@@ -66,7 +66,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
 
 
 def report(repo, base, head):
-    repo = git(repo, "rev-parse", "--show-toplevel").stdout.strip()
+    repo = git(repo, "rev-parse", "--show-toplevel").stdout.removesuffix("\n")
     found = git(repo, "merge-base", base, head, check=False)
     if found.returncode == 1:
         raise RuntimeError(f"{head} and {base} have no common ancestor")
@@ -123,7 +123,8 @@ def main(argv=None):
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
-            git(args.repo, "fetch", "--quiet", "--refmap=", "--", remote, f"+refs/heads/{branch}:refs/remotes/{ref}")
+            git(args.repo, "fetch", "--quiet", "--no-recurse-submodules", "--refmap=", "--", remote,
+                f"+refs/heads/{branch}:refs/remotes/{ref}")
 
         if args.fetch:
             if args.base:

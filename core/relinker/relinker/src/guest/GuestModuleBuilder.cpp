@@ -1,9 +1,11 @@
 #include <relinker/guest/GuestImage.hpp>
+#include <relinker/analysis/PathconfImport.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <domain/ImportModule.hpp>
 #include <io/NativePath.hpp>
@@ -24,6 +26,39 @@
 namespace Relinker {
 
 namespace {
+
+std::optional<Domain::VirtualAddress> FindGuestPathconfImportAddress(const GuestImage& image) {
+    std::optional<Domain::VirtualAddress> candidate;
+    for (const auto* table : {&image.Dynamic.RelaPltData, &image.Dynamic.RelaData}) {
+        for (std::size_t position = 0; position + 24 <= table->size(); position += 24) {
+            const auto info = Io::ReadU64(*table, position + 8);
+            const unsigned rank = PathconfRelocationRank(static_cast<std::uint32_t>(info));
+            if (rank == 0) {
+                continue;
+            }
+            const auto addend = static_cast<std::int64_t>(Io::ReadU64(*table, position + 16));
+            if (addend != 0) {
+                continue;
+            }
+            const auto symbolIndex = static_cast<std::size_t>(info >> 32);
+            if (symbolIndex >= image.Symbols.size()) {
+                continue;
+            }
+            const auto& symbol = image.Symbols[symbolIndex];
+            if (symbol.Section != 0 || !IsPathconfImportSymbolType(symbol.Info & 0x0F) || !IsPathconfImportLibrary(symbol.Library) || !IsPathconfImportName(symbol.Name)) {
+                continue;
+            }
+            const auto target = Io::ReadU64(*table, position);
+            if (rank == 3) {
+                return target;
+            }
+            if (!candidate) {
+                candidate = target;
+            }
+        }
+    }
+    return candidate;
+}
 
 struct GuestExport {
     std::size_t Provider;
@@ -164,6 +199,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         images.push_back(std::move(image));
     }
+    for (const auto& image : images)
+        if (image.IgnoredGlobDatAddends != 0)
+            progress.Message("Note: " + Io::Utf8Path(image.SourcePath) + ": GLOB_DAT addends ignored per the x86-64 psABI: " + std::to_string(image.IgnoredGlobDatAddends));
     std::map<std::string, std::size_t> guestNames;
     std::map<std::string, std::size_t> windowsGuestFiles;
     for (std::size_t index = 0; index < images.size(); ++index) {
@@ -216,7 +254,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::AppendString(strings, name + GuestSymbolSuffix);
     };
     const auto bindingName = [&](const std::string& name, const std::size_t provider) {
-        if (windows || macos || !sharedExports.contains(name)) return name;
+        if (windows || !sharedExports.contains(name)) return name;
         return name + "#module" + std::to_string(provider);
     };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
@@ -264,9 +302,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             const auto candidate = std::find_if(found->second.begin(), found->second.end(), [&](const auto& entry) { return entry.Provider == declared->second; });
             if (candidate != found->second.end()) declaredProvider = &*candidate;
         }
-        if (needed != 1 && (macos || declaredProvider == nullptr)) rejectSharedImport(base, Io::Utf8Path(inputPath));
+        if (needed != 1 && declaredProvider == nullptr) rejectSharedImport(base, Io::Utf8Path(inputPath));
         if (!windows && found != exports.end() && (declared == guestNames.end() || declaredProvider != nullptr)) {
-            if (!macos && declaredProvider != nullptr) {
+            if (declaredProvider != nullptr) {
                 const auto type = dynamic.DynSymData[offset + 4] & 15;
                 const auto exportType = declaredProvider->Type;
                 if (type != 0 && type != exportType && (exportType != 0 || type == 6)) throw Domain::RelinkerException("Guest import/export type mismatch: " + name);
@@ -274,7 +312,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
             if (executableReferences[offset / 24]) {
-                if (!macos && declaredProvider != nullptr) executableProviders.insert(declared->second);
+                if (declaredProvider != nullptr) executableProviders.insert(declared->second);
                 else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
             }
         }
@@ -323,7 +361,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
-                if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
+                if (!windows && declared != guestNames.end() && sharedExports.contains(symbol.Name))
                     importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
@@ -377,7 +415,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                     rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, bound == importBindings[module].end() ? symbol.Name : bound->second);
                 }
                 const auto shared = sharedExports.find(symbol.Name);
-                if (!macos && exported && shared != sharedExports.end() && shared->second.contains(module))
+                if (exported && shared != sharedExports.end() && shared->second.contains(module))
                     image.BindingAliases.emplace_back(index, symbol.Name + "#module" + std::to_string(module) + GuestSymbolSuffix);
             }
             if (!macos) BindNamedImportsByNid(image, executableExports);
@@ -484,7 +522,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); }, windows || macos)->Convert(std::move(image.Bytes), image.Headers);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
             if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Reports = converted.Reports, .Trampolines = image.Trampolines});
@@ -519,10 +557,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 }
             }
             const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
+            std::vector<RoutedSyscallStub> routedStubs;
             std::vector<std::size_t> syscallTraps;
             try {
-                syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges);
+                syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges, &routedStubs);
             } catch (const Domain::RelinkerException& error) {
+                if (!error.HasFailureOffset) throw;
                 const auto cause = DescribeReplacedPltStubReaching(replacedStubs, code, header.MappedAddress, error.FailureOffset);
                 if (cause.empty()) throw;
                 Domain::RelinkerException explained(error.what() + cause, error.FailureOffset);
@@ -538,6 +578,47 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 }
                 image.Bytes[header.Offset + offset] = 0x0F;
                 image.Bytes[header.Offset + offset + 1] = 0x0B;
+            }
+
+            for (const auto& routed : routedStubs) {
+                if (routed.SyscallNumber == 191) {
+                    const auto pathconfTarget = FindGuestPathconfImportAddress(image);
+                    if (pathconfTarget.has_value()) {
+                        const Domain::VirtualAddress stubVAddr = header.MappedAddress + routed.StubOffset;
+                        if (routed.StubOffset + routed.StubLength > code.size())
+                            throw Domain::RelinkerException("Syscall route patch exceeds guest executable segment", stubVAddr);
+                        const Domain::VirtualAddress ripAfterDisp = stubVAddr + 6;
+                        const std::int64_t disp = static_cast<std::int64_t>(*pathconfTarget) - static_cast<std::int64_t>(ripAfterDisp);
+                        if (disp < std::numeric_limits<std::int32_t>::min() || disp > std::numeric_limits<std::int32_t>::max())
+                            throw Domain::RelinkerException("Syscall stub relocation distance exceeds 32-bit displacement", stubVAddr);
+                        const auto disp32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(disp));
+                        const std::array<std::uint8_t, 13> patchBytes = {
+                            0xFF, 0x25,
+                            static_cast<std::uint8_t>(disp32 & 0xFF),
+                            static_cast<std::uint8_t>((disp32 >> 8) & 0xFF),
+                            static_cast<std::uint8_t>((disp32 >> 16) & 0xFF),
+                            static_cast<std::uint8_t>((disp32 >> 24) & 0xFF),
+                            0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                        };
+                        if (!image.PatchedRanges.empty()) {
+                            const GamePatch::WriterRange route{header.Offset + routed.StubOffset, 13, "syscall route"};
+                            GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Traps = std::span<const GamePatch::WriterRange>(&route, 1)});
+                        }
+                        std::copy(patchBytes.begin(), patchBytes.end(), image.Bytes.begin() + static_cast<std::ptrdiff_t>(header.Offset + routed.StubOffset));
+                    } else if (syscallScanner.TrapsSdkStubs()) {
+                        const std::size_t opcodeOffset = routed.StubOffset + 10u;
+                        if (opcodeOffset > code.size() || code.size() - opcodeOffset < 2u)
+                            throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + opcodeOffset);
+                        if (!image.PatchedRanges.empty()) {
+                            const GamePatch::WriterRange trap{header.Offset + opcodeOffset, 2, "syscall trap"};
+                            GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Traps = std::span<const GamePatch::WriterRange>(&trap, 1)});
+                        }
+                        image.Bytes[header.Offset + opcodeOffset] = 0x0F;
+                        image.Bytes[header.Offset + opcodeOffset + 1] = 0x0B;
+                    } else {
+                        throw Domain::RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import in " + Io::Utf8Path(image.SourcePath), header.MappedAddress + routed.StubOffset);
+                    }
+                }
             }
         }
         const auto relativeDirectory = appDirectory(image);
@@ -599,14 +680,27 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
+    struct Identity {
+        std::string Soname;
+        std::vector<std::string> ModuleNames;
+    };
+    std::map<std::size_t, Identity> identities;
+    const auto identity = [&](std::size_t index) -> const Identity& {
+        const auto [found, inserted] = identities.try_emplace(index);
+        if (inserted) {
+            auto image = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots);
+            found->second = {std::move(image.Soname), std::move(image.ModuleNames)};
+        }
         return found->second;
     };
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    const auto match = [&](std::size_t copy, std::size_t original) -> const char* {
+        const auto& left = identity(copy);
+        const auto& right = identity(original);
+        if (!left.Soname.empty() || !right.Soname.empty()) return left.Soname == right.Soname ? "same SONAME" : nullptr;
+        return !left.ModuleNames.empty() && left.ModuleNames == right.ModuleNames ? "same module names" : nullptr;
+    };
+    std::vector<BackupCopy> skipped;
     std::vector<bool> copies(modules.size());
     for (std::size_t copy = 0; copy < modules.size(); ++copy) {
         const auto& path = modules[copy].Path;
@@ -615,9 +709,10 @@ std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBacku
             const auto& kept = modules[original].Path;
             const auto prefix = Io::Utf8Path(kept.filename());
             if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            const auto* matched = match(copy, original);
+            if (matched == nullptr) continue;
             copies[copy] = true;
-            skipped.emplace_back(path, kept);
+            skipped.push_back({path, kept, matched});
             break;
         }
     }

@@ -73,6 +73,12 @@ static_assert(offsetof(UserUcontext, stackSize) == 0x4d0);
 static_assert(offsetof(UserUcontext, flags) == 0x4e0);
 static_assert(sizeof(UserUcontext) == 0x500);
 
+inline constexpr std::uint64_t FpFormatNodev = 0x10000;
+inline constexpr std::uint64_t FpFormatXmm = 0x10002;
+inline constexpr std::uint64_t FpOwnedNone = 0x20000;
+inline constexpr std::uint64_t FpOwnedFpu = 0x20001;
+inline constexpr std::uint64_t FpOwnedPcb = 0x20002;
+
 extern "C" int SigreturnContext_nid_no_patch(const UserUcontext* context);
 
 #endif

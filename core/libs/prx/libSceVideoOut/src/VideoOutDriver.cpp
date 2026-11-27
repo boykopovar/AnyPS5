@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <thread>
 #include <limits>
 #include <optional>
@@ -21,6 +22,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -104,6 +106,13 @@ bool readHostClipboard(std::string& text) {
     text.assign(raw);
     SDL_free(raw);
     return true;
+}
+
+void copyHostClipboard(const char* text, std::size_t size) {
+    const std::string utf8(text, size);
+    OnMainThread([&] {
+        if (SDL_SetClipboardText(utf8.c_str()) < 0) std::fprintf(stderr, "[videoout] IME clipboard copy failed: %s\n", SDL_GetError());
+    });
 }
 
 std::vector<const char*> windowExtensions(SDL_Window* window) {
@@ -342,6 +351,7 @@ VideoOutDriver& VideoOutDriver::Get() {
 VideoOutDriver::VideoOutDriver() {
     OnMainThread([] {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        SDL_SetHint(SDL_HINT_IME_SUPPORT_EXTENDED_TEXT, "1");
 #ifdef _WIN32
         SDL_SetHintWithPriority(SDL_HINT_DIRECTINPUT_ENABLED, "0", SDL_HINT_DEFAULT);
         if (std::getenv("APS5_NO_WGI") != nullptr) SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_WGI, "0", SDL_HINT_DEFAULT);
@@ -349,6 +359,7 @@ VideoOutDriver::VideoOutDriver() {
 #ifdef __linux__
         SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
 #endif
+        if (const char* keepAwake = std::getenv("ANYPS5_KEEP_AWAKE"); keepAwake != nullptr && std::strcmp(keepAwake, "0") == 0) SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
         if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
             throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
         }
@@ -595,13 +606,28 @@ std::uint32_t VideoOutDriver::GetDisplayResolution() {
     return displayResolution.load();
 }
 
+HostDisplayMode KeepHostDisplayMode(const std::optional<HostDisplayMode>& known, const std::optional<HostDisplayMode>& measured, const std::string& failure) {
+    if (measured) return *measured;
+    if (known) return *known;
+    throw std::runtime_error(failure);
+}
+
 void VideoOutDriver::updateDisplayRefreshRate() {
+    std::optional<HostDisplayMode> measured;
+    std::string failure;
     const int display = SDL_GetWindowDisplayIndex(window.Handle());
-    if (display < 0) throw std::runtime_error(std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError());
     SDL_DisplayMode mode{};
-    if (SDL_GetCurrentDisplayMode(display, &mode) != 0) throw std::runtime_error(std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError());
-    displayRefreshRate.store(mode.refresh_rate);
-    displayResolution.store(resolutionIndex(mode.w, mode.h));
+    if (display < 0) {
+        failure = std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError();
+    } else if (SDL_GetCurrentDisplayMode(display, &mode) != 0) {
+        failure = std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError();
+    } else {
+        measured = HostDisplayMode{mode.refresh_rate, resolutionIndex(mode.w, mode.h)};
+    }
+    const auto kept = KeepHostDisplayMode(knownDisplayMode, measured, failure);
+    knownDisplayMode = kept;
+    displayRefreshRate.store(kept.refreshRate);
+    displayResolution.store(kept.resolution);
 }
 
 void VideoOutDriver::pollHostHdr() {
@@ -789,6 +815,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
     struct DialogPresenter {
         ~DialogPresenter() { ModalDialogSetPresenter_nid_postfix(false); }
     } dialogPresenter;
+    struct ClipboardSink {
+        ~ClipboardSink() { ImeSetHostClipboardSink_nid_no_patch(nullptr); }
+    } clipboardSink;
     std::shared_ptr<FlipRequest> current;
     std::optional<PadInput> padInput;
     std::optional<MouseInput> mouseInput;
@@ -809,6 +838,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             imeTextInput.emplace();
             dialogInput.emplace();
             imeTextInput->SetClipboardProvider(&readHostClipboard);
+            ImeSetHostClipboardSink_nid_no_patch(&copyHostClipboard);
         });
         bool windowCloseSeen = false;
         while (!token.stop_requested()) {
@@ -826,6 +856,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
+                    const std::unique_ptr<char, decltype(&SDL_free)> extendedText(event.type == SDL_TEXTEDITING_EXT ? event.editExt.text : nullptr, SDL_free);
                     if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
                     const bool padOwnedMouse = padInput->MouseModeEnabled();
@@ -866,7 +897,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 int windowHeight = 0;
                 if (window.Handle() != nullptr) OnMainThread([&] { SDL_GetWindowSize(window.Handle(), &windowWidth, &windowHeight); });
                 if (windowWidth > 0 && windowHeight > 0) {
-                    const auto presented = AgcDriver::ComputeContainSize_nid_postfix(current->width, current->height, static_cast<std::uint32_t>(windowWidth), static_cast<std::uint32_t>(windowHeight), true);
+                    const auto presented = AgcDriver::ComputePresentationSize_nid_postfix(current->width, current->height, static_cast<std::uint32_t>(windowWidth), static_cast<std::uint32_t>(windowHeight));
                     mouseInput->SetPresentation(current->width, current->height, presented.width, presented.height);
                 }
                 const auto finished = AgcDriver::FrameTiming::Clock::now();

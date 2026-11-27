@@ -1,12 +1,16 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 static constexpr int SCE_OK = 0;
+static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_SCHED_FIFO = 1;
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -54,6 +58,19 @@ int main() {
         Require(scePthreadJoin(thread, nullptr) == SCE_KERNEL_ERROR_ESRCH);
         Require(scePthreadDetach(thread) == SCE_KERNEL_ERROR_ESRCH);
         Require(scePthreadCancel(thread) == SCE_KERNEL_ERROR_ESRCH);
+        unsigned char name[64];
+        std::memset(name, 0xAA, sizeof(name));
+        Require(pthread_getname_np_nid_postfix(thread, reinterpret_cast<char*>(name)) == GUEST_ESRCH);
+        Require(name[0] == 0xAA && name[sizeof(name) - 1] == 0xAA);
+        int policy = -1;
+        KernelSchedParam param{};
+        Require(scePthreadGetschedparam(thread, &policy, &param) == SCE_KERNEL_ERROR_ESRCH);
+        Require(pthread_getschedparam_nid_postfix(thread, &policy, &param) == GUEST_ESRCH);
+        const KernelSchedParam requested{300};
+        Require(scePthreadSetschedparam(thread, GUEST_SCHED_FIFO, &requested) == SCE_KERNEL_ERROR_ESRCH);
+        Require(pthread_setschedparam_nid_postfix(thread, GUEST_SCHED_FIFO, &requested) == GUEST_ESRCH);
+        int clockId = -1;
+        Require(pthread_getcpuclockid_nid_postfix(thread, &clockId) == GUEST_ESRCH);
     }
     return 0;
 }
