@@ -2,6 +2,9 @@
 #include "cmemory.h"
 #include "unicode/usearch.h"
 #include "usrchimp.h"
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <mutex>
 
 namespace {
@@ -9,6 +12,11 @@ namespace {
 std::mutex& OpenMutex() {
     static std::mutex mutex;
     return mutex;
+}
+
+std::atomic_bool& PatternAllocationFailure() {
+    static std::atomic_bool failure;
+    return failure;
 }
 
 }
@@ -56,11 +64,53 @@ void SetAttribute(void* search, std::int32_t attribute, std::int32_t value, std:
 void SetPattern(void* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t& status) {
     auto code = static_cast<UErrorCode>(status);
     auto* native = static_cast<UStringSearch*>(search);
-    if (native->pattern.ces != native->pattern.cesBuffer && native->pattern.ces) uprv_free(native->pattern.ces);
+    const auto previousText = native->pattern.text;
+    const auto previousTextLength = native->pattern.textLength;
+    const auto previousCes = native->pattern.ces;
+    const auto previousCesLength = native->pattern.cesLength;
+    const auto previousPces = native->pattern.pces;
+    const auto previousPcesLength = native->pattern.pcesLength;
+    const auto previousPrefixAccents = native->pattern.hasPrefixAccents;
+    const auto previousSuffixAccents = native->pattern.hasSuffixAccents;
+    std::array<std::int32_t, INITIAL_ARRAY_SIZE_> previousCesBuffer{};
+    std::copy_n(native->pattern.cesBuffer, previousCesBuffer.size(), previousCesBuffer.begin());
     native->pattern.ces = native->pattern.cesBuffer;
     native->pattern.cesLength = 0;
-    usearch_setPattern(native, pattern, patternLength, &code);
+    native->pattern.pces = nullptr;
+    native->pattern.pcesLength = 0;
+    if (PatternAllocationFailure().exchange(false)) {
+        code = U_MEMORY_ALLOCATION_ERROR;
+    } else {
+        usearch_setPattern(native, pattern, patternLength, &code);
+    }
+    if (U_FAILURE(code)) {
+        if (native->pattern.ces != native->pattern.cesBuffer && native->pattern.ces) uprv_free(native->pattern.ces);
+        if (native->pattern.pces != native->pattern.pcesBuffer && native->pattern.pces) uprv_free(native->pattern.pces);
+        native->pattern.text = previousText;
+        native->pattern.textLength = previousTextLength;
+        native->pattern.ces = previousCes;
+        native->pattern.cesLength = previousCesLength;
+        native->pattern.pces = previousPces;
+        native->pattern.pcesLength = previousPcesLength;
+        native->pattern.hasPrefixAccents = previousPrefixAccents;
+        native->pattern.hasSuffixAccents = previousSuffixAccents;
+        std::copy(previousCesBuffer.begin(), previousCesBuffer.end(), native->pattern.cesBuffer);
+    } else {
+        if (previousCes != native->pattern.cesBuffer && previousCes) uprv_free(previousCes);
+        if (previousPces != native->pattern.pcesBuffer && previousPces) uprv_free(previousPces);
+    }
     status = code;
+}
+
+void FailNextPatternAllocation() {
+    PatternAllocationFailure() = true;
+}
+
+std::int32_t Next(void* search, std::int32_t& status) {
+    auto code = static_cast<UErrorCode>(status);
+    const auto result = usearch_next(static_cast<UStringSearch*>(search), &code);
+    status = code;
+    return result;
 }
 
 }

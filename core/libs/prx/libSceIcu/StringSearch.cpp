@@ -266,7 +266,7 @@ void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* search, const char1
     const std::lock_guard lock(state->mutex);
     auto outgoing = incoming;
     Icu::StringSearchHost::SetPattern(state->search, replacement.data(), static_cast<std::int32_t>(replacement.size()), outgoing);
-    state->pattern.swap(replacement);
+    if (outgoing <= 0) state->pattern.swap(replacement);
     WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 

@@ -425,6 +425,13 @@ void Run() {
     usearch_setPattern_nid_postfix(opened, u"nan", -1, &status);
     Require(status == 0);
     Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
+    Icu::StringSearchHost::FailNextPatternAllocation();
+    usearch_setPattern_nid_postfix(opened, u"zzz", -1, &status);
+    Require(status > 0);
+    status = 0;
+    Require(Icu::StringSearchHost::Next(opened, status) == 2);
+    Require(status <= 0);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 3);
 }
 
 } // namespace UsearchObject
