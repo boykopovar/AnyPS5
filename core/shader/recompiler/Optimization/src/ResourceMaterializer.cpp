@@ -923,6 +923,27 @@ private:
         std::vector<std::uint32_t> values{0u};
         std::vector<std::pair<std::uint64_t, std::uint64_t>> scanned;
         for (const auto& domain : column.keyDomains) {
+            if (domain.child) {
+                if (!plan.descriptorSources.at(column.heapSource).tableColumn.has_value()) {
+                    skip(NarrowSkip::Value);
+                    return;
+                }
+                std::uint32_t word = 0u;
+                if (const auto dword = ImageTableAbi::ScalarBufferDword(domain.offset, 0u, records.size)) {
+                    const auto address = records.base + *dword;
+                    if (!PageAccessible(address, records.base, records.base + records.size)) {
+                        skip(NarrowSkip::Unmapped);
+                        return;
+                    }
+                    if (runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, address, sizeof(std::uint32_t))) {
+                        skip(NarrowSkip::Pending);
+                        return;
+                    }
+                    word = Read(address);
+                }
+                values.push_back((word >> domain.shift) & domain.mask);
+                continue;
+            }
             if (domain.value) {
                 DescriptorValue key;
                 try {
@@ -2054,7 +2075,7 @@ bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::v
 std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::vector<ImageTableColumnSnapshot>& tables) {
     std::size_t footprint = resolved.map.size() + (resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
     for (const auto& table : tables) {
-        footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u;
+        footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u + table.readRanges.size() * 4u;
         for (const auto& view : table.resourceViews) footprint += view.words.size() * 9u + view.identities.size() * (sizeof(RegisteredImageView) / sizeof(std::uint32_t));
     }
     return footprint;
