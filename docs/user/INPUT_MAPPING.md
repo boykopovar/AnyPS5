@@ -19,7 +19,7 @@ The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`
 
 Game-controller bindings are enabled automatically. Keyboard and mouse overrides apply independently of [controller button remapping](#controller-button-remapping).
 
-Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords.
+Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `ToggleBorderless` (F2, switches the display window between normal and borderless windowed, as described in [USAGE](USAGE.md)), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords. `ToggleBorderless` accepts keyboard keys only.
 
 ### SDL controller detection and layout
 
@@ -86,6 +86,7 @@ Each action keeps its built-in bindings unless the shared file or the current ti
 | `Shake` | X (reports a swinging acceleration and angular velocity while held) |
 | `ToggleMouse` | Middle mouse button, F7 |
 | `ToggleFullscreen` | F11 |
+| `ToggleBorderless` | F2 |
 | `TogglePerformanceOverlay` | F10 |
 | `Screenshot` | F12 |
 | `ShowPadStatus` | F9 |
@@ -119,7 +120,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `MouseCurve` | Number from 0.2 to 5, the response exponent. Above 1 gives finer control at low speed; below 1 reaches large tilts sooner. | `1` |
 | `MouseDeadzoneOffset` | Number from 0 to 0.9, the smallest tilt any movement produces as a fraction of full tilt. Set it just above the game's own deadzone: raise it if slow movement doesn't move the camera, lower it if small movements jump. | `0.2` |
 | `MouseMaxSpeed` | Number from 0.1 to 10, the highest tracked speed as a multiple of the full-tilt speed. Above 1, a fast flick keeps the stick at full tilt a little longer after the mouse stops. | `1` |
-| `MouseSmoothingMs` | Number from 0 to 500, the smoothing time constant in milliseconds. A mouse that reports fewer than 300 times per second, such as a 125 or 250 Hz mouse, is smoothed over at least three of its report intervals, up to 30 ms; the report rate is measured from the movement itself. 0 follows every mouse report directly and turns this off too. | `10` |
+| `MouseSmoothingMs` | Smoothing time constant in milliseconds, from 0 to 500. When the measured report rate is available, a positive setting is raised to three report intervals if that is longer, with a 30 ms cap on this automatic minimum. Set 0 to disable smoothing. | `10` |
 | `MouseDecayMs` | Number from 1 to 1000, the milliseconds without movement after which the stick is centered. | `30` |
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
@@ -144,7 +145,7 @@ Set `APS5_PAD_INPUT_FILE` as described in [Controller input for test runs](USAGE
 python3 tools/pad_timeline.py menu.json /tmp/anyps5-pad --repeat 3 --gap-ms 500
 ```
 
-Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. An event may also hold `left_stick` and `right_stick` positions as `[x, y]` from 0 to 255 (128 is centred); a stick an event names but the other leaves out stays centred for that event, and an event without either keeps the physical sticks, for example `{"at_ms":0,"hold_ms":400,"buttons":[],"left_stick":[255,128]}` to push the left stick right. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition, and the command file they produce must not exceed the 64 KiB the runtime reads. The helper validates the entire sequence before atomically replacing the command file.
+Events start relative to when the application first observes the new command. Use button names from `pad_input.py`. Different buttons in one event are pressed together. An empty list or `["release"]` injects no buttons. Each name can appear only once, and `release` must appear alone. An event may also hold `left_stick` and `right_stick` positions as `[x, y]` from 0 to 255 (128 is centred). If an event specifies one stick, the other stays centred for that event. An event that specifies neither keeps both physical stick positions. For example, `{"at_ms":0,"hold_ms":400,"buttons":[],"left_stick":[255,128]}` pushes the left stick right and centres the right stick. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition, and the command file they produce must not exceed the 64 KiB the runtime reads. The helper validates the entire sequence before atomically replacing the command file.
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
@@ -154,7 +155,7 @@ The runtime evaluates scheduled events at each controller read, including their 
 
 ## Recording and replaying controller input
 
-Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
+Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. Replay replaces port 0's buttons, sticks and analog triggers on normal reads and keeps the last recorded state after the final change. When a system dialog or the IME intercepts input, the title receives the intercepted state. Playback time keeps advancing during interception. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
 
 ```sh
 APS5_PAD_RECORD=/tmp/fight.txt ./app.elf
@@ -226,6 +227,8 @@ Cross = KEY:F
 
 `ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the analog stick selected by `MouseStickTarget` (`Right` by default) from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
 
+An on-screen notice shows the mouse-as-stick state and an available `ToggleMouse` binding for four seconds after a toggle. If losing focus released the mouse, the notice returns when the game window regains focus. Press the displayed binding to capture the mouse again.
+
 The stick tilts in the direction the mouse moves, and further the faster it moves. Speed is measured in counts per second over the time between updates, so the same hand speed gives the same tilt at any frame rate. Any movement tilts the stick at least `MouseDeadzoneOffset`, so slow movement isn't lost inside the game's own deadzone. When the mouse stops, the stick eases back and is centered `MouseDecayMs` after the last movement.
 
 To control the left analog stick with mouse movement:
@@ -248,7 +251,7 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](https://boykopovar.github.io/AnyPS5/input-mapper/) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs. The hosted mapper follows `main`, so settings added since a release require a newer build.
+The [input mapper](https://boykopovar.github.io/AnyPS5/input-mapper/) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action omits that action from the exported INI and shows its built-in inputs in the editor. At runtime, an omitted action in a per-game profile inherits the shared file's bindings if present. Otherwise it uses the built-in inputs. The hosted mapper follows `main`, so settings added since a release require a newer build.
 
 For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
@@ -256,7 +259,7 @@ On the Configuration page, enter the game's exact title ID to download a [per-ga
 
 On the Configuration page, open **Controller buttons** to assign an SDL button to a PlayStation button. Choose `None` to disable it or **No override** to omit its `SDLButton:` line and keep the inherited mapping. These assignments apply to all connected controllers.
 
-Add settings such as `MouseSensitivity` or `ToggleActions` by hand. The configurator validates settings and controller assignments on import and preserves them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
+Use Native settings to edit values such as `MouseSensitivity` or `ToggleActions`. Leave a setting blank to inherit its value. The configurator validates settings and controller assignments and includes them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 
@@ -272,7 +275,7 @@ npm --prefix tools/input-mapper test
 
 Controls, Configuration and Help are separate views; switching views preserves bindings. Search covers all control groups. The group selector supports arrow keys, Home and End. Input and language menus support search, arrow keys and Enter; Escape cancels selection. Menus open beside their fields on larger screens and as bottom sheets on phones. The interface uses system fonts and respects reduced-motion preferences.
 
-The translation button selects one of 22 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
+The translation button selects one of 24 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
 
 Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `74be4c2836da0940f0144d0d97852606f9ab11e9`, the commit `3rdparty/SDL2` is pinned to. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
@@ -280,5 +283,8 @@ For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `k
 
 ## Checking a timeline without a controller
 
-- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the preview as JSON.
+- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the expanded events and their duration as JSON. The duration ends at the last event's release.
+  With `--repeat`, `--gap-ms` specifies the delay from one iteration's last release to the next iteration's time zero.
 - `tools/preview_pad_input.py <path> <button> [--hold-ms MS] [--left-stick X Y] [--right-stick X Y] [--touch X Y ID ACTIVE]` prints one controller pulse without modifying the command file at `<path>`.
+  It uses the previous command's sequence and the monotonic clock to calculate a preview sequence. The preview
+  does not reserve that sequence. Run `tools/pad_input.py` to queue a pulse with the current sequence.

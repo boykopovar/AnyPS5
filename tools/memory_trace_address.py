@@ -130,7 +130,10 @@ def main(argv=None):
     try:
         start, size = parse_range(args.address, args.length)
         with args.trace.open("rb") as raw, decode_trace(raw) as source:
-            output = render_events(iter_events(source), args.trace, start, size, args.limit)
+            try:
+                output = render_events(iter_events(source), args.trace, start, size, args.limit)
+            except ValueError as error:
+                raise ValueError(f"{args.trace}: {error}") from error
         sys.stdout.write(output)
     except (OSError, ValueError) as error:
         parser.error(str(error))

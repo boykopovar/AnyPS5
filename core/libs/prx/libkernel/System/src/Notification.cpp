@@ -20,10 +20,19 @@
 extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
     if (channel < 0) return static_cast<int>(0x80020016u);
     if (!text) return static_cast<int>(0x8002000eu);
+    constexpr std::size_t DebugTextLimit = 0x10000;
+    std::string copied;
+    const int copyError = CopyGuestString_nid_no_patch(text, DebugTextLimit, copied);
+    if (copyError == 63) {
+        copied.resize(DebugTextLimit);
+        if (!GuestCopyIn_nid_no_patch(copied.data(), text, DebugTextLimit)) return static_cast<int>(0x8002000eu);
+    } else if (copyError != 0) {
+        return static_cast<int>(0x8002000eu);
+    }
     static std::mutex outputMutex;
     const std::lock_guard lock(outputMutex);
     if (const int host = File::HostStandardError(); host >= 0) {
-        const auto line = "[debug:" + std::to_string(channel) + "] " + text;
+        const auto line = "[debug:" + std::to_string(channel) + "] " + copied;
 #ifdef _WIN32
         const auto written = _write(host, line.data(), static_cast<unsigned>(line.size()));
 #else
@@ -31,7 +40,7 @@ extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
 #endif
         return written == static_cast<decltype(written)>(line.size()) ? 0 : static_cast<int>(0x80020005u);
     }
-    if (std::fprintf(stderr, "[debug:%d] %s", channel, text) < 0 || std::fflush(stderr) != 0)
+    if (std::fprintf(stderr, "[debug:%d] %s", channel, copied.c_str()) < 0 || std::fflush(stderr) != 0)
         return static_cast<int>(0x80020005u);
     return 0;
 }

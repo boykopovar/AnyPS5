@@ -147,6 +147,12 @@ int main(int argc, char** argv) {
         Status(sceNgs2VoiceGetState(voice, &state.voice_state, sizeof(state)), SCE_NGS2_OK, "valid sampler state lookup failed");
         const Ngs2VoiceCommand stop{2, 0, 4, 0, {.u = SCE_NGS2_VOICE_EVENT_STOP_IMM}};
         Status(sceNgs2VoiceRunCommands(voice, &stop, 1), SCE_NGS2_OK, "valid voice command failed");
+        errno = 71;
+        Status(sceNgs2VoiceRunCommands(voice, reinterpret_cast<const Ngs2VoiceCommand*>(0x10), 1), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "VoiceRunCommands accepted an unreadable command list");
+        Require(errno == 71);
+        const Ngs2VoiceCommand badLevels{5, 0, 0x11, 1, {.levels = reinterpret_cast<const float*>(0x10)}};
+        Status(sceNgs2VoiceRunCommands(voice, &badLevels, 1), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "VoiceRunCommands accepted unreadable matrix levels");
+        Require(errno == 71);
         Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
         for (auto name : Names) if (selected(name)) Invalid(name, voice);
         Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
