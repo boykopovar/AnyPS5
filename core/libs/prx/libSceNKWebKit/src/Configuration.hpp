@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -111,6 +113,16 @@ public:
     std::vector<std::string> thirdPartyCNAMEDomains;
     std::vector<std::string> sameSiteStrictCookiesHosts;
     bool firstPartyWebsiteDataRemovalMode = false;
+    bool isEphemeral = false;
+    std::unordered_set<std::uint32_t> statisticsDomainIDs;
+    std::unordered_set<std::string> grandfatheredHosts;
+    std::unordered_set<std::string> userInteractionHosts;
+    std::set<std::pair<std::string, std::string>> onlyInDatabaseOncePairs;
+    std::unordered_set<std::string> prevalentResourceHosts;
+    std::set<std::pair<std::string, std::string>> redirectingToPairs;
+    std::set<std::pair<std::string, std::string>> subFrameUnderPairs;
+    std::set<std::pair<std::string, std::string>> subresourceUnderPairs;
+    std::unordered_set<std::string> veryPrevalentResourceHosts;
 };
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
