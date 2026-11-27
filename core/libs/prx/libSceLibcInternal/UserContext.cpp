@@ -2,6 +2,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -124,21 +125,30 @@ int APS5_VABI signalcontext_nid_postfix(UserUcontext* context, int signal, Conte
     if (local.mcontext.rsp < MinimumHeadroom) return Fail(GuestEfault);
     auto stack = (local.mcontext.rsp - 128 - sizeof(UserUcontext)) & ~static_cast<std::uint64_t>(15);
     auto* saved = reinterpret_cast<UserUcontext*>(stack);
-    if (!GuestCopyOut_nid_no_patch(saved, &local, sizeof(local))) return Fail(GuestEfault);
     stack = (stack - SignalInfoSize) & ~static_cast<std::uint64_t>(15);
     auto* info = reinterpret_cast<std::uint8_t*>(stack);
+    stack -= SignalArguments * sizeof(std::uint64_t);
+    auto* arguments = reinterpret_cast<std::uint64_t*>(stack);
+    stack -= 16;
+    const auto stackBase = static_cast<std::uintptr_t>(stack);
+    const auto stackEnd = reinterpret_cast<std::uintptr_t>(saved) + sizeof(UserUcontext);
+    const auto stackBytes = static_cast<std::size_t>(stackEnd - stackBase);
+    const GuestArena::HostWrite contextGuard(context, sizeof(local));
+    const GuestArena::HostWrite stackGuard(reinterpret_cast<void*>(stackBase), stackBytes);
+    if (!contextGuard.Open() || !GuestWritable_nid_no_patch(context, sizeof(local)) ||
+        !stackGuard.Open() || !GuestWritable_nid_no_patch(reinterpret_cast<void*>(stackBase), stackBytes)) {
+        return Fail(GuestEfault);
+    }
+    if (!GuestCopyOut_nid_no_patch(saved, &local, sizeof(local))) return Fail(GuestEfault);
     std::uint8_t signalInfo[SignalInfoSize]{};
     std::memcpy(signalInfo, &signal, sizeof(signal));
     if (!GuestCopyOut_nid_no_patch(info, signalInfo, sizeof(signalInfo))) return Fail(GuestEfault);
-    stack -= SignalArguments * sizeof(std::uint64_t);
-    auto* arguments = reinterpret_cast<std::uint64_t*>(stack);
     const std::uint64_t callArguments[SignalArguments] = {
         static_cast<std::uint64_t>(static_cast<std::int64_t>(signal)),
         reinterpret_cast<std::uint64_t>(info),
         reinterpret_cast<std::uint64_t>(saved),
     };
     if (!GuestCopyOut_nid_no_patch(arguments, callArguments, sizeof(callArguments))) return Fail(GuestEfault);
-    stack -= 16;
     const std::uint64_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(stack), &zero, sizeof(zero))) return Fail(GuestEfault);
     std::memset(&local.mcontext, 0, sizeof(UserMcontext));
