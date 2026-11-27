@@ -9,8 +9,8 @@
 
 namespace {
 
-using LookupCallback = int (*)(LibreSslX509Lookup*);
-using LookupFree = void (*)(LibreSslX509Lookup*);
+using LookupCallback = int (APS5_VABI*)(LibreSslX509Lookup*);
+using LookupFree = void (APS5_VABI*)(LibreSslX509Lookup*);
 
 struct MemoryBuffer {
     MemoryBuffer* next;
@@ -22,7 +22,7 @@ struct MemoryData {
     MemoryBuffer* head;
 };
 
-int NewMemoryLookup(LibreSslX509Lookup* lookup) {
+int APS5_VABI NewMemoryLookup(LibreSslX509Lookup* lookup) {
     auto* data = static_cast<MemoryData*>(malloc_nid_postfix(sizeof(MemoryData)));
     if (!data) return 0;
     data->head = nullptr;
@@ -30,7 +30,7 @@ int NewMemoryLookup(LibreSslX509Lookup* lookup) {
     return 1;
 }
 
-void FreeMemoryLookup(LibreSslX509Lookup* lookup) {
+void APS5_VABI FreeMemoryLookup(LibreSslX509Lookup* lookup) {
     auto* data = reinterpret_cast<MemoryData*>(lookup->methodData);
     if (!data) return;
     while (data->head) {
