@@ -52,17 +52,24 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfStringDumpExports.hpp"
 
 #include <cstdarg>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
 
 using NKWebKit::WtfAbi::CString;
+using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
+using NKWebKit::WtfAbi::URL;
 using NKWebKit::WtfDumpAbi::PrintStream;
 
 using VprintfFunction = void (APS5_VABI*)(PrintStream*, const char*, VaList*);
@@ -70,60 +77,110 @@ using BeginFunction = PrintStream* (APS5_VABI*)(PrintStream*);
 using EndFunction = void (APS5_VABI*)(PrintStream*);
 
 constexpr unsigned LenientConversion = 0;
+constexpr unsigned kStringImplFlag8Bit = 4u;
 
-template<typename TFunction>
-TFunction Slot(PrintStream& out, std::size_t slot) {
-    return reinterpret_cast<TFunction>(const_cast<void*>(out.vtable[slot]));
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+static_assert(std::is_trivially_copyable_v<URL>);
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-void APS5_VABI StringDumpPrintf_nid_no_patch(PrintStream& out, const char* format, ...) {
+template<typename TFunction>
+TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
+    if (!out) throw std::invalid_argument("null WTF::PrintStream");
+    void* const* vtablePtr = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&vtablePtr, out, sizeof(vtablePtr)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!vtablePtr) throw std::invalid_argument("null WTF::PrintStream");
+    const std::size_t byteOffset = slot * sizeof(void*);
+    const auto baseAddress = reinterpret_cast<std::uintptr_t>(vtablePtr);
+    if (byteOffset > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    void* slotValue = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&slotValue, reinterpret_cast<const void*>(baseAddress + byteOffset), sizeof(slotValue)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!slotValue) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return reinterpret_cast<TFunction>(slotValue);
+}
+
+String CopyGuestString(const StringImpl* guestImpl, const char* function) {
+    if (!guestImpl) return {};
+    StringImpl header{};
+    if (!GuestCopyIn_nid_no_patch(&header, guestImpl, sizeof(header)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!header.length) return {};
+    if (!header.data) throw std::invalid_argument("null WTF character buffer");
+    const bool is8Bit = (header.hashAndFlags & kStringImplFlag8Bit) != 0;
+    const std::size_t unitSize = is8Bit ? 1u : sizeof(char16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * unitSize;
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    void* characters = nullptr;
+    String copy(NKWebKit::WtfAbi::CreateUninitialized(header.length, is8Bit, characters));
+    if (!GuestCopyIn_nid_no_patch(characters, header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return copy;
+}
+
+void APS5_VABI StringDumpPrintf_nid_no_patch(PrintStream* out, VprintfFunction vprintfFn, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, format);
-    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, reinterpret_cast<VaList*>(arguments));
+    vprintfFn(out, format, reinterpret_cast<VaList*>(arguments));
     __builtin_sysv_va_end(arguments);
 #else
     std::va_list arguments;
     va_start(arguments, format);
-    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, reinterpret_cast<VaList*>(arguments));
+    vprintfFn(out, format, reinterpret_cast<VaList*>(arguments));
     va_end(arguments);
 #endif
 }
 
-void PrintCString(PrintStream& out, const char* string) {
-    StringDumpPrintf_nid_no_patch(out, "%s", string);
+void PrintCString(PrintStream* out, VprintfFunction vprintfFn, const char* string) {
+    StringDumpPrintf_nid_no_patch(out, vprintfFn, "%s", string);
 }
 
-void PrintUTF8(PrintStream& out, const StringImpl& string) {
-    CString utf8 = _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(&string, LenientConversion);
-    PrintCString(out, utf8.buffer ? reinterpret_cast<const char*>(utf8.buffer + 1) : "");
+void PrintCopiedUTF8(PrintStream* out, VprintfFunction vprintfFn, const String& string) {
+    if (!string.impl) {
+        PrintCString(out, vprintfFn, "");
+        return;
+    }
+    CString utf8 = _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(string.impl, LenientConversion);
+    PrintCString(out, vprintfFn, utf8.buffer ? reinterpret_cast<const char*>(utf8.buffer + 1) : "");
 }
 
-PrintStream& Checked(PrintStream* out) {
-    if (!out || !out->vtable) throw std::invalid_argument("null WTF::PrintStream");
-    return *out;
-}
-
-}
+}  // namespace
 
 extern "C" {
 
 void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(PrintStream* out, const StringImpl* string) {
-    PrintStream& stream = Checked(out);
+    const auto vprintfFn = ReadSlot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf, __func__);
     if (!string) {
-        PrintCString(stream, "(null StringImpl*)");
+        PrintCString(out, vprintfFn, "(null StringImpl*)");
         return;
     }
-    PrintUTF8(stream, *string);
+    const String copied = CopyGuestString(string, __func__);
+    PrintCopiedUTF8(out, vprintfFn, copied);
 }
 
-void APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE(const NKWebKit::WtfAbi::URL* self, PrintStream* out) {
+void APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE(const URL* self, PrintStream* out) {
     if (!self) throw std::invalid_argument("null WTF::URL");
-    PrintStream& outer = Checked(out);
-    PrintStream& stream = Checked(Slot<BeginFunction>(outer, NKWebKit::WtfDumpAbi::PrintStreamBegin)(&outer));
-    if (self->impl) PrintUTF8(stream, *self->impl);
-    else PrintCString(stream, "");
-    Slot<EndFunction>(outer, NKWebKit::WtfDumpAbi::PrintStreamEnd)(&outer);
+    URL local{};
+    if (!GuestCopyIn_nid_no_patch(&local, self, sizeof(local)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const auto beginFn = ReadSlot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin, __func__);
+    const auto endFn = ReadSlot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd, __func__);
+    const String copied = CopyGuestString(local.impl, __func__);
+    PrintStream* stream = beginFn(out);
+    const auto innerVprintfFn = ReadSlot<VprintfFunction>(stream, NKWebKit::WtfDumpAbi::PrintStreamVprintf, __func__);
+    PrintCopiedUTF8(stream, innerVprintfFn, copied);
+    endFn(out);
 }
 
 }
