@@ -32,6 +32,7 @@ int main() {
         Require(sceBackupRestoreUtilGetRequiredSize() == notInitialized);
         Require(sceBackupRestoreUtilGetRestoreFailedTitles() == notInitialized);
         Require(sceBackupRestoreUtilGetTitles() == notInitialized);
+        Require(sceBackupRestoreUtilTerminate() == 0);
     }
     return 0;
 }
