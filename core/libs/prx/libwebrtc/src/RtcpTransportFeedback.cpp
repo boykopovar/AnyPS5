@@ -194,10 +194,6 @@ std::size_t PaddedSize(std::size_t size) {
     return (size + 3) & ~std::size_t{3};
 }
 
-std::size_t APS5_VABI TransportFeedbackBlockLength_nid_no_patch(const WebRtcRtcpTransportFeedback* feedback) {
-    return PaddedSize(ReadGuest(feedback, "TransportFeedback::BlockLength requires a readable packet").sizeBytes);
-}
-
 std::uint16_t EncodeLast(const WebRtcFeedbackLastChunk& chunk) {
     if (chunk.allSame) {
         if (chunk.size > 0x1fff || chunk.deltaSizes[0] > 3)
@@ -217,15 +213,60 @@ std::uint16_t EncodeLast(const WebRtcFeedbackLastChunk& chunk) {
 }
 
 template <typename T>
-std::vector<T> ReadVector(const WebRtcFeedbackVector<T>& values, std::size_t limit) {
+std::size_t VectorLength(const WebRtcFeedbackVector<T>& values, std::size_t limit) {
     ValidateVector(values);
     const auto bytes = reinterpret_cast<std::uintptr_t>(values.end) - reinterpret_cast<std::uintptr_t>(values.begin);
     if (bytes % sizeof(T) || bytes / sizeof(T) > limit)
         throw std::invalid_argument("TransportFeedback::Create invalid vector length");
-    std::vector<T> result(bytes / sizeof(T));
+    return bytes / sizeof(T);
+}
+
+template <typename T>
+std::vector<T> ReadVector(const WebRtcFeedbackVector<T>& values, std::size_t limit) {
+    std::vector<T> result(VectorLength(values, limit));
+    const auto bytes = result.size() * sizeof(T);
     if (bytes && !GuestBytes(values.begin).CopyIn(result.data(), bytes))
         throw std::invalid_argument("TransportFeedback::Create requires readable packet data");
     return result;
+}
+
+std::size_t SerializedSize(const WebRtcRtcpTransportFeedback& state) {
+    if (state.sizeBytes < 20 || state.sizeBytes > MaxRtcpPayloadBytes + 4)
+        throw std::invalid_argument("TransportFeedback invalid packet length");
+    if (state.includeTimestamps) return state.sizeBytes;
+    const auto chunks = VectorLength(state.encodedChunks, state.sequenceNumberCount);
+    return 20 + 2 * (chunks + (state.lastChunk.size != 0));
+}
+
+std::size_t APS5_VABI TransportFeedbackBlockLength_nid_no_patch(const WebRtcRtcpTransportFeedback* feedback) {
+    return PaddedSize(SerializedSize(ReadGuest(feedback, "TransportFeedback::BlockLength requires a readable packet")));
+}
+
+void AppendDeltas(const WebRtcRtcpTransportFeedback& state, const std::vector<std::uint16_t>& chunks, std::vector<std::uint8_t>& bytes) {
+    const auto packets = ReadVector(state.receivedPackets, state.sequenceNumberCount);
+    std::size_t remaining = state.sequenceNumberCount;
+    auto received = packets.begin();
+    for (const auto word : chunks) {
+        WebRtcFeedbackLastChunk chunk{};
+        Decode(chunk, word, remaining);
+        if (!chunk.size) throw std::invalid_argument("TransportFeedback::Create invalid empty chunk");
+        remaining -= chunk.size;
+        for (std::size_t index = 0; index < chunk.size; ++index) {
+            const auto width = chunk.deltaSizes[chunk.allSame ? 0 : index];
+            if (width == 0) continue;
+            if (width > 2 || received == packets.end())
+                throw std::invalid_argument("TransportFeedback::Create invalid received packet status");
+            const auto delta = received->deltaTicks;
+            ++received;
+            if (width == 2)
+                bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint16_t>(delta) >> 8));
+            else if (delta < 0 || delta > 255)
+                throw std::invalid_argument("TransportFeedback::Create delta exceeds its status width");
+            bytes.push_back(static_cast<std::uint8_t>(delta));
+        }
+    }
+    if (remaining || received != packets.end())
+        throw std::invalid_argument("TransportFeedback::Create inconsistent packet counts");
 }
 
 using PacketReady = void(APS5_VABI*)(void*, const std::uint8_t*, std::size_t);
@@ -237,7 +278,8 @@ bool APS5_VABI TransportFeedbackCreate_nid_no_patch(const WebRtcRtcpTransportFee
     auto offset = ReadGuest(position, "TransportFeedback::Create requires a readable position");
     if (offset > maxLength || !GuestWritable_nid_no_patch(position, sizeof(*position)))
         throw std::invalid_argument("TransportFeedback::Create invalid output position");
-    if (PaddedSize(state.sizeBytes) > maxLength - offset) {
+    auto size = SerializedSize(state);
+    if (PaddedSize(size) > maxLength - offset) {
         if (!offset) return false;
         if (!call || !GuestReadable_nid_no_patch(packet, offset))
             throw std::invalid_argument("TransportFeedback::Create invalid flush callback or buffer");
@@ -245,12 +287,12 @@ bool APS5_VABI TransportFeedbackCreate_nid_no_patch(const WebRtcRtcpTransportFee
         offset = 0;
         WriteGuest(position, offset, "TransportFeedback::Create requires a writable position");
         state = ReadGuest(feedback, "TransportFeedback::Create requires a readable packet");
+        if (!state.sequenceNumberCount) return false;
+        size = SerializedSize(state);
     }
-    if (state.sizeBytes < 20 || state.sizeBytes > MaxRtcpPayloadBytes + 4)
-        throw std::invalid_argument("TransportFeedback::Create invalid packet length");
-    const auto length = PaddedSize(state.sizeBytes);
+    const auto length = PaddedSize(size);
     if (length > maxLength - offset) return false;
-    const auto padding = length - state.sizeBytes;
+    const auto padding = length - size;
     std::vector<std::uint8_t> bytes;
     bytes.reserve(length);
     const auto append = [&bytes](std::uint32_t value, unsigned width) {
@@ -266,21 +308,17 @@ bool APS5_VABI TransportFeedbackCreate_nid_no_patch(const WebRtcRtcpTransportFee
     append(state.sequenceNumberCount, 2);
     append(state.baseTimeTicks, 3);
     append(state.feedbackSequence, 1);
-    for (const auto chunk : ReadVector(state.encodedChunks, (state.sizeBytes - 20) / 2))
-        append(chunk, 2);
-    if (state.lastChunk.size) append(EncodeLast(state.lastChunk), 2);
-    if (state.includeTimestamps) {
-        for (const auto received : ReadVector(state.receivedPackets, state.sequenceNumberCount)) {
-            const std::int16_t delta = received.deltaTicks;
-            append(static_cast<std::uint16_t>(delta), delta >= 0 && delta <= 255 ? 1 : 2);
-        }
-    }
+    auto chunks = ReadVector(state.encodedChunks, state.sequenceNumberCount);
+    if (state.lastChunk.size) chunks.push_back(EncodeLast(state.lastChunk));
+    for (const auto chunk : chunks) append(chunk, 2);
+    if (state.includeTimestamps) AppendDeltas(state, chunks, bytes);
     if (padding) {
         bytes.insert(bytes.end(), padding - 1, 0);
         bytes.push_back(static_cast<std::uint8_t>(padding));
     }
     const auto address = reinterpret_cast<std::uintptr_t>(packet);
-    if (!packet || offset > UINTPTR_MAX - address || bytes.size() > length ||
+    if (bytes.size() != length) throw std::invalid_argument("TransportFeedback::Create inconsistent packet length");
+    if (!packet || offset > UINTPTR_MAX - address ||
         !GuestBytes(reinterpret_cast<void*>(address + offset)).CopyOut(bytes.data(), bytes.size()))
         throw std::invalid_argument("TransportFeedback::Create output buffer is too small or unwritable");
     WriteGuest(position, offset + bytes.size(), "TransportFeedback::Create requires a writable position");

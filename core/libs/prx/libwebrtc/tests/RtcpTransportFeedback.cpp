@@ -116,8 +116,14 @@ void TestWriting() {
     check(wide, wide);
     const auto multiple = Payload(15, {0x0001, 0xa000}, {7});
     check(multiple, multiple);
+    const auto twoByteDeltas = Payload(2, {0x4002}, {0, 1, 0, 2});
+    check(twoByteDeltas, twoByteDeltas);
+    const auto mixedChunks = Payload(3, {0x4002, 0x2001}, {0, 1, 0, 2, 3});
+    check(mixedChunks, mixedChunks);
     const auto noTime = Payload(1, {0x2001});
     check(noTime, noTime);
+    check(Payload(1, {0x2001}, {9}), noTime);
+    check(twoByteDeltas, Payload(2, {0x4002}));
     _ZN6webrtc4rtcp17TransportFeedbackD1Ev_nid_postfix(&feedback);
 }
 

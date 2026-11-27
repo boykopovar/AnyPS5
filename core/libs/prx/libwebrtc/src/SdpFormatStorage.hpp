@@ -14,6 +14,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -98,11 +99,11 @@ struct StringGuard {
     }
 };
 
-inline void CopyString(const WebRtcGuestString& source, WebRtcGuestString& destination) {
+inline void CopyString(const WebRtcGuestString& source, WebRtcGuestString& destination, const char* message) {
     InitStringEmpty(destination);
     if (source.size <= WebRtcGuestStringInlineCapacity) {
         if (source.size > 0)
-            std::memcpy(destination.buffer, WebRtcGuestStringData(source), source.size);
+            CopyInChecked(destination.buffer, WebRtcGuestStringData(source), source.size, message);
         destination.buffer[source.size] = '\0';
         destination.size = source.size;
         return;
@@ -110,12 +111,15 @@ inline void CopyString(const WebRtcGuestString& source, WebRtcGuestString& desti
     const std::size_t capacity = source.size | WebRtcGuestStringInlineCapacity;
     if (capacity > std::numeric_limits<std::size_t>::max() - 1)
         throw std::bad_alloc();
-    auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
-    std::memcpy(data, source.pointer, source.size);
-    data[source.size] = '\0';
-    destination.pointer = data;
-    destination.size = source.size;
-    destination.capacity = capacity;
+    StringGuard copy;
+    copy.value.pointer = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    copy.value.capacity = capacity;
+    copy.active = true;
+    CopyInChecked(copy.value.pointer, source.pointer, source.size, message);
+    copy.value.pointer[source.size] = '\0';
+    copy.value.size = source.size;
+    destination = copy.value;
+    copy.active = false;
 }
 
 inline void MoveString(WebRtcGuestString& destination, WebRtcGuestString& source) {
@@ -132,46 +136,47 @@ inline void MoveString(WebRtcGuestString& destination, WebRtcGuestString& source
     InitStringEmpty(source);
 }
 
-inline void ValidateMapNodes(const WebRtcStringMap& map, const char* message, std::vector<WebRtcStringMapNode*>& outNodes) {
-    outNodes.clear();
-    const WebRtcStringMapNode* const end = EndNode(map);
-    if (map.size == 0) {
-        if (map.root != nullptr || map.beginNode != end)
-            throw std::invalid_argument(message);
+template <typename Visitor>
+void VisitMapNodes(const WebRtcStringMap& map, const WebRtcStringMapNode* end, const char* message, Visitor visit) {
+    if (!map.root) {
+        if (map.size || map.beginNode != end) throw std::invalid_argument(message);
         return;
     }
-    if (!map.root || !map.beginNode || map.beginNode == end)
-        throw std::invalid_argument(message);
     struct Entry {
-        WebRtcStringMapNode* node;
-        const WebRtcStringMapNode* expectedParent;
+        WebRtcStringMapNode* address;
+        const WebRtcStringMapNode* parent;
+        std::size_t parentIndex;
+        bool left;
     };
-    std::vector<Entry> pending;
-    pending.push_back({map.root, end});
-    while (!pending.empty()) {
-        const Entry current = pending.back();
-        pending.pop_back();
-        if (outNodes.size() >= map.size)
-            throw std::invalid_argument(message);
-        WebRtcStringMapNode nodeCopy{};
-        CopyInChecked(&nodeCopy, current.node, sizeof(nodeCopy), message);
-        if (nodeCopy.links.parent != current.expectedParent)
-            throw std::invalid_argument(message);
-        ValidateString(nodeCopy.key, message);
-        ValidateString(nodeCopy.value, message);
-        outNodes.push_back(current.node);
-        if (nodeCopy.links.right)
-            pending.push_back({nodeCopy.links.right, current.node});
-        if (nodeCopy.links.left)
-            pending.push_back({nodeCopy.links.left, current.node});
-    }
-    if (outNodes.size() != map.size)
-        throw std::invalid_argument(message);
+    std::vector<Entry> pending{{map.root, end, 0, false}};
+    std::unordered_set<WebRtcStringMapNode*> visited;
     const WebRtcStringMapNode* leftmost = map.root;
-    while (leftmost->links.left)
-        leftmost = leftmost->links.left;
-    if (leftmost != map.beginNode)
+    while (!pending.empty()) {
+        const auto current = pending.back();
+        pending.pop_back();
+        const auto index = visited.size();
+        if (index >= map.size || !visited.insert(current.address).second)
+            throw std::invalid_argument(message);
+        WebRtcStringMapNode node{};
+        CopyInChecked(&node, current.address, sizeof(node), message);
+        if (node.links.parent != current.parent) throw std::invalid_argument(message);
+        ValidateString(node.key, message);
+        ValidateString(node.value, message);
+        if (current.address == leftmost && node.links.left)
+            leftmost = node.links.left;
+        visit(current.address, node, current.parentIndex, current.left);
+        if (node.links.right) pending.push_back({node.links.right, current.address, index, false});
+        if (node.links.left) pending.push_back({node.links.left, current.address, index, true});
+    }
+    if (visited.size() != map.size || leftmost != map.beginNode)
         throw std::invalid_argument(message);
+}
+
+inline void ValidateMapNodes(const WebRtcStringMap& map, const char* message, std::vector<WebRtcStringMapNode*>& outNodes) {
+    outNodes.clear();
+    VisitMapNodes(map, EndNode(map), message, [&](WebRtcStringMapNode* address, const WebRtcStringMapNode&, std::size_t, bool) {
+        outNodes.push_back(address);
+    });
 }
 
 inline void DestroyMapNodes(const std::vector<WebRtcStringMapNode*>& nodes, WebRtcStringMap& map) {
@@ -193,6 +198,7 @@ struct NodeGuard {
         if (!active)
             return;
         for (WebRtcStringMapNode* node : nodes) {
+            if (!node) continue;
             ReleaseString(node->value);
             ReleaseString(node->key);
             _ZdlPv_nid_postfix(node);
@@ -200,45 +206,31 @@ struct NodeGuard {
     }
 };
 
-inline std::vector<WebRtcStringMapNode*> CloneMap(const WebRtcStringMap& source, WebRtcStringMap& destination, const char* message) {
-    std::vector<WebRtcStringMapNode*> validated;
-    ValidateMapNodes(source, message, validated);
-    destination.beginNode = EndNode(destination);
-    destination.root = nullptr;
-    destination.size = 0;
-    if (source.size == 0)
-        return {};
-
+inline std::vector<WebRtcStringMapNode*> CloneMap(const WebRtcStringMap& source, const WebRtcStringMapNode* sourceEnd,
+                                                 WebRtcStringMap& destination, const char* message) {
+    destination = {EndNode(destination), nullptr, 0};
     NodeGuard guard;
-    guard.nodes.reserve(validated.size());
-    struct CloneTask {
-        const WebRtcStringMapNode* source;
-        WebRtcStringMapNode** slot;
-        WebRtcStringMapNode* parent;
-    };
-    std::vector<CloneTask> tasks;
-    tasks.push_back({source.root, &destination.root, EndNode(destination)});
-    while (!tasks.empty()) {
-        const CloneTask task = tasks.back();
-        tasks.pop_back();
-        void* storage = _Znwm_nid_postfix(sizeof(WebRtcStringMapNode));
-        auto* node = new (storage) WebRtcStringMapNode{};
-        node->links.parent = task.parent;
-        node->links.isBlack = task.source->links.isBlack;
+    VisitMapNodes(source, sourceEnd, message, [&](const WebRtcStringMapNode* address, const WebRtcStringMapNode& snapshot,
+                                                 std::size_t parentIndex, bool left) {
+        guard.nodes.push_back(nullptr);
+        auto* node = new (_Znwm_nid_postfix(sizeof(WebRtcStringMapNode))) WebRtcStringMapNode{};
+        guard.nodes.back() = node;
         InitStringEmpty(node->key);
         InitStringEmpty(node->value);
-        guard.nodes.push_back(node);
-        CopyString(task.source->key, node->key);
-        CopyString(task.source->value, node->value);
-        *task.slot = node;
-        if (task.source == source.beginNode)
-            destination.beginNode = node;
-        if (task.source->links.right)
-            tasks.push_back({task.source->links.right, &node->links.right, node});
-        if (task.source->links.left)
-            tasks.push_back({task.source->links.left, &node->links.left, node});
-    }
-    destination.size = source.size;
+        CopyString(snapshot.key, node->key, message);
+        CopyString(snapshot.value, node->value, message);
+        node->links.isBlack = snapshot.links.isBlack;
+        if (!destination.root) {
+            destination.root = node;
+            node->links.parent = EndNode(destination);
+        } else {
+            auto* parent = guard.nodes[parentIndex];
+            (left ? parent->links.left : parent->links.right) = node;
+            node->links.parent = parent;
+        }
+        if (address == source.beginNode) destination.beginNode = node;
+    });
+    destination.size = guard.nodes.size();
     guard.active = false;
     return std::move(guard.nodes);
 }

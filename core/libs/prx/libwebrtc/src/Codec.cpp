@@ -82,7 +82,7 @@ WebRtcRtpCodecParameters* APS5_VABI CodecToCodecParameters_nid_no_patch(WebRtcRt
         throw std::invalid_argument("Codec::ToCodecParameters invalid codec type");
     ValidateString(snapshot.name, message);
     StringGuard name;
-    CopyString(snapshot.name, name.value);
+    CopyString(snapshot.name, name.value, message);
     name.active = true;
     WebRtcRtpCodecParameters output{};
     output.codec.vtable = CodecParametersVtable + 2;
@@ -95,7 +95,7 @@ WebRtcRtpCodecParameters* APS5_VABI CodecToCodecParameters_nid_no_patch(WebRtcRt
         output.codec.hasNumChannels = true;
     }
     output.payloadType = snapshot.id;
-    NodeGuard map{CloneMap(codec->params, output.codec.parameters, message)};
+    NodeGuard map{CloneMap(snapshot.params, EndNode(codec->params), output.codec.parameters, message)};
     if (output.codec.parameters.root)
         output.codec.parameters.root->links.parent = EndNode(result->codec.parameters);
     else
@@ -173,15 +173,15 @@ WebRtcCodec* APS5_VABI _ZN7cricket16CreateVideoCodecERKN6webrtc14SdpVideoFormatE
     RequireWritable(result, sizeof(*result), message);
     WebRtcSdpVideoFormat snapshot{};
     CopyInChecked(&snapshot, format, sizeof(snapshot), message);
-    ValidateString(format->name, message);
+    ValidateString(snapshot.name, message);
     ValidateModes(snapshot.scalabilityModes, message);
 
     StringGuard nameGuard;
-    CopyString(format->name, nameGuard.value);
+    CopyString(snapshot.name, nameGuard.value, message);
     nameGuard.active = true;
 
     WebRtcStringMap clonedMap{};
-    CloneMap(format->parameters, clonedMap, message);
+    CloneMap(snapshot.parameters, EndNode(format->parameters), clonedMap, message);
 
     const std::uint64_t modeCount = ModeCount(snapshot.scalabilityModes);
     const std::uint8_t* const sourceModes = ModesAllocated(snapshot.scalabilityModes) ? snapshot.scalabilityModes.allocated.data : snapshot.scalabilityModes.inlined;

@@ -68,15 +68,15 @@ void APS5_VABI _ZN6webrtc14SdpVideoFormatC1ERKS0__nid_postfix(WebRtcSdpVideoForm
     RequireWritable(format, sizeof(*format), message);
     WebRtcSdpVideoFormat snapshot{};
     CopyInChecked(&snapshot, other, sizeof(snapshot), message);
-    ValidateString(other->name, message);
+    ValidateString(snapshot.name, message);
     ValidateModes(snapshot.scalabilityModes, message);
 
     StringGuard nameGuard;
-    CopyString(other->name, nameGuard.value);
+    CopyString(snapshot.name, nameGuard.value, message);
     nameGuard.active = true;
 
     WebRtcStringMap clonedMap{};
-    CloneMap(other->parameters, clonedMap, message);
+    CloneMap(snapshot.parameters, EndNode(other->parameters), clonedMap, message);
 
     const bool hasModes = ModeCount(snapshot.scalabilityModes) != 0;
     WebRtcScalabilityModeVector modes{};
