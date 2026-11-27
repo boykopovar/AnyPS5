@@ -4424,7 +4424,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (stop == 1) return false;
         if (stop == 2) throw std::runtime_error("injected failure after the draw's resources were resolved");
     }
-    if (state.depth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     auto& resources = resolved.resources;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         auto& binding = targets[index];
@@ -4538,6 +4537,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             }
         }
     }
+    if (state.depth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     // A draw whose only completion work is a BDA fault check (the rect-list stages carry a fault
     // buffer, so every rect-list draw needed one) is recorded too, with the check as a completion
     // action like a dispatch's write-back: its own batch would first wait for everything recorded
