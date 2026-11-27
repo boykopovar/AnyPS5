@@ -13041,6 +13041,12 @@ void verifyShortCubeMode() {
         require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].cube, "a loaded cube with six faces or more was rejected");
     }
     image.sampledOnly = true;
+    descriptor.dwords[4] = 4u;
+    image.table = 0u;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "fewer than six slices is implemented only for sampling", "a cube with five slices selected through an image table was accepted");
+    image.table = NoTable;
+    const auto directModes = ResourceMaterializer::RuntimeImageModes(image);
+    require(directModes[ResourceMaterializer::RuntimeImageMode(image, descriptor, directModes)].cube, "a direct sampled cube with five slices did not select a cube runtime mode");
     image.resourceClass = ImageResourceClass::Storage;
     image.written = true;
     descriptor.dwords[4] = 3u | (1u << 16u);

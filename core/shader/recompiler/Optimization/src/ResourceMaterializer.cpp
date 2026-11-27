@@ -315,7 +315,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     const bool table = base.table != NoTable;
-    if (decoded.cube && (storage || !base.sampledOnly) && descriptorIsShortCube(descriptor) && (storage || !base.shortCubeCompatible)) {
+    // A short cube's face limit is a specialization constant built from its direct descriptor; a record
+    // selected through a runtime image table carries no descriptor words, so it keeps the refusal.
+    if (decoded.cube && (storage || table || !base.sampledOnly) && descriptorIsShortCube(descriptor) && (storage || table || !base.shortCubeCompatible)) {
         return rejectImage(PoisonReason::Dimension, "a cube descriptor with fewer than six slices is implemented only for sampling, mip-0 loads and dimension queries; stores, atomics and loads at a mip level through it are not implemented");
     }
     decoded.fmask = IsFmaskTextureFormat(format);
