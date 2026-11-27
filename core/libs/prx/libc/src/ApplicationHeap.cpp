@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -36,6 +37,7 @@ std::once_flag heapInitialization;
 std::exception_ptr heapFailure;
 Initialize heapFinalize = nullptr;
 bool heapFinalized = false;
+bool heapFinalizing = false;
 thread_local bool heapCallbackActive = false;
 
 void* APS5_VABI defaultAllocate(std::size_t bytes) { return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }
@@ -85,7 +87,7 @@ TValue read(const void* pointer, std::size_t offset) {
 }
 
 void ensureInitialized(std::unique_lock<std::mutex>& lock) {
-    if (heapApi[0] != nullptr || heapFailure || heapFinalized) return;
+    if (heapApi[0] != nullptr || heapFailure || heapFinalized || heapFinalizing) return;
     lock.unlock();
     ApplicationHeapInitialize_nid_no_patch(ApplicationProcessParameters_nid_no_patch());
     lock.lock();
@@ -121,13 +123,20 @@ void finalize() {
     Initialize finalizeCallback = nullptr;
     {
         std::lock_guard lock(heapMutex);
-        if (heapFinalized || heapFailure) return;
+        if (heapFinalized || heapFinalizing || heapFailure) return;
+        heapFinalizing = true;
         finalizeCallback = heapFinalize;
+        heapFinalize = nullptr;
     }
+    struct FinalizeGuard {
+        ~FinalizeGuard() {
+            std::lock_guard lock(heapMutex);
+            heapFinalized = true;
+            heapFinalizing = false;
+            publishedApi.store(nullptr, std::memory_order_release);
+        }
+    } guard;
     if (finalizeCallback != nullptr) finalizeCallback();
-    std::lock_guard lock(heapMutex);
-    heapFinalized = true;
-    publishedApi.store(nullptr, std::memory_order_release);
 }
 
 struct HeapFinalizerRegistration {
@@ -200,6 +209,9 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
         } catch (...) {
             std::lock_guard lock(heapMutex);
             heapFailure = std::current_exception();
+            heapApi = {};
+            heapFinalize = nullptr;
+            heapKind.store(0, std::memory_order_release);
             publishedApi.store(nullptr, std::memory_order_release);
         }
     });
@@ -267,8 +279,14 @@ extern "C" void APS5_VABI scriptingFreeMem_nid_postfix(void* pointer) {
 
 void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std::size_t alignment) {
     if (bytes == 0 && !ApplicationHeapDefault_nid_no_patch()) {
-        ApplicationHeapFree_nid_no_patch(pointer);
-        return nullptr;
+        if (pointer != nullptr) {
+            ApplicationHeapFree_nid_no_patch(pointer);
+            return nullptr;
+        }
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+            *__error_nid_postfix() = 22;
+            return nullptr;
+        }
     }
     requireAlignment(alignment);
     Realign realign;
