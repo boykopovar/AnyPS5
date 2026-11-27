@@ -25,6 +25,7 @@
  */
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/FormDataExports.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
@@ -36,8 +37,10 @@
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfVector.hpp"
 
+#include <cstddef>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
@@ -58,33 +61,92 @@ using NKWebKit::WtfAbi::URL;
 
 double defaultTimeoutInterval = 0;
 
-ResourceRequestBase& Checked(ResourceRequestBase* self) {
+void RequireReadableGuestBytes(const void* pointer, std::size_t bytes, const char* function) {
+    if (!bytes) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, bytes);
+    if (!GuestReadable_nid_no_patch(pointer, bytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CopyInGuest(void* destination, const void* source, std::size_t bytes, const char* function) {
+    if (!bytes) return;
+    RequireReadableGuestBytes(source, bytes, function);
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+class GuestWriteScope {
+public:
+    GuestWriteScope(void* pointer, std::size_t bytes, const char* function, const char* nullMessage, bool requireReadable = true)
+        : guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        if (!pointer) throw std::invalid_argument(nullMessage);
+        if (!bytes) return;
+        if (requireReadable) RequireReadableGuestBytes(pointer, bytes, function);
+        if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    GuestWriteScope(const GuestWriteScope&) = delete;
+    GuestWriteScope& operator=(const GuestWriteScope&) = delete;
+
+private:
+    GuestArena::HostWrite guard;
+};
+
+template<typename T>
+class GuestWriteRef : private GuestWriteScope {
+public:
+    GuestWriteRef(T* pointer, const char* function, const char* nullMessage, bool requireReadable = true)
+        : GuestWriteScope(pointer, sizeof(T), function, nullMessage, requireReadable), ptr(pointer) {}
+    T& Ref() const { return *ptr; }
+
+private:
+    T* ptr;
+};
+
+void ValidateGuestStringImpl(const NKWebKit::WtfAbi::StringImpl* impl, const char* function) {
+    if (!impl) return;
+    NKWebKit::WtfAbi::StringImpl header{};
+    CopyInGuest(&header, impl, sizeof(header), function);
+    if (!header.length) return;
+    const bool is8Bit = (header.hashAndFlags & 4) != 0;
+    const std::size_t unitSize = is8Bit ? 1 : sizeof(char16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(header.data, static_cast<std::size_t>(header.length) * unitSize, function);
+}
+
+GuestWriteRef<ResourceRequestBase> CheckedWrite(ResourceRequestBase* self, const char* function) {
+    return GuestWriteRef<ResourceRequestBase>(self, function, "null WebCore::ResourceRequestBase");
+}
+
+const ResourceRequestBase& CheckedRead(const ResourceRequestBase* self, const char* function) {
     if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
+    RequireReadableGuestBytes(self, sizeof(*self), function);
     return *self;
 }
 
-const ResourceRequestBase& Checked(const ResourceRequestBase* self) {
+GuestWriteRef<LegacyResourceRequestBase> CheckedWrite(LegacyResourceRequestBase* self, const char* function) {
+    return GuestWriteRef<LegacyResourceRequestBase>(self, function, "null WebCore::ResourceRequestBase");
+}
+
+const LegacyResourceRequestBase& CheckedRead(const LegacyResourceRequestBase* self, const char* function) {
     if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
+    RequireReadableGuestBytes(self, sizeof(*self), function);
     return *self;
 }
 
-LegacyResourceRequestBase& Checked(LegacyResourceRequestBase* self) {
-    if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
-    return *self;
-}
-
-const LegacyResourceRequestBase& Checked(const LegacyResourceRequestBase* self) {
-    if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
-    return *self;
-}
-
-const URL& Checked(const URL* url) {
+const URL& CheckedRead(const URL* url, const char* function) {
     if (!url) throw std::invalid_argument("null WTF::URL");
+    URL copy{};
+    CopyInGuest(&copy, url, sizeof(copy), function);
+    ValidateGuestStringImpl(copy.impl, function);
     return *url;
 }
 
-const String& Checked(const String* string) {
+const String& CheckedRead(const String* string, const char* function) {
     if (!string) throw std::invalid_argument("null WTF::String");
+    NKWebKit::WtfAbi::StringImpl* impl = nullptr;
+    CopyInGuest(&impl, string, sizeof(impl), function);
+    ValidateGuestStringImpl(impl, function);
     return *string;
 }
 
@@ -140,15 +202,16 @@ const NKWebKit::HttpAbi::HTTPHeaderMap& HeaderFields(const ResourceRequestBase& 
     return *reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
 }
 
-String HeaderField(const ResourceRequestBase* self, HTTPHeaderName name) {
-    const auto& request = Checked(self);
+String HeaderField(const ResourceRequestBase* self, HTTPHeaderName name, const char* function) {
+    const auto& request = CheckedRead(self, function);
     UpdateResourceRequest(request);
     return _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(&HeaderFields(request), name);
 }
 
-void SetHeaderField(ResourceRequestBase* self, HTTPHeaderName name, const String* value, bool add) {
-    auto& request = Checked(self);
-    const auto& text = Checked(value);
+void SetHeaderField(ResourceRequestBase* self, HTTPHeaderName name, const String* value, bool add, const char* function) {
+    auto reqAccess = CheckedWrite(self, function);
+    auto& request = reqAccess.Ref();
+    const auto& text = CheckedRead(value, function);
     UpdateResourceRequest(request);
     NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(HeaderFields(request), name, text, add);
     request.platformRequestUpdated = false;
@@ -185,14 +248,21 @@ void AssignIsolatedURL(URL& target, String& isolated, const URL& source) {
 }
 
 template<class TVector>
-void ValidateVector(const TVector& vector) {
+void ValidateVector(const TVector& vector, const char* function = "WebCore::ResourceRequestBase") {
     if (vector.size > vector.capacity) throw std::invalid_argument("invalid vector size");
     if (vector.size && !vector.buffer) throw std::invalid_argument("null vector storage");
+    if (vector.size) {
+        using RawEntry = std::remove_pointer_t<decltype(vector.buffer)>;
+        constexpr std::size_t entrySize = std::is_void_v<RawEntry> ? sizeof(String) : sizeof(std::conditional_t<std::is_void_v<RawEntry>, char, RawEntry>);
+        if (vector.size > std::numeric_limits<std::size_t>::max() / entrySize)
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        RequireReadableGuestBytes(vector.buffer, static_cast<std::size_t>(vector.size) * entrySize, function);
+    }
 }
 
-void ReleaseHeaderMap(NKWebKit::HttpAbi::HTTPHeaderMap& map) {
-    ValidateVector(map.common);
-    ValidateVector(map.uncommon);
+void ReleaseHeaderMap(NKWebKit::HttpAbi::HTTPHeaderMap& map, const char* function = "WebCore::ResourceRequestBase") {
+    ValidateVector(map.common, function);
+    ValidateVector(map.uncommon, function);
     for (unsigned i = 0; i < map.common.size; ++i) NKWebKit::WtfAbi::Release(map.common.buffer[i].value.impl);
     for (unsigned i = 0; i < map.uncommon.size; ++i) {
         NKWebKit::WtfAbi::Release(map.uncommon.buffer[i].key.impl);
@@ -204,9 +274,14 @@ void ReleaseHeaderMap(NKWebKit::HttpAbi::HTTPHeaderMap& map) {
     map.uncommon = {};
 }
 
-void AssignIsolatedHeaderMap(NKWebKit::HttpAbi::HTTPHeaderMap& target, const NKWebKit::HttpAbi::HTTPHeaderMap& source) {
-    ValidateVector(source.common);
-    ValidateVector(source.uncommon);
+void AssignIsolatedHeaderMap(NKWebKit::HttpAbi::HTTPHeaderMap& target, const NKWebKit::HttpAbi::HTTPHeaderMap& source, const char* function) {
+    ValidateVector(source.common, function);
+    ValidateVector(source.uncommon, function);
+    for (unsigned i = 0; i < source.common.size; ++i) ValidateGuestStringImpl(source.common.buffer[i].value.impl, function);
+    for (unsigned i = 0; i < source.uncommon.size; ++i) {
+        ValidateGuestStringImpl(source.uncommon.buffer[i].key.impl, function);
+        ValidateGuestStringImpl(source.uncommon.buffer[i].value.impl, function);
+    }
     NKWebKit::HttpAbi::HTTPHeaderMap copy{};
     copy.common.buffer = static_cast<NKWebKit::HttpAbi::CommonHeader*>(source.common.size ? _ZN3WTF10fastMallocEm(source.common.size * sizeof(NKWebKit::HttpAbi::CommonHeader)) : nullptr);
     copy.common.capacity = source.common.size;
@@ -226,26 +301,30 @@ void AssignIsolatedHeaderMap(NKWebKit::HttpAbi::HTTPHeaderMap& target, const NKW
         std::construct_at(copy.uncommon.buffer + i, NKWebKit::HttpAbi::UncommonHeader{std::move(retainedKey), std::move(retainedValue)});
         ++copy.uncommon.size;
     }
-    ReleaseHeaderMap(target);
+    ReleaseHeaderMap(target, function);
     target.common = copy.common;
     target.uncommon = copy.uncommon;
     copy.common = {};
     copy.uncommon = {};
 }
 
-void SetFallbackArray(ResourceRequestBase& request, const String* first, const String* second, const String* third) {
+void SetFallbackArray(ResourceRequestBase& request, const String* first, const String* second, const String* third, const char* function) {
     if (!first || !second || !third) throw std::invalid_argument("null WTF::String");
+    const auto& firstValue = CheckedRead(first, function);
+    const auto& secondValue = CheckedRead(second, function);
+    const auto& thirdValue = CheckedRead(third, function);
     auto& vector = *reinterpret_cast<NKWebKit::WtfAbi::Vector<String>*>(&request.responseContentDispositionEncodingFallbackArray);
     if (vector.size > vector.capacity || (vector.size && !vector.buffer)) throw std::invalid_argument("invalid fallback array storage");
+    if (vector.size) RequireReadableGuestBytes(vector.buffer, static_cast<std::size_t>(vector.size) * sizeof(String), function);
     UpdateResourceRequest(request);
     vector.clear();
-    const unsigned count = (first->impl != nullptr) + (second->impl != nullptr) + (third->impl != nullptr);
+    const unsigned count = (firstValue.impl != nullptr) + (secondValue.impl != nullptr) + (thirdValue.impl != nullptr);
     if (count) {
         vector.buffer = static_cast<String*>(_ZN3WTF10fastMallocEm(count * sizeof(String)));
         vector.capacity = count;
         vector.size = 0;
     }
-    for (const String* text : {first, second, third}) {
+    for (const String* text : {&firstValue, &secondValue, &thirdValue}) {
         if (!text->impl) continue;
         std::construct_at(vector.buffer + vector.size, *text);
         ++vector.size;
@@ -253,17 +332,20 @@ void SetFallbackArray(ResourceRequestBase& request, const String* first, const S
     request.platformRequestUpdated = false;
 }
 
-bool EqualHeaderMaps(const NKWebKit::HttpAbi::HTTPHeaderMap& left, const NKWebKit::HttpAbi::HTTPHeaderMap& right) {
-    ValidateVector(left.common);
-    ValidateVector(left.uncommon);
-    ValidateVector(right.common);
-    ValidateVector(right.uncommon);
+bool EqualHeaderMaps(const NKWebKit::HttpAbi::HTTPHeaderMap& left, const NKWebKit::HttpAbi::HTTPHeaderMap& right, const char* function) {
+    ValidateVector(left.common, function);
+    ValidateVector(left.uncommon, function);
+    ValidateVector(right.common, function);
+    ValidateVector(right.uncommon, function);
     if (left.common.size != right.common.size || left.uncommon.size != right.uncommon.size) return false;
     for (unsigned i = 0; i < left.common.size; ++i) {
+        ValidateGuestStringImpl(left.common.buffer[i].value.impl, function);
         String value = _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(&right, left.common.buffer[i].key);
         if (!_ZN3WTF5equalEPKNS_10StringImplES2_(value.impl, left.common.buffer[i].value.impl)) return false;
     }
     for (unsigned i = 0; i < left.uncommon.size; ++i) {
+        ValidateGuestStringImpl(left.uncommon.buffer[i].key.impl, function);
+        ValidateGuestStringImpl(left.uncommon.buffer[i].value.impl, function);
         String value = _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(&right, left.uncommon.buffer[i].key);
         if (!_ZN3WTF5equalEPKNS_10StringImplES2_(value.impl, left.uncommon.buffer[i].value.impl)) return false;
     }
@@ -288,12 +370,20 @@ bool EqualBodyBytes(const NKWebKit::WebCoreAbi::FormDataByteVector& left, const 
     if (left.size != right.size) return false;
     if (!left.size) return true;
     if (!left.buffer || !right.buffer) throw std::invalid_argument("null WebCore::FormData byte storage");
+    RequireReadableGuestBytes(left.buffer, left.size, __func__);
+    RequireReadableGuestBytes(right.buffer, right.size, __func__);
     return std::memcmp(left.buffer, right.buffer, left.size) == 0;
 }
 
-bool FormDataElementsEqual(const NKWebKit::WebCoreAbi::FormData& left, const NKWebKit::WebCoreAbi::FormData& right) {
-    ValidateVector(left.elements);
-    ValidateVector(right.elements);
+const NKWebKit::WebCoreAbi::FormData* CheckedFormData(const void* pointer, const char* function) {
+    if (!pointer) return nullptr;
+    RequireReadableGuestBytes(pointer, sizeof(NKWebKit::WebCoreAbi::FormData), function);
+    return static_cast<const NKWebKit::WebCoreAbi::FormData*>(pointer);
+}
+
+bool FormDataElementsEqual(const NKWebKit::WebCoreAbi::FormData& left, const NKWebKit::WebCoreAbi::FormData& right, const char* function) {
+    ValidateVector(left.elements, function);
+    ValidateVector(right.elements, function);
     if (left.elements.size != right.elements.size) return false;
     for (unsigned i = 0; i < left.elements.size; ++i) {
         const auto& first = left.elements.buffer[i];
@@ -304,11 +394,15 @@ bool FormDataElementsEqual(const NKWebKit::WebCoreAbi::FormData& left, const NKW
         if (kind == kBytesElement) {
             if (!EqualBodyBytes(first.storage.bytes, second.storage.bytes)) return false;
         } else if (kind == kFileElement) {
+            ValidateGuestStringImpl(first.storage.file.filename, function);
+            ValidateGuestStringImpl(second.storage.file.filename, function);
             if (!_ZN3WTF5equalEPKNS_10StringImplES2_(first.storage.file.filename, second.storage.file.filename)) return false;
             if (first.storage.file.fileStart != second.storage.file.fileStart || first.storage.file.fileLength != second.storage.file.fileLength) return false;
             if (first.storage.file.hasExpectedFileModificationTime != second.storage.file.hasExpectedFileModificationTime) return false;
             if (first.storage.file.hasExpectedFileModificationTime && first.storage.file.expectedFileModificationTime != second.storage.file.expectedFileModificationTime) return false;
         } else if (kind == kBlobElement) {
+            ValidateGuestStringImpl(first.storage.blob.url.impl, function);
+            ValidateGuestStringImpl(second.storage.blob.url.impl, function);
             if (!Equal(first.storage.blob.url, second.storage.blob.url)) return false;
         } else if (kind == kValuelessElement) {
             continue;
@@ -319,8 +413,12 @@ bool FormDataElementsEqual(const NKWebKit::WebCoreAbi::FormData& left, const NKW
     return true;
 }
 
-void SetIsolatedCopy(ResourceRequestBase& to, const ResourceRequestBase& from) {
+void SetIsolatedCopy(ResourceRequestBase& to, const ResourceRequestBase& from, const char* function) {
     UpdateResourceRequest(from);
+    ValidateGuestStringImpl(from.url.impl, function);
+    ValidateGuestStringImpl(from.firstPartyForCookies.impl, function);
+    ValidateGuestStringImpl(from.httpMethod.impl, function);
+    ValidateGuestStringImpl(from.initiatorIdentifier.impl, function);
 
     String url = IsolatedString(from.url);
     String firstParty = IsolatedString(from.firstPartyForCookies);
@@ -361,21 +459,28 @@ void SetIsolatedCopy(ResourceRequestBase& to, const ResourceRequestBase& from) {
         to.isTopSite = from.isTopSite;
         to.platformRequestUpdated = false;
     }
-    AssignIsolatedHeaderMap(HeaderFields(to), HeaderFields(from));
+    AssignIsolatedHeaderMap(HeaderFields(to), HeaderFields(from), function);
     const auto& source = *reinterpret_cast<const NKWebKit::WtfAbi::Vector<String>*>(&from.responseContentDispositionEncodingFallbackArray);
     if (source.size > 0) {
         if (source.size > source.capacity || !source.buffer) throw std::invalid_argument("invalid fallback array storage");
+        RequireReadableGuestBytes(source.buffer, static_cast<std::size_t>(source.size) * sizeof(String), function);
+        ValidateGuestStringImpl(source.buffer[0].impl, function);
         String first = IsolatedString(source.buffer[0]);
         String second;
         String third;
         if (source.size > 1) {
+            ValidateGuestStringImpl(source.buffer[1].impl, function);
             second = IsolatedString(source.buffer[1]);
-            if (source.size > 2) third = IsolatedString(source.buffer[2]);
+            if (source.size > 2) {
+                ValidateGuestStringImpl(source.buffer[2].impl, function);
+                third = IsolatedString(source.buffer[2]);
+            }
         }
-        SetFallbackArray(to, &first, &second, &third);
+        SetFallbackArray(to, &first, &second, &third, function);
     }
     if (from.httpBody) {
-        auto isolated = _ZNK7WebCore8FormData12isolatedCopyEv(static_cast<const NKWebKit::WebCoreAbi::FormData*>(from.httpBody));
+        auto* body = CheckedFormData(from.httpBody, function);
+        auto isolated = _ZNK7WebCore8FormData12isolatedCopyEv(body);
         SetHTTPBody(to, std::exchange(isolated.m_ptr, nullptr));
     }
     if (to.allowCookies != from.allowCookies) {
@@ -401,114 +506,123 @@ void SetIsolatedCopy(ResourceRequestBase& to, const ResourceRequestBase& from) {
 extern "C" {
 
 const URL& APS5_VABI _ZNK7WebCore19ResourceRequestBase3urlEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.url;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE(ResourceRequestBase* self, const URL* url) {
-    auto& request = Checked(self);
-    const auto& value = Checked(url);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    const auto& value = CheckedRead(url, __func__);
     UpdateResourceRequest(request);
     Assign(request.url, value);
     request.platformRequestUpdated = false;
 }
 
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase6isNullEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return !request.url.impl;
 }
 
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase7isEmptyEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
+    ValidateGuestStringImpl(request.url.impl, __func__);
     return !request.url.impl || !request.url.impl->length;
 }
 
 const URL& APS5_VABI _ZNK7WebCore19ResourceRequestBase20firstPartyForCookiesEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.firstPartyForCookies;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase23setFirstPartyForCookiesERKN3WTF3URLE(ResourceRequestBase* self, const URL* url) {
-    auto& request = Checked(self);
-    const auto& value = Checked(url);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    const auto& value = CheckedRead(url, __func__);
     UpdateResourceRequest(request);
+    ValidateGuestStringImpl(request.firstPartyForCookies.impl, __func__);
     if (Equal(request.firstPartyForCookies, value)) return;
     Assign(request.firstPartyForCookies, value);
     request.platformRequestUpdated = false;
 }
 
 const String& APS5_VABI _ZNK7WebCore19ResourceRequestBase10httpMethodEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.httpMethod;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase13setHTTPMethodERKN3WTF6StringE(ResourceRequestBase* self, const String* method) {
-    auto& request = Checked(self);
-    const auto& value = Checked(method);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    const auto& value = CheckedRead(method, __func__);
     UpdateResourceRequest(request);
+    ValidateGuestStringImpl(request.httpMethod.impl, __func__);
     if (Equal(request.httpMethod, value)) return;
     Assign(request.httpMethod, value);
     request.platformRequestUpdated = false;
 }
 
 String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldENS_14HTTPHeaderNameE(const ResourceRequestBase* self, HTTPHeaderName name) {
-    return HeaderField(self, name);
+    return HeaderField(self, name, __func__);
 }
 
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase18hasHTTPHeaderFieldENS_14HTTPHeaderNameE(const ResourceRequestBase* self, HTTPHeaderName name) {
-    return _ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&HeaderFields(Checked(self)), name);
+    return _ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&HeaderFields(CheckedRead(self, __func__)), name);
 }
 
 String APS5_VABI _ZNK7WebCore19ResourceRequestBase12httpReferrerEv(const ResourceRequestBase* self) {
-    return HeaderField(self, HTTPHeaderName::Referer);
+    return HeaderField(self, HTTPHeaderName::Referer, __func__);
 }
 
 String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpContentTypeEv(const ResourceRequestBase* self) {
-    return HeaderField(self, HTTPHeaderName::ContentType);
+    return HeaderField(self, HTTPHeaderName::ContentType, __func__);
 }
 
 String APS5_VABI _ZNK7WebCore19ResourceRequestBase13httpUserAgentEv(const ResourceRequestBase* self) {
-    return HeaderField(self, HTTPHeaderName::UserAgent);
+    return HeaderField(self, HTTPHeaderName::UserAgent, __func__);
 }
 
 String APS5_VABI _ZNK7WebCore19ResourceRequestBase10httpOriginEv(const ResourceRequestBase* self) {
-    return HeaderField(self, HTTPHeaderName::Origin);
+    return HeaderField(self, HTTPHeaderName::Origin, __func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldENS_14HTTPHeaderNameERKN3WTF6StringE(ResourceRequestBase* self, HTTPHeaderName name, const String* value) {
-    SetHeaderField(self, name, value, false);
+    SetHeaderField(self, name, value, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(ResourceRequestBase* self, const String* name, const String* value) {
-    auto& request = Checked(self);
-    const auto& key = Checked(name);
-    const auto& text = Checked(value);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    const auto& key = CheckedRead(name, __func__);
+    const auto& text = CheckedRead(value, __func__);
     UpdateResourceRequest(request);
     _ZN7WebCore13HTTPHeaderMap3setERKN3WTF6StringES4_(&HeaderFields(request), key, text);
     request.platformRequestUpdated = false;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase18addHTTPHeaderFieldENS_14HTTPHeaderNameERKN3WTF6StringE(ResourceRequestBase* self, HTTPHeaderName name, const String* value) {
-    SetHeaderField(self, name, value, true);
+    SetHeaderField(self, name, value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase18addHTTPHeaderFieldERKN3WTF6StringES4_(ResourceRequestBase* self, const String* name, const String* value) {
-    auto& request = Checked(self);
-    const auto& key = Checked(name);
-    const auto& text = Checked(value);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    const auto& key = CheckedRead(name, __func__);
+    const auto& text = CheckedRead(value, __func__);
     UpdateResourceRequest(request);
     _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_(&HeaderFields(request), key, text);
     request.platformRequestUpdated = false;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase30addHTTPHeaderFieldIfNotPresentENS_14HTTPHeaderNameERKN3WTF6StringE(ResourceRequestBase* self, HTTPHeaderName name, const String* value) {
-    auto& request = Checked(self);
-    const auto& text = Checked(value);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    const auto& text = CheckedRead(value, __func__);
     UpdateResourceRequest(request);
     if (_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&HeaderFields(request), name)) return;
     NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(HeaderFields(request), name, text, false);
@@ -516,33 +630,34 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase30addHTTPHeaderFieldIfNotPresentE
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase15setHTTPReferrerERKN3WTF6StringE(ResourceRequestBase* self, const String* referrer) {
-    const auto& text = Checked(referrer);
+    const auto& text = CheckedRead(referrer, __func__);
     if (text.impl && text.impl->length > 4096) NotImplemented_nid_no_patch(__func__);
-    SetHeaderField(self, HTTPHeaderName::Referer, referrer, false);
+    SetHeaderField(self, HTTPHeaderName::Referer, referrer, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase16setHTTPUserAgentERKN3WTF6StringE(ResourceRequestBase* self, const String* userAgent) {
-    SetHeaderField(self, HTTPHeaderName::UserAgent, userAgent, false);
+    SetHeaderField(self, HTTPHeaderName::UserAgent, userAgent, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase18setHTTPContentTypeERKN3WTF6StringE(ResourceRequestBase* self, const String* contentType) {
-    SetHeaderField(self, HTTPHeaderName::ContentType, contentType, false);
+    SetHeaderField(self, HTTPHeaderName::ContentType, contentType, false, __func__);
 }
 
 double APS5_VABI _ZNK7WebCore19ResourceRequestBase15timeoutIntervalEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.timeoutInterval;
 }
 
 std::uint8_t APS5_VABI _ZNK7WebCore19ResourceRequestBase11cachePolicyEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.cachePolicy;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase14setCachePolicyENS_26ResourceRequestCachePolicyE(ResourceRequestBase* self, std::uint8_t cachePolicy) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     if (request.cachePolicy == cachePolicy) return;
     request.cachePolicy = cachePolicy;
@@ -550,13 +665,14 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase14setCachePolicyENS_26ResourceReq
 }
 
 std::uint8_t APS5_VABI _ZNK7WebCore19ResourceRequestBase8priorityEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.priority;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPriorityE(ResourceRequestBase* self, std::uint8_t priority) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     if (request.priority == priority) return;
     request.priority = priority;
@@ -564,13 +680,14 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPr
 }
 
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase10isSameSiteEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.sameSiteDisposition == NKWebKit::WebCoreAbi::SameSite;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase13setIsSameSiteEb(ResourceRequestBase* self, bool isSameSite) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     auto disposition = isSameSite ? NKWebKit::WebCoreAbi::SameSite : NKWebKit::WebCoreAbi::CrossSite;
     if (request.sameSiteDisposition == disposition) return;
@@ -579,13 +696,14 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase13setIsSameSiteEb(ResourceRequest
 }
 
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9isTopSiteEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return request.isTopSite;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12setIsTopSiteEb(ResourceRequestBase* self, bool isTopSite) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     if (request.isTopSite == isTopSite) return;
     request.isTopSite = isTopSite;
@@ -601,7 +719,8 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(dou
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, HTTPHeaderName::ContentType);
@@ -609,7 +728,8 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(Resource
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
     if (!_ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, HTTPHeaderName::Authorization))
@@ -618,7 +738,8 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(Resour
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, HTTPHeaderName::Origin);
@@ -626,7 +747,8 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(ResourceReque
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
     constexpr HTTPHeaderName conditionalHeaders[] = {
@@ -645,25 +767,32 @@ void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(LegacyResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody) {
-    auto& request = Checked(self);
-    if (!httpBody) throw std::invalid_argument("null WTF::RefPtr");
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    GuestWriteScope bodyPtrAccess(httpBody, sizeof(*httpBody), __func__, "null WTF::RefPtr");
+    NKWebKit::WebCoreAbi::FormData* adopted = nullptr;
+    CopyInGuest(&adopted, httpBody, sizeof(adopted), __func__);
     UpdateResourceRequest(request);
+    NKWebKit::WebCoreAbi::FormData* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(httpBody, &cleared, sizeof(cleared)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     auto* previous = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
-    request.httpBody = std::exchange(*httpBody, nullptr);
+    request.httpBody = adopted;
     if (previous) previous->deref();
     request.resourceRequestBodyUpdated = true;
     request.platformRequestBodyUpdated = false;
 }
 
 String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const LegacyResourceRequestBase* self, const String* name) {
-    const auto& request = Checked(self);
-    const auto& key = Checked(name);
+    const auto& request = CheckedRead(self, __func__);
+    const auto& key = CheckedRead(name, __func__);
     UpdateResourceRequest(request);
     return _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields), key);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&HeaderFields(request), HTTPHeaderName::Purpose);
     request.platformRequestUpdated = false;
@@ -671,21 +800,26 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv(ResourceRequestB
 
 String APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(const String* domain) {
     if (!domain) throw std::invalid_argument("ResourceRequestBase::partitionName: null domain");
-    if (!domain->impl) return String(NKWebKit::WtfAbi::EmptyStringImpl());
+    NKWebKit::WtfAbi::StringImpl* impl = nullptr;
+    CopyInGuest(&impl, domain, sizeof(impl), __func__);
+    if (!impl) return String(NKWebKit::WtfAbi::EmptyStringImpl());
+    ValidateGuestStringImpl(impl, __func__);
     String highLevel = _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE(domain);
     if (!highLevel.impl) return String(NKWebKit::WtfAbi::EmptyStringImpl());
     return highLevel;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&HeaderFields(request), HTTPHeaderName::Referer);
     request.platformRequestUpdated = false;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17removeCredentialsEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     UpdateResourceRequest(request);
     if (!(request.url.passwordEnd > request.url.userStart)) return;
     if (request.url.bits & 1) NotImplemented_nid_no_patch(__func__);
@@ -693,22 +827,24 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase17removeCredentialsEv(ResourceReq
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17setAsIsolatedCopyERKNS_15ResourceRequestE(ResourceRequestBase* self, const ResourceRequestBase* other) {
-    auto& request = Checked(self);
-    const auto& source = Checked(other);
-    SetIsolatedCopy(request, source);
+    auto reqAccess = CheckedWrite(self, __func__);
+    const auto& source = CheckedRead(other, __func__);
+    SetIsolatedCopy(reqAccess.Ref(), source, __func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17setCachePartitionERKN3WTF6StringE(ResourceRequestBase*, const String*) {
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(ResourceRequestBase* self, NKWebKit::WebCoreAbi::HTTPHeaderMap* headerFields) {
-    auto& request = Checked(self);
-    if (!headerFields) throw std::invalid_argument("null WebCore::HTTPHeaderMap");
-    auto& source = *reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(headerFields);
-    ValidateVector(source.common);
-    ValidateVector(source.uncommon);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
+    GuestWriteRef<NKWebKit::HttpAbi::HTTPHeaderMap> sourceAccess(
+        reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(headerFields), __func__, "null WebCore::HTTPHeaderMap");
+    auto& source = sourceAccess.Ref();
+    ValidateVector(source.common, __func__);
+    ValidateVector(source.uncommon, __func__);
     UpdateResourceRequest(request);
-    ReleaseHeaderMap(HeaderFields(request));
+    ReleaseHeaderMap(HeaderFields(request), __func__);
     auto& map = HeaderFields(request);
     map.common = std::move(source.common);
     map.uncommon = std::move(source.uncommon);
@@ -718,28 +854,35 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHe
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase37setExistingHTTPReferrerToOriginStringEv(ResourceRequestBase* self) {
-    auto& request = Checked(self);
+    auto reqAccess = CheckedWrite(self, __func__);
+    auto& request = reqAccess.Ref();
     if (!_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&HeaderFields(request), HTTPHeaderName::Referer)) return;
     UpdateResourceRequest(request);
     NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase50setResponseContentDispositionEncodingFallbackArrayERKN3WTF6StringES4_S4_(ResourceRequestBase* self, const String* first, const String* second, const String* third) {
-    auto& request = Checked(self);
-    SetFallbackArray(request, first, second, third);
+    auto reqAccess = CheckedWrite(self, __func__);
+    SetFallbackArray(reqAccess.Ref(), first, second, third, __func__);
 }
 
 bool APS5_VABI _ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(const ResourceRequestBase* left, const ResourceRequestBase* right) {
-    const auto& first = Checked(left);
-    const auto& second = Checked(right);
+    const auto& first = CheckedRead(left, __func__);
+    const auto& second = CheckedRead(right, __func__);
     UpdateResourceRequest(first);
     UpdateResourceRequest(second);
+    ValidateGuestStringImpl(first.url.impl, __func__);
+    ValidateGuestStringImpl(second.url.impl, __func__);
     if (!_ZN3WTF5equalEPKNS_10StringImplES2_(first.url.impl, second.url.impl)) return false;
     if (first.cachePolicy != second.cachePolicy) return false;
     if (first.timeoutInterval != second.timeoutInterval) return false;
+    ValidateGuestStringImpl(first.firstPartyForCookies.impl, __func__);
+    ValidateGuestStringImpl(second.firstPartyForCookies.impl, __func__);
     if (!_ZN3WTF5equalEPKNS_10StringImplES2_(first.firstPartyForCookies.impl, second.firstPartyForCookies.impl)) return false;
     if ((first.sameSiteDisposition == NKWebKit::WebCoreAbi::SameSite) != (second.sameSiteDisposition == NKWebKit::WebCoreAbi::SameSite)) return false;
     if (first.isTopSite != second.isTopSite) return false;
+    ValidateGuestStringImpl(first.httpMethod.impl, __func__);
+    ValidateGuestStringImpl(second.httpMethod.impl, __func__);
     if (!_ZN3WTF5equalEPKNS_10StringImplES2_(first.httpMethod.impl, second.httpMethod.impl)) return false;
     if (first.allowCookies != second.allowCookies) return false;
     if (first.priority != second.priority) return false;
@@ -748,13 +891,15 @@ bool APS5_VABI _ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_
     UpdateResourceRequestBody(second);
     if (first.httpBody != second.httpBody) {
         if (!first.httpBody || !second.httpBody) return false;
-        if (!FormDataElementsEqual(*static_cast<const NKWebKit::WebCoreAbi::FormData*>(first.httpBody), *static_cast<const NKWebKit::WebCoreAbi::FormData*>(second.httpBody))) return false;
+        const auto* leftBody = CheckedFormData(first.httpBody, __func__);
+        const auto* rightBody = CheckedFormData(second.httpBody, __func__);
+        if (!FormDataElementsEqual(*leftBody, *rightBody, __func__)) return false;
     }
-    return EqualHeaderMaps(HeaderFields(first), HeaderFields(second));
+    return EqualHeaderMaps(HeaderFields(first), HeaderFields(second), __func__);
 }
 
 ResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase12isolatedCopyEv(const ResourceRequestBase* self) {
-    const auto& source = Checked(self);
+    const auto& source = CheckedRead(self, __func__);
     ResourceRequestBase request{};
     request.timeoutInterval = defaultTimeoutInterval;
     request.priority = 1;
@@ -764,33 +909,36 @@ ResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase12isolatedCopyEv(
     request.cachePartition.impl = NKWebKit::WtfAbi::EmptyStringImpl();
     request.resourceRequestUpdated = true;
     request.resourceRequestBodyUpdated = true;
-    SetIsolatedCopy(request, source);
+    SetIsolatedCopy(request, source, __func__);
     return request;
 }
 
 const NKWebKit::WebCoreAbi::HTTPHeaderMap& APS5_VABI _ZNK7WebCore19ResourceRequestBase16httpHeaderFieldsEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     return reinterpret_cast<const NKWebKit::WebCoreAbi::HTTPHeaderMap&>(HeaderFields(request));
 }
 
 NKWebKit::WebCoreAbi::FormDataRefPtr APS5_VABI _ZNK7WebCore19ResourceRequestBase8httpBodyEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     UpdateResourceRequestBody(request);
     NKWebKit::WebCoreAbi::FormDataRefPtr result;
     result.ptr = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
-    if (result.ptr) result.ptr->ref();
+    if (result.ptr) {
+        GuestWriteScope bodyAccess(result.ptr, sizeof(NKWebKit::WebCoreAbi::FormData), __func__, "null WebCore::FormData");
+        result.ptr->ref();
+    }
     return result;
 }
 
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9hasUploadEv(const ResourceRequestBase* self) {
-    const auto& request = Checked(self);
+    const auto& request = CheckedRead(self, __func__);
     UpdateResourceRequest(request);
     UpdateResourceRequestBody(request);
-    auto* body = static_cast<const NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
+    const auto* body = CheckedFormData(request.httpBody, __func__);
     if (!body) return false;
-    ValidateVector(body->elements);
+    ValidateVector(body->elements, __func__);
     for (unsigned i = 0; i < body->elements.size; ++i) {
         const auto kind = static_cast<std::uint8_t>(body->elements.buffer[i].index & 0xFF);
         if (kind == kFileElement || kind == kBlobElement) return true;
@@ -819,9 +967,16 @@ const NKWebKit::HttpAbi::HTTPHeaderMap& HeaderFields(const LegacyResourceRequest
 }
 
 template<class TVector>
-void ValidateCopySource(const TVector& source) {
+void ValidateCopySource(const TVector& source, const char* function = "WebCore::ResourceRequestBase") {
     if (source.size > source.capacity) throw std::invalid_argument("invalid WTF::Vector size in a WebCore::ResourceRequest");
     if (source.size && !source.buffer) throw std::invalid_argument("null WTF::Vector storage in a WebCore::ResourceRequest");
+    if (source.size) {
+        using RawEntry = std::remove_pointer_t<decltype(source.buffer)>;
+        constexpr std::size_t entrySize = std::is_void_v<RawEntry> ? sizeof(String) : sizeof(std::conditional_t<std::is_void_v<RawEntry>, char, RawEntry>);
+        if (source.size > std::numeric_limits<std::size_t>::max() / entrySize)
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        RequireReadableGuestBytes(source.buffer, static_cast<std::size_t>(source.size) * entrySize, function);
+    }
 }
 
 template<class TEntry, class TVector>
@@ -838,9 +993,13 @@ void CopyVector(TVector& target, const TVector& source) {
 
 LegacyResourceRequestBase CopyRequest(const LegacyResourceRequestBase& source) {
     const auto& sourceHeaders = HeaderFields(source);
-    ValidateCopySource(sourceHeaders.common);
-    ValidateCopySource(sourceHeaders.uncommon);
-    ValidateCopySource(source.responseContentDispositionEncodingFallbackArray);
+    ValidateCopySource(sourceHeaders.common, __func__);
+    ValidateCopySource(sourceHeaders.uncommon, __func__);
+    ValidateCopySource(source.responseContentDispositionEncodingFallbackArray, __func__);
+    ValidateGuestStringImpl(source.firstPartyForCookies.impl, __func__);
+    ValidateGuestStringImpl(source.httpMethod.impl, __func__);
+    ValidateGuestStringImpl(source.initiatorIdentifier.impl, __func__);
+    ValidateGuestStringImpl(source.cachePartition.impl, __func__);
     LegacyResourceRequestBase copy{};
     copy.timeoutInterval = source.timeoutInterval;
     Assign(copy.firstPartyForCookies, source.firstPartyForCookies);
@@ -852,7 +1011,10 @@ LegacyResourceRequestBase CopyRequest(const LegacyResourceRequestBase& source) {
     CopyVector<NKWebKit::HttpAbi::UncommonHeader>(headers.uncommon, sourceHeaders.uncommon);
     CopyVector<String>(copy.responseContentDispositionEncodingFallbackArray, source.responseContentDispositionEncodingFallbackArray);
     copy.httpBody = source.httpBody;
-    if (copy.httpBody) static_cast<NKWebKit::WebCoreAbi::FormData*>(copy.httpBody)->ref();
+    if (copy.httpBody) {
+        GuestWriteScope bodyAccess(copy.httpBody, sizeof(NKWebKit::WebCoreAbi::FormData), __func__, "null WebCore::FormData");
+        static_cast<NKWebKit::WebCoreAbi::FormData*>(copy.httpBody)->ref();
+    }
     copy.cachePolicy = source.cachePolicy;
     copy.sameSiteDisposition = source.sameSiteDisposition;
     copy.priority = source.priority;
@@ -907,7 +1069,13 @@ bool ProtocolIs(const String& string, std::string_view protocol) {
 
 extern "C" LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(
     const LegacyResourceRequestBase* self, const ResourceResponseBase* redirectResponse, bool shouldClearReferrerOnHTTPSToHTTPRedirect) {
-    const auto& source = Checked(self);
+    const auto& source = CheckedRead(self, __func__);
+    if (!redirectResponse) throw std::invalid_argument("null WebCore::ResourceResponseBase");
+    RequireReadableGuestBytes(redirectResponse, sizeof(ResourceResponseStatusLayout), __func__);
+    int statusCode = 0;
+    CopyInGuest(&statusCode,
+        reinterpret_cast<const unsigned char*>(redirectResponse) + offsetof(ResourceResponseStatusLayout, httpStatusCode),
+        sizeof(statusCode), __func__);
     const String location = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(redirectResponse, HTTPHeaderName::Location);
     const URL& responseURL = _ZNK7WebCore20ResourceResponseBase3urlEv(redirectResponse);
     URL target{};
@@ -919,8 +1087,11 @@ extern "C" LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase
     auto& headers = HeaderFields(request);
     request.resourceRequestUpdated = true;
     Assign(request.url, target);
-    source.resourceRequestUpdated = true;
-    if (ShouldUseGet(source.httpMethod, reinterpret_cast<const ResourceResponseStatusLayout*>(redirectResponse)->httpStatusCode)) {
+    if (!source.resourceRequestUpdated) {
+        GuestWriteScope sourceWrite(const_cast<LegacyResourceRequestBase*>(self), sizeof(*self), __func__, "null WebCore::ResourceRequestBase");
+        source.resourceRequestUpdated = true;
+    }
+    if (ShouldUseGet(source.httpMethod, statusCode)) {
         request.httpMethod = DefaultHTTPMethod();
         if (auto* body = static_cast<NKWebKit::WebCoreAbi::FormData*>(std::exchange(request.httpBody, nullptr))) body->deref();
         request.resourceRequestBodyUpdated = true;
