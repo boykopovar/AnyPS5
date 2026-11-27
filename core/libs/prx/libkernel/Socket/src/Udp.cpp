@@ -2635,6 +2635,8 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
         return error == 0 ? 0 : Fail(error);
     }
     if (File::IoctlRequestMalformed(request)) return Fail(25);
+    std::vector<unsigned char> input;
+    if (!File::CopyIoctlInput(request, argument, input)) return Fail(14);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     const auto command = static_cast<std::uint32_t>(request);
@@ -2644,7 +2646,6 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
     if (request != 0x8004667e && request != 0x4004667f) {
         const char group = static_cast<char>((request >> 8) & 0xff);
         const bool internet = socket->family == 2 || socket->family == 28;
@@ -2658,7 +2659,7 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     unsigned long value = 0;
     if (request == 0x8004667e) {
         int enable = 0;
-        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(14);
+        std::memcpy(&enable, input.data(), sizeof(enable));
         value = enable != 0;
     }
 #ifdef _WIN32
