@@ -7029,10 +7029,6 @@ int APS5_VABI _ZN7WebCore15makeSimpleRangeERKNS_20VisiblePositionRangeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetNetworkProcessIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_uNaCeoknjtQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

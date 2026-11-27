@@ -48,4 +48,9 @@ void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef) {
     ++pool->terminatedNetworkProcessesCount;
 }
 
+std::int32_t APS5_VABI WKContextGetNetworkProcessIdentifier(const void* contextRef) {
+    const auto* pool = NKWebKit::Cast<NKWebKit::ProcessPool>(contextRef, __func__);
+    return pool->usesNetworkProcess ? 1001 : 0;
+}
+
 }
