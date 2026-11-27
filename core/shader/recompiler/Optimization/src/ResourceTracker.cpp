@@ -914,7 +914,7 @@ private:
             return TryMakeIndirectColumn(handle, *heapHandle, sampler, words, descriptorOffset, first, plan);
         }
         if (!MatchAffineOffset(offset, key, stride, addend)) {
-            if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
+            if (!MatchMaskedOffset(SplitImmediateAddend(offset, addend), key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
                 return false;
             }
             masked = true;
