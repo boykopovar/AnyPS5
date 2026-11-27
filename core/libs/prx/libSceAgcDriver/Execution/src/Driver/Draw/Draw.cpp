@@ -1525,7 +1525,8 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
         if (program.binary.stage == Stage::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i])) continue;
         tail.vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, tail.decodeReads[i], 8u - program.firstUserSgpr);
         if (!tail.vertexInfos[i]) continue;
-        tail.vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
+        const auto& exporter = roles[i] == Role::Geometry && i + 1u < count && roles[i + 1u] == Role::Copy ? programs[i + 1u] : program;
+        tail.vertexInfos[i]->paClVsOutCntl = PositionExportLayout(exporter.snapshot.get(), exporter.codeOffset, exporter.binary.code, tail.reg207, exporter.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
         tail.vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
         Graphics::ApplyPointSize(graphics, *tail.vertexInfos[i]);
     }
