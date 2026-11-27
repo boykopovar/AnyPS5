@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestXml.hpp"
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -28,7 +30,7 @@ namespace {
 struct XmlBinding {
     NKWebKit::GuestParserCtxt guest_ctxt{};
     xmlParserCtxtPtr host_ctxt = nullptr;
-    NKWebKit::GuestSAXHandler* guest_sax = nullptr;
+    std::optional<NKWebKit::GuestSAXHandler> guest_sax;
     xmlSAXHandler host_sax{};
     NKWebKit::GuestXmlError guest_error{};
     std::string error_message;
@@ -465,6 +467,29 @@ static void HostEntityDecl(void* ctx, const xmlChar* name, int type, const xmlCh
         reinterpret_cast<const uint8_t*>(content));
 }
 
+static void HostNotationDecl(void* ctx, const xmlChar* name, const xmlChar* publicId, const xmlChar* systemId) {
+    auto& b = *static_cast<XmlBinding*>(ctx);
+    if (auto callback = b.guest_sax->notationDecl) callback(b.guest_ctxt.userData, name, publicId, systemId);
+}
+
+static void HostAttributeDecl(void* ctx, const xmlChar* element, const xmlChar* name, int type, int def,
+                              const xmlChar* value, xmlEnumerationPtr tree) {
+    auto& b = *static_cast<XmlBinding*>(ctx);
+    if (auto callback = b.guest_sax->attributeDecl) callback(b.guest_ctxt.userData, element, name, type, def, value, tree);
+    else xmlFreeEnumeration(tree);
+}
+
+static void HostElementDecl(void* ctx, const xmlChar* name, int type, xmlElementContentPtr content) {
+    auto& b = *static_cast<XmlBinding*>(ctx);
+    if (auto callback = b.guest_sax->elementDecl) callback(b.guest_ctxt.userData, name, type, content);
+}
+
+static void HostUnparsedEntityDecl(void* ctx, const xmlChar* name, const xmlChar* publicId, const xmlChar* systemId,
+                                   const xmlChar* notation) {
+    auto& b = *static_cast<XmlBinding*>(ctx);
+    if (auto callback = b.guest_sax->unparsedEntityDecl) callback(b.guest_ctxt.userData, name, publicId, systemId, notation);
+}
+
 static void HostIgnorableWhitespace(void* ctx, const xmlChar* ch, int len) {
     auto* b = static_cast<XmlBinding*>(ctx);
     if (!b || !b->guest_sax || !b->guest_sax->ignorableWhitespace) return;
@@ -533,7 +558,11 @@ static void HostFatalError(void* ctx, const char* msg, ...) {
 
 static void InitHostSax(NKWebKit::GuestSAXHandler* guest_sax, xmlSAXHandler* host_sax) {
     if (!guest_sax || !host_sax) return;
-    host_sax->initialized = XML_SAX2_MAGIC;
+    host_sax->initialized = guest_sax->initialized;
+    host_sax->notationDecl = HostNotationDecl;
+    host_sax->attributeDecl = HostAttributeDecl;
+    host_sax->elementDecl = HostElementDecl;
+    host_sax->unparsedEntityDecl = HostUnparsedEntityDecl;
     if (guest_sax->startElementNs) host_sax->startElementNs = HostStartElementNs;
     if (guest_sax->endElementNs) host_sax->endElementNs = HostEndElementNs;
     if (guest_sax->characters) host_sax->characters = HostCharacters;
@@ -652,12 +681,18 @@ NKWebKit::GuestParserCtxt* APS5_VABI xmlCreateMemoryParserCtxt_nid_postfix(const
 
 NKWebKit::GuestParserCtxt* APS5_VABI xmlCreatePushParserCtxt_nid_postfix(NKWebKit::GuestSAXHandler* sax, void* user_data, const char* chunk, int size, const char* filename) {
     auto b = std::make_unique<XmlBinding>();
-    b->guest_sax = sax;
     b->guest_ctxt.userData = sax && user_data ? user_data : &b->guest_ctxt;
-    b->guest_ctxt.sax = sax;
 
     if (sax) {
-        InitHostSax(sax, &b->host_sax);
+        auto& handler = b->guest_sax.emplace();
+        constexpr auto sax1Size = offsetof(NKWebKit::GuestSAXHandler, _private);
+        if (!GuestCopyIn_nid_no_patch(&handler, sax, sax1Size)) throw std::invalid_argument("unreadable XML SAX handler");
+        if (handler.initialized == XML_SAX2_MAGIC &&
+            !GuestCopyIn_nid_no_patch(&handler._private, &sax->_private, sizeof(*sax) - sax1Size)) {
+            throw std::invalid_argument("unreadable XML SAX2 handler");
+        }
+        b->guest_ctxt.sax = &handler;
+        InitHostSax(&handler, &b->host_sax);
         b->host_ctxt = xmlCreatePushParserCtxt(&b->host_sax, b.get(), chunk, size, filename);
     } else {
         b->host_ctxt = xmlCreatePushParserCtxt(nullptr, user_data, chunk, size, filename);
