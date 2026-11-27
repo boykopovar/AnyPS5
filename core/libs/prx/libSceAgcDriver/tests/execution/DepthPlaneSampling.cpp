@@ -465,6 +465,10 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     return true;
 }
 
+void ImportGuestBlockByUnrelatedLoad(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    Load(device, block.At(ReloadOffset), {Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX}, 0, output);
+}
+
 void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     using AgcDriver::Graphics::ShaderResources;
     auto* base = block.At(EpochSurfaceOffset);
@@ -473,6 +477,7 @@ void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, st
     FillSlice(base, SliceBytes, Bits(0.75f), 4u);
     const auto program = LoadProgram(device, base, shape, 0, output);
     const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    ImportGuestBlockByUnrelatedLoad(device, block, output);
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     AgcDriver::GuestMemory::MarkProofThread();
