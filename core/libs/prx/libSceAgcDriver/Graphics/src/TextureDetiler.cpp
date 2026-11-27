@@ -68,6 +68,39 @@ std::uint32_t PipelineKey(TextureTileMode tileMode, std::uint32_t elementBytes, 
     return (image ? 1u << 18 : 0u) | (thick ? 1u << 17 : 0u) | (retile ? 1u << 16 : 0u) | (static_cast<std::uint32_t>(tileMode) << 8) | elementBytes;
 }
 
+std::vector<DetileWindow> OversizedBands(const Context& context, TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, bool thick, bool linearBuffer, const DetileWindow& window) {
+    const bool whole = window.rangeBegin == 0 && window.rangeEnd == 0xffffffffu && window.tiledBase == 0 && window.linearBase == 0 && window.linearBytes == 0 && window.columnBegin == 0 && window.columnEnd == 0 && window.rowBegin == 0 && window.rowEnd == 0;
+    if (!whole || layout.tail || thick || layout.gcnMicroTiled || layout.gcnSplitStride != 0 || IsGcnTiled(tileMode) || layout.height == 0 || layout.tiledSize > UINT32_MAX || (linearBuffer && layout.linearSize > UINT32_MAX)) return {};
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const std::uint64_t limit = context.limits.maxStorageBufferRange;
+    if (limit <= alignment + 4u) return {};
+    const auto budget = limit - alignment - 4u;
+    const bool linear = tileMode == TextureTileMode::kLinear;
+    const auto block = linear ? std::array<std::uint32_t, 3>{0u, 0u, 1u} : ThinBlockLayout(tileMode, elementBytes);
+    const std::uint64_t rowHeight = block[2];
+    const std::uint64_t tiledPerRow = linear ? layout.pitchBytes : static_cast<std::uint64_t>(layout.blocksPerRow) * block[0];
+    const std::uint64_t linearPerRow = rowHeight * layout.pitchBytes;
+    if (rowHeight == 0 || tiledPerRow == 0) return {};
+    const auto rowsPerBand = budget / std::max(tiledPerRow, linearBuffer ? linearPerRow : std::uint64_t{0});
+    if (rowsPerBand == 0) return {};
+    std::vector<DetileWindow> bands;
+    const auto blockRows = (layout.height + rowHeight - 1u) / rowHeight;
+    for (std::uint64_t row = 0; row < blockRows; row += rowsPerBand) {
+        const auto rows = std::min(rowsPerBand, blockRows - row);
+        DetileWindow band{};
+        band.rangeBegin = static_cast<std::uint32_t>(row * tiledPerRow);
+        band.rangeEnd = static_cast<std::uint32_t>(std::min<std::uint64_t>(layout.tiledSize, (row + rows) * tiledPerRow));
+        band.tiledBase = band.rangeBegin;
+        band.rowBegin = static_cast<std::uint32_t>(row * rowHeight);
+        band.rowEnd = static_cast<std::uint32_t>(std::min<std::uint64_t>(layout.height, (row + rows) * rowHeight));
+        band.linearBase = linearBuffer ? band.rowBegin * layout.pitchBytes : 0u;
+        band.linearBytes = linearBuffer ? std::min<std::uint64_t>(layout.linearSize - band.linearBase, static_cast<std::uint64_t>(band.rowEnd - band.rowBegin) * layout.pitchBytes) : 0u;
+        band.pipeBankXor = window.pipeBankXor;
+        if (band.rangeBegin < band.rangeEnd) bands.push_back(band);
+    }
+    return bands;
+}
+
 }
 
 TextureDetiler::TextureDetiler(const Context& context) : context(context) {
@@ -249,6 +282,11 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     const std::uint64_t linearBytes = window.linearBytes != 0 ? window.linearBytes : layout.linearSize - std::min<std::uint64_t>(window.linearBase, layout.linearSize);
     const auto sourceRange = (sourceBase + (retile ? linearBytes : tiledBytes) + 3) / 4 * 4;
     const auto destinationRange = (destinationBase + (retile ? tiledBytes : linearBytes) + 3) / 4 * 4;
+    if (sourceRange > context.limits.maxStorageBufferRange || destinationRange > context.limits.maxStorageBufferRange) {
+        const auto bands = OversizedBands(context, tileMode, elementBytes, layout, thick, true, window);
+        for (const auto& band : bands) Dispatch(commands, tileMode, elementBytes, source, sourceOffset + (retile ? band.linearBase : band.tiledBase), destination, destinationOffset + (retile ? band.tiledBase : band.linearBase), layout, retile, slice, thick, band);
+        if (!bands.empty()) return;
+    }
     Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto set = allocateSet();
     const VkDescriptorBufferInfo sourceInfo{source, sourceDescriptorOffset, sourceRange};
@@ -440,6 +478,11 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     Require(base <= UINT32_MAX, "texture detiling buffer offset exceeds addressable range");
     const std::uint64_t tiledBytes = window.rangeEnd == 0xffffffffu ? layout.tiledSize : std::min<std::uint64_t>(layout.tiledSize, window.rangeEnd) - window.tiledBase;
     const auto range = (base + tiledBytes + 3) / 4 * 4;
+    if (range > context.limits.maxStorageBufferRange) {
+        const auto bands = OversizedBands(context, tileMode, elementBytes, layout, false, false, window);
+        for (const auto& band : bands) DispatchImage(commands, tileMode, elementBytes, tiled, tiledOffset + band.tiledBase, view, layout, retile, slice, band);
+        if (!bands.empty()) return;
+    }
     Require(range <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto set = allocateSet(true);
     const VkDescriptorBufferInfo bufferInfo{tiled, descriptorOffset, range};

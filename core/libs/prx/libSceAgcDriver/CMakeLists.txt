@@ -528,6 +528,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleUpload.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RecordingPool.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
@@ -757,8 +758,10 @@ set(ANYPS5_AGC_EXECUTION_TESTS "" CACHE STRING "tests/execution sources to build
 
 file(GLOB agcExecutionTestSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/*.cpp)
 set(agcExecutionTests)
+set(agcExecutionTestNames)
 foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     get_filename_component(agcExecutionTestName ${agcExecutionTestSource} NAME_WE)
+    list(APPEND agcExecutionTestNames "${agcExecutionTestName}")
     if(NOT WIN32 AND agcExecutionTestName STREQUAL "CommittedReadMapping")
         continue()
     endif()
@@ -877,8 +880,8 @@ if(BUILD_TESTING)
 endif()
 
 foreach(agcExecutionTestName IN LISTS ANYPS5_AGC_EXECUTION_TESTS)
-    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/${agcExecutionTestName}.cpp)
-        message(FATAL_ERROR "ANYPS5_AGC_EXECUTION_TESTS names ${agcExecutionTestName}, which has no source in tests/execution")
+    if(NOT agcExecutionTestName IN_LIST agcExecutionTestNames)
+        message(FATAL_ERROR "ANYPS5_AGC_EXECUTION_TESTS names ${agcExecutionTestName}, which does not match a tests/execution source name")
     endif()
 endforeach()
 option(ANYPS5_REQUIRE_CPU_LEAD_TEST "Register agc_driver_sparse_dma_buf_cpu_lead, which fails instead of skipping when the nonzero-lead dma-buf CPU publish cannot run (bench only)" OFF)
