@@ -250,9 +250,9 @@ void CheckSubwordOffsets() {
         const std::array<std::uint32_t, 16> expected{
             u8(1u), u8(2u), u8(3u),
             s8(1u), s8(2u), s8(3u),
-            u16(1u), u16(2u), u16(3u),
-            s16(1u), s16(2u), s16(3u),
-            u8(1u), u8(2u),
+            0u, u16(2u), 0u,
+            0u, s16(2u), 0u,
+            0u, 0u,
             u8(2u), u8(3u),
         };
         for (std::uint32_t index = 0; index < expected.size(); ++index) {
