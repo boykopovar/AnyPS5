@@ -5348,6 +5348,48 @@ int main() {
     Require(negativeDoubleGammaUnderflow == 0.0 && std::signbit(negativeDoubleGammaUnderflow));
     Require(positiveDoubleGammaUnderflow == 0.0 && !std::signbit(positiveDoubleGammaUnderflow));
     Require(errno == 0);
+    {
+        struct Case { std::uint32_t input, expected[4]; int sign; };
+        constexpr Case cases[] = {
+            {0x01b2c176u, {0x42ab3b87u, 0x42ab3b87u, 0x42ab3b86u, 0x42ab3b86u}, 1},
+            {0xb52680dcu, {0x4164b08eu, 0x4164b08fu, 0x4164b091u, 0x4164b090u}, -1},
+            {0x40642084u, {0x3fa2eadcu, 0x3fa2eadbu, 0x3fa2eadcu, 0x3fa2eadbu}, 1},
+            {0x4124a496u, {0x41575aa5u, 0x41575aa2u, 0x41575aa6u, 0x41575aa2u}, 1},
+            {0xbe4ccccdu, {0x3fe178c0u, 0x3fe178beu, 0x3fe178c2u, 0x3fe178c1u}, -1},
+            {0x3ec00000u, {0x3f5cf26au, 0x3f5cf26au, 0x3f5cf26bu, 0x3f5cf26au}, 1},
+            {0xbd000000u, {0x405f0384u, 0x405f0383u, 0x405f0387u, 0x405f0384u}, -1},
+            {0x3fcccccdu, {0xbde69682u, 0xbde69683u, 0xbde69682u, 0xbde69682u}, 1},
+            {0xc0200000u, {0xbd665fc8u, 0xbd665fc0u, 0xbd665fd0u, 0xbd665fc0u}, -1},
+            {0xc0500000u, {0xbf1f86fbu, 0xbf1f86fau, 0xbf1f86fau, 0xbf1f86f8u}, 1},
+        };
+        constexpr int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+        std::fenv_t savedEnvironment;
+        Require(std::fegetenv(&savedEnvironment) == 0);
+        for (const auto& item : cases) {
+            const float input = std::bit_cast<float>(item.input);
+            for (unsigned mode = 0; mode < 4; ++mode) {
+                Require(std::fesetround(rounding[mode]) == 0);
+                for (const auto call : {lgammaf_r_nid_postfix, gammaf_r_nid_postfix}) {
+                    int sign = 0;
+                    Require(std::bit_cast<std::uint32_t>(call(input, &sign)) == item.expected[mode]);
+                    Require(sign == item.sign);
+                }
+                for (const auto call : {lgammaf_nid_postfix, gammaf_nid_postfix}) {
+                    signgam_nid_postfix = 0;
+                    Require(std::bit_cast<std::uint32_t>(call(input)) == item.expected[mode]);
+                    Require(signgam_nid_postfix == item.sign);
+                }
+            }
+        }
+        const unsigned previous = _mm_getcsr();
+        _mm_setcsr(0x9fc0);
+        int sign = 0;
+        const float tiny = lgammaf_r_nid_postfix(std::bit_cast<float>(0x80000001u), &sign);
+        const unsigned flags = _mm_getcsr();
+        _mm_setcsr(previous);
+        Require(std::bit_cast<std::uint32_t>(tiny) == 0x42d2b77cu && sign == -1 && flags == 0x9fe0);
+        Require(std::fesetenv(&savedEnvironment) == 0);
+    }
     int rSign = 7;
     Require(lgamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
     rSign = 7;

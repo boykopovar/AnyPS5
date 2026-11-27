@@ -264,6 +264,9 @@ void RunSamplerReductionTests(const Fields& base) {
 
     const auto pointFiltered = [](const std::array<std::uint32_t, 4>& words) { return ShaderRecompiler::PointFilteredSamplerWord(words[0], words[2]); };
     Require(pointFiltered(pack(base)) == 0x05000000u, "a point-filtered weighted-average sampler kept its bilinear or linear mip filter");
+    Fields blendModeThree = base;
+    blendModeThree.filterMode = 3;
+    Require(pointFiltered(pack(blendModeThree)) == pointFiltered(pack(base)), "a point-filtered filter mode 3 sampler, which blends as a weighted average, did not point-sample like filter mode 0");
     Require(pointFiltered(pack(minPoint)) == pack(minPoint)[2], "a point-filtered min sampler that already point-samples changed");
     reject([&] { pointFiltered(capturedSampler); }, "needs point filtering");
     Fields maxLinearMip = minPoint;

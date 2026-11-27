@@ -7,6 +7,7 @@ static void Require(bool value) {
 }
 
 int main() {
+    Require(sceKernelIsAddressSanitizerEnabled() == 0);
     Require(sceKernelGetSanitizerMallocReplaceExternal() == nullptr);
     Require(sceKernelGetSanitizerNewReplaceExternal() == nullptr);
 }

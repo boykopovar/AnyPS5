@@ -353,7 +353,7 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
 
 void ValidateSampleMask(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
     if (!PartialSampleMask(state)) return;
-    const bool uniform = UniformSampleMask(state) && !SampleMaskFollowsOrder(state, HostSampleLocationsFor(context, state).order);
+    const bool uniform = UniformSampleMask(state) && !SampleMaskInShader(state, HostSampleLocationsFor(context, state).order, context.staticSampleMaskStopsShading);
     for (const auto& shader : shaders) {
         if (shader.stage != ShaderRecompiler::ShaderStage::Fragment) continue;
         Require(shader.program != nullptr, "missing compiled fragment shader");
@@ -376,6 +376,8 @@ VkShaderStageFlags pushStagesOf(const Context& context) {
 }
 
 constexpr std::size_t MaxColorWriteMasks = 8;
+
+constexpr VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT PixelWave32Subgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
 
 using ColorWriteMasks = std::array<VkColorComponentFlags, MaxColorWriteMasks>;
 
@@ -903,6 +905,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             stages[i].module = _modules[i];
             stages[i].pName = "main";
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
+            if (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && context.pixelWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &PixelWave32Subgroup;
             specializations.emplace_back(shader, context.atomicLockTable, state.meshLayerBase, state.meshLayerCount);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
@@ -1074,7 +1077,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         depthStencil.front = state.stencilFront;
         depthStencil.back = state.stencilBack;
         const VkSampleMask sampleMask = HostSampleMask(state);
-        if (PartialSampleMask(state) && UniformSampleMask(state) && !SampleMaskFollowsOrder(state, sampleOrder)) samples.pSampleMask = &sampleMask;
+        if (PartialSampleMask(state) && UniformSampleMask(state) && !SampleMaskInShader(state, sampleOrder, context.staticSampleMaskStopsShading)) samples.pSampleMask = &sampleMask;
         VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool alternateAlpha = SplitsAlternateAlpha(state);
         std::vector<VkPipelineColorBlendAttachmentState> firstChannels(state.blends.begin(), state.blends.end());

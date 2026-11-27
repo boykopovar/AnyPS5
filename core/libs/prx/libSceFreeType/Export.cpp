@@ -63,6 +63,9 @@ void FinalizeFace(void* object) {
     SyncSizePointer_nid_no_patch(*face);
     if (face->rec.generic.finalizer) face->rec.generic.finalizer(&face->rec);
     face->finalized = true;
+    auto& faces = face->library->faces;
+    const auto entry = std::find_if(faces.begin(), faces.end(), [face](const auto& candidate) { return candidate.get() == face; });
+    if (entry != faces.end()) faces.erase(entry);
 }
 
 void PublishFace(GuestLibrary* library, std::unique_ptr<GuestFace> face, FT_Face host, GuestFaceRec** aface) {
@@ -134,14 +137,19 @@ int APS5_VABI FT_Init_FreeType_nid_postfix(GuestLibrary** alibrary) {
     if (error != 0) return error;
     std::unique_ptr<FT_LibraryRec_, decltype(&FT_Done_FreeType)> native(library->host, &FT_Done_FreeType);
     GuestLibrary* result = library.get();
-    if (!CopyGuestOut(alibrary, &result, sizeof(result))) return FT_Err_Invalid_Argument;
+    if (!RegisterCacheLibrary_nid_no_patch(result)) return FT_Err_Out_Of_Memory;
+    if (!CopyGuestOut(alibrary, &result, sizeof(result))) {
+        DestroyCacheManagers_nid_no_patch(result);
+        return FT_Err_Invalid_Argument;
+    }
     native.release();
     library.release();
     return 0;
 }
 
 int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
-    const FT_Error error = FT_Done_FreeType(library ? library->host : nullptr);
+    if (!DestroyCacheManagers_nid_no_patch(library)) return FT_Err_Invalid_Library_Handle;
+    const FT_Error error = FT_Done_FreeType(library->host);
     if (error == 0) delete library;
     return error;
 }
@@ -268,9 +276,7 @@ int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec* face) {
 
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec* face) {
     GuestFace* owner = FaceOf(face);
-    const FT_Error error = FT_Done_Face(owner ? owner->host : nullptr);
-    if (error == 0 && owner->finalized) owner->library->faces.remove_if([owner](const auto& entry) { return entry.get() == owner; });
-    return error;
+    return FT_Done_Face(owner ? owner->host : nullptr);
 }
 
 int APS5_VABI FT_New_Size_nid_postfix(GuestFaceRec* face, GuestSizeRec** asize) {
