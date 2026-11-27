@@ -16,8 +16,14 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_storage_cache_entries_profile PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         PASS_REGULAR_EXPRESSION "write-backs by reason .count/MiB.: .*entry cap 2/.*evictions by reason .count/MiB flushed.: .*entry cap 2/"
         FAIL_REGULAR_EXPRESSION "entry limit test failed")
+    add_test(NAME agc_driver_storage_cache_entries_recent COMMAND agc_driver_storage_cache_entries_tests --recent)
+    set_tests_properties(agc_driver_storage_cache_entries_recent PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_storage_cache_entries_ceiling COMMAND agc_driver_storage_cache_entries_tests --ceiling)
+    set_tests_properties(agc_driver_storage_cache_entries_ceiling PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_storage_cache_entries_stall COMMAND agc_driver_storage_cache_entries_tests --stall)
+    set_tests_properties(agc_driver_storage_cache_entries_stall PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_storage_cache_retained_batch agc_driver_storage_cache_entries_unlimited agc_driver_storage_cache_entries_profile PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_storage_cache_retained_batch agc_driver_storage_cache_entries_unlimited agc_driver_storage_cache_entries_profile agc_driver_storage_cache_entries_recent agc_driver_storage_cache_entries_ceiling agc_driver_storage_cache_entries_stall PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -29,7 +29,7 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint64_t SurfaceBytes = std::uint64_t{Side} * Side * 4u;
 constexpr std::uint64_t Stride = 0x10000;
 constexpr std::uint32_t Entries = 4;
-constexpr std::uint32_t Surfaces = Entries + 2;
+constexpr std::uint32_t Ceiling = Entries * 8u;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> StoreCode{
     0x7e020280, 0x7e0402f2, 0x7e0602f2, 0x7e0802f2, 0x7e0a02f2, 0xf0201f08, 0x00010200, 0xbf810000,
@@ -88,9 +88,15 @@ int main(int argc, char** argv) {
         const std::string mode = argc > 1 ? argv[1] : "";
         const bool unlimited = mode == "--unlimited";
         const bool profile = mode == "--profile";
-        const std::string limit = unlimited ? "no entry limit" : "a limit of " + std::to_string(Entries) + " entries";
+        const bool recent = mode == "--recent";
+        const bool ceiling = mode == "--ceiling";
+        const bool stall = mode == "--stall";
+        const std::uint32_t Surfaces = (ceiling ? Ceiling : Entries) + 2u;
+        const std::uint32_t kept = unlimited || recent || stall ? Surfaces : ceiling ? Ceiling : Entries;
+        const std::string limit = unlimited ? "no entry limit" : recent ? "a limit of " + std::to_string(Entries) + " entries for surfaces idle longer than ten minutes" : ceiling ? "a limit of " + std::to_string(Entries) + " entries for idle surfaces and a ceiling of " + std::to_string(Ceiling) : stall ? "a limit of " + std::to_string(Entries) + " entries for surfaces idle longer than 1.5 s of cache activity, across a 3 s pause without lookups" : "a limit of " + std::to_string(Entries) + " entries";
         const auto stride = profile ? SurfaceBytes : Stride;
         SetVariable("APS5_STORAGE_CACHE_ENTRIES", unlimited ? "0" : "4");
+        SetVariable("APS5_STORAGE_CACHE_IDLE_MS", recent || ceiling ? "600000" : stall ? "1500" : "0");
         SetVariable("APS5_TEXTURE_CACHE_MIB", "1024");
         if (profile) SetVariable("APS5_PROFILE_DRAW", "1");
         const auto device = OpenVulkanTestDevice();
@@ -118,10 +124,11 @@ int main(int argc, char** argv) {
                 const auto again = Store(*device, base, surface, stride, !profile);
                 Require(again != nullptr && again == images[surface].lock(), "surface " + std::to_string(surface) + " was made again while the cache held " + std::to_string(Entries) + " of its " + std::to_string(Entries) + " entries");
             }
+            if (stall) std::this_thread::sleep_for(std::chrono::seconds(3));
             for (std::uint32_t surface = Entries; surface < Surfaces; ++surface) images[surface] = Store(*device, base, surface, stride, !profile);
             for (std::uint32_t surface = 0; surface < Surfaces; ++surface) {
                 const bool cached = StorageTexture::FindLive(base + surface * stride, SurfaceBytes) != nullptr;
-                Require(cached == (unlimited || surface >= Surfaces - Entries), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(Surfaces) + " small surfaces under " + limit + " and a 1024 MiB budget");
+                Require(cached == (surface >= Surfaces - kept), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(Surfaces) + " small surfaces under " + limit + " and a 1024 MiB budget");
                 Require(cached == !images[surface].expired(), "surface " + std::to_string(surface) + (cached ? " is cached but its weak image expired" : " was evicted but its image is still alive"));
             }
             if (profile) {
@@ -134,7 +141,7 @@ int main(int argc, char** argv) {
             throw;
         }
         release();
-        std::puts(unlimited ? "storage cache without an entry limit tests passed" : profile ? "storage cache entry limit counter tests passed" : "storage cache entry limit tests passed");
+        std::puts(unlimited ? "storage cache without an entry limit tests passed" : profile ? "storage cache entry limit counter tests passed" : recent ? "storage cache entry limit keeps recently used surfaces tests passed" : ceiling ? "storage cache entry ceiling tests passed" : stall ? "storage cache entry limit ages surfaces by cache activity tests passed" : "storage cache entry limit tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "storage cache entry limit test failed: " << error.what() << '\n';
