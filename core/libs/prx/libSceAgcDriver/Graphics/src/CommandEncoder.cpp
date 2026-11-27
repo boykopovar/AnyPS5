@@ -706,7 +706,7 @@ void CommandEncoder::EndInline() noexcept {
 }
 
 void CommandEncoder::startTimedWindow() noexcept {
-    policy.ChargeOutside(waitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
+    policy.ChargeOutside(producerWaitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
     timedWindow = true;
     windowStart = std::chrono::steady_clock::now();
 }
@@ -714,13 +714,13 @@ void CommandEncoder::startTimedWindow() noexcept {
 void CommandEncoder::endTimedWindow() noexcept {
     timedWindow = false;
     const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - windowStart).count());
-    waitsAtWindowEnd = waitNs.load(std::memory_order_relaxed);
+    waitsAtWindowEnd = producerWaitNs.load(std::memory_order_relaxed);
     policy.Charge(ns);
 }
 
 void CommandEncoder::decide(std::source_location where) noexcept {
     if (policy.LastEncoded()) Quiesce(WaitSite::At(Wait::Open, where));
-    policy.ChargeOutside(waitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
+    policy.ChargeOutside(producerWaitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
     const auto decision = policy.Decide();
     (decision.encode ? encodedDecisions : inlineDecisions).fetch_add(1, std::memory_order_relaxed);
     if (!profiled) return;
@@ -765,6 +765,7 @@ void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
     const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
     waitCount.fetch_add(1, std::memory_order_relaxed);
     waitNs.fetch_add(ns, std::memory_order_relaxed);
+    if (owner.load(std::memory_order_relaxed) == std::this_thread::get_id()) producerWaitNs.fetch_add(ns, std::memory_order_relaxed);
     note(site, ns, true, flushed);
 }
 
@@ -813,6 +814,7 @@ void CommandEncoder::awaitSpare() noexcept {
     const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
     waitCount.fetch_add(1, std::memory_order_relaxed);
     waitNs.fetch_add(ns, std::memory_order_relaxed);
+    producerWaitNs.fetch_add(ns, std::memory_order_relaxed);
     note(WaitSite{Wait::ChunkPool, nullptr, 0}, ns, true, false);
 }
 

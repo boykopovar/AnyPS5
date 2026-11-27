@@ -306,6 +306,7 @@ private:
     std::atomic<std::uint64_t> commandCount{0};
     std::atomic<std::uint64_t> waitCount{0};
     std::atomic<std::uint64_t> waitNs{0};
+    std::atomic<std::uint64_t> producerWaitNs{0};
     std::atomic<std::uint64_t> encodeNs{0};
     std::atomic<std::uint64_t> postNs{0};
     std::atomic<std::uint64_t> inlinedCount{0};

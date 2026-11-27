@@ -1457,6 +1457,66 @@ void HandoffPolicyDecidesFromTheCostItIsGiven() {
     }
 }
 
+void HandoffIgnoresAnotherThreadsWaits() {
+    Reset();
+    auto table = BurnTable();
+    replayNs.store(0, std::memory_order_relaxed);
+    const auto device = Handle<VkDevice>(0x5b);
+    const auto commands = Handle<VkCommandBuffer>(0x1b00);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    std::atomic<bool> held{false};
+    std::atomic<bool> waiting{false};
+    CommandEncoder::SetDelayForTesting([&] { held.wait(true, std::memory_order_acquire); });
+    CommandEncoder::SetBlockedHookForTesting([&] {
+        waiting.store(true, std::memory_order_release);
+        waiting.notify_all();
+    });
+    const auto release = [&] {
+        held.store(false, std::memory_order_release);
+        held.notify_all();
+    };
+    const auto lookUpElsewhere = [&] {
+        waiting.store(false, std::memory_order_release);
+        std::thread other([&] { AgcDriver::Graphics::BeforeCommandLookup(device); });
+        const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!waiting.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < give_up) std::this_thread::yield();
+        const bool blocked = waiting.load(std::memory_order_acquire);
+        if (blocked) std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        release();
+        other.join();
+        Require(blocked, "a lookup on another thread did not wait for the queued replay");
+    };
+    constexpr std::uint64_t Windows = CommandEncoder::ProbeWindows + 600;
+    std::uint64_t inlined = 0;
+    try {
+        for (std::uint64_t window = 0; window < Windows; ++window) {
+            const bool encoded = encoder.Admit(CommandEncoder::Handoff::Adaptive);
+            const bool lastOfEncodedBlock = window < CommandEncoder::ProbeWindows && encoded && window % CommandEncoder::ProbeBlock == CommandEncoder::ProbeBlock - 1;
+            if (encoded) encoder.Open(commands, RecordingOf(commands));
+            table.cmdDraw(commands, 3, 1, 0, 0);
+            if (lastOfEncodedBlock) held.store(true, std::memory_order_release);
+            if (encoded) {
+                encoder.Close();
+            } else {
+                BusyFor(std::chrono::microseconds(50));
+                encoder.EndInline();
+                ++inlined;
+            }
+            if (lastOfEncodedBlock) lookUpElsewhere();
+        }
+    } catch (...) {
+        release();
+        CommandEncoder::SetBlockedHookForTesting({});
+        CommandEncoder::SetDelayForTesting({});
+        throw;
+    }
+    encoder.Quiesce();
+    CommandEncoder::SetBlockedHookForTesting({});
+    CommandEncoder::SetDelayForTesting({});
+    Require(inlined < Windows / 2, "the adaptive hand-off recorded " + std::to_string(inlined) + " of " + std::to_string(Windows) + " windows inline because another thread's wait for the encoder was charged to the producer's encoded windows");
+}
+
 void InlineSpansRunOnTheOriginalTable() {
     Reset();
     auto table = FakeTable();
@@ -1675,6 +1735,7 @@ int main(int argc, char** argv) {
         HandoffPolicyFollowsItsMeasuredCost();
         HandoffChargesTheLastProbeBlocksBacklog();
         HandoffPolicyDecidesFromTheCostItIsGiven();
+        HandoffIgnoresAnotherThreadsWaits();
         InlineSpansRunOnTheOriginalTable();
         SwitchFlipEndsTheInlineSpan();
         UnwindAfterASpanStillSettles();
