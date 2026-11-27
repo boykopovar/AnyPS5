@@ -677,6 +677,11 @@ void testControls() {
     check(sceVideoOutIsOutputSupported(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode is supported");
     check(sceVideoOutConfigureOutput(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode was configured");
     check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 0, "default output mode was rejected");
+#ifdef _WIN32
+    check(_putenv_s("APS5_FLIP_RATE", "") == 0, "APS5_FLIP_RATE was not cleared");
+#else
+    check(unsetenv("APS5_FLIP_RATE") == 0 || std::getenv("APS5_FLIP_RATE") == nullptr, "APS5_FLIP_RATE was not cleared");
+#endif
     for (int rate = 0; rate <= 2; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
     }
