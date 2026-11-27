@@ -405,9 +405,9 @@ void verifyOutputModifierRounding() {
         requireOpcode(0xd4000000u | (form.opcode << 16u), form.op);
         static_cast<void>(translate(diamond(12, 0, form, 1), flushed));
     }
-    constexpr std::array<Form, 6> tracked64{{
+    constexpr std::array<Form, 7> tracked64{{
         {0x166, RdnaOpcode::VMinF64, binary}, {0x167, RdnaOpcode::VMaxF64, binary}, {0x19a, RdnaOpcode::VFloorF64, unary},
-        {0x198, RdnaOpcode::VCeilF64, unary}, {0x197, RdnaOpcode::VTruncF64, unary}, {0x199, RdnaOpcode::VRndneF64, unary},
+        {0x198, RdnaOpcode::VCeilF64, unary}, {0x197, RdnaOpcode::VTruncF64, unary}, {0x199, RdnaOpcode::VRndneF64, unary}, {0x16e, RdnaOpcode::VDivScaleF64, ternary},
     }};
     for (const auto& form : tracked64) {
         requireOpcode(0xd4000000u | (form.opcode << 16u), form.op);

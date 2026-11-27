@@ -416,6 +416,7 @@ void TranslationContext::checkRoundingUse(const RdnaInstruction& inst) const {
     case RdnaOpcode::VRsqF64:
     case RdnaOpcode::VSqrtF64:
     case RdnaOpcode::VTrigPreopF64:
+    case RdnaOpcode::VDivScaleF64:
     case RdnaOpcode::VCvtF64F32:
     case RdnaOpcode::VCvtF64I32:
     case RdnaOpcode::VCvtF64U32:
