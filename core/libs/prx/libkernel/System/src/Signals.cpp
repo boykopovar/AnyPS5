@@ -957,6 +957,13 @@ int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previo
     return 0;
 }
 
+int ChangeHold(int how, int guest) {
+    if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
+    GuestSignalSet set{};
+    set.bits[static_cast<std::size_t>(guest - 1) >> 5] = 1u << ((guest - 1) & 31);
+    return ChangeBlockedMask(how, &set, nullptr, true);
+}
+
 }
 
 bool SiginfoFaultHandlerInstalled(int guest) {
@@ -1103,6 +1110,19 @@ int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, Guest
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet) {
     return _sigprocmask_nid_postfix(how, static_cast<const GuestSignalSet*>(set),
                                     static_cast<GuestSignalSet*>(previousSet));
+}
+
+int APS5_VABI sighold_nid_postfix(int guest) {
+    return ChangeHold(GuestSigblock, guest);
+}
+
+int APS5_VABI sigrelse_nid_postfix(int guest) {
+    return ChangeHold(GuestSigunblock, guest);
+}
+
+int APS5_VABI sigignore_nid_postfix(int guest) {
+    const auto ignore = reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(1));
+    return signal_nid_postfix(guest, ignore) == reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1)) ? -1 : 0;
 }
 
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
