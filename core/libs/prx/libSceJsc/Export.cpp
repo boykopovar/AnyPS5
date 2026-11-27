@@ -37,7 +37,8 @@ bool GuestTextLength(const char* text, std::size_t& length) {
 }
 
 bool GuestBufferReadable(const void* address, std::size_t size) {
-    if (reinterpret_cast<std::uintptr_t>(address) > std::numeric_limits<std::uintptr_t>::max() - size) return false;
+    if (size == 0) return true;
+    if (size - 1 > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(address)) return false;
     char chunk[4096];
     for (std::size_t offset = 0; offset < size;) {
         const auto current = reinterpret_cast<std::uintptr_t>(address) + offset;
