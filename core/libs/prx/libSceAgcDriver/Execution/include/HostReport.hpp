@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_HOSTREPORT_HPP
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -79,6 +80,7 @@ struct HostSources {
 };
 
 HostFacts CollectHostFacts(const HostSources& sources);
+HostShaderCacheFacts MeasureShaderCache(const std::filesystem::path& directory);
 std::vector<std::pair<std::string, std::string>> FilterHostEnvironment(const std::vector<std::string>& entries);
 std::vector<std::string> HostRedactionNames(const std::string& user, const std::string& hostName, const std::string& homeDirectory);
 std::vector<HostRequirement> MissingRequirements(const HostGpuFacts& gpu);

@@ -1,8 +1,15 @@
 #include "prx/libSceAgcDriver/Execution/include/HostReport.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -349,6 +356,44 @@ void FormattedReportHasNoSensitiveText() {
     Check(text.find("APS5_NOTE: line INJECTED: yes\n") != std::string::npos, "a newline in a value was not flattened");
 }
 
+void WriteBytes(const std::filesystem::path& path, std::size_t bytes) {
+    std::ofstream file(path, std::ios::binary);
+    const std::string block(bytes, 'x');
+    file.write(block.data(), static_cast<std::streamsize>(block.size()));
+    Check(file.good(), "a shader cache fixture file was not written");
+}
+
+void ShaderCacheIsMeasured() {
+    Check(!AgcDriver::MeasureShaderCache({}).enabled, "an unset shader cache directory was reported as enabled");
+    const auto root = std::filesystem::temp_directory_path() / ("aps5-host-report-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto missing = AgcDriver::MeasureShaderCache(root);
+    Check(missing.enabled && !missing.present, "a missing shader cache directory was reported as present");
+    std::filesystem::create_directories(root / "version");
+    WriteBytes(root / "first.bin", 1u << 20u);
+    WriteBytes(root / "version" / "second.bin", 2u << 20u);
+    const auto measured = AgcDriver::MeasureShaderCache(root);
+    Check(measured.enabled && measured.present, "an existing shader cache directory was not reported as present");
+    Check(measured.sizeMiB == 3, "the shader cache size does not count every file");
+#ifdef _WIN32
+    const auto pendingPath = std::filesystem::absolute(root) / "version" / "pending.bin";
+    WriteBytes(pendingPath, 4u << 20u);
+    const HANDLE pending = ::CreateFileW(pendingPath.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(pending != INVALID_HANDLE_VALUE, "the delete-pending shader cache fixture file was not opened");
+    if (pending != INVALID_HANDLE_VALUE) {
+        FILE_DISPOSITION_INFO disposition{TRUE};
+        Check(::SetFileInformationByHandle(pending, FileDispositionInfo, &disposition, sizeof(disposition)) != 0, "the shader cache fixture file was not marked for deletion");
+        const HANDLE probe = ::CreateFileW(pendingPath.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        Check(probe == INVALID_HANDLE_VALUE, "a delete-pending fixture file could still be opened, so it cannot show that no file is opened");
+        if (probe != INVALID_HANDLE_VALUE) ::CloseHandle(probe);
+        const auto withPending = AgcDriver::MeasureShaderCache(root);
+        Check(withPending.sizeMiB == 7, "the shader cache size opened each file instead of reading the directory listing: a listed file that cannot be opened was not counted");
+        ::CloseHandle(pending);
+    }
+#endif
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+}
+
 }
 
 int main() {
@@ -364,5 +409,6 @@ int main() {
     FailingSourcesAreRecorded();
     RedactionNamesAreDerived();
     FormattedReportHasNoSensitiveText();
+    ShaderCacheIsMeasured();
     return failures == 0 ? 0 : 1;
 }
