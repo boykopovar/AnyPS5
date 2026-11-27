@@ -16,6 +16,7 @@ namespace NKWebKit {
 class BundleBackForwardList;
 class BundleBackForwardListItem;
 class BundlePageGroup;
+class BundlePage;
 
 std::optional<std::u16string> DecodeUtf8(const char* text, std::size_t length);
 std::optional<std::u16string> DecodeUtf8(const char* text);
@@ -315,6 +316,8 @@ public:
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
     bool hasLocalDataForURL = false;
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
 };
 
 class BundlePageGroup final : public ObjectOf<ObjectType::BundlePageGroup> {
