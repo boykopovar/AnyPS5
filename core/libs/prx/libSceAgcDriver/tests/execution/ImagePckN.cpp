@@ -124,16 +124,16 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t fo
     device.WaitIdle();
 }
 
-void Check(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& format, std::uint32_t dmask) {
+void Check(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& format, std::uint32_t dmask, std::uint32_t swizzle = 0xfacu) {
     const auto elements = opcode == 0x71u || opcode == 0x74u ? 4u : 2u;
     const bool mip = opcode == 0x73u || opcode == 0x74u;
     const auto texelBits = format.bytes * format.components * 8u;
-    const auto name = "image PCK opcode " + std::to_string(opcode) + " format " + std::to_string(format.id) + " dmask " + std::to_string(dmask);
+    const auto name = "image PCK opcode " + std::to_string(opcode) + " format " + std::to_string(format.id) + " dmask " + std::to_string(dmask) + " swizzle " + std::to_string(swizzle);
     FillTexels(format);
     FillInput();
     const auto initial = Texels;
     Output.fill(0xdeadbeefu);
-    Run(device, opcode, format.id, dmask);
+    Run(device, opcode, format.id, dmask, swizzle);
     for (std::uint32_t thread = 0; thread < Threads; ++thread) {
         const auto x = Input[thread * 4u + 0u];
         const auto y = Input[thread * 4u + 1u];
@@ -184,7 +184,11 @@ int main() {
         Refused(*device, 0x70u, R32UInt, 0x1u, 0xfacu, layout);
         Refused(*device, 0x71u, R16UInt, 0x1u, 0xfacu, layout);
         Refused(*device, 0x71u, Rg8UInt, 0x1u, 0xfacu, layout);
-        Refused(*device, 0x70u, R16UInt, 0x1u, 0xf2eu, "identity swizzle");
+        for (const auto swizzle : {0xf2eu, 0x977u, 0x924u, 0x000u, 0x249u, 0xde5u}) {
+            Check(*device, 0x70u, r16, 0x1u, swizzle);
+            Check(*device, 0x73u, rg8, 0x1u, swizzle);
+            Check(*device, 0x74u, r8, 0x1u, swizzle);
+        }
         for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) Refused(*device, opcode, R8UInt, 0x1u, 0xfacu, "stores are not implemented");
         GuestAllocations::Mutation().Remove(Texels.data());
         std::cout << "image PCK2/PCK4 execution tests passed\n";

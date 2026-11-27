@@ -661,7 +661,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 const auto resource = compact.resources[element];
                 const auto& image = info.images.at(resource);
                 const auto& mode = info.runtimeImageModes.at(resource).at(imageModes[resource]);
-                entry.identityImageSwizzle.push_back(mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits);
+                entry.identityImageSwizzle.push_back(mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits || image.packed);
                 physical.imageWritten.push_back(image.written || image.atomic);
                 physical.imageDepthCompare.push_back(mode.depthCompare);
                 physical.imageAtomic.push_back(image.atomic);

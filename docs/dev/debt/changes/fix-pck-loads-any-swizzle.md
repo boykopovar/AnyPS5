@@ -1,0 +1,5 @@
+# shader
+
+## change [MIMG PCK2/PCK4 loads]
+
+- [MIMG PCK2/PCK4 loads](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) (`image_load[_mip]_pck2/pck4`, opcodes 0x70, 0x71, 0x73, 0x74) were measured on RDNA2 (gfx1035, gfx1036) with the [hardware oracle](../HW_ORACLE.md) for 2D images. With data mask 0x1 they write one dword: the raw bits of the N texels (PCK2: 2, PCK4: 4) from `x & ~(N - 1)` on row y, concatenated (element k at bit `k * texel bits`), zero-extended, whatever the T# swizzle. The dword is zero when the mip level is past the last level, `x + N - 1` is outside the level's width (unaligned x, unsigned), or y is outside its height. Data only comes back when N texels fit in 32 bits: R8, R16 or RG8 for PCK2, R8 for PCK4; wider texels and masks other than 0x1 write zeros. Those masks throw at decode, and formats outside UNORM/UINT/SINT R8, R16 and RG8 throw. The stores (0x76, 0x77, 0x79, 0x7a) decode but throw at translation; they are not measured, and 0x76 on 32_32_32_32_FLOAT hung the GPU (#1314).

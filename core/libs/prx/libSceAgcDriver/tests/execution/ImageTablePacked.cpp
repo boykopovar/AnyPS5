@@ -733,7 +733,6 @@ void RejectedEntries(AgcDriver::VulkanDevice& device) {
         Rejection{0x70u, 1u, {20u, 4u, 1u}, Identity},
         Rejection{0x71u, 1u, {11u, 2u, 1u}, Identity},
         Rejection{0x74u, 1u, {18u, 2u, 2u}, Identity},
-        Rejection{0x70u, 1u, {5u, 1u, 1u}, 0xf2eu},
         Rejection{10u, 1u, {1u, 1u, 1u}, Identity},
         Rejection{10u, 1u, {6u, 1u, 1u}, Identity},
         Rejection{10u, 1u, {12u, 2u, 1u}, Identity},
