@@ -1,9 +1,5 @@
 # libSceAgcDriver
 
-## change [Native D32S8 guest publication]
-
-- [Native D32S8 guest publication](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) overwrites a guest byte only when a CPU store of the snapshot's value lands in a byte the host changes while that part commits; other late stores are kept and the read throws. A written page's byte equal to its snapshot, the host's differing, no driver store over it, is undecided: a draw input, storage image, colour target or new depth target reusing the memory takes the guest's byte, inferred; CPU, DMA, texture and buffer reads throw. HTILE is published expanded; the stencil plane is retiled with the depth XOR. Only a reuse taking a guest byte, a new depth or multisampled colour target or a guest write retires the owner. A kept plane of host bytes is rebased; one with a guest byte or unmapped hole throws at next use. D16 owners, unproven clear transitions, other resident colour aliases, colour acquisition mid-read, pending storage-image units and in-completion publication throw.
-
 ## add Unknown function info
 
 - [Native D32 guest publication without stencil](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) follows the D32S8 publication above for the depth plane and, with HTILE, the HTILE plane, expanded for the depth aspect only; that this is the console's expanded HTILE for a depth-only target is inferred, not measured on PS5 hardware.
