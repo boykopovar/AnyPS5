@@ -281,6 +281,11 @@ void CheckErrors() {
     badStack.mcontext.rsp = 0x10;
     *__error_nid_postfix() = 0;
     Require(signalcontext_nid_postfix(&badStack, 15, nullptr) == -1 && *__error_nid_postfix() == GuestEfault, "signalcontext rejects an unmapped stack pointer");
+    UserUcontext unmappedStack = context;
+    unmappedStack.mcontext.rsp = 0x10000;
+    *__error_nid_postfix() = 0;
+    Require(signalcontext_nid_postfix(&unmappedStack, 15, nullptr) == -1 && *__error_nid_postfix() == GuestEfault, "signalcontext rejects a mapped context with an inaccessible stack range");
+    Require(unmappedStack.link == context.link && unmappedStack.mcontext.rip == context.mcontext.rip, "signalcontext leaves context untouched when stack validation fails");
 
     UserUcontext signalContext = context;
     signalContext.mcontext.rsp = reinterpret_cast<std::uint64_t>(g_contextStack.bytes + StackBytes);
