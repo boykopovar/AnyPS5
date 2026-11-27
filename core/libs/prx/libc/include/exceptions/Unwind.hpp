@@ -10,6 +10,7 @@
 #include "prx/libc/include/specifics/itanium/UnwindAbi.hpp"
 
 extern "C" const std::uintptr_t* UnwindCursorSlots_nid_no_patch();
+extern "C" bool LibcUnwindHasFrame_nid_no_patch(const std::uintptr_t* registers);
 
 struct _Unwind_Context {
     const std::uintptr_t* cursor = UnwindCursorSlots_nid_no_patch();

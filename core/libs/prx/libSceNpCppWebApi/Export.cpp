@@ -295,16 +295,25 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Acti
     return HostVectorEnd(out, self, 1, sizeof(IntrusivePtr), __func__);
 }
 
+static void* ReadIntrusivePtrObject(const IntrusivePtr* self) {
+    if (!self) return nullptr;
+    IntrusivePtr copy{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, self, sizeof(copy));
+    errno = savedErrno;
+    return readable ? copy.object : nullptr;
+}
+
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEEptEv(const IntrusivePtr* self) {

@@ -1089,4 +1089,14 @@ void* APS5_VABI CRYPTO_malloc_nid_postfix(int count, const char*, int);
 void APS5_VABI CRYPTO_free_nid_postfix(void* pointer);
 int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*);
 
+void* APS5_VABI NCONF_new_nid_no_patch(const void* method);
+int APS5_VABI NCONF_load_nid_no_patch(void* conf, const char* file, long* eline);
+void APS5_VABI NCONF_free_nid_no_patch(void* conf);
+void* APS5_VABI NCONF_get_section_nid_no_patch(void* conf, const char* section);
+const char* APS5_VABI NCONF_get_string_nid_no_patch(const void* conf, const char* section, const char* name);
+int APS5_VABI sk_CONF_VALUE_num_nid_no_patch(const void* section);
+void* APS5_VABI sk_CONF_VALUE_value_nid_no_patch(const void* section, int index);
+int APS5_VABI CONF_modules_load_nid_no_patch(const void* cnf, const char* appname, std::uint64_t flags);
+int APS5_VABI CONF_module_add_nid_no_patch(const char* name, int (*init)(void*, const void*), void (*finish)(void*));
+
 }

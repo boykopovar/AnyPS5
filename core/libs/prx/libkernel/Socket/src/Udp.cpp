@@ -90,6 +90,8 @@ constexpr int GuestDontWait = 0x80;
 constexpr int GuestNoSignal = 0x20000;
 constexpr int GuestSendFlags = GuestNoSignal | GuestDontWait;
 constexpr int GuestReceiveFlags = GuestPeek | GuestWaitAll | GuestDontWait;
+constexpr int GuestKeptStatusFlags = 0x8 | 0x40 | 0x80 | 0x200 | 0x10000;
+constexpr int GuestPosixSharedMemoryFlag = 0x100;
 int NativeSendFlags(int flags) {
 #ifdef _WIN32
     static_cast<void>(flags);
@@ -142,6 +144,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     int type;
     std::mutex modeMutex;
     GuestSockets::SocketOptionState options;
+    int statusFlags = 0;
     bool receiveShut = false;
     bool sendShut = false;
     bool localAddressCleared = false;
@@ -164,6 +167,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool externalPeer = false;
     bool pairCreated = false;
     std::optional<GuestSockets::LocalCredentials> peerCredentials;
+    bool connectWait = false;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -870,12 +874,13 @@ bool PipeReadiness(int descriptor, short events, short& revents) {
     if (!QueryPipe(descriptor, "poll", access, pipe)) return false;
     if ((events & GuestPollWritable) && !(access & FILE_WRITE_DATA)) ThrowReadEndWritable(descriptor);
     const bool closed = pipe.state == PipeClosingState;
+    const bool hungUp = closed && (events & GuestPollIgnoreEof) == 0;
     revents = 0;
     if ((access & FILE_READ_DATA) && pipe.readDataAvailable > 0)
         revents = static_cast<short>(revents | (events & GuestPollReadable));
-    if ((access & FILE_WRITE_DATA) && !closed && pipe.writeQuotaAvailable >= PipeAtomicBytes)
+    if ((access & FILE_WRITE_DATA) && !hungUp && (closed || pipe.writeQuotaAvailable >= PipeAtomicBytes))
         revents = static_cast<short>(revents | (events & GuestPollWritable));
-    if (closed) revents = static_cast<short>(revents | (events & GuestPollReadable) | GuestPollHangUp);
+    if (hungUp) revents = static_cast<short>(revents | (events & GuestPollReadable) | GuestPollHangUp);
     return true;
 }
 #else
@@ -1118,7 +1123,7 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
         if (level != 0) return 22;
         const bool handledByFreeBsd = (!set && option == GuestLocalPeerCredentials) || option == GuestLocalCredentials || option == GuestLocalConnectWait;
         if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
-        return 45;
+        return set ? 42 : 45;
     }
     const bool ownProtocol = level == 17 && socket.type == 2 && socket.family == 2;
     const bool ownFamily = socket.family == 2 && level == 0;
@@ -2000,10 +2005,10 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0); // F_GETFL, O_RDWR
+    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0) | socket->statusFlags;
     if (command == 4) {
         const int flags = static_cast<int>(argument);
-        if ((flags & ~7) != 0) return Fail(45);
+        if ((flags & GuestPosixSharedMemoryFlag) != 0) return Fail(45);
 #ifdef _WIN32
         unsigned long enabled = (flags & 4) != 0;
         if (ioctlsocket(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
@@ -2012,6 +2017,7 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         if (::ioctl(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
 #endif
         socket->options.nonblocking = enabled != 0;
+        socket->statusFlags = flags & GuestKeptStatusFlags;
         return 0;
     }
     if ((command >= 7 && command <= 9) || (command >= 11 && command <= 13) || command == 15 || command == 16) return Fail(9);
@@ -2041,6 +2047,14 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->pairCreated && level == 0 && option == GuestLocalConnectWait) {
+        if (length < sizeof(int)) return Fail(22);
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, value, sizeof(enable))) return Fail(14);
+        std::lock_guard lock(socket->modeMutex);
+        socket->connectWait = enable != 0;
+        return 0;
+    }
     if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, true));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
@@ -2068,7 +2082,12 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family == GuestUnix && socket->pairCreated && level == 0 && (option == GuestLocalPeerCredentials || option == GuestLocalCredentials || option == GuestLocalConnectWait)) {
-        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, option, value, &declared);
+        bool connectWait = false;
+        {
+            std::lock_guard lock(socket->modeMutex);
+            connectWait = socket->connectWait;
+        }
+        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, connectWait, option, value, &declared);
         if (error != 0) return Fail(error);
         return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
     }
@@ -2361,6 +2380,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         {
             std::lock_guard modeLock(listener->modeMutex);
             inheritNonblocking = listener->options.nonblocking;
+            accepted->statusFlags = listener->statusFlags;
             accepted->options.noSignal = listener->options.noSignal;
             accepted->options.keptFlags = listener->options.keptFlags;
             accepted->options.sendTimeout = listener->options.sendTimeout;
@@ -3156,8 +3176,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     ReceivedRights rights;
     bool controlTruncated = false;
     bool shut = ReceiveEnded(*socket);
+    const bool emptyStream = socket->type == 1 && total == 0 && !passing;
+    if (emptyStream && !shut) {
+        if (const int error = ReceiveAnsweredHere(*socket, 0)) return Fail(error);
+    }
     std::vector<unsigned char> stamps;
-    if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
+    if (!shut && !emptyStream && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveEnded(*socket);
@@ -3410,6 +3434,46 @@ static bool SocketStillHeld(int descriptor, const void* owner) {
     throw std::runtime_error("poll: unsupported event flags " + std::to_string(events) + " on " + kind);
 }
 
+static bool PollDataQueued(std::uintptr_t value, bool pipe, short host, int lowWater) {
+    const auto descriptor = static_cast<NativeSocket>(value);
+#ifndef _WIN32
+    int queued = 0;
+    if (pipe) {
+        const int flags = ::fcntl(descriptor, F_GETFL);
+        if (flags < 0) throw std::runtime_error("poll: querying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(errno));
+        if ((flags & O_ACCMODE) == O_WRONLY) return false;
+        if (::ioctl(descriptor, FIONREAD, &queued) != 0) throw std::runtime_error("poll: querying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(errno));
+        return queued > 0;
+    }
+#endif
+    bool listening = false;
+    if (GuestSockets::NativeListening(value, listening) && listening) return true;
+    int type = 0;
+#ifdef _WIN32
+    static_cast<void>(pipe);
+    int length = sizeof(type);
+    unsigned long queued = 0;
+    if (::getsockopt(descriptor, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &length) != 0 || ::ioctlsocket(descriptor, FIONREAD, &queued) != 0)
+#else
+    socklen_t length = sizeof(type);
+    if (::getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &type, &length) != 0 || ::ioctl(descriptor, FIONREAD, &queued) != 0)
+#endif
+        throw std::runtime_error("poll: querying the receive buffer of a socket failed, errno " + std::to_string(NativeError()));
+    if (type == SOCK_DGRAM) return (host & (NativePollIn | POLLRDNORM)) != 0;
+    return queued >= static_cast<decltype(queued)>(type == SOCK_STREAM ? lowWater : 1);
+}
+
+#ifdef __APPLE__
+static bool SocketErrorPending(NativeSocket descriptor) {
+    char probe = 0;
+    ssize_t received = 0;
+    do {
+        received = ::recv(descriptor, &probe, sizeof(probe), MSG_PEEK | MSG_DONTWAIT);
+    } while (received < 0 && errno == EINTR);
+    return received < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != ENOTCONN;
+}
+#endif
+
 static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
     if (timeout < -1) return Fail(22);
     if (count && !descriptors) return Fail(14);
@@ -3430,7 +3494,6 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         std::shared_ptr<void> owner;
         std::uintptr_t value = 0;
         if (auto socket = Find(entry.descriptor)) {
-            if ((entry.events & GuestPollIgnoreEof) != 0) UnsupportedPollEvents(entry.events, "a socket");
             value = static_cast<std::uintptr_t>(socket->value);
             if (entry.events & GuestPollReadable) readers.push_back(entry.descriptor);
             guestSockets.emplace_back(native.size(), socket);
@@ -3478,12 +3541,10 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
                 }
                 throw std::runtime_error("poll: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file, a directory nor a kqueue");
             }
-            if ((entry.events & GuestPollIgnoreEof) != 0) UnsupportedPollEvents(entry.events, "a pipe");
             pipes.push_back(i);
             continue;
         } else {
             if (entry.events & GuestPollReadable) readers.push_back(entry.descriptor);
-            if ((entry.events & GuestPollIgnoreEof) != 0) UnsupportedPollEvents(entry.events, "a socket");
             forwardedSockets.push_back(native.size());
         }
         NativePollDescriptor request{};
@@ -3524,12 +3585,16 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         native.push_back(request);
     }
     std::vector<short> shutAt(watched, 0);
+    std::vector<Socket*> guestAt(watched, nullptr);
+    for (const auto& [index, socket] : guestSockets) guestAt[index] = socket.get();
     const auto refreshShut = [&] {
         int shut = 0;
         const auto refresh = [&](std::size_t index, bool receiveShut, bool sendShut) {
-            const short readable = receiveShut ? static_cast<short>(descriptors[owners[index]].events & GuestPollReadable) : short{0};
+            const short events = descriptors[owners[index]].events;
+            const short readable = receiveShut ? static_cast<short>(events & GuestPollReadable) : short{0};
             const short hangUp = receiveShut && sendShut ? GuestPollHangUp : short{0};
-            shutAt[index] = static_cast<short>(readable | hangUp);
+            if (events & GuestPollIgnoreEof) shutAt[index] = hangUp ? static_cast<short>(events & GuestPollWritable) : short{0};
+            else shutAt[index] = static_cast<short>(readable | hangUp);
             if (shutAt[index]) ++shut;
         };
         for (const auto& [index, socket] : guestSockets) {
@@ -3554,12 +3619,14 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         }
         return shut;
     };
+    bool readinessDropped = false;
     const auto collect = [&](std::size_t i, bool pipe) {
         auto& entry = descriptors[owners[i]];
         if (entry.revents == GuestPollInvalid) {
             ++ready;
             return;
         }
+        const short host = native[i].revents;
 #if defined(_WIN32) || defined(__APPLE__)
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
@@ -3572,7 +3639,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
                 entry.revents = static_cast<short>(entry.revents | flag.guest);
         for (const auto& flag : StatusFlags)
             if (revents & flag.native) entry.revents = static_cast<short>(entry.revents | flag.guest);
-        const auto socket = pipe ? nullptr : Find(entry.descriptor);
+        Socket* const socket = pipe ? nullptr : guestAt[i];
         const bool stream = socket && socket->type == 1;
         if ((pipe || stream) && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
         if ((pipe || stream) && (entry.revents & GuestPollHangUp))
@@ -3583,6 +3650,31 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
 #else
         if (shutAt[i] & GuestPollHangUp) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
 #endif
+        if ((entry.events & GuestPollIgnoreEof) && entry.revents) {
+            if (entry.revents & GuestPollHangUp)
+                entry.revents = static_cast<short>((entry.revents & ~GuestPollHangUp) | (entry.events & GuestPollWritable));
+            const bool receiveShut = !pipe && (entry.revents & GuestPollReadable) && (socket ? ReceiveEnded(*socket)
+                : (static_cast<const KernelSocketPoll::NativeOwner*>(held[i].get())->shutdownFlags.load() & KernelSocketPoll::ReceiveShut) != 0);
+#ifdef _WIN32
+            const bool errorPending = (host & POLLERR) != 0 && !receiveShut;
+#elif defined(__APPLE__)
+            const bool errorPending = !pipe && (entry.revents & GuestPollReadable) && ((host & POLLERR) != 0 || SocketErrorPending(native[i].fd));
+#else
+            const bool errorPending = !pipe && (host & POLLERR) != 0;
+#endif
+            if ((entry.revents & GuestPollReadable) && !errorPending) {
+                int lowWater = 1;
+                if (socket) {
+                    std::lock_guard lock(socket->modeMutex);
+                    lowWater = std::max(1, socket->options.receiveLowWater);
+                }
+                if (!receiveShut && lowWater > 1 && socket->type != 1 && !Listening(*socket))
+                    NotImplemented_nid_no_patch("poll: POLLINIGNEOF on a datagram or sequenced-packet socket whose SO_RCVLOWAT is above 1");
+                if (receiveShut || !PollDataQueued(static_cast<std::uintptr_t>(native[i].fd), pipe, host, lowWater))
+                    entry.revents = static_cast<short>(entry.revents & ~GuestPollReadable);
+            }
+            if (!entry.revents) readinessDropped = true;
+        }
         if (entry.revents) ++ready;
     };
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout < 0 ? 0 : timeout);
@@ -3680,12 +3772,16 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         const bool expired = timeout >= 0 && std::chrono::steady_clock::now() >= deadline;
         if (ready || checkedReady || urgent || socketReady || shutReady || expired || closed || (!sliced && !woken)) {
             ready += checkedReady;
+            readinessDropped = false;
 #ifdef _WIN32
             for (std::size_t i = 0; i < watched; ++i) collect(i, false);
 #else
             for (std::size_t i = 0; i < watched; ++i) collect(i, i >= socketCount);
 #endif
-            return ready;
+            if (ready || !readinessDropped || expired) return ready;
+            for (std::size_t i = 0; i < watched; ++i) descriptors[owners[i]].revents = 0;
+            const auto wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(step);
+            PreciseSleepUntil(timeout < 0 ? wake : std::min(deadline, wake));
         }
     }
 }
