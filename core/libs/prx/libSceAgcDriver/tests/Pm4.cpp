@@ -176,6 +176,7 @@ void testRegisters() {
     execute(state, makePacket(0x69, {0xffffffffu, 52, 53}));
     check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "a direct register packet with the 0xffffffff sentinel wrote a register");
     execute(state, makePacket(0x68, {0x102, 50, 51}));
+    AgcDriver::Pm4::Validate(makePacket(0x68, {0x102, 50, 51}, 4), 0);
     check(state.config.at(0x102) == 50 && state.config.at(0x103) == 51, "config registers not sequential");
     execute(state, makePacket(0x68, {0xffffffffu, 52, 53}));
     check(state.config.at(0x102) == 50 && state.config.at(0x103) == 51, "a config register packet with the 0xffffffff sentinel wrote a register");
@@ -323,6 +324,7 @@ void testContextAndBases() {
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x26, {0x1000, 0x10000}), 0); }, "unsupported index base alignment or address bits");
     execute(state, makePacket(0x13, {32}));
     execute(state, makePacket(0x26, {0x1000, 1}));
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x2a, {4}), 0); }, "unsupported index-type swap mode");
     execute(state, makePacket(0x2a, {1}));
     execute(state, makePacket(0x2f, {3}));
     check(state.indexBufferSize == 32 && state.indexBase == 0x100001000ull && state.indexType == 1 && state.instanceCount == 3, "draw setup state lost");

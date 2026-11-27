@@ -366,7 +366,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     // Header bit 1 selects the compute shader type and bit 2 (register writes) resets the filter CAM;
     // neither changes what the packet writes.
     const auto flags = header & 0xffu;
-    const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a || (opcode == 0x37 && ((packet[1] >> 8u) & 0xfu) == 0);
+    const bool registerWrite = opcode == 0x68 || opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a || (opcode == 0x37 && ((packet[1] >> 8u) & 0xfu) == 0);
     auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
     if (opcode != 0x20 && opcode != 0x22) allowedFlags |= 1u;
     if (queue != 0 && ShaderRecompiler::GcnGuestShaders()) allowedFlags |= 2u;
@@ -407,7 +407,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet[4] <= packet[1], "index count exceeds maximum index size");
             require((packet[5] & ~0x20u) == 0, "unsupported indexed draw flags");
             break;
-        case 0x2a: graphics(); size(2); break;
+        case 0x2a: graphics(); size(2); require((packet[1] & 0xcu) == 0, "unsupported index-type swap mode"); break;
         case 0x91:
             graphics();
             size(4);

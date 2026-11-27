@@ -18,7 +18,7 @@
 
 - [SET_CONFIG_REG](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - config register writes validate like the other register packets and are recorded in a config bank without interpretation; reads of config registers still throw as outside the modeled banks. Heretic + Hexen (CUSA51664) writes 0 to config register 0x8102 twice per submission and never reads it back; what that register selects is unmeasured, as is whether config writes may appear on compute queues (they are refused there). Closes when: the written registers' effects are measured.
 
-- [INDEX_TYPE modifiers](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - the packet's low two bits select the index type, as the uconfig index-type path and shadPS4's decode do; the other bits are ignored. Heretic + Hexen (CUSA51664) sends 0x400 (16-bit with bit 10 set); what that bit selects is unmeasured. Closes when: the modifier bits are measured.
+- [INDEX_TYPE modifiers](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - the packet's low two bits select the index type, as the uconfig index-type path and shadPS4's decode do; the byte-swap bits 3:2 are rejected, and other high bits are ignored. Heretic + Hexen (CUSA51664) sends 0x400 (16-bit with bit 10 set); what that bit selects is unmeasured. Closes when: the modifier bits are measured.
 
 # libSceNpToolkit
 
@@ -42,7 +42,7 @@
 
 - [PS4 voice event 0](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - the PS4 library ignores a voice event id of 0, which Heretic + Hexen (CUSA51664) sends to an empty mastering voice during setup; the native library still throws. Whether the console ignores 0 in other voice states, and whether it answers an error instead, is unmeasured. Closes when: measured on a console.
 
-- [PS4 combined voice events](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - the PS4 library applies each known event bit in ascending numeric order, returning `0x804A8351` before any state change when the PLAY bit is present without channels, as Heretic + Hexen (CUSA51664) sends PLAY|STOP to an empty sampler voice; the native library still throws. Whether the console accepts combined bits, and the bit order, are unmeasured. Closes when: measured on a console.
+- [PS4 combined voice events](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - the PS4 library applies each known event bit in ascending numeric order, returning `0x804A8351` before any state change when the PLAY bit is present without channels, as Heretic + Hexen (CUSA51664) sends PLAY|STOP to an empty sampler voice; the native library still throws. Deferred masks publish KILL-then-PLAY pending bookkeeping to match that order. Whether the console accepts combined bits, and the bit order, are unmeasured. Closes when: measured on a console.
 
 - [PS4 sampler voice state](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - the PS4 library answers the 48-byte sampler state without the 4-byte error code, translating flags, heights, decoded counts, user data and waveform pointer, as Heretic + Hexen (CUSA51664) polls it; other sizes still require the PS5 56-byte form. Whether the console's 48-byte layout matches this translation is unmeasured. Closes when: measured on a console.
 

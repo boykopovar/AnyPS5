@@ -239,7 +239,13 @@ static void ValidateDeferredEvent(const Ngs2Voice& voice, std::uint32_t event) {
 static void PublishPendingEvent(Ngs2Voice& voice, const Ngs2PendingControl& control) {
     const auto* event = std::get_if<std::uint32_t>(&control);
     if (event == nullptr) return;
-    if (*event == SCE_NGS2_VOICE_EVENT_PLAY) {
+    if (PS4_LIBRARY && (*event & SCE_NGS2_VOICE_EVENT_KILL) != 0) {
+        voice.pendingPlay = false;
+        if (!voice.IsMastering()) voice.KillForRender(true);
+    } else if (PS4_LIBRARY && (*event & SCE_NGS2_VOICE_EVENT_PLAY) != 0) {
+        voice.pendingPlay = true;
+        if (Ngs2HasPitchShift(voice)) voice.KillForRender(false);
+    } else if (*event == SCE_NGS2_VOICE_EVENT_PLAY) {
         voice.pendingPlay = true;
         if (Ngs2HasPitchShift(voice)) voice.KillForRender(false);
     } else if (*event == SCE_NGS2_VOICE_EVENT_KILL) {
