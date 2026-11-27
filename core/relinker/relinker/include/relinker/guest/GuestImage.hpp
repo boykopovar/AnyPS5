@@ -81,6 +81,11 @@ struct GuestArtifact {
     std::vector<std::string> NeededLibraries;
 };
 
+struct GuestModuleBuild {
+    std::vector<GuestArtifact> Artifacts;
+    std::uint64_t RequiredHostCpuFeatures = 0;
+};
+
 struct GuestModuleInput {
     std::filesystem::path Path;
     std::vector<std::uint8_t> Bytes;
@@ -97,7 +102,7 @@ std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& module
 
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, Codegen::Amd64OnlyTarget target, ISyscallScanner& syscallScanner, bool lazyBinding, bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, bool functionSymbolRoots = false) const;
+    GuestModuleBuild Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, Codegen::Amd64OnlyTarget target, ISyscallScanner& syscallScanner, bool lazyBinding, bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, bool functionSymbolRoots = false) const;
 };
 
 }

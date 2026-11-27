@@ -361,8 +361,10 @@ void targetSelection() {
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
     const auto avx = parse({"--macos", "--to-avx", "input.elf", "output.elf"});
     require(avx.toMacos && avx.toAvx && avx.toIntel && !avx.toRosetta, "--to-avx did not imply --to-intel on macOS");
-    expectThrows({"--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
-    expectThrows({"--windows", "--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
+    const auto avxLinux = parse({"--to-avx", "input.elf", "output.elf"});
+    require(avxLinux.toAvx && avxLinux.toIntel && !avxLinux.toMacos && !avxLinux.toWindows, "--to-avx did not select Linux output");
+    const auto avxWindows = parse({"--windows", "--to-avx", "input.elf", "output.elf"});
+    require(avxWindows.toWindows && avxWindows.toAvx && avxWindows.toIntel, "--to-avx was rejected with --windows");
 }
 
 void patchOptions() {

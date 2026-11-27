@@ -43,7 +43,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     static_assert(std::endian::native == std::endian::little);
     if (options.Target != TargetSystem::Linux && options.Target != TargetSystem::Windows && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("Unknown target system");
     if (options.ToRosetta && (!options.ToIntel || options.Target == TargetSystem::Windows)) throw Domain::RelinkerException("Rosetta conversion requires Intel lowering and a non-Windows target");
-    if (options.ToAvx && (!options.ToIntel || options.Target != TargetSystem::MacOs)) throw Domain::RelinkerException("AVX conversion requires Intel lowering and a macOS target: only the macOS runtime skips the host CPU check");
+    if (options.ToAvx && !options.ToIntel) throw Domain::RelinkerException("AVX conversion requires Intel lowering");
     if (options.UnusedFilterLevel > 2) throw Domain::RelinkerException("Unused NID filter level must be 0, 1 or 2");
     if (options.FrameRedZone && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Red-zone framing requires a Windows target: only Windows exception dispatch writes below RSP");
     if (input.InputPath.empty() || input.OutputPath.empty()) throw Domain::RelinkerException("Input and output names are required");
@@ -70,9 +70,11 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         }
     }
     std::vector<Codegen::TrampolineSite> trampolines;
+    std::uint64_t executableHostCpuFeatures = 0;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
         auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); }, options.Target == TargetSystem::MacOs)->Convert(std::move(sourceBytes), segments);
+        executableHostCpuFeatures = converted.RequiredHostCpuFeatures;
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
@@ -148,8 +150,11 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     }
 
     std::vector<Relinker::GuestArtifact> guestArtifacts;
+    std::uint64_t requiredHostCpuFeatures = executableHostCpuFeatures;
     if (!input.Modules.empty()) {
-        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.FunctionSymbolRoots);
+        auto moduleBuild = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.FunctionSymbolRoots);
+        guestArtifacts = std::move(moduleBuild.Artifacts);
+        requiredHostCpuFeatures |= moduleBuild.RequiredHostCpuFeatures;
     }
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
@@ -186,7 +191,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             for (auto& patch : appliedPatches)
                 if (patch.Target == options.TargetName) patch.OutputRva = image.GetRva(patch.VirtualAddress);
         }
-        executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines);
+        executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines, options.ToAvx && !macos ? std::optional<std::uint64_t>(requiredHostCpuFeatures) : std::nullopt);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);
         throw;

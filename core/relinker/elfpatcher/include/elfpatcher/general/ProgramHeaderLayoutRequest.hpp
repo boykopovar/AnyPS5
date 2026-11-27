@@ -3,6 +3,7 @@
 
 #include <domain/Types.hpp>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace Elfpatcher {
@@ -20,6 +21,7 @@ namespace Elfpatcher {
         std::uint64_t InterpOffset;
         std::uint64_t InterpSize;
         std::uint64_t MovedLoadAlignment;
+        std::optional<std::uint64_t> HostCpuRecordVaddr;
     };
 
 }

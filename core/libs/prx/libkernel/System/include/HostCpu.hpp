@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_SYSTEM_HOSTCPU_HPP
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,8 +11,11 @@ struct HostCpuRegisters {
     std::uint32_t Leaf1Edx = 0;
     std::uint32_t Leaf7Ebx = 0;
     std::uint32_t Leaf7Ecx = 0;
+    std::uint32_t Leaf7Sub1Eax = 0;
+    std::uint32_t Leaf7Sub1Edx = 0;
     std::uint32_t LeafDSub1Eax = 0;
     std::uint32_t Leaf80000001Ecx = 0;
+    std::uint32_t Leaf80000001Edx = 0;
     std::uint32_t Leaf80000008Ebx = 0;
     std::uint64_t Xcr0 = 0;
 };
@@ -36,8 +40,8 @@ HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* register
 
 HostCpuRegisters ReadHostCpuRegisters();
 std::string HostCpuModel();
-std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers);
-std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers);
-void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model);
+std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers, std::optional<std::uint64_t> recorded = std::nullopt);
+std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers, std::optional<std::uint64_t> recorded = std::nullopt);
+void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model, std::optional<std::uint64_t> recorded = std::nullopt);
 
 #endif

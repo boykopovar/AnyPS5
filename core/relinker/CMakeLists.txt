@@ -65,6 +65,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/HostCpuFeatureClassifier.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -98,6 +99,7 @@ target_include_directories(relinker_core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/include
 )
 
 target_compile_features(relinker_core PUBLIC cxx_std_20)
@@ -181,6 +183,11 @@ if(BUILD_TESTING)
     target_link_libraries(mulx_lowering_tests PRIVATE relinker_core)
     add_test(NAME mulx_lowering COMMAND mulx_lowering_tests)
     set_tests_properties(mulx_lowering PROPERTIES TIMEOUT 20)
+
+    add_test_executable(host_cpu_feature_classifier_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/HostCpuFeatureClassifierTests.cpp)
+    target_link_libraries(host_cpu_feature_classifier_tests PRIVATE relinker_core)
+    add_test(NAME host_cpu_feature_classifier COMMAND host_cpu_feature_classifier_tests)
+    set_tests_properties(host_cpu_feature_classifier PROPERTIES TIMEOUT 20)
 
     add_test_executable(relinker_conversion_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ConversionTests.cpp)
     target_link_libraries(relinker_conversion_tests PRIVATE relinker_core)
@@ -351,8 +358,9 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/HostCpuFeatureClassifier.cpp
     )
-    target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
+    target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
     if(BUILD_TESTING)
         set_target_properties(amd64_only_windows_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
         add_test(NAME amd64_only_windows COMMAND amd64_only_windows_tests)
@@ -489,6 +497,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
         ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/include
     )
     add_test(NAME program_layout_ranges COMMAND program_layout_ranges_tests)
     add_test_executable(windows_load_image_relocation_tests
@@ -650,6 +659,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
         ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/include
     )
     add_test(NAME linux_load_pages COMMAND linux_load_pages_tests)
     set_tests_properties(linux_load_pages PROPERTIES TIMEOUT 20)
@@ -688,6 +698,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/HostCpuFeatureClassifier.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
@@ -704,6 +715,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
         ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/include
     )
     if(APPLE AND (CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" OR (NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")))
         target_link_options(amd64_only_converter_tests PRIVATE "LINKER:-pagezero_size,0x10000")
@@ -1099,6 +1111,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_elf_header.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_process_parameters COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_process_parameters.py $<TARGET_FILE:relinker>)
+        add_test(NAME host_cpu_record COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_hostcpu_record.py $<TARGET_FILE:relinker>)
         add_test(NAME weak_imports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_weak_imports.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_guest_weak_imports COMMAND ${Python3_EXECUTABLE}

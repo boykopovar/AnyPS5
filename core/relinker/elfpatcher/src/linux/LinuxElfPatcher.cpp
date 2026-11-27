@@ -1,6 +1,7 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <HostCpuFeatures.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
@@ -430,7 +431,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::string& runPath,
     const bool lazyBinding,
     const bool dependencyDiagnostics,
-    const std::vector<Codegen::TrampolineSite>& trampolines)
+    const std::vector<Codegen::TrampolineSite>& trampolines,
+    const std::optional<std::uint64_t> hostCpuFeatures)
 {
     const auto dynSection = ImportsByNid(sourceDynSection);
     if (runPath.empty() || runPath.front() == ':' || runPath.back() == ':' || runPath.find("::") != std::string::npos)
@@ -490,6 +492,14 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
             throw Domain::RelinkerException("Extra block member offset lies before the extra block");
         return extraBlockVaddr + (fileOffset - extraBlockOff);
     };
+
+    std::optional<std::uint64_t> hostCpuRecordVaddr;
+    if (hostCpuFeatures) {
+        alignBuf(buf, 8);
+        hostCpuRecordVaddr = vaddrOfExtraBlockOffset(static_cast<std::uint64_t>(buf.size()));
+        Io::AppendU64(buf, HostCpuFeatureBits::RecordMagic);
+        Io::AppendU64(buf, *hostCpuFeatures);
+    }
 
     const auto& neededLibraries = dynSection.NeededLibraries;
     const bool mainStackEntry = std::find(neededLibraries.begin(), neededLibraries.end(), kGuestMainStackEntryLibrary) != neededLibraries.end();
@@ -787,10 +797,13 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
     std::uint64_t tableOff = phOff;
     std::uint16_t tableSlots = phNum;
-    if (const auto required = _programHeaderLayoutBuilder->RequiredProgramHeaderCount(originalHeaders); required > phNum && required <= std::numeric_limits<std::uint16_t>::max()) {
+    const auto requiredHeaders = _programHeaderLayoutBuilder->RequiredProgramHeaderCount(originalHeaders) + (hostCpuRecordVaddr ? 1u : 0u);
+    if (requiredHeaders > std::numeric_limits<std::uint16_t>::max())
+        throw Domain::RelinkerException("Not enough program header slots for the host CPU feature record");
+    if (const auto required = static_cast<std::uint16_t>(requiredHeaders); required > phNum) {
         alignBuf(buf, kPhdrHeaderAlignment);
         tableOff = static_cast<std::uint64_t>(buf.size());
-        tableSlots = static_cast<std::uint16_t>(required);
+        tableSlots = required;
         buf.resize(buf.size() + required * phEntSize);
         _byteWriter->WriteU64(buf, kEhdrPhOffOffset, tableOff);
     }
@@ -817,6 +830,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.InterpOffset = interpOff;
     layoutRequest.InterpSize = interpSize;
     layoutRequest.MovedLoadAlignment = movedLoadAlignment;
+    layoutRequest.HostCpuRecordVaddr = hostCpuRecordVaddr;
 
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);
     _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);

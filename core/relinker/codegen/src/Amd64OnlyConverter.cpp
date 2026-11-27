@@ -7,6 +7,7 @@
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <codegen/x86/HostCpuFeatureClassifier.hpp>
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -387,6 +388,9 @@ void Amd64OnlyConverter::_convertSegment(
 
     const auto scanner = MakeInstructionScanner([&](auto offset, auto) { if (progress) progress(completed + offset, total); });
     const auto matches = _atFileOffset(ph.Offset, [&] { return scanner->ScanCodeSection(seg, 0, seg.size()); });
+    std::vector<std::uint64_t> instructionFeatures(matches.size(), 0);
+    for (std::size_t index = 0; index < matches.size(); ++index)
+        instructionFeatures[index] = RequiredHostCpuFeatures(seg.data() + matches[index].Offset, matches[index].Length);
 
     if (progress) progress(completed + segSize, total);
     std::vector<Pending> pending;
@@ -402,6 +406,8 @@ void Amd64OnlyConverter::_convertSegment(
     if (progress) progress(completed + std::uint64_t{2} * segSize, total);
     if (pending.empty()) {
         if (progress) progress(completed + std::uint64_t{3} * segSize, total);
+        for (const auto features : instructionFeatures)
+            result.RequiredHostCpuFeatures |= features;
         return;
     }
 
@@ -415,6 +421,7 @@ void Amd64OnlyConverter::_convertSegment(
         pendingIndices.insert(item.Index);
     std::set<std::size_t> claimed;
     std::set<std::size_t> consumed;
+    std::set<std::size_t> lowered;
 
     std::size_t processed = 0;
     for (const auto& item : pending) {
@@ -434,6 +441,7 @@ void Amd64OnlyConverter::_convertSegment(
                 throw CodegenException("Intel substitution changes the instruction length", fileOffset);
             std::copy(substitution.ReplacementBytes.begin(), substitution.ReplacementBytes.end(), seg.begin() + static_cast<std::ptrdiff_t>(match.Offset));
             replacementLength = substitution.ReplacementBytes.size();
+            lowered.insert(item.Index);
             ++result.ReplacedCount;
             break;
         }
@@ -449,6 +457,8 @@ void Amd64OnlyConverter::_convertSegment(
                     result.Trampolines.push_back(std::move(site));
                 claimed.insert(placement->Claimed.begin(), placement->Claimed.end());
                 consumed.insert(placement->Consumed.begin(), placement->Consumed.end());
+                lowered.insert(item.Index);
+                lowered.insert(placement->Consumed.begin(), placement->Consumed.end());
                 replacementLength = placement->ReplacementLength;
                 break;
             }
@@ -500,6 +510,8 @@ void Amd64OnlyConverter::_convertSegment(
                 });
                 replacementLength = stub.StubBody.size();
                 consumed.insert(taken.begin(), taken.end());
+                lowered.insert(item.Index);
+                lowered.insert(taken.begin(), taken.end());
                 for (auto k = item.Index; k < matches.size() && matches[k].Offset < match.Offset + siteLength; ++k)
                     claimed.insert(k);
             } catch (const CodegenException&) {
@@ -521,6 +533,10 @@ void Amd64OnlyConverter::_convertSegment(
 
     if (seg.size() != segSize)
         throw CodegenException("Code segment size changed during Intel conversion", ph.Offset);
+    for (std::size_t index = 0; index < matches.size(); ++index) {
+        if (lowered.contains(index)) continue;
+        result.RequiredHostCpuFeatures |= instructionFeatures[index];
+    }
     std::copy(seg.begin(), seg.end(), fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset));
     if (progress) progress(completed + std::uint64_t{3} * segSize, total);
 }

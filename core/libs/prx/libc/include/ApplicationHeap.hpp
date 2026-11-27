@@ -4,11 +4,14 @@
 #include <cstdint>
 #include <cstring>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 
 extern "C" {
 
 const void* ApplicationProcessParameters_nid_no_patch();
 const void* ApplicationEmptyProcessParameters_nid_no_patch();
+std::optional<std::uint64_t> ApplicationHostCpuFeatures_nid_no_patch();
 bool ApplicationGuestHeapApi_nid_no_patch(void** api);
 void ApplicationHeapInitialize_nid_no_patch(const void* processParameters);
 void ApplicationHeapEnsureInitialized_nid_no_patch();

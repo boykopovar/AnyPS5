@@ -24,7 +24,8 @@ const char* Usage() {
            "  --to-intel                     Convert supported AMD-only instructions for Intel CPUs.\n"
            "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
            "  --to-avx                       Convert as --to-intel and lower BMI1, BMI2, LZCNT, MOVBE, CLWB and RDPID for\n"
-           "                                 CPUs with AVX but without AVX2. Implies --to-intel. Requires --macos.\n"
+           "                                 CPUs with AVX but without AVX2. Implies --to-intel. Linux and Windows\n"
+           "                                 output record the extensions it still needs.\n"
            "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
            "  --omit-unavailable-dependencies Linux: leave out a module dependency that no module provides, no import uses\n"
@@ -260,8 +261,6 @@ Args ParseArgs(int argc, char* argv[]) {
         throw std::runtime_error("--windows conflicts with --macos");
     if (args.toRosetta && args.toWindows)
         throw std::runtime_error("--to-rosetta conflicts with --windows");
-    if (args.toAvx && !args.toMacos)
-        throw std::runtime_error("--to-avx requires --macos");
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
     if (args.frameRedZone && !args.toWindows)

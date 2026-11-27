@@ -1,5 +1,6 @@
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/CodegenException.hpp>
+#include <HostCpuFeatures.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/x86/Sse4aLowering.hpp>
 #include <codegen/x86/Sse4aOperands.hpp>
@@ -583,6 +584,21 @@ void converterSegment() {
     require(shortSite.Offset == 0x20F && shortSite.Length == 5 && shortSite.OriginalBytes == shortOriginal, "Short EXTRQ site did not absorb the following instruction");
     require(shortSite.Body[shortSite.ReturnBranchOffset - 1] == 0x90 && shortSite.Body[shortSite.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     requireFailure([&] { (void)converter->Convert(file, {segmentHeader(0x200)}); }, "Segment exceeding the file was accepted");
+}
+
+void converterHostCpuFeatures() {
+    const Bytes text = {0xF3, 0x0F, 0xBD, 0xC1, 0xC5, 0xF5, 0xFE, 0xC2, 0xC4, 0xE2, 0x71, 0x98, 0xC1, 0xC3};
+    Bytes file(0x300, 0xCC);
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto intel = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Intel)->Convert(file, {segmentHeader(text.size())});
+    require(intel.RequiredHostCpuFeatures == (HostCpuFeatureBits::Lzcnt | HostCpuFeatureBits::Avx2 | HostCpuFeatureBits::Fma), "An Intel conversion did not record every retained extension");
+    const Bytes avxText = {0xC5, 0xF5, 0xFE, 0xC2, 0xC4, 0xE2, 0x71, 0x98, 0xC1, 0xC3};
+    Bytes avxFile(0x300, 0xCC);
+    std::copy(avxText.begin(), avxText.end(), avxFile.begin() + 0x200);
+    const auto avx = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Avx)->Convert(avxFile, {segmentHeader(avxText.size())});
+    require(avx.RequiredHostCpuFeatures == HostCpuFeatureBits::Fma, "An AVX conversion kept a lowered extension or dropped a retained one");
+    const auto untouched = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Avx)->Convert(Bytes(0x300, 0x90), {segmentHeader(0x100)});
+    require(untouched.RequiredHostCpuFeatures == 0, "A segment without extensions recorded one");
 }
 
 void converterSegmentMappedAtInt64Max() {
@@ -2709,6 +2725,7 @@ int main() {
         rdpruExecution();
         mcommitExecution();
         converterSegment();
+        converterHostCpuFeatures();
         converterSegmentMappedAtInt64Max();
         converterRipRelativeFollower();
         converterSha256();
