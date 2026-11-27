@@ -19,7 +19,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <windows.h>
-#include <psapi.h>
+#include <winternl.h>
 #elif defined(__APPLE__)
 #include <dlfcn.h>
 #include <mach-o/getsect.h>
@@ -42,6 +42,22 @@ std::mutex unwindImagesMutex;
 std::unordered_map<std::uintptr_t, UnwindImage>& UnwindImages() {
   static auto& images = *new std::unordered_map<std::uintptr_t, UnwindImage>();
   return images;
+}
+
+std::string MappedFileName(const void* address) {
+  using QueryFunction = LONG(NTAPI*)(HANDLE, PVOID, int, PVOID, SIZE_T, SIZE_T*);
+  static const auto query = reinterpret_cast<QueryFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryVirtualMemory")));
+  if (query == nullptr) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: ntdll.dll has no NtQueryVirtualMemory");
+  constexpr int memoryMappedFilenameInformation = 2;
+  std::vector<std::uint64_t> buffer((sizeof(UNICODE_STRING) + 32768 * sizeof(wchar_t)) / sizeof(std::uint64_t) + 1);
+  if (query(GetCurrentProcess(), const_cast<void*>(address), memoryMappedFilenameInformation, buffer.data(), buffer.size() * sizeof(std::uint64_t), nullptr) < 0) return {};
+  const auto* name = reinterpret_cast<const UNICODE_STRING*>(buffer.data());
+  const int characters = name->Length / sizeof(wchar_t);
+  if (characters == 0) return {};
+  const int bytes = WideCharToMultiByte(CP_ACP, 0, name->Buffer, characters, nullptr, 0, nullptr, nullptr);
+  std::string result(static_cast<std::size_t>(bytes), '\0');
+  if (bytes == 0 || WideCharToMultiByte(CP_ACP, 0, name->Buffer, characters, result.data(), bytes, nullptr, nullptr) != bytes) return {};
+  return result;
 }
 
 void WriteUnwindInfo(const UnwindImage& image, const std::uint8_t* base, ModuleInfoForUnwind* info) {
@@ -74,9 +90,7 @@ void FillUnwindImage(void* allocationBase, ModuleInfoForUnwind* info) {
   UnwindImage fresh;
   fresh.size = nt->OptionalHeader.SizeOfImage;
   fresh.hasTables = EhFrame::ReadEhmeta(key, *nt, "sceKernelGetModuleInfoForUnwind", fresh.tables);
-  char path[4096] = {};
-  const DWORD length = GetMappedFileNameA(GetCurrentProcess(), allocationBase, path, sizeof(path) - 1);
-  fresh.name.assign(path, length);
+  fresh.name = MappedFileName(allocationBase);
   std::lock_guard lock(unwindImagesMutex);
   const auto& image = UnwindImages().insert_or_assign(key, std::move(fresh)).first->second;
   WriteUnwindInfo(image, base, info);
@@ -199,10 +213,7 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
     FillUnwindImage(mbi.AllocationBase, info);
     return 0;
   }
-  char path[4096] = {};
-  const DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.BaseAddress, path, sizeof(path) - 1);
-  path[len] = '\0';
-  std::strncpy(info->name, path, sizeof(info->name) - 1);
+  std::strncpy(info->name, MappedFileName(mbi.BaseAddress).c_str(), sizeof(info->name) - 1);
   info->name[sizeof(info->name) - 1] = '\0';
   return 0;
 #elif defined(__APPLE__)
