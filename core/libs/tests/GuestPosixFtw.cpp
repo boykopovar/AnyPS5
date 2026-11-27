@@ -14,8 +14,12 @@
 #include <random>
 #include <source_location>
 #include <string>
+#include <utility>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <aclapi.h>
+#include <windows.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -23,11 +27,13 @@ namespace {
 
 constexpr int FtwF = 0;
 constexpr int FtwD = 1;
+constexpr int FtwDnr = 2;
 constexpr int FtwNs = 4;
 constexpr int GuestEinval = 22;
 
 std::map<std::string, int> g_types;
 std::vector<std::string> g_order;
+std::vector<std::pair<std::string, int>> g_visits;
 int g_stopAt = 0;
 int g_stopReturn = 0;
 int g_calls = 0;
@@ -42,10 +48,41 @@ void Require(bool condition, std::source_location location = std::source_locatio
 int APS5_VABI Recorder(const char* path, const void*, int type) {
     g_types[path] = type;
     g_order.push_back(path);
+    g_visits.emplace_back(path, type);
     ++g_calls;
     if (g_stopAt != 0 && g_calls == g_stopAt) return g_stopReturn;
     return 0;
 }
+
+#ifdef _WIN32
+PACL DenyListing(const std::wstring& directory, PSECURITY_DESCRIPTOR& owner) {
+    HANDLE token = nullptr;
+    Require(::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token) != FALSE);
+    DWORD size = 0;
+    ::GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<unsigned char> user(size);
+    const BOOL queried = ::GetTokenInformation(token, TokenUser, user.data(), size, &size);
+    ::CloseHandle(token);
+    Require(queried != FALSE);
+    PACL original = nullptr;
+    Require(::GetNamedSecurityInfoW(directory.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+        nullptr, nullptr, &original, nullptr, &owner) == ERROR_SUCCESS);
+    _EXPLICIT_ACCESS_W denied{};
+    denied.grfAccessPermissions = FILE_LIST_DIRECTORY;
+    denied.grfAccessMode = DENY_ACCESS;
+    denied.grfInheritance = NO_INHERITANCE;
+    denied.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    denied.Trustee.TrusteeType = TRUSTEE_IS_USER;
+    denied.Trustee.ptstrName = static_cast<LPWSTR>(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid);
+    PACL blocked = nullptr;
+    Require(::SetEntriesInAclW(1, &denied, original, &blocked) == ERROR_SUCCESS);
+    const DWORD applied = ::SetNamedSecurityInfoW(const_cast<LPWSTR>(directory.c_str()), SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION, nullptr, nullptr, blocked, nullptr);
+    ::LocalFree(blocked);
+    Require(applied == ERROR_SUCCESS);
+    return original;
+}
+#endif
 
 }
 
@@ -133,6 +170,48 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == -1);
     Require(*__error_nid_postfix() == 62);
+    std::filesystem::remove(root / "d" / "loop");
+#endif
+
+    const auto locked = root / "locked";
+    Require(std::filesystem::create_directory(locked));
+    std::ofstream(locked / "hidden.txt") << "x";
+#ifdef _WIN32
+    PSECURITY_DESCRIPTOR owner = nullptr;
+    const PACL original = DenyListing(locked.wstring(), owner);
+    const bool unreadable = true;
+#else
+    std::filesystem::permissions(locked, std::filesystem::perms::none);
+    std::error_code listing;
+    std::filesystem::directory_iterator probe(locked, listing);
+    const bool unreadable = static_cast<bool>(listing);
+#endif
+    if (unreadable) {
+        const std::pair<std::string, int> entered{"/anyps5-ftw-test/locked", FtwD};
+        const std::pair<std::string, int> refused{"/anyps5-ftw-test/locked", FtwDnr};
+        g_visits.clear();
+        g_calls = 0;
+        Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == 0);
+        const auto visit = std::find(g_visits.begin(), g_visits.end(), entered);
+        Require(visit != g_visits.end() && std::next(visit) != g_visits.end() && *std::next(visit) == refused);
+        Require(std::count(g_visits.begin(), g_visits.end(), refused) == 1);
+        Require(std::none_of(g_visits.begin(), g_visits.end(), [](const auto& seen) { return seen.first.starts_with("/anyps5-ftw-test/locked/"); }));
+
+        g_stopAt = static_cast<int>(visit - g_visits.begin()) + 1;
+        g_stopReturn = 7;
+        g_visits.clear();
+        g_calls = 0;
+        Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == 7);
+        Require(!g_visits.empty() && g_visits.back() == entered);
+        g_stopAt = 0;
+        g_stopReturn = 0;
+    }
+#ifdef _WIN32
+    Require(::SetNamedSecurityInfoW(const_cast<LPWSTR>(locked.wstring().c_str()), SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION, nullptr, nullptr, original, nullptr) == ERROR_SUCCESS);
+    ::LocalFree(owner);
+#else
+    std::filesystem::permissions(locked, std::filesystem::perms::owner_all);
 #endif
 
     RemovePathAlias_nid_no_patch("/anyps5-ftw-test");
