@@ -339,6 +339,56 @@ void TestGfx1013OnlyFormsTranslate() {
         EXPECT_EQ(foundStore, true);
     }
 
+    const auto smemWord = [](std::uint32_t opcode, std::uint32_t sdst, bool glc) {
+        return (0x3Du << 26u) | (opcode << 18u) | (glc ? (1u << 16u) : 0u) | (sdst << 6u) | 1u;
+    };
+    {
+        const std::array<std::uint32_t, 2> words = {smemWord(0x82u, 3u, false), 0x10u};
+        const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(atomic);
+        const IrValue* emitted = nullptr;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::AddressAtomicIAdd32) emitted = value;
+        EXPECT_EQ(emitted != nullptr, true);
+        EXPECT_EQ(emitted->ArgumentCount(), 5u);
+    }
+    {
+        const std::array<std::uint32_t, 2> words = {smemWord(0x81u, 3u, true), 0x10u};
+        const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(atomic);
+        const IrValue* emitted = nullptr;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::AddressAtomicCmpSwap32) emitted = value;
+        EXPECT_EQ(emitted != nullptr, true);
+        EXPECT_EQ(emitted->ArgumentCount(), 6u);
+        bool writtenBack = false;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::SetScalarRegister) writtenBack = value->Argument(1)->Resolve() == emitted;
+        EXPECT_EQ(writtenBack, true);
+    }
+    {
+        const std::array<std::uint32_t, 2> words = {smemWord(0x62u, 4u, false), 0x8u};
+        const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(atomic);
+        const IrValue* emitted = nullptr;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::BufferAtomicIAdd64) emitted = value;
+        EXPECT_EQ(emitted != nullptr, true);
+        EXPECT_EQ(emitted->ArgumentCount(), 6u);
+        EXPECT_EQ(IrOpcodeType(emitted->Opcode()), IrType::U64);
+    }
     const std::array<std::uint32_t, 2> src2Words = {(0x36u << 26u) | (0xC0u << 18u) | 2u, (4u << 24u) | (6u << 16u) | (5u << 8u) | 7u};
     const RdnaInstruction src2 = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(src2Words), 0u);
     {

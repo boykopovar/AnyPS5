@@ -25,6 +25,18 @@ MemoryInfo scalarMemoryInfoFromInstruction(const RdnaInstruction& inst, bool raw
     return memory;
 }
 
+bool scalarAtomicCompares(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::AddressAtomicCmpSwap32:
+    case IrOpcode::AddressAtomicCmpSwap64:
+    case IrOpcode::BufferAtomicCmpSwap32:
+    case IrOpcode::BufferAtomicCmpSwap64:
+        return true;
+    default:
+        return false;
+    }
+}
+
 }
 
 bool TranslationContext::sLoad(const RdnaInstruction& inst, bool raw) {
@@ -79,15 +91,60 @@ bool TranslationContext::sStore(const RdnaInstruction& inst, bool raw) {
                              {&data.Value(), &second.Value(), &third.Value(), &fourth.Value()});
         }
     }
-    IrValue& exec = ir.GetExec();
+    IrValue& uniform = ir.ConstantBool(true);
     if (raw) {
-        (void)ir.Emit(opcode, IrType::Void, {resource, &offset.Value(), &ir.Constant(0u), value, &exec},
+        (void)ir.Emit(opcode, IrType::Void, {resource, &offset.Value(), &ir.Constant(0u), value, &uniform},
                       addMemoryInfo(memory, inst.programCounter));
     } else {
         (void)ir.Emit(opcode, IrType::Void,
-                      {resource, &ir.Constant(0u), &offset.Value(), &ir.Constant(0u), value, &exec},
+                      {resource, &ir.Constant(0u), &offset.Value(), &ir.Constant(0u), value, &uniform},
                       addMemoryInfo(memory, inst.programCounter));
     }
+    return true;
+}
+
+bool TranslationContext::sAtomic(const RdnaInstruction& inst, bool raw, IrOpcode opcode) {
+    const bool wide = IrOpcodeType(opcode) == IrType::U64;
+    MemoryInfo memory = scalarMemoryInfoFromInstruction(inst, raw);
+    memory.dataDwords = wide ? 2u : 1u;
+    memory.componentCount = memory.dataDwords;
+    const std::uint32_t baseCode = inst.source0.kind == RdnaOperandKind::VccLo ? 106u : inst.source0.reg;
+    IrValue* resource = raw ? getScalarAddressResource(baseCode) : getBufferResource(memory);
+    const IrU32 offset = readU32(inst.source1);
+    IrValue* value = nullptr;
+    IrValue* comparator = nullptr;
+    if (wide) {
+        const IrU64 data = readU64(inst.destination);
+        value = &data.Value();
+        if (scalarAtomicCompares(opcode)) {
+            const IrU64 other = readU64(offsetOperand(inst.destination, 2u));
+            comparator = &other.Value();
+        }
+    } else {
+        const IrU32 data = readU32(inst.destination);
+        value = &data.Value();
+        if (scalarAtomicCompares(opcode)) {
+            const IrU32 other = readU32(offsetOperand(inst.destination, 1u));
+            comparator = &other.Value();
+        }
+    }
+    IrValue& uniform = ir.ConstantBool(true);
+    const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);
+    IrValue* result = nullptr;
+    if (raw) {
+        if (comparator != nullptr) {
+            result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &offset.Value(), &ir.Constant(0u), value, comparator, &uniform}, flags);
+        } else {
+            result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &offset.Value(), &ir.Constant(0u), value, &uniform}, flags);
+        }
+    } else {
+        if (comparator != nullptr) {
+            result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &ir.Constant(0u), &offset.Value(), &ir.Constant(0u), value, comparator, &uniform}, flags);
+        } else {
+            result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &ir.Constant(0u), &offset.Value(), &ir.Constant(0u), value, &uniform}, flags);
+        }
+    }
+    if (inst.glc) writeOperand(inst.destination, result);
     return true;
 }
 

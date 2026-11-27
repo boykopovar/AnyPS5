@@ -426,7 +426,7 @@ void StoreWideShared(SpirvValueEmitContext& ctx, const IrValue& inst, const Memo
 
 const MemoryInfo& BufferMemory(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto& mem = ctx.Memory(inst);
-    if (mem.kind != ResourceKind::Buffer) {
+    if (mem.kind != ResourceKind::Buffer && mem.kind != ResourceKind::ScalarBuffer) {
         ctx.Fail(inst, "must access a buffer resource");
     }
     return mem;
@@ -825,7 +825,7 @@ std::uint32_t EmitLdsAtomic32(SpirvEmitterState& state, const MemoryInfo& mem, T
 
 template<typename TOperation>
 std::uint32_t EmitAtomicAccess(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, TOperation&& operation) {
-    if (mem.kind == ResourceKind::Buffer) return EmitRuntimeBufferAtomic(ctx, inst, 32u, ActiveArgument(ctx, inst), operation);
+    if (mem.kind == ResourceKind::Buffer || mem.kind == ResourceKind::ScalarBuffer) return EmitRuntimeBufferAtomic(ctx, inst, 32u, ActiveArgument(ctx, inst), operation);
     auto& state = ctx.state;
     return EmitValueOrZeroIfCondition(state, ActiveArgument(ctx, inst), [&]() {
         const auto access = PrepareMemoryElement(ctx, mem, DwordIndex(ctx, inst, mem));
@@ -1303,7 +1303,7 @@ std::uint32_t ApertureAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, 
 std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto& mem = ctx.Memory(inst);
-    if (mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) {
+    if (mem.kind != ResourceKind::ScalarAddress && mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) {
         ctx.Fail(inst, "must access a physical address resource");
     }
     const bool wide = inst.Type() == IrType::U64;

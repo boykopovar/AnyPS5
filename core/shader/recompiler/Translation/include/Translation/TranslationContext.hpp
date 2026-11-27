@@ -172,6 +172,7 @@ private:
     IrValue* narrowSubdword(IrU32 value, std::uint32_t bits);
     bool sLoad(const RdnaInstruction& inst, bool raw);
     bool sStore(const RdnaInstruction& inst, bool raw);
+    bool sAtomic(const RdnaInstruction& inst, bool raw, IrOpcode opcode);
     bool sScratchLoad(const RdnaInstruction& inst);
     bool sScratchStore(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
