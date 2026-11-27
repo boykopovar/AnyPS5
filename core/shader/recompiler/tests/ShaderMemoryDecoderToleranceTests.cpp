@@ -422,12 +422,31 @@ void TestGfx1013OnlyFormsTranslate() {
         context.TranslateInstruction(store);
         bool foundResource = false;
         bool foundStore = false;
+        bool laneAdjusted = false;
         for (const auto* value : block.Instructions()) {
             if (value->Opcode() == IrOpcode::GetScratchResource) foundResource = true;
-            if (value->Opcode() == IrOpcode::StoreAddressU32) foundStore = true;
+            if (value->Opcode() == IrOpcode::StoreAddressU32) {
+                foundStore = true;
+                laneAdjusted = value->Argument(1)->Resolve()->Opcode() == IrOpcode::ISub32;
+            }
         }
         EXPECT_EQ(foundResource, true);
         EXPECT_EQ(foundStore, true);
+        EXPECT_EQ(laneAdjusted, true);
+    }
+    {
+        const std::array<std::uint32_t, 2> words = {smemWord(0x17u, 4u, false), 0x10u};
+        const RdnaInstruction store = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        program.Info().scratchDwords = 16u;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(store);
+        std::uint32_t stores = 0u;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::StoreAddressU32) stores++;
+        EXPECT_EQ(stores, 4u);
     }
     {
         const std::array<std::uint32_t, 2> words = {smemWord(0x05u, 3u, false), 0x10u};
