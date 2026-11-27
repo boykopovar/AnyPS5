@@ -81,8 +81,8 @@ static std::optional<std::wstring> HostOpenName(const std::filesystem::path& pat
 }
 #endif
 
-static std::FILE* OpenNative(const std::filesystem::path& path, const std::string& nativeMode) {
 #ifdef _WIN32
+static int OpenNativeDescriptor(const std::filesystem::path& path, const std::string& nativeMode) {
     const char access = nativeMode[0];
     const bool update = nativeMode.find('+') != std::string::npos;
     const DWORD writes = access == 'a' ? AppendOnlyAccess : GENERIC_WRITE;
@@ -91,24 +91,22 @@ static std::FILE* OpenNative(const std::filesystem::path& path, const std::strin
         : nativeMode.find('x') != std::string::npos ? CREATE_NEW : access == 'w' ? CREATE_ALWAYS : OPEN_ALWAYS;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     const auto filename = HostOpenName(path);
-    if (!filename) return nullptr;
+    if (!filename) return -1;
     const auto handle = CreateFileW(filename->c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security,
         disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
-        return nullptr;
+        return -1;
     }
     const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), access == 'a' ? _O_APPEND : 0);
-    if (descriptor < 0) {
-        CloseHandle(handle);
-        return nullptr;
-    }
-    std::wstring streamMode;
-    for (const char character : nativeMode)
-        if (character != 'x') streamMode.push_back(static_cast<unsigned char>(character));
-    std::FILE* stream = ::_wfdopen(descriptor, streamMode.c_str());
-    if (!stream) ::_close(descriptor);
-    return stream;
+    if (descriptor < 0) CloseHandle(handle);
+    return descriptor;
+}
+#endif
+
+static std::FILE* OpenNative(const std::filesystem::path& path, const std::string& nativeMode) {
+#ifdef _WIN32
+    return FileStream::StreamFromDescriptor(OpenNativeDescriptor(path, nativeMode), nativeMode.c_str(), false);
 #else
     return std::fopen(path.c_str(), nativeMode.c_str());
 #endif
@@ -478,9 +476,19 @@ static const std::filesystem::path NullDevicePath = "NUL";
 static const std::filesystem::path NullDevicePath = "/dev/null";
 #endif
 
-static std::FILE* OpenNullDevice(const std::filesystem::path& = {}, const std::string& = {}) {
+static std::FILE* OpenNullDevice() {
     return std::fopen(NullDevicePath.string().c_str(), "rb");
 }
+
+#ifdef _WIN32
+static int OpenNullDeviceForReopen(const std::filesystem::path&, const std::string&) {
+    return ::_wopen(NullDevicePath.c_str(), _O_RDONLY | _O_BINARY);
+}
+#else
+static std::FILE* OpenNullDeviceForReopen(const std::filesystem::path&, const std::string&) {
+    return OpenNullDevice();
+}
+#endif
 
 static int OpenFailure(const std::filesystem::path& path, bool writes, int hostError) {
     const int error = GuestErrnoFromHost_nid_no_patch(hostError);
@@ -526,16 +534,21 @@ void DuplicateDirectoryStream_nid_no_patch(int from, int to) {
     g_duplicateDirectoryDescriptor(from, to);
 }
 
-static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path, const std::string& = {}) {
-    if (!g_openDirectoryDescriptor) throw std::runtime_error("OpenDirectoryHandle: libkernel has not registered its directory descriptors");
+static int OpenDirectoryDescriptor(const std::filesystem::path& path, const std::string& = {}) {
+    if (!g_openDirectoryDescriptor) throw std::runtime_error("OpenDirectoryDescriptor: libkernel has not registered its directory descriptors");
     const auto filename = HostOpenName(path);
-    if (!filename) { errno = GuestErrnoFromHost_nid_no_patch(errno); return nullptr; }
+    if (!filename) { errno = GuestErrnoFromHost_nid_no_patch(errno); return -1; }
     const int descriptor = g_openDirectoryDescriptor(filename->c_str());
     if (descriptor < 0) {
         const int error = GuestErrnoFromHost_nid_no_patch(errno);
         errno = error == 2 ? NotFoundError_nid_no_patch(path) : error;
-        return nullptr;
     }
+    return descriptor;
+}
+
+static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path) {
+    const int descriptor = OpenDirectoryDescriptor(path);
+    if (descriptor < 0) return nullptr;
     auto* native = ::_fdopen(descriptor, "rb");
     if (!native) {
         const int error = GuestErrnoFromHost_nid_no_patch(errno);
@@ -560,6 +573,33 @@ static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
 }
 #endif
 
+namespace {
+
+struct ReopenCleanup {
+    FileStream* stream;
+    std::uint64_t reservation;
+    bool armed = true;
+    bool committed = false;
+    ReopenCleanup(FileStream* reopened, std::uint64_t reserved) : stream(reopened), reservation(reserved) {}
+    ReopenCleanup(const ReopenCleanup&) = delete;
+    ReopenCleanup& operator=(const ReopenCleanup&) = delete;
+    ~ReopenCleanup() {
+        if (committed) return;
+        const int error = errno;
+        if (armed) {
+            try {
+                if (stream->IsOpen()) static_cast<void>(stream->CloseNativeUnderGate_nid_no_patch());
+            } catch (...) {
+            }
+            RetireFileStream_nid_no_patch(stream);
+        }
+        CancelFileStreamReopenReservation_nid_no_patch(reservation);
+        errno = error;
+    }
+};
+
+}
+
 FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode, FileStream* stream) {
     if (!stream || !mode) { errno = 22; return nullptr; }
     auto lease = AcquireFileStreamLease_nid_no_patch(stream, true);
@@ -573,16 +613,12 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
             if (parsed->writes) throw std::runtime_error(std::string(__func__) + ": writing to " + filename + " is not implemented");
             const auto reservation = ReserveFileStreamReopen_nid_no_patch(stream);
             if (!reservation) { errno = 9; return nullptr; }
-            if (!stream->Reopen(NullDevicePath, "rb", OpenNullDevice)) {
-                const int error = errno;
-                RetireFileStream_nid_no_patch(stream);
-                CancelFileStreamReopenReservation_nid_no_patch(*reservation);
-                errno = error;
-                return nullptr;
-            }
+            ReopenCleanup cleanup(stream, *reservation);
+            if (!stream->Reopen(NullDevicePath, "rb", OpenNullDeviceForReopen)) return nullptr;
             stream->MarkRandomDevice();
-            SynchronizeFileStreamAliases_nid_no_patch(stream);
+            SynchronizeFileStreamAliases_nid_no_patch(stream, stream->RawHandle_nid_no_patch());
             PublishFileStreamReopen_nid_no_patch(stream, *reservation);
+            cleanup.committed = true;
             return stream;
         }
         std::filesystem::path path;
@@ -595,31 +631,16 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
         }
         const auto reservation = ReserveFileStreamReopen_nid_no_patch(stream);
         if (!reservation) { errno = 9; return nullptr; }
-        struct ReopenCleanup {
-            FileStream* stream;
-            std::uint64_t reservation;
-            bool armed = false;
-            bool committed = false;
-            ~ReopenCleanup() {
-                if (committed) return;
-                const int error = errno;
-                if (armed) {
-                    if (stream->IsOpen()) static_cast<void>(stream->CloseNativeUnderGate_nid_no_patch());
-                    RetireFileStream_nid_no_patch(stream);
-                }
-                CancelFileStreamReopenReservation_nid_no_patch(reservation);
-                errno = error;
-            }
-        } cleanup{stream, *reservation, true};
+        ReopenCleanup cleanup(stream, *reservation);
 #ifdef _WIN32
         const bool directory = !parsed->writes && [&] {
             std::error_code status;
             return std::filesystem::is_directory(path, status);
         }();
-        bool reopened = stream->Reopen(path, parsed->native.c_str(), directory ? OpenDirectoryHandle : OpenNative, directory);
+        bool reopened = stream->Reopen(path, parsed->native.c_str(), directory ? OpenDirectoryDescriptor : OpenNativeDescriptor, directory);
         if (reopened && directory) {
             stream->MarkDirectory();
-            SynchronizeFileStreamAliases_nid_no_patch(stream);
+            SynchronizeFileStreamAliases_nid_no_patch(stream, stream->RawHandle_nid_no_patch());
         }
 #else
         bool reopened = stream->Reopen(path, parsed->native.c_str(), OpenNative);
@@ -947,11 +968,12 @@ void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std:
 }
 #endif
 
-void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source) {
+void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members) {
     std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
     source->ClearPushback();
     for (FileStream* cur = FileStreamRegistryHead_nid_no_patch(); cur != nullptr; cur = cur->_nextStream_nid_no_patch) {
-        if (cur == source || cur->_retired_nid_no_patch || cur->_gate_nid_no_patch != source->_gate_nid_no_patch) continue;
+        if (cur == source || cur->_retired_nid_no_patch || cur->_gate_nid_no_patch != source->_gate_nid_no_patch
+            || cur->RawHandle_nid_no_patch() != members) continue;
         cur->StoreHandleAtomic_nid_no_patch(source->RawHandle_nid_no_patch());
         cur->_guest = source->_guest;
         cur->guestError = source->guestError;

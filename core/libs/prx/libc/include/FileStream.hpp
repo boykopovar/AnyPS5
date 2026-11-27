@@ -115,13 +115,14 @@ bool IsFileStreamInSnapshot_nid_no_patch(FileStream* stream, std::uint64_t snaps
 std::pair<FileStream*, std::shared_ptr<std::recursive_mutex>>
     PinNextFileStream_nid_no_patch(std::uint64_t& cursor);
 void DetachFileStreamAliasesForNative_nid_no_patch(FileStream* source, std::FILE* native);
-void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source);
+void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members);
 #ifdef _WIN32
 void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std::FILE* native);
 #endif
 extern "C" void NoteExplicitNativeLock_nid_no_patch(std::FILE* native);
 extern "C" bool ForgetExplicitNativeLock_nid_no_patch(std::FILE* native);
 extern "C" void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native);
+extern "C" void DropExplicitNativeLocks_nid_no_patch(std::FILE* native);
 extern "C" int CloseNativeReleasingExplicitLocks_nid_no_patch(std::FILE* native);
 
 class FileStream {
@@ -153,7 +154,7 @@ class FileStream {
     friend std::pair<FileStream*, std::shared_ptr<std::recursive_mutex>>
         PinNextFileStream_nid_no_patch(std::uint64_t&);
     friend void DetachFileStreamAliasesForNative_nid_no_patch(FileStream*, std::FILE*);
-    friend void SynchronizeFileStreamAliases_nid_no_patch(FileStream*);
+    friend void SynchronizeFileStreamAliases_nid_no_patch(FileStream*, std::FILE*);
 #ifdef _WIN32
     friend void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream*, std::FILE*);
 #endif
@@ -389,20 +390,46 @@ public:
         return true;
     }
 
-    bool Reopen(const std::filesystem::path& filename, const char* mode,
-        [[maybe_unused]] std::FILE* (*open)(const std::filesystem::path&, const std::string&) = nullptr,
+#ifdef _WIN32
+    using NativeOpener = int (*)(const std::filesystem::path&, const std::string&);
+
+    static std::FILE* StreamFromDescriptor(int descriptor, const char* mode, bool directoryStream) {
+        if (descriptor < 0) return nullptr;
+        std::wstring streamMode;
+        for (const char character : std::string_view(mode))
+            if (character != 'x') streamMode.push_back(static_cast<unsigned char>(character));
+        std::FILE* const stream = ::_wfdopen(descriptor, streamMode.c_str());
+        if (!stream) {
+            const int error = errno;
+            if (directoryStream) ForgetDirectoryStream_nid_no_patch(descriptor);
+            ::_close(descriptor);
+            errno = error;
+        }
+        return stream;
+    }
+#else
+    using NativeOpener = std::FILE* (*)(const std::filesystem::path&, const std::string&);
+#endif
+
+    bool Reopen(const std::filesystem::path& filename, const char* mode, [[maybe_unused]] NativeOpener open = nullptr,
         [[maybe_unused]] bool directoryStream = false) {
+        auto* previous = LoadHandleAtomic_nid_no_patch();
         struct SynchronizeAliases {
             FileStream* source;
-            ~SynchronizeAliases() { SynchronizeFileStreamAliases_nid_no_patch(source); }
-        } synchronizeAliases{this};
-        auto* previous = LoadHandleAtomic_nid_no_patch();
+            std::FILE* members;
+            ~SynchronizeAliases() { SynchronizeFileStreamAliases_nid_no_patch(source, members); }
+        } synchronizeAliases{this, previous};
         if (!previous) {
             if (!open || filename.empty()) {
                 errno = ENOENT;
                 return false;
             }
+#ifdef _WIN32
+            std::unique_ptr<std::FILE, int (*)(std::FILE*)> replacement(
+                StreamFromDescriptor(open(filename, mode), mode, directoryStream), std::fclose);
+#else
             std::unique_ptr<std::FILE, int (*)(std::FILE*)> replacement(open(filename, mode), std::fclose);
+#endif
             if (!Adopt(replacement.get())) return false;
             replacement.release();
             _orientation.store(0, std::memory_order_relaxed);
@@ -441,9 +468,8 @@ public:
                     ::_wfreopen(L"NUL", wideMode.c_str(), previous), CloseNativeReleasingExplicitLocks_nid_no_patch);
                 closing.reset();
                 if (original) {
-                    std::unique_ptr<std::FILE, int (*)(std::FILE*)> replacement(open(filename, mode), std::fclose);
-                    if (replacement) {
-                        const int source = ::_fileno(replacement.get());
+                    const int source = open(filename, mode);
+                    if (source >= 0) {
                         const int destination = ::_fileno(original.get());
                         const int moved = ::_dup2(source, destination);
                         const int error = errno;
@@ -452,16 +478,17 @@ public:
                                 if (moved == 0) DuplicateDirectoryStream_nid_no_patch(source, destination);
                             } catch (...) {
                                 ForgetDirectoryStream_nid_no_patch(source);
+                                ::_close(source);
                                 errno = error;
                                 throw;
                             }
                             ForgetDirectoryStream_nid_no_patch(source);
                         }
+                        ::_close(source);
                         if (moved == 0) StoreHandleAtomic_nid_no_patch(original.release());
                         errno = error;
                     }
                     const int error = errno;
-                    replacement.reset();
                     original.reset();
                     errno = error;
                 }
@@ -473,20 +500,19 @@ public:
                 if (kept >= 0) ::_lock_file(previous);
                 StoreHandleAtomic_nid_no_patch(nullptr);
                 try {
-                    std::FILE* const replacement = open(filename, mode);
-                    if (replacement) {
-                        const int source = ::_fileno(replacement);
+                    const int source = open(filename, mode);
+                    if (source >= 0) {
                         if (::_wfreopen(L"NUL", resetMode.c_str(), previous) == previous) {
                             const int moved = ::_dup2(source, replaced);
                             const int error = errno;
                             if (moved == 0 && directoryStream) DuplicateDirectoryStream_nid_no_patch(source, replaced);
-                            std::fclose(replacement);
+                            ::_close(source);
                             if (moved == 0 && directoryStream) ForgetDirectoryStream_nid_no_patch(source);
                             if (moved == 0) StoreHandleAtomic_nid_no_patch(previous);
                             else errno = error;
                         } else {
                             const int error = errno;
-                            std::fclose(replacement);
+                            ::_close(source);
                             errno = error;
                         }
                     }
@@ -520,7 +546,10 @@ public:
         errno = error;
         if (kept >= 0) ::flockfile(previous);
         StoreHandleAtomic_nid_no_patch(std::freopen(filename.c_str(), mode, previous));
-        if (!LoadHandleAtomic_nid_no_patch()) ReleaseExplicitNativeLocks_nid_no_patch(previous);
+        if (!LoadHandleAtomic_nid_no_patch()) {
+            if (previous == stdin || previous == stdout || previous == stderr) ReleaseExplicitNativeLocks_nid_no_patch(previous);
+            else DropExplicitNativeLocks_nid_no_patch(previous);
+        }
         if (kept >= 0) RestoreHostStandard(previous, kept);
 #endif
         return Adopt(LoadHandleAtomic_nid_no_patch());

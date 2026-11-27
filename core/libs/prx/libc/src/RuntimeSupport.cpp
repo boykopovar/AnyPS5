@@ -237,6 +237,11 @@ void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native) {
     for (; held > 0; --held) UnlockNative_nid_no_patch(native);
 }
 
+void DropExplicitNativeLocks_nid_no_patch(std::FILE* native) {
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    ExplicitNativeLocks_nid_no_patch().erase(native);
+}
+
 int CloseNativeReleasingExplicitLocks_nid_no_patch(std::FILE* native) {
     ReleaseExplicitNativeLocks_nid_no_patch(native);
     return std::fclose(native);

@@ -13,7 +13,9 @@
 #include <mutex>
 #include <vector>
 #ifdef _WIN32
+#include <fcntl.h>
 #include <io.h>
+#include <sys/stat.h>
 #else
 #include <fcntl.h>
 #include <sys/resource.h>
@@ -110,15 +112,14 @@ static std::FILE* releaseForOpen = nullptr;
 static int openEntryError = 0;
 static int openCalls = 0;
 
-static std::FILE* OpenMissingAfterRelease(const std::filesystem::path& filename, const std::string& mode) {
+static int OpenMissingAfterRelease(const std::filesystem::path& filename, const std::string&) {
     openEntryError = errno;
     ++openCalls;
     if (releaseForOpen) {
         Require(std::fclose(releaseForOpen) == 0, "cannot release the callback's stream slot");
         releaseForOpen = nullptr;
     }
-    const std::wstring wideMode(mode.begin(), mode.end());
-    return ::_wfopen(filename.c_str(), wideMode.c_str());
+    return ::_wopen(filename.c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
 }
 
 static int KeepReturnFailure(int descriptor, const std::string& stamp) {

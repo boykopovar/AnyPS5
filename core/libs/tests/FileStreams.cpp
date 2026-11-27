@@ -36,6 +36,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <io.h>
+#include <sys/stat.h>
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -1210,7 +1211,7 @@ static int FreopenAliasesChild([[maybe_unused]] const std::string& base) {
     alias.SetError();
     flockfile_nid_postfix(&source);
     const bool reopened = source.Reopen(target, "w+b", [](const std::filesystem::path&, const std::string&) {
-        return std::exchange(replacement, nullptr);
+        return ::_dup(::_fileno(replacement));
     });
     const bool sameNative = reopened && source.RawHandle_nid_no_patch() == original;
     const bool aliasesMatch = reopened && alias.RawHandle_nid_no_patch() == source.RawHandle_nid_no_patch()
@@ -1472,6 +1473,8 @@ static int FcloseallReadInProgressChild() {
 #endif
     if (!native) return 61;
     FileStream* const reading = new FileStream(native, true);
+    auto readingLease = AcquireFileStreamLease_nid_no_patch(reading);
+    if (!readingLease.Valid()) return 71;
     std::promise<void> finished;
     std::thread watchdog([done = finished.get_future()] {
         if (done.wait_for(std::chrono::seconds(10)) == std::future_status::ready) return;
@@ -1493,7 +1496,7 @@ static int FcloseallReadInProgressChild() {
     }
     auto closed = std::async(std::launch::async, [] { fcloseall_nid_postfix(); });
     if (closed.wait_for(std::chrono::milliseconds(200)) != std::future_status::timeout) return 63;
-    if (!reading->IsOpen()) return 64;
+    if (!readingLease.Stream()->IsOpen()) return 64;
     constexpr char payload[] = "data";
 #ifdef _WIN32
     if (::_write(descriptors[1], payload, 4) != 4) return 65;
@@ -1777,10 +1780,16 @@ static int ReopenSnapshotChild(const std::string& base) {
     FileStreamLease_nid_no_patch interveningLease(interveningSelection, interveningGate);
     const std::uint64_t reservedSnapshot = interveningCursor + 1;
     if (IsFileStreamInSnapshot_nid_no_patch(selected, reservedSnapshot)) return 157;
+#ifdef _WIN32
+    if (!stream.Reopen(std::filesystem::path(path), "wb", [](const std::filesystem::path& filename, const std::string&) {
+            return ::_wopen(filename.c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+        })) return 158;
+#else
     if (!stream.Reopen(std::filesystem::path(path), "wb",
         [](const std::filesystem::path& filename, const std::string& mode) {
             return std::fopen(filename.string().c_str(), mode.c_str());
         })) return 158;
+#endif
     PublishFileStreamReopen_nid_no_patch(&stream, *reservation);
     cleanup.reservation = 0;
     if (IsFileStreamInSnapshot_nid_no_patch(selected, originalSnapshot)) return 159;
@@ -1830,6 +1839,26 @@ static int FreopenExceptionCleanupChild(const std::string& base) {
     if (g_failingClosingDescriptors.load() > 0) return 191;
     if (failed != nullptr || failedError != 12) return 192;
     if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 193;
+    stream = fopen_nid_postfix(path.c_str(), "rb");
+    if (!stream) return 198;
+    g_failingClosingDescriptors = 1;
+    errno = 0;
+    FileStream* const deviceFailed = freopen_nid_postfix("/dev/urandom", "r", stream);
+    const int deviceError = errno;
+    if (g_failingClosingDescriptors.load() > 0) return 199;
+    if (deviceFailed != nullptr || deviceError != 12) return 180;
+    if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 181;
+    for (const char* target : {path.c_str(), "/dev/urandom"}) {
+        stream = fopen_nid_postfix(path.c_str(), "rb");
+        if (!stream) return 182;
+        g_failingClosingDescriptors = 1000;
+        errno = 0;
+        FileStream* const persistent = freopen_nid_postfix(target, "rb", stream);
+        const int persistentError = errno;
+        g_failingClosingDescriptors = 0;
+        if (persistent != nullptr || persistentError != 12) return 183;
+        if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 184;
+    }
 #ifdef _WIN32
     const std::string directoryName = base + ".freopen-exception.dir";
     std::error_code removed;
@@ -1874,6 +1903,8 @@ static int FcloseallExhaustedHostStandardChild(const std::string& base) {
     const std::string path = base + ".fcloseall.exhausted";
     FileStream* const stream = fopen_nid_postfix(path.c_str(), "wb");
     if (!stream) return 210;
+    auto lease = AcquireFileStreamLease_nid_no_patch(stream);
+    if (!lease.Valid()) return 214;
     std::vector<std::FILE*> exhaustedStreams;
     const int streamLimit = ::_getmaxstdio();
     exhaustedStreams.reserve(static_cast<std::size_t>(streamLimit));
@@ -1891,11 +1922,107 @@ static int FcloseallExhaustedHostStandardChild(const std::string& base) {
     for (std::FILE* extra : exhaustedStreams) std::fclose(extra);
     std::remove(path.c_str());
     if (threw) return 211;
-    if (stream->IsOpen()) return 212;
+    if (lease.Stream()->IsOpen()) return 212;
     if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 213;
 #else
     static_cast<void>(base);
 #endif
+    return 0;
+}
+
+static int ClosedAliasReopenChild(const std::string& base) {
+    const std::string first = base + ".closed-alias.first";
+    const std::string second = base + ".closed-alias.second";
+    std::FILE* const native = std::tmpfile();
+    if (!native) return 220;
+    FileStream a(native);
+    FileStream b(native);
+    fcloseall_nid_postfix();
+    if (a.IsOpen() || b.IsOpen()) return 221;
+    if (freopen_nid_postfix(first.c_str(), "wb", &a) != &a) return 222;
+    if (freopen_nid_postfix(second.c_str(), "wb", &b) != &b) return 223;
+    if (a.RawHandle_nid_no_patch() == b.RawHandle_nid_no_patch()) return 224;
+    if (fputc_nid_postfix('A', &a) != 'A' || fputc_nid_postfix('B', &b) != 'B') return 225;
+    if (fclose_nid_postfix(&a) != 0 || fclose_nid_postfix(&b) != 0) return 226;
+    const auto contents = [](const std::string& path) {
+        std::FILE* const read = std::fopen(path.c_str(), "rb");
+        if (!read) return std::string();
+        std::string text;
+        for (int character; (character = std::fgetc(read)) != EOF;) text.push_back(static_cast<char>(character));
+        std::fclose(read);
+        return text;
+    };
+    const bool separate = contents(first) == "A" && contents(second) == "B";
+    std::remove(first.c_str());
+    std::remove(second.c_str());
+    return separate ? 0 : 227;
+}
+
+static int FreopenExhaustedSlotsChild(const std::string& base) {
+#ifdef _WIN32
+    const std::string source = base + ".exhausted-slots.source";
+    const std::string target = base + ".exhausted-slots.target";
+    std::FILE* const seed = std::fopen(target.c_str(), "wb");
+    if (!seed || std::fputs("kept", seed) < 0 || std::fclose(seed) != 0) return 230;
+    FileStream* const stream = fopen_nid_postfix(source.c_str(), "wb");
+    if (!stream) return 231;
+    const int savedLimit = ::_getmaxstdio();
+    if (::_setmaxstdio(64) != 64) return 236;
+    std::vector<std::FILE*> fillers;
+    for (int i = 0; i < 64; ++i) {
+        std::FILE* extra = std::fopen("NUL", "w");
+        if (!extra) break;
+        fillers.push_back(extra);
+    }
+    const int duplicate = ::_open("NUL", _O_RDONLY);
+    const bool descriptorsLeft = duplicate >= 0;
+    if (descriptorsLeft) ::_close(duplicate);
+    errno = 0;
+    FileStream* const reopened = descriptorsLeft ? freopen_nid_postfix(target.c_str(), "wb", stream) : nullptr;
+    const int reopenError = errno;
+    const bool wrote = reopened && fputc_nid_postfix('Z', reopened) == 'Z';
+    for (std::FILE* extra : fillers) std::fclose(extra);
+    ::_setmaxstdio(savedLimit);
+    if (!descriptorsLeft) return 232;
+    if (reopened != stream) {
+        std::cerr << "freopen with a full stream table failed, errno " << reopenError << '\n';
+        return 233;
+    }
+    if (!wrote || fclose_nid_postfix(stream) != 0) return 234;
+    std::FILE* const read = std::fopen(target.c_str(), "rb");
+    const bool replaced = read && std::fgetc(read) == 'Z' && std::fgetc(read) == EOF;
+    if (read) std::fclose(read);
+    std::remove(source.c_str());
+    std::remove(target.c_str());
+    return replaced ? 0 : 235;
+#else
+    static_cast<void>(base);
+    return 0;
+#endif
+}
+
+static int FreopenFailedLockChild(const std::string& base) {
+#if defined(__GLIBC__)
+#if !__GLIBC_PREREQ(2, 41)
+    const std::string path = base + ".failed-lock";
+    const std::string missing = base + ".failed-lock-missing/output";
+    FileStream* const stream = fopen_nid_postfix(path.c_str(), "wb");
+    if (!stream) return 240;
+    std::FILE* const previous = stream->RawHandle_nid_no_patch();
+    flockfile_nid_postfix(stream);
+    errno = 0;
+    if (freopen_nid_postfix(missing.c_str(), "rb", stream) != nullptr) return 241;
+    const int lockedElsewhere = std::async(std::launch::async, [previous] {
+        const int result = ::ftrylockfile(previous);
+        if (result == 0) ::funlockfile(previous);
+        return result;
+    }).get();
+    funlockfile_nid_postfix(stream);
+    std::remove(path.c_str());
+    return lockedElsewhere != 0 ? 0 : 242;
+#endif
+#endif
+    static_cast<void>(base);
     return 0;
 }
 
@@ -2144,6 +2271,9 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--reopen-snapshot-child") == 0) return ReopenSnapshotChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--freopen-exception-child") == 0) return FreopenExceptionCleanupChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--closed-alias-reopen-child") == 0) return ClosedAliasReopenChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-exhausted-slots-child") == 0) return FreopenExhaustedSlotsChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-failed-lock-child") == 0) return FreopenFailedLockChild(argv[1]);
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
     CheckShortCharacterScans();
@@ -2304,6 +2434,15 @@ int main(int argc, char** argv) {
     const int freopenException = RunFcloseallChild(argv[0], argv[1], "--freopen-exception-child");
     if (freopenException != 0) std::cerr << "freopen exception cleanup child exit " << freopenException << '\n';
     Require(freopenException == 0, "freopen exception cleanup child failed");
+    const int closedAlias = RunFcloseallChild(argv[0], argv[1], "--closed-alias-reopen-child");
+    if (closedAlias != 0) std::cerr << "closed alias reopen child exit " << closedAlias << '\n';
+    Require(closedAlias == 0, "reopening closed aliases joined their new files");
+    const int exhaustedSlots = RunFcloseallChild(argv[0], argv[1], "--freopen-exhausted-slots-child");
+    if (exhaustedSlots != 0) std::cerr << "freopen exhausted stream slots child exit " << exhaustedSlots << '\n';
+    Require(exhaustedSlots == 0, "freopen with a full host stream table failed");
+    const int failedLock = RunFcloseallChild(argv[0], argv[1], "--freopen-failed-lock-child");
+    if (failedLock != 0) std::cerr << "freopen failed locked-stream child exit " << failedLock << '\n';
+    Require(failedLock == 0, "a failed freopen unlocked the replaced native stream");
     const int freopenStandard = RunFcloseallChild(argv[0], argv[1], "--freopen-standard-owner-child");
     Require(freopenStandard == 0, "freopen standard-stream owner child failed");
     std::cout << "PASS: stream objects, file operations, EOF and error handling\n";
