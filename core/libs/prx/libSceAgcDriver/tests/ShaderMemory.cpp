@@ -7897,7 +7897,8 @@ void verifyFusedExactArithmetic() {
 void verifyHalfWaveReduction() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
-    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) {
+    static constexpr std::array<std::uint32_t, 6> quadCapabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformQuad, spv::CapabilityClipDistance};
+    const auto pixelWith = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::span<const std::uint32_t> supported) {
         ShaderPixelStageInfo info{};
         info.inputAddr = PixelInputBit(PixelInput::PositionX);
         info.posX = true;
@@ -7910,10 +7911,13 @@ void verifyHalfWaveReduction() {
         request.target.vulkanVersion = 0x00401000u;
         request.target.spirvVersion = 0x00010300u;
         request.target.subgroupSize = subgroupSize;
-        if (arithmetic) request.target.supportedCapabilities = capabilities;
+        request.target.supportedCapabilities = supported;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
         return Recompile(request).spirv;
+    };
+    const auto pixel = [&pixelWith](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) {
+        return pixelWith(code, subgroupSize, arithmetic ? std::span<const std::uint32_t>(capabilities) : std::span<const std::uint32_t>());
     };
     const auto reductions = [](std::span<const std::uint32_t> spirv, spv::Op opcode) {
         std::uint32_t count = 0;
@@ -8107,6 +8111,27 @@ void verifyHalfWaveReduction() {
     compared.insert(compared.begin() + 3, {0xd4c50006u, 0x00021680u});
     expectFailure([&] { static_cast<void>(pixel(compared, 32u, true)); }, lane63, "half-wave reduction: a scan selected by a compare under the all-lanes EXEC read lane 63");
     expectFailure([&] { static_cast<void>(pixel(umin, 8u, true)); }, "v_permlanex16_b32 from lanes 16-31 is outside the 8-lane host subgroup", "half-wave reduction: the scan built on an 8-lane subgroup");
+    const auto quadBroadcasts = [](std::span<const std::uint32_t> spirv) {
+        std::uint32_t count = 0;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == static_cast<std::uint32_t>(spv::OpGroupNonUniformQuadBroadcast)) ++count;
+        }
+        return count;
+    };
+    const auto underWqm = [](std::vector<std::uint32_t> code) {
+        code.insert(code.begin(), {0x7c0800ffu, 0xbf800000u, 0x87fe6a7eu, 0xbefe0a7eu});
+        return code;
+    };
+    const auto wqmUmin = pixelWith(underWqm(umin), 32u, quadCapabilities);
+    require(reductions(wqmUmin, spv::OpGroupNonUniformUMin) == 1u && quadBroadcasts(wqmUmin) >= 4u, "half-wave reduction: a UMin scan of keys under an s_wqm_b64 mask was not combined across each quad and reduced on 32 lanes");
+    const auto wqmOr = pixelWith(underWqm(scan(0u, 0x38000000u, 0x88000000u)), 32u, quadCapabilities);
+    require(reductions(wqmOr, spv::OpGroupNonUniformBitwiseOr) == 1u && quadBroadcasts(wqmOr) >= 4u, "half-wave reduction: an OR scan of keys under an s_wqm_b64 mask was not combined across each quad and reduced on 32 lanes");
+    expectFailure([&] { static_cast<void>(pixelWith(underWqm(scan(0u, 0x4a000000u, 0x80000000u)), 32u, quadCapabilities)); }, lane63, "half-wave reduction: an IAdd scan of keys under an s_wqm_b64 mask, which a quad combine would count more than once, read lane 63");
+    auto wqmUpperAll = underWqm(umin);
+    wqmUpperAll.insert(wqmUpperAll.begin() + 7, 0xbe8703c1u);
+    expectFailure([&] { static_cast<void>(pixelWith(wqmUpperAll, 32u, quadCapabilities)); }, lane63, "half-wave reduction: keys under an s_wqm_b64 mask whose upper word was set to every lane read lane 63");
+    expectFailure([&] { static_cast<void>(pixelWith(helperLoop, 32u, quadCapabilities)); }, lane63, "half-wave reduction: a loop initialized with every lane read lane 63 on a device with quad operations");
+    expectFailure([&] { static_cast<void>(pixelWith(compared, 32u, quadCapabilities)); }, lane63, "half-wave reduction: a scan selected by a compare under the all-lanes EXEC read lane 63 on a device with quad operations");
 }
 
 void verifyEntryLaneProofBudget() {
