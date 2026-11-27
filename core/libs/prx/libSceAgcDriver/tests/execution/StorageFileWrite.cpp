@@ -181,10 +181,7 @@ bool CheckWrite(Api api, const char* name, GuestSurface& surface, GuestSurface& 
         Require(stream != nullptr, "file write: cannot open the stdio output");
         Require(fwrite_nid_postfix(source, 0, 7, stream) == 0, "file write: zero-sized fwrite failed");
         Require(fwrite_nid_postfix(source, 5, 0, stream) == 0, "file write: zero-count fwrite failed");
-        bool overflow = false;
-        try { fwrite_nid_postfix(source, std::numeric_limits<std::size_t>::max(), 2, stream); }
-        catch (const std::overflow_error&) { overflow = true; }
-        Require(overflow, "file write: fwrite byte count overflow was accepted");
+        Require(fwrite_nid_postfix(source, std::numeric_limits<std::size_t>::max(), 2, stream) == 0, "file write: fwrite byte count overflow was accepted");
         Require(AgcDriver::Graphics::StorageTexture::FindPending(reinterpret_cast<std::uintptr_t>(surface.Data()), SurfaceBytes) != nullptr, "file write: an empty or overflowing fwrite flushed its source");
         const auto written = fwrite_nid_postfix(source, 5, TransferBytes / 5, stream);
         Require(fclose_nid_postfix(stream) == 0, "file write: cannot close the stdio output");

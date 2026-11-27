@@ -1495,6 +1495,7 @@ int main(int argc, char** argv) {
         Require(ferror_nid_postfix(stream) == 0);
         Require(errno == 35);
         Require(fclose_nid_postfix(stream) == 0);
+        Require(std::filesystem::file_size(argv[1]) == 0);
         Require(std::remove(argv[1]) == 0);
     }
     std::cout << "PASS: stream objects, file operations, EOF and error handling\n";
