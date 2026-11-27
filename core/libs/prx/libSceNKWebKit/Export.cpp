@@ -3369,10 +3369,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_PpX1vzTqOIg_nid_no_patch() {
 }
 APS5_EXPORT("PpX1vzTqOIg", libSceNKWebKitLegacyUnknown_PpX1vzTqOIg_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore21ContentSecurityPolicyC2EON3WTF3URLEPNS_27ContentSecurityPolicyClientE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore20DeprecatedCSSOMValue7destroyEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5137,10 +5133,6 @@ int APS5_VABI _ZN7WebCore11DisplayList20DrawTiledScaledImageD1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore24CoordinatedGraphicsLayer13addChildAboveEON3WTF3RefINS_13GraphicsLayerENS1_13DumbPtrTraitsIS3_EEEEPS3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ContentSecurityPolicyC1EON3WTF3URLEPNS_27ContentSecurityPolicyClientE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -17588,18 +17580,6 @@ int APS5_VABI _ZN7WebCore21ComplexTextController14ComplexTextRunC2ERKN3WTF6Vecto
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore21ContentSecurityPolicy17didReceiveHeadersERKNS_36ContentSecurityPolicyResponseHeadersEON3WTF6StringENS0_19ReportParsingErrorsE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ContentSecurityPolicyD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore21ContentSecurityPolicyD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21DisplayRefreshMonitorC2Ej() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25471,22 +25451,6 @@ int APS5_VABI _ZNK7WebCore20ScrollingCoordinator36coordinatesScrollingForOverflo
 }
 
 int APS5_VABI _ZNK7WebCore21BackForwardController18canGoBackOrForwardEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore21ContentSecurityPolicy15responseHeadersEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore21ContentSecurityPolicy22overridesXFrameOptionsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore21ContentSecurityPolicy30upgradeInsecureRequestIfNeededERN3WTF3URLENS0_19InsecureRequestTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore21ContentSecurityPolicy30upgradeInsecureRequestIfNeededERNS_15ResourceRequestENS0_19InsecureRequestTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
