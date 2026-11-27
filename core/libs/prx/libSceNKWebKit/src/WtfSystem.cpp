@@ -130,6 +130,19 @@ struct MappedDataGuard {
     }
 };
 
+struct FileHandleGuard {
+    int handle = -1;
+
+    ~FileHandleGuard() {
+        if (handle != -1) {
+            try {
+                close_nid_postfix(handle);
+            } catch (...) {
+            }
+        }
+    }
+};
+
 void PublishMappedResult(WTF::MappedFileData* self, const WTF::MappedFileData& previousSelf, MappedDataGuard& mapped, bool* success, bool ok, unsigned char previousSuccess, const char* function) {
     static_assert(sizeof(bool) == sizeof(unsigned char));
     if (!TryPublishGuestValue(self, mapped.mapped, previousSelf))
@@ -252,10 +265,10 @@ void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14Mapp
     if (!GuestCopyIn_nid_no_patch(&previousSuccess, &success, sizeof(previousSuccess)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     const String hostPath = CopyGuestStringToHost(&path, __func__);
-    int handle = _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(hostPath, 0, true, false);
+    FileHandleGuard file{_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(hostPath, 0, true, false)};
     MappedDataGuard guard{};
-    const bool ok = _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(&guard.mapped, handle, 0, mapMode);
-    _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+    const bool ok = _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(&guard.mapped, file.handle, 0, mapMode);
+    _ZN3WTF14FileSystemImpl9closeFileERi(file.handle);
     PublishMappedResult(self, previousSelf, guard, &success, ok, previousSuccess, __func__);
 }
 
