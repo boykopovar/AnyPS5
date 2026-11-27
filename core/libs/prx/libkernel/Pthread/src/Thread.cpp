@@ -596,8 +596,18 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     const auto* parent = CurrentGuestState().current;
-    const KernelCpumask inherited = parent ? parent->affinity.load(std::memory_order_relaxed) : registry.processAffinity;
-    affinity.store(attr && attr->_affinityExplicit ? attr->_affinity : inherited, std::memory_order_relaxed);
+    if (attr && attr->_affinityExplicit) {
+        const KernelCpumask clipped = attr->_affinity & registry.processAffinity;
+        if (clipped == 0)
+            throw std::invalid_argument("Invalid explicit thread affinity");
+        affinity.store(clipped, std::memory_order_relaxed);
+    } else {
+        const KernelCpumask inherited = parent ? parent->affinity.load(std::memory_order_relaxed) : registry.processAffinity;
+        const KernelCpumask clamped = inherited & registry.processAffinity;
+        affinity.store(clamped != 0 ? clamped : registry.processAffinity, std::memory_order_relaxed);
+    }
+    const bool isExplicit = (attr && attr->_affinityExplicit) || (parent && parent->explicitAffinity.load(std::memory_order_relaxed));
+    explicitAffinity.store(isExplicit, std::memory_order_relaxed);
     constexpr int ExplicitSched = 0;
     const bool explicitSched = attr && attr->_inheritsched == ExplicitSched;
     if (attr) inheritSched = attr->_inheritsched;
@@ -652,13 +662,39 @@ int GuestThreadCpuClockId(const PthreadPrivate* thread) {
     return static_cast<int>(CPU_CLOCK_BIT | static_cast<std::uint32_t>(thread->cpuClockThread));
 }
 
-void SetLiveGuestThreadsAffinity(KernelCpumask mask) {
+bool SetLiveGuestThreadsAffinity(KernelCpumask mask) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
+    const KernelCpumask clipped = mask & registry.processAffinity;
+    if (clipped == 0) return false;
+    for (const auto& [id, thread] : registry.threads) {
+        if (!GuestThreadEnded(thread)) {
+            thread->affinity.store(clipped, std::memory_order_relaxed);
+            thread->explicitAffinity.store(true, std::memory_order_relaxed);
+        }
+    }
+    return true;
+}
+
+bool SetLiveGuestProcessCpuset(KernelCpumask mask) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (GuestThreadEnded(thread)) continue;
+        if (thread->explicitAffinity.load(std::memory_order_relaxed)) {
+            if ((thread->affinity.load(std::memory_order_relaxed) & mask) == 0) return false;
+        }
+    }
     registry.processAffinity = mask;
     for (const auto& [id, thread] : registry.threads) {
-        if (!GuestThreadEnded(thread)) thread->affinity.store(mask, std::memory_order_relaxed);
+        if (GuestThreadEnded(thread)) continue;
+        if (thread->explicitAffinity.load(std::memory_order_relaxed)) {
+            thread->affinity.store(thread->affinity.load(std::memory_order_relaxed) & mask, std::memory_order_relaxed);
+        } else {
+            thread->affinity.store(mask, std::memory_order_relaxed);
+        }
     }
+    return true;
 }
 
 KernelCpumask LiveGuestThreadsAffinity() {
@@ -671,6 +707,12 @@ KernelCpumask LiveGuestThreadsAffinity() {
     return mask;
 }
 
+KernelCpumask GuestProcessCpusetAffinity() {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    return registry.processAffinity;
+}
+
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
@@ -681,7 +723,7 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     return {};
 }
 
-static std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
+std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, registered] : registry.threads) {
@@ -737,15 +779,19 @@ bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& pr
     return false;
 }
 
-bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask) {
+int SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask) {
+    constexpr int GuestEsrch = 3, GuestEdeadlk = 11;
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
         if (thread->tid != tid || GuestThreadEnded(thread)) continue;
-        thread->affinity.store(mask, std::memory_order_relaxed);
-        return true;
+        const KernelCpumask clipped = mask & registry.processAffinity;
+        if (clipped == 0) return GuestEdeadlk;
+        thread->affinity.store(clipped, std::memory_order_relaxed);
+        thread->explicitAffinity.store(true, std::memory_order_relaxed);
+        return 0;
     }
-    return false;
+    return GuestEsrch;
 }
 
 bool LiveGuestThreadExists(std::int64_t tid) {
@@ -892,6 +938,7 @@ static void finishThread(PthreadPrivate* self, void* retval) {
     if (const auto callback = threadDtors.load())
         callback();
     ThreadLifecycle::RunKeyDtors();
+    ThreadLifecycle::ReleaseRobustUmutexes();
     {
         std::unique_lock<std::mutex> lk(self->_join_mtx);
         self->_retval = retval;
@@ -998,6 +1045,8 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 using FinalThreadReleaseTestHook = void (*)(Pthread);
 static std::atomic<PthreadPrivate*> finalThreadReleaseTestTarget{nullptr};
 static std::atomic<FinalThreadReleaseTestHook> finalThreadReleaseTestHook{nullptr};
+using JoinWindowTestHook = void (*)(Pthread);
+static std::atomic<JoinWindowTestHook> joinWindowTestHook{nullptr};
 
 static void ReleaseThread(PthreadPrivate* thread) {
     if (thread->_adopted)
@@ -1048,6 +1097,10 @@ private:
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, FinalThreadReleaseTestHook hook) {
     finalThreadReleaseTestHook.store(hook, std::memory_order_relaxed);
     finalThreadReleaseTestTarget.store(static_cast<PthreadPrivate*>(thread), std::memory_order_release);
+}
+
+extern "C" void APS5_Test_SetJoinWindowHook(Pthread thread, JoinWindowTestHook hook) {
+    joinWindowTestHook.store(hook, std::memory_order_relaxed);
 }
 
 static std::mutex joinedLock;
@@ -1217,7 +1270,12 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         }
     }
     if (attr && !*attr) attr = nullptr;
-    auto p = std::make_unique<PthreadPrivate>(attr ? *attr : nullptr);
+    std::unique_ptr<PthreadPrivate> p;
+    try {
+        p = std::make_unique<PthreadPrivate>(attr ? *attr : nullptr);
+    } catch (const std::invalid_argument&) {
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
     bool detached = false;
     if (attr && *attr) detached = ((*attr)->_detachstate == DETACH_DETACHED);
     p->_detached = detached;
@@ -1343,11 +1401,10 @@ int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const Kerne
     if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
     if (thread->_joined.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
     registered.unlock();
-    reference.Reset();
+    if (const auto hook = joinWindowTestHook.exchange(nullptr, std::memory_order_relaxed)) hook(thread);
     ThreadCancel::Check();
     registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    if (!reference.Retain(thread)) return SCE_KERNEL_ERROR_ESRCH;
     {
         std::unique_lock lock(thread->_join_mtx);
         if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
@@ -1620,9 +1677,20 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
 
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
     if (!thread || mask == 0) return SCE_KERNEL_ERROR_EINVAL;
-    auto registered = LockRegisteredGuestThread(thread);
-    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    thread->affinity.store(mask, std::memory_order_relaxed);
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    bool found = false;
+    for (const auto& [id, registered] : registry.threads) {
+        if (registered == thread) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) return SCE_KERNEL_ERROR_ESRCH;
+    const KernelCpumask clipped = mask & registry.processAffinity;
+    if (clipped == 0) return SCE_KERNEL_ERROR_EINVAL;
+    thread->affinity.store(clipped, std::memory_order_relaxed);
+    thread->explicitAffinity.store(true, std::memory_order_relaxed);
     return SCE_OK;
 }
 

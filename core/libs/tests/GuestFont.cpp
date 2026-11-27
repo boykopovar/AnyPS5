@@ -326,6 +326,16 @@ static void CheckWritingAfterStringDestroyed(FontHandle font) {
     errno = 71;
     Require(sceFontCreateString(&memory, &source, nullptr, reinterpret_cast<FontString*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(errno == 71);
+    const auto stale = reinterpret_cast<FontString>(std::uintptr_t{0x20});
+    string = stale;
+    Require(sceFontCreateString(&memory, reinterpret_cast<FontTextSource*>(0x10), nullptr, &string) == SCE_FONT_ERROR_INVALID_PARAMETER && string == nullptr);
+    string = stale;
+    Require(sceFontCreateString(reinterpret_cast<const FontMemory*>(0x10), &source, nullptr, &string) == SCE_FONT_ERROR_INVALID_MEMORY && string == nullptr);
+    FontMemory unreadableInterface = memory;
+    unreadableInterface.iface = reinterpret_cast<const FontMemoryInterface*>(0x10);
+    Require(sceFontCreateString(&unreadableInterface, &source, nullptr, &string) == SCE_FONT_ERROR_INVALID_MEMORY && string == nullptr);
+    Require(sceFontCreateString(&memory, &source, reinterpret_cast<const FontCreateStringDetail*>(0x10), &string) == SCE_FONT_ERROR_INVALID_PARAMETER && string == nullptr);
+    Require(errno == 71 && heldBlocks.size() == blocksBefore + 1);
     heldBlockLimit = SIZE_MAX;
     Require(heldBlocks.size() == blocksBefore + 1 && heldBlocks.back().released);
     FontString failedString = static_cast<FontString>(heldBlocks.back().pointer);
@@ -388,7 +398,13 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     Require(sceFontCharacterGetBidiLevel(characters, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontCharacterGetTextFontCode(characters, reinterpret_cast<FontHandle*>(0x10), &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontCharacterGetTextFontCode(characters, &characterFont, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    characterFont = font;
+    characterCode = 'A';
+    Require(sceFontCharacterGetTextFontCode(reinterpret_cast<const FontTextCharacter*>(0x10), &characterFont, &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER && characterFont == nullptr && characterCode == 0 && errno == 71);
+    Require(sceFontCharacterGetTextFontCode(reinterpret_cast<const FontTextCharacter*>(0x10), nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontCharacterGetTextOrder(characters, reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    textOrder = characters;
+    Require(sceFontCharacterGetTextOrder(reinterpret_cast<const FontTextCharacter*>(0x10), &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr && errno == 71);
     Require(sceFontStringGetWritingForm(string) == 0x12);
     Require(sceFontStringGetTerminateCode(string) == 0 && sceFontStringGetTerminateOrder(string) == parsed.text + 3);
     ParsedText line{"AV\nA", 0, font};
@@ -400,6 +416,15 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     Require(sceFontStringRefersTextCharacters(lineString, &lineCount) != nullptr && lineCount == 2);
     Require(sceFontStringGetTerminateCode(lineString) == '\n' && sceFontStringGetTerminateOrder(lineString) == line.text + 2);
     Require(sceFontDestroyString(&lineString) == SCE_FONT_OK);
+    FontCreateStringDetail detail{};
+    detail.detailId = 0x0FD4;
+    detail.defaultFont = font;
+    line.at = 0;
+    Require(sceFontCreateString(memory, &lineSource, &detail, &lineString) == SCE_FONT_OK && lineString != nullptr);
+    Require(sceFontStringRefersTextCharacters(lineString, &lineCount) != nullptr && lineCount == 2);
+    Require(sceFontDestroyString(&lineString) == SCE_FONT_OK);
+    detail.detailType = 2;
+    Require(sceFontCreateString(memory, &lineSource, &detail, &lineString) == SCE_FONT_ERROR_INVALID_PARAMETER && lineString == nullptr);
     FontString rtlString = nullptr;
     Require(sceFontTextSourceSetWritingForm(&source, 0x11) == SCE_FONT_OK && sceFontCreateString(memory, &source, nullptr, &rtlString) == SCE_FONT_OK);
     Require(sceFontStringGetWritingForm(rtlString) == 0x11);
@@ -426,6 +451,10 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     const std::uint32_t hebrewLetterCodes[]{0xFB1D};
     const std::uint32_t arabicFormCodes[]{0xFE70};
     const std::uint32_t digitHebrewCodes[]{'1', ' ', 0x05D0};
+    const std::uint32_t arabicNumericPrefix[]{0x0662, 0x066B, 0x0665, ' ', 0x0633};
+    const std::uint32_t easternArabicNumericPrefix[]{0x06F2, ' ', 0x067E};
+    const std::uint32_t arabicNumbersOnly[]{0x0661, 0x066C, 0x0665, 0x066A};
+    const std::uint32_t arabicNumericPrefixLatin[]{0x0667, ' ', 'A', 0x05D0};
     const std::uint32_t hebrewLatinCodes[]{0x05D0, 'A'};
     const std::uint32_t latinHebrewCodes[]{'A', 0x05D0};
     const std::uint32_t rlmLatinCodes[]{0x200F, 'A'};
@@ -448,6 +477,10 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
         {hebrewLetterCodes, 1, 0x10, 0x11},
         {arabicFormCodes, 1, 0x10, 0x11},
         {digitHebrewCodes, 3, 0x10, 0x11},
+        {arabicNumericPrefix, 5, 0x10, 0x11},
+        {easternArabicNumericPrefix, 3, 0x10, 0x11},
+        {arabicNumbersOnly, 4, 0x10, 0x12},
+        {arabicNumericPrefixLatin, 4, 0x10, 0x12},
         {hebrewLatinCodes, 2, 0x10, 0x11},
         {latinHebrewCodes, 2, 0x10, 0x12},
         {rlmLatinCodes, 2, 0x10, 0x11},
@@ -537,6 +570,15 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     float scaleW = 1.0f;
     float scaleH = 1.0f;
     Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && scaleW == 0.0f && scaleH == 0.0f);
+    float fontSlant = 0.0f;
+    Require(sceFontSetEffectSlant(font, 0.25f) == SCE_FONT_OK);
+    Require(sceFontGetEffectSlant(font, &fontSlant) == SCE_FONT_OK && approximately(fontSlant, 0.25f));
+    Require(sceFontGetEffectSlant(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetEffectSlant(nullptr, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    errno = 71;
+    Require(sceFontGetEffectSlant(font, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontSetEffectSlant(font, 0.0f) == SCE_FONT_OK);
     Require(sceFontSetEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_OK);
     Require(sceFontGetEffectWeight(font, &weightX, &weightY, &mode) == SCE_FONT_OK && approximately(weightX, 1.02f) && approximately(weightY, 0.98f) && mode == 0);
     Require(sceFontGetEffectWeight(font, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
@@ -982,6 +1024,13 @@ int main() {
     }
     Require(sceFontGetTypographicDesign(nullptr, 1, &setting) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && setting == 0);
     Require(sceFontGetTypographicDesign(nullptr, 1, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    errno = 71;
+    Require(sceFontGetScriptLanguage(font, 0x100, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetScriptLanguage(nullptr, 0x100, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetTypographicDesign(font, 1, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetTypographicDesign(font, 2, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetTypographicDesign(nullptr, 1, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(errno == 71);
     Require(sceFontSetTypographicDesign(nullptr, 1, 2) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontSetTypographicDesign(font, 65537, 0) == SCE_FONT_ERROR_INVALID_PARAMETER);
     for (const auto selector : {1, 17, 65537, 65538, 65539}) {

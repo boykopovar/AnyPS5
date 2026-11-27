@@ -50,7 +50,7 @@ public:
     VkPipelineLayout Layout() const;
     std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<void>> owners, VkExtent2D extent, std::uint32_t layers = 1);
     // Begins the render pass on the framebuffer, binds the pipeline and sets its dynamic state.
-    void Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked = nullptr) const;
+    void Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked = nullptr, bool secondaryContents = false) const;
     // The same inside a render pass another pipeline of the same attachments began (compatible by
     // construction: the attachment formats alone decide).
     void Continue(CommandState& recording, const State& state, const State* masked = nullptr) const;
@@ -59,10 +59,21 @@ public:
     void ContinueBackFaces(CommandState& recording, const State& state, const State* masked = nullptr) const;
     bool SplitsSecondChannel() const { return secondChannel != VK_NULL_HANDLE; }
     void ContinueSecondChannel(CommandState& recording, const State& state, const State* masked = nullptr) const;
+    bool MasksStencilReplayPasses(const State& state) const;
+    void SetStencilReplayMasks(CommandState& recording, const State& state, const State* masked, bool colorAndDepth, std::uint32_t stencilBits) const;
     const SampleOrder& HostSampleOrder() const { return sampleOrder; }
     bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
     bool NarrowLibraryKeys() const { return narrowLibraryKeys; }
+    VkFormat DepthFormat() const { return depthFormat; }
+    bool DynamicRendering() const { return dynamicRendering; }
+    std::uint32_t ColorSlotCount() const { return static_cast<std::uint32_t>(colorSlots.size()); }
+    bool BindsColor() const {
+        for (const auto slot : colorSlots) {
+            if (slot != ~0u) return true;
+        }
+        return false;
+    }
     VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
@@ -72,6 +83,7 @@ private:
     struct CachedFramebuffer {
         std::vector<VkImageView> views;
         std::vector<std::weak_ptr<void>> owners;
+        std::vector<const void*> ownerPointers;
         std::vector<bool> owned;
         VkExtent2D extent;
         std::uint32_t layers = 1;

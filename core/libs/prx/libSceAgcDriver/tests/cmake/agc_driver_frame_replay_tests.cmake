@@ -20,6 +20,14 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_frame_replay PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        add_test(NAME agc_driver_frame_replay_subpage COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> subpage)
+        set_tests_properties(agc_driver_frame_replay_subpage PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame replay subpage capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 120 SKIP_RETURN_CODE 77)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_replay_subpage PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
         add_test(NAME agc_driver_frame_replay_cold_pipelines COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> pipelines)
         set_tests_properties(agc_driver_frame_replay_cold_pipelines PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=0;APS5_HEADLESS_PIPELINE_CACHE=1;ANYPS5_SHADER_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/frame replay pipeline cache;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame replay cold capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
@@ -40,6 +48,22 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_frame_replay_concurrent PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-concurrent-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=8;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
                 TIMEOUT 120 SKIP_RETURN_CODE 77)
+        add_test(NAME agc_driver_frame_replay_multisample_depth COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> multisample_depth)
+        set_tests_properties(agc_driver_frame_replay_multisample_depth PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-multisample-depth-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 30 SKIP_RETURN_CODE 77)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_replay_multisample_depth PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+        add_test(NAME agc_driver_frame_replay_single_sample_depth COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> single_sample_depth)
+        set_tests_properties(agc_driver_frame_replay_single_sample_depth PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-single-sample-depth-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 30 SKIP_RETURN_CODE 77)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_replay_single_sample_depth PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
         add_test(NAME agc_driver_frame_replay_rewind COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> rewind)
         set_tests_properties(agc_driver_frame_replay_rewind PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-rewind-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
@@ -64,7 +88,17 @@ if(BUILD_TESTING)
                         "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
             endif()
         endforeach()
-        foreach(mode IN ITEMS rewind_store rewind_copy rewind_compute rewind_release rewind_fill rewind_split wait_label fence_reuse busy_queue rewind_page allocation_ranges)
+        foreach(mode IN ITEMS rewind_chained rewind_page_start rewind_zero_control rewind_zero_control_parked rewind_in_order rewind_kept_words)
+            add_test(NAME agc_driver_frame_replay_${mode} COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> ${mode})
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES
+                    ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-${mode}-capture;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                    TIMEOUT 120 SKIP_RETURN_CODE 77)
+            if(WIN32)
+                set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endforeach()
+        foreach(mode IN ITEMS rewind_store rewind_copy rewind_compute rewind_release rewind_fill rewind_split wait_label fence_reuse busy_queue rewind_page allocation_ranges gpu_only)
             add_test(NAME agc_driver_frame_replay_${mode} COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> ${mode})
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES
                     ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-${mode}-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"

@@ -35,20 +35,6 @@ void Require(bool condition, const char* function, const char* message) {
     if (!condition) throw std::invalid_argument(std::string(function) + ": " + message);
 }
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
 void RequireShift(const void* quantizer, std::int32_t shift, std::int32_t scaled, const char* function) {
     Require(quantizer != nullptr, function, "null quantizer");
     const auto index = *static_cast<const std::uint8_t*>(quantizer);
@@ -72,7 +58,7 @@ void APS5_VABI formatQuantizer_nid_postfix(void** quantizers, std::uint8_t mode,
     Require(quantizers != nullptr, __func__, "null quantizer table");
     Require(channels <= MaxChannels, __func__, "more than 16 channels");
     std::array<void*, MaxChannels> table{};
-    Require(CopyIn(table.data(), quantizers, channels * sizeof(void*)), __func__, "unreadable quantizer table");
+    Require(GuestCopyIn_nid_no_patch(table.data(), quantizers, channels * sizeof(void*)), __func__, "unreadable quantizer table");
     for (std::size_t channel = 0; channel < channels; ++channel)
         Require(table[channel] != nullptr, __func__, "null channel quantizer");
     JxrFormatQuantizer_nid_no_patch(table.data(), mode, channels, position, shiftedUv, scaled);
@@ -101,7 +87,7 @@ int APS5_VABI allocateQuantizer_nid_postfix(void** quantizers, std::size_t chann
             table[channel] = quantizerCount == 0 ? allocation : allocation + channel * quantizerCount;
         entries = channels == 0 ? 1 : channels;
     }
-    if (!CopyOut(quantizers, table.data(), entries * sizeof(void*))) {
+    if (!GuestCopyOut_nid_no_patch(quantizers, table.data(), entries * sizeof(void*))) {
         if (allocation) free_nid_postfix(allocation);
         throw std::invalid_argument(std::string(__func__) + ": unwritable quantizer table");
     }
@@ -111,7 +97,7 @@ int APS5_VABI allocateQuantizer_nid_postfix(void** quantizers, std::size_t chann
 void APS5_VABI freeQuantizer_nid_postfix(void** quantizers) {
     Require(quantizers != nullptr, __func__, "null quantizer table");
     void* first = nullptr;
-    Require(CopyIn(&first, quantizers, sizeof(first)), __func__, "unreadable quantizer table");
+    Require(GuestCopyIn_nid_no_patch(&first, quantizers, sizeof(first)), __func__, "unreadable quantizer table");
     if (first) free_nid_postfix(first);
 }
 

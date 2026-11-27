@@ -58,6 +58,12 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     if (size < sizeof(KernelCpumask) || size > 16) return fail(GuestErange);
     auto* self = scePthreadSelf();
     KernelCpumask affinity = 0;
+    auto cpuset = GuestCpusetTarget::Process;
+    const auto cpusetAffinity = [&]() -> KernelCpumask {
+        if (cpuset == GuestCpusetTarget::Root) return RootCpumask;
+        if (cpuset == GuestCpusetTarget::Other) NotImplemented_nid_no_patch("cpuset_getaffinity of a set the process is not in");
+        return GuestProcessCpusetAffinity();
+    };
     switch (which) {
     case WhichThread: {
         const auto tid = id == -1 ? self->tid : id;
@@ -68,7 +74,8 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
         break;
     case WhichCpuset:
-        if (id != -1) NotImplemented_nid_no_patch("cpuset_getaffinity of a numbered cpuset");
+        cpuset = FindGuestCpuset(id);
+        if (cpuset == GuestCpusetTarget::Missing) return fail(GuestEsrch);
         break;
     case WhichJail:
         return fail(GuestEsrch);
@@ -80,15 +87,18 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     }
     switch (level) {
     case LevelRoot:
+        if (which == WhichIrq || which == WhichDomain) return fail(GuestEinval);
+        affinity = RootCpumask;
+        break;
     case LevelCpuset:
         if (which == WhichIrq || which == WhichDomain) return fail(GuestEinval);
-        affinity = level == LevelRoot ? RootCpumask : sceKernelGetAvailableCpumask();
+        affinity = cpusetAffinity();
         break;
     case LevelWhich:
         if (which == WhichIrq) NotImplemented_nid_no_patch("cpuset_getaffinity of an interrupt");
         if (which == WhichDomain) NotImplemented_nid_no_patch("cpuset_getaffinity of a memory domain");
         if (which == WhichProcess) affinity = LiveGuestThreadsAffinity();
-        else if (which == WhichCpuset) affinity = sceKernelGetAvailableCpumask();
+        else if (which == WhichCpuset) affinity = cpusetAffinity();
         break;
     default:
         return fail(GuestEinval);
@@ -104,7 +114,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
     constexpr int LevelRoot = 1, LevelCpuset = 2, LevelWhich = 3;
     constexpr int WhichThread = 1, WhichProcess = 2, WhichCpuset = 3, WhichIrq = 4, WhichJail = 5, WhichDomain = 6;
     constexpr int WhichInterruptHandler = 7, WhichInterruptThread = 8;
-    constexpr int GuestEsrch = 3, GuestEdeadlk = 11, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEdeadlk = 11, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
     constexpr std::size_t MaximumSize = 256 / 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
@@ -119,6 +129,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
     }
     auto* self = scePthreadSelf();
     const auto threadExists = [&] { return id == -1 || id == self->tid || LiveGuestThreadExists(id); };
+    auto cpuset = GuestCpusetTarget::Process;
     switch (level) {
     case LevelRoot:
     case LevelCpuset:
@@ -130,7 +141,8 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
             if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
             break;
         case WhichCpuset:
-            if (id != -1) NotImplemented_nid_no_patch("cpuset_setaffinity of a numbered cpuset");
+            cpuset = FindGuestCpuset(id);
+            if (cpuset == GuestCpusetTarget::Missing) return fail(GuestEsrch);
             break;
         case WhichJail:
             return fail(GuestEsrch);
@@ -139,29 +151,33 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         default:
             return fail(GuestEinval);
         }
-        NotImplemented_nid_no_patch(level == LevelRoot ? "cpuset_setaffinity at CPU_LEVEL_ROOT" : "cpuset_setaffinity at CPU_LEVEL_CPUSET");
-        return fail(GuestEinval);
+        if (level == LevelRoot || cpuset == GuestCpusetTarget::Root) return fail(GuestEperm);
+        if (cpuset == GuestCpusetTarget::Other) NotImplemented_nid_no_patch("cpuset_setaffinity of a set the process is not in");
+        break;
     case LevelWhich:
-        break;
-    default:
-        return fail(GuestEinval);
-    }
-    switch (which) {
-    case WhichThread:
-        if (!threadExists()) return fail(GuestEsrch);
-        break;
-    case WhichProcess:
-        if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
-        break;
-    case WhichCpuset:
-        NotImplemented_nid_no_patch(id == -1 ? "cpuset_setaffinity of the calling thread's base cpuset" : "cpuset_setaffinity of a numbered cpuset");
-        break;
-    case WhichJail:
-        return fail(GuestEsrch);
-    case WhichIrq:
-    case WhichInterruptHandler:
-    case WhichInterruptThread:
-        NotImplemented_nid_no_patch("cpuset_setaffinity of an interrupt");
+        switch (which) {
+        case WhichThread:
+            if (!threadExists()) return fail(GuestEsrch);
+            break;
+        case WhichProcess:
+            if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
+            break;
+        case WhichCpuset:
+            cpuset = FindGuestCpuset(id);
+            if (cpuset == GuestCpusetTarget::Missing) return fail(GuestEsrch);
+            if (cpuset == GuestCpusetTarget::Root) return fail(GuestEperm);
+            if (cpuset == GuestCpusetTarget::Other) NotImplemented_nid_no_patch("cpuset_setaffinity of a set the process is not in");
+            break;
+        case WhichJail:
+            return fail(GuestEsrch);
+        case WhichIrq:
+        case WhichInterruptHandler:
+        case WhichInterruptThread:
+            NotImplemented_nid_no_patch("cpuset_setaffinity of an interrupt");
+            break;
+        default:
+            return fail(GuestEinval);
+        }
         break;
     default:
         return fail(GuestEinval);
@@ -170,10 +186,15 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
     std::memcpy(&requested, buffer.data(), sizeof(requested));
     const KernelCpumask affinity = requested & sceKernelGetAvailableCpumask();
     if (affinity == 0) return fail(GuestEdeadlk);
-    if (which == WhichThread) {
+    if (level == LevelCpuset || which == WhichCpuset) {
+        if (!SetLiveGuestProcessCpuset(affinity)) return fail(GuestEdeadlk);
+    } else if (which == WhichProcess) {
+        if (!SetLiveGuestThreadsAffinity(affinity)) return fail(GuestEdeadlk);
+    } else {
         const auto tid = id == -1 ? self->tid : id;
-        if (!SetLiveGuestThreadAffinity_nid_no_patch(tid, affinity)) return fail(GuestEsrch);
-    } else SetLiveGuestThreadsAffinity(affinity);
+        const int error = SetLiveGuestThreadAffinity_nid_no_patch(tid, affinity);
+        if (error != 0) return fail(error);
+    }
     return 0;
 }
 
@@ -250,6 +271,8 @@ int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedPa
     KernelSchedParam current{};
     const int result = scePthreadGetprio(thread, &current.sched_priority);
     if (result != 0) return result;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     const int currentPolicy = thread->schedPolicy.load(std::memory_order_relaxed);
     if (!GuestCopyOut_nid_no_patch(param, &current, sizeof(current)) ||
         !GuestCopyOut_nid_no_patch(policy, &currentPolicy, sizeof(currentPolicy)))
@@ -263,8 +286,11 @@ int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSc
     if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SCE_KERNEL_ERROR_EFAULT;
     if (!AcceptsSchedParam(policy, requested.sched_priority)) return SCE_KERNEL_ERROR_EINVAL;
     const int result = scePthreadSetprio(thread, requested.sched_priority);
-    if (result == 0) thread->schedPolicy.store(policy, std::memory_order_relaxed);
-    return result;
+    if (result != 0) return result;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
+    thread->schedPolicy.store(policy, std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
@@ -461,9 +487,12 @@ int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {
     if (!thread) return PosixThread::GUEST_ESRCH;
     if (!name) return PosixThread::GUEST_EFAULT;
+    auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return PosixThread::GUEST_ESRCH;
     // A joined thread answers ESRCH on the console (PS5 firmware 13.60); the object is retained
     // after scePthreadJoin, so _joined tells it apart from a live thread.
     if (thread->_joined.load(std::memory_order_acquire)) return PosixThread::GUEST_ESRCH;
+    registered.unlock();
     return PosixThread::ToErrno(scePthreadGetname(thread, name));
 }
 
@@ -488,6 +517,8 @@ int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId) {
     constexpr int guestFault = 14;
     if (!thread) return PosixThread::GUEST_EINVAL;
     if (!clockId) return guestFault;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return PosixThread::GUEST_ESRCH;
     const int id = GuestThreadCpuClockId(thread);
     if (!GuestCopyOut_nid_no_patch(clockId, &id, sizeof(id))) return guestFault;
     return 0;

@@ -15,6 +15,7 @@ struct WebRtcSocketAddress {
 };
 
 static_assert(sizeof(WebRtcSocketAddress) == 88);
+static_assert(offsetof(WebRtcSocketAddress, hostname) == 0);
 static_assert(offsetof(WebRtcSocketAddress, ip) == 40);
 static_assert(offsetof(WebRtcSocketAddress, port) == 72);
 static_assert(offsetof(WebRtcSocketAddress, scopeId) == 76);

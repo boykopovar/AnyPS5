@@ -65,12 +65,15 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -80,6 +83,15 @@ constexpr std::int32_t FormatPcm = 1;
 constexpr std::int32_t FormatIeeeFloat = 3;
 constexpr int SeekSet = 0;
 
+class ErrnoGuard {
+public:
+    ErrnoGuard() : savedErrno(errno) {}
+    ~ErrnoGuard() { errno = savedErrno; }
+
+private:
+    int savedErrno;
+};
+
 std::int16_t FloatToS16(float value) {
     value *= 32768.f;
     value = std::min(value, 32767.f);
@@ -87,10 +99,29 @@ std::int16_t FloatToS16(float value) {
     return static_cast<std::int16_t>(value + std::copysign(0.5f, value));
 }
 
-FileStream* Stream(WebRtcWavReader* reader, const char* function) {
-    if (!reader || !reader->file.file)
+WebRtcWavReader CopyInReader(const WebRtcWavReader* reader, const char* function) {
+    ErrnoGuard errnoGuard;
+    WebRtcWavReader local{};
+    if (!GuestPtr<const WebRtcWavReader>(reader).CopyIn(local))
         throw std::invalid_argument(function);
-    return reader->file.file;
+    return local;
+}
+
+bool WritableReader(WebRtcWavReader* reader) {
+    ErrnoGuard errnoGuard;
+    return reader != nullptr && GuestWritable_nid_no_patch(reader, sizeof(*reader));
+}
+
+void CopyOutReader(WebRtcWavReader* reader, const WebRtcWavReader& local, const char* function) {
+    ErrnoGuard errnoGuard;
+    if (!GuestPtr<WebRtcWavReader>(reader).CopyOut(local))
+        throw std::invalid_argument(function);
+}
+
+FileStream* RequireStream(const WebRtcWavReader& reader, const char* function) {
+    if (!reader.file.file)
+        throw std::invalid_argument(function);
+    return reader.file.file;
 }
 
 }
@@ -98,49 +129,72 @@ FileStream* Stream(WebRtcWavReader* reader, const char* function) {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc9WavReader5ResetEv_nid_postfix(WebRtcWavReader* reader) {
-    FileStream* const stream = Stream(reader, "WavReader::Reset requires an open file");
-    if (fseek_nid_postfix(stream, reader->dataStartPos, SeekSet) != 0)
+    WebRtcWavReader local = CopyInReader(reader, "WavReader::Reset requires an open file");
+    FileStream* const stream = RequireStream(local, "WavReader::Reset requires an open file");
+    if (!WritableReader(reader))
+        throw std::invalid_argument("WavReader::Reset requires a writable reader");
+    if (fseek_nid_postfix(stream, local.dataStartPos, SeekSet) != 0)
         throw std::runtime_error("WavReader::Reset: Failed to set position in the file to WAV data start position");
-    reader->numUnreadSamples = reader->numSamplesInFile;
+    local.numUnreadSamples = local.numSamplesInFile;
+    CopyOutReader(reader, local, "WavReader::Reset requires a writable reader");
 }
 
 std::size_t APS5_VABI _ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(WebRtcWavReader* reader, std::size_t numSamples, std::int16_t* samples) {
+    WebRtcWavReader local = CopyInReader(reader, "WavReader::ReadSamples requires an open file");
     std::size_t numSamplesLeftToRead = numSamples;
     std::size_t nextChunkStart = 0;
-    while (numSamplesLeftToRead > 0 && reader->numUnreadSamples > 0) {
-        FileStream* const stream = Stream(reader, "WavReader::ReadSamples requires an open file");
+    if (numSamplesLeftToRead > 0 && local.numUnreadSamples > 0) {
+        RequireStream(local, "WavReader::ReadSamples requires an open file");
         if (!samples)
             throw std::invalid_argument("WavReader::ReadSamples requires a sample buffer");
-        const std::size_t chunkSize = std::min(std::min(MaxChunkSize, numSamplesLeftToRead), reader->numUnreadSamples);
+        if (!WritableReader(reader))
+            throw std::invalid_argument("WavReader::ReadSamples requires a writable reader");
+        const std::size_t plannedSamples = std::min(numSamplesLeftToRead, local.numUnreadSamples);
+        if (plannedSamples > std::numeric_limits<std::size_t>::max() / sizeof(std::int16_t))
+            throw std::invalid_argument("WavReader::ReadSamples requires a writable sample buffer");
+        ErrnoGuard errnoGuard;
+        if (!GuestWritable_nid_no_patch(samples, plannedSamples * sizeof(std::int16_t)))
+            throw std::invalid_argument("WavReader::ReadSamples requires a writable sample buffer");
+    }
+    while (numSamplesLeftToRead > 0 && local.numUnreadSamples > 0) {
+        FileStream* const stream = RequireStream(local, "WavReader::ReadSamples requires an open file");
+        const std::size_t chunkSize = std::min(std::min(MaxChunkSize, numSamplesLeftToRead), local.numUnreadSamples);
+        std::array<std::int16_t, MaxChunkSize> outSamples{};
         std::size_t numBytesRead;
         std::size_t numSamplesRead;
-        if (reader->format == FormatIeeeFloat) {
+        if (local.format == FormatIeeeFloat) {
             std::array<float, MaxChunkSize> samplesToConvert;
             numBytesRead = fread_nid_postfix(samplesToConvert.data(), 1, chunkSize * sizeof(samplesToConvert[0]), stream);
             numSamplesRead = numBytesRead / sizeof(samplesToConvert[0]);
             for (std::size_t j = 0; j < numSamplesRead; ++j)
-                samples[nextChunkStart + j] = FloatToS16(samplesToConvert[j]);
+                outSamples[j] = FloatToS16(samplesToConvert[j]);
         } else {
-            if (reader->format != FormatPcm)
+            if (local.format != FormatPcm)
                 throw std::runtime_error("WavReader::ReadSamples: the WAV format is neither PCM nor IEEE float");
-            numBytesRead = fread_nid_postfix(&samples[nextChunkStart], 1, chunkSize * sizeof(samples[0]), stream);
-            numSamplesRead = numBytesRead / sizeof(samples[0]);
+            numBytesRead = fread_nid_postfix(outSamples.data(), 1, chunkSize * sizeof(outSamples[0]), stream);
+            numSamplesRead = numBytesRead / sizeof(outSamples[0]);
         }
         if (numSamplesRead != 0 && (numBytesRead % numSamplesRead) != 0)
             throw std::runtime_error("WavReader::ReadSamples: Corrupt file: file ended in the middle of a sample.");
         if (numSamplesRead != chunkSize && !feof_nid_postfix(stream))
             throw std::runtime_error("WavReader::ReadSamples: Corrupt file: payload size does not match header.");
+        {
+            ErrnoGuard errnoGuard;
+            if (!GuestPtr<std::int16_t>(samples + nextChunkStart).CopyOut(outSamples.data(), numSamplesRead))
+                throw std::invalid_argument("WavReader::ReadSamples requires a writable sample buffer");
+        }
         nextChunkStart += numSamplesRead;
-        reader->numUnreadSamples -= numSamplesRead;
+        local.numUnreadSamples -= numSamplesRead;
         numSamplesLeftToRead -= numSamplesRead;
+        CopyOutReader(reader, local, "WavReader::ReadSamples requires a writable reader");
     }
     return numSamples - numSamplesLeftToRead;
 }
 
 void APS5_VABI _ZN6webrtc9WavReader5CloseEv_nid_postfix(WebRtcWavReader* reader) {
-    if (!reader)
-        throw std::invalid_argument("WavReader::Close requires a reader");
-    _ZN6webrtc11FileWrapper5CloseEv_nid_postfix(&reader->file);
+    CopyInReader(reader, "WavReader::Close requires a reader");
+    const auto fileAddress = reinterpret_cast<std::uintptr_t>(reader) + offsetof(WebRtcWavReader, file);
+    _ZN6webrtc11FileWrapper5CloseEv_nid_postfix(reinterpret_cast<WebRtcFileWrapper*>(fileAddress));
 }
 
 }

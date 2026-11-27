@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -81,12 +82,6 @@ public:
 private:
     std::uint8_t* block = nullptr;
 };
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 std::vector<std::uint32_t> Expected(std::uint32_t lanes) {
     std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);

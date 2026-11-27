@@ -551,6 +551,12 @@ OriginRef APS5_VABI _ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE(const URL* u
     return CreateFromURL(Checked(url), __func__);
 }
 
+OriginRef APS5_VABI _ZN7WebCore14SecurityOrigin12createUniqueEv() {
+    PendingOrigin origin;
+    InitializeOpaque(*origin);
+    return origin.Release();
+}
+
 String APS5_VABI _ZNK7WebCore14SecurityOrigin8toStringEv(const SecurityOrigin* self) {
     const auto& origin = Checked(self);
     if (IsOpaque(origin.data)) return Concatenate({Literal("null")});
@@ -597,6 +603,10 @@ bool APS5_VABI _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(const Security
     return IsSameSchemeHostPort(origin, second);
 }
 
+bool APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(const SecurityOrigin* self, const SecurityOrigin* other) {
+    return IsSameSchemeHostPort(Checked(self), Checked(other));
+}
+
 String APS5_VABI _ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(const SecurityOrigin* self) {
     const auto& origin = Checked(self);
     const auto& protocol = Protocol(origin.data);
@@ -629,6 +639,23 @@ String APS5_VABI _ZNK7WebCore18SecurityOriginData18databaseIdentifierEv(const Se
 
 OriginRef APS5_VABI _ZNK7WebCore18SecurityOriginData14securityOriginEv(const SecurityOriginData* self) {
     return CreateFromData(Checked(self), __func__);
+}
+
+SecurityOriginData APS5_VABI _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(const SecurityOriginData* self) {
+    SecurityOriginData result;
+    result.index = kSecurityOriginOpaqueIndex;
+    IsolatedCopyData(result, Checked(self));
+    return result;
+}
+
+SecurityOriginData APS5_VABI _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(void* frame) {
+    if (!frame) {
+        SecurityOriginData result;
+        new (&result.storage.tuple) SecurityOriginTuple{};
+        result.index = kSecurityOriginTupleIndex;
+        return result;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

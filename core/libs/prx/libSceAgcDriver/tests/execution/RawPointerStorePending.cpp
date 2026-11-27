@@ -6,8 +6,8 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "BatchHold.hpp"
 #include "VulkanTestDevice.hpp"
-#include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -28,7 +28,6 @@
 #include <functional>
 #include <initializer_list>
 #include <iostream>
-#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -173,33 +172,7 @@ void Submit(std::vector<std::uint32_t>& commands, const std::string& what) {
 
 class SubmitHold {
 public:
-    SubmitHold() {
-        {
-            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-            recorder = AgcDriver::Graphics::Recorder::Active();
-        }
-        if (recorder == nullptr) throw std::runtime_error("raw pointer store pending: no active recorder to hold a batch on the GPU");
-        device = recorder->Device();
-#ifdef _WIN32
-        constexpr const char* libraryName = "vulkan-1.dll";
-#elif defined(__APPLE__)
-        constexpr const char* libraryName = "libvulkan.1.dylib";
-#else
-        constexpr const char* libraryName = "libvulkan.so.1";
-#endif
-        library.reset(SDL_LoadObject(libraryName));
-        if (library == nullptr) throw std::runtime_error("raw pointer store pending: cannot load Vulkan to hold a batch");
-        resolve = reinterpret_cast<PFN_vkGetDeviceProcAddr>(SDL_LoadFunction(library.get(), "vkGetDeviceProcAddr"));
-        if (resolve == nullptr) throw std::runtime_error("raw pointer store pending: cannot resolve vkGetDeviceProcAddr");
-        const auto createSemaphore = function<PFN_vkCreateSemaphore>("vkCreateSemaphore");
-        destroySemaphore = function<PFN_vkDestroySemaphore>("vkDestroySemaphore");
-        signalSemaphore = reinterpret_cast<PFN_vkSignalSemaphore>(resolve(device, "vkSignalSemaphoreKHR"));
-        if (signalSemaphore == nullptr) signalSemaphore = function<PFN_vkSignalSemaphore>("vkSignalSemaphore");
-        VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-        if (createSemaphore(device, &info, nullptr, &semaphore) != VK_SUCCESS) throw std::runtime_error("raw pointer store pending: cannot create the batch hold");
-    }
+    SubmitHold() : recorder(ActiveRecorder()), hold(recorder->Device()) {}
 
     SubmitHold(const SubmitHold&) = delete;
     SubmitHold& operator=(const SubmitHold&) = delete;
@@ -214,12 +187,11 @@ public:
             AgcDriverWaitIdle_nid_postfix();
         } catch (...) {
         }
-        destroySemaphore(device, semaphore, nullptr);
     }
 
     void Arm() {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        recorder->HoldNextSubmit(semaphore, 1);
+        hold.Arm(*recorder);
         first = recorder->OpenSerial();
     }
 
@@ -250,28 +222,20 @@ public:
     }
 
 private:
-    template <typename TFunction>
-    TFunction function(const char* name) const {
-        const auto found = reinterpret_cast<TFunction>(resolve(device, name));
-        if (found == nullptr) throw std::runtime_error(std::string("raw pointer store pending: cannot resolve ") + name);
-        return found;
+    static AgcDriver::Graphics::Recorder* ActiveRecorder() {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        auto* active = AgcDriver::Graphics::Recorder::Active();
+        if (active == nullptr) throw std::runtime_error("raw pointer store pending: no active recorder to hold a batch on the GPU");
+        return active;
     }
 
     void Release() {
         if (released.exchange(true)) return;
-        VkSemaphoreSignalInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-        info.semaphore = semaphore;
-        info.value = 1;
-        releaseResult = signalSemaphore(device, &info);
+        releaseResult = hold.Release();
     }
 
-    AgcDriver::Graphics::Recorder* recorder = nullptr;
-    VkDevice device = VK_NULL_HANDLE;
-    std::unique_ptr<void, decltype(&SDL_UnloadObject)> library{nullptr, &SDL_UnloadObject};
-    PFN_vkGetDeviceProcAddr resolve = nullptr;
-    PFN_vkDestroySemaphore destroySemaphore = nullptr;
-    PFN_vkSignalSemaphore signalSemaphore = nullptr;
-    VkSemaphore semaphore = VK_NULL_HANDLE;
+    AgcDriver::Graphics::Recorder* recorder;
+    BatchHold hold;
     std::uint64_t first = 0;
     std::jthread watcher;
     std::atomic<bool> released{false};

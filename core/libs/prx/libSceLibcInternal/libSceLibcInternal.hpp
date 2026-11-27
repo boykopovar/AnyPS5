@@ -15,6 +15,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/ExceptionVirtuals.hpp"
 #include "prx/libSceLibcInternal/include/IosBase.hpp"
+#include "prx/libSceLibcInternal/include/StreamDestructors.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"

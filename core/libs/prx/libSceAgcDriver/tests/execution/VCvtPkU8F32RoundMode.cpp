@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -28,6 +29,16 @@ alignas(256) constexpr std::array<std::uint32_t, 10> Code{
 
 alignas(256) std::array<std::uint32_t, 11> RoundModeCode{
     0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xbfa40000u, 0xd55e000au, 0x02010104u,
+    0xe0701000u, 0x80010a02u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> ClampCode{
+    0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xd55e800au, 0x02010104u, 0xe0701000u,
+    0x80010a02u, 0xbf810000u,
+};
+
+alignas(256) std::array<std::uint32_t, 11> ClampRoundModeCode{
+    0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xbfa40000u, 0xd55e800au, 0x02010104u,
     0xe0701000u, 0x80010a02u, 0xbf810000u,
 };
 
@@ -78,17 +89,6 @@ constexpr std::array<PackVector, 38> Vectors{{
     {0x7f800001u, {0x00u, 0x00u, 0x00u, 0x00u}, {0x00u, 0x00u, 0x00u, 0x00u}},
 }};
 
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, ShaderRecompiler::ShaderFloatMode floatMode) {
     Input.fill(0u);
     for (std::uint32_t lane = 0; lane < Vectors.size(); ++lane) Input[lane * Inputs] = Vectors[lane].value;
@@ -138,10 +138,18 @@ int main() {
                     RoundModeCode[5] = 0xbfa40000u | rounding;
                     Run(*device, RoundModeCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u, true, ieee, false});
                     Check(kept, rounding, ieee, field + " set by s_round_mode");
+                    for (const bool dx10 : {false, true}) {
+                        const std::string clamp = dx10 ? ", clamp, DX10_CLAMP=1" : ", clamp, DX10_CLAMP=0";
+                        Run(*device, ClampCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u | rounding, dx10, ieee, false});
+                        Check(kept, rounding, ieee, field + clamp);
+                        ClampRoundModeCode[5] = 0xbfa40000u | rounding;
+                        Run(*device, ClampRoundModeCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u, dx10, ieee, false});
+                        Check(kept, rounding, ieee, field + " set by s_round_mode" + clamp);
+                    }
                 }
             }
         }
-        std::puts("v_cvt_pk_u8_f32 round mode tests passed");
+        std::puts("v_cvt_pk_u8_f32 round mode and clamp tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
