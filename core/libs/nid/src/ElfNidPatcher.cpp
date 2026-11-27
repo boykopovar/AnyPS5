@@ -622,6 +622,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     std::uint64_t relocatedSceDynlibOffset = 0;
     std::uint64_t relocatedSceDynlibSize = 0;
     bool relocatedSceDynlib = false;
+    std::uint64_t relocatedDynamicSourceOffset = 0;
+    std::uint64_t relocatedDynamicOffset = 0;
+    std::uint64_t relocatedDynamicAddress = 0;
+    std::uint64_t relocatedDynamicSize = 0;
+    bool relocatedDynamic = false;
 
     if (newDynStr.size() > dynStrSize && options.executable) {
         if (ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0 || ehdr.e_phnum >= 0xfffdu)
@@ -731,6 +736,24 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             relocatedSceDynlibOffset = sceDynlibOffset;
             relocatedSceDynlibSize = sceDynlibSize;
             relocatedSceDynlib = true;
+
+            for (auto& segment : segments) {
+                if (segment.p_type != 2u || segment.p_offset < sceDynlibSourceOffset) continue;
+                const auto relativeOffset = segment.p_offset - sceDynlibSourceOffset;
+                if (relativeOffset > sceDynlibSize || segment.p_filesz > sceDynlibSize - relativeOffset) continue;
+                const auto oldVirtualAddress = segment.p_vaddr;
+                const auto oldPhysicalAddress = segment.p_paddr;
+                segment.p_offset = sceDynlibOffset + relativeOffset;
+                segment.p_vaddr = address + (segment.p_offset - fileOffset);
+                if (oldPhysicalAddress == oldVirtualAddress) segment.p_paddr = segment.p_vaddr;
+                if (segment.p_align > 1u && segment.p_offset % segment.p_align != segment.p_vaddr % segment.p_align)
+                    throw std::runtime_error("invalid relocated PT_DYNAMIC alignment");
+                relocatedDynamicSourceOffset = sceDynlibSourceOffset + relativeOffset;
+                relocatedDynamicOffset = segment.p_offset;
+                relocatedDynamicAddress = segment.p_vaddr;
+                relocatedDynamicSize = segment.p_filesz;
+                relocatedDynamic = true;
+            }
         }
         segments.push_back({1, 4, fileOffset, address, address, segmentSize, segmentSize, 4096});
         elf.resize(static_cast<std::size_t>(fileOffset + segmentSize), 0);
@@ -787,6 +810,19 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             static_cast<std::size_t>(relocatedSceDynlibSize),
             elf.begin() + static_cast<std::size_t>(relocatedSceDynlibOffset)
         );
+    }
+    if (relocatedDynamic) {
+        for (std::uint16_t index = 0; index < ehdr.e_shnum; ++index) {
+            const auto sectionOffset = static_cast<std::size_t>(ehdr.e_shoff) + index * sizeof(Elf64_Shdr);
+            auto section = Read<Elf64_Shdr>(elf, sectionOffset);
+            if (section.sh_type != kShtDynamic ||
+                section.sh_offset != relocatedDynamicSourceOffset ||
+                section.sh_size != relocatedDynamicSize)
+                continue;
+            section.sh_offset = relocatedDynamicOffset;
+            section.sh_addr = relocatedDynamicAddress;
+            Write(elf, sectionOffset, section);
+        }
     }
 }
 
