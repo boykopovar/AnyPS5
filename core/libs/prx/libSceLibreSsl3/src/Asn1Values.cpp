@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
 #include <array>
@@ -39,6 +40,13 @@ void ZeroGuestBytes(unsigned char* data, std::size_t length, const char* message
 }
 
 void ClearData(Asn1String* guestString, Asn1String& string, bool respectBorrowed) {
+    bool guestWritable = false;
+    {
+        ErrnoGuard guard;
+        const GuestArena::HostWrite write(guestString, sizeof(*guestString));
+        guestWritable = write.Open() && GuestWritable_nid_no_patch(guestString, sizeof(*guestString));
+    }
+    if (!guestWritable) throw std::invalid_argument("ASN.1 value object is unwritable");
     unsigned char* const oldData = string.data;
     const bool releaseData = oldData && (!respectBorrowed || !(string.flags & BorrowedData));
     if (releaseData) {
