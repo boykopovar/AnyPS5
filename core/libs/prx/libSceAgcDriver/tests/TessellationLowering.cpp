@@ -18,6 +18,7 @@
 #include <iterator>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace ShaderRecompiler;
@@ -401,7 +402,7 @@ bool OwnControlPoint(const IrValue* address, std::uint32_t stride) {
     return invocation->Opcode() == IrOpcode::GetBuiltin && invocation->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::InvocationId);
 }
 
-enum class Walk { Exact, StoreInBlock, NeighbourRead, UnresetValue, CountMask, ExitOnMask, WaitInBlock };
+enum class Walk { Exact, StoreInBlock, NeighbourRead, UnresetValue, CountMask, ExitOnMask, WaitInBlock, WaitInJoin };
 
 constexpr std::uint32_t RectCountOffset = 0u;
 constexpr std::uint32_t ValidLanesOffset = 4u;
@@ -515,6 +516,7 @@ struct QuadWalk {
             v5Out->AddPhiOperand(&test, v5);
             v5Out->AddPhiOperand(&sample, v5New);
         }
+        if (walk == Walk::WaitInJoin) static_cast<void>(b.Emit(wait, IrType::Void, {}));
         IrValue& more = both(entryExec, equal(u(3u), v13Out));
         IrValue& v13Next = select(more, u(0u), v13Out);
         IrValue& next = b.IAdd(index, u(1u));
@@ -655,8 +657,8 @@ bool Contains(const IrProgram& program, IrOpcode opcode) {
     return false;
 }
 
-bool QuadRefusedBecause(Walk walk, std::initializer_list<const char*> reasons) {
-    QuadWalk hull(walk);
+bool QuadRefusedBecause(Walk walk, std::initializer_list<const char*> reasons, IrOpcode wait = IrOpcode::Waitcnt) {
+    QuadWalk hull(walk, wait);
     const Outcome outcome = Lower(hull.program);
     if (outcome.lowered) {
         std::fprintf(stderr, "lowered instead of refusing: %s\n", *reasons.begin());
@@ -1279,9 +1281,9 @@ int main() {
         return outcome.lowered && !Contains(hull.program, IrOpcode::Ballot) && !Contains(hull.program, IrOpcode::WqmU64) && choice->Argument(0)->Resolve() == predicate->Resolve();
     });
 
-    passed &= run("a whole-quad mask read lowers with s_waitcnt, s_waitcnt_vscnt, buffer_gl0_inv or buffer_gl1_inv in the block it gates", [] {
-        for (const auto wait : {IrOpcode::Waitcnt, IrOpcode::ControlNop, IrOpcode::GuestRelease, IrOpcode::GuestAcquire}) {
-            QuadWalk hull(Walk::WaitInBlock, wait);
+    passed &= run("a whole-quad mask read lowers with s_waitcnt or a control no-op in the block it gates and with a guest release or acquire after the block", [] {
+        for (const auto [walk, wait] : {std::pair{Walk::WaitInBlock, IrOpcode::Waitcnt}, std::pair{Walk::WaitInBlock, IrOpcode::ControlNop}, std::pair{Walk::WaitInJoin, IrOpcode::GuestRelease}, std::pair{Walk::WaitInJoin, IrOpcode::GuestAcquire}}) {
+            QuadWalk hull(walk, wait);
             const Outcome outcome = Lower(hull.program);
             if (!outcome.lowered) {
                 std::fprintf(stderr, "%s refused: %s\n", std::string(IrOpcodeName(wait)).c_str(), outcome.reason.c_str());
@@ -1290,6 +1292,11 @@ int main() {
             if ((wait != IrOpcode::ControlNop && !Contains(hull.program, wait)) || Contains(hull.program, IrOpcode::WqmU64)) return false;
         }
         return true;
+    });
+
+    passed &= run("a whole-quad mask read refuses a guest release or acquire in the block it gates", [] {
+        return QuadRefusedBecause(Walk::WaitInBlock, {"(GuestRelease) in block $3 runs on a quad-helper lane in only one of the two programs"}, IrOpcode::GuestRelease) &&
+            QuadRefusedBecause(Walk::WaitInBlock, {"(GuestAcquire) in block $3 runs on a quad-helper lane in only one of the two programs"}, IrOpcode::GuestAcquire);
     });
 
     passed &= run("a whole-quad mask read refuses an LDS write in the block it gates", [] {
