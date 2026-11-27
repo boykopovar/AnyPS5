@@ -122,9 +122,10 @@ void LoopbackRefusal() {
         const auto start6 = std::chrono::steady_clock::now();
         const int res6 = connect_nid_postfix(client6, target6.data(), target6.size());
         const auto elapsed6Ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start6).count();
+        Require(res6 == -1);
         const int err6 = Error();
         if (err6 != ErrorAffamily && err6 != ErrorAddrNotAvail && err6 != ErrorNetUnreach) {
-            Require(res6 == -1 && err6 == ErrorRefused);
+            Require(err6 == ErrorRefused);
             Require(elapsed6Ms < 1000);
         }
         Require(close_nid_postfix(client6) == 0);
@@ -157,9 +158,10 @@ void LoopbackRefusal() {
             const auto startMapped = std::chrono::steady_clock::now();
             const int resMapped = connect_nid_postfix(clientMapped, targetMapped.data(), targetMapped.size());
             const auto elapsedMappedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startMapped).count();
+            Require(resMapped == -1);
             const int errMapped = Error();
             if (errMapped != ErrorAffamily && errMapped != ErrorAddrNotAvail && errMapped != ErrorNetUnreach) {
-                Require(resMapped == -1 && errMapped == ErrorRefused);
+                Require(errMapped == ErrorRefused);
                 Require(elapsedMappedMs < 1000);
             }
         }

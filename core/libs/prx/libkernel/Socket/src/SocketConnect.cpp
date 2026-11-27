@@ -38,8 +38,14 @@ u_short Port(const sockaddr* address) {
     return address->sa_family == AF_INET ? reinterpret_cast<const sockaddr_in*>(address)->sin_port : reinterpret_cast<const sockaddr_in6*>(address)->sin6_port;
 }
 
+enum class ListenerQuery {
+    Matched,
+    Missing,
+    Unavailable,
+};
+
 template<typename TTable, typename TMatch>
-bool HasMatchingListener(ULONG family, TMatch&& match) {
+ListenerQuery QueryListener(ULONG family, TMatch&& match) {
     std::vector<unsigned char> table;
     ULONG size = 0;
     DWORD result = ERROR_INSUFFICIENT_BUFFER;
@@ -47,16 +53,15 @@ bool HasMatchingListener(ULONG family, TMatch&& match) {
         table.resize(size);
         result = GetExtendedTcpTable(table.data(), &size, FALSE, family, TCP_TABLE_OWNER_PID_LISTENER, 0);
     }
-    if (result != NO_ERROR || table.size() < sizeof(DWORD)) return true;
-    const auto* rows = reinterpret_cast<const TTable*>(table.data());
     const std::size_t headerSize = offsetof(TTable, table);
-    if (table.size() < headerSize) return true;
+    if (result != NO_ERROR || table.size() < headerSize) return ListenerQuery::Unavailable;
+    const auto* rows = reinterpret_cast<const TTable*>(table.data());
     const std::size_t maxEntries = (table.size() - headerSize) / sizeof(rows->table[0]);
     const DWORD count = static_cast<DWORD>((std::min)(static_cast<std::size_t>(rows->dwNumEntries), maxEntries));
     for (DWORD i = 0; i < count; ++i) {
-        if (match(rows->table[i])) return true;
+        if (match(rows->table[i])) return ListenerQuery::Matched;
     }
-    return false;
+    return ListenerQuery::Missing;
 }
 
 bool Ipv6ListenerMatchesIpv4(const MIB_TCP6ROW_OWNER_PID& row, u_short port, ULONG ipv4Address) {
@@ -77,6 +82,22 @@ bool Ipv6ListenerMatchesLoopback6(const MIB_TCP6ROW_OWNER_PID& row, u_short port
     return IN6_IS_ADDR_UNSPECIFIED(&local) || IN6_IS_ADDR_LOOPBACK(&local);
 }
 
+bool ListenerDefinitelyAbsent(const sockaddr* address, bool isIpv4, ULONG ipv4Address) {
+    const u_short port = Port(address);
+    if (!isIpv4) {
+        return QueryListener<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, [&](const MIB_TCP6ROW_OWNER_PID& row) {
+            return Ipv6ListenerMatchesLoopback6(row, port);
+        }) == ListenerQuery::Missing;
+    }
+    return QueryListener<MIB_TCPTABLE_OWNER_PID>(AF_INET, [&](const MIB_TCPROW_OWNER_PID& row) {
+        return static_cast<u_short>(row.dwLocalPort) == port
+            && (row.dwLocalAddr == htonl(INADDR_ANY) || row.dwLocalAddr == ipv4Address);
+    }) == ListenerQuery::Missing
+        && QueryListener<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, [&](const MIB_TCP6ROW_OWNER_PID& row) {
+            return Ipv6ListenerMatchesIpv4(row, port, ipv4Address);
+        }) == ListenerQuery::Missing;
+}
+
 }
 
 extern "C" void RefuseClosedLoopbackAtOnce_nid_no_patch(SOCKET socket, const sockaddr* address) {
@@ -84,18 +105,7 @@ extern "C" void RefuseClosedLoopbackAtOnce_nid_no_patch(SOCKET socket, const soc
     ULONG ipv4Address = 0;
     in6_addr ipv6Address{};
     if (!ExtractTarget(address, isIpv4, ipv4Address, ipv6Address)) return;
-    const u_short port = Port(address);
-    const bool hasListener = isIpv4
-        ? HasMatchingListener<MIB_TCPTABLE_OWNER_PID>(AF_INET, [&](const MIB_TCPROW_OWNER_PID& row) {
-              return static_cast<u_short>(row.dwLocalPort) == port
-                  && (row.dwLocalAddr == htonl(INADDR_ANY) || row.dwLocalAddr == ipv4Address);
-          }) || HasMatchingListener<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, [&](const MIB_TCP6ROW_OWNER_PID& row) {
-              return Ipv6ListenerMatchesIpv4(row, port, ipv4Address);
-          })
-        : HasMatchingListener<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, [&](const MIB_TCP6ROW_OWNER_PID& row) {
-              return Ipv6ListenerMatchesLoopback6(row, port);
-          });
-    if (hasListener) return;
+    if (!ListenerDefinitelyAbsent(address, isIpv4, ipv4Address)) return;
     TCP_INITIAL_RTO_PARAMETERS parameters{TCP_INITIAL_RTO_UNSPECIFIED_RTT, TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS};
     DWORD returned = 0;
     WSAIoctl(socket, SIO_TCP_INITIAL_RTO, &parameters, sizeof(parameters), nullptr, 0, &returned, nullptr, nullptr);
