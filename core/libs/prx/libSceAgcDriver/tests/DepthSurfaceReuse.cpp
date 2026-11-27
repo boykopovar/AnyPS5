@@ -21,6 +21,9 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#ifdef APS5_AGC_ALLOCATION_COUNT
+#include "AllocationCounter.hpp"
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -82,6 +85,10 @@ VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice, const VkImageCreateInfo* in
 
 VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) {
     *requirements = {65536, 65536, 1};
+}
+
+VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements2(VkDevice, const VkImageMemoryRequirementsInfo2*, VkMemoryRequirements2* requirements) {
+    requirements->memoryRequirements = {65536, 65536, 1};
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL allocateMemory(VkDevice, const VkMemoryAllocateInfo*, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
@@ -200,8 +207,24 @@ VKAPI_ATTR VkResult VKAPI_CALL sampledDepthProperties(VkPhysicalDevice, VkFormat
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL attachmentOnlyProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties*) {
-    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+VKAPI_ATTR VkResult VKAPI_CALL attachmentOnlyProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags usage, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    *properties = {};
+    properties->maxExtent = {16384, 16384, 1};
+    properties->maxArrayLayers = 1;
+    properties->maxMipLevels = 1;
+    properties->sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL twoSampleAttachmentProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags usage, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    *properties = {};
+    properties->maxExtent = {16384, 16384, 1};
+    properties->maxArrayLayers = 1;
+    properties->maxMipLevels = 1;
+    properties->sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT;
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR void VKAPI_CALL formatPropertiesWithoutD16S8(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
@@ -218,6 +241,7 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(createImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements)},
+        {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements2)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(allocateMemory)},
         {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(bindImageMemory)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(createImageView)},
@@ -374,6 +398,21 @@ void TestD16StencilFallback(const Context& context) {
     Require(lastImageFormat == VK_FORMAT_D24_UNORM_S8_UINT, "a D16_UNORM_S8_UINT surface was not created as D24_UNORM_S8_UINT on a device without it");
     Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256}) != nullptr, "an R16 view of a D16 surface stored as D24 must still sample its depth plane");
     Require(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256}) != nullptr, "an 8-bit view of the stencil plane of a D16 surface stored as D24 must sample it");
+    DepthSurfaceView(without, {d16s8 + 0x20000, d16s8Stencil + 0x10000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    imageReads.clear();
+    imageWrites.clear();
+    Require(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr && lastImageFormat == VK_FORMAT_R8_UINT, "two slices of the stencil plane of a D16 surface stored as D24 must assemble through an R8_UINT plane copy");
+    Require(imageReads.size() == 2 && imageReads[0].second == VK_IMAGE_ASPECT_STENCIL_BIT && imageReads[1].second == VK_IMAGE_ASPECT_STENCIL_BIT, "the layered stencil plane copy must read the stencil aspect of each resident slice");
+    Require(imageWrites.size() == 2 && imageWrites[0].second == VK_IMAGE_ASPECT_COLOR_BIT && imageWrites[1].second == VK_IMAGE_ASPECT_COLOR_BIT, "the layered stencil plane copy must write the color aspect of its R8_UINT array");
+    DepthSurfaceView(without, {d16s8 + 0x40000, d16s8Stencil + 0x10000, {128, 128}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    imageReads.clear();
+    bool displacedFallback = false;
+    try {
+        static_cast<void>(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256, TileDepth64KB, Type2DArray, 1}));
+    } catch (const std::runtime_error&) {
+        displacedFallback = true;
+    }
+    Require(displacedFallback && imageReads.empty(), "a stencil slice displaced by a newer owner of another extent must not reuse the older surface");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 512.0f, "a 16-bit depth bias must be scaled by 256 for D24 storage");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D32_SFLOAT_S8_UINT, 2.0f) == 2.0f, "a D32 depth bias must not be scaled");
     const auto refused = [&](const View& view) {
@@ -422,6 +461,15 @@ void TestMultisampleDepthOwnership(Context context) {
     DepthTarget target{0x71000000, 0, {129, 67}, VK_FORMAT_D32_SFLOAT, 0.0f, 0, 0, false, 4};
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "lack of sampled MSAA support must retain attachment rendering");
     Require((lastImageUsage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0, "unsupported sampled usage must not be requested for a native depth attachment");
+    ClearDepthSurfaces(context.device);
+    context.imageFormatProperties = twoSampleAttachmentProperties;
+    std::string unheld;
+    try {
+        DepthSurfaceView(context, target);
+    } catch (const std::runtime_error& error) {
+        unheld = error.what();
+    }
+    Require(unheld.find("cannot hold 4 samples on this device") != std::string::npos, "a four-sample depth target in a format the device holds only at one or two samples must be refused, not created");
     ClearDepthSurfaces(context.device);
     context.imageFormatProperties = sampledDepthProperties;
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a supported sampled MSAA format must retain attachment rendering without import eligibility");
@@ -723,7 +771,13 @@ void TestUntrackedHtileDriverStore(const Context& context) {
 }
 
 void TestRepeatedDepthViewAllocations(const Context& context) {
-#ifdef __GLIBC__
+#if defined(__GLIBC__) || defined(APS5_AGC_ALLOCATION_COUNT)
+#ifdef APS5_AGC_ALLOCATION_COUNT
+    BeginAllocationCount_nid_no_patch();
+    AllocateForCount_nid_no_patch(2048);
+    const auto controlAllocations = EndAllocationCount_nid_no_patch();
+    Require(controlAllocations == 1, "the AGC allocation counter must observe a known allocation inside the driver");
+#endif
     ClearDepthSurfaces(context.device);
     constexpr VkExtent2D extent{256, 256};
     DepthTarget target{0xa4000000, 0xa5000000, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
@@ -733,11 +787,19 @@ void TestRepeatedDepthViewAllocations(const Context& context) {
     Require(view != VK_NULL_HANDLE, "a mirrorable depth and stencil surface must render");
     draw();
     const auto images = createdImages.size();
+#ifdef APS5_AGC_ALLOCATION_COUNT
+    BeginAllocationCount_nid_no_patch();
+#else
     countedAllocations = 0;
     countingAllocations = true;
+#endif
     VkImageView repeated = VK_NULL_HANDLE;
     for (int index = 0; index < 16; ++index) repeated = draw();
+#ifdef APS5_AGC_ALLOCATION_COUNT
+    const auto countedAllocations = EndAllocationCount_nid_no_patch();
+#else
     countingAllocations = false;
+#endif
     Require(repeated == view && createdImages.size() == images, "a repeated draw into a resident depth surface must reuse its image and view");
     Require(countedAllocations == 0, "a repeated draw into a resident depth surface allocated " + std::to_string(countedAllocations) + " times over 16 draws: its view resolution must not rebuild per-surface geometry");
     ClearDepthSurfaces(context.device);

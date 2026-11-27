@@ -41,21 +41,43 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void ApplyDefaults(WebRtcPacketOptions& host) {
+    host.packetId = -1;
+    host.isMedia = true;
+    host.includedInFeedback = false;
+    host.includedInAllocation = false;
+    host.sendAsEct1 = false;
+    host.batchable = false;
+    host.lastPacketInBatch = false;
+}
+
+}
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc13PacketOptionsC1Ev_nid_postfix(WebRtcPacketOptions* options) {
     if (!options)
         throw std::invalid_argument("PacketOptions constructor requires options");
-    options->packetId = -1;
-    options->isMedia = true;
-    options->includedInFeedback = false;
-    options->includedInAllocation = false;
-    options->sendAsEct1 = false;
-    options->batchable = false;
-    options->lastPacketInBatch = false;
+    WebRtcPacketOptions host{};
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(options, sizeof(*options)) ||
+        !GuestPtr<const WebRtcPacketOptions>(options).CopyIn(host))
+        throw std::invalid_argument("PacketOptions constructor requires options");
+    ApplyDefaults(host);
+    if (!GuestPtr<WebRtcPacketOptions>(options).CopyOut(host))
+        throw std::invalid_argument("PacketOptions constructor requires options");
 }
 
 void APS5_VABI _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(WebRtcPacketOptions* options, const WebRtcPacketOptions* other) {
@@ -63,14 +85,24 @@ void APS5_VABI _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(WebRtcPacketOptions
         throw std::invalid_argument("PacketOptions copy constructor requires options");
     if (!other)
         throw std::invalid_argument("PacketOptions copy constructor requires a source");
-    WebRtcPacketOptions copy = *other;
-    options->packetId = copy.packetId;
-    options->isMedia = copy.isMedia;
-    options->includedInFeedback = copy.includedInFeedback;
-    options->includedInAllocation = copy.includedInAllocation;
-    options->sendAsEct1 = copy.sendAsEct1;
-    options->batchable = copy.batchable;
-    options->lastPacketInBatch = copy.lastPacketInBatch;
+    WebRtcPacketOptions copy{};
+    WebRtcPacketOptions host{};
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(options, sizeof(*options)))
+        throw std::invalid_argument("PacketOptions copy constructor requires options");
+    if (!GuestPtr<const WebRtcPacketOptions>(other).CopyIn(copy))
+        throw std::invalid_argument("PacketOptions copy constructor requires a source");
+    if (!GuestPtr<const WebRtcPacketOptions>(options).CopyIn(host))
+        throw std::invalid_argument("PacketOptions copy constructor requires options");
+    host.packetId = copy.packetId;
+    host.isMedia = copy.isMedia;
+    host.includedInFeedback = copy.includedInFeedback;
+    host.includedInAllocation = copy.includedInAllocation;
+    host.sendAsEct1 = copy.sendAsEct1;
+    host.batchable = copy.batchable;
+    host.lastPacketInBatch = copy.lastPacketInBatch;
+    if (!GuestPtr<WebRtcPacketOptions>(options).CopyOut(host))
+        throw std::invalid_argument("PacketOptions copy constructor requires options");
 }
 
 }

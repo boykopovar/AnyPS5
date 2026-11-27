@@ -5,7 +5,9 @@
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
+#include <bit>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 #include <utility>
@@ -17,7 +19,7 @@ namespace {
 
 void validateRelroCoverage(
     const std::vector<Domain::ProgramHeader>& inputHeaders,
-    const Domain::ProgramHeader& relro
+    Domain::ProgramHeader& relro
 ) {
     if (relro.FileSize > relro.MemorySize)
         throw Domain::RelinkerException("PT_GNU_RELRO file size exceeds memory size", relro.MappedAddress);
@@ -31,6 +33,7 @@ void validateRelroCoverage(
     if (relroStart == relroEnd) return;
 
     std::vector<std::pair<std::uint64_t, std::uint64_t>> mappedRanges;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> paddedRanges;
     for (const auto& header : inputHeaders) {
         if (header.Type != PT_LOAD || header.MemorySize == 0 || header.Flags == 0) continue;
         const auto size = std::max(header.FileSize, header.MemorySize);
@@ -41,6 +44,9 @@ void validateRelroCoverage(
         const auto end = (endBytes + pageMask) & ~pageMask;
         if (start < end)
             mappedRanges.emplace_back(start, end);
+        const auto alignment = header.Alignment > pageMask + 1 && std::has_single_bit(header.Alignment) ? header.Alignment : pageMask + 1;
+        if (start < end && end <= std::numeric_limits<std::uint64_t>::max() - (alignment - 1))
+            paddedRanges.emplace_back(start, (end + alignment - 1) & ~(alignment - 1));
     }
     std::sort(mappedRanges.begin(), mappedRanges.end());
     auto coveredUntil = relroStart;
@@ -49,7 +55,17 @@ void validateRelroCoverage(
         if (end > coveredUntil) coveredUntil = end;
         if (coveredUntil >= relroEnd) return;
     }
-    throw Domain::RelinkerException("PT_GNU_RELRO is not covered by PT_LOAD pages", relro.MappedAddress);
+    std::sort(paddedRanges.begin(), paddedRanges.end());
+    auto paddedUntil = relroStart;
+    for (const auto& [start, end] : paddedRanges) {
+        if (start > paddedUntil) break;
+        if (end > paddedUntil) paddedUntil = end;
+    }
+    const bool mappedInTail = std::any_of(mappedRanges.begin(), mappedRanges.end(), [&](const auto& range) { return range.first >= coveredUntil && range.first < relroEnd; });
+    if (coveredUntil <= relro.MappedAddress || paddedUntil < relroEnd || mappedInTail)
+        throw Domain::RelinkerException("PT_GNU_RELRO is not covered by PT_LOAD pages", relro.MappedAddress);
+    relro.MemorySize = coveredUntil - relro.MappedAddress;
+    relro.FileSize = std::min(relro.FileSize, relro.MemorySize);
 }
 
 }
@@ -129,16 +145,19 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             needsTlsResolver = true;
         }
     }
+    std::optional<std::uint64_t> zeroExportThunk;
     for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
         const auto& symbol = image.Symbols[index];
         if (symbol.Value != 0 || symbol.Section == 0 || symbol.Section >= 0xff00 || (symbol.Info >> 4) == 0 ||
             (symbol.Info & 15) != 2 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
-        const auto thunk = address();
-        if (thunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
-            throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
-        bytes.push_back(0xe9);
-        Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
-        Io::WriteU64(symbols, index * 24 + 8, thunk);
+        if (!zeroExportThunk) {
+            zeroExportThunk = address();
+            if (*zeroExportThunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
+                throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
+            bytes.push_back(0xe9);
+            Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(*zeroExportThunk + 5)));
+        }
+        Io::WriteU64(symbols, index * 24 + 8, *zeroExportThunk);
     }
     if (!image.BindingAliases.empty()) {
         if (symbols.size() % 24 != 0) throw Domain::RelinkerException("Invalid guest symbol table for binding aliases");
