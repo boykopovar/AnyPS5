@@ -5,11 +5,20 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::CollationCallable;
 using NKWebKit::WebCoreAbi::CollationFunction;
@@ -357,6 +366,151 @@ void CheckDatabaseCommands(Database& db) {
     Require(!db.TableExists("sqlite_sequence"));
 }
 
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    unsigned char* base = nullptr;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* Writable() const { return base; }
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TCall>
+bool ThrowsNotImplemented(TCall&& call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+template<typename TCall>
+bool ThrowsInvalidArgument(TCall&& call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+void CheckGuestPointers(Database& db) {
+    GuardedPages pages;
+    auto* unmappedDb = reinterpret_cast<SQLiteDatabase*>(pages.Guard());
+    auto* readOnlyDb = reinterpret_cast<SQLiteDatabase*>(pages.ReadOnly());
+    auto* unmappedString = reinterpret_cast<const String*>(pages.Guard());
+    auto* unmappedStatement = reinterpret_cast<SQLiteStatement*>(pages.Guard());
+    auto* readOnlyStatement = reinterpret_cast<SQLiteStatement*>(pages.ReadOnly());
+    auto* unmappedTx = reinterpret_cast<SQLiteTransaction*>(pages.Guard());
+    auto* readOnlyTx = reinterpret_cast<SQLiteTransaction*>(pages.ReadOnly());
+    auto* unmappedScope = reinterpret_cast<SQLiteStatementAutoResetScope*>(pages.Guard());
+    auto* readOnlyScope = reinterpret_cast<SQLiteStatementAutoResetScope*>(pages.ReadOnly());
+    auto* readOnlyCollation = reinterpret_cast<CollationFunction*>(pages.ReadOnly());
+
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore14SQLiteDatabaseC1Ev(nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore14SQLiteDatabaseD1Ev(nullptr); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabaseC1Ev(unmappedDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabaseC2Ev(readOnlyDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabaseD1Ev(unmappedDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabaseD2Ev(readOnlyDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase5closeEv(readOnlyDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase9lastErrorEv(unmappedDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase12lastErrorMsgEv(unmappedDb); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase9interruptEv(readOnlyDb); }));
+
+    auto validSql = Latin1("SELECT 1");
+    String validString(&validSql);
+    StringImpl* unmappedImplPtr = reinterpret_cast<StringImpl*>(pages.Guard());
+    const auto* unmappedImplString = reinterpret_cast<const String*>(&unmappedImplPtr);
+    StringImpl unmappedDataImpl{4, 8, pages.Guard(), 4};
+    StringImpl* unmappedDataPtr = &unmappedDataImpl;
+    const auto* unmappedDataString = reinterpret_cast<const String*>(&unmappedDataPtr);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase4openERKN3WTF6StringENS0_8OpenModeE(db.get(), unmappedString, ReadOnly); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase4openERKN3WTF6StringENS0_8OpenModeE(db.get(), unmappedImplString, ReadOnly); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase4openERKN3WTF6StringENS0_8OpenModeE(db.get(), unmappedDataString, ReadOnly); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase14executeCommandERKN3WTF6StringE(db.get(), unmappedString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase11tableExistsERKN3WTF6StringE(db.get(), unmappedDataString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore14SQLiteDatabase20setCollationFunctionERKN3WTF6StringEONS1_8FunctionIFiiPKviS7_EEE(db.get(), &validString, readOnlyCollation); }));
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatementC1ERNS_14SQLiteDatabaseERKN3WTF6StringE(readOnlyStatement, db.get(), &validString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatementC1ERNS_14SQLiteDatabaseERKN3WTF6StringE(unmappedStatement, db.get(), &validString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatementD1Ev(readOnlyStatement); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement7prepareEv(unmappedStatement); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore15SQLiteStatement18bindParameterCountEv(unmappedStatement); }));
+
+    Statement bindStmt(db, "SELECT ?");
+    Require(bindStmt.Prepare() == SqliteOk);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindBlobEiPKvi(bindStmt.get(), 1, pages.Guard(), 4); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindTextEiRKN3WTF6StringE(bindStmt.get(), 1, unmappedDataString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindBlobEiRKN3WTF6StringE(bindStmt.get(), 1, unmappedDataString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6StringEdEEE(bindStmt.get(), 1, reinterpret_cast<const SQLValue*>(pages.Guard())); }));
+    SQLValue badValue{};
+    badValue.index = 1;
+    badValue.string = &unmappedDataImpl;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6StringEdEEE(bindStmt.get(), 1, &badValue); }));
+
+    Statement blobStmt(db, "SELECT X'01020304'");
+    Require(blobStmt.Prepare() == SqliteOk && blobStmt.Step() == SqliteRow);
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+            blobStmt.get(), 0, reinterpret_cast<Vector<char>*>(pages.ReadOnly()));
+    }));
+    Vector<unsigned char> readOnlyBufferVec;
+    readOnlyBufferVec.buffer = pages.ReadOnly();
+    readOnlyBufferVec.capacity = 16;
+    readOnlyBufferVec.size = 0;
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIhLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+            blobStmt.get(), 0, &readOnlyBufferVec);
+    }));
+    readOnlyBufferVec.buffer = nullptr;
+    readOnlyBufferVec.capacity = 0;
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore17SQLiteTransactionC1ERNS_14SQLiteDatabaseEb(readOnlyTx, db.get(), false); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore17SQLiteTransaction5beginEv(unmappedTx); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore17SQLiteTransactionD1Ev(readOnlyTx); }));
+
+    SQLiteStatementAutoResetScope validScope{nullptr};
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_(readOnlyScope, &validScope); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_(&validScope, readOnlyScope); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29SQLiteStatementAutoResetScopeaSEOS0_(readOnlyScope, &validScope); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29SQLiteStatementAutoResetScopeD1Ev(unmappedScope); }));
+}
+
 }  // namespace
 
 int main() {
@@ -372,6 +526,7 @@ int main() {
         CheckBindAndRead(db);
         CheckTransactions(db);
         CheckAutoResetScope(db);
+        CheckGuestPointers(db);
         CheckDatabaseCommands(db);
         Require(db.Open("/webcore-sqlite/main.db", ReadOnly) && db->db != nullptr);
     }
