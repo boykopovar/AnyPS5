@@ -38,7 +38,7 @@ int APS5_VABI ucurr_openISOCurrencies();
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int32_t APS5_VABI uloc_forLanguageTag(const char* langtag, char* localeID, std::int32_t capacity, std::int32_t* parsedLength, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
-int APS5_VABI uloc_getCharacterOrientation();
+std::int32_t APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getCountry(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 const char* APS5_VABI uloc_getDefault();
 const char* APS5_VABI uloc_getISO3Country(const char* locale);

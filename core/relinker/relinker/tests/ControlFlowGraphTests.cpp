@@ -56,6 +56,10 @@ public:
         for (const auto& [slot, target] : Slots) targets.push_back(target);
         return targets;
     }
+
+    std::map<VirtualAddress, VirtualAddress> SlotTargets() const override {
+        return Slots;
+    }
 };
 
 void Require(bool condition, const std::string& message) {
@@ -328,6 +332,25 @@ void CheckSpeculativeRoots() {
     Require(threw, "Malformed mandatory root was treated as speculative");
 }
 
+void CheckCodeSegmentJumpTables() {
+    constexpr std::size_t table = 64;
+    Bytes text(80, 0xcc);
+    text[0] = 0x48;
+    text[1] = 0x8d;
+    text[2] = 0x05;
+    SetDisplacement(text, 3, 7, TextAddress + table);
+    text[7] = 0xff;
+    text[8] = 0xe0;
+    text[12] = text[24] = 0x90;
+    text[13] = text[25] = 0xc3;
+    const std::int32_t targets[]{12 - static_cast<std::int32_t>(table), 0, 24 - static_cast<std::int32_t>(table)};
+    std::memcpy(text.data() + table, targets, sizeof(targets));
+    const Pointers pointers;
+    const auto graph = BuildAddressTakenControlFlowGraph(text, TextAddress, TextAddress, {}, pointers, {});
+    Require(graph->IsReachable(TextAddress + 12) && graph->IsReachable(TextAddress + 13), "A case reached only through a relative jump table in the code segment was not walked");
+    Require(!graph->IsReachable(TextAddress + 24), "A relative jump table in the code segment was read past an entry pointing into itself");
+}
+
 void CheckTrailingZeroRoots() {
     const Pointers pointers;
     const Bytes lone{0x00};
@@ -590,6 +613,35 @@ void CheckGapWalkBranchTargets() {
     SetDisplacement(chained, 1, 5, TextAddress + 8);
     SetDisplacement(chained, 9, 13, TextAddress + 40);
     Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
+}
+
+void CheckRelativeJumpTablesAtHighBases() {
+    constexpr std::size_t tableOffset = 16;
+    Bytes text(32, 0x90);
+    text[0] = 0x48;
+    text[1] = 0x8d;
+    text[2] = 0x05;
+    const auto displacement = static_cast<std::int32_t>(tableOffset - 7);
+    std::memcpy(text.data() + 3, &displacement, sizeof(displacement));
+    text[7] = 0xff;
+    text[8] = 0xe0;
+    const std::int32_t targets[]{-16, -9};
+    std::memcpy(text.data() + tableOffset, targets, sizeof(targets));
+    for (const VirtualAddress base : {VirtualAddress{0x7ffffffffffffff0}, VirtualAddress{0x8000000000000000}, VirtualAddress{0xffffffffffffff00}}) {
+        const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{base, base + 9}, {base + text.size(), base + text.size() + 8}};
+        const auto tables = Relinker::FindRelativeJumpTables(text, base, functions);
+        Require(tables.size() == 1, "A relative jump table was missed in a segment at a high base address");
+        Require(tables[0].Function == base && tables[0].Begin == base + tableOffset && tables[0].End == base + text.size(), "A relative jump table range changed in a segment at a high base address");
+    }
+
+    Bytes backwardJump(32, 0x90);
+    backwardJump[0] = 0xeb;
+    backwardJump[1] = 0xf0;
+    for (const VirtualAddress base : {VirtualAddress{0x8000000000000000}, VirtualAddress{0xffffffffffffff00}}) {
+        const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{base, base + backwardJump.size()}};
+        Require(Relinker::FindRelativeJumpTables(backwardJump, base, functions).empty(), "A backward branch from a segment at a high base address produced a table");
+        Require(Relinker::FindRelativeJumpTables(backwardJump, base, {}).empty(), "A backward branch from an unmapped-function segment at a high base address produced a table");
+    }
 }
 
 void CheckEmbeddedDataTables() {
@@ -916,6 +968,7 @@ int main() {
         CheckRipDisplacementBounds();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
+        CheckCodeSegmentJumpTables();
         CheckTrailingZeroRoots();
         CheckBorrowedReachability();
         CheckReachedMap();
@@ -923,6 +976,7 @@ int main() {
         CheckAddressOverflow();
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
+        CheckRelativeJumpTablesAtHighBases();
         CheckEmbeddedDataTables();
         CheckSyscallsBeforeLaterPadding();
         CheckDecodedPaddingSuffix();

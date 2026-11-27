@@ -2,14 +2,21 @@
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -62,6 +69,131 @@ void Button(std::uint32_t button, bool pressed) {
     event.button = button;
     event.pressed = pressed;
     MousePublishInput_nid_no_patch(event);
+}
+
+struct GuardedPages {
+    std::uint8_t* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE, PAGE_NOACCESS));
+        Require(base != nullptr, "guarded VirtualAlloc reserve failed");
+        Require(VirtualAlloc(base, pageSize, MEM_COMMIT, PAGE_READWRITE) == base, "guarded VirtualAlloc commit failed");
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "guarded mmap failed");
+        base = static_cast<std::uint8_t*>(mapping);
+        Require(mprotect(base, pageSize, PROT_READ | PROT_WRITE) == 0, "guarded mprotect failed");
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 2);
+#endif
+    }
+
+    void SetWritable(bool writable) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, pageSize, writable ? PAGE_READWRITE : PAGE_READONLY, &previous) != 0, "guarded VirtualProtect failed");
+#else
+        Require(mprotect(base, pageSize, writable ? (PROT_READ | PROT_WRITE) : PROT_READ) == 0, "guarded mprotect failed");
+#endif
+    }
+
+    template <typename T>
+    T* AtEnd(std::size_t bytesBeforeBoundary) const {
+        return reinterpret_cast<T*>(base + pageSize - bytesBeforeBoundary);
+    }
+
+    bool HasByte(std::size_t offset, std::size_t bytes, std::uint8_t value) const {
+        for (std::size_t i = 0; i < bytes; ++i) {
+            if (base[offset + i] != value) return false;
+        }
+        return true;
+    }
+};
+
+bool HasUntouchedGap(const AbsoluteRecord& record) {
+    for (const std::uint8_t byte : record.padding) {
+        if (byte != 0xA5) return false;
+    }
+    for (const std::uint8_t byte : record.reserved) {
+        if (byte != 0xA5) return false;
+    }
+    return true;
+}
+
+void CheckGuardedAbsoluteReads(ReadAbsoluteFn readAbsolute, AbsoluteRecord (&records)[64]) {
+    GuardedPages guarded;
+    std::memset(guarded.base, 0xA5, guarded.pageSize);
+
+    MouseInputEvent connection{};
+    connection.connectionChange = true;
+    connection.connected = false;
+    MousePublishInput_nid_no_patch(connection);
+    errno = EINVAL;
+    Require(readAbsolute(MOUSE_HANDLE, reinterpret_cast<AbsoluteRecord*>(0x10), 1) == MOUSE_ERROR_INVALID_ARG && errno == EINVAL,
+            "disconnected read to unmapped pointer did not return INVALID_ARG preserving errno");
+    guarded.SetWritable(false);
+    errno = EACCES;
+    Require(readAbsolute(MOUSE_HANDLE, reinterpret_cast<AbsoluteRecord*>(guarded.base), 1) == MOUSE_ERROR_INVALID_ARG && errno == EACCES &&
+                guarded.HasByte(0, sizeof(AbsoluteRecord), 0xA5),
+            "disconnected read wrote or accepted read-only output");
+    guarded.SetWritable(true);
+    errno = EDOM;
+    Require(readAbsolute(MOUSE_HANDLE, guarded.AtEnd<AbsoluteRecord>(sizeof(AbsoluteRecord) - 4), 1) == MOUSE_ERROR_INVALID_ARG && errno == EDOM &&
+                guarded.HasByte(guarded.pageSize - (sizeof(AbsoluteRecord) - 4), sizeof(AbsoluteRecord) - 4, 0xA5),
+            "disconnected read partially wrote across page boundary");
+    connection.connected = true;
+    MousePublishInput_nid_no_patch(connection);
+    Require(readAbsolute(MOUSE_HANDLE, records, 4) == 1 && records[0].connected == 1 && records[0].x == 100 && records[0].y == 100,
+            "reconnecting after guarded disconnected read failed");
+
+    Motion(12, 8);
+    Button(1, true);
+    Motion(5, -3);
+
+    errno = EINVAL;
+    Require(readAbsolute(MOUSE_HANDLE, reinterpret_cast<AbsoluteRecord*>(0x10), 4) == MOUSE_ERROR_INVALID_ARG && errno == EINVAL,
+            "connected read to unmapped pointer did not return INVALID_ARG preserving errno");
+
+    guarded.SetWritable(false);
+    errno = EACCES;
+    Require(readAbsolute(MOUSE_HANDLE, reinterpret_cast<AbsoluteRecord*>(guarded.base), 4) == MOUSE_ERROR_INVALID_ARG && errno == EACCES &&
+                guarded.HasByte(0, sizeof(AbsoluteRecord) * 4, 0xA5),
+            "connected read wrote or accepted read-only output");
+    guarded.SetWritable(true);
+
+    errno = EDOM;
+    Require(readAbsolute(MOUSE_HANDLE, guarded.AtEnd<AbsoluteRecord>(sizeof(AbsoluteRecord)), 4) == MOUSE_ERROR_INVALID_ARG && errno == EDOM &&
+                guarded.HasByte(guarded.pageSize - sizeof(AbsoluteRecord), sizeof(AbsoluteRecord), 0xA5),
+            "connected multi-record read partially wrote across page boundary");
+
+    constexpr std::size_t SplitBytes = sizeof(AbsoluteRecord) - sizeof(AbsoluteRecord::wheel) - sizeof(AbsoluteRecord::tilt) - sizeof(AbsoluteRecord::reserved);
+    errno = ERANGE;
+    Require(readAbsolute(MOUSE_HANDLE, guarded.AtEnd<AbsoluteRecord>(SplitBytes), 1) == MOUSE_ERROR_INVALID_ARG && errno == ERANGE &&
+                guarded.HasByte(guarded.pageSize - SplitBytes, SplitBytes, 0xA5),
+            "connected single-record read partially wrote head bytes when body crossed page boundary");
+
+    std::memset(records, 0xA5, sizeof(records));
+    Require(readAbsolute(MOUSE_HANDLE, records, 4) == 3, "failed guarded reads consumed queued absolute samples");
+    Require(records[0].x == 112 && records[0].y == 108 && records[0].buttons == 0 && HasUntouchedGap(records[0]),
+            "first recovered absolute record or padding/reserved was corrupted");
+    Require(records[1].x == 112 && records[1].y == 108 && records[1].buttons == 1 && HasUntouchedGap(records[1]),
+            "second recovered absolute record or padding/reserved was corrupted");
+    Require(records[2].x == 117 && records[2].y == 105 && records[2].buttons == 1 && HasUntouchedGap(records[2]),
+            "third recovered absolute record or padding/reserved was corrupted");
+    Require(readAbsolute(MOUSE_HANDLE, records, 4) == 0, "queue was not drained after valid absolute read");
 }
 
 }
@@ -208,6 +340,8 @@ int main() {
     MousePublishInput_nid_no_patch(disconnect);
     Require(readAbsolute(MOUSE_HANDLE, records, 4) == 1 && records[0].connected == 1 && records[0].x == 100 && records[0].y == 100,
             "a reconnect before reading replayed stale absolute motion");
+
+    CheckGuardedAbsoluteReads(readAbsolute, records);
 
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK, "close failed");
     Require(readAbsolute(MOUSE_HANDLE, records, 1) == MOUSE_ERROR_INVALID_HANDLE, "a closed handle was read");

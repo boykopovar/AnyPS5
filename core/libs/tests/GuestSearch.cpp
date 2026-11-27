@@ -31,6 +31,23 @@ static int APS5_VABI Compare(const void* key, const void* record) {
     const int right = static_cast<const Record*>(record)->key;
     return (left > right) - (left < right);
 }
+static int answer = 0;
+static const void* seenKey = nullptr;
+static std::array<const void*, 64> probes{};
+static int APS5_VABI Fixed(const void* key, const void* element) {
+    seenKey = key;
+    if (calls < static_cast<int>(probes.size())) probes[static_cast<std::size_t>(calls)] = element;
+    ++calls;
+    return answer;
+}
+static int APS5_VABI FixedWithContext(const void* key, const void* element, void*) {
+    return Fixed(key, element);
+}
+static bool ProbedOnly(const void* address) {
+    for (int index = 0; index < calls && index < static_cast<int>(probes.size()); ++index)
+        if (probes[static_cast<std::size_t>(index)] != address) return false;
+    return true;
+}
 int main() {
     const std::array<Record, 6> records{{{1, "one"}, {3, "three"}, {5, "five"},
         {5, "duplicate"}, {7, "seven"}, {9, "nine"}}};
@@ -54,6 +71,55 @@ int main() {
     try { bsearch_nid_postfix(&key, records.data(), std::numeric_limits<std::size_t>::max(), sizeof(Record), Compare); }
     catch (const std::overflow_error&) { rejected = true; }
     Require(rejected);
+    rejected = false;
+    try { bsearch_nid_postfix(&key, records.data(), 1, sizeof(Record), nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+    rejected = false;
+    try { bsearch_nid_postfix(&key, nullptr, 1, sizeof(Record), Compare); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+    rejected = false;
+    try { bsearch_nid_postfix(&key, records.data(), 5, 0, nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+
+    {
+        struct ZeroStride { int answer; void* result; int calls; };
+        const std::array<ZeroStride, 3> cases{{{0, const_cast<Record*>(records.data()), 1}, {-1, nullptr, 3}, {1, nullptr, 2}}};
+        for (const auto& entry : cases) {
+            answer = entry.answer;
+            calls = 0;
+            seenKey = nullptr;
+            Require(bsearch_nid_postfix(&key, records.data(), 5, 0, Fixed) == entry.result);
+            Require(calls == entry.calls && seenKey == &key && ProbedOnly(records.data()));
+            calls = 0;
+            seenKey = nullptr;
+            Require(bsearch_s_nid_postfix(&key, records.data(), 5, 0, FixedWithContext, nullptr) == entry.result);
+            Require(calls == entry.calls && seenKey == &key && ProbedOnly(records.data()));
+        }
+        for (const int fixed : {-1, 1}) {
+            answer = fixed;
+            calls = 0;
+            Require(bsearch_nid_postfix(&key, records.data(), std::numeric_limits<std::size_t>::max(), 0, Fixed) == nullptr);
+            Require(calls == 64 && ProbedOnly(records.data()));
+        }
+        answer = 0;
+        calls = 0;
+        seenKey = &key;
+        Require(bsearch_nid_postfix(nullptr, records.data(), records.size(), sizeof(Record), Fixed) == &records[3]);
+        Require(calls == 1 && seenKey == nullptr);
+        answer = -1;
+        calls = 0;
+        seenKey = &key;
+        Require(bsearch_nid_postfix(nullptr, records.data(), records.size(), sizeof(Record), Fixed) == nullptr);
+        Require(calls == 3 && seenKey == nullptr);
+        Require(probes[0] == &records[3] && probes[1] == &records[1] && probes[2] == &records[0]);
+        calls = 0;
+        seenKey = &key;
+        Require(bsearch_nid_postfix(nullptr, records.data(), 5, 0, Fixed) == nullptr);
+        Require(calls == 3 && seenKey == nullptr && ProbedOnly(records.data()));
+    }
 
     {
         std::array<Record, 6> table = records;
@@ -105,13 +171,33 @@ int main() {
     {
         bool caught = false;
         std::size_t nel = 1;
-        try { lfind_nid_postfix(nullptr, records.data(), &nel, sizeof(Record), Compare); }
+        try { lfind_nid_postfix(&key, nullptr, &nel, sizeof(Record), Compare); }
         catch (const std::invalid_argument&) { caught = true; }
         Require(caught);
+        caught = false;
+        try { lfind_nid_postfix(&key, records.data(), &nel, sizeof(Record), nullptr); }
+        catch (const std::invalid_argument&) { caught = true; }
+        Require(caught);
+        nel = records.size();
+        answer = -1;
+        calls = 0;
+        seenKey = &key;
+        Require(lfind_nid_postfix(nullptr, records.data(), &nel, sizeof(Record), Fixed) == nullptr);
+        Require(calls == static_cast<int>(records.size()) && seenKey == nullptr && probes[5] == &records[5]);
+        answer = 0;
+        calls = 0;
+        seenKey = &key;
+        Require(lfind_nid_postfix(nullptr, records.data(), &nel, sizeof(Record), Fixed) == records.data());
+        Require(calls == 1 && seenKey == nullptr && nel == records.size());
+        nel = 1;
         caught = false;
         try { lsearch_nid_postfix(&key, nullptr, &nel, sizeof(Record), Compare); }
         catch (const std::invalid_argument&) { caught = true; }
         Require(caught);
+        caught = false;
+        try { lsearch_nid_postfix(nullptr, const_cast<Record*>(records.data()), &nel, sizeof(Record), Compare); }
+        catch (const std::invalid_argument&) { caught = true; }
+        Require(caught && nel == 1);
         caught = false;
         try { lfind_nid_postfix(&key, records.data(), nullptr, sizeof(Record), Compare); }
         catch (const std::invalid_argument&) { caught = true; }
