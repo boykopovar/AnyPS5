@@ -189,6 +189,12 @@ void testIndexedIndirectDraws() {
     const auto* unaligned = sceAgcDcbDrawIndexIndirect(&console.buffer, 0x22222222u, 0x3333333344444444ull);
     const std::array<std::uint32_t, 5> expectedUnaligned{0xc0032500u, 0x22222222u, 0x280, 0x94, 0};
     check(unaligned == console.words.data() && std::equal(expectedUnaligned.begin(), expectedUnaligned.end(), unaligned), "indexed indirect draw did not encode an unaligned offset and high modifier bits as the console does");
+    const auto* modifierBitOne = sceAgcDcbDrawIndexIndirect(&console.buffer, 0x11111111u, 0x22222222ull);
+    const std::array<std::uint32_t, 5> expectedModifierBitOne{0xc0032500u, 0x11111111u, 0x00940280u, 0x10000280u, 0};
+    check(modifierBitOne == console.words.data() + expectedUnaligned.size() && std::equal(expectedModifierBitOne.begin(), expectedModifierBitOne.end(), modifierBitOne), "indexed indirect draw did not write the modifier bit 1 start-index register and enable as the console does");
+    const auto* startRegisterZero = sceAgcDcbDrawIndexIndirect(&console.buffer, 1, 2);
+    const std::array<std::uint32_t, 5> expectedStartRegisterZero{0xc0032500u, 1, 0x008c0280u, 0x10000280u, 0};
+    check(startRegisterZero == console.words.data() + expectedUnaligned.size() + expectedModifierBitOne.size() && std::equal(expectedStartRegisterZero.begin(), expectedStartRegisterZero.end(), startRegisterZero), "indexed indirect draw did not name the base start-index register for a modifier bit 1 without register bits");
     const auto before = storage.words;
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, nullptr, 20, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 3, 8, &count, 20, 0); });
@@ -495,6 +501,10 @@ void testDrawPackets() {
     sceAgcDcbDrawIndexAuto(&console.buffer, 0x22222222u, 0x3333333344444444ull);
     const std::array<std::uint32_t, 13> consoleExpected{0xc0032400u, 1, 0x280, 0x280, 2, 0xc0032400u, 0x22222222u, 0x280, 0x94, 2, 0xc0012d00u, 0x22222222u, 2};
     check(std::equal(consoleExpected.begin(), consoleExpected.end(), console.words.begin()) && console.buffer.cursor_up == console.words.data() + consoleExpected.size(), "draws did not encode unaligned offsets and high modifier bits as the console does");
+    Storage bitOne;
+    sceAgcDcbDrawIndirect(&bitOne.buffer, 0x11111111u, 0x22222222ull);
+    const std::array<std::uint32_t, 5> expectedBitOne{0xc0032400u, 0x11111111u, 0x280, 0x280, 2};
+    check(std::equal(expectedBitOne.begin(), expectedBitOne.end(), bitOne.words.begin()), "non-indexed indirect draw wrote indexed start-index fields for modifier bit 1");
     Storage offset;
     sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
     sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);

@@ -437,6 +437,10 @@ void testIndirectDraw() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x200, 0x8e, 2}), 0); }, "register location");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x280, 0x8e, 0}), 0); }, "initiator");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x25, {0, 0x280, 0x8e, 2}), 0); }, "initiator");
+    AgcDriver::Pm4::Validate(makePacket(0x25, {0, 0x00940280u, 0x10000280u, 0}), 0);
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x25, {0, 0x00210280u, 0x10000280u, 0}), 0); }, "invalid indirect draw register location");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x25, {0, 0x00940280u, 0x20000280u, 0}), 0); }, "unsupported start-index control bits");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x25, {0, 0x00940280u, 0x10000280u, 2}), 0); }, "unsupported indirect draw initiator");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x280, 0x8e}), 0); }, "packet size");
     AgcDriver::Pm4::Validate(makePacket(0x2c, {0, 0x8c, 0x280, 0x8d | (1u << 31u), 3, 0, 0, 16, 2}), 0);
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x2c, {0, 0x280, 0x8e, 0x280 | (1u << 27u), 3, 0, 0, 16, 2}), 0); }, "control bits");
@@ -479,6 +483,9 @@ void testIndirectDraw() {
     const auto indexed = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
     check(indexed.indexed && indexed.indexAddress == state.indexBase && indexed.indexCount == 8 && indexed.indexSize == 2 && indexed.indirect->recordBytes == 20 && indexed.indirect->stride == 20 && indexed.firstVertex == 0 && indexed.indirect->indxOffset == 0, "indexed indirect draw mismatch");
     check(indexed.indirect->VertexDwordOffset() == 12 && indexed.indirect->InstanceDwordOffset() == 16, "indexed record geometry mismatch");
+    const auto startIndexed = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x00940280u, 0x10000280u, 0}), state);
+    check(startIndexed.indirect->startIndexLocation == 0x94u && startIndexed.indirect->startIndexEnabled, "the indexed draw's start-index register and enable did not decode");
+    check(indexed.indirect->startIndexLocation == 0x280u && !indexed.indirect->startIndexEnabled, "an indexed indirect draw without the start-index enable decoded a start-index write");
     alignas(16) std::array<std::uint32_t, 10> records{3, 2, 7, 9, 4, 1, 5, 6, 0, 0};
     state.drawIndirectBase = reinterpret_cast<std::uintptr_t>(records.data());
     const auto local = AgcDriver::Pm4::ResolveDraw(makePacket(0x2c, {0, 0x280, 0x280, 0x280, 2, 0, 0, 16, 2}), state);

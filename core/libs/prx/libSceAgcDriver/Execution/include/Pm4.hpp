@@ -52,6 +52,8 @@ struct DrawParameters {
         std::uint32_t startInstanceLocation;
         std::uint32_t drawIndexLocation;
         bool drawIndexEnabled;
+        std::uint32_t startIndexLocation;
+        bool startIndexEnabled;
         std::uint32_t indxOffset;
         bool indexLimitKnown = true;
         enum class Rule : std::uint8_t { InPlace, Constant };
@@ -62,6 +64,7 @@ struct DrawParameters {
         std::int32_t baseVertexSgpr = -1;
         std::int32_t startInstanceSgpr = -1;
         std::int32_t drawIndexSgpr = -1;
+        std::int32_t startIndexSgpr = -1;
         // Bytes of the record range: (count - 1) * stride + recordBytes, or 0 for no records.
         std::uint64_t RangeBytes() const { return count == 0 ? 0 : static_cast<std::uint64_t>(count - 1) * stride + recordBytes; }
         std::uint32_t VertexDwordOffset() const { return recordBytes == 20 ? 12u : 8u; }

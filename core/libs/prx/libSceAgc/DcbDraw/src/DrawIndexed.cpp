@@ -36,7 +36,7 @@ uint32_t APS5_VABI sceAgcDcbDrawIndexOffsetGetSize(void) {
 }
 
 uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint64_t modifier) {
-    const auto offsets = Agc::Command::DrawPatchOffsets(modifier);
+    const auto offsets = Agc::Command::DrawPatchOffsets(modifier, true);
     return Agc::Command::Emit(buf, 0x25u, {data_offset_in_bytes, static_cast<std::uint32_t>(offsets), static_cast<std::uint32_t>(offsets >> 32u), Agc::Command::DrawInitiator(modifier, true)}, __func__);
 }
 
@@ -48,7 +48,7 @@ uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, uint32_t
     Agc::Command::Require((count_indirect & 1u) == 0 || count_indirect == 1, __func__, "an odd count selector above 1 is not measured");
     const auto address = reinterpret_cast<std::uintptr_t>(count_addr);
     if (count_indirect == 1) Agc::Command::CheckAddress(address, 4, __func__);
-    const auto offsets = Agc::Command::DrawPatchOffsets(modifier);
+    const auto offsets = Agc::Command::DrawPatchOffsets(modifier, false);
     const auto low = static_cast<std::uint32_t>(modifier);
     const auto control = Agc::Command::DrawIndexLocation(modifier) | ((low & 0x10u) << 23u) | ((count_indirect & 1u) << 30u) | ((low & 8u) << 28u);
     const auto initiator = Agc::Command::DrawInitiator(modifier, true);

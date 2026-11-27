@@ -424,13 +424,21 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet[3] <= packet[1], "index count exceeds maximum index size");
             require((packet[4] & ~0x20u) == 0, "unsupported indexed draw flags");
             break;
-        case 0x24: case 0x25:
+        case 0x24:
             graphics();
             size(5);
             require((packet[1] & 3u) == 0, "misaligned indirect draw offset");
             require((packet[2] >> 16u) == 0 && (packet[3] >> 16u) == 0, "start-index location semantics are not implemented");
             require(drawLocation(packet[2]) && drawLocation(packet[3]), "invalid indirect draw register location");
-            require((packet[4] & ~0x20u) == (opcode == 0x24 ? 2u : 0u), "unsupported indirect draw initiator");
+            require((packet[4] & ~0x20u) == 2u, "unsupported indirect draw initiator");
+            break;
+        case 0x25:
+            graphics();
+            size(5);
+            require((packet[1] & 3u) == 0, "misaligned indirect draw offset");
+            require((packet[3] & ~0x1000ffffu) == 0, "unsupported start-index control bits");
+            require(drawLocation(packet[2] & 0xffffu) && drawLocation(packet[3] & 0xffffu) && drawLocation(packet[2] >> 16u), "invalid indirect draw register location");
+            require((packet[4] & ~0x20u) == 0u, "unsupported indirect draw initiator");
             break;
         case 0x2c: case 0x38:
             graphics();
@@ -981,10 +989,12 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
     indirect.countIndirect = multi && (packet[4] & (1u << 30u)) != 0;
     indirect.countAddress = multi ? address(packet[6], packet[7]) : 0;
     const auto location = [](std::uint32_t value) { return value == 0 ? 0x280u : value; };
-    indirect.baseVertexLocation = location(packet[2]);
-    indirect.startInstanceLocation = location(packet[3]);
+    indirect.baseVertexLocation = location(packet[2] & 0xffffu);
+    indirect.startInstanceLocation = location(packet[3] & 0xffffu);
     indirect.drawIndexLocation = multi ? location(packet[4] & 0xffffu) : 0x280u;
     indirect.drawIndexEnabled = multi && (packet[4] >> 31u) != 0;
+    indirect.startIndexLocation = location(packet[2] >> 16u);
+    indirect.startIndexEnabled = opcode == 0x25u && (packet[3] & (1u << 28u)) != 0;
     indirect.indxOffset = 0;
     require(indirect.RangeBytes() <= std::numeric_limits<std::uint64_t>::max() - indirect.arguments, "indirect draw record range overflow");
     // The counts are unknown here (the CP takes them from the record; NUM_INSTANCES is ignored).

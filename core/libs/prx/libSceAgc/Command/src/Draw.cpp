@@ -16,11 +16,13 @@ std::uint32_t DrawInitiator(std::uint64_t modifier, bool indexed) {
     return flags | (indexed ? 0u : 2u);
 }
 
-std::uint64_t DrawPatchOffsets(std::uint64_t modifier) {
+std::uint64_t DrawPatchOffsets(std::uint64_t modifier, bool indexed) {
     const auto base = sgprBase(modifier);
     const auto vertex = (modifier & 1u) != 0 ? base + static_cast<std::uint32_t>((modifier >> 9u) & 0x1fu) : 0x280u;
     const auto instance = (modifier & 4u) != 0 ? base + static_cast<std::uint32_t>((modifier >> 19u) & 0x1fu) : 0x280u;
-    return vertex | (static_cast<std::uint64_t>(instance) << 32u);
+    const auto start = indexed && (modifier & 2u) != 0 ? static_cast<std::uint64_t>(base + static_cast<std::uint32_t>((modifier >> 14u) & 0x1fu)) << 16u : 0ull;
+    const auto enable = indexed && (modifier & 2u) != 0 ? std::uint64_t{1} << 60u : 0ull;
+    return vertex | start | (static_cast<std::uint64_t>(instance) << 32u) | enable;
 }
 
 std::uint32_t DrawIndexLocation(std::uint64_t modifier) {

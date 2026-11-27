@@ -614,6 +614,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         indirect.baseVertexSgpr = sgprOf(indirect.baseVertexLocation);
         indirect.startInstanceSgpr = sgprOf(indirect.startInstanceLocation);
         indirect.drawIndexSgpr = sgprOf(indirect.drawIndexLocation);
+        indirect.startIndexSgpr = sgprOf(indirect.startIndexLocation);
     }
     if (DrawFinisher::Busy()) {
         const bool drain = !DrawFinisher::Overlap();
@@ -1207,6 +1208,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto baseVertexWords = UserDataWords(programs, roles, indirect.baseVertexLocation);
         const auto startInstanceWords = UserDataWords(programs, roles, indirect.startInstanceLocation);
         const auto drawIndexWords = indirect.drawIndexEnabled ? UserDataWords(programs, roles, indirect.drawIndexLocation) : std::vector<std::pair<std::size_t, std::size_t>>{};
+        const auto startIndexWords = indirect.startIndexEnabled ? UserDataWords(programs, roles, indirect.startIndexLocation) : std::vector<std::pair<std::size_t, std::size_t>>{};
         const auto drawable = [&](const Pm4::DrawArguments& arguments) { return arguments.count != 0 && arguments.instances != 0 && (!drawParameters.indexed || !indirect.indexLimitKnown || arguments.firstVertexOrIndex < drawParameters.indexCount); };
         std::size_t lastDrawable = records.size();
         for (std::size_t record = 0; record < records.size(); ++record) {
@@ -1280,6 +1282,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             patch(baseVertexWords, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex);
             patch(startInstanceWords, arguments.firstInstance);
             patch(drawIndexWords, record);
+            patch(startIndexWords, arguments.firstVertexOrIndex);
             if (graphics.stages.tessellation) {
                 for (std::size_t i = 0; i < programs.size(); ++i) {
                     if (programs[i].binary.stage == Stage::TessellationControl || programs[i].binary.stage == Stage::TessellationEvaluation) patched.insert(i);
