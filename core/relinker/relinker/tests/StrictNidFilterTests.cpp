@@ -530,6 +530,7 @@ void filterSegmentRelativeImports() {
                 input.TextVaddr = 0x100001000ull;
                 input.Entries = {input.TextVaddr};
                 input.ImportSlots = {0x2000, 0x100002000ull};
+                input.TlsModeled = true;
                 std::vector<std::uint8_t> instruction;
                 instruction.reserve(15);
                 if (segment != 0) instruction.push_back(segment);
@@ -545,8 +546,11 @@ void filterSegmentRelativeImports() {
                 std::copy(instruction.begin(), instruction.end(), input.Text.begin());
                 input.Text[next] = 0xc3;
                 const auto target = address32 ? 0x2000ull : 0x100002000ull;
-                const bool resolved = operation == 0x8d || (segment != 0x64 && segment != 0x65);
-                const auto expected = resolved ? std::set<std::uint64_t>{target} : input.ImportSlots;
+                std::set<std::uint64_t> expected{target};
+                if (operation != 0x8d) {
+                    if (segment == 0x64) expected.clear();
+                    else if (segment == 0x65) expected = input.ImportSlots;
+                }
                 require(AnalyzeStrictReachability(input).ImportSlots == expected,
                         "Strict filter lost a possible segment-relative import");
                 auto bytes = elfFixture(input);
@@ -570,11 +574,114 @@ void filterSegmentRelativeImports() {
     }
 }
 
+std::vector<std::uint8_t> elfFixtureWithTls(const StrictReachabilityInput& input, std::uint64_t tlsVaddr, std::uint64_t tlsSize) {
+    auto bytes = elfFixture(input);
+    write<std::uint16_t>(bytes, 56, 3);
+    constexpr std::size_t tlsHeader = 64 + 2 * 56;
+    write<std::uint32_t>(bytes, tlsHeader, 7);
+    write<std::uint32_t>(bytes, tlsHeader + 4, 4);
+    write<std::uint64_t>(bytes, tlsHeader + 8, 0x300 + tlsVaddr - 0x2000);
+    write<std::uint64_t>(bytes, tlsHeader + 16, tlsVaddr);
+    write<std::uint64_t>(bytes, tlsHeader + 24, tlsVaddr);
+    write<std::uint64_t>(bytes, tlsHeader + 32, tlsSize);
+    write<std::uint64_t>(bytes, tlsHeader + 40, tlsSize);
+    write<std::uint64_t>(bytes, tlsHeader + 48, 8);
+    return bytes;
+}
+
+void fsTlsReadsIgnoreUnrelatedImports() {
+    auto input = fixture();
+    input.TlsModeled = true;
+    input.TlsImages = {{0x3000, 0x3020}};
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0x64, 0x8B, 0x04, 0x25, 0xF0, 0xFF, 0xFF, 0xFF});
+    emit(input, 17, {0xC3});
+    const auto reachable = AnalyzeStrictReachability(input);
+    require(reachable.Instructions.size() == 3, "FS TLS reads were not decoded as live instructions");
+    require(reachable.ImportSlots.empty(), "Reachable FS TLS read retained every import");
+
+    auto dead = fixture();
+    dead.TlsModeled = true;
+    dead.TlsImages = {{0x3000, 0x3020}};
+    emit(dead, 0, {0xC3});
+    emit(dead, 16, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(dead, 25, {0xC3});
+    require(AnalyzeStrictReachability(dead).ImportSlots.empty(), "Dead FS TLS read retained imports");
+}
+
+void fsTlsReadsRetainResidentImports() {
+    auto input = fixture();
+    input.ImportSlots = {0x2000, 0x2008, 0x2020};
+    input.TlsModeled = true;
+    input.TlsImages = {{0x2000, 0x2010}};
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x2000, 0x2008},
+            "FS TLS read lost an import resident in the TLS image");
+
+    auto unmodeled = fixture();
+    unmodeled.TlsImages = {{0x2000, 0x2010}};
+    emit(unmodeled, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(unmodeled, 9, {0xC3});
+    require(AnalyzeStrictReachability(unmodeled).ImportSlots == unmodeled.ImportSlots,
+            "FS access without a TLS layout no longer retains every import");
+}
+
+void gsMemoryOperandRetainsEveryImport() {
+    auto input = fixture();
+    input.TlsModeled = true;
+    input.TlsImages = {{0x3000, 0x3020}};
+    emit(input, 0, {0x65, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    require(AnalyzeStrictReachability(input).ImportSlots == input.ImportSlots, "GS memory operand no longer retains every import");
+}
+
+void fsOperandKeepsReferencedGotImport() {
+    auto input = fixture();
+    input.TlsModeled = true;
+    input.TlsImages = {{0x3000, 0x3020}};
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    ripOperand(input, 9, {0x48, 0x8B, 0x05}, 0x2000);
+    emit(input, 16, {0xC3});
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x2000},
+            "FS operand dropped or widened the referenced GOT import");
+}
+
+void filterTlsImagesThroughElf() {
+    auto input = fixture();
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    const std::vector<Relinker::NidReference> references = {
+        {"unused", {}, 6, 0x300, 0x2000, 0}, {"alsoUnused", {}, 6, 0x318, 0x2008, 0}};
+    const auto bytes = elfFixtureWithTls(input, 0x2060, 0x20);
+    for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+        require(filter->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
+                "ELF filter retained an unused import for a TLS read");
+    }
+}
+
+void filterResidentImportsThroughElf() {
+    auto input = fixture();
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    const std::vector<Relinker::NidReference> references = {
+        {"tlsFirst", {}, 6, 0x300, 0x2000, 0}, {"tlsSecond", {}, 6, 0x318, 0x2008, 0}, {"unused", {}, 6, 0x330, 0x2050, 0}};
+    const auto bytes = elfFixtureWithTls(input, 0x2000, 0x20);
+    for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+        const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
+        std::set<std::uint64_t> keptSlots;
+        for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+        require(keptSlots == std::set<std::uint64_t>{0x2000, 0x2008},
+                "ELF filter mishandled imports resident in the TLS image");
+    }
+}
+
 void segmentRelativeBaseAndReachability() {
     for (const std::uint8_t segment : {0x64, 0x65}) {
         for (const bool address32 : {false, true}) {
             for (const bool relative : {false, true}) {
                 auto input = fixture();
+                input.TlsModeled = true;
                 std::vector<std::uint8_t> instruction{segment};
                 instruction.reserve(15);
                 if (address32) instruction.push_back(0x67);
@@ -594,7 +701,7 @@ void segmentRelativeBaseAndReachability() {
                     {"zeroBase", {}, 6, 0x300, 0x2000, 0}, {"nonzeroBase", {}, 6, 0x318, 0x2008, 0}};
                 for (const bool reachable : {false, true}) {
                     if (reachable) input.Entries[0] = input.TextVaddr + 16;
-                    const auto expected = reachable ? input.ImportSlots : std::set<std::uint64_t>{};
+                    const auto expected = reachable && segment == 0x65 ? input.ImportSlots : std::set<std::uint64_t>{};
                     const auto analysis = AnalyzeStrictReachability(input);
                     require(analysis.ImportSlots == expected, "Strict filter lost unknown-base imports or treated dead access as live");
                     const auto bytes = elfFixture(input);
@@ -603,7 +710,7 @@ void segmentRelativeBaseAndReachability() {
                         std::set<std::uint64_t> keptSlots;
                         for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
                         require(keptSlots == expected, "ELF filter lost unknown-base imports or treated dead access as live");
-                        if (reachable) {
+                        if (reachable && segment == 0x65) {
                             for (const std::uint64_t segmentBase : {0, 8}) {
                                 const auto linearAddress = segmentBase + 0x2000;
                                 require(keptSlots.contains(linearAddress), "Valid zero/nonzero-base import access was removed");
@@ -1738,6 +1845,12 @@ int main() {
         unusedNidFilterTextRangeBounds();
         pltCompactorSlotOverflow();
         symbolCountApproachingUint32MaxBounds();
+        fsTlsReadsIgnoreUnrelatedImports();
+        fsTlsReadsRetainResidentImports();
+        gsMemoryOperandRetainsEveryImport();
+        fsOperandKeepsReferencedGotImport();
+        filterTlsImagesThroughElf();
+        filterResidentImportsThroughElf();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -73,6 +73,11 @@ public:
             if (!input.ImportSlots.insert(reference.RelocationAddress).second)
                 throw RelinkerException("Strict filter: duplicate imported slot", reference.RelocationAddress);
         }
+        input.TlsModeled = true;
+        for (const auto& segment : headers) {
+            if (segment.Type != Elfpatcher::PT_TLS) continue;
+            input.TlsImages.push_back({segment.MappedAddress, segment.MappedAddress + segment.MemorySize});
+        }
 
         const auto rela = table(7, 0x6100002F);
         const auto relaSize = value(8, 0x61000031);

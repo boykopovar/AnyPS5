@@ -19,6 +19,11 @@ struct StrictDataRegion {
     std::vector<std::uint8_t> Bytes;
 };
 
+struct TlsImageRange {
+    VirtualAddress Begin;
+    VirtualAddress End;
+};
+
 struct StrictReachabilityInput {
     std::vector<std::uint8_t> Text;
     VirtualAddress TextVaddr = 0;
@@ -27,6 +32,8 @@ struct StrictReachabilityInput {
     std::set<VirtualAddress> ImportSlots;
     std::vector<StrictCodeRegion> Functions;
     std::vector<StrictDataRegion> Data;
+    std::vector<TlsImageRange> TlsImages;
+    bool TlsModeled = false;
 };
 
 struct StrictReachabilityResult {

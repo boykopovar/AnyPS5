@@ -1,5 +1,6 @@
 #include <relinker/analysis/UnusedNidFilter/IGotAccessIndex.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/x86/X64OpcodeConstants.hpp>
 #include <unordered_set>
 #include <cstring>
 #include <limits>
@@ -8,22 +9,30 @@ namespace Relinker::UnusedNidFilter {
 
 class GotAccessIndex : public IGotAccessIndex {
 public:
-    explicit GotAccessIndex(std::unordered_set<VirtualAddress> accessed, bool unknownSegmentAccess)
-        : _accessed(std::move(accessed)), unknownSegmentAccess(unknownSegmentAccess) {}
+    GotAccessIndex(std::unordered_set<VirtualAddress> accessed, bool unknownSegmentAccess, bool tlsAccessed, std::vector<TlsImageRange> tlsImages)
+        : _accessed(std::move(accessed)), unknownSegmentAccess(unknownSegmentAccess), tlsAccessed(tlsAccessed), tlsImages(std::move(tlsImages)) {}
 
     bool IsGotSlotAccessed(VirtualAddress gotSlotVaddr) const override {
-        return unknownSegmentAccess || _accessed.count(gotSlotVaddr) > 0;
+        if (unknownSegmentAccess || _accessed.count(gotSlotVaddr) > 0) return true;
+        if (!tlsAccessed) return false;
+        for (const auto& image : tlsImages)
+            if (gotSlotVaddr >= image.Begin && gotSlotVaddr < image.End) return true;
+        return false;
     }
 
 private:
     std::unordered_set<VirtualAddress> _accessed;
     bool unknownSegmentAccess;
+    bool tlsAccessed;
+    std::vector<TlsImageRange> tlsImages;
 };
 
 std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
     const IControlFlowGraph& cfg,
     const std::vector<std::uint8_t>& text,
-    VirtualAddress textVaddr
+    VirtualAddress textVaddr,
+    const std::vector<TlsImageRange>& tlsImages,
+    bool tlsModeled
 ) {
     if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
         throw RelinkerException("Text section range exceeds the address space");
@@ -31,6 +40,7 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
     const Codegen::X64InstructionDecoder decoder;
     std::unordered_set<VirtualAddress> accessed;
     bool unknownSegmentAccess = false;
+    bool tlsAccessed = false;
 
     for (VirtualAddress va : cfg.ReachableVaddrs()) {
         if (va < textVaddr || va - textVaddr >= text.size())
@@ -41,7 +51,8 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
 
         Codegen::DecodedInstructionInfo info = decoder.DecodeInstruction(text.data() + bufOff, available);
         if (info.SegmentPrefix != 0 && info.HasMemoryOperand) {
-            unknownSegmentAccess = true;
+            if (info.SegmentPrefix == Codegen::X64OpcodeConstants::PrefixSegFs && tlsModeled) tlsAccessed = true;
+            else unknownSegmentAccess = true;
             continue;
         }
         if (!info.HasRipRelativeDisp) continue;
@@ -58,7 +69,7 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
         accessed.insert(target);
     }
 
-    return std::make_unique<GotAccessIndex>(std::move(accessed), unknownSegmentAccess);
+    return std::make_unique<GotAccessIndex>(std::move(accessed), unknownSegmentAccess, tlsAccessed, tlsImages);
 }
 
 }

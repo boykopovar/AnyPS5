@@ -1,5 +1,6 @@
 #include <relinker/analysis/UnusedNidFilter/StrictReachability.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
@@ -24,6 +25,7 @@ struct Region {
     std::vector<VirtualAddress> Instructions;
     std::size_t IndirectTransfers = 0;
     bool UnknownSegmentAccess = false;
+    bool TlsAccess = false;
 };
 
 bool endsFlow(Codegen::ControlFlowKind kind) {
@@ -71,6 +73,15 @@ public:
             enqueue(entry);
         }
         for (const auto root : addressTaken) enqueue(root);
+        std::set<VirtualAddress> tlsImports;
+        if (input.TlsModeled) {
+            for (const auto slot : input.ImportSlots)
+                for (const auto& image : input.TlsImages)
+                    if (slot >= image.Begin && slot < image.End) {
+                        tlsImports.insert(slot);
+                        break;
+                    }
+        }
         bool unknownSegmentAccess = false;
         while (!pending.empty()) {
             const auto begin = pending.front();
@@ -78,6 +89,7 @@ public:
             const auto& region = regions.at(begin);
             result.Instructions.insert(region.Instructions.begin(), region.Instructions.end());
             result.ImportSlots.insert(region.Imports.begin(), region.Imports.end());
+            if (region.TlsAccess) result.ImportSlots.insert(tlsImports.begin(), tlsImports.end());
             unknownSegmentAccess |= region.UnknownSegmentAccess;
             result.IndirectTransfers += region.IndirectTransfers;
             for (const auto target : region.Edges) enqueue(target);
@@ -176,7 +188,10 @@ private:
                 const auto next = address + info.Length;
                 const auto offset = static_cast<std::size_t>(address - input.TextVaddr);
                 region.Instructions.push_back(address);
-                if (info.SegmentPrefix != 0 && info.HasMemoryOperand) region.UnknownSegmentAccess = true;
+                if (info.SegmentPrefix != 0 && info.HasMemoryOperand) {
+                    if (info.SegmentPrefix == Codegen::X64OpcodeConstants::PrefixSegFs && input.TlsModeled) region.TlsAccess = true;
+                    else region.UnknownSegmentAccess = true;
+                }
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                     if ((info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
                         || (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(info.BranchDisp)))

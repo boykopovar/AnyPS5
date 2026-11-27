@@ -59,6 +59,12 @@ def with_import_type(image, relocation_type):
     return image
 
 
+def with_tls(image, tls_vaddr, tls_size):
+    struct.pack_into("<H", image, 56, 9)
+    struct.pack_into("<IIQQQQQQ", image, 64 + 8 * 56, 7, 4, tls_vaddr, tls_vaddr, tls_vaddr, tls_size, tls_size, 8)
+    return image
+
+
 def with_landing_pad(image, personality):
     header, cie, fde, lsda = 0x840, 0x860, 0x880, 0x8a0
     struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, header, header, header, 20, 20, 4)
@@ -182,8 +188,15 @@ def main():
                     load = prefix + rel(CODE + len(prefix) + 4, SLOT - base) + b"\xc3"
                     for level in (1, 2):
                         name = f"segment-{segment.hex()}-address-{address_prefix.hex()}-base-{base}-filter-{level}"
-                        if not run(relinker, Path(directory), name, build(at_offset([(0, load)])), level):
+                        expected = level == 2 or segment == b"\x65"
+                        if run(relinker, Path(directory), name, build(at_offset([(0, load)])), level) != expected:
                             failures.append(name)
+        for segment in (b"\x64", b"\x65"):
+            load = segment + b"\x48\x8b\x05" + rel(CODE + 8, SLOT) + b"\xc3"
+            for level in (1, 2):
+                name = f"tls-resident-{segment.hex()}-filter-{level}"
+                if not run(relinker, Path(directory), name, with_tls(build(at_offset([(0, load)])), SLOT, 8), level):
+                    failures.append(name)
         for sections in (False, True):
             for kind, binding, defined in (("global", 1, True), ("weak", 2, True),
                                            ("local", 0, True), ("undefined", 1, False)):

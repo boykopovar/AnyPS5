@@ -2,6 +2,7 @@
 #define RELINKER_ANALYSIS_UNUSED_NID_FILTER_IGOTACCESSINDEX_HPP
 
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
+#include <relinker/analysis/UnusedNidFilter/StrictReachability.hpp>
 #include <unordered_set>
 #include <memory>
 #include <vector>
@@ -18,7 +19,9 @@ public:
 std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
     const IControlFlowGraph& cfg,
     const std::vector<std::uint8_t>& text,
-    VirtualAddress textVaddr
+    VirtualAddress textVaddr,
+    const std::vector<TlsImageRange>& tlsImages,
+    bool tlsModeled
 );
 
 }
