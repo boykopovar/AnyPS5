@@ -91,6 +91,13 @@ void AppendProgramMemory(std::vector<ShaderRecompiler::MemoryRegion>& memory, co
     }
 }
 
+const DrawProgram& PositionExportProgram(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::size_t index) {
+    using Role = ShaderRecompiler::ProgramRole;
+    require(roles.size() == programs.size() && index < programs.size(), "draw program roles are incomplete");
+    if (roles[index] == Role::Geometry && index + 1u < programs.size() && roles[index + 1u] == Role::Copy) return programs[index + 1u];
+    return programs[index];
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::uint32_t location) {
     using Role = ShaderRecompiler::ProgramRole;
     require(roles.size() == programs.size(), "draw program roles are incomplete");

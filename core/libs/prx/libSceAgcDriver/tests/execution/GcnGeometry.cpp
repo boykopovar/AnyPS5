@@ -331,6 +331,12 @@ void RequireProgramDecode() {
         Require(std::ranges::equal(program.userData, users[index]), name + " did not read its own stage's user data");
     }
     Require(draw.state.stages.legacyGeometry->exports == Points().exports, "the copy program's exports were not read into the geometry configuration");
+    Require(&PositionExportProgram(draw.programs, draw.roles, 1u) == &draw.programs[2], "the GS position export layout was not read from the copy program that exports the GS vertices");
+    Require(&PositionExportProgram(draw.programs, draw.roles, 0u) == &draw.programs[0], "the ES position export layout was not read from the ES program");
+    Require(&PositionExportProgram(draw.programs, draw.roles, 2u) == &draw.programs[2], "the copy program's position export layout was not read from itself");
+    const std::vector<DrawProgram> alone{draw.programs[0], draw.programs[1]};
+    const std::vector<ProgramRole> aloneRoles{ProgramRole::Main, ProgramRole::Geometry};
+    Require(&PositionExportProgram(alone, aloneRoles, 1u) == &alone[1], "a geometry program without a following copy program read its position export layout from another program");
 }
 
 }
