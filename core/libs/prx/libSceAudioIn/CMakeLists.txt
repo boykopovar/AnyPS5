@@ -52,6 +52,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_audio_in_status_reroute_shared_bounds_tests PRIVATE libSceAudioIn libc)
     configure_windows_unwind(guest_audio_in_status_reroute_shared_bounds_tests)
     add_test(NAME guest_audio_in_status_reroute_shared_bounds COMMAND guest_audio_in_status_reroute_shared_bounds_tests)
+    set_tests_properties(guest_audio_in_status_reroute_shared_bounds PROPERTIES ENVIRONMENT "SDL_AUDIODRIVER=dummy;ANYPS5_AUDIO_IN_DEVICE=")
     if(WIN32)
         set_tests_properties(guest_audio_in_status_reroute_shared_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioIn>")
