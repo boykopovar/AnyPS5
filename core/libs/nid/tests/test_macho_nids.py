@@ -264,6 +264,12 @@ def check_refusals(patcher, directory):
     growing = [("_ab", 0, 0x100), ("_cd", 0, 0x108)]
     result, _ = patch(patcher, directory, "signed.dylib", build_dylib(growing, [], signed=True))
     assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    image = bytearray(build_dylib(growing, [], signed=True))
+    struct.pack_into("<I", image, 16, struct.unpack_from("<I", image, 16)[0] - 1)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "hidden-code-signature.dylib", original)
+    assert result.returncode != 0 and "load command count" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
     check_linkedit_bounds(patcher, directory)
     check_chained_fixups_bounds(patcher, directory)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))
@@ -301,6 +307,17 @@ def check_short_chained_fixups_command(patcher, directory):
     assert path.read_bytes() == image
 
 def check_dylib_name_bounds(patcher, directory):
+    boundary = bytearray(build_dylib([], [("_sceKernelFoo", 1)]))
+    boundary_command = command_fields(boundary)[LC_LOAD_DYLIB][0]
+    boundary_size, boundary_name_offset = struct.unpack_from("<II", boundary, boundary_command + 4)
+    boundary_name = b"/usr/lib/libc++.1.dylib\0"
+    assert len(boundary_name) == boundary_size - boundary_name_offset
+    boundary[boundary_command + boundary_name_offset:boundary_command + boundary_size] = boundary_name
+    boundary_path = Path(directory) / "dylib-command-name-ends-at-boundary.dylib"
+    boundary_path.write_bytes(boundary)
+    boundary_result = subprocess.run([str(patcher), "--exec", str(boundary_path)], capture_output=True, text=True, timeout=30)
+    assert boundary_result.returncode == 0, (boundary_result.stdout, boundary_result.stderr)
+
     image = bytearray(build_dylib([], [("_sceKernelFoo", 1)]))
     command = command_fields(image)[LC_LOAD_DYLIB][-1]
     size, name_offset = struct.unpack_from("<II", image, command + 4)
@@ -320,6 +337,7 @@ def check_dylib_name_bounds(patcher, directory):
         result = subprocess.run([str(patcher), "--exec", str(path)], capture_output=True, text=True, timeout=30)
         assert result.returncode != 0 and "dylib name out of bounds" in result.stdout + result.stderr, (invalid_offset, result.stdout, result.stderr)
         assert path.read_bytes() == image
+
 
 def check_short_imports(patcher, directory):
     imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]

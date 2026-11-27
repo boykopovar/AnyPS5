@@ -81,6 +81,13 @@ def dependency_order(pull_requests, root, base_sha, repo):
     dependencies = {number: set(pr["depends"]) for number, pr in pull_requests.items()}
     excluded = {}
     for number, required in dependencies.items():
+        pr = pull_requests[number]
+        if pr.get("unavailable"):
+            excluded[number] = "head_unavailable"
+            continue
+        if is_ancestor(root, pr["sha"], base_sha):
+            required.clear()
+            continue
         missing = required - pull_requests.keys()
         for dependency in sorted(missing):
             merge_sha = closed_dependency_status(repo, dependency)
@@ -88,12 +95,6 @@ def dependency_order(pull_requests, root, base_sha, repo):
                 excluded[number] = "unresolved_dependency"
                 break
             dependencies[number].discard(dependency)
-    for number, pr in pull_requests.items():
-        if pr.get("unavailable"):
-            excluded[number] = "head_unavailable"
-        elif is_ancestor(root, pr["sha"], base_sha):
-            excluded.pop(number, None)
-            dependencies[number] = set()
     pending = set(pull_requests) - excluded.keys()
     order = []
     while pending:

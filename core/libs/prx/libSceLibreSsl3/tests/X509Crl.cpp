@@ -202,6 +202,14 @@ Bytes CrlReasonExtension(unsigned char reason) {
     return Extension({0x55, 0x1d, 0x15}, false, Tlv(0x0a, Bytes{reason}));
 }
 
+Bytes CertificateIssuerExtension(const char* commonName) {
+    return Extension({0x55, 0x1d, 0x1d}, true, Sequence({Tlv(0xa4, IssuerName(commonName))}));
+}
+
+Bytes InvalidityDateExtension() {
+    return Extension({0x55, 0x1d, 0x18}, false, GeneralizedTime("20240102000000Z"));
+}
+
 Bytes RevokedEntry(const Bytes& serial) {
     return Sequence({Tlv(0x02, serial), UtcTime("240102000000Z")});
 }
@@ -667,6 +675,80 @@ void TestRemoveFromCrl() {
     SetCertificate(retainedCertificate, retainedInfo, &retained.value, nullptr);
     Require(X509_CRL_get0_by_cert_nid_postfix(crl, nullptr, &retainedCertificate) == 1);
     FreeCrlValue(crl);
+    Require(allocations.empty());
+}
+
+int LookupSerial(LibreSsl3X509Crl* crl, int low, const LibreSslX509Name* issuer, LibreSsl3Revoked** found) {
+    Serial serial(static_cast<unsigned char>(low));
+    LibreSsl3CertificateInfo info{};
+    LibreSsl3Certificate certificate{};
+    SetCertificate(certificate, info, &serial.value, issuer);
+    return X509_CRL_get0_by_cert_nid_postfix(crl, found, &certificate);
+}
+
+void TestCertificateIssuerEntries() {
+    LibreSsl3X509Crl* crl = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntry(Bytes{0x10, 0x01}),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x02}, CertificateIssuerExtension("Other CA")),
+            RevokedEntry(Bytes{0x10, 0x03}),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x04}, CrlReasonExtension(8)),
+        })),
+    })));
+    Require(crl != nullptr);
+    LibreSsl3X509Crl* other = Parse(CrlWithIssuer(IssuerName("Other CA")));
+    Require(other != nullptr);
+    const LibreSslX509Name* crlIssuer = crl->crl->issuer;
+    const LibreSslX509Name* otherIssuer = other->crl->issuer;
+    Require(RevokedEntryAt(crl, 1)->extensions != nullptr && RevokedEntryAt(crl, 1)->extensions->num == 1);
+    for (int index = 0; index < 4; ++index) Require(RevokedEntryAt(crl, index)->issuer == nullptr);
+    Require(RevokedEntryAt(crl, 3)->reason == 8);
+
+    LibreSsl3Revoked* found = nullptr;
+    Require(LookupSerial(crl, 0x01, nullptr, &found) == 1);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(crl, 0)));
+    Require(LookupSerial(crl, 0x01, crlIssuer, nullptr) == 1);
+    Require(LookupSerial(crl, 0x01, otherIssuer, nullptr) == 0);
+    Require(LookupSerial(crl, 0x05, nullptr, nullptr) == 0);
+    Require(LookupSerial(crl, 0x05, otherIssuer, nullptr) == 0);
+
+    for (const int low : {0x02, 0x03, 0x04}) {
+        for (const LibreSslX509Name* issuer : {otherIssuer, crlIssuer, static_cast<const LibreSslX509Name*>(nullptr)}) {
+            found = nullptr;
+            RequireNotImplemented([&] { LookupSerial(crl, low, issuer, &found); });
+            Require(found == nullptr);
+        }
+    }
+
+    LibreSsl3X509Crl* second = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+            Join({CrlReasonExtension(1), CertificateIssuerExtension("Other CA")}))),
+    })));
+    Require(second != nullptr);
+    Require(RevokedEntryAt(second, 0)->extensions->num == 2 && RevokedEntryAt(second, 0)->reason == 1);
+    RequireNotImplemented([&] { LookupSerial(second, 0x01, otherIssuer, nullptr); });
+    Require(LookupSerial(second, 0x02, otherIssuer, nullptr) == 0);
+
+    LibreSsl3X509Crl* direct = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntryWithExtensions(Bytes{0x10, 0x01}, CrlReasonExtension(1)),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x02}, Join({InvalidityDateExtension(), CrlReasonExtension(8)})),
+        })),
+    })));
+    Require(direct != nullptr);
+    Require(LookupSerial(direct, 0x01, crlIssuer, nullptr) == 1);
+    Require(LookupSerial(direct, 0x02, nullptr, &found) == 2);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(direct, 1)));
+    Require(LookupSerial(direct, 0x02, otherIssuer, nullptr) == 0);
+
+    FreeCrlValue(direct);
+    FreeCrlValue(second);
+    FreeCrlValue(other);
+    FreeCrlValue(crl);
+    RequireQueue({});
     Require(allocations.empty());
 }
 
@@ -1334,6 +1416,7 @@ int main() {
     TestExtensionArgumentErrors();
     TestGet0ByCert();
     TestRemoveFromCrl();
+    TestCertificateIssuerEntries();
     TestTrailingData();
     TestMalformed();
     TestTimes();

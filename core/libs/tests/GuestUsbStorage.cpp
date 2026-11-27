@@ -327,6 +327,14 @@ void TestNoDevice() {
     Require(info.volumeSize == 0x5a5a5a5a5a5a5a5aull && info.flags == 0x5a5a5a5a5a5a5a5aull, "device info was written");
     Require(sceUsbStorageGetDeviceInfo(0, nullptr) == UsbStorage::InvalidArgument, "get device info without an info buffer");
 
+    char mountPoint[UsbStorage::MountPointSize];
+    std::memset(mountPoint, 0x5a, sizeof(mountPoint));
+    Require(sceUsbStorageGetMountPointOfShellCore(static_cast<std::uint32_t>(UsbStorage::MaxDevices), mountPoint) == UsbStorage::DeviceNotFound,
+            "get the mount point of the first id past the last slot");
+    Require(sceUsbStorageGetMountPointOfShellCore(0xffffffffu, mountPoint) == UsbStorage::DeviceNotFound, "get the mount point of the highest device id");
+    Require(mountPoint[0] == static_cast<char>(0x5a), "the mount point of an absent device was written");
+    Require(sceUsbStorageGetMountPointOfShellCore(0xffffffffu, nullptr) == UsbStorage::InvalidArgument, "get the mount point without a buffer");
+
     std::uint8_t exists = 1;
     Require(sceUsbStorageIsExist(0, "/mnt/usb0", &exists) == true && exists == 0, "device 0 does not exist");
     errno = 71;

@@ -269,9 +269,7 @@ int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* d
         produced += space - stream.avail_out;
     } while (result == Z_OK);
     if (output != &probe) {
-        const int savedErrno = errno;
         const bool copiedOut = GuestCopyOut_nid_no_patch(destinationLength, &produced, sizeof(produced));
-        errno = savedErrno;
         if (!copiedOut) {
             inflateEnd(&stream);
             throw std::runtime_error("uncompress: unwritable destination length");

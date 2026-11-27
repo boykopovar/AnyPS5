@@ -6,6 +6,7 @@ import sys
 
 from guest_import_fixtures import dynamic, fixture_directory
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
+from test_guest_module_directories import dynamic_flags
 
 ENTRY = 0x1010
 SHARED = 0x1000
@@ -13,7 +14,7 @@ CALL_SLOTS = (0x23a0, 0x23a8, 0x23b0)
 TLS_SLOT = 0x23b8
 
 
-def module(value, tls_value, identity, entry_symbol, symbolic):
+def module(value, tls_value, identity, entry_symbol, symbolic, symbolic_tag=None):
     image = guest_fixture(PLAIN_SITE, symbolic=symbolic)
     strings = b'\0shared#A#B\0' + entry_symbol.encode() + b'#A#B\0tls_value#A#B\0'
     entry_name = strings.index(entry_symbol.encode())
@@ -27,6 +28,8 @@ def module(value, tls_value, identity, entry_symbol, symbolic):
             (0x61000043, (1 << 48) | (0x101 << 32) | identity_offset)]
     if symbolic:
         tags.append((30, 2))
+    if symbolic_tag is not None:
+        tags.append((16, symbolic_tag))
     dynamic(image, 0x600, 176, tags)
     struct.pack_into('<H', image, 56, 4)
     struct.pack_into('<IIQQQQQQ', image, 232, 7, 4, 0x980, 0x2380, 0x2380, 8, 8, 8)
@@ -82,20 +85,26 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with fixture_directory('anyps5-symbolic-modules-') as directory:
         work = Path(directory)
-        (work / 'sce_module').mkdir()
-        (work / 'sce_module' / 'libFirst.prx').write_bytes(module(1, 4, 'libFirst', 'first', symbolic=False))
-        (work / 'sce_module' / 'libSecond.prx').write_bytes(module(2, 8, 'libSecond', 'second', symbolic=True))
-        source = work / 'input.elf'
-        source.write_bytes(executable('libFirst', 'libSecond'))
-        output = work / 'output.exe'
-        result = subprocess.run([str(relinker), '--windows', str(source), str(output)], capture_output=True, text=True, timeout=30)
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        modules = work / 'app0' / 'sce_module'
-        for name in ('libFirst', 'libSecond'):
-            assert (modules / (name + '.prx.guest.prx')).read_bytes().startswith(b'MZ'), name
-        if os.name == 'nt':
-            run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
-            assert run.returncode == (3 * 1 + 4) + (3 * 2 + 8) * 16, (run.returncode, run.stdout, run.stderr)
+        for label, flag, tag in (('flag', True, None), ('tag', False, 0), ('tag-value', False, 123), ('both', True, 0)):
+            for windows in (False, True):
+                case = work / f'{label}-{windows}'
+                (case / 'sce_module').mkdir(parents=True)
+                (case / 'sce_module' / 'libFirst.prx').write_bytes(module(1, 4, 'libFirst', 'first', symbolic=False))
+                (case / 'sce_module' / 'libSecond.prx').write_bytes(module(2, 8, 'libSecond', 'second', symbolic=flag, symbolic_tag=tag))
+                source = case / 'input.elf'
+                source.write_bytes(executable('libFirst', 'libSecond'))
+                output = case / ('output.exe' if windows else 'output.elf')
+                result = subprocess.run([str(relinker), *(['--windows'] if windows else []), str(source), str(output)], capture_output=True, text=True, timeout=30)
+                assert result.returncode == 0, (label, windows, result.stdout, result.stderr)
+                modules = case / 'app0' / 'sce_module'
+                for name in ('libFirst', 'libSecond'):
+                    image = (modules / (name + '.prx.guest.prx')).read_bytes()
+                    assert image.startswith(b'MZ' if windows else b'\x7fELF'), name
+                    if not windows:
+                        assert dynamic_flags(image) == (10 if name == 'libSecond' else 8), (label, name)
+                if windows and os.name == 'nt':
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                    assert run.returncode == (3 * 1 + 4) + (3 * 2 + 8) * 16, (label, run.returncode, run.stdout, run.stderr)
     print('Guest symbolic module tests passed')
 
 

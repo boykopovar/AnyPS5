@@ -165,7 +165,7 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
 }
 
 bool multisamplePlaneRead(const ImageResource& image) {
-    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible && !image.gathered;
 }
 
 DescriptorValue gcnTableImageWords(DescriptorValue descriptor) {
@@ -323,11 +323,13 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (decoded.fmask && (storage || base.depthCompare || table)) {
         return rejectImage(PoisonReason::Fmask, "FMASK requires a direct sampled image load");
     }
-    if (decoded.fmask && !FmaskLayoutOf(format).has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
+    const auto fmaskLayout = FmaskLayoutOf(format);
+    if (decoded.fmask && !fmaskLayout.has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
     if (decoded.fmask && ((descriptor.dwords[6] & (1u << 20u)) != 0u || ((descriptor.dwords[6] & (1u << 21u)) != 0u && (descriptor.dwords[6] >> 24u) == 0u && descriptor.dwords[7] == 0u))) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented without readable metadata");
     if (decoded.fmask && (descriptor.dwords[6] & (1u << 21u)) != 0u && format != IrBufferFormat::Fmask32_S8_F8 && format != IrBufferFormat::Fmask8_S2_F2) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is implemented only for 2-sample, 2-fragment and 8-sample, 8-fragment FMASK");
     if (decoded.fmask && (base.packed || base.byElements != 0u)) return rejectImage(PoisonReason::Fmask, "packed FMASK image reads are not implemented");
-    for (std::uint32_t component = 0; decoded.fmask && component < 4u; ++component) {
+    const bool identityWideFmask = decoded.fmask && fmaskLayout->samples > 8u && descriptorImageSwizzle(descriptor) == ShaderImageIdentitySwizzle;
+    for (std::uint32_t component = 0; decoded.fmask && !identityWideFmask && component < 4u; ++component) {
         const auto selector = (descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u;
         if (selector != 0u && selector != 1u && selector != 4u) return rejectImage(PoisonReason::Fmask, "FMASK destination channel selector is not implemented");
     }
@@ -379,7 +381,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
-    const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
+    const bool packedNarrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt;
+    const bool rawSintStorage = storage && (wideSint || (narrowSint && (!base.packed || packedNarrowSint))) && base.written && !base.read && !base.atomic;
     const bool rawFloat16Storage = storage && base.written && !base.read && !base.atomic &&
         (remappedFormat == IrBufferFormat::Format16Float || remappedFormat == IrBufferFormat::Format16_16Float || remappedFormat == IrBufferFormat::Format16_16_16_16Float);
     decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(remappedFormat);
@@ -810,6 +813,7 @@ public:
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             parentKeysRemaining = ImageTableAbi::MaxParentKeys;
             nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+            parentScans.clear();
             if (attempt != 0u) {
                 columns.clear();
                 pages.clear();
@@ -1151,8 +1155,23 @@ private:
                 if (column.buffer) records.readRanges.emplace_back(records.base, records.size);
             }
         }
-        ReadColumn(column, records, column.buffer ? parentKeysRemaining : ImageTableAbi::MaxKeys);
-        if (column.buffer) parentKeysRemaining -= records.keys;
+        if (!column.buffer) {
+            ReadColumn(column, records, ImageTableAbi::MaxKeys);
+            return;
+        }
+        auto scan = column;
+        scan.indirectOffset = 0u;
+        scan.indirectImmediate = 0u;
+        const auto scanned = std::ranges::find_if(parentScans, [&](const ParentScan& known) {
+            return known.base == records.base && known.size == records.size && known.column == scan && known.column.maxKey == scan.maxKey && known.column.unkeyed == scan.unkeyed && known.column.keyDomains == scan.keyDomains;
+        });
+        if (scanned != parentScans.end()) {
+            ReadColumn(column, records, scanned->keys);
+            return;
+        }
+        ReadColumn(column, records, parentKeysRemaining);
+        parentKeysRemaining -= records.keys;
+        parentScans.push_back({std::move(scan), records.base, records.size, records.keys});
     }
 
     void ReadColumn(const TableColumn& column, ColumnRecords& records, std::uint32_t limit) {
@@ -1599,6 +1618,13 @@ private:
         }
     }
 
+    struct ParentScan {
+        TableColumn column;
+        std::uint64_t base = 0;
+        std::uint64_t size = 0;
+        std::uint32_t keys = 0;
+    };
+
     const IrResourcePlan& plan;
     const SrtRuntime& runtime;
     SrtWalker& walker;
@@ -1606,6 +1632,7 @@ private:
     ImageTableSnapshot& tables;
     std::uint32_t parentKeysRemaining = ImageTableAbi::MaxParentKeys;
     std::uint32_t nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+    std::vector<ParentScan> parentScans;
     std::map<std::uint32_t, ColumnRecords> columns;
     HashScratchIndex wordsIndex{threadScratch<HashSlot, WordsIndexTag>()};
     std::unordered_map<std::uint64_t, bool> pages;
@@ -1714,6 +1741,13 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         }
         snapshot.samplers[i] = values[cursor];
         cursor++;
+    }
+}
+
+void materializeBlendingReductions(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    for (std::uint32_t index = 0; index < plan.info.samplers.size() && index < snapshot.samplers.size(); ++index) {
+        auto& sampler = snapshot.samplers[index];
+        if (plan.info.samplers[index].table == NoTable && sampler.dwordCount == 4u && ((sampler.dwords[0] >> 29u) & 3u) == 3u) sampler.dwords[0] &= ~(3u << 29u);
     }
 }
 
@@ -1851,12 +1885,10 @@ bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValu
 bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
     const auto& buffer = plan.info.buffers[index];
     if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
-    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
     bool accessed = false;
     for (const auto& memory : plan.memoryInfo) {
         if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
         if (memory.typed || memory.gpuDescriptor) return false;
-        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
         accessed = true;
     }
     return accessed;
@@ -2127,6 +2159,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 if (image.packed && image.resourceClass == ImageResourceClass::Storage) {
                     auto viewFormat = mode.packedFormat;
                     switch (viewFormat) {
+                        case IrBufferFormat::Format16SInt: viewFormat = IrBufferFormat::Format16UInt; break;
+                        case IrBufferFormat::Format8_8SInt: viewFormat = IrBufferFormat::Format8_8UInt; break;
+                        case IrBufferFormat::Format16_16SInt: viewFormat = IrBufferFormat::Format16_16UInt; break;
                         case IrBufferFormat::Format32SInt: viewFormat = IrBufferFormat::Format32UInt; break;
                         case IrBufferFormat::Format32_32SInt: viewFormat = IrBufferFormat::Format32_32UInt; break;
                         case IrBufferFormat::Format32_32_32_32SInt: viewFormat = IrBufferFormat::Format32_32_32_32UInt; break;
@@ -2164,7 +2199,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         std::array<std::uint32_t, Abi::SamplerRecordWords> record{0u, 0u};
         if ((words.dwords[0] & (1u << 15u)) != 0u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
-        } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
+        } else if (const auto reduction = (words.dwords[0] >> 29u) & 3u; reduction == 1u || reduction == 2u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
         } else {
             const auto hash = hashWords(std::span(words.dwords.data(), 4u), 0);
@@ -2375,6 +2410,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                 offer(declaredArray ? RdnaImageDimension::Dim1DArray : RdnaImageDimension::Dim3D);
             }
             if (declaredArray) offer(RdnaImageDimension::Dim2D);
+            if (!declaredArray && !table && image.read && image.fmaskCompatible && image.cubeFaceCompatible) offer(RdnaImageDimension::Dim2DMsaa);
             auto cube = mode;
             cube.dimension = RdnaImageDimension::Dim2DArray;
             cube.cube = true;
@@ -2477,12 +2513,13 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             const auto info = GetFormatInfo(format);
             if (info.packedBitfield || info.componentCount == 0u || (storage && info.byteSize == 12u)) continue;
             if (image.byElements != 0u && info.byteSize * 8u * image.byElements > 32u) continue;
-            const auto numeric = storage && (format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt) ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
+            const bool rawSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt || format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt;
+            const auto numeric = storage && rawSint ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
             bool supported = numeric != IrTextureNumericClass::Unsupported && (!storage || numeric != IrTextureNumericClass::Sint);
             for (std::uint32_t component = 0u; component < info.componentCount; ++component) {
                 const auto bits = info.componentBits[component];
                 const bool exactRead = info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint || (info.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (info.type == SpirvFormatComponentType::Float && bits == 32u);
-                const bool exactWrite = info.type == SpirvFormatComponentType::Uint || (bits == 32u && (info.type == SpirvFormatComponentType::Sint || info.type == SpirvFormatComponentType::Float));
+                const bool exactWrite = info.type == SpirvFormatComponentType::Uint || (info.type == SpirvFormatComponentType::Sint && rawSint) || (bits == 32u && info.type == SpirvFormatComponentType::Float);
                 supported &= storage ? exactWrite : exactRead;
             }
             if (supported) append(numeric, IrBufferFormat::Invalid, format, false, false);
@@ -2622,7 +2659,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         if (storage && packedFormat.byteSize == 12u) return reject(PoisonReason::InvalidFormat, "runtime packed image uses a format the hardware does not write");
         for (std::uint32_t component = 0u; component < packedFormat.componentCount; ++component) {
             const auto bits = packedFormat.componentBits[component];
-            const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || (bits == 32u && (packedFormat.type == SpirvFormatComponentType::Sint || packedFormat.type == SpirvFormatComponentType::Float)) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
+            const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || (packedFormat.type == SpirvFormatComponentType::Sint && (bits == 32u || decoded.packedFormat == IrBufferFormat::Format16SInt || decoded.packedFormat == IrBufferFormat::Format8_8SInt || decoded.packedFormat == IrBufferFormat::Format16_16SInt)) || (bits == 32u && packedFormat.type == SpirvFormatComponentType::Float) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
             if (!exact) return reject(PoisonReason::InvalidFormat, storage ? "runtime packed image bits are not reproducible through the view" : "runtime packed image bits are not recoverable from the view");
         }
     }
@@ -3052,6 +3089,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeBlendingReductions(plan, nextSnapshot);
                 materializeForcedDegamma(plan, nextSnapshot);
                 materializeTables(plan, nextSnapshot);
                 materializeSrtGuards(plan, nextSnapshot);

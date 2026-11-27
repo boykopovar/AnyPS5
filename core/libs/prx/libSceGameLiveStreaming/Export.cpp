@@ -1,6 +1,5 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -32,9 +31,7 @@ static bool ValidFeedbackType(int type) {
 
 static bool ValidString(const char* text, std::size_t maxLength) {
     std::string value;
-    const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(text, maxLength + 1, value);
-    errno = savedErrno;
     return result == 0;
 }
 
@@ -42,9 +39,7 @@ template<class T>
 static bool ReservedZero(const T* entry) {
     std::array<std::uint8_t, sizeof(T::reserved)> bytes{};
     const auto* reserved = reinterpret_cast<const std::uint8_t*>(entry) + offsetof(T, reserved);
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), reserved, bytes.size());
-    errno = savedErrno;
     if (!copied) return false;
     for (const auto byte : bytes) {
         if (byte != 0) return false;
@@ -53,9 +48,7 @@ static bool ReservedZero(const T* entry) {
 }
 
 static int WriteGuestOutput(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied ? 0 : ErrorInvalidArgument;
 }
 
@@ -174,9 +167,7 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessagesCount(int type, std::
     if (!g_initialized) return ErrorNotInitialized;
     if (count == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
     const std::uint32_t zero = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidArgument;
     return 0;
 }
@@ -186,9 +177,7 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t cap
     if (!g_initialized) return ErrorNotInitialized;
     if (messages == nullptr || acquired == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
     const size_t zero = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(acquired, &zero, sizeof(zero));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidArgument;
     return 0;
 }

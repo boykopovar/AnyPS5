@@ -5,13 +5,52 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import relinker_fuzz_seeds
 
 
 class RelinkerFuzzSeedsTests(unittest.TestCase):
+    def test_without_arguments_accepts_only_optional_parameters(self):
+        cases = (
+            ("no parameters", lambda: None, True),
+            ("positional only", lambda required, /: None, False),
+            ("positional or keyword", lambda required: None, False),
+            ("keyword only", lambda *, required: None, False),
+            ("mixed required keyword", lambda optional=1, *, required: None, False),
+            ("positional default", lambda optional=1, /: None, True),
+            ("keyword default", lambda *, optional=1: None, True),
+            ("variadic", lambda *args, **kwargs: None, True),
+            ("variadic with required keyword", lambda *args, required, **kwargs: None, False),
+        )
+        for name, function, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(relinker_fuzz_seeds.without_arguments(function), expected)
+
+    def test_required_keyword_builder_is_skipped_without_warning(self):
+        builders = SimpleNamespace(
+            fixture=lambda *, size: bytes(size),
+            image=lambda *, size=64: bytes(size),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "test_keyword_builders.py").touch()
+            output = root / "seeds"
+            with patch.object(relinker_fuzz_seeds, "TESTS", root), \
+                    patch.object(relinker_fuzz_seeds.importlib, "import_module", return_value=builders):
+                code, stdout, stderr = self.run_main(output)
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("4 seeds written to", stdout)
+            self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, {
+                f"test_keyword_builders-image-{selector}": bytes([selector]) + bytes(64)
+                for selector in relinker_fuzz_seeds.SELECTORS
+            })
+
     def run_main(self, *arguments):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -20,6 +59,39 @@ class RelinkerFuzzSeedsTests(unittest.TestCase):
             except SystemExit as error:
                 code = error.code
         return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_replacing_linked_seed_preserves_original_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "seeds"
+            output.mkdir()
+            original = root / "original"
+            original.write_bytes(b"preserve this file")
+            target = output / "fixture-0"
+            os.link(original, target)
+            with mock.patch.object(relinker_fuzz_seeds, "images", return_value=[("fixture", b"A" * 64)]):
+                for _ in range(2):
+                    code, stdout, stderr = self.run_main(output)
+                    self.assertEqual(code, 0, stderr)
+                    self.assertEqual(original.read_bytes(), b"preserve this file")
+                    self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()},
+                                     {f"fixture-{selector}": bytes([selector]) + b"A" * 64
+                                      for selector in relinker_fuzz_seeds.SELECTORS})
+
+    def test_failed_seed_replacement_preserves_existing_seed_and_cleans_temporary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            target = output / "fixture-0"
+            target.write_bytes(b"previous seed")
+            with mock.patch.object(relinker_fuzz_seeds, "images", return_value=[("fixture", b"A" * 64)]), \
+                    mock.patch.object(Path, "replace", side_effect=OSError("replacement failed")):
+                code, stdout, stderr = self.run_main(output)
+            self.assertEqual(code, 2)
+            self.assertIn("replacement failed", stderr)
+            self.assertNotIn("Traceback", stderr)
+            self.assertEqual(stdout, "")
+            self.assertEqual(list(output.iterdir()), [target])
+            self.assertEqual(target.read_bytes(), b"previous seed")
 
     def test_seeds_written_to_directory(self):
         with tempfile.TemporaryDirectory() as directory:

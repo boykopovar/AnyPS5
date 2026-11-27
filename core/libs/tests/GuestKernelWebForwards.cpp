@@ -67,10 +67,42 @@ void TestExec() {
                    "_execvpe of a missing program did not fail with ENOENT");
 }
 
+void TestSocketClose() {
+    RequireFailure(__sys_socketclose_nid_disambig1_nid_postfix(-1), GuestEbadf,
+                   "__sys_socketclose(-1) did not fail with EBADF");
+    RequireFailure(__sys_socketclose_nid_postfix(-1), GuestEbadf,
+                   "libkernel_sys __sys_socketclose(-1) did not fail with EBADF");
+
+    int pipeFds[2]{-1, -1};
+    Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
+    Require(__sys_socketclose_nid_disambig1_nid_postfix(pipeFds[0]) == 0,
+            "__sys_socketclose failed to close descriptor");
+    RequireFailure(__sys_socketclose_nid_disambig1_nid_postfix(pipeFds[0]), GuestEbadf,
+                   "__sys_socketclose closed descriptor twice");
+    Require(__sys_socketclose_nid_postfix(pipeFds[1]) == 0,
+            "libkernel_sys __sys_socketclose failed to close descriptor");
+    RequireFailure(__sys_socketclose_nid_postfix(pipeFds[1]), GuestEbadf,
+                   "libkernel_sys __sys_socketclose closed descriptor twice");
+}
+
 void TestDevelopmentMode() {
     Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == 0, "__sys_is_development_mode did not report development mode off");
     Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == __sys_is_development_mode_nid_postfix(),
             "__sys_is_development_mode differs from libkernel_sys");
+}
+
+void TestGetGPI() {
+    sceKernelSetGPO(0);
+    Require(__sceKernelGetGPI_nid_postfix() == 0, "__sceKernelGetGPI in libkernel_sys did not return 0");
+    Require(__sceKernelGetGPI_nid_disambig1_nid_postfix() == 0, "__sceKernelGetGPI in libkernel_web did not return 0");
+
+    constexpr std::uint32_t Pattern = 0xA5A5A5A5;
+    sceKernelSetGPO(Pattern);
+    Require(sceKernelGetGPI() == Pattern, "sceKernelGetGPI did not reflect sceKernelSetGPO");
+    Require(__sceKernelGetGPI_nid_postfix() == Pattern, "__sceKernelGetGPI in libkernel_sys did not reflect sceKernelSetGPO");
+    Require(__sceKernelGetGPI_nid_disambig1_nid_postfix() == Pattern, "__sceKernelGetGPI in libkernel_web did not reflect sceKernelSetGPO");
+
+    sceKernelSetGPO(0);
 }
 
 void TestNamedObject() {
@@ -107,13 +139,48 @@ void TestWait4() {
     Require(status == -1, "_wait4 wrote a status on failure");
 }
 
+void TestRdup() {
+    RequireFailure(__sys_rdup_nid_disambig1_nid_postfix(0, -1), GuestEbadf,
+                   "__sys_rdup(-1) did not fail with EBADF");
+    RequireFailure(__sys_rdup_nid_disambig1_nid_postfix(getpid_nid_postfix(), -1), GuestEbadf,
+                   "__sys_rdup(own_pid, -1) did not fail with EBADF");
+    RequireFailure(__sys_rdup_nid_disambig1_nid_postfix(0, 1000000), GuestEbadf,
+                   "__sys_rdup on unopened descriptor did not fail with EBADF");
+    bool threw = false;
+    try {
+        __sys_rdup_nid_disambig1_nid_postfix(1234567, 0);
+    } catch (...) {
+        threw = true;
+    }
+    Require(threw, "__sys_rdup for another process did not throw");
+
+    int pipeFds[2]{-1, -1};
+    Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
+    const int copy = __sys_rdup_nid_disambig1_nid_postfix(0, pipeFds[0]);
+    Require(copy >= 0 && copy != pipeFds[0], "__sys_rdup failed to duplicate");
+
+    const char msg[] = "web_rdup";
+    const auto len = static_cast<std::int64_t>(sizeof(msg));
+    Require(write_nid_postfix(pipeFds[1], msg, len) == len, "write through pipe write-end failed");
+    char buf[16]{};
+    Require(read_nid_postfix(copy, buf, sizeof(buf)) == len, "read through rdup duplicate failed");
+    Require(std::memcmp(buf, msg, sizeof(msg)) == 0, "payload mismatch");
+
+    Require(close_nid_postfix(copy) == 0, "close on duplicate failed");
+    Require(close_nid_postfix(pipeFds[0]) == 0, "close on pipe 0 failed");
+    Require(close_nid_postfix(pipeFds[1]) == 0, "close on pipe 1 failed");
+}
+
 } // namespace
 
 int main() {
     TestDup2();
     TestExec();
+    TestSocketClose();
     TestDevelopmentMode();
+    TestGetGPI();
     TestNamedObject();
     TestWait4();
+    TestRdup();
     return 0;
 }

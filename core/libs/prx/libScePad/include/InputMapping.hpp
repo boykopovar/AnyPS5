@@ -51,6 +51,7 @@ struct InputConfiguration {
 
 inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_F11, MouseButton::None, InputControl::ToggleFullscreen},
+    InputBinding{SDL_SCANCODE_F2, MouseButton::None, InputControl::ToggleBorderless},
     InputBinding{SDL_SCANCODE_F10, MouseButton::None, InputControl::TogglePerformanceOverlay},
     InputBinding{SDL_SCANCODE_F12, MouseButton::None, InputControl::Screenshot},
     InputBinding{SDL_SCANCODE_F9, MouseButton::None, InputControl::ShowPadStatus},
