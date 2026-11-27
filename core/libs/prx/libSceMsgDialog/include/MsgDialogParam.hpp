@@ -1,14 +1,13 @@
 #ifndef CORE_LIBS_PRX_LIBSCEMSGDIALOG_INCLUDE_MSGDIALOGPARAM_HPP
 #define CORE_LIBS_PRX_LIBSCEMSGDIALOG_INCLUDE_MSGDIALOGPARAM_HPP
 
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace MsgDialog {
 
@@ -36,39 +35,51 @@ struct ParsedParam {
     std::string text;
 };
 
-inline bool Readable(const void* p, std::size_t n) {
-#ifdef _WIN32
-    if (p == nullptr) return false;
-    MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0 || mbi.State != MEM_COMMIT) return false;
-    if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return false;
-    const auto end = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
-    return reinterpret_cast<std::uintptr_t>(p) + n <= end;
-#else
-    return p != nullptr;
-#endif
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+inline bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    bool read = false;
+    try {
+        read = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    } catch (const std::runtime_error&) {
+        errno = savedErrno;
+        return false;
+    }
+    errno = savedErrno;
+    return read;
 }
+#else
+inline bool ReadGuest(void*, const void*, std::size_t) {
+    return false;
+}
+#endif
 
 inline ParsedParam ParseParam(const void* param) {
     ParsedParam parsed;
-    const std::uint8_t* bytes = static_cast<const std::uint8_t*>(param);
-    if (!Readable(bytes, ParamBytes)) return parsed;
+    std::uint8_t bytes[ParamBytes]{};
+    if (!ReadGuest(bytes, param, sizeof(bytes))) return parsed;
     std::int32_t mode = 0;
     std::memcpy(&mode, bytes + 0x38, 4);
     if (mode >= ModeUserMsg && mode <= ModeSystemMsg) parsed.mode = mode;
     if (parsed.mode != ModeUserMsg) return parsed;
     const std::uint8_t* userMsg = nullptr;
     std::memcpy(&userMsg, bytes + 0x40, 8);
-    if (!Readable(userMsg, 16)) return parsed;
+    std::uint8_t userBytes[16]{};
+    if (!ReadGuest(userBytes, userMsg, sizeof(userBytes))) return parsed;
     std::int32_t buttonType = 0;
-    std::memcpy(&buttonType, userMsg, 4);
+    std::memcpy(&buttonType, userBytes, 4);
     const char* msg = nullptr;
-    std::memcpy(&msg, userMsg + 8, 8);
+    std::memcpy(&msg, userBytes + 8, 8);
     parsed.hasUserMessage = true;
     parsed.buttonType = buttonType;
-    if (!Readable(msg, 4)) return parsed;
-    parsed.hasText = true;
-    for (std::size_t i = 0; i < MaxMessageBytes && Readable(msg + i, 1) && msg[i] != '\0'; ++i) parsed.text.push_back(msg[i]);
+    const auto address = reinterpret_cast<std::uintptr_t>(msg);
+    for (std::size_t i = 0; i < MaxMessageBytes && i <= UINTPTR_MAX - address; ++i) {
+        char character = 0;
+        if (!ReadGuest(&character, reinterpret_cast<const void*>(address + i), sizeof(character))) break;
+        parsed.hasText = true;
+        if (character == '\0') break;
+        parsed.text.push_back(character);
+    }
     return parsed;
 }
 

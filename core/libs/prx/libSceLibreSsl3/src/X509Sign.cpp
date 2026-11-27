@@ -17,6 +17,10 @@ constexpr int NullType = 5;
 constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr std::int64_t BitsLeftMask = BitsLeftFlag | 0x07;
 constexpr int RsaKeyType = 6;
+constexpr unsigned char IntegerTag = 0x02;
+constexpr unsigned char ObjectTag = 0x06;
+constexpr unsigned char SequenceTag = 0x30;
+constexpr unsigned char VersionTag = 0xa0;
 
 struct Encoding {
     const unsigned char* bytes;
@@ -71,6 +75,69 @@ std::vector<unsigned char> CertificateInfoEncoding(const Encoding& encoding) {
     if (!GuestCopyIn_nid_no_patch(tbs.data(), encoding.bytes, tbs.size()))
         NotImplemented_nid_no_patch("X509_sign: certificate info without a current cached encoding");
     return tbs;
+}
+
+std::vector<unsigned char> Element(unsigned char tag, const std::vector<unsigned char>& content) {
+    std::vector<unsigned char> encoded {tag};
+    if (content.size() < 0x80) {
+        encoded.push_back(static_cast<unsigned char>(content.size()));
+    } else {
+        unsigned char bytes[sizeof(std::size_t)];
+        int count = 0;
+        for (std::size_t rest = content.size(); rest != 0; rest >>= 8) bytes[count++] = static_cast<unsigned char>(rest);
+        encoded.push_back(static_cast<unsigned char>(0x80 | count));
+        while (count > 0) encoded.push_back(bytes[--count]);
+    }
+    encoded.insert(encoded.end(), content.begin(), content.end());
+    return encoded;
+}
+
+std::vector<unsigned char> AlgorithmEncoding(const LibreSslAsn1Object& object, bool nullParameter) {
+    if (object.length <= 0 || !object.data)
+        NotImplemented_nid_no_patch("X509_sign: signature algorithm without an object encoding");
+    auto content = Element(ObjectTag, std::vector<unsigned char>(object.data, object.data + object.length));
+    if (nullParameter) {
+        content.push_back(NullType);
+        content.push_back(0);
+    }
+    return Element(SequenceTag, content);
+}
+
+struct Span {
+    std::size_t begin;
+    std::size_t content;
+    std::size_t end;
+};
+
+Span ReadElement(const std::vector<unsigned char>& bytes, std::size_t offset, std::size_t limit, unsigned char tag) {
+    constexpr const char* Malformed = "X509_sign: cached certificate info that is not a TBSCertificate";
+    if (limit - offset < 2 || bytes[offset] != tag) NotImplemented_nid_no_patch(Malformed);
+    std::size_t length = bytes[offset + 1];
+    std::size_t content = offset + 2;
+    if ((length & 0x80) != 0) {
+        const std::size_t count = length & 0x7f;
+        if (count == 0 || count > sizeof(std::size_t) || limit - content < count) NotImplemented_nid_no_patch(Malformed);
+        length = 0;
+        for (std::size_t index = 0; index < count; ++index) length = (length << 8) | bytes[content++];
+    }
+    if (limit - content < length) NotImplemented_nid_no_patch(Malformed);
+    return {offset, content, content + length};
+}
+
+std::vector<unsigned char> ReencodeCertificateInfo(const std::vector<unsigned char>& cached,
+    const std::vector<unsigned char>& algorithm) {
+    const Span whole = ReadElement(cached, 0, cached.size(), SequenceTag);
+    if (whole.end != cached.size())
+        NotImplemented_nid_no_patch("X509_sign: cached certificate info that is not a TBSCertificate");
+    std::size_t cursor = whole.content;
+    if (cursor < whole.end && cached[cursor] == VersionTag) cursor = ReadElement(cached, cursor, whole.end, VersionTag).end;
+    cursor = ReadElement(cached, cursor, whole.end, IntegerTag).end;
+    const Span signature = ReadElement(cached, cursor, whole.end, SequenceTag);
+    std::vector<unsigned char> content(cached.begin() + static_cast<std::ptrdiff_t>(whole.content),
+        cached.begin() + static_cast<std::ptrdiff_t>(signature.begin));
+    content.insert(content.end(), algorithm.begin(), algorithm.end());
+    content.insert(content.end(), cached.begin() + static_cast<std::ptrdiff_t>(signature.end), cached.end());
+    return Element(SequenceTag, content);
 }
 
 std::vector<unsigned char> SignBytes(const std::vector<unsigned char>& tbs, LibreSsl3EvpPkey* key,
@@ -210,8 +277,18 @@ extern "C" int APS5_VABI X509_sign_nid_postfix(LibreSsl3Certificate* certificate
     auto* const outer = const_cast<LibreSsl3X509Algor*>(fields.sigAlg);
     auto* const innerAlgor = static_cast<LibreSsl3X509Algor*>(info.signature);
 
+    const auto cached = CertificateInfoEncoding(encoding);
+    const auto tbs = ReencodeCertificateInfo(cached, AlgorithmEncoding(*object, nullParameter));
+    const auto signature = SignBytes(tbs, key, digestMethod);
+
     LibreSsl3Asn1Type* outerParameter = nullptr;
     LibreSsl3Asn1Type* innerParameter = nullptr;
+    unsigned char* reencoded = nullptr;
+    const auto release = [&] {
+        free_nid_postfix(outerParameter);
+        free_nid_postfix(innerParameter);
+        free_nid_postfix(reencoded);
+    };
     if (nullParameter && !outer->parameter) {
         outerParameter = NewNullParameter();
         if (!outerParameter) return 0;
@@ -219,23 +296,44 @@ extern "C" int APS5_VABI X509_sign_nid_postfix(LibreSsl3Certificate* certificate
     if (nullParameter && !innerAlgor->parameter) {
         innerParameter = NewNullParameter();
         if (!innerParameter) {
-            free_nid_postfix(outerParameter);
+            release();
             return 0;
         }
     }
+    if (tbs != cached) {
+        reencoded = static_cast<unsigned char*>(malloc_nid_postfix(tbs.size()));
+        if (!reencoded) {
+            release();
+            return 0;
+        }
+        std::memcpy(reencoded, tbs.data(), tbs.size());
+    }
 
-    std::vector<unsigned char> signature;
+    auto* const encodingField = reinterpret_cast<unsigned char*>(const_cast<LibreSsl3CertificateInfo*>(fields.certInfo))
+        + offsetof(LibreSsl3CertificateInfo, encoding);
     try {
-        const auto tbs = CertificateInfoEncoding(encoding);
-        signature = SignBytes(tbs, key, digestMethod);
+        if (outerParameter) {
+            CopyOut(&outer->parameter, outerParameter, "X509_sign");
+            outerParameter = nullptr;
+        }
+        if (innerParameter) {
+            CopyOut(&innerAlgor->parameter, innerParameter, "X509_sign");
+            innerParameter = nullptr;
+        }
+        if (!ApplyAlgorithm(outer, object, nullParameter) || !ApplyAlgorithm(innerAlgor, object, nullParameter)) {
+            release();
+            return 0;
+        }
+        if (reencoded) {
+            CopyOut(encodingField, Encoding {reencoded, static_cast<std::int64_t>(tbs.size()), 0, encoding.padding},
+                "X509_sign");
+            reencoded = nullptr;
+            free_nid_postfix(const_cast<unsigned char*>(encoding.bytes));
+        }
     } catch (...) {
-        free_nid_postfix(outerParameter);
-        free_nid_postfix(innerParameter);
+        release();
         throw;
     }
-    if (outerParameter) CopyOut(&outer->parameter, outerParameter, "X509_sign");
-    if (innerParameter) CopyOut(&innerAlgor->parameter, innerParameter, "X509_sign");
-    if (!ApplyAlgorithm(outer, object, nullParameter) || !ApplyAlgorithm(innerAlgor, object, nullParameter)) return 0;
     if (!StoreSignature(view, certificate, signature)) return 0;
     return static_cast<int>(signature.size());
 }

@@ -66,6 +66,7 @@ constexpr int InvalidOutAddress = static_cast<int>(0x804a8010u);
 constexpr int InvalidOutSize = static_cast<int>(0x804a8011u);
 constexpr int InvalidOptionSize = static_cast<int>(0x804a8013u);
 constexpr int InvalidBufferInfo = static_cast<int>(0x804a8020u);
+constexpr int InvalidBufferSize = static_cast<int>(0x804a8021u);
 constexpr int InvalidBufferAllocator = static_cast<int>(0x804a8023u);
 constexpr int InvalidStreamCommands = static_cast<int>(0x804a8030u);
 constexpr int InvalidStreamQueryId = static_cast<int>(0x804a8031u);
@@ -323,8 +324,16 @@ void TestStreamExports() {
     Ngs2ContextBufferInfo emptyHost{};
     Require(sceNgs2StreamCreate(system, &opt, &emptyHost, &streamHandle) == InvalidBufferInfo);
     bufInfo.host_buffer = reinterpret_cast<void*>(0x1000);
+    bufInfo.host_buffer_size = 0x106c0;
     Require(sceNgs2StreamCreate(system, reinterpret_cast<const void*>(0x10), &bufInfo, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreate(system, &opt, &bufInfo, nullptr) == InvalidOutAddress);
+    Ngs2ContextBufferInfo shortBuffer = bufInfo;
+    shortBuffer.host_buffer_size = 0x106bf;
+    Require(sceNgs2StreamCreate(0xdead, &opt, &shortBuffer, &streamHandle) == InvalidBufferSize);
+    Require(sceNgs2StreamCreate(system, &badBlocks, &shortBuffer, &streamHandle) == InvalidNumBlocks);
+    StreamOption guarded = opt;
+    guarded.flags = 0x80000000u;
+    Require(sceNgs2StreamCreate(system, &guarded, &bufInfo, &streamHandle) == InvalidBufferSize);
     Require(sceNgs2StreamCreate(0xdead, &opt, &bufInfo, &streamHandle) == InvalidSystemHandle);
     AssertThrows([&] { sceNgs2StreamCreate(system, &opt, &bufInfo, &streamHandle); });
 
@@ -339,9 +348,17 @@ void TestStreamExports() {
     AssertThrows([&] { sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle); });
 
     Require(sceNgs2StreamDestroy(0, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(0x100, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(0, reinterpret_cast<void*>(0x10)) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(system, nullptr) == InvalidStreamHandle);
+    const auto reverbRack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Require(sceNgs2StreamDestroy(reverbRack, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2RackDestroy(reverbRack, nullptr) == SCE_NGS2_OK);
     Require(sceNgs2StreamRunCommands(0, nullptr, 0) == InvalidStreamHandle);
-    Require(sceNgs2StreamRunCommands(0x100, reinterpret_cast<const void*>(0x10), 1) == InvalidStreamCommands);
+    Require(sceNgs2StreamRunCommands(0x100, nullptr, 0) == InvalidStreamHandle);
+    Require(sceNgs2StreamRunCommands(0x100, reinterpret_cast<const void*>(0x10), 1) == InvalidStreamHandle);
     Require(sceNgs2StreamQueryInfo(0, 0xf24001, nullptr, 0) == InvalidStreamHandle);
+    Require(sceNgs2StreamQueryInfo(0x100, 0x99999999, nullptr, 0) == InvalidStreamHandle);
 
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }

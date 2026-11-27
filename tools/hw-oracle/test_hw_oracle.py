@@ -1,4 +1,5 @@
 import contextlib
+import ctypes
 import hashlib
 import io
 import json
@@ -845,6 +846,9 @@ class AssemblyTests(unittest.TestCase):
         targets = subprocess.run([hw_oracle.tool("clang"), "--print-targets"], capture_output=True, text=True).stdout
         if "amdgcn" not in targets:
             self.skipTest("clang has no AMDGPU target")
+        probe = subprocess.run([hw_oracle.tool("ld.lld"), "-m", "elf64_amdgpu"], capture_output=True, text=True)
+        if "unknown emulation" in probe.stderr:
+            self.skipTest("ld.lld has no elf64_amdgpu emulation")
         for wave64, vcc, sgpr in ((False, "vcc_lo", "s8"), (True, "vcc", "s[8:9]")):
             body = (f"  v_cmp_lt_f32 {vcc}, v4, v5\n"
                     f"  v_cndmask_b32 v10, v6, v7, {vcc}\n"
@@ -1427,6 +1431,17 @@ class HipOracleTests(unittest.TestCase):
                 self.assertEqual(os.environ["HIP_VISIBLE_DEVICES"], expected)
         self.oracle_hip.hip.cache_clear()
 
+    def driver_targets(self):
+        library = self.oracle_hip.comgr()
+        count = ctypes.c_size_t()
+        self.oracle_hip.check(library.amd_comgr_get_isa_count(ctypes.byref(count)), "amd_comgr_get_isa_count")
+        targets = set()
+        for index in range(count.value):
+            name = ctypes.c_char_p()
+            self.oracle_hip.check(library.amd_comgr_get_isa_name(ctypes.c_size_t(index), ctypes.byref(name)), "amd_comgr_get_isa_name")
+            targets.add(name.value.decode("ascii").removeprefix("amdgcn-amd-amdhsa--"))
+        return targets
+
     def test_assembles_both_wave_sizes_with_the_driver_comgr(self):
         if os.name != "nt":
             self.skipTest("comgr from AMD's Windows driver")
@@ -1434,6 +1449,8 @@ class HipOracleTests(unittest.TestCase):
             self.oracle_hip.comgr()
         except self.oracle_hip.OracleError as error:
             self.skipTest(str(error))
+        targets = self.driver_targets()
+        self.assertIn("gfx1010", targets)
         for assembly_target, modes in (("gfx1010", MODES), ("gfx1201", MODES | {"ieee": None, "dx10_clamp": None})):
             for wave64, mask in ((False, "s8"), (True, "s[8:9]")):
                 body = f"  v_cmp_lt_f32 {mask}, v4, v5\n  v_cndmask_b32 v10, v6, v7, {mask}\n"
@@ -1443,6 +1460,8 @@ class HipOracleTests(unittest.TestCase):
                     hw_oracle.assemble(body, Path(tmp), wave64, **modes)
                     text = (Path(tmp) / "k.s").read_text()
                 with self.subTest(target=assembly_target, wave64=wave64):
+                    if assembly_target not in targets:
+                        self.skipTest(f"the driver's comgr has no {assembly_target} target")
                     self.assertEqual(self.oracle_hip.assemble(text.encode(), assembly_target, wave64)[:4], b"\x7fELF")
 
 

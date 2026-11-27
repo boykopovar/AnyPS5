@@ -1,9 +1,11 @@
 #include "prx/libSceFreeTypeOt/include/Bitmap.hpp"
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -207,6 +209,70 @@ void OwnershipErrors() {
     Require(!fixture.slot.bitmap.buffer && fixture.internal.flags == FreeType::GlyphOwnBitmap, "Own_Bitmap of an empty bitmap stores null and marks it owned");
 }
 
+void OwnershipGuestPointerErrors() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && errno == 71, "Own_Bitmap rejects bad guest pointer and preserves errno");
+    };
+
+    rejectsRuntime([] {
+        sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(reinterpret_cast<GuestGlyphSlotRec*>(std::uintptr_t{0x10}));
+    });
+
+    {
+        Fixture fixture;
+        fixture.slot.format = FreeType::GlyphFormatBitmap;
+        fixture.slot.internal = reinterpret_cast<void*>(std::uintptr_t{0x10});
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+
+        fixture.slot.internal = &fixture.internal;
+        fixture.slot.library = reinterpret_cast<void*>(std::uintptr_t{0x10});
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+
+        fixture.slot.library = &fixture.library;
+        auto* badPixels = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        fixture.slot.bitmap = {2, 4, 4, badPixels, 256, 2, 0, nullptr};
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+        Require(fixture.recorder.allocs == 1 && fixture.recorder.frees == 1, "Own_Bitmap frees allocation when pixel copy-in fails");
+        Require(fixture.slot.bitmap.buffer == badPixels && fixture.internal.flags == 0, "Own_Bitmap leaves slot unchanged when pixel copy-in fails");
+    }
+
+    {
+        static Recorder roRecorder{{nullptr, RecordAlloc, RecordFree, RecordRealloc}};
+        static GuestBitmapLibrary roLibrary{&roRecorder.memory};
+        static GuestSlotInternalRec roInternal{};
+        static unsigned char roPixels[8]{1, 2, 3, 4, 5, 6, 7, 8};
+        static const GuestGlyphSlotRec readOnlySlot{
+            .library = &roLibrary,
+            .format = FreeType::GlyphFormatBitmap,
+            .bitmap = {2, 4, 4, roPixels, 256, 2, 0, nullptr},
+            .internal = &roInternal,
+        };
+        roRecorder.memory.user = &roRecorder;
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(const_cast<GuestGlyphSlotRec*>(&readOnlySlot)); });
+        Require(roRecorder.allocs == 1 && roRecorder.frees == 1, "Own_Bitmap frees allocation when slot write-back fails");
+        Require(roInternal.flags == 0, "Own_Bitmap does not mark read-only slot internal flags owned");
+    }
+
+    {
+        static const GuestSlotInternalRec readOnlyInternal{};
+        Fixture fixture;
+        unsigned char pixels[8]{1, 2, 3, 4, 5, 6, 7, 8};
+        fixture.slot.format = FreeType::GlyphFormatBitmap;
+        fixture.slot.internal = const_cast<GuestSlotInternalRec*>(&readOnlyInternal);
+        fixture.slot.bitmap = {2, 4, 4, pixels, 256, 2, 0, nullptr};
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+        Require(fixture.recorder.allocs == 1 && fixture.recorder.frees == 1, "Own_Bitmap frees allocation when internal flags write-back fails");
+        Require(fixture.slot.bitmap.buffer == pixels, "Own_Bitmap restores slot bitmap when internal flags write-back fails");
+    }
+}
+
 struct SlotCalls {
     int inits = 0;
     int dones = 0;
@@ -235,6 +301,30 @@ int APS5_VABI RecordInitSlot(GuestGlyphSlotRec* slot) {
 void APS5_VABI RecordDoneSlot(GuestGlyphSlotRec* slot) {
     ++calls.dones;
     calls.doneSlot = slot;
+}
+
+GuestGlyphSlotRec* gCorruptTargetSlot = nullptr;
+void* gSavedInternal = nullptr;
+void* gSavedLoader = nullptr;
+
+GuestGlyphSlotRec* gInsertedHead = nullptr;
+GuestGlyphSlotRec* gInsertedTail = nullptr;
+
+int APS5_VABI InsertHeadOnInit(GuestGlyphSlotRec* slot) {
+    if (gInsertedHead && slot && slot->face) {
+        auto* face = static_cast<GuestFaceRec*>(slot->face);
+        gInsertedHead->next = gInsertedTail;
+        face->glyph = gInsertedHead;
+    }
+    return 0;
+}
+
+int APS5_VABI CorruptFaceOnInit(GuestGlyphSlotRec* slot) {
+    gCorruptTargetSlot = slot;
+    gSavedInternal = slot->internal;
+    gSavedLoader = gSavedInternal ? static_cast<GuestSlotInternalRec*>(gSavedInternal)->loader : nullptr;
+    slot->face = reinterpret_cast<GuestFaceRec*>(0x10);
+    return 0x24;
 }
 
 struct DriverFixture {
@@ -340,6 +430,93 @@ void NewSlotFailures() {
     Require(rejected.recorder.lastFreed == calls.initSlot, "a rejected slot is freed last");
 }
 
+void GuestPointers() {
+    DriverFixture fixture;
+    GuestGlyphSlotRec* slot = reinterpret_cast<GuestGlyphSlotRec*>(0x1234);
+    static Recorder roRecorder{};
+    roRecorder.memory = {&roRecorder, RecordAlloc, RecordFree, RecordRealloc};
+    static GuestModuleClass roModuleClass{};
+    static GuestDriverClassPrefix roClazz{.slot_object_size = sizeof(GuestGlyphSlotRec)};
+    static int roLibrary = 0;
+    static GuestDriverRec roDriver{.root_clazz = &roModuleClass, .root_library = &roLibrary, .root_memory = &roRecorder.memory, .clazz = &roClazz};
+    static GuestSlotInternalRec roInternal{};
+    static const GuestFaceRec readOnlyFace{.driver = &roDriver, .memory = &roRecorder.memory};
+    static const GuestGlyphSlotRec readOnlySlot{.face = const_cast<GuestFaceRec*>(&readOnlyFace), .internal = &roInternal};
+    unsigned char buffer[4]{};
+
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(reinterpret_cast<GuestFaceRec*>(0x10), &slot) == 0x06 && errno == 71 && slot == reinterpret_cast<GuestGlyphSlotRec*>(0x1234),
+        "New_GlyphSlot refuses an unreadable face without changing errno or output");
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, reinterpret_cast<GuestGlyphSlotRec**>(0x10)) == 0x06 && errno == 71 && !fixture.face.glyph && fixture.recorder.allocs == fixture.recorder.frees,
+        "New_GlyphSlot rolls back when the output slot pointer is unwritable");
+
+    DriverFixture listFixture;
+    GuestGlyphSlotRec existingTail{};
+    GuestGlyphSlotRec insertedHead{};
+    listFixture.clazz.init_slot = InsertHeadOnInit;
+    gInsertedHead = &insertedHead;
+    gInsertedTail = &existingTail;
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(&listFixture.face, reinterpret_cast<GuestGlyphSlotRec**>(0x10)) == 0x06 && errno == 71,
+        "New_GlyphSlot rollback on unwritable aslot returns Invalid_Argument without changing errno");
+    Require(listFixture.face.glyph == &insertedHead && insertedHead.next == &existingTail && listFixture.recorder.allocs == listFixture.recorder.frees,
+        "New_GlyphSlot rollback preserves newer face->glyph head added during init_slot");
+    gInsertedHead = nullptr;
+    gInsertedTail = nullptr;
+    Require(FT_New_GlyphSlot_nid_postfix(const_cast<GuestFaceRec*>(&readOnlyFace), &slot) == 0x06 && errno == 71 && !readOnlyFace.glyph && roRecorder.allocs == roRecorder.frees,
+        "New_GlyphSlot refuses a read-only face without leaking or changing errno");
+
+    fixture.face.driver = reinterpret_cast<void*>(0x10);
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x06 && errno == 71,
+        "New_GlyphSlot refuses an unreadable driver pointer without changing errno");
+
+    DriverFixture badRootClazz;
+    badRootClazz.driver.root_clazz = reinterpret_cast<GuestModuleClass*>(0x10);
+    slot = reinterpret_cast<GuestGlyphSlotRec*>(0x1234);
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(&badRootClazz.face, &slot) == 0x06 && errno == 71,
+        "New_GlyphSlot stops on an unreadable root_clazz without changing errno");
+    Require(calls.inits == 0 && badRootClazz.recorder.allocs == badRootClazz.recorder.frees && !badRootClazz.face.glyph,
+        "New_GlyphSlot does not call init_slot or leak on an unreadable root_clazz");
+
+    DriverFixture corruptFace;
+    corruptFace.clazz.init_slot = CorruptFaceOnInit;
+    gCorruptTargetSlot = nullptr;
+    gSavedInternal = nullptr;
+    gSavedLoader = nullptr;
+    errno = 71;
+    Require(FT_New_GlyphSlot_nid_postfix(&corruptFace.face, &slot) == 0x24 && errno == 71,
+        "Rollback cleans up slot allocations even when init_slot corrupts slot->face without changing errno");
+    Require(calls.dones == 1 && corruptFace.recorder.allocs == corruptFace.recorder.frees && !corruptFace.face.glyph,
+        "Rollback calls done_slot and frees all slot, internal and loader allocations without leaking");
+
+    ft_glyphslot_free_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10));
+    Require(errno == 71, "free_bitmap ignores an unreadable slot without changing errno");
+    ft_glyphslot_set_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10), buffer);
+    Require(errno == 71, "set_bitmap ignores an unreadable slot without changing errno");
+    ft_glyphslot_set_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlySlot), buffer);
+    Require(errno == 71 && !readOnlySlot.bitmap.buffer, "set_bitmap ignores a read-only slot without changing errno");
+    Require(ft_glyphslot_alloc_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10), 8) == 0x06 && errno == 71,
+        "alloc_bitmap refuses an unreadable slot without changing errno");
+    Require(ft_glyphslot_alloc_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlySlot), 8) == 0x06 && errno == 71 && !readOnlySlot.bitmap.buffer && roRecorder.allocs == roRecorder.frees,
+        "alloc_bitmap refuses a read-only slot without leaking or changing errno");
+
+    static unsigned char ownedDummy[4]{};
+    static GuestSlotInternalRec roOwnedInternal{.flags = FreeType::GlyphOwnBitmap};
+    static const GuestGlyphSlotRec readOnlyOwnedSlot{
+        .face = const_cast<GuestFaceRec*>(&readOnlyFace),
+        .bitmap = {.buffer = ownedDummy},
+        .internal = &roOwnedInternal};
+    roRecorder.allocs = 0;
+    roRecorder.frees = 0;
+    errno = 71;
+    ft_glyphslot_set_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlyOwnedSlot), buffer);
+    Require(errno == 71 && readOnlyOwnedSlot.bitmap.buffer == ownedDummy && roRecorder.frees == 0 && (roOwnedInternal.flags & FreeType::GlyphOwnBitmap) != 0,
+        "set_bitmap keeps owned bitmap intact when slot is read-only");
+    Require(ft_glyphslot_alloc_bitmap_nid_postfix(const_cast<GuestGlyphSlotRec*>(&readOnlyOwnedSlot), 8) == 0x06 && errno == 71 && readOnlyOwnedSlot.bitmap.buffer == ownedDummy && roRecorder.allocs == 0 && roRecorder.frees == 0,
+        "alloc_bitmap keeps owned bitmap intact when slot is read-only");
+}
+
 }
 
 int main() {
@@ -350,10 +527,12 @@ int main() {
     Ownership();
     OwnershipSkips();
     OwnershipErrors();
+    OwnershipGuestPointerErrors();
     NewSlot();
     NewSlotWithoutOutlines();
     NewSlotArguments();
     NewSlotFailures();
+    GuestPointers();
     std::puts("Guest FreeType Ot glyph slot tests passed");
     return 0;
 }

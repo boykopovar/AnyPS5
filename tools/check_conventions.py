@@ -93,7 +93,7 @@ FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*
 BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
 BACKTICKS = re.compile(r"`+")
 INLINE = re.compile(BACKSLASH_ESCAPE.pattern + r"|`+")
-SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
+SECTION = re.compile(r"^#{2,3}(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
 _NON_CODE_TRIGGER = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|["\']')
 _STRING_TAIL = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
@@ -1244,6 +1244,9 @@ if __name__ == "__main__":
             parser.error(f"--event {args.event}: {error}")
         if not isinstance(event, dict):
             parser.error(f"--event {args.event}: not a JSON object")
+        pr = event.get("pull_request")
+        if "pull_request" in event and not (isinstance(pr, dict) and isinstance(pr.get("title"), str) and isinstance(pr.get("body", 0), (str, type(None)))):
+            parser.error(f"--event {args.event}: pull_request needs a title string and a body string or null")
     body = ""
     if args.body:
         try:

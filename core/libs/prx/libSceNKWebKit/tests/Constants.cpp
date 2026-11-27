@@ -51,8 +51,6 @@ int main() {
     Require(WKBundlePageIsUsingDarkAppearance() == 0);
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
     Require(WKContextDownloadURLRequest() == 0);
-    Require(WKContextGetIconDatabase() == 0);
-    Require(WKContextGetMaximumNumberOfProcesses() == static_cast<int>(0xffffffffu));
     Require(WKContextMenuCopySubmenuItems() == 0);
     Require(WKContextMenuItemCopyTitle() == 0);
     Require(WKContextMenuItemCreateAsAction() == 0);
@@ -66,8 +64,6 @@ int main() {
     Require(WKContextMenuItemSeparatorItem() == 0);
     Require(WKContextResumeDownload() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
-    Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
-    Require(WKIconDatabaseCopyIconURLForPageURL() == 0);
     Require(WKKeyValueStorageManagerDeleteAllEntries() == 0);
     Require(WKKeyValueStorageManagerDeleteEntriesForOrigin() == 0);
     Require(WKKeyValueStorageManagerGetCreationTimeKey() == 0);
@@ -79,20 +75,6 @@ int main() {
     Require(WKOpenPanelParametersGetMediaCaptureType() == 0);
     Require(WKPageGetFrameSetLargestFrame() == 0);
     Require(WKPageIsMockRealtimeMediaSourceCenterEnabled() == 0);
-    Require(WKPlugInInformationReplacementObscuredKey() == 0);
-    Require(WKPluginInformationBundleIdentifierKey() == 0);
-    Require(WKPluginInformationBundleShortVersionKey() == 0);
-    Require(WKPluginInformationBundleVersionKey() == 0);
-    Require(WKPluginInformationDefaultLoadPolicyKey() == 0);
-    Require(WKPluginInformationDisplayNameKey() == 0);
-    Require(WKPluginInformationFrameURLKey() == 0);
-    Require(WKPluginInformationHasSandboxProfileKey() == 0);
-    Require(WKPluginInformationMIMETypeKey() == 0);
-    Require(WKPluginInformationPageURLKey() == 0);
-    Require(WKPluginInformationPathKey() == 0);
-    Require(WKPluginInformationPluginURLKey() == 0);
-    Require(WKPluginInformationPluginspageAttributeURLKey() == 0);
-    Require(WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() == 0);
     Require(WKPreferencesGetQTKitEnabled() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));

@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libSceJxr/Factory.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,8 @@ void JxrWmpReferenceTranscodeParameters(void* value, std::uint32_t width, std::u
 std::size_t JxrWmpReferenceMetadataSize();
 void JxrWmpReferenceConfigureDecoder(void* value);
 void JxrWmpReferenceMetadata(void* value, const char* software, std::uint16_t rating, std::int32_t wide);
+void JxrWmpReferenceSetCaption(void* value, std::uint16_t* caption);
+const std::uint16_t* JxrWmpReferenceCaption(const void* value);
 const char* JxrWmpReferenceSoftware(const void* value);
 std::uint32_t JxrWmpReferenceRating(const void* value);
 std::int64_t JxrWmpReferenceEncode(const void* parameters, std::int32_t alpha, std::uint32_t width, std::uint32_t height,
@@ -66,6 +69,7 @@ constexpr std::size_t Capacity = 1 << 20;
 bool failCalloc = false;
 long liveBlocks = 0;
 std::size_t callocCalls = 0;
+std::size_t failCallocNumber = 0;
 
 void* APS5_VABI Allocate(std::size_t size) {
     ++liveBlocks;
@@ -77,7 +81,7 @@ void APS5_VABI Free(void* pointer) {
 }
 void* APS5_VABI Calloc(std::size_t count, std::size_t size) {
     ++callocCalls;
-    if (failCalloc) return nullptr;
+    if (failCalloc || callocCalls == failCallocNumber) return nullptr;
     ++liveBlocks;
     return std::calloc(count, size);
 }
@@ -347,6 +351,99 @@ void TestDecode(std::vector<std::uint8_t> encoded, std::uint32_t bytesPerPixel, 
     Require(liveBlocks == blocksBefore);
 }
 
+void CheckCaptionTag(const std::vector<std::uint8_t>& output, const std::vector<std::uint16_t>& expected) {
+    const auto word = [&](std::size_t at, unsigned bytes) {
+        std::uint32_t value = 0;
+        for (unsigned i = 0; i < bytes; ++i) value |= std::uint32_t{output.at(at + i)} << (8 * i);
+        return value;
+    };
+    const auto directory = word(4, 4);
+    const auto count = word(directory, 2);
+    for (unsigned i = 0; i < count; ++i) {
+        const auto entry = directory + 2 + 12 * i;
+        if (word(entry, 2) != 0x9c9b) continue;
+        Require(word(entry + 2, 2) == 1 && word(entry + 4, 4) == expected.size() * 2);
+        const auto offset = expected.size() <= 2 ? entry + 8 : word(entry + 8, 4);
+        for (std::size_t j = 0; j < expected.size(); ++j) Require(word(offset + j * 2, 2) == expected[j]);
+        return;
+    }
+    Require(false);
+}
+
+void TestCaption(std::vector<std::uint16_t> caption, bool banded, bool shortOnly = false) {
+    const auto blocksBefore = liveBlocks;
+    auto input = caption;
+    std::vector<std::uint8_t> description(JxrWmpReferenceMetadataSize());
+    if (caption.size() <= 2 && !shortOnly) JxrWmpReferenceMetadata(description.data(), software, 4, 0);
+    JxrWmpReferenceSetCaption(description.data(), input.data());
+    auto parameters = Parameters(0, 0);
+    auto pixels = Pixels(3);
+    std::vector<std::uint8_t> output(Capacity);
+    auto* stream = MemoryStream(output, output.size());
+    auto* encoder = CreateEncoder();
+    Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
+    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setSize(encoder, Width, Height) == 0);
+    Require(encoder->setDescriptiveMetadata(encoder, description.data()) == 0);
+    const auto blocksWithCaption = liveBlocks;
+    Require(encoder->setDescriptiveMetadata(encoder, description.data()) == 0 && liveBlocks == blocksWithCaption);
+    auto replacement = std::vector<std::uint16_t>{0x55, 0x56, 0};
+    JxrWmpReferenceSetCaption(description.data(), replacement.data());
+    failCallocNumber = callocCalls + (caption.size() <= 2 && !shortOnly ? 2 : 1);
+    const auto failedReplacement = encoder->setDescriptiveMetadata(encoder, description.data());
+    failCallocNumber = 0;
+    Require(failedReplacement == OutOfMemory && liveBlocks == blocksWithCaption);
+    input.front() = 0x55;
+    if (shortOnly) {
+        if (banded) {
+            Require(encoder->writePixelsBandedBegin(encoder, nullptr) == 0);
+            RequireThrow(std::runtime_error, [&] { encoder->writePixelsBanded(encoder, Height, pixels.data(), Width * 3, 1); });
+        } else {
+            RequireThrow(std::runtime_error, [&] { encoder->writePixels(encoder, Height, pixels.data(), Width * 3); });
+        }
+        Require(encoder->release(&encoder) == 0 && liveBlocks == blocksBefore);
+        if constexpr (sizeof(wchar_t) == sizeof(std::uint16_t)) {
+            JxrWmpReferenceSetCaption(description.data(), caption.data());
+            std::size_t written = 0;
+            Require(JxrWmpReferenceEncode(parameters.data(), 0, Width, Height, pixels.data(), Width * 3, banded,
+                                          nullptr, 0, description.data(), nullptr, output.data(), Capacity, &written) == 0);
+            std::int32_t width = 0, height = 0;
+            Require(JxrWmpReferenceDecode(output.data(), written, pixels.data(), Width * 3, &width, &height) < 0);
+        }
+        return;
+    }
+    if (banded) {
+        Require(encoder->writePixelsBandedBegin(encoder, nullptr) == 0);
+        Require(encoder->writePixelsBanded(encoder, 16, pixels.data(), Width * 3, 0) == 0);
+        Require(encoder->writePixelsBanded(encoder, Height - 16, pixels.data() + 16 * Width * 3, Width * 3, 1) == 0);
+        Require(encoder->writePixelsBandedEnd(encoder) == 0);
+    } else {
+        Require(encoder->writePixels(encoder, Height, pixels.data(), Width * 3) == 0);
+    }
+    std::size_t written = 0;
+    Require(stream->getPosition(stream, &written) == 0);
+    Require(encoder->setDescriptiveMetadata(encoder, description.data()) == OutOfSequence);
+    Require(encoder->release(&encoder) == 0);
+    CheckCaptionTag(output, caption);
+    if constexpr (sizeof(wchar_t) == sizeof(std::uint16_t)) {
+        JxrWmpReferenceSetCaption(description.data(), caption.data());
+        std::vector<std::uint8_t> expected(Capacity);
+        std::size_t size = 0;
+        Require(JxrWmpReferenceEncode(parameters.data(), 0, Width, Height, pixels.data(), Width * 3, banded,
+                                      nullptr, 0, description.data(), nullptr, expected.data(), Capacity, &size) == 0);
+        Require(written == size && output == expected);
+    }
+    auto* encoded = MemoryStream(output, output.size());
+    auto* decoder = CreateDecoder();
+    Require(decoder->initialize(decoder, encoded) == 0);
+    std::vector<std::uint8_t> decoded(JxrWmpReferenceMetadataSize());
+    Require(decoder->getDescriptiveMetadata(decoder, decoded.data()) == 0);
+    const auto* text = JxrWmpReferenceCaption(decoded.data());
+    Require(text && std::equal(caption.begin(), caption.end(), text));
+    Require(decoder->release(&decoder) == 0 && encoded->close(&encoded) == 0);
+    Require(liveBlocks == blocksBefore);
+}
+
 void TestTranscode(std::vector<std::uint8_t> encoded, std::uint8_t alphaMode) {
     auto parameters = Parameters(1, alphaMode);
     std::vector<std::uint8_t> transcode(JxrWmpReferenceTranscodeSize());
@@ -535,6 +632,14 @@ int main() {
     TestTranscode(plain, 0);
     TestTranscode(alpha, 2);
     TestRefusals();
+    for (bool banded : {false, true}) {
+        TestCaption({0}, banded, true);
+        TestCaption({'a', 0}, banded, true);
+        TestCaption({0}, banded);
+        TestCaption({'A', 0}, banded);
+        TestCaption({'a', 'b', 0}, banded);
+        TestCaption({0x00e9, 0x03a9, 0xd83d, 0xde80, 0x6f22, 0}, banded);
+    }
     TestColorContextReplacementOom();
     Require(liveBlocks == 0);
     return 0;

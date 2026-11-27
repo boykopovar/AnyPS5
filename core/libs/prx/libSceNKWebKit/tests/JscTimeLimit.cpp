@@ -210,6 +210,7 @@ void TestPassedDeadlineDoesNotStopLaterWork() {
 
 struct NapState {
     int naps = 0;
+    double processorAtWake = 0;
 };
 
 NapState napState;
@@ -221,7 +222,10 @@ JSValueRef APS5_VABI Nap(JSContextRef ctx, JSObjectRef function, JSObjectRef thi
     (void)arguments;
     (void)exception;
     ++napState.naps;
+    const auto wake = Clock::now() + std::chrono::milliseconds(400);
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    while (Clock::now() < wake) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    napState.processorAtWake = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value;
     return JSValueMakeUndefined(ctx);
 }
 
@@ -257,7 +261,8 @@ void TestTimeSpentWaitingIsNotCounted() {
     start = Clock::now();
     Require(Eval(f.ctx, "nap(); var turns = 0; while (turns < 100000000) { turns++; } turns") == nullptr);
     Require(ProcessorSeconds() - processorBefore >= 0.05);
-    Require(Clock::now() - start >= nap + std::chrono::milliseconds(50));
+    const std::chrono::duration<double> limitLeftAtWake(0.05 - (napState.processorAtWake - processorBefore));
+    Require(Clock::now() - start >= nap + limitLeftAtWake);
     JSContextGroupClearExecutionTimeLimit(f.group);
 }
 

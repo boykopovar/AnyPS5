@@ -1,6 +1,7 @@
 #include "prx/libSceJpegParser/include/Api.hpp"
 
 #include "Decoder/Jpeg.hpp"
+#include "MetadataState.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -27,7 +28,8 @@ using Free = void (APS5_VABI*)(void*);
 
 struct Config {
     Allocate allocate;
-    std::uintptr_t other[2];
+    JpegParser::ZeroAllocate zero;
+    std::uintptr_t other;
     Free release;
     std::uintptr_t rest[7];
 };
@@ -37,20 +39,13 @@ struct Parser {
     Config config{};
     void* context = nullptr;
     bool initializing = false;
+    bool finalizePending = false;
 };
 
 std::mutex g_mutex;
 Parser g_parser;
 
-struct GuestString {
-    union {
-        char bytes[16];
-        const char* pointer;
-    };
-    std::uint64_t size;
-    std::uint64_t capacity;
-};
-static_assert(sizeof(GuestString) == 32);
+using JpegParser::GuestString;
 static_assert(offsetof(JpegParserThumbnail, mappingSize) == 8 && offsetof(JpegParserThumbnail, format) == 0x20);
 static_assert(offsetof(JpegParserThumbnail, width) == 0x28);
 
@@ -61,14 +56,14 @@ void CopyIn(void* destination, const void* source, std::size_t size) {
     if (!copied) throw std::invalid_argument("JPEG thumbnail: unreadable guest object");
 }
 
-class File {
+class JpegFile {
 public:
-    File(const char* path, std::int64_t size) : size(size), fd(sceKernelOpen(path, 0, 0)) {
+    JpegFile(const char* path, std::int64_t size) : size(size), fd(sceKernelOpen(path, 0, 0)) {
         if (fd < 0) throw std::runtime_error("JPEG thumbnail: opening a file after stat failed");
     }
-    ~File() { sceKernelClose(fd); }
-    File(const File&) = delete;
-    File& operator=(const File&) = delete;
+    ~JpegFile() { sceKernelClose(fd); }
+    JpegFile(const JpegFile&) = delete;
+    JpegFile& operator=(const JpegFile&) = delete;
 
     bool Read(std::int64_t pos, std::span<std::uint8_t> bytes) const {
         if (pos > size || bytes.size() > static_cast<std::uint64_t>(size - pos)) return false;
@@ -125,10 +120,10 @@ Bytes ThumbnailData(Bytes tiff) {
     return tiff.subspan(start, length);
 }
 
-int ReadThumbnail(const File& file, std::vector<std::uint8_t>& app1) {
+int ReadJpeg(const JpegFile& file, JpegParser::ImageInfo& image) {
     std::array<std::uint8_t, 2> pair{};
     if (!file.Read(0, pair) || pair[0] != 0xff || pair[1] != 0xd8) return kInvalidJpeg;
-    bool frame = false;
+    auto& app1 = image.exif;
     for (std::int64_t pos = 2; pos < file.size;) {
         if (!file.Read(pos, pair) || pair[0] != 0xff) return kInvalidJpeg;
         const auto marker = pair[1];
@@ -147,29 +142,29 @@ int ReadThumbnail(const File& file, std::vector<std::uint8_t>& app1) {
                 if (!file.Read(pos + 8, app1)) return kInvalidJpeg;
             }
         }
+        if (marker == 0xe2 && length >= 6) {
+            std::array<std::uint8_t, 4> id{};
+            if (!file.Read(pos + 2, id)) return kInvalidJpeg;
+            if (std::memcmp(id.data(), "MPF\0", 4) == 0) image.multiPicture = true;
+        }
         if (marker >= 0xc0 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 && marker != 0xcc) {
             std::array<std::uint8_t, 6> fields{};
             if (length < 8 || !file.Read(pos + 2, fields) || !fields[5] || length != 8u + 3u * fields[5] ||
                 !Integer(Bytes(fields).subspan(1, 2), false) || !Integer(Bytes(fields).subspan(3, 2), false))
                 return kInvalidJpeg;
-            frame = true;
+            image.height = Integer(Bytes(fields).subspan(1, 2), false);
+            image.width = Integer(Bytes(fields).subspan(3, 2), false);
         }
         pos += length;
     }
-    return frame ? 0 : kInvalidJpeg;
+    return image.width ? 0 : kInvalidJpeg;
 }
 
 int Extract(const char* path, JpegParserThumbnail* output) {
-    FileStat stat{};
-    const int error = sceKernelStat(path, &stat);
-    if (error == SCE_KERNEL_ERROR_ENOENT || error == SCE_KERNEL_ERROR_ENOTDIR || error == SCE_KERNEL_ERROR_EINVAL)
-        return static_cast<int>(0x809D401Eu);
-    if (error) return kParserError;
-    File file(path, stat.st_size);
-    std::vector<std::uint8_t> app1;
-    const auto result = ReadThumbnail(file, app1);
+    JpegParser::ImageInfo image;
+    const int result = JpegParser::ReadImage_nid_no_patch(path, image);
     if (result) return result;
-    const auto bytes = ThumbnailData(app1);
+    const auto bytes = ThumbnailData(image.exif);
     if (bytes.size() < 2 || bytes[0] != 0xff || bytes[1] != 0xd8) return kNoThumbnail;
     const auto info = Decoder::Jpeg::ParseHeader(bytes);
     if (!info) return kNoThumbnail;
@@ -194,49 +189,8 @@ int Extract(const char* path, JpegParserThumbnail* output) {
     return 0;
 }
 
-} // namespace
-
-extern "C" {
-
-int APS5_VABI libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(const void* config) {
-    Config callbacks{};
-    {
-        const std::lock_guard lock(g_mutex);
-        if (g_parser.context || g_parser.initializing) return kParserError;
-        CopyIn(&callbacks, config, sizeof(callbacks));
-        if (!callbacks.allocate || !callbacks.release)
-            throw std::invalid_argument("JPEG parser: missing allocator callback");
-        g_parser.config = callbacks;
-        g_parser.initializing = true;
-    }
-    void* context;
-    try {
-        context = callbacks.allocate(0x168);
-    } catch (...) {
-        const std::lock_guard lock(g_mutex);
-        g_parser.initializing = false;
-        throw;
-    }
-    const std::lock_guard lock(g_mutex);
-    g_parser.initializing = false;
-    g_parser.context = context;
-    return context ? 0 : static_cast<int>(0x809D4029u);
-}
-APS5_EXPORT("v3aOHSEXfjo", libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch);
-
-int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() {
-    Parser saved;
-    {
-        const std::lock_guard lock(g_mutex);
-        if (!g_parser.context) return 0;
-        saved = g_parser;
-        g_parser = {};
-    }
-    saved.config.release(saved.context);
-    return 0;
-}
-
-int APS5_VABI libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch(const void* pathObject, JpegParserThumbnail* output) {
+template<class TOperation>
+int WithPath(const void* pathObject, TOperation operation) {
     GuestString path{};
     CopyIn(&path, pathObject, sizeof(path));
     if (path.size > path.capacity || path.size == UINT64_MAX)
@@ -256,7 +210,81 @@ int APS5_VABI libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch(const void* 
     CopyIn(text, path.capacity < 16 ? path.bytes : path.pointer, path.size);
     text[path.size] = '\0';
     if (!state.context) return kParserError;
-    return Extract(text, output);
+    return operation(text, state.config);
+}
+
+} // namespace
+
+int JpegParser::ReadImage_nid_no_patch(const char* path, ImageInfo& image) {
+    const int error = sceKernelStat(path, &image.stat);
+    if (error == SCE_KERNEL_ERROR_ENOENT || error == SCE_KERNEL_ERROR_ENOTDIR || error == SCE_KERNEL_ERROR_EINVAL)
+        return static_cast<int>(0x809D401Eu);
+    if (error) return kParserError;
+    const JpegFile file(path, image.stat.st_size);
+    return ReadJpeg(file, image);
+}
+
+extern "C" {
+
+int APS5_VABI libSceJpegParserReadMetadata_nid_no_patch(const void* path, void* request, void* output) {
+    return WithPath(path, [&](const char* text, const Config& config) {
+        return JpegParser::ReadFields_nid_no_patch(text, request, output, config.allocate, config.zero, config.release);
+    });
+}
+APS5_EXPORT("cT6Gbjt5xYE", libSceJpegParserReadMetadata_nid_no_patch);
+
+int APS5_VABI libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(const void* config) {
+    Config callbacks{};
+    {
+        const std::lock_guard lock(g_mutex);
+        if (g_parser.context || g_parser.initializing) return kParserError;
+        CopyIn(&callbacks, config, sizeof(callbacks));
+        if (!callbacks.allocate || !callbacks.release)
+            throw std::invalid_argument("JPEG parser: missing allocator callback");
+        g_parser.config = callbacks;
+        g_parser.initializing = true;
+    }
+    void* context;
+    try {
+        context = callbacks.allocate(0x168);
+    } catch (...) {
+        const std::lock_guard lock(g_mutex);
+        if (g_parser.finalizePending) g_parser = {};
+        else g_parser.initializing = false;
+        throw;
+    }
+    {
+        const std::lock_guard lock(g_mutex);
+        if (!g_parser.finalizePending) {
+            g_parser.initializing = false;
+            g_parser.context = context;
+            return context ? 0 : static_cast<int>(0x809D4029u);
+        }
+        g_parser = {};
+    }
+    if (context) callbacks.release(context);
+    return kParserError;
+}
+APS5_EXPORT("v3aOHSEXfjo", libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch);
+
+int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() {
+    Parser saved;
+    {
+        const std::lock_guard lock(g_mutex);
+        if (g_parser.initializing) {
+            g_parser.finalizePending = true;
+            return 0;
+        }
+        if (!g_parser.context) return 0;
+        saved = g_parser;
+        g_parser = {};
+    }
+    saved.config.release(saved.context);
+    return 0;
+}
+
+int APS5_VABI libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch(const void* pathObject, JpegParserThumbnail* output) {
+    return WithPath(pathObject, [&](const char* text, const Config&) { return Extract(text, output); });
 }
 APS5_EXPORT("-0oLMyS3AcA", libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch);
 

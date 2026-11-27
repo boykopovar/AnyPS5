@@ -311,6 +311,44 @@ int main() {
         Require(strcasestr_nid_postfix(guarded.data, "missing") == nullptr);
         Require(errno == EINVAL);
         Require(strcasestr_nid_postfix(guarded.data + guarded.pageSize - 1, "") == guarded.data + guarded.pageSize - 1);
+
+        const auto expectFnmatchInvalid = [](const char* pattern, const char* text, int flags) {
+            errno = EBUSY;
+            bool rejected = false;
+            try {
+                fnmatch_nid_postfix(pattern, text, flags);
+            } catch (const std::invalid_argument&) {
+                rejected = true;
+            }
+            Require(rejected && errno == EBUSY);
+        };
+
+        expectFnmatchInvalid(nullptr, "x", 0);
+        expectFnmatchInvalid("x", nullptr, 0);
+        expectFnmatchInvalid(badText, "notes.txt", 0);
+        expectFnmatchInvalid("*.txt", badText, 0);
+        expectFnmatchInvalid(badNeedle, "notes.txt", 0);
+        expectFnmatchInvalid("*.txt", badNeedle, 0);
+        expectFnmatchInvalid(guarded.data + guarded.pageSize, "notes.txt", 0);
+        expectFnmatchInvalid("*.txt", guarded.data + guarded.pageSize, 0);
+
+        char* boundaryPattern = guarded.data + guarded.pageSize - 6;
+        std::memcpy(boundaryPattern, "*.txt", 6);
+        Require(fnmatch_nid_postfix(boundaryPattern, "notes.txt", 0) == 0);
+        char* boundaryString = guarded.data + guarded.pageSize - 10;
+        std::memcpy(boundaryString, "notes.TXT", 10);
+        Require(fnmatch_nid_postfix("*.txt", boundaryString, 0x10) == 0);
+
+        char* unterminated = guarded.data + guarded.pageSize - 4;
+        std::memcpy(unterminated, "*.tx", 4);
+        expectFnmatchInvalid(unterminated, "notes.txt", 0);
+        expectFnmatchInvalid("*.txt", unterminated, 0);
+
+        const std::string longString(6000, 'm');
+        const std::string longPattern = "*" + longString;
+        Require(fnmatch_nid_postfix(longPattern.c_str(), longString.c_str(), 0) == 0);
+        Require(fnmatch_nid_postfix(longPattern.c_str(), "other", 0) == 1);
+        Require(fnmatch_nid_postfix(longString.c_str(), longString.c_str(), 0) == 0);
     }
     return 0;
 }

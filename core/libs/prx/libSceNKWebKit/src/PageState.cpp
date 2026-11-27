@@ -75,4 +75,22 @@ bool APS5_VABI WKPageBackgroundExtendsBeyondPage(const void* pageRef) {
     return NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__)->backgroundExtendsBeyondPage;
 }
 
+bool APS5_VABI WKPageGetAllowsRemoteInspection(const void* pageRef) {
+    return NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__)->allowsRemoteInspection;
+}
+
+void APS5_VABI WKPageSetAllowsRemoteInspection(const void* pageRef, bool allowsRemoteInspection) {
+    NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__)->allowsRemoteInspection = allowsRemoteInspection;
+}
+
+const void* APS5_VABI WKPageCopyPendingAPIRequestURL(const void* pageRef) {
+    const auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    return page->pendingAPIRequestURL ? NKWebKit::ToRef(page->pendingAPIRequestURL) : nullptr;
+}
+
+const void* APS5_VABI WKPageCopyPageConfiguration(const void* pageRef) {
+    const auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    return page->configuration ? NKWebKit::ToRef(page->configuration->Duplicate()) : nullptr;
+}
+
 }

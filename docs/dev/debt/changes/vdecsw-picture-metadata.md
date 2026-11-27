@@ -1,0 +1,5 @@
+# libSceVdecsw
+
+## add Functional
+
+- [Queued AVC and HEVC picture metadata](../../../core/libs/prx/libSceVdecsw/Export.cpp): the software decoder returns the underlying parser's complete frame record when available. The [software](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Video/Vdecsw.cs#L486-L891) and [Videodec2 layouts](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Video/Videodec2.cs#L246-L631) agree, but no console comparison establishes all field values. When codec syntax has no full projection, the previous partial geometry, timestamps and decoder profile are used; fields beyond that subset stay zero. For HEVC the fallback converts decoded pixel offsets to SPS conformance-window units using the source chroma subsampling. The frame-crop fields mirror those offsets in this model. Their console units and native handling of incomplete metadata remain unverified.

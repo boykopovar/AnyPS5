@@ -58,18 +58,14 @@ std::string ReadGuestText(const char* text, const char* caller) {
 
 LibreSsl3SslCtx ValidateWritableContext(LibreSsl3SslCtx* context, const char* caller) {
     LibreSsl3SslCtx copy{};
-    const int savedErrno = errno;
     const bool valid = GuestCopyIn_nid_no_patch(&copy, context, sizeof(copy)) &&
         GuestWritable_nid_no_patch(&context->cipherListTls13, sizeof(context->cipherListTls13));
-    errno = savedErrno;
     if (!valid) NotImplemented_nid_no_patch(caller);
     return copy;
 }
 
 void WriteCipherList(LibreSsl3SslCtx* context, LibreSslStack* stack, const char* caller) {
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(&context->cipherListTls13, &stack, sizeof(stack));
-    errno = savedErrno;
     if (!written) {
         sk_free_nid_postfix(stack);
         NotImplemented_nid_no_patch(caller);

@@ -204,6 +204,7 @@ private:
     }
 
     static void ParseLine(std::string_view raw, std::size_t line, std::vector<Entry>& out) {
+        if (line == 1 && raw.starts_with("\xef\xbb\xbf")) raw.remove_prefix(3);
         const auto hash = raw.find('#');
         const std::string_view text = hash == std::string_view::npos ? raw : raw.substr(0, hash);
         std::vector<std::string> tokens;

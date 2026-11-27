@@ -192,6 +192,7 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
         image.Commands.push_back(cursor);
         cursor += command.Size;
     }
+    if (cursor != end) throw std::runtime_error("load command count does not match command bytes");
     return image;
 }
 

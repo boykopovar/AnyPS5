@@ -21,5 +21,7 @@ bool APS5_VABI _ZNK7WebCore14SecurityOrigin33isMatchingRegistrableDomainSuffixER
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore18SecurityOriginData8toStringEv(const NKWebKit::WebCoreAbi::SecurityOriginData* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore18SecurityOriginData18databaseIdentifierEv(const NKWebKit::WebCoreAbi::SecurityOriginData* self);
 WebCore::Ref<NKWebKit::WebCoreAbi::SecurityOrigin> APS5_VABI _ZNK7WebCore18SecurityOriginData14securityOriginEv(const NKWebKit::WebCoreAbi::SecurityOriginData* self);
+NKWebKit::WebCoreAbi::SecurityOriginData APS5_VABI _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(const NKWebKit::WebCoreAbi::SecurityOriginData* self);
+NKWebKit::WebCoreAbi::SecurityOriginData APS5_VABI _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(void* frame);
 
 }

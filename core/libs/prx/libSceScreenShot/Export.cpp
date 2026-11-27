@@ -66,15 +66,8 @@ bool StringFits(const char* text, std::size_t maxLength) {
     throw std::runtime_error(std::string(function) + ": the screenshot service is not available");
 }
 
-std::uint32_t CompiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
-}
-
 int SetOverlayImage(const char* path, int offsetX, int offsetY) {
-    const bool large = CompiledSdkVersion() >= LargeOverlaySdkVersion;
+    const bool large = ApplicationCompiledSdkVersion() >= LargeOverlaySdkVersion;
     const int maxX = large ? 3839 : 1919;
     const int maxY = large ? 2159 : 1079;
     const std::int64_t maxSize = large ? 8 * 1024 * 1024 : 2 * 1024 * 1024;
