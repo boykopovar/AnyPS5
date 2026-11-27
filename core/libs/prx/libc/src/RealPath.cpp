@@ -19,11 +19,13 @@
 namespace {
 constexpr std::size_t PathMax = 1024;
 constexpr std::string_view Separators = "/\\";
+constexpr int OperationNotPermitted = 1;
 constexpr int NoEntry = 2;
 constexpr int InputOutput = 5;
 constexpr int NoMemory = 12;
 constexpr int PermissionDenied = 13;
 constexpr int NotDirectory = 20;
+constexpr int IsDirectory = 21;
 constexpr int InvalidArgument = 22;
 constexpr int TooManyLinks = 62;
 constexpr int NameTooLong = 63;
@@ -31,8 +33,12 @@ constexpr unsigned MaxSymbolicLinks = 32;
 
 int StatusError(const std::error_code& error) {
     if (error == std::errc::no_such_file_or_directory) return NoEntry;
+    if (error == std::errc::illegal_byte_sequence) return NoEntry;
     if (error == std::errc::not_a_directory) return NotDirectory;
+    if (error == std::errc::is_a_directory) return IsDirectory;
     if (error == std::errc::permission_denied) return PermissionDenied;
+    if (error == std::errc::operation_not_permitted) return OperationNotPermitted;
+    if (error == std::errc::invalid_argument) return InvalidArgument;
     if (error == std::errc::filename_too_long) return NameTooLong;
     if (error == std::errc::too_many_symbolic_link_levels) return TooManyLinks;
     if (error == std::errc::not_enough_memory) return NoMemory;

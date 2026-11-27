@@ -126,6 +126,8 @@ int main() {
 
     *__error_nid_postfix() = 0;
     Require(realpath_nid_postfix((guest + "/missing").c_str(), nullptr) == nullptr && *__error_nid_postfix() == 2);
+    Require(Fails((guest + "/\xff").c_str(), 2, guest + "/\xff"));
+    Require(Fails("/\xff", 2, "/\xff"));
 
     const auto createLink = [&](const std::filesystem::path& link, const std::string& target, bool toDirectory) {
 #ifdef _WIN32
