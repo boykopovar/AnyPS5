@@ -313,6 +313,9 @@ void TestGuestPointers() {
     RequireNotImplemented([&] { _ZN3WTF15ThreadCondition4waitERNS_5MutexE(&condition, guardMutex); }, "_ZN3WTF15ThreadCondition4waitERNS_5MutexE");
     RequireNotImplemented([&] { _ZN3WTF15ThreadCondition4waitERNS_5MutexE(&condition, misalignedMutex); }, "_ZN3WTF15ThreadCondition4waitERNS_5MutexE");
 
+    RequireInvalidArgument([&] {
+        static_cast<void>(_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE(guardCondition, &mutex, {std::numeric_limits<double>::quiet_NaN()}));
+    });
     RequireNotImplemented([&] { static_cast<void>(_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE(guardCondition, &mutex, After(1.0))); }, "_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE");
     RequireNotImplemented([&] { static_cast<void>(_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE(readOnlyCondition, &mutex, After(1.0))); }, "_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE");
     RequireNotImplemented([&] { static_cast<void>(_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE(splitCondition, &mutex, {-std::numeric_limits<double>::infinity()})); }, "_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE");

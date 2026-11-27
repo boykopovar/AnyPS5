@@ -163,11 +163,15 @@ void Wait(ThreadCondition* self, Mutex* mutex, const char* function) {
 }
 
 bool TimedWait(ThreadCondition* self, Mutex* mutex, WTF::WallTime absoluteTime, const char* function) {
-    const WritableGuestObject<ThreadCondition> conditionGuard(self, "WTF::ThreadCondition::timedWait", function, true);
-    PthreadMutex mutexHandle = CopyInMutexHandle(mutex, "WTF::ThreadCondition::timedWait", function);
+    if (!self)
+        throw std::invalid_argument("WTF::ThreadCondition::timedWait requires an object");
+    if (!mutex)
+        throw std::invalid_argument("WTF::ThreadCondition::timedWait requires an object");
     const double rawSeconds = absoluteTime.m_value;
     if (std::isnan(rawSeconds))
         throw std::invalid_argument("WTF::ThreadCondition::timedWait requires a time");
+    const WritableGuestObject<ThreadCondition> conditionGuard(self, "WTF::ThreadCondition::timedWait", function, true);
+    PthreadMutex mutexHandle = CopyInMutexHandle(mutex, "WTF::ThreadCondition::timedWait", function);
     if (std::isinf(rawSeconds)) {
         if (rawSeconds < 0)
             return false;
