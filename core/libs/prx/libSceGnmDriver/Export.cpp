@@ -93,6 +93,12 @@ constexpr int GNM_ERROR_CAPTURE_FAILED_INTERNAL = static_cast<int>(0x80d1500fu);
 using RegisterValue = std::pair<std::uint32_t, std::uint32_t>;
 
 constexpr int Failure = static_cast<int>(0x8EEE00FFu);
+constexpr int TcaUnits = 2;
+constexpr int FlipCommandTooSmall = static_cast<int>(0x80D11001u);
+constexpr int GpuUnavailable = static_cast<int>(0x80D110FFu);
+constexpr int ComputeQueueInvalid = static_cast<int>(0x80D17000u);
+constexpr int ComputeQueueUnavailable = static_cast<int>(0x80D170FFu);
+constexpr std::uint32_t FlipCommandWords = 0x100;
 
 std::uint32_t AddressLo(const void* code) {
     return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8);
@@ -868,9 +874,8 @@ int APS5_VABI sceGnmSetEmbeddedVsShader_nid_disambig1(std::uint32_t* cmdbuf, std
     return 0;
 }
 
-int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(std::uint32_t stream) {
+    return stream - 1 >= 0xf ? 1 : 0;
 }
 
 int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t) {
@@ -889,58 +894,52 @@ int APS5_VABI sceGnmDrawOpaqueAuto_nid_disambig1(void) {
 }
 
 int APS5_VABI sceGnmGetGpuBlockStatus_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetGpuInfoStatus_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetLastWaitedAddress_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetNumTcaUnits_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TcaUnits;
 }
 
 int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetShaderProgramBaseAddress_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(std::uint32_t pipeId, std::uint32_t queueId, std::uint64_t ringBase, std::uint32_t ringSizeDw, std::uint64_t readPointer, std::uint32_t priority) {
+    if (pipeId > 6) return ComputeQueueInvalid;
+    if (queueId > 7) return ComputeQueueInvalid + 1;
+    if ((ringSizeDw & (ringSizeDw - 1)) != 0) return ComputeQueueInvalid + 2;
+    if ((ringBase & 0xff) != 0) return ComputeQueueInvalid + 3;
+    if ((readPointer & 3) != 0 || priority > 1) return ComputeQueueInvalid + 4;
+    return ComputeQueueUnavailable;
 }
 
-int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(std::uint64_t, std::uint32_t*, std::uint32_t size, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return size < FlipCommandWords ? FlipCommandTooSmall : GpuUnavailable;
 }
 
-int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(std::uint32_t, const std::uint8_t*) {
+    return 1;
 }
 
 int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
