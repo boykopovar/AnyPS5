@@ -303,6 +303,164 @@ void TestSimpleDataConstructors() {
     Require(data4.data == sample && data4.size == 5, "SimpleData C2 param initializes members");
 }
 
+struct SaxHandler;
+
+struct SaxHandlerVtable {
+    void* destructor;
+    void* deletingDestructor;
+    int(APS5_VABI* startDocument)(SaxHandler*, void*);
+    int(APS5_VABI* startElement)(SaxHandler*, void*, const XmlString*, const XmlHandle*);
+    int(APS5_VABI* characters)(SaxHandler*, void*, const XmlString*);
+    int(APS5_VABI* endElement)(SaxHandler*, void*, const XmlString*);
+    int(APS5_VABI* endDocument)(SaxHandler*, void*);
+    int(APS5_VABI* node)(SaxHandler*, void*, int, const XmlString*);
+    int(APS5_VABI* reference)(SaxHandler*, void*, int, const XmlString*);
+    void(APS5_VABI* error)(SaxHandler*, void*, int);
+};
+
+struct SaxHandler {
+    const SaxHandlerVtable* vtable;
+    std::string events;
+    void* expectedUserData = nullptr;
+};
+
+int RecordSaxEvent(SaxHandler* handler, void* userData, const std::string& event) {
+    Require(userData == handler->expectedUserData, "SAX callback receives the user data");
+    handler->events += event + "|";
+    return 0;
+}
+
+int APS5_VABI OnSaxStartDocument(SaxHandler* handler, void* userData) {
+    return RecordSaxEvent(handler, userData, "SD");
+}
+
+int APS5_VABI OnSaxStartElement(SaxHandler* handler, void* userData, const XmlString* name, const XmlHandle*) {
+    const std::string tag = name->size == 0 ? std::string() : std::string(name->buffer, name->size);
+    return RecordSaxEvent(handler, userData, "SE:" + tag);
+}
+
+int APS5_VABI OnSaxCharacters(SaxHandler* handler, void* userData, const XmlString* text) {
+    const std::string body = text->size == 0 ? std::string() : std::string(text->buffer, text->size);
+    return RecordSaxEvent(handler, userData, "CH:" + body);
+}
+
+int APS5_VABI OnSaxEndElement(SaxHandler* handler, void* userData, const XmlString* name) {
+    const std::string tag = name->size == 0 ? std::string() : std::string(name->buffer, name->size);
+    return RecordSaxEvent(handler, userData, "EE:" + tag);
+}
+
+int APS5_VABI OnSaxEndDocument(SaxHandler* handler, void* userData) {
+    return RecordSaxEvent(handler, userData, "ED");
+}
+
+int APS5_VABI OnSaxNode(SaxHandler* handler, void* userData, int kind, const XmlString*) {
+    return RecordSaxEvent(handler, userData, "N" + std::to_string(kind));
+}
+
+int APS5_VABI OnSaxReference(SaxHandler* handler, void* userData, int kind, const XmlString*) {
+    return RecordSaxEvent(handler, userData, "R" + std::to_string(kind));
+}
+
+void APS5_VABI OnSaxError(SaxHandler* handler, void* userData, int status) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "ERR:%x", static_cast<unsigned>(status));
+    RecordSaxEvent(handler, userData, buffer);
+}
+
+const SaxHandlerVtable g_saxHandlerVtable{
+    nullptr,
+    nullptr,
+    OnSaxStartDocument,
+    OnSaxStartElement,
+    OnSaxCharacters,
+    OnSaxEndElement,
+    OnSaxEndDocument,
+    OnSaxNode,
+    OnSaxReference,
+    OnSaxError,
+};
+
+struct SaxChunk {
+    const char* bytes;
+    std::size_t size;
+    bool last;
+    int expectedStatus;
+    const char* expectedEvents;
+};
+
+void RunSaxBomSequence(XmlHandle* initializer, const SaxChunk* chunks, std::size_t count, const char* label) {
+    void* const handlerUserData = reinterpret_cast<void*>(0x4321);
+    SaxHandler handler{&g_saxHandlerVtable, {}, handlerUserData};
+    XmlHandle parser{nullptr};
+    _ZN3sce3Xml3Sax6ParserC1Ev(&parser);
+    Require(_ZN3sce3Xml3Sax6Parser10initializeEPKNS0_11InitializerE(&parser, initializer) == 0, label);
+    _ZN3sce3Xml3Sax6Parser11setUserDataEPv(&parser, handlerUserData);
+    Require(_ZN3sce3Xml3Sax6Parser18setDocumentHandlerEPNS1_15DocumentHandlerE(&parser, &handler) == 0, label);
+    for (std::size_t i = 0; i < count; ++i) {
+        const XmlString input{chunks[i].bytes, chunks[i].size};
+        const int status = _ZN3sce3Xml3Sax6Parser5parseEPKNS0_6StringEb(&parser, &input, chunks[i].last);
+        if (status != chunks[i].expectedStatus || handler.events != chunks[i].expectedEvents) {
+            std::fprintf(stderr, "%s[%zu]: status %#x expected %#x events '%s' expected '%s'\n", label, i,
+                    static_cast<unsigned>(status), static_cast<unsigned>(chunks[i].expectedStatus),
+                    handler.events.c_str(), chunks[i].expectedEvents);
+            Require(false, label);
+        }
+    }
+    Require(_ZN3sce3Xml3Sax6Parser9terminateEv(&parser) == 0, label);
+    _ZN3sce3Xml3Sax6ParserD1Ev(&parser);
+}
+
+void TestSaxSplitUtf8Bom() {
+    TestAllocator allocator{};
+    allocator.base.vtable = &g_testVtable;
+    void* const allocUserData = reinterpret_cast<void*>(0x1234);
+    allocator.expectedUserData = allocUserData;
+    const XmlInitParameter parameter{&allocator.base, allocUserData, {0, 0}};
+    XmlHandle initializer{nullptr};
+    Require(Initialize(&initializer, &parameter) == 0, "BOM test initializer starts");
+
+    const SaxChunk standaloneThreeByte[] = {
+        {"\xef\xbb\xbf", 3, false, 0x00850001, "SD|"},
+        {"<a/>", 4, true, 0, "SD|SE:a|EE:a|ED|"},
+    };
+    RunSaxBomSequence(&initializer, standaloneThreeByte, 2, "3-byte BOM chunk");
+
+    const SaxChunk splitOnePlusTwo[] = {
+        {"\xef", 1, false, 0x00850001, ""},
+        {"\xbb\xbf<a/>", 6, true, 0, "SD|SE:a|EE:a|ED|"},
+    };
+    RunSaxBomSequence(&initializer, splitOnePlusTwo, 2, "1+2 split BOM");
+
+    const SaxChunk splitTwoPlusOne[] = {
+        {"\xef\xbb", 2, false, 0x00850001, ""},
+        {"\xbf<a/>", 5, true, 0, "SD|SE:a|EE:a|ED|"},
+    };
+    RunSaxBomSequence(&initializer, splitTwoPlusOne, 2, "2+1 split BOM");
+
+    const SaxChunk splitOneByOne[] = {
+        {"\xef", 1, false, 0x00850001, ""},
+        {"\xbb", 1, false, 0x00850001, ""},
+        {"\xbf<a/>", 5, true, 0, "SD|SE:a|EE:a|ED|"},
+    };
+    RunSaxBomSequence(&initializer, splitOneByOne, 3, "1+1+1 split BOM");
+
+    const SaxChunk bomOnlyFinal[] = {
+        {"\xef\xbb\xbf", 3, true, static_cast<int>(0x80850019), "SD|ERR:80850019|"},
+    };
+    RunSaxBomSequence(&initializer, bomOnlyFinal, 1, "BOM-only final chunk");
+
+    const SaxChunk partialPrefixMismatch[] = {
+        {"\xef\xbb", 2, false, 0x00850001, ""},
+        {"X<a/>", 5, true, static_cast<int>(0x8085000b), "SD|ERR:8085000b|"},
+    };
+    RunSaxBomSequence(&initializer, partialPrefixMismatch, 2, "partial BOM prefix followed by non-BOM");
+
+    Require(Terminate(&initializer, nullptr) == 0, "BOM test initializer terminates");
+    for (void* block : allocator.blocks) {
+        if (block != nullptr) std::free(block);
+    }
+}
+
 }
 
 int main() {
@@ -311,6 +469,7 @@ int main() {
     TestSimpleDataConstructors();
     TestTwoAllocators();
     TestInitializer();
+    TestSaxSplitUtf8Bom();
     std::puts("guest_xml_initializer: all checks passed");
     return 0;
 }
