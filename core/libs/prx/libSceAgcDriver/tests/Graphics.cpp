@@ -2238,8 +2238,8 @@ void ShadersWriteMemoryTests() {
         ShaderRecompiler::DescriptorBinding result{};
         result.kind = kind;
         result.role = role;
-        result.count = 1;
-        if (role == ShaderRecompiler::DescriptorRole::GuestImages) result.imageWritten = std::move(written);
+        result.count = static_cast<std::uint32_t>(written.size());
+        if (role == ShaderRecompiler::DescriptorRole::GuestImages || role == ShaderRecompiler::DescriptorRole::ImageStorageTable) result.imageWritten = std::move(written);
         else result.bufferWritten = std::move(written);
         return result;
     };
@@ -2254,6 +2254,12 @@ void ShadersWriteMemoryTests() {
     Require(writes({{Stage::Vertex, &reads, 0}, {Stage::Fragment, &stores, 0}}), "a pixel shader that stores to a buffer was not reported");
     Require(writes({{Stage::Vertex, &stores, 0}, {Stage::Fragment, &reads, 0}}), "a vertex shader that stores to a buffer was not reported");
     Require(writes({{Stage::Geometry, &stores, 0}, {Stage::Fragment, &reads, 0}}), "a geometry shader that stores to a buffer was not reported");
+    ShaderRecompiler::RecompileResult tableReads;
+    tableReads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorRole::ImageStorageTable, {false, false}));
+    ShaderRecompiler::RecompileResult tableStores;
+    tableStores.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorRole::ImageStorageTable, {false, true}));
+    Require(!writes({{Stage::Vertex, &reads, 0}, {Stage::Fragment, &tableReads, 0}}), "a storage image table with no written element was reported as writing memory");
+    Require(writes({{Stage::Vertex, &reads, 0}, {Stage::Fragment, &tableStores, 0}}), "a pixel shader that writes an element of a storage image table was not reported");
 }
 
 void ReversedComponentOrderTests() {
