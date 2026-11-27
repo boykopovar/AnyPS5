@@ -6,6 +6,7 @@
 #include "unicode/uloc.h"
 #include <cerrno>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -36,7 +37,11 @@ struct Registry {
         std::int32_t type;
         std::string locale;
     };
-    std::unordered_map<const UBreakIterator*, Recipe> iterators;
+    struct Entry {
+        Recipe recipe;
+        std::shared_ptr<UBreakIterator> iterator;
+    };
+    std::unordered_map<const UBreakIterator*, Entry> iterators;
 };
 
 Registry& Iterators() {
@@ -45,15 +50,32 @@ Registry& Iterators() {
 }
 
 void Register(UBreakIterator* iterator, std::int32_t type, std::string locale) {
+    std::shared_ptr<UBreakIterator> owned(iterator, ubrk_close_78);
     auto& registry = Iterators();
     const std::lock_guard lock(registry.mutex);
-    registry.iterators.emplace(iterator, Registry::Recipe{type, std::move(locale)});
+    registry.iterators.emplace(iterator, Registry::Entry{{type, std::move(locale)}, std::move(owned)});
 }
 
-bool Unregister(const UBreakIterator* iterator) {
+std::shared_ptr<UBreakIterator> Unregister(const UBreakIterator* iterator) {
+    auto& registry = Iterators();
+    std::shared_ptr<UBreakIterator> owned;
+    {
+        const std::lock_guard lock(registry.mutex);
+        const auto found = registry.iterators.find(iterator);
+        if (found == registry.iterators.end()) return {};
+        owned = std::move(found->second.iterator);
+        registry.iterators.erase(found);
+    }
+    return owned;
+}
+
+std::shared_ptr<UBreakIterator> Registered(const void* iterator, const char* caller) {
+    if (!iterator) APS5_INVALID_ARG_EX;
     auto& registry = Iterators();
     const std::lock_guard lock(registry.mutex);
-    return registry.iterators.erase(iterator) != 0;
+    const auto found = registry.iterators.find(static_cast<const UBreakIterator*>(iterator));
+    if (found == registry.iterators.end()) NotImplemented_nid_no_patch(caller);
+    return found->second.iterator;
 }
 
 std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
@@ -96,7 +118,7 @@ void* CloneRegistered(const void* iterator, std::int32_t& status, const char* ca
         const std::lock_guard lock(registry.mutex);
         const auto found = registry.iterators.find(static_cast<const UBreakIterator*>(iterator));
         if (found == registry.iterators.end()) NotImplemented_nid_no_patch(caller);
-        recipe = found->second;
+        recipe = found->second.recipe;
     }
     const auto incoming = status;
     auto code = static_cast<UErrorCode>(incoming);
@@ -130,7 +152,6 @@ void* APS5_VABI ubrk_open(std::int32_t type, const char* locale, const char16_t*
             WriteStatus(error, incoming, status, __func__);
         } catch (...) {
             Unregister(result);
-            ubrk_close_78(result);
             throw;
         }
     } else {
@@ -141,62 +162,63 @@ void* APS5_VABI ubrk_open(std::int32_t type, const char* locale, const char16_t*
 
 void APS5_VABI ubrk_close(void* iterator) {
     if (!iterator) return;
-    if (!Unregister(static_cast<UBreakIterator*>(iterator))) NotImplemented_nid_no_patch(__func__);
-    ubrk_close_78(static_cast<UBreakIterator*>(iterator));
+    auto owned = Unregister(static_cast<UBreakIterator*>(iterator));
+    if (!owned) NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI ubrk_setText(void* iterator, const char16_t* text, std::int32_t length, std::int32_t* error) {
     if (!iterator || !error) APS5_INVALID_ARG_EX;
     const auto incoming = ReadStatus(error, __func__);
     if (incoming > 0) return;
+    const auto registered = Registered(iterator, __func__);
     auto status = static_cast<UErrorCode>(incoming);
-    ubrk_setText_78(static_cast<UBreakIterator*>(iterator), text, length, &status);
+    ubrk_setText_78(registered.get(), text, length, &status);
     WriteStatus(error, incoming, status, __func__);
 }
 
 std::int32_t APS5_VABI ubrk_first(void* iterator) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_first_78(static_cast<UBreakIterator*>(iterator));
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_first_78(registered.get());
 }
 
 std::int32_t APS5_VABI ubrk_last(void* iterator) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_last_78(static_cast<UBreakIterator*>(iterator));
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_last_78(registered.get());
 }
 
 std::int32_t APS5_VABI ubrk_next(void* iterator) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_next_78(static_cast<UBreakIterator*>(iterator));
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_next_78(registered.get());
 }
 
 std::int32_t APS5_VABI ubrk_previous(void* iterator) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_previous_78(static_cast<UBreakIterator*>(iterator));
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_previous_78(registered.get());
 }
 
 std::int32_t APS5_VABI ubrk_current(const void* iterator) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_current_78(static_cast<const UBreakIterator*>(iterator));
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_current_78(registered.get());
 }
 
 std::int32_t APS5_VABI ubrk_following(void* iterator, std::int32_t offset) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_following_78(static_cast<UBreakIterator*>(iterator), offset);
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_following_78(registered.get(), offset);
 }
 
 std::int32_t APS5_VABI ubrk_preceding(void* iterator, std::int32_t offset) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_preceding_78(static_cast<UBreakIterator*>(iterator), offset);
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_preceding_78(registered.get(), offset);
 }
 
 std::int8_t APS5_VABI ubrk_isBoundary(void* iterator, std::int32_t offset) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_isBoundary_78(static_cast<UBreakIterator*>(iterator), offset);
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_isBoundary_78(registered.get(), offset);
 }
 
 std::int32_t APS5_VABI ubrk_getRuleStatus(void* iterator) {
-    if (!iterator) APS5_INVALID_ARG_EX;
-    return ubrk_getRuleStatus_78(static_cast<UBreakIterator*>(iterator));
+    const auto registered = Registered(iterator, __func__);
+    return ubrk_getRuleStatus_78(registered.get());
 }
 
 std::int32_t APS5_VABI ubrk_countAvailable() {

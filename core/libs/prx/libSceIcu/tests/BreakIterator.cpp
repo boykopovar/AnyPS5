@@ -35,6 +35,17 @@ void Equal(std::int32_t actual, std::int32_t expected, const char* what) {
     std::abort();
 }
 
+template<class TAction>
+void Rejects(TAction action, const char* what) {
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    Expect(rejected, what);
+}
+
 class ReadOnlyPage {
 public:
     ReadOnlyPage() {
@@ -272,6 +283,17 @@ void Api() {
     Equal(status, -128, "input warning preserved");
     Equal(ubrk_last(iterator), 2, "warning allows setText");
     ubrk_close(iterator);
+    status = 0;
+    Rejects([&] { ubrk_setText(iterator, u"z", 1, &status); }, "closed iterator setText rejected");
+    Rejects([&] { ubrk_first(iterator); }, "closed iterator first rejected");
+    Rejects([&] { ubrk_last(iterator); }, "closed iterator last rejected");
+    Rejects([&] { ubrk_next(iterator); }, "closed iterator next rejected");
+    Rejects([&] { ubrk_previous(iterator); }, "closed iterator previous rejected");
+    Rejects([&] { ubrk_current(iterator); }, "closed iterator current rejected");
+    Rejects([&] { ubrk_following(iterator, 0); }, "closed iterator following rejected");
+    Rejects([&] { ubrk_preceding(iterator, 0); }, "closed iterator preceding rejected");
+    Rejects([&] { ubrk_isBoundary(iterator, 0); }, "closed iterator boundary rejected");
+    Rejects([&] { ubrk_getRuleStatus(iterator); }, "closed iterator rule status rejected");
     ubrk_close(nullptr);
     status = 0;
     Expect(!ubrk_open(99, "en", u"a", 1, &status), "invalid iterator type");

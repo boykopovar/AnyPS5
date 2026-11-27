@@ -32,6 +32,7 @@ ExternalProject_Add(icu_host_tools
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/cmake/icu-host
     BINARY_DIR ${icu_host_dir}
     CMAKE_ARGS ${icu_host_compilers}
+        -DCMAKE_TOOLCHAIN_FILE:FILEPATH=
         -DICU_SOURCE_DIR=${ICU_SOURCE_DIR}
         -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
         -DCMAKE_BUILD_TYPE=Release

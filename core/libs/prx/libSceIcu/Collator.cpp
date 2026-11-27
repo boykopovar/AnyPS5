@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -299,8 +300,15 @@ UCollationResult APS5_VABI ucol_strcollUTF8_nid_postfix(const UCollator* coll, c
     const auto incoming = ReadStatus(status, __func__);
     if (incoming > 0) return UCOL_EQUAL;
     const auto registered = Registered(coll, __func__);
-    const auto left = CopyOperand(source, sourceLength, __func__);
-    const auto right = CopyOperand(target, targetLength, __func__);
+    Operand<char> left{};
+    Operand<char> right{};
+    try {
+        left = CopyOperand(source, sourceLength, __func__);
+        right = CopyOperand(target, targetLength, __func__);
+    } catch (const std::bad_alloc&) {
+        WriteStatus(status, incoming, U_MEMORY_ALLOCATION_ERROR, __func__);
+        return UCOL_EQUAL;
+    }
     auto outgoing = incoming;
     const auto result =
         Icu::CollatorHost::CompareUtf8(registered.handle, left.Data(), left.length, right.Data(), right.length, outgoing);

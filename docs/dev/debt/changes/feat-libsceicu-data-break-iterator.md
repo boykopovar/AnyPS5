@@ -34,7 +34,7 @@
 
 ## change [Cleanup]
 
-- [Cleanup](../../../core/libs/prx/libSceIcu/Configuration.cpp) is unverified on a console. `u_cleanup` follows ICU 78.1 [ucln_cmn.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucln_cmn.cpp) for the state this module keeps: it clears the functions stored by `u_setMemoryFunctions` and resets the data and time zone files directories. Pointers returned earlier by the directory getters are invalidated, as in ICU. It first calls the native ICU 78.1 `u_cleanup`, whose cleanup chains release the backend's shared caches (see Allocator integration). The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
+- [Cleanup](../../../core/libs/prx/libSceIcu/Configuration.cpp) is unverified on a console. `u_cleanup` follows ICU 78.1 [ucln_cmn.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucln_cmn.cpp) for the state this module keeps: it clears the functions stored by `u_setMemoryFunctions` and resets the data and time zone files directories. Pointers returned earlier by the directory getters are invalidated, as in ICU. Before native cleanup it clears registered searches, closing them and their cloned break iterators while guest allocator callbacks remain installed. It then calls native ICU 78.1 `u_cleanup`, whose cleanup chains release the backend's shared caches, before resetting those callbacks (see Allocator integration). The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 
 ## change [Memory function configuration]
 
