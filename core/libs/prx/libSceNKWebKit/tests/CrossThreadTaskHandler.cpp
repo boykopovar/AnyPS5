@@ -542,6 +542,50 @@ static void TestGuestPointers() {
     DrainMain();
     Require(TakeLog().empty());
     Require(liveCallables.load() == 0);
+
+    for (int round = 0; round < 16; ++round) {
+        Handler racing;
+        std::atomic<bool> go{false};
+        std::atomic<int> destroySucceeded{0};
+        std::atomic<int> destroyRejected{0};
+        std::thread tDestroy([&] {
+            while (!go) std::this_thread::yield();
+            try {
+                destroy(racing.get());
+                ++destroySucceeded;
+            } catch (const std::invalid_argument&) {
+                ++destroyRejected;
+            } catch (const std::runtime_error&) {
+                ++destroyRejected;
+            }
+        });
+        std::thread tPost([&] {
+            while (!go) std::this_thread::yield();
+            VoidFunction job = Make("race", {}, true);
+            try {
+                postTask(racing.get(), &job);
+            } catch (const std::invalid_argument&) {
+            } catch (const std::runtime_error&) {
+            }
+            if (job.callableWrapper) job.callableWrapper->vtable->deletingDestructor(job.callableWrapper);
+        });
+        go = true;
+        try {
+            destroy(racing.get());
+            ++destroySucceeded;
+        } catch (const std::invalid_argument&) {
+            ++destroyRejected;
+        } catch (const std::runtime_error&) {
+            ++destroyRejected;
+        }
+        tDestroy.join();
+        tPost.join();
+        Require(destroySucceeded.load() == 1 && destroyRejected.load() == 1);
+    }
+    Settle();
+    DrainMain();
+    TakeLog();
+    Require(liveCallables.load() == 0);
 }
 
 int main() {

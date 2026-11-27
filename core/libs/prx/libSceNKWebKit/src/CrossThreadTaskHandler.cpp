@@ -62,6 +62,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -108,14 +109,19 @@ static_assert(std::is_trivially_copyable_v<VoidCallableWrapper>);
 static_assert(std::is_trivially_copyable_v<VoidCallableWrapperVtable>);
 static_assert(std::is_trivially_copyable_v<VoidFunction>);
 
+struct LiveStateEntry {
+    CrossThreadTaskHandler* owner{nullptr};
+    bool retiring{false};
+};
+
 std::mutex& LiveStatesLock() {
     static std::mutex* const lock = new std::mutex;
     return *lock;
 }
 
-std::unordered_map<CrossThreadTaskHandlerState*, CrossThreadTaskHandler*>& LiveStates() {
-    static std::unordered_map<CrossThreadTaskHandlerState*, CrossThreadTaskHandler*>* const states =
-        new std::unordered_map<CrossThreadTaskHandlerState*, CrossThreadTaskHandler*>;
+std::unordered_map<CrossThreadTaskHandlerState*, LiveStateEntry>& LiveStates() {
+    static std::unordered_map<CrossThreadTaskHandlerState*, LiveStateEntry>* const states =
+        new std::unordered_map<CrossThreadTaskHandlerState*, LiveStateEntry>;
     return *states;
 }
 
@@ -124,14 +130,6 @@ void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char
     if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
     if (!GuestReadable_nid_no_patch(pointer, size))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-}
-
-void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
-    if (!size) return;
-    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    const GuestArena::HostWrite guard(pointer, size);
-    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
@@ -172,8 +170,10 @@ StateRef AcquireLiveState(CrossThreadTaskHandler* self, const char* function) {
     if (!state) throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
     std::lock_guard lock(LiveStatesLock());
     const auto it = LiveStates().find(state);
-    if (it == LiveStates().end() || it->second != self)
+    if (it == LiveStates().end() || it->second.owner != self)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (it->second.retiring)
+        throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
     ++state->references;
     return StateRef(state);
 }
@@ -270,7 +270,9 @@ const CrossThreadTaskHandlerVtableStorage vtable = {
 
 void Construct(CrossThreadTaskHandler* self, const char* function) {
     if (!self) throw std::invalid_argument("null WTF::CrossThreadTaskHandler");
-    RequireWritableGuestBytes(self, sizeof(CrossThreadTaskHandler), function);
+    const GuestArena::HostWrite writeGuard(self, sizeof(CrossThreadTaskHandler));
+    if (!writeGuard.Open() || !GuestWritable_nid_no_patch(self, sizeof(CrossThreadTaskHandler)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     VoidCallableWrapper* nullCallback = nullptr;
     if (!GuestCopyOut_nid_no_patch(
             reinterpret_cast<unsigned char*>(self) + offsetof(CrossThreadTaskHandler, completionCallback),
@@ -282,7 +284,7 @@ void Construct(CrossThreadTaskHandler* self, const char* function) {
     state->owner = self;
     try {
         std::lock_guard lock(LiveStatesLock());
-        LiveStates().emplace(state, self);
+        LiveStates().emplace(state, LiveStateEntry{self, false});
     } catch (...) {
         delete state;
         throw;
@@ -318,7 +320,9 @@ void Construct(CrossThreadTaskHandler* self, const char* function) {
 void Destroy(CrossThreadTaskHandler* self, const char* function) {
     if (!self) throw std::invalid_argument("null WTF::CrossThreadTaskHandler");
     RequireReadableGuestBytes(self, sizeof(CrossThreadTaskHandler), function);
-    RequireWritableGuestBytes(self, sizeof(CrossThreadTaskHandler), function);
+    const GuestArena::HostWrite writeGuard(self, sizeof(CrossThreadTaskHandler));
+    if (!writeGuard.Open() || !GuestWritable_nid_no_patch(self, sizeof(CrossThreadTaskHandler)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     CrossThreadTaskHandlerState* state = nullptr;
     if (!GuestCopyIn_nid_no_patch(&state, reinterpret_cast<const unsigned char*>(self) + offsetof(CrossThreadTaskHandler, state), sizeof(state)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
@@ -331,17 +335,29 @@ void Destroy(CrossThreadTaskHandler* self, const char* function) {
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
     ValidateCallableWrapper(completionCallback, false, function);
+
+    CrossThreadTaskHandlerState* pinnedState = nullptr;
     {
         std::lock_guard liveLock(LiveStatesLock());
         const auto it = LiveStates().find(state);
-        if (it == LiveStates().end() || it->second != self)
+        if (it == LiveStates().end() || it->second.owner != self)
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        if (it->second.retiring)
+            throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
+        it->second.retiring = true;
+        ++state->references;
+        pinnedState = state;
     }
+    StateRef pinned(pinnedState);
+
     CrossThreadTaskHandlerState* nullState = nullptr;
     if (!GuestCopyOut_nid_no_patch(
             reinterpret_cast<unsigned char*>(self) + offsetof(CrossThreadTaskHandler, state),
             &nullState,
             sizeof(nullState))) {
+        std::lock_guard liveLock(LiveStatesLock());
+        const auto it = LiveStates().find(state);
+        if (it != LiveStates().end()) it->second.retiring = false;
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
     VoidCallableWrapper* nullCallback = nullptr;
@@ -353,14 +369,14 @@ void Destroy(CrossThreadTaskHandler* self, const char* function) {
             reinterpret_cast<unsigned char*>(self) + offsetof(CrossThreadTaskHandler, state),
             &state,
             sizeof(state)));
+        std::lock_guard liveLock(LiveStatesLock());
+        const auto it = LiveStates().find(state);
+        if (it != LiveStates().end()) it->second.retiring = false;
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
     {
         std::lock_guard liveLock(LiveStatesLock());
-        const auto it = LiveStates().find(state);
-        if (it == LiveStates().end() || it->second != self)
-            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-        LiveStates().erase(it);
+        LiveStates().erase(state);
     }
     std::deque<VoidCallableWrapper*> tasks;
     std::deque<VoidCallableWrapper*> replies;
@@ -383,21 +399,23 @@ void PostTaskImpl(CrossThreadTaskHandler* self, VoidFunction* task, const char* 
     StateRef state = AcquireLiveState(self, function);
     if (!task) throw std::invalid_argument("null WTF::Function reference for WTF::CrossThreadTaskHandler");
     RequireReadableGuestBytes(task, sizeof(VoidFunction), function);
-    RequireWritableGuestBytes(task, sizeof(VoidFunction), function);
+    const GuestArena::HostWrite taskWriteGuard(task, sizeof(VoidFunction));
+    if (!taskWriteGuard.Open() || !GuestWritable_nid_no_patch(task, sizeof(VoidFunction)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     VoidCallableWrapper* callable = nullptr;
     if (!GuestCopyIn_nid_no_patch(&callable, task, sizeof(callable)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     ValidateCallableWrapper(callable, true, function);
-    VoidCallableWrapper* cleared = nullptr;
-    if (!GuestCopyOut_nid_no_patch(task, &cleared, sizeof(cleared)))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     {
         std::lock_guard lock(state.ptr->mutex);
-        if (state.ptr->destroyed) {
-            static_cast<void>(GuestCopyOut_nid_no_patch(task, &callable, sizeof(callable)));
+        if (state.ptr->destroyed)
             throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
-        }
         state.ptr->tasks.push_back(callable);
+        VoidCallableWrapper* cleared = nullptr;
+        if (!GuestCopyOut_nid_no_patch(task, &cleared, sizeof(cleared))) {
+            state.ptr->tasks.pop_back();
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
     }
     state.ptr->condition.notify_one();
 }
@@ -406,29 +424,48 @@ void PostTaskReplyImpl(CrossThreadTaskHandler* self, VoidFunction* task, const c
     StateRef state = AcquireLiveState(self, function);
     if (!task) throw std::invalid_argument("null WTF::Function reference for WTF::CrossThreadTaskHandler");
     RequireReadableGuestBytes(task, sizeof(VoidFunction), function);
-    RequireWritableGuestBytes(task, sizeof(VoidFunction), function);
+    const GuestArena::HostWrite taskWriteGuard(task, sizeof(VoidFunction));
+    if (!taskWriteGuard.Open() || !GuestWritable_nid_no_patch(task, sizeof(VoidFunction)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     VoidCallableWrapper* callable = nullptr;
     if (!GuestCopyIn_nid_no_patch(&callable, task, sizeof(callable)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (!callable) throw std::invalid_argument("null WTF::Function for WTF::CrossThreadTaskHandler::postTaskReply");
     ValidateCallableWrapper(callable, true, function);
-    VoidCallableWrapper* cleared = nullptr;
-    if (!GuestCopyOut_nid_no_patch(task, &cleared, sizeof(cleared)))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    std::unique_ptr<ReplyJob> job;
     {
         std::lock_guard lock(state.ptr->mutex);
-        if (state.ptr->destroyed) {
-            static_cast<void>(GuestCopyOut_nid_no_patch(task, &callable, sizeof(callable)));
+        if (state.ptr->destroyed)
             throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
-        }
+        const bool needSchedule = !state.ptr->replyScheduled;
+        if (needSchedule) job = std::make_unique<ReplyJob>(ReplyJob{{&replyJobVtable}, state.ptr});
         state.ptr->replies.push_back(callable);
-        if (state.ptr->replyScheduled) return;
+        VoidCallableWrapper* cleared = nullptr;
+        if (!GuestCopyOut_nid_no_patch(task, &cleared, sizeof(cleared))) {
+            state.ptr->replies.pop_back();
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        if (!needSchedule) return;
         state.ptr->replyScheduled = true;
+        ++state.ptr->references;
     }
-    ++state.ptr->references;
-    auto* job = new ReplyJob{{&replyJobVtable}, state.ptr};
-    VoidFunction functionObj{&job->base};
-    _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(&functionObj);
+    ReplyJob* jobPtr = job.release();
+    VoidFunction functionObj{&jobPtr->base};
+    try {
+        _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(&functionObj);
+    } catch (...) {
+        if (functionObj.callableWrapper) {
+            delete jobPtr;
+            Release(state.ptr);
+        }
+        std::lock_guard lock(state.ptr->mutex);
+        state.ptr->replyScheduled = false;
+        if (!state.ptr->replies.empty() && state.ptr->replies.back() == callable) {
+            state.ptr->replies.pop_back();
+            static_cast<void>(GuestCopyOut_nid_no_patch(task, &callable, sizeof(callable)));
+        }
+        throw;
+    }
 }
 
 void KillImpl(CrossThreadTaskHandler* self, const char* function) {
