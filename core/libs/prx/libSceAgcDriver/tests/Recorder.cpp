@@ -62,6 +62,7 @@
 #include "BdaAbi.hpp"
 #include "ShaderCacheSourceVersion.hpp"
 #include "WatchedBlock.hpp"
+#include "ShaderDiskCache.hpp"
 #include <SDL_loadso.h>
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -1851,6 +1852,29 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     Require(ran == 1 && delivered == 1 && Recorder::PendingCompletionLabels() == 0 && Recorder::PendingCompletionStores() == 0 && Recorder::PendingWriteBackCompletions() == 0 && recorder.Idle(), "counts did not return to 0 at finish");
     const bool storeAlways = std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr;
     Require(memory[0] == 1 && memory[2] == (storeAlways ? 1u : 7u) && memory[16] == 1, "completion stores ran for the wrong labels (overlapped and not-imported ones store, the untouched GPU-stored one skips)");
+}
+
+void writtenBackRunTests(const Device& device, Recorder& recorder) {
+    if (std::getenv("APS5_COUNT_ALL_COMPLETION_LABELS") != nullptr || std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr) return;
+    alignas(64) static std::uint32_t memory[64];
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    Require(recorder.Idle() && Recorder::PendingCompletionLabels() == 0, "a fresh recorder reports pending completion labels");
+    recorder.OnComplete([] {});
+    recorder.AfterCompletions(base + 0x40, value, 3, 0, true);
+    recorder.AfterCompletions(base + 0x80, value, 4, 0, true);
+    const auto over = Recorder::WriteBacksOverLabels();
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 4> runs{{{base, base + 0x10}, {base + 0x18, base + 0x20}, {base + 0x60, base + 0x70}, {base + 0x80, base + 0x82}}};
+    Recorder::NoteWrittenBack(runs);
+    Require(Recorder::PendingCompletionLabels() == 1, "stored runs on both sides of a GPU-stored label counted the label between them, or missed the label a run overlaps");
+    Require(Recorder::WriteBacksOverLabels() == over + 1, "stored runs were noted over a label no run overlaps, or not over the one a run overlaps");
+    memory[16] = 7;
+    memory[32] = 7;
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(Recorder::PendingCompletionLabels() == 0 && recorder.Idle(), "counts did not return to 0 at finish");
+    Require(memory[16] == 7 && memory[32] == 1, "completion stores ran for the wrong labels (the one a stored run overlaps stores, the one between runs skips)");
 }
 
 class StderrCapture {
@@ -15820,7 +15844,7 @@ public:
         layoutInfo.bindingCount = 2;
         layoutInfo.pBindings = bindings;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &setLayout), "vkCreateDescriptorSetLayout");
-        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 2};
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 4};
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &setLayout;
@@ -15859,6 +15883,10 @@ public:
     SampleProgram& operator=(const SampleProgram&) = delete;
 
     float Red(VkImageView view, VkImageLayout layout, float lod, float layer = 0) {
+        return Texel(view, layout, lod, 0.5f, 0.5f, layer)[0];
+    }
+
+    std::array<float, 4> Texel(VkImageView view, VkImageLayout layout, float lod, float u, float v, float layer = 0) {
         VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocateInfo.descriptorPool = pool;
         allocateInfo.descriptorSetCount = 1;
@@ -15883,16 +15911,16 @@ public:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         context.BindComputePipeline(commands, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
-        const float parameters[]{lod, layer};
+        const float parameters[]{lod, layer, u, v};
         context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         recorder.Submit();
         recorder.Sync();
         Check(context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets")(context.device, pool, 1, &set), "vkFreeDescriptorSets");
-        float texel[4];
-        std::memcpy(texel, result.Bytes().data(), sizeof(texel));
-        return texel[0];
+        std::array<float, 4> texel{};
+        std::memcpy(texel.data(), result.Bytes().data(), sizeof(texel));
+        return texel;
     }
 
 private:
@@ -15906,6 +15934,110 @@ private:
     VkSampler sampler = VK_NULL_HANDLE;
     VkDescriptorPool pool = VK_NULL_HANDLE;
 };
+
+GuestTextureResource bc1Resource(std::uint32_t width, std::uint32_t height, std::uint32_t levels) {
+    GuestTextureResource resource{};
+    resource.baseAddress = 0x100000;
+    resource.width = width;
+    resource.height = height;
+    resource.mipCount = resource.allocatedMipCount = levels;
+    resource.lastLevel = levels - 1u;
+    resource.tileMode = TextureTileMode::kLinear;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Bc1UNorm);
+    return resource;
+}
+
+bool bc1DecodeTests(const Device& device, Recorder& recorder, bool expectDecoded) {
+    const auto& context = device.GetContext();
+    if (!expectDecoded && !context.textureCompressionBC) {
+        std::cout << "skipped, the device does not support native BC textures\n";
+        return false;
+    }
+    struct Block {
+        std::uint32_t first;
+        std::uint32_t second;
+        std::array<std::uint32_t, 4> rgba;
+    };
+    constexpr std::array<Block, 4> blocks{{
+        {0xf800u, 0x07ffu, {0xff0000ffu, 0xffffff00u, 0xff5454abu, 0xffabab54u}},
+        {0x001fu, 0xffe0u, {0xffff0000u, 0xff00ffffu, 0xff808080u, 0x00000000u}},
+        {0x738au, 0x3a37u, {0xff527173u, 0xffbd4539u, 0xff756360u, 0xff9a534cu}},
+        {0x07e0u, 0x07e0u, {0xff00ff00u, 0xff00ff00u, 0xff00ff00u, 0x00000000u}},
+    }};
+    constexpr std::uint32_t selectors = 0xe41b4eb1u;
+    const auto resource = bc1Resource(7u, 5u, 2u);
+    const auto geometry = DescribeSurface(resource);
+    std::vector<std::byte> snapshot(static_cast<std::size_t>(geometry.guestBytes));
+    for (std::uint32_t level = 0; level < geometry.mips.size(); ++level) {
+        const auto& mip = geometry.mips[level];
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                const auto& block = blocks[(level + y * mip.width + x) % blocks.size()];
+                const std::uint32_t words[]{block.first | (block.second << 16u), selectors};
+                std::memcpy(snapshot.data() + mip.tiledOffset + y * mip.pitchBytes + x * sizeof(words), words, sizeof(words));
+            }
+        }
+    }
+    TextureDetiler detiler(context);
+    SampleProgram program(context, recorder);
+    const Texture texture(context, detiler, resource, {}, snapshot);
+    const auto format = expectDecoded ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+    Require(texture.ViewFormat() == format, "BC1 upload used an unexpected Vulkan image format");
+    std::uint32_t compared = 0, differences = 0;
+    float maxDifference = 0.0f;
+    for (std::uint32_t level = 0; level < geometry.mips.size(); ++level) {
+        const auto width = resource.width >> level;
+        const auto height = resource.height >> level;
+        for (std::uint32_t y = 0; y < height; ++y) {
+            for (std::uint32_t x = 0; x < width; ++x) {
+                const auto block = (level + y / 4u * geometry.mips[level].width + x / 4u) % blocks.size();
+                const auto selector = (selectors >> ((y % 4u * 4u + x % 4u) * 2u)) & 3u;
+                const auto packed = blocks[block].rgba[selector];
+                const auto texel = program.Texel(texture.View(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, static_cast<float>(level),
+                                                 (static_cast<float>(x) + 0.5f) / static_cast<float>(width),
+                                                 (static_cast<float>(y) + 0.5f) / static_cast<float>(height));
+                for (std::uint32_t channel = 0; channel < texel.size(); ++channel) {
+                    Require(std::isfinite(texel[channel]), "BC1 sampling returned a non-finite value");
+                    const auto expected = static_cast<float>((packed >> (channel * 8u)) & 0xffu) / 255.0f;
+                    const auto difference = std::abs(texel[channel] - expected) * 255.0f;
+                    differences += difference > 0.25f;
+                    maxDifference = std::max(maxDifference, difference);
+                    ++compared;
+                }
+            }
+        }
+    }
+    std::cout << "BC1 components differing from RDNA2 reference " << differences << '/' << compared
+              << ", maximum difference " << maxDifference << "/255\n";
+    Require(!expectDecoded || differences == 0u, "decoded BC1 texels differ from the RDNA2 reference");
+    return true;
+}
+
+void benchmarkBc1Upload(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    const auto resource = bc1Resource(2048u, 2048u, 1u);
+    const auto geometry = DescribeSurface(resource);
+    std::vector<std::byte> snapshot(static_cast<std::size_t>(geometry.guestBytes));
+    const std::uint32_t block[]{0x07fff800u, 0xe41b4eb1u};
+    for (std::size_t i = 0; i < snapshot.size(); i += sizeof(block)) {
+        std::memcpy(snapshot.data() + i, block, sizeof(block));
+    }
+    TextureDetiler detiler(context);
+    std::array<double, 9> timings{};
+    VkDeviceSize bytes = 0;
+    for (std::size_t run = 0; run < timings.size() + 3u; ++run) {
+        const auto start = std::chrono::steady_clock::now();
+        const Texture texture(context, detiler, resource, {}, snapshot);
+        recorder.Submit();
+        recorder.Sync();
+        if (run >= 3u) timings[run - 3u] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        bytes = texture.AllocationBytes();
+    }
+    std::ranges::sort(timings);
+    std::cout << "BC1 2048x2048 upload and wait over " << timings.size() << " runs, median " << timings[timings.size() / 2u]
+              << " ms, min " << timings.front() << " ms, max " << timings.back() << " ms, image allocation " << bytes << " bytes\n";
+}
 
 void expectRed(float got, float want, const char* what) {
     if (std::abs(got - want) > 1.5f / 255.0f) throw std::runtime_error(std::string(what) + ": read " + std::to_string(got) + ", expected " + std::to_string(want));
@@ -17224,7 +17356,7 @@ void pipelineCacheHeaderTests(const Device& device) {
     } removeDirectory{cleanupRoot};
     auto directory = root;
     char version[17];
-    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::SourceVersion()));
     while ((directory / version).native().size() < 220) {
         const auto length = (directory / version).native().size();
         const auto remaining = 245 > length ? 245 - length : 1;
@@ -17320,7 +17452,7 @@ int pipelineCacheFileTests(const Device& device) {
     setLayoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
     setLayoutInfo.pBindings = bindings.data();
     Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &setLayoutInfo, nullptr, &objects.setLayout), "vkCreateDescriptorSetLayout");
-    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 2};
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 4};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts = &objects.setLayout;
@@ -19278,6 +19410,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
             completionCountTests(device, recorder);
+            writtenBackRunTests(device, recorder);
             afterRecordedWorkTests(device, recorder);
             directCompletionLabelTests(recorder);
             labelTests(recorder);
@@ -19619,6 +19752,12 @@ int main(int argc, char** argv) {
         if (argc == 2 && (std::string_view(argv[1]) == "--vertex-target-range-copied" || std::string_view(argv[1]) == "--vertex-target-range-imported")) {
             return vertexTargetRangeTests(device, recorder, std::string_view(argv[1]) == "--vertex-target-range-imported") ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--bc1-decode-only") return bc1DecodeTests(device, recorder, true) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--bc1-native-only") return bc1DecodeTests(device, recorder, false) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-bc1-upload") {
+            benchmarkBc1Upload(device, recorder);
+            return 0;
+        }
 
 #ifdef _WIN32
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-second-mapping-only") {
@@ -19633,6 +19772,7 @@ int main(int argc, char** argv) {
         changedCopyTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
+        writtenBackRunTests(device, recorder);
         afterRecordedWorkTests(device, recorder);
         directCompletionLabelTests(recorder);
         batchStampTests(recorder);

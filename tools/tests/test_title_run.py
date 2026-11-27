@@ -1049,10 +1049,25 @@ class PreparationTests(unittest.TestCase):
             (source / name).parent.mkdir(parents=True, exist_ok=True)
             (source / name).write_bytes(elf if name.endswith((".bin", ".prx")) else b"text")
         expected = ["eboot.elf", "prx/akcompressor.prx", "sce_module/libc.prx", "sce_modules/libfoo.prx"]
-        for index, entry in enumerate(({}, {"relink": ["--module-dir", "prx"]})):
+        entries = ({}, {"relink": ["--module-dir", "prx"]}, {"relink": ["--rpath", "--skip-sce-module"]})
+        for index, entry in enumerate(entries):
             target = self.root / f"input{index}"
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
+    def test_skip_sce_module_stages_only_the_main_executable(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        (source / "eboot.bin").write_bytes(elf)
+        (source / "sce_module").mkdir()
+        (source / "sce_module/libc.prx").write_bytes(elf)
+        staged = self.root / "input"
+        entry = {"relink": ["--skip-sce-module"]}
+
+        title_run.stage_inputs(source, entry, staged)
+
+        self.assertEqual((staged / "eboot.elf").read_bytes(), elf)
+        self.assertEqual(list(staged.iterdir()), [staged / "eboot.elf"])
 
     def test_plural_module_dir_is_staged_without_singular_fallback(self):
         package_root = package(self.root / "pkg", "PPSA00001")

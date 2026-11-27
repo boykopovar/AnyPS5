@@ -1119,10 +1119,6 @@ int APS5_VABI _ZN3JSC4Yarr25unicodeMatchPropertyValueEN3WTF6StringES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC4Yarr7replaceERN3WTF6StringERKNS0_17RegularExpressionERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC4Yarr9interpretEPNS0_15BytecodePatternERKN3WTF6StringEjPj() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1160,10 +1156,6 @@ int APS5_VABI _ZN3JSC6JSCell16getConstructDataEPS0_() {
 }
 
 int APS5_VABI _ZN3JSC6JSCell17customHasInstanceEPNS_8JSObjectEPNS_14JSGlobalObjectENS_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC6JSCell7destroyEPS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1464,10 +1456,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 }
 
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
