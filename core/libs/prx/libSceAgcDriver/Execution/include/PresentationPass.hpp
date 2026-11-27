@@ -31,7 +31,7 @@ public:
     void BindTexels(std::size_t slot, VkCommandBuffer commands, std::span<const std::byte> texels, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits);
     void RecordPresent(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
     void RecordStage(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
-    void RecordOverlay(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
+    void RecordOverlay(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, bool capture);
     void RecordDump(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride, VkBuffer destination);
     void RecordDumpImage(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride);
     void RecordDumpReadback(VkCommandBuffer commands, std::size_t slot, VkBuffer destination);
