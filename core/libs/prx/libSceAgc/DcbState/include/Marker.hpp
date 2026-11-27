@@ -9,6 +9,7 @@ namespace Agc::Marker {
 std::uint32_t* Push(CommandBuffer* buf, const char* str, const char* function);
 std::uint32_t* PushSpan(CommandBuffer* buf, const char* str, std::uint32_t length, const char* function);
 std::uint32_t* Pop(CommandBuffer* buf, const char* function);
+std::uint32_t* PopTag(CommandBuffer* buf, std::uint32_t tagFlags, const char* function);
 
 }
 

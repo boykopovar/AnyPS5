@@ -161,15 +161,9 @@ enum class CodecType { Generic, Vp8, Vp9, Av1, H264, H265 };
 
 enum class H264Profile { ConstrainedBaseline, Baseline, Main, ConstrainedHigh, High, PredictiveHigh444 };
 
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
-
 void CopyInChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!source)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }

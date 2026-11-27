@@ -187,7 +187,6 @@ int main(int argc, char** argv) {
         DeadCodeEliminator deadCodeEliminator;
 
         constantFolder.Fold(program);
-        ResolveControlFlowIdentities(program);
         deadCodeEliminator.RemoveIdentities(program);
         deadCodeEliminator.Eliminate(program);
         std::cout << "Fold/DCE pass 1 OK\n";
@@ -199,7 +198,6 @@ int main(int argc, char** argv) {
 
         if (readLaneStats.rewrittenReads != 0u) {
             constantFolder.Fold(program);
-            ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
             deadCodeEliminator.Eliminate(program);
         }

@@ -414,12 +414,16 @@ bool profiling() {
 
 thread_local bool replayingHere = false;
 
-std::uint64_t configured(const char* name, std::uint64_t fallback) {
+std::uint64_t configured(const char* name, std::uint64_t fallback, std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max()) {
     const char* text = std::getenv(name);
     if (text == nullptr || *text == '\0') return fallback;
     char* end = nullptr;
+    errno = 0;
     const auto value = std::strtoull(text, &end, 10);
     if (end == text || *end != '\0') throw std::runtime_error(std::string("AGC graphics: ") + name + " must be a decimal integer");
+    if (std::strchr(text, '-') != nullptr || errno == ERANGE || value > maximum) {
+        throw std::runtime_error(std::string("AGC graphics: ") + name + " must be between 0 and " + std::to_string(maximum));
+    }
     return value;
 }
 
@@ -941,7 +945,7 @@ private:
 #endif
         path = directory / "pipelines.journal";
         lockPath = directory / "pipelines.journal.lock";
-        maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
+        maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u, std::numeric_limits<std::uint64_t>::max() >> 20u) << 20u;
         Libc::StartHostThread([this] { run(); }).detach();
     }
 
@@ -1749,7 +1753,7 @@ std::uint64_t PipelineJournalDeviceFingerprint(const VkPhysicalDeviceProperties&
 
 std::shared_ptr<PipelineJournalReplay> StartPipelineJournalReplay(const Context& context, std::uint64_t deviceFingerprint, PipelineJournalHooks hooks) {
     if (!Journal::Instance().Enabled() || !Journal::Instance().Bind(deviceFingerprint)) return nullptr;
-    const auto threads = static_cast<unsigned>(configured("APS5_PIPELINE_JOURNAL_THREADS", std::max(1u, std::thread::hardware_concurrency() / 2u)));
+    const auto threads = static_cast<unsigned>(configured("APS5_PIPELINE_JOURNAL_THREADS", std::max(1u, std::thread::hardware_concurrency() / 2u), std::numeric_limits<unsigned>::max()));
     if (threads == 0) return nullptr;
     return std::make_shared<Replay>(context, std::move(hooks), threads);
 }

@@ -438,7 +438,7 @@ void verifySpecializedModuleRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
-    require(released.Expired(), "specialized module release: the module caches kept the words of a module no result uses");
+    require(released.Expired() != (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr), "specialized module release: the module caches kept the words of a module no result uses, or APS5_KEEP_SPECIALIZED_MIB released a kept module");
     const auto again = Recompile(pixel);
     require(again.specializationId == specializationId, "specialized module release: a module built again from its key got another specialization ID");
     require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
@@ -486,7 +486,7 @@ void verifyLayerSpecializationRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
-    require(released.Expired(), "layer module release: the metadata retained unused SPIR-V words");
+    require(released.Expired() != (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr), "layer module release: the metadata retained unused SPIR-V words, or APS5_KEEP_SPECIALIZED_MIB released a kept module");
     const auto again = Recompile(request);
     require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
     require(again.specializationId == specializationId && std::ranges::equal(again.spirv.Words(), words), "layer module release: rebuilding changed the module identity or words");
@@ -576,6 +576,67 @@ void verifyResultMemoBudget() {
     SetResultMemoBudget(0u);
     for (const auto value : {5u, 6u, 7u}) static_cast<void>(compile(value));
     require(ResultMemoBytes() > budget, "result memo budget: clearing the budget kept bounding the memo");
+}
+
+bool compileResultMemoBuffer(std::uint32_t address, std::uint32_t stride) {
+    using namespace ShaderRecompiler;
+    static const std::vector<std::uint32_t> code{0xe0700000u, 0x80000000u, 0xbf810000u};
+    const std::array<std::uint32_t, 4> buffer{address, stride << 16u, 0x40u, 0x00027facu};
+    auto request = FrontendRequest(code, buffer);
+    request.useCache = true;
+    AgcDriver::ShaderMemory memory({});
+    const auto capture = memory.Capture(request);
+    const auto regions = memory.Regions();
+    request.context.memory = regions;
+    bool hit = false;
+    static_cast<void>(Recompile(request, *capture, &hit));
+    return hit;
+}
+
+void verifyResultMemoWays() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 17> colliding{
+        38u, 164u, 181u, 241u, 283u, 335u, 376u, 385u, 438u, 461u, 498u, 539u, 588u, 710u, 792u, 836u, 914u
+    };
+    for (std::size_t i = 0; i < 16u; ++i) {
+        require(!compileResultMemoPixel(colliding[i]), "result memo ways: a distinct snapshot unexpectedly hit the memo");
+    }
+    for (std::size_t i = 0; i < 16u; ++i) {
+        require(compileResultMemoPixel(colliding[i]), "result memo ways: one of 16 results sharing a set was evicted");
+    }
+    require(!compileResultMemoPixel(colliding[16]), "result memo ways: an unseen 17th snapshot hit the memo");
+    for (std::size_t i = 1; i < 17u; ++i) {
+        require(compileResultMemoPixel(colliding[i]), "result memo ways: inserting a 17th result evicted a newer entry than the LRU one");
+    }
+    require(!compileResultMemoPixel(colliding[0]), "result memo ways: the 17th result in one set did not evict the least recently used entry");
+}
+
+void verifyResultMemoMaskedWays() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 17> colliding{
+        21u, 96u, 134u, 184u, 405u, 411u, 499u, 568u, 590u, 617u, 656u, 678u, 796u, 883u, 884u, 949u, 971u
+    };
+    const auto expectPatched = [&](std::uint32_t address, std::uint32_t stride, bool expectedPatch, const char* message) {
+        const auto before = ResultMemoBytes();
+        require(!compileResultMemoBuffer(address, stride), "result memo masked ways: a new buffer address unexpectedly hit the full memo");
+        const bool patched = ResultMemoBytes() == before;
+        require(patched == expectedPatch, message);
+    };
+    for (std::size_t i = 0; i < 16u; ++i) {
+        const auto before = ResultMemoBytes();
+        require(!compileResultMemoBuffer(0x10000000u, colliding[i]), "result memo masked ways: an unseen masked snapshot hit the memo");
+        require(ResultMemoBytes() > before, "result memo masked ways: a missed masked snapshot inserted no entry");
+    }
+    for (std::size_t i = 0; i < 16u; ++i) {
+        expectPatched(0x10000100u, colliding[i], true, "result memo masked ways: one of 16 masked donors sharing a set was evicted");
+    }
+    const auto before17 = ResultMemoBytes();
+    require(!compileResultMemoBuffer(0x10000000u, colliding[16]), "result memo masked ways: an unseen 17th masked snapshot hit the memo");
+    require(ResultMemoBytes() > before17, "result memo masked ways: the 17th masked snapshot inserted no entry");
+    for (std::size_t i = 1; i < 17u; ++i) {
+        expectPatched(0x10000200u, colliding[i], true, "result memo masked ways: inserting a 17th masked donor evicted a newer entry than the LRU one");
+    }
+    expectPatched(0x10000200u, colliding[0], false, "result memo masked ways: the 17th masked donor in one set did not evict the least recently used entry");
 }
 
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
@@ -1417,6 +1478,14 @@ void verifyMayDecideSharedConditions() {
     require(Detail::Evaluator::MayDecide(plan, decided), "MayDecide did not decide 64 levels of shared conditions over a uniform conjunct");
     std::unordered_map<const IrValue*, bool> memo;
     require(!Detail::Evaluator::MayDecide(plan, undecided, memo) && Detail::Evaluator::MayDecide(plan, decided, memo), "MayDecide answered differently through a shared memo");
+    const auto uniformConjunct = [&] { return &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), &make(IrOpcode::IEqual32, IrType::Bool, {&input, &input})}); };
+    auto& copies = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), uniformConjunct()});
+    auto& lanes = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), varying()})});
+    auto& looped = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct()});
+    looped.AddArgument(&looped);
+    require(Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&copies})), "MayDecide did not decide a branch on a phi of two copies of a condition with a uniform conjunct");
+    require(!Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&lanes})), "MayDecide decided a phi of a decidable and an undecidable condition");
+    require(Detail::Evaluator::MayDecide(plan, &looped), "MayDecide did not decide a phi that carries one decidable condition around a loop");
 }
 
 void verifyEvaluatedValues() {
@@ -4123,6 +4192,99 @@ void verifyNestedSnapshotRetry(bool sampler) {
             "nested retry: an invalidation changed the captured keys, pointers, words or codes");
 }
 
+void verifyNestedParentScanBudget() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
+    constexpr std::uint32_t Leaves = 4u;
+    std::array<std::array<std::uint32_t, 8>, Leaves> first{};
+    std::array<std::array<std::uint32_t, 8>, Leaves> second{};
+    first.fill(TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
+    second.fill(TableT(reinterpret_cast<const void*>(0x100001000ull), TableFormat8888UNorm, TableType2D, 2u));
+    const auto firstChild = TableV(first.data(), 32u, Leaves);
+    const auto secondChild = TableV(second.data(), 32u, Leaves);
+    alignas(16) std::array<std::uint32_t, 8> block{};
+    std::copy(firstChild.begin(), firstChild.end(), block.begin());
+    std::copy(secondChild.begin(), secondChild.end(), block.begin() + 4u);
+    std::vector<std::uint64_t> shared(Parents, reinterpret_cast<std::uintptr_t>(block.data()));
+    std::vector<std::uint64_t> other(Parents, reinterpret_cast<std::uintptr_t>(block.data()));
+    std::vector<std::unique_ptr<IrValue>> values;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.resourceTrackingComplete = true;
+    plan.userDataCount = 0u;
+    const auto heap = [&](const std::vector<std::uint64_t>& records) {
+        const auto source = static_cast<std::uint32_t>(plan.descriptorSources.size());
+        plan.descriptorSources.emplace_back();
+        const auto words = TableV(records.data(), 8u, Parents);
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+            value->SetImmediateU32(words[word]);
+            plan.descriptorSources[source].dwords[word] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources[source].dwordCount = 4u;
+        return source;
+    };
+    const auto table = [&](std::uint32_t heapSource, std::uint32_t immediate) {
+        TableColumn parent;
+        parent.heapSource = heapSource;
+        parent.stride = 8u;
+        parent.dwordCount = 4u;
+        parent.indirect = true;
+        parent.buffer = true;
+        parent.indirectImmediate = immediate;
+        plan.descriptorSources.emplace_back().tableColumn = parent;
+        TableColumn nested;
+        nested.heapSource = static_cast<std::uint32_t>(plan.descriptorSources.size() - 1u);
+        nested.stride = 32u;
+        nested.dwordCount = 8u;
+        plan.descriptorSources.emplace_back().tableColumn = nested;
+        ImageResource image;
+        image.source = static_cast<std::uint32_t>(plan.descriptorSources.size() - 1u);
+        image.table = static_cast<std::uint32_t>(plan.info.images.size());
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        plan.materializationSources.push_back(image.source);
+    };
+    const auto sharedHeap = heap(shared);
+    table(sharedHeap, 0u);
+    table(sharedHeap, 16u);
+    table(heap(other), 0u);
+    struct Memory {
+        std::array<std::pair<std::uint64_t, std::size_t>, 5> ranges;
+    } memory{{{{reinterpret_cast<std::uintptr_t>(shared.data()), shared.size() * sizeof(shared[0])},
+               {reinterpret_cast<std::uintptr_t>(other.data()), other.size() * sizeof(other[0])},
+               {reinterpret_cast<std::uintptr_t>(block.data()), sizeof(block)},
+               {reinterpret_cast<std::uintptr_t>(first.data()), sizeof(first)},
+               {reinterpret_cast<std::uintptr_t>(second.data()), sizeof(second)}}}};
+    SrtRuntime runtime{};
+    runtime.userContext = &memory;
+    runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+        for (const auto& [base, size] : static_cast<Memory*>(context)->ranges) {
+            if (address >= base && address - base <= size - sizeof(*value)) {
+                std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                return true;
+            }
+        }
+        return false;
+    };
+    ResourceSnapshot snapshot;
+    ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+    const auto& tables = snapshot.tables.tables;
+    require(tables.size() == 3u && tables[0].keys == Parents, "nested parent scans: the first V# behind the parent records was truncated");
+    require(tables[1].keys == Parents,
+            std::string("nested parent scans: a second V# behind the same parent records was charged for them again (" + std::to_string(tables[1].keys) + " of " + std::to_string(Parents) + " keys)").c_str());
+    require(tables[1].pointers.size() == Parents && tables[1].pointers.at(Parents - 1u) == reinterpret_cast<std::uintptr_t>(block.data()) && (tables[1].codes.at(Parents - 1u) & ImageTableAbi::PoisonFlag) == 0u,
+            "nested parent scans: the last record behind the second V# was not captured");
+    require(snapshot.tables.nested.size() == 3u && snapshot.tables.nested.at(tables[0].codes.at(0)).base != snapshot.tables.nested.at(tables[1].codes.at(0)).base,
+            "nested parent scans: the two V#s behind one pointer did not keep their own child tables");
+    require(tables[2].keys == ImageTableAbi::MaxParentKeys - Parents,
+            std::string("nested parent scans: parent records of another heap were not charged to the shared budget (" + std::to_string(tables[2].keys) + " keys)").c_str());
+}
+
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -6160,6 +6322,36 @@ void verifyImageTableRegistration() {
     const auto colorRegions = colorMemory.Regions();
     colorRequest.context.memory = colorRegions;
     expectFailure([&] { static_cast<void>(Recompile(colorRequest, *colorCapture)); }, "comparison sampling of a color texture through a sampler table is not implemented", "image table registration: a color compare through a sampler table was accepted");
+    guest.heap[1] = guest.heap[0];
+    auto samplerCode = colorCompareCode;
+    samplerCode[9] = 0x20000020u;
+    samplerCode[10] = 0xf09c0f08u;
+    samplerCode.insert(samplerCode.begin() + 8, {0x8710ff10u, 0x30u});
+    const auto sampler = CompileTable(TableRequest(samplerCode, userData));
+    const auto& samplerSnapshot = sampler.capture->snapshot.tables.tables.at(0);
+    const auto samplerCodes = TableCodes(TableMap(*sampler.result), 0);
+    for (const std::uint32_t addend : {16u, 32u}) {
+        auto offsetCode = samplerCode;
+        offsetCode.insert(offsetCode.begin() + 10, {0x8110ff10u, addend});
+        const auto load = std::find(offsetCode.begin(), offsetCode.end(), 0xf4280202u);
+        require(load != offsetCode.end(), "sampler table masked addend: the descriptor load is missing");
+        load[1] = 0x20000000u | (32u - addend);
+        const auto offset = CompileTable(TableRequest(offsetCode, userData));
+        const auto& samplerInfo = offset.capture->plan->info.samplers.at(0);
+        const auto& column = *offset.capture->plan->descriptorSources.at(samplerInfo.source).tableColumn;
+        require(column.sampler && !column.address && column.stride == 16u && column.addend == addend && column.offset == 32u - addend && column.dwordCount == 4u, "sampler table masked addend: the column is wrong");
+        const auto& snapshot = offset.capture->snapshot.tables.tables.at(0);
+        require(snapshot.codes == samplerSnapshot.codes && snapshot.words.size() == samplerSnapshot.words.size(), "sampler table masked addend: the snapshot selected other records");
+        for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(snapshot.words[i].dwords == samplerSnapshot.words[i].dwords, "sampler table masked addend: the sampler words changed");
+        require(TableCodes(TableMap(*offset.result), 0) == samplerCodes, "sampler table masked addend: the map codes changed");
+    }
+    auto wrappedCode = samplerCode;
+    wrappedCode.insert(wrappedCode.begin() + 10, {0x8110ff10u, 0xfffffff0u});
+    const auto wrapped = CompileTable(TableRequest(wrappedCode, userData));
+    const auto& wrappedMap = TableMap(*wrapped.result);
+    require(wrapped.capture->snapshot.tables.tables.at(0).keys == 0u && TableCodes(wrappedMap, 0).empty(), "sampler table masked addend: an out-of-bounds start captured descriptors");
+    const auto outsideSampler = wrappedMap.at(Abi::TableHeader(0) + Abi::TableOutsideCode);
+    require(wrappedMap.at(Abi::TableHeader(0) + Abi::TableFault) == 0u && outsideSampler != Abi::NullCode && wrappedMap.at(outsideSampler + Abi::SamplerRecordFlags) == 0u, "sampler table masked addend: the out-of-bounds zero sampler is wrong");
 }
 
 bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, const void* pointer, std::size_t bytes) {
@@ -6304,6 +6496,27 @@ void verifyPointerImageTable() {
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, masked.target.vulkanVersion, masked.target.spirvVersion));
 #endif
+    for (const std::uint32_t addend : {32u, 64u}) {
+        auto offsetCode = maskedCode;
+        offsetCode.erase(offsetCode.begin() + 10, offsetCode.begin() + 13);
+        offsetCode.insert(offsetCode.begin() + 10, {0x8f128511u, 0x8712ff12u, 0x1fe0u, 0x8112ff12u, addend});
+        const auto load = std::find(offsetCode.begin(), offsetCode.end(), 0xf40c0900u);
+        require(load != offsetCode.end(), "pointer image table masked addend: the descriptor load is missing");
+        load[1] = 0x24000000u | (Palette - addend);
+        const auto offsetRequest = request(offsetCode, 0x36000u + addend);
+        const auto offsetPlan = GetResourcePlan(offsetRequest);
+        require(offsetPlan->info.images.size() == 1u && offsetPlan->info.images[0].table == 0u, "pointer image table masked addend: the T# was not planned as a table");
+        const auto& offsetColumn = *offsetPlan->descriptorSources.at(offsetPlan->info.images[0].source).tableColumn;
+        require(offsetColumn.address && offsetColumn.stride == 32u && offsetColumn.addend == addend && offsetColumn.offset == Palette - addend && offsetColumn.dwordCount == 8u && offsetColumn.unkeyed && offsetColumn.keyDomains.empty(), "pointer image table masked addend: the column is wrong");
+        const auto offsetCompiled = CompileTable(offsetRequest);
+        const auto& offsetSnapshot = offsetCompiled.capture->snapshot.tables.tables.at(0);
+        require(offsetSnapshot.codes.size() >= snapshot.codes.size() && std::equal(snapshot.codes.begin(), snapshot.codes.end(), offsetSnapshot.codes.begin()), "pointer image table masked addend: the snapshot selected other records");
+        for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(offsetSnapshot.words.at(i).dwords == snapshot.words[i].dwords, "pointer image table masked addend: the descriptor words changed");
+        require(TableCovered(offsetCompiled.regions, root + Palette / 4u, Entries * 32u), "pointer image table masked addend: the descriptor bytes were not captured");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv, offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
+#endif
+    }
 
     const std::vector<std::uint32_t> pointerCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4040500u, 0xfa000030u,
         0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c090au, 0x241fff00u, 0xf09c0f08u, 0x01090000u,
@@ -10270,6 +10483,8 @@ void verifyInt64AtomicCapabilities() {
         0u, 0u, 0u, 0u};
     const std::vector<std::uint32_t> bufferAtomic{0xe1705000u, 0x80012803u, 0xbf810000u};
     const std::vector<std::uint32_t> imageAtomic{0xf03c0308u, 0x00020a08u, 0xbf810000u};
+    const std::vector<std::uint32_t> imageAtomicInc{0xf06c2308u, 0x00020a08u, 0xbf810000u};
+    const std::vector<std::uint32_t> imageAtomicDec{0xf0702308u, 0x00020a08u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOr{0xe1685000u, 0x80010003u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferAnd{0xe1645000u, 0x80010003u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80010003u, 0xbf810000u};
@@ -10364,6 +10579,24 @@ void verifyInt64AtomicCapabilities() {
     const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
     require(declares(native.spirv, spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
     require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
+    const std::array<std::pair<const std::vector<std::uint32_t>*, const char*>, 2> updates{{{&imageAtomicInc, "image_atomic_inc"}, {&imageAtomicDec, "image_atomic_dec"}}};
+    for (const auto& [code, name] : updates) {
+        const auto words = compile(*code, spv::CapabilityInt64ImageEXT).spirv;
+        std::set<std::uint32_t> texelPointers;
+        std::size_t exchanges = 0;
+        std::size_t loads = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "64-bit atomics: truncated SPIR-V instruction");
+            const auto op = words[cursor] & 0xffffu;
+            if (op == spv::OpImageTexelPointer) texelPointers.insert(words[cursor + 2]);
+            if (op == spv::OpAtomicCompareExchange && texelPointers.contains(words[cursor + 3])) ++exchanges;
+            if (op == spv::OpAtomicLoad && texelPointers.contains(words[cursor + 3])) ++loads;
+            cursor += count;
+        }
+        require(exchanges != 0u, (std::string("64-bit atomics: a 64-bit ") + name + " on a 32_32 image has no compare-exchange on its texel").c_str());
+        require(loads == 0u, (std::string("64-bit atomics: a 64-bit ") + name + " on a 32_32 image reads its starting value with OpAtomicLoad from the texel pointer").c_str());
+    }
 }
 
 void verifySpecializedBufferAtomicBindings(bool finalAbiOnly = false) {
@@ -12235,15 +12468,27 @@ void verifyFmaskImageMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].numericClass == IrTextureNumericClass::Uint && modes[selected].packedFormat == IrBufferFormat::Invalid && !modes[selected].constantSwizzle, "FMASK did not select a bound integer image mode");
-    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 163u, 165u}) {
+    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 162u, 163u, 164u, 165u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         const auto expanded = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
-        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format of up to 8 samples did not select the FMASK expansion mode");
+        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format did not select the FMASK expansion mode");
     }
     require(std::ranges::count_if(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) == 1, "FMASK expansion needs exactly one runtime image mode");
     descriptor.dwords[1] = 159u << 20u;
     descriptor.dwords[6] = (1u << 21u) | (1u << 24u);
     require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].numericClass == IrTextureNumericClass::Uint, "a two-fragment CMASK FMASK did not select a bound integer image mode");
+    descriptor.dwords[6] = 0u;
+    for (const auto format : {161u, 162u, 164u, 166u, 167u, 168u}) {
+        descriptor.dwords[1] = format << 20u;
+        descriptor.dwords[3] = 0x91800005u;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
+    }
+    descriptor.dwords[3] = (descriptor.dwords[3] & ~0xfffu) | 0xfacu;
+    for (const auto format : {162u, 164u, 167u, 168u}) {
+        descriptor.dwords[1] = format << 20u;
+        const auto wide = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+        require(modes[wide].conversionFormat == FmaskExpansion && modes[wide].dimension == RdnaImageDimension::Dim2D, "a 16-sample FMASK identity view did not select the FMASK expansion mode");
+    }
     descriptor.dwords[1] = 166u << 20u;
     descriptor.dwords[6] = 1u << 21u;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without readable metadata");
@@ -12809,6 +13054,32 @@ void verifyPixelQuadPermReads() {
     }
     const auto shifted = compile(rowShift, true);
     require(declares(shifted, spv::OpGroupNonUniformShuffle) && !declares(shifted, spv::OpGroupNonUniformQuadBroadcast), "a pixel row shift read went through quad operations");
+    const auto broadcastLanes = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::vector<std::uint32_t> indices;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad perm: truncated SPIR-V instruction");
+            const auto opcode = words[cursor] & 0xffffu;
+            if (opcode == static_cast<std::uint32_t>(spv::OpConstant) && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (opcode == static_cast<std::uint32_t>(spv::OpGroupNonUniformQuadBroadcast)) indices.push_back(words[cursor + 5]);
+            cursor += count;
+        }
+        std::vector<std::uint32_t> lanes;
+        for (const auto index : indices) {
+            const auto constant = constants.find(index);
+            require(constant != constants.end(), "quad perm: a broadcast lane is not a 32-bit constant");
+            lanes.push_back(constant->second);
+        }
+        return lanes;
+    };
+    constexpr std::array<std::uint32_t, 6> uniformQuadPerm{0xbefe0ac1u, 0x7e0202fau, 0xff005500u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    const auto swapLanes = broadcastLanes(compile(quadPerm, true));
+    require(!swapLanes.empty() && swapLanes.size() % 4u == 0u, "a quad_perm that reads different lanes did not broadcast every lane of the quad");
+    for (std::size_t index = 0; index < swapLanes.size(); ++index) require(swapLanes[index] == index % 4u, "a quad_perm that reads different lanes did not broadcast every lane of the quad in order");
+    const auto uniformLanes = broadcastLanes(compile(uniformQuadPerm, true));
+    require(uniformLanes.size() * 4u == swapLanes.size() && std::ranges::all_of(uniformLanes, [](std::uint32_t lane) { return lane == 1u; }), "a quad_perm whose four lanes read lane 1 did not read it with one broadcast per read");
 }
 
 void verifyCubeDepthCompareMode() {
@@ -13391,6 +13662,11 @@ int main(int argc, char** argv) {
             std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--specialized-module-release") {
+            verifySpecializedModuleRelease();
+            std::cout << "A specialized module is released with its last result, or kept and served again, as APS5_KEEP_SPECIALIZED_MIB says\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
             verifySpecializedBufferAtomicBindings(true);
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
@@ -13439,6 +13715,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
             verifyResultMemoBudgetMasked();
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-ways") {
+            verifyResultMemoWays();
+            std::cout << "Each result memo set keeps 16 results and evicts the least recently used entry\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-ways-masked") {
+            verifyResultMemoMaskedWays();
+            std::cout << "Each masked result memo set keeps 16 donors and evicts the least recently used entry\n";
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {
@@ -13505,6 +13791,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--nested-sampler-snapshot-retry") {
             verifyNestedSnapshotRetry(true);
             std::cout << "Nested sampler snapshot retry checks the descriptor epoch and preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-parent-scan-budget") {
+            verifyNestedParentScanBudget();
+            std::cout << "Nested parent records are charged once per scan, other heaps still share the budget\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {

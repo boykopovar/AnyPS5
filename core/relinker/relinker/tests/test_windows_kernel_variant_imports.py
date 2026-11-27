@@ -1,3 +1,4 @@
+import ctypes
 import os
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from test_windows_import_modules import provider
 
 def main():
     assert os.name == 'nt', 'This test executes Windows startup stubs'
+    ctypes.windll.kernel32.SetErrorMode(0x8003)
     relinker = Path(sys.argv[1]).resolve()
     variant = sys.argv[2]
     assert variant in ('libkernel_sys.prx', 'libkernel_web.prx')

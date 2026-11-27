@@ -11,6 +11,15 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -75,6 +84,47 @@ void boundaries() {
     check(registrations == 1 && registered != nullptr && registered->user_data->srt_size_dw == 9 && registered->shader_size != 0, "fill shader was not registered exactly once");
 }
 
+std::byte* ReadableThenUnmapped(std::size_t& pageSize) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* pages = static_cast<std::byte*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE, PAGE_NOACCESS));
+    check(pages != nullptr && VirtualAlloc(pages, pageSize, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot map the guard pages");
+#else
+    pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(mapping != MAP_FAILED, "cannot map the guard pages");
+    auto* pages = static_cast<std::byte*>(mapping);
+    check(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0, "cannot protect the guard page");
+#endif
+    return pages;
+}
+
+void unreadablePattern() {
+    soc = 0;
+    std::size_t pageSize = 0;
+    std::byte* pages = ReadableThenUnmapped(pageSize);
+    std::memcpy(pages + pageSize - 16, First.data(), 16);
+    const void* straddling = pages + pageSize - 8;
+    for (const void* pattern : {static_cast<const void*>(pages + pageSize), straddling, reinterpret_cast<const void*>(std::uintptr_t{0x10})}) {
+        std::array<std::uint32_t, 256> storage{};
+        CommandBuffer buffer{storage.data(), storage.data() + storage.size(), storage.data(), storage.data() + storage.size(), nullptr, nullptr, 0};
+        bool rejected = false;
+        try {
+            sceAgcCbMemsetExclusive(&buffer, storage.data(), pattern, 16);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        check(rejected, "an unreadable pattern was not rejected");
+    }
+    std::array<std::uint32_t, 256> storage{};
+    CommandBuffer buffer{storage.data(), storage.data() + storage.size(), storage.data(), storage.data() + storage.size(), nullptr, nullptr, 0};
+    const auto address = reinterpret_cast<std::uint64_t>(storage.data());
+    sceAgcCbMemsetExclusive(&buffer, storage.data(), pages + pageSize - 16, 16);
+    inspect({storage.data(), static_cast<std::size_t>(buffer.cursor_up - storage.data())}, address, 16, First, 0x3fcffu);
+}
+
 struct Segments {
     std::deque<std::vector<std::uint32_t>> packets;
     Pattern pattern{};
@@ -126,6 +176,7 @@ int main() {
     try {
         boundaries();
         callbacks();
+        unreadablePattern();
         std::puts("AGC memset command boundary and callback tests passed");
         return 0;
     } catch (const std::exception& error) {

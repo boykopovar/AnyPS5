@@ -55,6 +55,9 @@ int main() {
     Require(!WKPageIsClosed(pageRef));
     Require(WKPageGetEstimatedProgress(pageRef) == 0.0);
     Require(!WKPageBackgroundExtendsBeyondPage(pageRef));
+    Require(!WKPageGetAllowsRemoteInspection(pageRef));
+    Require(WKPageCopyPendingAPIRequestURL(pageRef) == nullptr);
+    Require(WKPageCopyPageConfiguration(pageRef) == nullptr);
     Require(WKPageCopyActiveURL(pageRef) == nullptr);
     Require(WKPageCopyProvisionalURL(pageRef) == nullptr);
     Require(WKPageCopyCommittedURL(pageRef) == nullptr);
@@ -76,6 +79,23 @@ int main() {
     Require(CopiedURLEquals(WKPageCopyActiveURL, pageRef, "https://example.test/active"));
     Require(CopiedURLEquals(WKPageCopyProvisionalURL, pageRef, "https://example.test/provisional"));
     Require(CopiedURLEquals(WKPageCopyCommittedURL, pageRef, "https://example.test/committed"));
+
+    page->pendingAPIRequestURL = NKWebKit::Make<NKWebKit::URL>("https://example.test/pending");
+    Require(CopiedURLEquals(WKPageCopyPendingAPIRequestURL, pageRef, "https://example.test/pending"));
+
+    auto config = NKWebKit::Make<NKWebKit::PageConfiguration>();
+    config->initialCapitalizationEnabled = true;
+    config->cpuLimit = 42.5;
+    page->configuration = config;
+    const void* copiedConfig = WKPageCopyPageConfiguration(pageRef);
+    Require(copiedConfig != nullptr);
+    Require(copiedConfig != config.Get());
+    const auto* copiedImpl = NKWebKit::Cast<NKWebKit::PageConfiguration>(copiedConfig, __func__);
+    Require(copiedImpl->initialCapitalizationEnabled == true);
+    Require(copiedImpl->cpuLimit == 42.5);
+    config->initialCapitalizationEnabled = false;
+    Require(copiedImpl->initialCapitalizationEnabled == true);
+    WKRelease(copiedConfig);
 
     const void* applicationName = WKStringCreateWithUTF8CString("Shell/1.0");
     WKPageSetApplicationNameForUserAgent(pageRef, applicationName);
@@ -110,6 +130,11 @@ int main() {
     WKPageSetBackgroundExtendsBeyondPage(pageRef, false);
     Require(!WKPageBackgroundExtendsBeyondPage(pageRef));
 
+    WKPageSetAllowsRemoteInspection(pageRef, true);
+    Require(WKPageGetAllowsRemoteInspection(pageRef));
+    WKPageSetAllowsRemoteInspection(pageRef, false);
+    Require(!WKPageGetAllowsRemoteInspection(pageRef));
+
     RequireInvalidArgument([] { WKPageIsClosed(nullptr); });
     RequireInvalidArgument([] { WKPageCopyTitle(nullptr); });
     RequireInvalidArgument([] { WKPageCopyActiveURL(nullptr); });
@@ -121,6 +146,10 @@ int main() {
     RequireInvalidArgument([] { WKPageCopyCustomTextEncodingName(nullptr); });
     RequireInvalidArgument([] { WKPageBackgroundExtendsBeyondPage(nullptr); });
     RequireInvalidArgument([] { WKPageSetBackgroundExtendsBeyondPage(nullptr, true); });
+    RequireInvalidArgument([] { WKPageGetAllowsRemoteInspection(nullptr); });
+    RequireInvalidArgument([] { WKPageSetAllowsRemoteInspection(nullptr, true); });
+    RequireInvalidArgument([] { WKPageCopyPendingAPIRequestURL(nullptr); });
+    RequireInvalidArgument([] { WKPageCopyPageConfiguration(nullptr); });
     const void* probe = WKStringCreateWithUTF8CString("x");
     RequireInvalidArgument([probe] { WKPageSetCustomUserAgent(nullptr, probe); });
     WKRelease(probe);
@@ -128,6 +157,10 @@ int main() {
     RequireInvalidArgument([probe] { WKPageSetApplicationNameForUserAgent(nullptr, probe); });
     RequireInvalidArgument([probe] { WKPageSetCustomTextEncodingName(nullptr, probe); });
     RequireInvalidArgument([] { WKPageIsClosed(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get()); });
+    RequireInvalidArgument([] { WKPageGetAllowsRemoteInspection(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get()); });
+    RequireInvalidArgument([] { WKPageSetAllowsRemoteInspection(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get(), true); });
+    RequireInvalidArgument([] { WKPageCopyPendingAPIRequestURL(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get()); });
+    RequireInvalidArgument([] { WKPageCopyPageConfiguration(NKWebKit::Make<NKWebKit::BundleScriptWorld>().Get()); });
 
     return 0;
 }
