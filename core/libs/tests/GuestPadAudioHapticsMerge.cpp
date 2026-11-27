@@ -1,12 +1,15 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "prx/libScePad/include/PadHapticBuffer.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 namespace {
 
@@ -90,6 +93,81 @@ void CheckMergeWithinWindow() {
     Require(Matches(third.audioVibrationSmall, second.audioVibrationSmall, 80, thirdWindow), "third small follows the 80 ms merge window");
 }
 
+void CheckHapticBlockBoundaryFailures() {
+    Require(!PadWaitTakeHapticBlock_nid_postfix(nullptr, 10), "nullptr haptic block returned false");
+
+    std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+    PadSetHapticStreamOpen_nid_postfix(false);
+    Require(!PadHapticStreamOpen_nid_postfix(), "haptic stream closed");
+
+    std::array<float, PadHapticBuffer::BlockFrames> left{};
+    std::array<float, PadHapticBuffer::BlockFrames> right{};
+    left.fill(0.5f);
+    right.fill(-0.25f);
+    PadSubmitHapticFrames_nid_postfix(left.data(), right.data(), 1, PadHapticBuffer::BlockFrames, PadHapticBuffer::Rate);
+    Require(!PadWaitTakeHapticBlock_nid_postfix(block.data(), 50), "closed stream wait returned false");
+
+    PadSetHapticStreamOpen_nid_postfix(true);
+    Require(PadHapticStreamOpen_nid_postfix(), "haptic stream opened for partial block check");
+    PadSubmitHapticFrames_nid_postfix(left.data(), right.data(), 1, PadHapticBuffer::BlockFrames - 1, PadHapticBuffer::Rate);
+    std::thread closer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        PadSetHapticStreamOpen_nid_postfix(false);
+    });
+    const bool took = PadWaitTakeHapticBlock_nid_postfix(block.data(), 5000);
+    closer.join();
+    Require(!took, "31 queued frames returned false when stream closed");
+}
+
+void CheckHapticSingleBlockWakeup() {
+    PadSetHapticStreamOpen_nid_postfix(true);
+    Require(PadHapticStreamOpen_nid_postfix(), "haptic stream opened for single-block wakeup");
+
+    std::array<float, PadHapticBuffer::BlockFrames> left{};
+    std::array<float, PadHapticBuffer::BlockFrames> right{};
+    left.fill(0.5f);
+    right.fill(-0.25f);
+    PadSubmitHapticFrames_nid_postfix(left.data(), right.data(), 1, PadHapticBuffer::BlockFrames, PadHapticBuffer::Rate);
+
+    std::thread closer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        PadSetHapticStreamOpen_nid_postfix(false);
+    });
+
+    std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+    const bool took = PadWaitTakeHapticBlock_nid_postfix(block.data(), 5000);
+    closer.join();
+    Require(took, "waiter woke up immediately with 32 queued frames");
+    for (std::size_t frame = 0; frame < PadHapticBuffer::BlockFrames; ++frame) {
+        Require(block[frame * 2] == 64, "left haptic sample matched 0.5f");
+        Require(block[frame * 2 + 1] == -32, "right haptic sample matched -0.25f");
+    }
+}
+
+void CheckHapticAsyncProducerWakeup() {
+    PadSetHapticStreamOpen_nid_postfix(true);
+    Require(PadHapticStreamOpen_nid_postfix(), "haptic stream opened for async producer wakeup");
+
+    std::thread producer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::array<float, PadHapticBuffer::BlockFrames> left{};
+        std::array<float, PadHapticBuffer::BlockFrames> right{};
+        left.fill(-0.5f);
+        right.fill(0.25f);
+        PadSubmitHapticFrames_nid_postfix(left.data(), right.data(), 1, PadHapticBuffer::BlockFrames, PadHapticBuffer::Rate);
+    });
+
+    std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+    const bool took = PadWaitTakeHapticBlock_nid_postfix(block.data(), 5000);
+    producer.join();
+    PadSetHapticStreamOpen_nid_postfix(false);
+    Require(took, "waiting consumer woke on 32 frames from async producer");
+    for (std::size_t frame = 0; frame < PadHapticBuffer::BlockFrames; ++frame) {
+        Require(block[frame * 2] == -64, "async left haptic sample matched -0.5f");
+        Require(block[frame * 2 + 1] == 32, "async right haptic sample matched 0.25f");
+    }
+}
+
 }
 
 int main() {
@@ -103,6 +181,9 @@ int main() {
     CheckOutOfRangeNoOp();
     CheckZeroZeroNoOp();
     CheckMergeWithinWindow();
+    CheckHapticBlockBoundaryFailures();
+    CheckHapticSingleBlockWakeup();
+    CheckHapticAsyncProducerWakeup();
 
     std::puts("guest pad audio haptics merge tests passed");
     return 0;
