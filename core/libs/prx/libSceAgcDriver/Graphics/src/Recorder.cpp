@@ -2794,7 +2794,7 @@ std::uint32_t Recorder::beginTiming(std::uint64_t key) {
     const auto commands = open->commands;
     const std::uint32_t queryCount = full ? MaxTimedRanges * 2 : 2;
     if (open->queries == VK_NULL_HANDLE) {
-        if (!full && !sparePools.empty()) {
+        if (!sparePools.empty()) {
             open->queries = sparePools.back();
             sparePools.pop_back();
         } else {
@@ -5673,7 +5673,7 @@ void Recorder::removeLabels(Batch& batch) {
 
 void Recorder::release(Batch& batch) noexcept {
     if (batch.queries != VK_NULL_HANDLE) {
-        if (!GpuTimingEnabled() && sparePools.size() < 64) {
+        if (sparePools.size() < 64) {
             try {
                 sparePools.push_back(batch.queries);
                 batch.queries = VK_NULL_HANDLE;
