@@ -31,9 +31,23 @@ using ShaderRecompiler::ShaderStage;
 PFN_vkCmdBindPipeline NativeBind = nullptr;
 std::atomic<std::uint64_t> GraphicsBinds{0u};
 
+PFN_vkCmdDraw NativeDraw = nullptr;
+PFN_vkCmdDrawIndexed NativeDrawIndexed = nullptr;
+std::atomic<std::uint64_t> GraphicsDraws{0u};
+
 VKAPI_ATTR void VKAPI_CALL CountBind(VkCommandBuffer commands, VkPipelineBindPoint point, VkPipeline pipeline) {
     if (point == VK_PIPELINE_BIND_POINT_GRAPHICS) ++GraphicsBinds;
     NativeBind(commands, point, pipeline);
+}
+
+VKAPI_ATTR void VKAPI_CALL CountDraw(VkCommandBuffer commands, std::uint32_t vertices, std::uint32_t instances, std::uint32_t firstVertex, std::uint32_t firstInstance) {
+    ++GraphicsDraws;
+    NativeDraw(commands, vertices, instances, firstVertex, firstInstance);
+}
+
+VKAPI_ATTR void VKAPI_CALL CountDrawIndexed(VkCommandBuffer commands, std::uint32_t indices, std::uint32_t instances, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance) {
+    ++GraphicsDraws;
+    NativeDrawIndexed(commands, indices, instances, firstIndex, vertexOffset, firstInstance);
 }
 
 struct BindTrace {
@@ -43,9 +57,17 @@ struct BindTrace {
         functions = const_cast<AgcDriver::Graphics::DeviceFunctions*>(context.functions);
         Require(functions != nullptr, "native pipeline bind table is unavailable");
         NativeBind = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
+        NativeDraw = reinterpret_cast<PFN_vkCmdDraw>(context.deviceProc(context.device, "vkCmdDraw"));
+        NativeDrawIndexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(context.deviceProc(context.device, "vkCmdDrawIndexed"));
         functions->cmdBindPipeline = CountBind;
+        functions->cmdDraw = CountDraw;
+        functions->cmdDrawIndexed = CountDrawIndexed;
     }
-    ~BindTrace() { functions->cmdBindPipeline = NativeBind; }
+    ~BindTrace() {
+        functions->cmdBindPipeline = NativeBind;
+        functions->cmdDraw = NativeDraw;
+        functions->cmdDrawIndexed = NativeDrawIndexed;
+    }
 };
 
 constexpr std::uint32_t Width = 64;
@@ -94,6 +116,7 @@ ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
 }
 
 bool LastReplayStored = false;
+std::uint64_t LastDraws = 0;
 
 void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u) {
     Pixels.fill(Kept);
@@ -171,8 +194,10 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     AgcDriver::Pm4::DrawParameters draw{0, vertices, 0, instances, 0, false};
     if (alterDraw) alterDraw(draw);
     const auto bindsBefore = GraphicsBinds.load();
+    const auto drawsBefore = GraphicsDraws.load();
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+    LastDraws = GraphicsDraws.load() - drawsBefore;
     if (!pixelResult.stencilReferences.empty()) Require(GraphicsBinds.load() - bindsBefore == 1u, "stencil replay rebound its shader pipeline within an original draw");
 }
 
@@ -251,6 +276,29 @@ int main() {
         Draw(*device, waveBranch, exported, equal(91u));
         Check(all, "a wave branch on a lane predicate sees every lane of the original draw");
         Require(LastReplayStored == storeDevice, "a shader that needs the lane guarantee did not get the replay store");
+        alignas(256) constexpr std::array<std::array<float, 4>, 4> stripVertices{{
+            {-1.0f, -1.0f, 0.5f, 1.0f}, {1.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 0.5f, 1.0f},
+        }};
+        Draw(*device, PlainPixelCode, plain, replace(0u));
+        Draw(*device, alternating, exported, replace(), 4u, 1u, false, [](AgcDriver::Graphics::State& state) { state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; }, {}, stripVertices);
+        Draw(*device, PlainPixelCode, plain, equal(255u));
+        Check(even, "a replayed triangle strip draws both of its triangles");
+        std::array<bool, 4> culled{};
+        const bool dynamicFace = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).graphicsPipelineLibrary;
+        for (std::uint32_t variant = 0; variant < (dynamicFace ? 4u : 0u); ++variant) {
+            Draw(*device, PlainPixelCode, plain, replace(0u));
+            Draw(*device, alternating, exported, replace(), 4u, 1u, false, [variant](AgcDriver::Graphics::State& state) {
+                state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+                state.cullMode = (variant & 1u) != 0u ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+                state.frontFace = (variant & 2u) != 0u ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            }, {}, stripVertices);
+            Draw(*device, PlainPixelCode, plain, equal(255u));
+            std::uint32_t count = 0;
+            for (std::uint32_t y = 0; y < Height; ++y) for (std::uint32_t x = 0; x < Width; ++x) if (Pixels[(y * Width + x) * 4u] == std::byte{255}) ++count;
+            culled[variant] = count == 0u;
+            if (!culled[variant]) Check(even, "a replayed culled triangle strip draws both of its triangles or none");
+        }
+        Require(!dynamicFace || (culled[0] != culled[1] && culled[0] != culled[2] && culled[1] != culled[3]), "culling a replayed triangle strip does not follow the face state");
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, replace(), 6u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
@@ -334,10 +382,16 @@ int main() {
             state.depthCompare = VK_COMPARE_OP_LESS;
         }, {}, midDepth);
         Check(all, "simultaneous depth and stencil exports preserve shader depth replacement");
-        for (const bool restart : {false, true}) {
+        for (const int unsafe : {0, 1, 2}) {
+            if (unsafe == 1 && dynamicFace) continue;
             bool refused = false;
             try {
-                Draw(*device, alternating, exported, replace(), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) { if (restart) state.primitiveRestart = true; else state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; });
+                Draw(*device, alternating, exported, replace(), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) {
+                    if (unsafe == 0) state.primitiveRestart = true;
+                    else state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+                    if (unsafe == 1) state.cullMode = VK_CULL_MODE_BACK_BIT;
+                    if (unsafe == 2) state.stencilBack.passOp = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+                });
             } catch (const std::exception& error) {
                 refused = std::string(error.what()).find("direct triangle lists") != std::string::npos;
             }
@@ -347,6 +401,80 @@ int main() {
         Check(all, "unbounded stencil export");
         Draw(*device, PlainPixelCode, plain, equal(5u));
         Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "unbounded stencil export replaces each column's own value");
+        const auto replayContext = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        const bool bitPasses = replayContext.graphicsPipelineLibrary && replayContext.dynamicColorWriteMask;
+        Draw(*device, PlainPixelCode, plain, replace(0u));
+        const auto plainDraws = LastDraws;
+        Draw(*device, ColumnPixelCode, exported, replace());
+        Require(LastDraws == plainDraws + (bitPasses ? 9u : 255u), "an unbounded replace export recorded " + std::to_string(LastDraws + 1u - plainDraws) + " passes");
+        Draw(*device, ColumnPixelCode, exported, replace(), 3u, 1u, false, [](AgcDriver::Graphics::State& state) {
+            state.blend.colorWriteMask = 0u;
+            state.blends = {state.blend};
+        });
+        Require(LastDraws == plainDraws + (replayContext.graphicsPipelineLibrary ? 9u : 255u), "an unbounded replace export that writes no color recorded " + std::to_string(LastDraws + 1u - plainDraws) + " passes");
+        Check([](std::uint32_t, std::uint32_t) { return false; }, "an unbounded replace export with no color write mask writes no color");
+        Draw(*device, PlainPixelCode, plain, equal(5u));
+        Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "an unbounded replace export that writes no color replaces each column's own value");
+        const auto columnsHold = [&](const std::function<std::uint32_t(std::uint32_t)>& value, std::string_view what) {
+            for (std::uint32_t x = 0; x < Width; ++x) {
+                Draw(*device, PlainPixelCode, plain, equal(value(x)));
+                Check([&](std::uint32_t column, std::uint32_t) { return value(column) == value(x); }, what);
+            }
+        };
+        Draw(*device, PlainPixelCode, plain, replace(0xffu));
+        Draw(*device, ColumnPixelCode, exported, replace());
+        columnsHold([](std::uint32_t x) { return x; }, "an unbounded replace export clears the bits its value does not set");
+        auto highColumns = std::vector<std::uint32_t>(ColumnPixelCode.begin(), ColumnPixelCode.end());
+        highColumns.insert(highColumns.begin() + 1, {(0x1cu << 25u) | (2u << 17u) | (2u << 9u) | 0xffu, 0xc0u});
+        Draw(*device, PlainPixelCode, plain, replace(0x3fu));
+        Draw(*device, highColumns, exported, replace());
+        columnsHold([](std::uint32_t x) { return x | 0xc0u; }, "an unbounded replace export sets the high bits of its value");
+        Draw(*device, PlainPixelCode, plain, replace(0xa5u));
+        Draw(*device, ColumnPixelCode, exported, replace(0u, 0x0fu));
+        columnsHold([](std::uint32_t x) { return 0xa0u | (x & 0x0fu); }, "an unbounded replace export keeps the bits outside the write mask");
+        const auto additive = [](AgcDriver::Graphics::State& state) {
+            state.blend.blendEnable = VK_TRUE;
+            state.blend.srcColorBlendFactor = state.blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            state.blend.srcAlphaBlendFactor = state.blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            state.blend.colorBlendOp = state.blend.alphaBlendOp = VK_BLEND_OP_ADD;
+            state.blends = {state.blend};
+        };
+        alignas(256) constexpr std::array<std::uint32_t, 5> faintPixelCode{0x7e0e02ffu, 0x3d800000u, 0xf800180fu, 0x07070707u, 0xbf810000u};
+        Draw(*device, faintPixelCode, plain, replace(0u), 3u, 1u, false, additive);
+        const auto blendedOnce = Pixels[0];
+        Require(blendedOnce != Kept && blendedOnce != std::byte{255}, "the additive blend reference did not blend");
+        auto faintColumns = std::vector<std::uint32_t>(ColumnPixelCode.begin(), ColumnPixelCode.end());
+        const auto white = std::find(faintColumns.begin(), faintColumns.end(), 0x7e0e02f2u);
+        *white = 0x7e0e02ffu;
+        faintColumns.insert(white + 1, 0x3d800000u);
+        Draw(*device, faintColumns, exported, replace(), 3u, 1u, false, additive);
+        for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) Require(Pixels[pixel * 4u] == blendedOnce, "an unbounded replace export blends its color once: pixel " + std::to_string(pixel) + " is " + std::to_string(static_cast<unsigned>(Pixels[pixel * 4u])) + ", expected " + std::to_string(static_cast<unsigned>(blendedOnce)));
+        auto depthColumns = std::vector<std::uint32_t>(ColumnPixelCode.begin(), ColumnPixelCode.end());
+        const auto columnZ = std::find(depthColumns.begin(), depthColumns.end(), 0xf8000082u);
+        const auto columnZOffset = static_cast<std::size_t>(columnZ - depthColumns.begin());
+        depthColumns.insert(columnZ, {0x7e0c02ffu, 0x3f400000u});
+        depthColumns[columnZOffset + 2u] = 0xf8000083u;
+        depthColumns[columnZOffset + 3u] = (2u << 8u) | 6u;
+        auto farColumns = Vertices;
+        for (auto& vertex : farColumns) vertex[2] = 1.0f;
+        const auto depthLess = [](AgcDriver::Graphics::State& state) {
+            state.depthTest = true;
+            state.depthWrite = true;
+            state.depthCompare = VK_COMPARE_OP_LESS;
+        };
+        Draw(*device, PlainPixelCode, plain, replace(0u), 3u, 1u, false, [](AgcDriver::Graphics::State& state) {
+            state.depthTest = true;
+            state.depthWrite = true;
+            state.depthCompare = VK_COMPARE_OP_ALWAYS;
+        }, {}, farColumns);
+        Draw(*device, depthColumns, 0x53u, replace(), 3u, 1u, false, depthLess);
+        Check(all, "an unbounded replace export with depth draws where its depth passes");
+        columnsHold([](std::uint32_t x) { return x; }, "an unbounded replace export tests each bit against the depth from before the draw");
+        Draw(*device, PlainPixelCode, plain, replace(0x77u));
+        Draw(*device, depthColumns, 0x53u, replace(), 3u, 1u, false, depthLess);
+        Check([](std::uint32_t, std::uint32_t) { return false; }, "an unbounded replace export behind the depth draws no color");
+        Draw(*device, PlainPixelCode, plain, equal(0x77u));
+        Check(all, "an unbounded replace export behind the depth keeps the stencil");
         bool earlyRefused = false;
         try { Draw(*device, alternating, 0x1012u, replace()); } catch (const std::exception& error) { earlyRefused = std::string(error.what()).find("late tests") != std::string::npos; }
         Require(earlyRefused, "early stencil testing was not refused");
@@ -354,7 +482,7 @@ int main() {
         try { Draw(*device, alternating, 0x10052u, replace()); } catch (const std::exception& error) { orderedRefused = std::string(error.what()).find("late tests") != std::string::npos; }
         Require(orderedRefused, "ordered fragment execution was not refused");
         bool indirectRefused = false;
-        try { Draw(*device, alternating, exported, replace(), 3u, 1u, false, {}, [](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect.emplace(); }); } catch (const std::exception& error) { indirectRefused = std::string(error.what()).find("direct triangle lists") != std::string::npos; }
+        try { Draw(*device, alternating, exported, replace(), 3u, 1u, false, {}, [](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{}; }); } catch (const std::exception& error) { indirectRefused = std::string(error.what()).find("direct triangle lists") != std::string::npos; }
         Require(indirectRefused, "an indirect replay draw was not refused");
         auto killed = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         killed.insert(std::find(killed.begin(), killed.end(), 0xf800180fu), 0x7c000000u | (0xd2u << 17u) | (3u << 9u) | 0x80u);

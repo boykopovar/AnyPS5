@@ -15,6 +15,7 @@
 #include <functional>
 #include <limits>
 #include <new>
+#include <stdexcept>
 #include <string>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
@@ -25,6 +26,8 @@ using GuestWhat = const char* (APS5_VABI *)(const void*);
 extern "C" {
 extern const TypeRecord _ZTISt12out_of_range_nid_postfix;
 extern const TypeRecord _ZTISt12length_error_nid_postfix;
+extern const TypeRecord _ZTISt12system_error_nid_postfix;
+extern const TypeRecord _ZTINSt8ios_base7failureE_nid_postfix;
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 
@@ -36,10 +39,13 @@ int SceV2Selector = 0;
 namespace {
 
 char caught[128];
+std::size_t inspectBytes = 0;
+LibcException::SystemErrorObject inspectedSystem{};
 long live = 0;
 bool failNextAllocation = false;
 int failedAllocations = 0;
 std::size_t lastAllocationSize = 0;
+std::size_t allocationCount = 0;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     lastAllocationSize = size;
@@ -52,6 +58,7 @@ void* APS5_VABI TestAllocate(std::size_t size) {
         throw std::bad_alloc();
     }
     ++live;
+    ++allocationCount;
     return std::malloc(size);
 }
 void APS5_VABI TestFree(void* pointer) {
@@ -86,6 +93,7 @@ extern "C" void APS5_VABI SceV2Inspect(void* object) {
     const auto* vtable = *static_cast<const void* const* const*>(object);
     const auto what = reinterpret_cast<GuestWhat>(const_cast<void*>(vtable[2]));
     std::snprintf(caught, sizeof(caught), "%s|%s", static_cast<const TypeRecord*>(vtable[-1])->name, what(object));
+    std::memcpy(&inspectedSystem, object, inspectBytes);
 }
 
 namespace {
@@ -133,13 +141,17 @@ void APS5_VABI Invoke(const void* call) {
     (*static_cast<const std::function<void()>*>(call))();
 }
 
-void RequireThrow(const std::function<void()>& call, int selector, const char* expected, const char* message) {
-    SceV2CatchType = &_ZTISt12out_of_range_nid_postfix;
-    SceV2OtherType = &_ZTISt12length_error_nid_postfix;
+void RequireThrowAs(const std::function<void()>& call, const void* catchType, const void* otherType, int selector, const char* expected, const char* message) {
+    SceV2CatchType = catchType;
+    SceV2OtherType = otherType;
     SceV2Selector = 0;
     caught[0] = 0;
     SceV2Catch(Invoke, &call);
     Require(SceV2Selector == selector && std::strcmp(caught, expected) == 0, message);
+}
+
+void RequireThrow(const std::function<void()>& call, int selector, const char* expected, const char* message) {
+    RequireThrowAs(call, &_ZTISt12out_of_range_nid_postfix, &_ZTISt12length_error_nid_postfix, selector, expected, message);
 }
 
 void RequireOutOfRange(const std::function<void()>& call, const char* message) {
@@ -154,6 +166,33 @@ void CheckReporters() {
     String string = Empty();
     RequireOutOfRange([&] { _ZNKSs5_XranEv_nid_postfix(&string); }, "_Xran throws out_of_range");
     RequireLengthError([&] { _ZNKSs5_XlenEv_nid_postfix(&string); }, "_Xlen throws length_error");
+    RequireOutOfRange([&] { _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix(&string); }, "wide _Xran throws out_of_range");
+    RequireLengthError([&] { _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(&string); }, "wide _Xlen throws length_error");
+}
+
+void CheckIosFailureDoraise() {
+    LibcException::SystemErrorObject failure{};
+    const LibcException::ErrorCode code{3, 5, _ZSt16generic_categoryv_nid_postfix()};
+    _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&failure, code, "stream");
+    const std::string expected = std::string("NSt8ios_base7failureE|") + _ZNKSt12system_error4whatEv_nid_postfix(&failure.base);
+    const auto raise = [&] { _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(&failure); };
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
+    RequireThrowAs(raise, &_ZTINSt8ios_base7failureE_nid_postfix, &_ZTISt12out_of_range_nid_postfix, 2, expected.c_str(),
+        "ios_base::failure::_Doraise throws ios_base::failure with the same message");
+    Require(inspectedSystem.base.message == failure.base.message, "ios_base::failure::_Doraise shares the message");
+    Require(inspectedSystem.code.reserved == 3 && inspectedSystem.code.value == 5 && inspectedSystem.code.category == code.category,
+        "ios_base::failure::_Doraise copies the error code");
+    RequireThrowAs(raise, &_ZTISt12system_error_nid_postfix, &_ZTISt12out_of_range_nid_postfix, 2, expected.c_str(),
+        "ios_base::failure::_Doraise is caught as system_error");
+    inspectBytes = 0;
+    bool rejected = false;
+    try {
+        _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "ios_base::failure::_Doraise rejects a null object");
+    _ZNSt12system_errorD2Ev_nid_postfix(&failure.base);
 }
 
 void CheckAssignCharacters() {
@@ -427,6 +466,67 @@ void CheckNarrowInsertGrowth() {
     GuestLocale::ReleaseStringStorage(string);
 }
 
+void CheckNarrowModifierGrowth() {
+    const std::string original(63, 'a');
+    const std::string longer(64, 'b');
+    String append = Make(original.c_str());
+    _ZNSs6appendEmc_nid_postfix(&append, 1, 'x');
+    Require(Holds(append, (original + "x").c_str()) && append.capacity == 94,
+        "narrow append uses the unrounded geometric capacity");
+    GuestLocale::ReleaseStringStorage(append);
+
+    String self = Make(original.c_str());
+    _ZNSs6appendERKSsmm_nid_postfix(&self, &self, 0, 1);
+    Require(Holds(self, (original + "a").c_str()) && self.capacity == 94,
+        "narrow self append retains its source across geometric growth");
+    GuestLocale::ReleaseStringStorage(self);
+
+    String pointer = Make(original.c_str());
+    _ZNSs6assignEPKcm_nid_postfix(&pointer, longer.data(), longer.size());
+    Require(Holds(pointer, longer.c_str()) && pointer.capacity == 94,
+        "narrow pointer assignment uses the geometric capacity");
+    GuestLocale::ReleaseStringStorage(pointer);
+
+    String fill = Make(original.c_str());
+    _ZNSs6assignEmc_nid_postfix(&fill, 64, 'b');
+    Require(Holds(fill, longer.c_str()) && fill.capacity == 94,
+        "narrow fill assignment uses the geometric capacity");
+    GuestLocale::ReleaseStringStorage(fill);
+
+    String source = Make(longer.c_str());
+    String substring = Make(original.c_str());
+    _ZNSs6assignERKSsmm_nid_postfix(&substring, &source, 0, NoPosition);
+    Require(Holds(substring, longer.c_str()) && substring.capacity == 94 && Holds(source, longer.c_str()),
+        "narrow substring assignment grows geometrically without changing its source");
+    GuestLocale::ReleaseStringStorage(substring);
+    GuestLocale::ReleaseStringStorage(source);
+
+    String repeated = Empty();
+    const auto before = allocationCount;
+    for (std::size_t index = 0; index < 4096; ++index) _ZNSs6appendEmc_nid_postfix(&repeated, 1, 'z');
+    Require(Holds(repeated, std::string(4096, 'z').c_str()) && repeated.capacity == 6013
+        && allocationCount - before == 14, "repeated narrow append follows geometric allocation boundaries");
+    Require(lastAllocationSize == 6014 + GuestStringStorage::AllocationPadding
+        && (reinterpret_cast<std::uintptr_t>(repeated.pointer) & 0x1f) == 0,
+        "narrow geometric growth retains padded aligned large storage");
+    GuestLocale::ReleaseStringStorage(repeated);
+
+    String failed = Make(original.c_str());
+    const auto oldPointer = failed.pointer;
+    const auto oldCapacity = failed.capacity;
+    const auto oldLive = live;
+    failNextAllocation = true;
+    bool caughtBadAlloc = false;
+    try {
+        _ZNSs6appendEmc_nid_postfix(&failed, 1, 'x');
+    } catch (const std::bad_alloc&) {
+        caughtBadAlloc = true;
+    }
+    Require(caughtBadAlloc && !failNextAllocation && failed.pointer == oldPointer && failed.capacity == oldCapacity
+        && live == oldLive && Holds(failed, original.c_str()), "failed narrow geometric growth preserves ownership and contents");
+    GuestLocale::ReleaseStringStorage(failed);
+}
+
 void CheckWideCapacityAndAliases() {
     const std::uint16_t inlineText[]{'a', 'b', 'c', 'd', 'e', 'f', 'g'};
     const std::uint16_t inlineExpected[]{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'};
@@ -612,6 +712,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     const long before = live;
     CheckReporters();
+    CheckIosFailureDoraise();
     CheckAssignCharacters();
     CheckAssignPointer();
     CheckAssignSubstring();
@@ -620,6 +721,7 @@ int main() {
     CheckErase();
     CheckWideModifiersAndNarrowInsert();
     CheckNarrowInsertGrowth();
+    CheckNarrowModifierGrowth();
     CheckWideCapacityAndAliases();
     CheckWideBoundaryAndFailures();
     CheckWideCopy();

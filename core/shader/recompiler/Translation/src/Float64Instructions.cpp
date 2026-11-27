@@ -30,14 +30,46 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     const IrType type = IrOpcodeType(opcode);
     IrValue* result = count == 1u ? &ir.Emit(opcode, type, {args[0]}) : count == 2u ? &ir.Emit(opcode, type, {args[0], args[1]}) : &ir.Emit(opcode, type, {args[0], args[1], args[2]});
     if (arithmetic) result = &nanResultF64(*args[0], *args[1], args[2], flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result));
+    if (opcode == IrOpcode::FPTrigPreop64) result = &flushTinyF64Result(opcode, *args[0], *args[1], nullptr, *result);
     if (type == IrType::U64) {
         writeF64Result(inst.destination, *result);
         return true;
     }
     RdnaOperand destination = inst.destination;
     if (!floatMode.has_value()) destination.omod = 0u;
+    const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    if (opcode == IrOpcode::ConvertF32F64 && rounding != 0u) {
+        IrValue& high = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x7fffffffu));
+        IrValue& sign = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x80000000u));
+        IrValue& exponent = ir.ShiftRightLogical(high, ir.Constant(20u));
+        IrValue& fraction = ir.BitwiseAnd(high, ir.Constant(0x000fffffu));
+        IrValue& mantissa = ir.BitwiseOr(ir.ShiftLeftLogical(fraction, ir.Constant(3u)), ir.ShiftRightLogical(source[0].Value(), ir.Constant(29u)));
+        IrValue& significand = ir.BitwiseOr(mantissa, ir.Constant(0x00800000u));
+        IrValue& distance = ir.ISub(ir.Constant(897u), exponent);
+        IrValue& shift = ir.Select(ir.UGreaterThan(distance, ir.Constant(31u)), ir.Constant(31u), distance);
+        IrValue& lost = ir.INotEqual(ir.BitwiseAnd(significand, ir.ISub(ir.ShiftLeftLogical(ir.Constant(1u), shift), ir.Constant(1u))), ir.Constant(0u));
+        IrValue& rest = ir.INotEqual(ir.BitwiseAnd(source[0].Value(), ir.Constant(0x1fffffffu)), ir.Constant(0u));
+        IrValue& normal = ir.UGreaterThan(exponent, ir.Constant(896u));
+        IrValue& overflow = ir.UGreaterThan(exponent, ir.Constant(1150u));
+        IrValue& zeroExponent = ir.IEqual(exponent, ir.Constant(0u));
+        IrValue& inRange = ir.IAdd(ir.ShiftLeftLogical(ir.ISub(exponent, ir.Constant(896u)), ir.Constant(23u)), mantissa);
+        IrValue* truncated = &ir.Select(normal, inRange, ir.ShiftRightLogical(significand, shift));
+        truncated = &ir.Select(overflow, ir.Constant(0x7f7fffffu), *truncated);
+        truncated = &ir.Select(zeroExponent, ir.Constant(0u), *truncated);
+        IrValue* inexact = &ir.LogicalAnd(ir.LogicalNot(zeroExponent), ir.LogicalOr(overflow, ir.LogicalOr(rest, ir.LogicalAnd(ir.LogicalNot(normal), lost))));
+        if ((floatMode->floatMode & 0x40u) != 0u) {
+            inexact = &ir.LogicalOr(*inexact, ir.LogicalAnd(zeroExponent, ir.INotEqual(ir.BitwiseOr(fraction, source[0].Value()), ir.Constant(0u))));
+        }
+        IrValue* bits = truncated;
+        if (rounding != 3u) {
+            IrValue& negative = ir.INotEqual(sign, ir.Constant(0u));
+            IrValue& away = rounding == 1u ? ir.LogicalNot(negative) : negative;
+            bits = &ir.Select(ir.LogicalAnd(*inexact, away), ir.IAdd(*truncated, ir.Constant(1u)), *truncated);
+        }
+        IrValue& finite = ir.ULessThan(high, ir.Constant(0x7ff00000u));
+        result = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&finite, &ir.BitCastF32(ir.BitwiseOr(sign, *bits)), result});
+    }
     if (opcode == IrOpcode::ConvertF32F64 && floatMode.has_value() && ((floatMode->floatMode >> 4u) & 2u) == 0u) {
-        const std::uint32_t rounding = floatMode->floatMode & 3u;
         IrValue& high = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x7fffffffu));
         IrValue& sign = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x80000000u));
         const auto below = [&](std::uint64_t limit) -> IrValue& {
@@ -129,13 +161,14 @@ bool TranslationContext::minMaxF64(const RdnaInstruction& inst, IrOpcode opcode)
 
 bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opcode) {
     const bool ldexp = opcode == IrOpcode::FPLdexp64;
-    const bool flushesInput = ldexp || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
+    const bool transcendental = opcode == IrOpcode::FPRcp64 || opcode == IrOpcode::FPRsq64 || opcode == IrOpcode::FPSqrt64;
+    const bool flushesInput = ldexp || transcendental || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
     const auto bits = flushesInput ? flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u) : readF64Bits(sourceAt(inst, 0u));
     IrValue& argument = ir.ConstructU64(bits[0].Value(), bits[1].Value());
     IrValue* exponent = ldexp ? &readU32(sourceAt(inst, 1u)).Value() : nullptr;
     IrValue& result = ldexp ? ir.Emit(opcode, IrType::U64, {&argument, exponent}) : ir.Emit(opcode, IrType::U64, {&argument});
     std::array<IrU32, 2> words{IrU32(ir.CompositeExtract(result, 0u)), IrU32(ir.CompositeExtract(result, 1u))};
-    if (opcode == IrOpcode::FPFract64) words = flushF64Bits(words, 0x80u);
+    if (opcode == IrOpcode::FPFract64 || transcendental) words = flushF64Bits(words, 0x80u);
     if (ldexp && floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
         IrValue& field = ir.ShiftRightLogical(bits[1].Value(), ir.Constant(20u));
         IrValue& biased = ir.BitwiseAnd(field, ir.Constant(0x7ffu));
@@ -193,7 +226,7 @@ IrValue& TranslationContext::scaleF64Result(std::uint32_t omod, IrValue& value) 
         scaledLow = &ir.Select(inRange, low, ir.Constant(0u));
     }
     IrValue& denormal = ir.ULessThan(magnitude, ir.Constant(0x00100000u));
-    scaledHigh = &ir.Select(denormal, sign, *scaledHigh);
+    scaledHigh = &ir.Select(denormal, ir.Constant(0u), *scaledHigh);
     scaledLow = &ir.Select(denormal, ir.Constant(0u), *scaledLow);
     IrValue& special = ir.UGreaterThan(magnitude, ir.Constant(0x7fefffffu));
     scaledHigh = &ir.Select(special, high, *scaledHigh);
@@ -322,6 +355,14 @@ bool TranslationContext::vDivFixupF64(const RdnaInstruction& inst) {
     const IrU32 sign(ir.BitwiseAnd(ir.BitwiseXor(denominator[1].Value(), numerator[1].Value()), ir.Constant(0x80000000u)));
     const std::array<IrU32, 2> zero{IrU32(ir.Constant(0u)), sign};
     const std::array<IrU32, 2> infinity{IrU32(ir.Constant(0u)), IrU32(ir.BitwiseOr(sign.Value(), ir.Constant(0x7ff00000u)))};
+    const std::uint32_t rounding = floatRoundMode(2u);
+    std::array<IrU32, 2> overflow = infinity;
+    if (rounding != 0u) {
+        overflow = {IrU32(roundedLimit(rounding, sign, ir.Constant(0u), ir.Constant(0xffffffffu))),
+            IrU32(ir.BitwiseOr(sign.Value(), roundedLimit(rounding, sign, ir.Constant(0x7ff00000u), ir.Constant(0x7fefffffu))))};
+    }
+    std::array<IrU32, 2> tiny = zero;
+    if (keepsDenormalResults(0x80u) && (rounding == 1u || rounding == 2u)) tiny = {IrU32(roundedLimit(rounding, sign, ir.Constant(1u), ir.Constant(0u))), sign};
     const std::array<IrU32, 2> defaultNan{IrU32(ir.Constant(0u)), IrU32(ir.Constant(0xfff80000u))};
     const IrU32 difference(ir.ISub(exponent(numerator[1]).Value(), exponent(denominator[1]).Value()));
     const IrU1 underflow(ir.Emit(IrOpcode::SLessThan32, IrType::U1, {&difference.Value(), &ir.Constant(static_cast<std::uint32_t>(-1075))}));
@@ -329,8 +370,8 @@ bool TranslationContext::vDivFixupF64(const RdnaInstruction& inst) {
     const auto choose = [&](IrU1 condition, const std::array<IrU32, 2>& word) {
         result = {IrU32(ir.Select(condition.Value(), word[0].Value(), result[0].Value())), IrU32(ir.Select(condition.Value(), word[1].Value(), result[1].Value()))};
     };
-    choose(isNan(quotient), infinity);
-    choose(underflow, zero);
+    choose(IrU1(ir.IEqual(ir.BitwiseAnd(quotient[1].Value(), ir.Constant(0x7ff00000u)), ir.Constant(0x7ff00000u))), overflow);
+    choose(underflow, tiny);
     choose(IrU1(ir.LogicalOr(isInf(denominator).Value(), isZero(numerator).Value())), zero);
     choose(IrU1(ir.LogicalOr(isZero(denominator).Value(), isInf(numerator).Value())), infinity);
     choose(IrU1(ir.LogicalOr(ir.LogicalAnd(isZero(denominator).Value(), isZero(numerator).Value()), ir.LogicalAnd(isInf(denominator).Value(), isInf(numerator).Value()))), defaultNan);

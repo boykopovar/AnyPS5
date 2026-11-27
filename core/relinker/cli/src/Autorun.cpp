@@ -30,11 +30,12 @@ int Autorun(const std::string& absPath, bool toWindows) {
     int exitCode = 0;
 
 #ifdef _WIN32
-    std::wstring command = L"\"" + Io::NativePath(absPath).wstring() + L"\"";
+    const auto path = Io::NativePath(absPath);
+    std::wstring command = L"\"" + path.native() + L"\"";
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
         const unsigned long runError = GetLastError();
         throw Domain::RelinkerException("Cannot run the output executable: " + absPath + " (error " + std::to_string(runError) + ")");
     }

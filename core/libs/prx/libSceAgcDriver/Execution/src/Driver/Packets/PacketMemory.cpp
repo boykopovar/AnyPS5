@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -81,8 +82,8 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto stamp = ++eventSerial;
                 if (localDevice != nullptr && submission.queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("label") != 0) workOpen = true;
                 reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 1) GuestMemory::Write(label->address, bytes, 4);
-                if (reason == 0 || reason == 1 || reason == 5) {
+                if (reason == 1 || reason == 7) GuestMemory::Write(label->address, bytes, 4);
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 7) {
                     noteLabelStore(label->address, bytes, stamp, submission.queue);
                     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 }
@@ -99,7 +100,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 interruptDeferred = localDevice->AfterRecordedWork([this, queueId, context] { deliverGuestEopInterrupt(queueId, context); }, submission.queue == 0);
                 if (interruptDeferred && workOpen) localDevice->SubmitRecorded(submission.queue == 0);
                 wroteOnGpu = true;
-            } else if (reason == 1) {
+            } else if (reason == 1 || reason == 7) {
                 wroteOnGpu = true;
             }
         }
@@ -134,7 +135,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 wroteOnGpu = reason == 0 || reason == 5;
-                if (reason == 1) {
+                if (reason == 1 || reason == 7) {
 
                     GuestMemory::Write(label->address, bytes, 4);
                     wroteOnGpu = true;
@@ -200,15 +201,16 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(store->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue, false);
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 7) noteLabelStore(store->address, bytes, stamp, submission.queue, false);
                 if (reason == 0 || reason == 5) {
                     if (reason == 0) ++storesOnGpu;
                     else ++storesBehindCompletions;
                     wroteOnGpu = true;
                     drained = false;
-                } else if (reason == 1 || (reason == 3 && opcode == 0x40 && Pm4::CopyDataSource(packet) == Pm4::CopyDataGpuClockSource && !localDevice->StoresPendingOver(store->address, bytes.size()))) {
+                } else if (reason == 1 || reason == 7 || (reason == 3 && opcode == 0x40 && Pm4::CopyDataSource(packet) == Pm4::CopyDataGpuClockSource && !localDevice->StoresPendingOver(store->address, bytes.size()))) {
                     GuestMemory::Write(store->address, bytes, 1);
-                    ++storesOnCpu;
+                    if (reason == 7) ++storesSyncedUnimported;
+                    else ++storesOnCpu;
                     wroteOnGpu = true;
                     drained = false;
                 }
@@ -477,10 +479,11 @@ void Driver::commitStore(std::uint32_t queue, std::uint64_t address, std::span<c
         if (reason == 0) ++storesOnGpu;
         else ++storesBehindCompletions;
     } else {
-        if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+        if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
         GuestMemory::Write(address, bytes, 1);
         noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue, false);
-        ++storesOnCpu;
+        if (reason == 7) ++storesSyncedUnimported;
+        else ++storesOnCpu;
     }
     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
 }
@@ -551,8 +554,9 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
         if (localDevice != nullptr && queue == 0 && Graphics::StorageTexture::StoreDrawnLinear("label") != 0) workOpen = true;
         reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(address, bytes, stamp, queue) : 4;
         if (reason != 0 && reason != 5 && reason != 6) {
-            if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+            if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(address, bytes, 4);
+            KernelWakeSleepers_nid_no_patch();
         }
         noteLabelStore(address, bytes, stamp, queue);
         Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
@@ -577,7 +581,8 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
 void Driver::submitDueAfterCommit(VulkanDevice* localDevice) {
     if (localDevice == nullptr) return;
     const auto pending = Graphics::Recorder::PendingLabelSince();
-    const bool due = pending.has_value() && std::chrono::steady_clock::now() - *pending >= labelFlushDeadline();
+    const auto age = pending.has_value() ? std::chrono::steady_clock::now() - *pending : std::chrono::steady_clock::duration::zero();
+    const bool due = pending.has_value() && age >= labelFlushDeadline() && (age >= labelFlushBusyDeadline() || !localDevice->SubmittedWorkRunning());
     const bool capped = batchCap() != 0 && Graphics::Recorder::RecordedWorkSinceSubmit() >= batchCap();
     if (due || capped) localDevice->SubmitRecorded(true);
 }

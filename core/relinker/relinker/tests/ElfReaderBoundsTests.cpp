@@ -5,6 +5,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -66,6 +67,26 @@ Bytes TlsFixture(const std::uint64_t address, const std::uint64_t fileSize, cons
     Write<std::uint32_t>(bytes, 0x298, 7);
     Write<std::uint32_t>(bytes, 0x29c, 4);
     Write<std::uint64_t>(bytes, 0x2a0, 0x248);
+    Write(bytes, 0x2a8, address);
+    Write(bytes, 0x2b0, address);
+    Write(bytes, 0x2b8, fileSize);
+    Write(bytes, 0x2c0, memorySize);
+    Write(bytes, 0x2c8, alignment);
+    return bytes;
+}
+
+constexpr std::uint32_t PT_SCE_RELA = 0x60000000;
+constexpr std::uint32_t PT_SCE_DYNLIBDATA = 0x61000000;
+constexpr std::uint32_t PT_SCE_LIBVERSION = 0x6fffff01;
+
+Bytes SonySegmentFixture(const std::uint32_t type, const std::uint64_t offset, const std::uint64_t address, const std::uint64_t fileSize, const std::uint64_t memorySize, const std::uint64_t alignment = 1) {
+    auto bytes = Fixture();
+    std::memcpy(bytes.data() + 0x260, bytes.data() + 64, 56);
+    Write<std::uint64_t>(bytes, 32, 0x260);
+    Write<std::uint16_t>(bytes, 56, 2);
+    Write<std::uint32_t>(bytes, 0x298, type);
+    Write<std::uint32_t>(bytes, 0x29c, 4);
+    Write<std::uint64_t>(bytes, 0x2a0, offset);
     Write(bytes, 0x2a8, address);
     Write(bytes, 0x2b0, address);
     Write(bytes, 0x2b8, fileSize);
@@ -197,6 +218,15 @@ void RejectDynamicTags(Bytes bytes, const Relinker::ProgramHeader& header, const
         return;
     }
     throw std::runtime_error("Invalid dynamic segment was accepted");
+}
+
+void RejectSegment(const Relinker::ElfReader& reader, const Relinker::ProgramHeader& header) {
+    try {
+        reader.ReadSegment(header);
+    } catch (const Relinker::RelinkerException&) {
+        return;
+    }
+    throw std::runtime_error("Invalid segment offset was accepted");
 }
 
 void RejectSegment(Bytes bytes, const Relinker::ProgramHeader& header, const std::string& expectedMessage = "") {
@@ -394,6 +424,20 @@ int main() {
             Write<std::uint64_t>(zeroHeadersOobOffset, 32, std::numeric_limits<std::uint64_t>::max());
             RejectProgramHeaders(std::move(zeroHeadersOobOffset), "FileByteOffset out of bounds", std::numeric_limits<std::uint64_t>::max());
         }},
+        {"extended program header count", [] {
+            auto largest = Fixture();
+            largest.resize(64 + std::size_t{0xfffe} * 56);
+            Write<std::uint16_t>(largest, 56, 0xfffe);
+            const auto headers = Relinker::ElfReader(std::move(largest)).ReadProgramHeaders();
+            Require(headers.size() == 0xfffe && headers[0].Type == 1 && headers.back().Type == 0);
+            auto extended = Fixture();
+            extended.resize(64 + std::size_t{0xffff} * 56);
+            Write<std::uint16_t>(extended, 56, 0xffff);
+            RejectProgramHeaders(std::move(extended), "Extended program header counts are not supported", 0x38);
+            auto truncated = Fixture();
+            Write<std::uint16_t>(truncated, 56, 0xffff);
+            RejectProgramHeaders(std::move(truncated), "FileByteOffset out of bounds", 0x40);
+        }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
             Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].Alignment == 8 && sections[1].EntrySize == 24);
@@ -452,9 +496,17 @@ int main() {
             }
         }},
         {"section name table index", [] {
-            auto bytes = Fixture();
-            Write<std::uint16_t>(bytes, 62, 3);
-            RejectSections(std::move(bytes));
+            for (const std::uint16_t index : {std::uint16_t{3}, std::uint16_t{4}, std::uint16_t{0xff00}}) {
+                auto bytes = Fixture();
+                Write<std::uint16_t>(bytes, 62, index);
+                RejectSections(std::move(bytes), "Section header string table index out of bounds", 0x3e);
+            }
+            for (const std::uint16_t index : {std::uint16_t{1}, std::uint16_t{0xff00}}) {
+                auto zeroSections = Fixture();
+                Write<std::uint16_t>(zeroSections, 60, 0);
+                Write<std::uint16_t>(zeroSections, 62, index);
+                RejectSections(std::move(zeroSections), "Section header string table index out of bounds", 0x3e);
+            }
         }},
         {"section name table type", [] {
             auto bytes = Fixture();
@@ -1025,7 +1077,7 @@ int main() {
                 Write<std::uint32_t>(valid, 196, type);
                 Write<std::uint32_t>(valid, 232, 2);
                 if (type == 4) Write<std::uint64_t>(valid, 248, 24);
-                if (type == 9) Write<std::uint64_t>(valid, 248, 16);
+                if (type == 9 || type == 6) Write<std::uint64_t>(valid, 248, 16);
                 const auto sections = Relinker::ElfReader(std::move(valid)).ReadSectionHeaders();
                 Require(sections.size() == 3 && sections[1].Link == 2);
             }
@@ -1053,6 +1105,14 @@ int main() {
                 Write<std::uint32_t>(bytes, 196, 4);
                 Write<std::uint64_t>(bytes, 248, entrySize);
                 RejectSections(std::move(bytes));
+            }
+        }},
+        {"SHT_DYNAMIC section entry size mismatch", [] {
+            for (const std::uint64_t entrySize : std::initializer_list<std::uint64_t>{0ULL, 1ULL, 8ULL, 15ULL, 17ULL, 24ULL, 32ULL, 64ULL, std::numeric_limits<std::uint64_t>::max()}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, 6);
+                Write<std::uint64_t>(bytes, 248, entrySize);
+                RejectSections(std::move(bytes), "Invalid dynamic section entry size", 248);
             }
         }},
         {"SHT_REL section entry size mismatch", [] {
@@ -1167,6 +1227,115 @@ int main() {
                 Write<std::uint64_t>(bytes, 64 + 48, align);
                 const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
                 Require(headers.size() == 1 && headers[0].Alignment == align);
+            }
+        }},
+        {"Sony segment headers parsed and read", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                auto bytes = SonySegmentFixture(type, 0x240, 0x2000, 16, 16);
+                Relinker::ElfReader reader(std::move(bytes));
+                const auto headers = reader.ReadProgramHeaders();
+                Require(headers.size() == 2 && headers[1].Type == type && headers[1].MappedAddress == 0x2000);
+                const auto segmentBytes = reader.ReadSegment(headers[1]);
+                Require(segmentBytes.size() == 16);
+            }
+        }},
+        {"Sony segment invalid virtual addresses", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                constexpr std::uint64_t addresses[] = {0, 0x0fff, 0x1020, 0x2000, 0x2008, std::numeric_limits<std::uint64_t>::max() - 15, std::numeric_limits<std::uint64_t>::max()};
+                for (const std::uint64_t address : addresses) {
+                    RejectAddress(SonySegmentFixture(type, 0x240, address, 16, 16), address);
+                }
+                const Relinker::ElfReader reader(SonySegmentFixture(type, 0x240, 0x2000, 16, 16));
+                Require(reader.TranslateVirtualAddress(0x1008) == 0x248);
+            }
+        }},
+        {"Sony segment unaligned file offsets", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                auto bytes = SonySegmentFixture(type, 0x241, 0x2000, 16, 16, 8);
+                Relinker::ElfReader reader(std::move(bytes));
+                const auto headers = reader.ReadProgramHeaders();
+                Require(headers.size() == 2 && headers[1].Offset == 0x241);
+                const auto segmentBytes = reader.ReadSegment(headers[1]);
+                Require(segmentBytes.size() == 16);
+                auto endBytes = SonySegmentFixture(type, 0x2ef, 0x2000, 17, 17, 1);
+                Relinker::ElfReader endReader(std::move(endBytes));
+                const auto endHeaders = endReader.ReadProgramHeaders();
+                Require(endHeaders.size() == 2 && endHeaders[1].Offset == 0x2ef);
+                Require(endReader.ReadSegment(endHeaders[1]).size() == 17);
+            }
+        }},
+        {"Sony segment unaligned offset overflow", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                constexpr std::uint64_t offsets[] = {0x2f1, 0x300, 0x301, std::numeric_limits<std::uint64_t>::max() - 7, std::numeric_limits<std::uint64_t>::max()};
+                for (const std::uint64_t offset : offsets) {
+                    auto bytes = SonySegmentFixture(type, offset, 0x2000, 16, 16);
+                    Relinker::ElfReader reader(std::move(bytes));
+                    const auto headers = reader.ReadProgramHeaders();
+                    Require(headers.size() == 2 && headers[1].Offset == offset);
+                    RejectSegment(reader, headers[1]);
+                }
+            }
+        }},
+        {"Sony segment table bounds overflow", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                for (const std::size_t size : {0x298 + 1, 0x298 + 20, 0x298 + 55}) {
+                    auto bytes = SonySegmentFixture(type, 0x240, 0x2000, 16, 16);
+                    bytes.resize(size);
+                    RejectProgramHeaders(bytes);
+                    RejectAddress(std::move(bytes), 0x1008);
+                }
+                for (const std::uint64_t offset : {std::uint64_t{0x300}, std::uint64_t{0x301}, std::numeric_limits<std::uint64_t>::max() - 55, std::numeric_limits<std::uint64_t>::max() - 31, std::numeric_limits<std::uint64_t>::max()}) {
+                    auto bytes = SonySegmentFixture(type, 0x240, 0x2000, 16, 16);
+                    Write(bytes, 32, offset);
+                    RejectProgramHeaders(bytes);
+                    RejectAddress(std::move(bytes), 0x1008);
+                }
+                auto overflowCount = SonySegmentFixture(type, 0x240, 0x2000, 16, 16);
+                Write<std::uint16_t>(overflowCount, 56, 0xffff);
+                RejectProgramHeaders(overflowCount);
+                RejectAddress(std::move(overflowCount), 0x1008);
+            }
+        }},
+        {"Sony segment unaligned table offset", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                auto bytes = Fixture();
+                std::memmove(bytes.data() + 65, bytes.data() + 64, 56);
+                Write<std::uint32_t>(bytes, 65 + 56, type);
+                Write<std::uint32_t>(bytes, 65 + 60, 4);
+                Write<std::uint64_t>(bytes, 65 + 64, 0x241);
+                Write<std::uint64_t>(bytes, 65 + 72, 0x2000);
+                Write<std::uint64_t>(bytes, 65 + 80, 0x2000);
+                Write<std::uint64_t>(bytes, 65 + 88, 16);
+                Write<std::uint64_t>(bytes, 65 + 96, 16);
+                Write<std::uint64_t>(bytes, 65 + 104, 1);
+                Write<std::uint64_t>(bytes, 32, 65);
+                Write<std::uint16_t>(bytes, 56, 2);
+                Relinker::ElfReader reader(bytes);
+                const auto headers = reader.ReadProgramHeaders();
+                Require(headers.size() == 2 && headers[1].Type == type && headers[1].Offset == 0x241);
+                const auto segmentBytes = reader.ReadSegment(headers[1]);
+                Require(segmentBytes.size() == 16);
+                auto truncated = bytes;
+                truncated.resize(65 + 2 * 56 - 1);
+                RejectProgramHeaders(truncated);
+                RejectAddress(std::move(truncated), 0x1008);
+            }
+        }},
+        {"Sony segment empty segment bounds", [] {
+            for (const std::uint32_t type : {PT_SCE_DYNLIBDATA, PT_SCE_RELA, PT_SCE_LIBVERSION}) {
+                auto atEof = SonySegmentFixture(type, 0x300, 0x2000, 0, 0);
+                Relinker::ElfReader atEofReader(std::move(atEof));
+                const auto atEofHeaders = atEofReader.ReadProgramHeaders();
+                Require(atEofHeaders.size() == 2 && atEofHeaders[1].Offset == 0x300);
+                Require(atEofReader.ReadSegment(atEofHeaders[1]).empty());
+                constexpr std::uint64_t offsets[] = {0x301, std::numeric_limits<std::uint64_t>::max()};
+                for (const std::uint64_t offset : offsets) {
+                    auto beyond = SonySegmentFixture(type, offset, 0x2000, 0, 0);
+                    Relinker::ElfReader beyondReader(std::move(beyond));
+                    const auto beyondHeaders = beyondReader.ReadProgramHeaders();
+                    Require(beyondHeaders.size() == 2 && beyondHeaders[1].Offset == offset);
+                    RejectSegment(beyondReader, beyondHeaders[1]);
+                }
             }
         }},
     };

@@ -1,6 +1,7 @@
 #include <relinker/pipeline/Conversion.hpp>
 #include <io/NativePath.hpp>
 #include <emscripten/bind.h>
+#include <algorithm>
 #include <stdexcept>
 
 namespace {
@@ -55,6 +56,7 @@ emscripten::val Convert(const emscripten::val& request, const emscripten::val& c
         input.OutputPath = Io::NativePath("/output/" + request["outputName"].as<std::string>());
         if (input.OutputPath.parent_path() != "/output") throw std::invalid_argument("Invalid output name");
         input.ModuleRoot = "/input";
+        input.RuntimeDirectories = {input.ModuleRoot / "Media/Modules", input.ModuleRoot / "Media/Plugins"};
         input.Executable = ReadBytes(request["executable"], remaining);
         const auto modules = request["modules"];
         const auto count = modules["length"].as<unsigned>();
@@ -62,8 +64,10 @@ emscripten::val Convert(const emscripten::val& request, const emscripten::val& c
         for (unsigned index = 0; index < count; ++index) {
             const auto module = modules[index];
             const auto path = Io::NativePath(module["name"].as<std::string>());
+            const auto parent = input.ModuleRoot / path.parent_path();
             if (path.is_absolute() || path.lexically_normal() != path || path.begin() == path.end() ||
-                (*path.begin() != "sce_module" && *path.begin() != "sce_modules" && *path.begin() != "prx")) throw std::invalid_argument("Invalid module path");
+                (*path.begin() != "sce_module" && *path.begin() != "sce_modules" && *path.begin() != "prx" &&
+                 std::ranges::find(input.RuntimeDirectories, parent) == input.RuntimeDirectories.end())) throw std::invalid_argument("Invalid module path");
             input.Modules.push_back({Io::NativePath("/input") / path, ReadBytes(module["bytes"], remaining)});
         }
         if (!request["icon"].isNull()) input.Icon = ReadBytes(request["icon"], remaining);
@@ -72,8 +76,22 @@ emscripten::val Convert(const emscripten::val& request, const emscripten::val& c
         options.WindowsGui = false;
         options.WindowsDiagnostics = target == "windows";
         options.ToIntel = request["toIntel"].as<bool>();
+        const auto patch = request["patch"];
+        if (!patch.isUndefined()) {
+            const auto text = patch.as<std::string>();
+            if (text.size() > 1024 * 1024) throw std::invalid_argument("Patch TOML exceeds 1 MiB");
+            options.TargetName = name;
+            options.Patches = Relinker::GamePatch::ParsePatchFile(text).Entries;
+            if (options.Patches.empty()) throw std::invalid_argument("Patch TOML has no patch entries");
+        }
+        const auto moduleRoot = input.ModuleRoot;
         BrowserProgress progress(callback);
         auto output = Relinker::Conversion(progress).Convert(std::move(input), options);
+        if (!options.Patches.empty()) {
+            std::vector<std::string> targets{name};
+            for (const auto& module : output.Modules) targets.push_back(Relinker::GamePatch::ModuleTargetName(module.SourcePath, moduleRoot));
+            Relinker::GamePatch::MatchTargets(options.Patches, targets);
+        }
         result.set("executable", CopyBytes(output.Executable));
         result.set("diagnostics", output.WindowsDiagnostics);
         auto artifacts = emscripten::val::array();

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -35,12 +36,6 @@ alignas(256) constexpr std::array<std::uint32_t, 16> LoadXy{
     0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x2c3e3c84u, 0x363c3c8fu, 0x7e140280u, 0x7e160280u,
     0x7e180280u, 0x7e1a0280u, 0xf0001f08u, 0x00010a1eu, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
 };
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t depth) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));

@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #ifndef _WIN32
 #include <sys/mman.h>
 #endif
@@ -16,6 +17,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +26,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -31,6 +34,11 @@ namespace {
 
 void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void Idle(std::chrono::microseconds length) {
+    const auto until = std::chrono::steady_clock::now() + length;
+    while (std::chrono::steady_clock::now() < until) std::this_thread::yield();
 }
 
 alignas(256) std::array<std::uint32_t, 15> SpinCode{0xf4080200u, 0xfa000000u, 0xbe840381u, 0x9304ff04u, 0x0019660du, 0x8004ff04u, 0x3c6ef35fu, 0x80828102u, 0xbf078002u, 0xbf85fff9u, 0xbf8cc07fu, 0x7e000204u, 0xe0700000u, 0x80020000u, 0xbf810000u};
@@ -228,15 +236,54 @@ std::uint64_t RunLanded(Slot& slot, std::uint32_t value, bool wait) {
     return AgcDriver::GuestMemory::CollectEpochBumps() - before;
 }
 
+void CpuLabelWake(Slot& slot) {
+    const auto submit = [&](std::uint32_t value) {
+        std::vector<std::uint32_t> words;
+        WriteData(words, &slot.done, value);
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        return sceAgcDriverSubmitAcb(0x20, &packet);
+    };
+    Require(submit(1) == 0, "CPU label wake warmup submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    bool woke = false;
+    for (std::uint32_t attempt = 0; attempt < 20 && !woke; ++attempt) {
+        const auto value = 1000 + attempt;
+        std::atomic<bool> ready{false};
+        int result = -1;
+        std::jthread worker([&] {
+            while (!ready.load(std::memory_order_acquire)) std::this_thread::yield();
+            Idle(std::chrono::microseconds(100));
+            result = submit(value);
+        });
+        KernelNoteGpuSubmit_nid_no_patch();
+        const auto began = std::chrono::steady_clock::now();
+        ready.store(true, std::memory_order_release);
+        SleepWake::Sleep(1000000);
+        const auto elapsed = std::chrono::steady_clock::now() - began;
+        const bool landed = slot.done == value;
+        worker.join();
+        AgcDriverWaitIdle_nid_postfix();
+        Require(result == 0 && slot.done == value, "the CPU label did not reach guest memory");
+        woke = landed && elapsed < std::chrono::microseconds(900);
+    }
+    Require(woke, "a completed CPU label did not wake the guest short sleep");
+    std::cout << "CPU label wakes the guest only after its bytes landed\n";
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
         GuestBlock block;
         auto& slot = block.Data();
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-label-wake-only") {
+            CpuLabelWake(slot);
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
         Run(slot, 1, false);
         std::uint64_t extra = ~std::uint64_t{0};
         for (std::uint32_t attempt = 0; attempt < MaxAttempts && extra >= Waits / 2; ++attempt) {

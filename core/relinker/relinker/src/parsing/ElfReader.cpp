@@ -135,6 +135,9 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
         throw RelinkerException("FileByteOffset out of bounds", header.ProgramHeaderOffset);
     }
+    if (header.ProgramHeaderCount == PN_XNUM) {
+        throw RelinkerException("Extended program header counts are not supported", 0x38);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
@@ -264,6 +267,10 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
             throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
         }
 
+        if (sh.Type == SHT_DYNAMIC && sh.EntrySize != kDynEntrySize) {
+            throw RelinkerException("Invalid dynamic section entry size", offset + kShdrEntSizeOffset);
+        }
+
         if (sh.Type == SHT_RELA && sh.EntrySize != kRelaEntrySize) {
             throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
         }
@@ -285,6 +292,18 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
     }
 
     return headers;
+}
+
+std::uint64_t ElfReader::ReadDynamicSymbolCount(const FileByteOffset symbolOffset, const std::uint32_t minimum) const {
+    const auto sections = ReadSectionHeaders();
+    const auto symbols = std::find_if(sections.begin(), sections.end(), [&](const auto& section) {
+        return section.Type == SHT_DYNSYM && section.Offset == symbolOffset;
+    });
+    if (symbols == sections.end()) return minimum;
+    const auto size = symbols->SectionSize;
+    if (size % kSymEntrySize != 0 || size / kSymEntrySize < minimum)
+        throw RelinkerException("Invalid dynamic symbol count", symbolOffset);
+    return size / kSymEntrySize;
 }
 
 std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeader& header) const {
