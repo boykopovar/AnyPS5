@@ -1572,8 +1572,6 @@ int APS5_VABI _ZN7WebCore12HTMLDocument5widthEv();
 int APS5_VABI _ZN7WebCore12HTMLDocument6heightEv();
 int APS5_VABI _ZN7WebCore12ISOWebVTTCue5parseERN3JSC8DataViewERj();
 int APS5_VABI _ZN7WebCore12ISOWebVTTCueD0Ev();
-int APS5_VABI _ZN7WebCore12ISOWebVTTCueD1Ev();
-int APS5_VABI _ZN7WebCore12ISOWebVTTCueD2Ev();
 int APS5_VABI _ZN7WebCore12JSAudioTrack14getConstructorERN3JSC2VMEPKNS1_14JSGlobalObjectE();
 int APS5_VABI _ZN7WebCore12JSAudioTrack15createPrototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE();
 int APS5_VABI _ZN7WebCore12JSAudioTrack15createStructureERN3JSC2VMEPNS1_14JSGlobalObjectENS1_7JSValueE();
