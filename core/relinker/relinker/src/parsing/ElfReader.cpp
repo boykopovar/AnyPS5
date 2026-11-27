@@ -294,6 +294,18 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
     return headers;
 }
 
+std::uint64_t ElfReader::ReadDynamicSymbolCount(const FileByteOffset symbolOffset, const std::uint32_t minimum) const {
+    const auto sections = ReadSectionHeaders();
+    const auto symbols = std::find_if(sections.begin(), sections.end(), [&](const auto& section) {
+        return section.Type == SHT_DYNSYM && section.Offset == symbolOffset;
+    });
+    if (symbols == sections.end()) return minimum;
+    const auto size = symbols->SectionSize;
+    if (size % kSymEntrySize != 0 || size / kSymEntrySize < minimum)
+        throw RelinkerException("Invalid dynamic symbol count", symbolOffset);
+    return size / kSymEntrySize;
+}
+
 std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeader& header) const {
     if (header.SectionHeaderStringIndex == 0) {
         return "";

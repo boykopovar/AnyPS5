@@ -10,7 +10,6 @@ from test_guest_module_directories import module_with_symbol
 
 
 PAGE = 0x1000
-NEIGHBOUR_ERROR = "Guest PT_LOAD sharing a page with a moved load is aligned above the page"
 
 
 def program_headers(data):
@@ -71,9 +70,11 @@ def page_end(address):
 
 def check_mapping(name, image, data):
     memory = mapped_memory(data)
-    for _, _, offset, address, _, file_size, memory_size, _ in loads(image):
+    for _, _, offset, address, _, file_size, memory_size, alignment in loads(image):
         assert memory[address:address + file_size] == image[offset:offset + file_size], (name, hex(address))
         assert memory[address + file_size:address + memory_size] == bytes(memory_size - file_size), (name, hex(address))
+        if alignment > 1:
+            assert offset % alignment == address % alignment, (name, hex(address), hex(offset), hex(alignment))
     output = {header[3]: header for header in loads(data)}
     for _, _, offset, address, _, file_size, _, align in loads(image):
         moved = output[address]
@@ -143,8 +144,19 @@ def main():
         check_mapping("large-neighbour-same-page", same, data)
         call(artifact)
         result, artifact = convert(relinker, work / "large-neighbour", large)
-        assert result.returncode == 2 and NEIGHBOUR_ERROR in result.stderr, (result.returncode, result.stderr)
-        assert not artifact.exists()
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        data = artifact.read_bytes()
+        check_mapping("large-neighbour", large, data)
+        moved = {header[3]: header for header in loads(data)}
+        assert moved[0x3100][7] == 0x4000, moved[0x3100]
+        assert moved[0x3100][2] % 0x4000 == 0x3100 % 0x4000, moved[0x3100]
+        call(artifact)
+        reversed_neighbour = module((0x1000, 0x1000), (0x2000, 0x1000),
+                                    ((4, 0x3100, 0x3100, 0x80, 0x80, 0x4000, 0x22), (4, 0x3810, 0x3000, 0x80, 0x80, 0x10, 0x11)))
+        result, artifact = convert(relinker, work / "large-neighbour-reversed", reversed_neighbour)
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        check_mapping("large-neighbour-reversed", reversed_neighbour, artifact.read_bytes())
+        call(artifact)
         result, artifact = convert(relinker, work / "trampoline", guest_fixture(SITE), ("--to-intel",))
         assert result.returncode == 0, result.stderr
         data = artifact.read_bytes()

@@ -7037,7 +7037,7 @@ bool DmaBufDeviceOpens() {
 void vertexWindowMirrorTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
-    if (!Recorder::DrawInputMirrors() || !WriteWatched()) return;
+    if (!Recorder::DrawInputMirrors() || !device.GetContext().HostMemoryType(~0u) || !WriteWatched()) return;
     if (SkipOnCpuVulkan(device, "a kept vertex window was not mirrored in device memory")) return;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, 65536);
@@ -7103,7 +7103,7 @@ void drawInputMirrorTests(const Device& device) {
     const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
-    const bool mirrors = Recorder::DrawInputMirrors();
+    const bool mirrors = Recorder::DrawInputMirrors() && context.HostMemoryType(~0u);
     State plain;
     State mesh;
     mesh.stages.mesh.emplace();
@@ -7128,7 +7128,7 @@ void drawInputMirrorTests(const Device& device) {
     cache.KeepDrawSnapshot(second, half, generation, registry, secondHost, Use::Vertex);
     const auto firstMirror = reuse(first);
     if (!mirrors) {
-        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set");
+        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set or on a device whose memory is all device-local");
         Require(drawInputHolds(context, cache, firstMirror, first, held), "a reused draw input lost the bytes of its snapshot");
         cache.Sync();
         return;
@@ -7202,7 +7202,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
         const auto contents = copy.buffer->Bytes();
         return contents.size() == size && std::memcmp(contents.data(), block, size) == 0;
     };
-    const bool mirrors = Recorder::DrawInputMirrors();
+    const bool mirrors = Recorder::DrawInputMirrors() && context.HostMemoryType(~0u);
     const auto servedFrom = [&](const DrawInputCopy& copy, const std::shared_ptr<Buffer>& host, std::uint64_t at, std::size_t read) {
         const bool kind = mirrors ? copy.buffer != host && !copy.buffer->Mapped() : copy.buffer == host;
         return copy.reused && kind && drawInputHolds(context, recorder, copy.buffer, at, read);
@@ -7374,6 +7374,50 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
         Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput, "a vertex input bound in place behind a GPU write did not note its read");
         recorder.Sync();
         Require(!recorder.PendingReadOverlaps(vertices, 256), "an in-place vertex input's read outlived its batch");
+        if (std::getenv("APS5_LARGE_INPUT_IN_PLACE_MIB") != nullptr) {
+            std::cout << "APS5_LARGE_INPUT_IN_PLACE_MIB is set: large draw inputs not tested\n";
+            return;
+        }
+        constexpr std::size_t largeBytes = std::size_t{8} << 20;
+        void* largeBlock = AllocateWatched(largeBytes + 65536, 65536);
+        struct ReleaseLarge {
+            void* block;
+            ~ReleaseLarge() { ReleaseWatched(block, largeBytes + 65536); }
+        } releaseLarge{largeBlock};
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(largeBlock, largeBytes + 65536, true, true, true);
+        }
+        struct UnregisterLarge {
+            const Context& context;
+            void* block;
+            ~UnregisterLarge() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), largeBytes + 65536);
+            }
+        } unregisterLarge{context, largeBlock};
+        const auto largeAddress = reinterpret_cast<std::uint64_t>(largeBlock);
+        if (HostImportFor(context, largeAddress, largeBytes + 65536) == nullptr) {
+            std::cout << "host import of the large watched block refused: large draw inputs not tested\n";
+            return;
+        }
+        const auto largeVertices = largeAddress + 4096;
+        recorder.Sync();
+        behind = false;
+        Require(InPlaceDrawInput(context, largeVertices, largeBytes - 65536, 4, &behind) == nullptr && !behind, "a draw input just below the large input size was bound in place where draw inputs are copied");
+        Require(!recorder.PendingReadOverlaps(largeVertices, largeBytes - 65536), "a copied draw input below the large input size noted an in-place read");
+        const auto* largeImport = InPlaceDrawInput(context, largeVertices, largeBytes, 4, &behind);
+        Require(largeImport != nullptr && largeImport->base <= largeVertices && largeVertices + largeBytes <= largeImport->base + largeImport->bytes, "a large vertex input free of pending GPU writes was copied where draw inputs are copied");
+        Require(!behind, "a large vertex input free of pending GPU writes was marked as ordered behind one");
+        Require(recorder.PendingReadOverlaps(largeVertices, largeBytes), "a large vertex input bound in place did not note its read");
+        recorder.Sync();
+        Require(!recorder.PendingReadOverlaps(largeVertices, largeBytes), "a large in-place vertex input's read outlived its batch");
+        recorder.NotePendingWrite(largeVertices, 16);
+        const auto* largeBehindImport = InPlaceDrawInput(context, largeVertices, largeBytes, 4, &behind);
+        Require(largeBehindImport != nullptr && behind && recorder.PendingWriteOverlaps(largeVertices, largeBytes), "a large vertex input under a pending GPU write was not bound in place behind it where draw inputs are copied");
         return;
     }
     const auto* import = InPlaceDrawInput(context, vertices, 256, 4);
@@ -20460,6 +20504,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--draw-input-mirrors-only") {
             if (!DmaBufDeviceOpens()) {
                 std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+                return 77;
+            }
+            if (Recorder::DrawInputMirrors() && !device.GetContext().HostMemoryType(~0u)) {
+                std::cout << "skipped, the device has no memory type outside its device-local heaps, so draw inputs get no device-local mirror\n";
                 return 77;
             }
             drawInputMirrorTests(device);
