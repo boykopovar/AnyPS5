@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
@@ -65,6 +66,20 @@ class CheckTestRegistrationTests(unittest.TestCase):
         )
         lines = [line.strip() for line in check_test_registration.workflow_run_lines(content)]
         self.assertEqual(lines, ["python3 a.py", "python3 b.py", "echo hi"])
+
+    def test_built_splits_ninja_target_lines_on_last_delimiter(self):
+        output = "\n".join([
+            "tests/suite: 1/my_test: CXX_EXECUTABLE_LINKER__my_test_Release",
+            "tests/foo: bar.exe: CXX_EXECUTABLE_LINKER__foo_Release",
+            "tests/fake: EXECUTABLE: phony",
+            "EXECUTABLE_NO_SEPARATOR",
+            "tests/plain_test: CXX_EXECUTABLE_LINKER__plain_test_Release",
+        ])
+        with patch.object(check_test_registration, "ninja_outputs", return_value=[output]):
+            self.assertEqual(
+                check_test_registration.built(Path("build")),
+                {"my_test", "foo: bar", "plain_test"},
+            )
 
 
 if __name__ == "__main__":

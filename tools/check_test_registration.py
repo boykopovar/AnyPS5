@@ -196,8 +196,8 @@ def built(build):
     names = set()
     for output in ninja_outputs(build, "targets", "all"):
         for line in output.splitlines():
-            path, _, rule = line.partition(": ")
-            if "EXECUTABLE" not in rule:
+            path, sep, rule = line.rpartition(": ")
+            if not sep or "EXECUTABLE" not in rule:
                 continue
             found = _TEST_EXEC_PATH.match(path)
             if not found:
