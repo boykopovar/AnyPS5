@@ -134,7 +134,8 @@ int main() {
         }
     }
     const auto hello = Stack(u"Hello");
-    const auto upper = Heap(u"HELLO", false);
+    const std::u16string upperText = u"HELLO";
+    const auto upper = Heap(upperText, false);
     Require(uhash_compareUnicodeString_nid_postfix(Key(&hello), Key(&upper)) == 0);
     Require(uhash_compareCaselessUnicodeString_nid_postfix(Key(&hello), Key(&upper)) == 1);
     Require(uhash_compareUnicodeString_nid_postfix(Key(&bogus), Key(&nativeBogus)) == 1);
