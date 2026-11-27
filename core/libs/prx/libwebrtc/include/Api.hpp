@@ -10,6 +10,7 @@
 #include "prx/libwebrtc/include/CodecSpecificInfo.hpp"
 #include "prx/libwebrtc/include/Buffer.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
+#include "prx/libwebrtc/include/AudioDecoderOpusImpl.hpp"
 #include "prx/libwebrtc/include/RtcCertificate.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioDeviceBuffer.hpp"
@@ -492,8 +493,8 @@ std::int16_t APS5_VABI WebRtcOpus_SetPacketLossRate_nid_postfix(WebRtcOpusEncIns
 std::int32_t APS5_VABI WebRtcOpus_GetBandwidth_nid_postfix(WebRtcOpusEncInst* inst);
 std::int16_t APS5_VABI WebRtcOpus_SetBandwidth_nid_postfix(WebRtcOpusEncInst* inst, std::int32_t bandwidth);
 std::int16_t APS5_VABI WebRtcOpus_SetForceChannels_nid_postfix(WebRtcOpusEncInst* inst, std::size_t numChannels);
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(void);
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(WebRtcAudioDecoderOpusImpl* decoder, const WebRtcFieldTrialsView* fieldTrials, std::size_t numChannels, int sampleRateHz);
+void APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(WebRtcAudioDecoderOpusImpl* decoder);
 void APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigC1Ev_nid_postfix(WebRtcAudioNetworkAdaptorConfig* config);
 int APS5_VABI libwebrtcUnknown57(void);
 int APS5_VABI libwebrtcUnknown58(void);

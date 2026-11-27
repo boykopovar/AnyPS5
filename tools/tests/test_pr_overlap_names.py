@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -193,6 +195,36 @@ class NamesLookupTests(unittest.TestCase):
     def test_names_excludes_the_other_modes(self):
         with self.assertRaises(SystemExit):
             pr_overlap.main(["--names", "pending", "--branch", "HEAD"])
+
+    def test_names_with_whitespace_or_control_characters_are_refused_before_any_lookup(self):
+        for name in ("pending\r", "pending\n", " pending", "pen ding", "pending\t", "pending\x00", "pending\x7f", ""):
+            with self.subTest(name=name):
+                with patch.object(pr_overlap, "upstream") as upstream, patch.object(pr_overlap, "open_prs") as open_prs, \
+                        self.assertRaises(SystemExit) as raised:
+                    pr_overlap.main(["--names", "done", name, "pending"])
+                self.assertEqual(raised.exception.code, "pr_overlap: --names takes one function name per argument, "
+                                                        "without whitespace or control characters: " + ascii(name))
+                upstream.assert_not_called()
+                open_prs.assert_not_called()
+
+    def test_every_refused_name_is_listed(self):
+        with self.assertRaises(SystemExit) as raised:
+            pr_overlap.main(["--names", "pending\r", "done", "absent\r"])
+        self.assertTrue(raised.exception.code.endswith(": 'pending\\r', 'absent\\r'"))
+
+    def test_names_without_whitespace_reach_the_lookup_unchanged(self):
+        names = ["pending_nid_postfix", "_ZN3sce3Xml3Dom4NodeC1Ev", "legacy_target_nid_disambig2"]
+        seen = []
+
+        def record(wanted, prs, jobs):
+            seen.extend(wanted)
+            return {}
+
+        with patch.object(pr_overlap, "upstream", return_value="owner/project"), patch.object(pr_overlap, "open_prs", return_value={}), \
+                patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"), patch.object(pr_overlap, "fetch_heads"), \
+                patch.object(pr_overlap, "pull_requests_with", side_effect=record), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(pr_overlap.main(["--names", *names]), 0)
+        self.assertEqual(seen, names)
 
 
 class LibraryStatusScanTests(unittest.TestCase):

@@ -534,7 +534,7 @@ int Run(const int argc, char* argv[]) {
     } catch (const Domain::RelinkerException& e) {
         progress.Finish();
         std::cerr << "FAIL: " << e.what();
-        if (e.FailureOffset != 0) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
+        if (e.HasFailureOffset) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
         std::cerr << "\n";
         if (!e.InputPath.empty()) std::cerr << "Input: " << e.InputPath << '\n';
         return 2;

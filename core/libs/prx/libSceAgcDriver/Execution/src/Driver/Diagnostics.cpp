@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -8,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <fstream>
 #include <mutex>
 #include <optional>
@@ -15,6 +17,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <thread>
 
 namespace AgcDriver::DriverDetail {
 
@@ -110,6 +113,109 @@ std::size_t AsyncComputePipelineWords() {
         return text != nullptr ? static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) : std::size_t{32768};
     }();
     return words;
+}
+
+std::chrono::milliseconds AsyncDispatchWait() {
+    static const std::chrono::milliseconds wait = [] {
+        const char* text = std::getenv("APS5_ASYNC_DISPATCH_WAIT_MS");
+        return std::chrono::milliseconds(text != nullptr ? std::strtoll(text, nullptr, 10) : 1000);
+    }();
+    return wait;
+}
+
+namespace {
+
+struct BackgroundWaitTag;
+
+struct BackgroundWaitBudget {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point windowStart{};
+    std::chrono::steady_clock::duration spent{};
+};
+
+BackgroundWaitBudget& backgroundWaitBudget() {
+    static auto* budget = new BackgroundWaitBudget();
+    return *budget;
+}
+
+constexpr auto BackgroundWaitWindow = std::chrono::seconds(10);
+
+std::chrono::steady_clock::duration takeBackgroundWait() {
+    auto& budget = backgroundWaitBudget();
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lock(budget.mutex);
+    if (now - budget.windowStart >= BackgroundWaitWindow) {
+        budget.windowStart = now;
+        budget.spent = {};
+    }
+    const std::chrono::steady_clock::duration allowance = 2 * AsyncDispatchWait();
+    return budget.spent < allowance ? std::min<std::chrono::steady_clock::duration>(AsyncDispatchWait(), allowance - budget.spent) : std::chrono::steady_clock::duration{};
+}
+
+void spendBackgroundWait(std::chrono::steady_clock::duration waited) {
+    auto& budget = backgroundWaitBudget();
+    std::lock_guard lock(budget.mutex);
+    budget.spent += waited;
+}
+
+struct DroppedDispatches {
+    std::mutex mutex;
+    std::map<std::uint64_t, std::uint64_t> dropped;
+};
+
+DroppedDispatches& droppedDispatches() {
+    static auto* dropped = new DroppedDispatches();
+    return *dropped;
+}
+
+}
+
+BackgroundWaitScope::BackgroundWaitScope() : previous(HostThreadSlot<bool, BackgroundWaitTag>::Get()) {
+    HostThreadSlot<bool, BackgroundWaitTag>::Set(true);
+}
+
+BackgroundWaitScope::~BackgroundWaitScope() {
+    HostThreadSlot<bool, BackgroundWaitTag>::Set(previous);
+}
+
+bool AwaitBackgroundJob(std::mutex& mutex, const bool& finished, bool& waited) {
+    {
+        std::lock_guard lock(mutex);
+        if (finished) return true;
+        if (waited || !HostThreadSlot<bool, BackgroundWaitTag>::Get() || AsyncDispatchWait().count() <= 0) return false;
+        waited = true;
+    }
+    const auto allowed = takeBackgroundWait();
+    if (allowed <= std::chrono::steady_clock::duration{}) return false;
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = start + allowed;
+    bool done = false;
+    while (true) {
+        {
+            std::lock_guard lock(mutex);
+            done = finished;
+        }
+        if (done || std::chrono::steady_clock::now() >= deadline) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    spendBackgroundWait(std::chrono::steady_clock::now() - start);
+    return done;
+}
+
+void NoteDispatchDropped(std::uint64_t address) {
+    auto& dropped = droppedDispatches();
+    std::lock_guard lock(dropped.mutex);
+    if (dropped.dropped[address]++ == 0) std::fprintf(stderr, "[dispatch] dropping the dispatches of compute shader 0x%llx while its shader is prepared in the background (APS5_ASYNC_DRAW_COMPILE)\n", static_cast<unsigned long long>(address));
+}
+
+void NoteDispatchRecorded(std::uint64_t address) {
+    auto& dropped = droppedDispatches();
+    std::lock_guard lock(dropped.mutex);
+    if (dropped.dropped.empty()) return;
+    const auto found = dropped.dropped.find(address);
+    if (found == dropped.dropped.end()) return;
+    std::fprintf(stderr, "[dispatch] compute shader 0x%llx: its shader is prepared after %llu dropped dispatches\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(found->second));
+    dropped.dropped.erase(found);
 }
 
 namespace {

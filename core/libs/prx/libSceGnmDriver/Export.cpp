@@ -124,6 +124,18 @@ std::uint32_t* SetRegisters(std::uint32_t* at, std::uint32_t opcode, std::initia
     return at;
 }
 
+template <std::size_t Words>
+bool ReadShaderRegs(const std::uint32_t* regs, std::array<std::uint32_t, Words>& out) {
+    return GuestCopyIn_nid_no_patch(out.data(), regs, sizeof(out)) && out[1] == 0;
+}
+
+template <std::size_t Words, typename Fn>
+int WriteShaderPacket(std::uint32_t* cmd, Fn&& build) {
+    std::array<std::uint32_t, Words> local{};
+    build(local.data());
+    return GuestCopyOut_nid_no_patch(cmd, local.data(), sizeof(local)) ? 0 : -1;
+}
+
 std::uint32_t* DefaultState(std::uint32_t* at, std::uint32_t scModeCntl1) {
     at = SetRegisters(at, OpSetShReg, {{0x216, 0xffffffffu}, {0x217, 0xffffffffu}, {0x215, 0}});
     at = SetRegisters(at, OpSetContextReg, {{0x2f9, 0x2d}, {0x282, 8}, {0x280, 0x80008}, {0x281, 0xffff0000u}, {0x204, 0}, {0x206, 0x43f}, {0x83, 0xffff}, {0x317, 0x10},
@@ -441,78 +453,99 @@ extern "C" {
 int APS5_VABI sceGnmSetPsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmd || size <= 0x27) return -1;
     if (!regs) {
-        cmd = Emit(cmd, OpSetShReg, {8, 0, 0});
-        cmd = Emit(cmd, OpSetContextReg, {0x203, 0});
-        Nop(cmd, 0x20);
-        return 0;
+        return WriteShaderPacket<0x28>(cmd, [](std::uint32_t* at) {
+            at = Emit(at, OpSetShReg, {8, 0, 0});
+            at = Emit(at, OpSetContextReg, {0x203, 0});
+            Nop(at, 0x20);
+        });
     }
-    if (regs[1] != 0) return -1;
-    cmd = Emit(cmd, OpSetShReg, {8, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {10, regs[2], regs[3]});
-    cmd = Emit(cmd, OpSetContextReg, {0x1c4, regs[4], regs[5]});
-    cmd = Emit(cmd, OpSetContextReg, {0x1b3, regs[6], regs[7]});
-    cmd = SetRegisters(cmd, OpSetContextReg, {{0x1b6, regs[8]}, {0x1b8, regs[9]}, {0x203, regs[10]}, {0x8f, regs[11]}});
-    Nop(cmd, 11);
-    return 0;
+    std::array<std::uint32_t, 12> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    return WriteShaderPacket<0x28>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {8, local[0], 0});
+        at = Emit(at, OpSetShReg, {10, local[2], local[3]});
+        at = Emit(at, OpSetContextReg, {0x1c4, local[4], local[5]});
+        at = Emit(at, OpSetContextReg, {0x1b3, local[6], local[7]});
+        at = SetRegisters(at, OpSetContextReg, {{0x1b6, local[8]}, {0x1b8, local[9]}, {0x203, local[10]}, {0x8f, local[11]}});
+        Nop(at, 11);
+    });
 }
 
 int APS5_VABI sceGnmSetVsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
-    if (!cmd || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu) || regs[1] != 0) return -1;
-    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & 0xfcfffc3fu) | modifier;
-    cmd = Emit(cmd, OpSetShReg, {0x48, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {0x4a, rsrc1, regs[3]});
-    cmd = SetRegisters(cmd, OpSetContextReg, {{0x207, regs[6]}, {0x1b1, regs[4]}, {0x1c3, regs[5]}});
-    Nop(cmd, 11);
-    return 0;
+    if (!cmd || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu)) return -1;
+    std::array<std::uint32_t, 7> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    const std::uint32_t rsrc1 = modifier == 0 ? local[2] : (local[2] & 0xfcfffc3fu) | modifier;
+    return WriteShaderPacket<0x1d>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {0x48, local[0], 0});
+        at = Emit(at, OpSetShReg, {0x4a, rsrc1, local[3]});
+        at = SetRegisters(at, OpSetContextReg, {{0x207, local[6]}, {0x1b1, local[4]}, {0x1c3, local[5]}});
+        Nop(at, 11);
+    });
 }
 
 int APS5_VABI sceGnmSetCsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs) {
-    if (!cmd || size <= 0x18 || !regs || regs[1] != 0) return -1;
-    cmd = Emit(cmd, OpSetShReg, {0x20c, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {0x212, regs[2], regs[3]});
-    cmd = Emit(cmd, OpSetShReg, {0x207, regs[4], regs[5], regs[6]});
-    Nop(cmd, 11);
-    return 0;
+    if (!cmd || size <= 0x18 || !regs) return -1;
+    std::array<std::uint32_t, 7> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    return WriteShaderPacket<0x19>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {0x20c, local[0], 0});
+        at = Emit(at, OpSetShReg, {0x212, local[2], local[3]});
+        at = Emit(at, OpSetShReg, {0x207, local[4], local[5], local[6]});
+        Nop(at, 11);
+    });
 }
 
 int APS5_VABI sceGnmSetEsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
-    if (!cmd || size < 0x14 || !regs || (modifier & 0xfcfffc3fu) || regs[1] != 0) return -1;
-    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & 0xfcfffc3fu) | modifier;
-    cmd = Emit(cmd, OpSetShReg, {0xc8, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {0xca, rsrc1, regs[3]});
-    Nop(cmd, 11);
-    return 0;
+    if (!cmd || size < 0x14 || !regs || (modifier & 0xfcfffc3fu)) return -1;
+    std::array<std::uint32_t, 4> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    const std::uint32_t rsrc1 = modifier == 0 ? local[2] : (local[2] & 0xfcfffc3fu) | modifier;
+    return WriteShaderPacket<0x14>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {0xc8, local[0], 0});
+        at = Emit(at, OpSetShReg, {0xca, rsrc1, local[3]});
+        Nop(at, 11);
+    });
 }
 
 int APS5_VABI sceGnmSetGsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs) {
-    if (!cmd || size < 0x1d || !regs || regs[1] != 0) return -1;
-    cmd = Emit(cmd, OpSetShReg, {0x88, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {0x8a, regs[2], regs[3]});
-    cmd = SetRegisters(cmd, OpSetContextReg, {{0x2e5, regs[4]}, {0x29b, regs[5]}, {0x2e4, regs[6]}});
-    Nop(cmd, 11);
-    return 0;
+    if (!cmd || size < 0x1d || !regs) return -1;
+    std::array<std::uint32_t, 7> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    return WriteShaderPacket<0x1d>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {0x88, local[0], 0});
+        at = Emit(at, OpSetShReg, {0x8a, local[2], local[3]});
+        at = SetRegisters(at, OpSetContextReg, {{0x2e5, local[4]}, {0x29b, local[5]}, {0x2e4, local[6]}});
+        Nop(at, 11);
+    });
 }
 
 int APS5_VABI sceGnmSetHsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
-    if (!cmd || size < 0x1e || !regs || regs[1] != 0) return -1;
-    cmd = Emit(cmd, OpSetShReg, {0x108, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {0x10a, regs[2], regs[3]});
-    cmd = Emit(cmd, OpSetContextReg, {0x286, regs[5], regs[6]});
-    cmd = SetRegisters(cmd, OpSetContextReg, {{0x2db, regs[4]}, {0x2d6, lsHsConfig}});
-    Nop(cmd, 11);
-    return 0;
+    if (!cmd || size < 0x1e || !regs) return -1;
+    std::array<std::uint32_t, 7> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    return WriteShaderPacket<0x1e>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {0x108, local[0], 0});
+        at = Emit(at, OpSetShReg, {0x10a, local[2], local[3]});
+        at = Emit(at, OpSetContextReg, {0x286, local[5], local[6]});
+        at = SetRegisters(at, OpSetContextReg, {{0x2db, local[4]}, {0x2d6, lsHsConfig}});
+        Nop(at, 11);
+    });
 }
 
 int APS5_VABI sceGnmSetLsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
     if (!cmd || size < 0x17 || !regs) return -1;
     const std::uint32_t mask = (modifier & 0xfffffc3fu) == 0 ? 0xfffffc3fu : 0xfcfffc3fu;
-    if ((modifier & mask) || regs[1] != 0) return -1;
-    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & mask) | modifier;
-    cmd = Emit(cmd, OpSetShReg, {0x148, regs[0], 0});
-    cmd = Emit(cmd, OpSetShReg, {0x14b, regs[3]});
-    cmd = Emit(cmd, OpSetShReg, {0x14a, rsrc1, regs[3]});
-    Nop(cmd, 11);
-    return 0;
+    if (modifier & mask) return -1;
+    std::array<std::uint32_t, 4> local{};
+    if (!ReadShaderRegs(regs, local)) return -1;
+    const std::uint32_t rsrc1 = modifier == 0 ? local[2] : (local[2] & mask) | modifier;
+    return WriteShaderPacket<0x17>(cmd, [&](std::uint32_t* at) {
+        at = Emit(at, OpSetShReg, {0x148, local[0], 0});
+        at = Emit(at, OpSetShReg, {0x14b, local[3]});
+        at = Emit(at, OpSetShReg, {0x14a, rsrc1, local[3]});
+        Nop(at, 11);
+    });
 }
 
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd, std::uint32_t size) {

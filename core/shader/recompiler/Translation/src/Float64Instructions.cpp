@@ -30,6 +30,7 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     const IrType type = IrOpcodeType(opcode);
     IrValue* result = count == 1u ? &ir.Emit(opcode, type, {args[0]}) : count == 2u ? &ir.Emit(opcode, type, {args[0], args[1]}) : &ir.Emit(opcode, type, {args[0], args[1], args[2]});
     if (arithmetic) result = &nanResultF64(*args[0], *args[1], args[2], flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result));
+    if (opcode == IrOpcode::FPTrigPreop64) result = &flushTinyF64Result(opcode, *args[0], *args[1], nullptr, *result);
     if (type == IrType::U64) {
         writeF64Result(inst.destination, *result);
         return true;

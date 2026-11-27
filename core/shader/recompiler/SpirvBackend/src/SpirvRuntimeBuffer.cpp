@@ -739,7 +739,7 @@ std::uint32_t genericFormattedLoad(SpirvValueEmitContext& context, const IrValue
     for (std::uint32_t index = 1; index <= formats; ++index) {
         const auto info = GetFormatInfo(static_cast<IrBufferFormat>(index));
         for (std::uint32_t component = 0; component < info.componentCount; ++component) {
-            const std::pair<SpirvFormatComponentType, std::uint32_t> key{info.type, info.componentBits[component]};
+            const std::pair<SpirvFormatComponentType, std::uint32_t> key{info.type, memory.d16 || info.type == SpirvFormatComponentType::Float ? info.componentBits[component] : 0u};
             if (std::find(conversions.begin(), conversions.end(), key) == conversions.end()) conversions.push_back(key);
         }
     }
@@ -781,6 +781,10 @@ std::uint32_t genericFormattedLoad(SpirvValueEmitContext& context, const IrValue
         const auto extracted = Select(state, u32, equal(state, componentBits, constant(32u)), raw, Select(state, u32, signedType, Unary(state, spv::OpBitcast, u32, signedField), unsignedField));
         auto converted = constant(0u);
         for (const auto& [conversionType, conversionBits] : conversions) {
+            if (conversionBits == 0u) {
+                converted = Select(state, u32, isType(conversionType), NormalizeFormatComponentWidth(state, conversionType, componentBits, extracted), converted);
+                continue;
+            }
             SpirvBufferFormatInfo info{};
             info.type = conversionType;
             info.componentCount = 1u;
