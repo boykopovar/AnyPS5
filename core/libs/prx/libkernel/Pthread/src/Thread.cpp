@@ -1126,35 +1126,56 @@ static void ReleaseThread(PthreadPrivate* thread) {
 struct SuspendMark {
     bool referenced = false;
     bool started = false;
+    bool request = false;
 };
+
+static bool HostAdoptedThread(const PthreadPrivate* thread) {
+#ifdef _WIN32
+    return thread->hostAdopted;
+#else
+    return thread->_adopted;
+#endif
+}
+
+static void NoteGuestThreadStarted(PthreadPrivate* thread, SuspendMark& mark) {
+    mark.started = true;
+    auto references = thread->references.load(std::memory_order_relaxed);
+    while (!thread->_adopted && !mark.referenced && references != 0)
+        mark.referenced = thread->references.compare_exchange_weak(references, references + 1, std::memory_order_acq_rel, std::memory_order_relaxed);
+    mark.request = mark.referenced || thread->_adopted;
+}
 
 static bool MarkGuestThreadSuspended(PthreadPrivate* thread, SuspendMark& mark) {
     thread->suspended.store(true, std::memory_order_seq_cst);
     if (thread->parked.load(std::memory_order_seq_cst) != 0) return false;
-    mark.referenced = !thread->_adopted;
-    if (mark.referenced) thread->references.fetch_add(1, std::memory_order_acq_rel);
-    mark.started = thread->started.load(std::memory_order_seq_cst);
+    if (thread->started.load(std::memory_order_seq_cst)) NoteGuestThreadStarted(thread, mark);
     return true;
 }
 
 static bool WaitGuestThreadParked(PthreadPrivate* thread, SuspendMark mark) {
     constexpr std::uint64_t PollNanos = 1000000;
-    const std::unique_ptr<PthreadPrivate, decltype(&ReleaseThread)> reference(mark.referenced ? thread : nullptr, &ReleaseThread);
-    if (mark.started) {
-        try {
-            if (!RequestGuestThreadPark(thread)) return false;
-        } catch (...) {
-            const auto live = LockLiveGuestThread(thread);
-            if (live.owns_lock()) thread->suspended.store(false, std::memory_order_release);
-            throw;
-        }
-    }
+    std::unique_ptr<PthreadPrivate, decltype(&ReleaseThread)> reference(mark.referenced ? thread : nullptr, &ReleaseThread);
     for (;;) {
+        if (mark.request) {
+            mark.request = false;
+            try {
+                if (!RequestGuestThreadPark(thread)) return false;
+            } catch (...) {
+                const auto live = LockLiveGuestThread(thread);
+                if (live.owns_lock()) ReleaseParkedThread(thread);
+                throw;
+            }
+        }
         {
             const auto live = LockLiveGuestThread(thread);
             if (!live.owns_lock()) return false;
             if (thread->parked.load(std::memory_order_acquire) != 0 || !thread->suspended.load(std::memory_order_acquire)) return true;
+            if (!mark.started && thread->started.load(std::memory_order_seq_cst) && HostAdoptedThread(thread)) {
+                NoteGuestThreadStarted(thread, mark);
+                if (mark.referenced) reference.reset(thread);
+            }
         }
+        if (mark.request) continue;
         TimedWait::SleepNanos(PollNanos);
         ParkCurrentGuestThread_nid_no_patch();
     }
@@ -1184,23 +1205,25 @@ extern "C" void SuspendAllGuestThreads_nid_no_patch() {
             if (thread != self && !thread->_finished.load(std::memory_order_acquire)) thread->suspended.store(true, std::memory_order_seq_cst);
         }
     }
-    std::vector<PthreadPrivate*> exited;
+    std::vector<int> exited;
     for (;;) {
         PthreadPrivate* pending = nullptr;
+        int pendingId = 0;
         SuspendMark mark;
         {
             std::lock_guard lock(registry.lock);
             for (const auto& [id, thread] : registry.threads) {
                 if (thread == self || thread->_finished.load(std::memory_order_acquire)) continue;
-                if (std::find(exited.begin(), exited.end(), thread) != exited.end()) continue;
+                if (std::find(exited.begin(), exited.end(), id) != exited.end()) continue;
                 if (MarkGuestThreadSuspended(thread, mark)) {
                     pending = thread;
+                    pendingId = id;
                     break;
                 }
             }
         }
         if (pending == nullptr) return;
-        if (!WaitGuestThreadParked(pending, mark)) exited.push_back(pending);
+        if (!WaitGuestThreadParked(pending, mark)) exited.push_back(pendingId);
     }
 }
 
@@ -1423,7 +1446,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     }
     if (name) p->name = std::move(nameCopy);
     p->createdSuspended = attr && (*attr)->_createSuspended;
-    p->suspended.store(p->createdSuspended, std::memory_order_relaxed);
+    if (p->createdSuspended) p->suspended.store(true, std::memory_order_seq_cst);
     p->pendingException.store(0, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
@@ -1654,8 +1677,9 @@ Pthread APS5_VABI scePthreadSelf() {
         adopted->references.store(1, std::memory_order_relaxed);
         TimedWait::BindThreadWaitState(&adopted->waitCount);
         SetStackFromHost(adopted.get());
-        adopted->started.store(true, std::memory_order_seq_cst);
-        CurrentGuestState().current = adopted.release();
+        auto* published = adopted.release();
+        CurrentGuestState().current = published;
+        published->started.store(true, std::memory_order_seq_cst);
     }
 #else
     if (!CurrentGuestState().current) {
@@ -1670,8 +1694,8 @@ Pthread APS5_VABI scePthreadSelf() {
         adoptedThread->threadId = std::this_thread::get_id();
         adoptedThread->hostThread = pthread_self();
         SetStackFromHost(adoptedThread.get());
-        adoptedThread->started.store(true, std::memory_order_seq_cst);
         CurrentGuestState().current = adoptedThread.get();
+        adoptedThread->started.store(true, std::memory_order_seq_cst);
     }
 #endif
     return CurrentGuestState().current;
