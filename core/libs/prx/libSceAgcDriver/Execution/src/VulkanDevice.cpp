@@ -241,6 +241,40 @@ APS5_RUN_REPORT_COMPONENT("libSceAgcDriver")
 
 namespace {
 
+#ifdef _WIN32
+constexpr const char* VulkanLoaderName = "vulkan-1.dll";
+#elif defined(__APPLE__)
+constexpr const char* VulkanLoaderName = "libvulkan.1.dylib";
+#else
+constexpr const char* VulkanLoaderName = "libvulkan.so.1";
+#endif
+
+void HoldVulkanDriversResident() {
+    static VkInstance resident = VK_NULL_HANDLE;
+    if (resident != VK_NULL_HANDLE) return;
+    void* const library = SDL_LoadObject(VulkanLoaderName);
+    if (library == nullptr) return;
+    const auto instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
+    const auto createInstance = instanceProc == nullptr ? nullptr : reinterpret_cast<PFN_vkCreateInstance>(instanceProc(VK_NULL_HANDLE, "vkCreateInstance"));
+    VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    application.pApplicationName = "AnyPS5 libSceAgcDriver";
+    application.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    create.pApplicationInfo = &application;
+#ifdef __APPLE__
+    const char* const portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    create.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    create.enabledExtensionCount = 1;
+    create.ppEnabledExtensionNames = &portability;
+#endif
+    if (createInstance == nullptr || createInstance(&create, nullptr, &resident) != VK_SUCCESS) {
+        resident = VK_NULL_HANDLE;
+        SDL_UnloadObject(library);
+        return;
+    }
+    APS5_LOG_OUT("Vulkan drivers held resident instance=%p", reinterpret_cast<void*>(resident));
+}
+
 class RdnaProbeShaders {
 public:
     RdnaProbeShaders() : gcn(ShaderRecompiler::GcnGuestShaders()) { ShaderRecompiler::SetGcnGuestShaders(false); }
@@ -1505,13 +1539,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->compileOnly = compileOnly;
     const bool hostReport = !compileOnly && ParseHostReportSetting(std::getenv("ANYPS5_HOST_REPORT"));
     APS5_LOG_OUT("VulkanDevice constructor window=%p", static_cast<const void*>(window));
-#ifdef _WIN32
-    state->library = SDL_LoadObject("vulkan-1.dll");
-#elif defined(__APPLE__)
-    state->library = SDL_LoadObject("libvulkan.1.dylib");
-#else
-    state->library = SDL_LoadObject("libvulkan.so.1");
-#endif
+    state->library = SDL_LoadObject(VulkanLoaderName);
     if (state->library == nullptr) {
         throw VulkanUnavailable(std::string("Vulkan loader: ") + SDL_GetError());
     }
@@ -1524,6 +1552,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     struct LoaderUnlock {
         ~LoaderUnlock() { AgcDriverUnlockVulkanLoader_nid_postfix(); }
     } loaderUnlock;
+    HoldVulkanDriversResident();
     VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     application.pApplicationName = "AnyPS5 libSceAgcDriver";
     application.apiVersion = VK_API_VERSION_1_1;
