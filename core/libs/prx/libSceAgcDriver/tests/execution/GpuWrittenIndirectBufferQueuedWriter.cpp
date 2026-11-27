@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -25,8 +26,8 @@ void check(bool condition, const std::string& what) {
 }
 
 struct Gate {
-    std::atomic<bool> release{false};
-    ~Gate() { release.store(true, std::memory_order_release); }
+    std::shared_ptr<std::atomic<bool>> release = std::make_shared<std::atomic<bool>>(false);
+    ~Gate() { release->store(true, std::memory_order_release); }
 };
 
 alignas(256) std::array<std::uint32_t, 8> CommandMemory{};
@@ -60,15 +61,15 @@ int main() {
         const auto commands = reinterpret_cast<std::uint64_t>(CommandMemory.data());
         {
             Gate gate;
-            DrawPipeline::Queue0().Enqueue([&gate] {
-                while (!gate.release.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            DrawPipeline::Queue0().Enqueue([release = gate.release] {
+                while (!release->load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 CommandMemory[0] = WriteData;
             }, {{commands, commands + 5u * sizeof(std::uint32_t)}});
             const auto before = DrawPipeline::DrainRequestsByOpcode(0x3f);
             std::thread releaser([&] {
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
                 while (DrawPipeline::DrainRequestsByOpcode(0x3f) == before && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                gate.release.store(true, std::memory_order_release);
+                gate.release->store(true, std::memory_order_release);
             });
             std::vector<std::uint32_t> words{0xc0023f00u, Low(CommandMemory.data()), High(CommandMemory.data()) & 0xffffu, 5u};
             Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};

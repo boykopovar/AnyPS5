@@ -713,9 +713,17 @@ def is_module(path):
 
 
 def stage_inputs(package, entry, source):
+    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    options = iter(entry.get("relink", []))
+    for option in options:
+        if option == "--skip-sce-module":
+            return
+        if option == "--":
+            break
+        if option in ("--exclude-sce-module", "--module-dir", "--rpath"):
+            next(options, None)
     if not (package / "sce_modules").is_dir():
         (source / "sce_module").mkdir(parents=True)
-    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
         if not (package / directory).is_dir():

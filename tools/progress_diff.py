@@ -8,19 +8,27 @@ import progress
 
 def compare(base, head):
     result = {}
+    states = ("done", "todo", "inert")
     for section in ("libraries", "shaders"):
-        before = {group["name"]: group for group in base[section]["groups"]}
+        before = {group["name"] for group in base[section]["groups"]}
         after = {group["name"]: group for group in head[section]["groups"]}
-        groups = []
-        for name in sorted(before.keys() | after.keys()):
-            a, b = before.get(name), after.get(name)
-            row = {"name": name, "presence": "added" if a is None else "removed" if b is None else "both"}
-            for state in ("done_names", "todo_names", "inert_names"):
-                old, new = set((a or {}).get(state, [])), set((b or {}).get(state, []))
-                row[state] = {"added": sorted(new - old), "removed": sorted(old - new)}
-            groups.append(row)
+        owners = {name: group["shared_sources"] for name, group in after.items() if "shared_sources" in group}
+        groups = {}
+        for name in sorted(before | after.keys()):
+            presence = "added" if name not in before else "removed" if name not in after else "both"
+            groups[name] = {"name": name, "presence": presence}
+            for state in states:
+                groups[name][f"{state}_names"] = {"added": [], "removed": []}
+        for state in states:
+            old = progress.names(base[section], state, owners)
+            new = progress.names(head[section], state, owners)
+            for action, changes in (("added", new - old), ("removed", old - new)):
+                for name, symbol in sorted(changes):
+                    if name in groups:
+                        groups[name][f"{state}_names"][action].append(symbol)
         result[section] = {"baseline_percent": base[section]["percent"], "candidate_percent": head[section]["percent"],
-                           "change_percentage_points": round(head[section]["percent"] - base[section]["percent"], 2), "groups": groups}
+                           "change_percentage_points": round(head[section]["percent"] - base[section]["percent"], 2),
+                           "groups": list(groups.values())}
     return result
 
 

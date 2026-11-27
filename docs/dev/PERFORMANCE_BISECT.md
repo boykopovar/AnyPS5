@@ -49,7 +49,7 @@ python3 tools/performance_bisect.py \
   --output /path/to/performance-bisect.json
 ```
 
-The known-good revision must be an ancestor of the known-bad revision. The tool creates an isolated temporary Git worktree, builds and samples the endpoints, then uses binary search on first-parent commits. It builds each tested revision from a clean build directory and removes the temporary worktree and measurements when finished. Use `--temp-dir` to select an existing disk location with enough room for a worktree and a full build.
+The known-good revision must be an earlier commit on the known-bad revision's first-parent history. The tool creates an isolated temporary Git worktree, builds and samples the endpoints, then uses binary search on first-parent commits. It builds each tested revision from a clean build directory and removes the temporary worktree and measurements when finished. Use `--temp-dir` to select an existing disk location with enough room for a worktree and a full build.
 
 Each tested revision runs `title_run.py` repeatedly with one measured run per invocation. The median FPS is compared with the good endpoint. A search stops instead of guessing if the bad endpoint is not slow enough, a run fails to render, the machine/title/content identity changes, or sample spread exceeds `max_spread_pct`.
 
