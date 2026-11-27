@@ -5415,7 +5415,7 @@ bool pendingUploadGpuCopy(const Device& device, Recorder& recorder, std::size_t 
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
     if (alignment < 8 || alignment > 256) {
-        std::cout << "storage buffer offset alignment " << alignment << ": uploads behind a pending GPU write not tested\n";
+        std::cout << "uploads behind a pending GPU write skipped, the device reports a storage buffer offset alignment of " << alignment << "\n";
         return false;
     }
     constexpr std::size_t bytes = 4u << 20u;
