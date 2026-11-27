@@ -273,6 +273,20 @@ VKAPI_ATTR void VKAPI_CALL bindVertexBuffers(VkCommandBuffer commands, std::uint
     CommandEncoder::Unwrap(slots()[S].real.cmdBindVertexBuffers)(commands, first, count, buffers, offsets);
 }
 
+template<std::size_t S>
+VKAPI_ATTR void VKAPI_CALL executeCommands(VkCommandBuffer commands, std::uint32_t count, const VkCommandBuffer* buffers) {
+    if (auto* encoder = deferring<S>(commands, "cmdExecuteCommands")) {
+        encoder->Emplace([](const std::byte* payload, VkCommandBuffer target, const DeviceFunctions& functions) {
+            const auto header = unpack<RangeHeader>(payload);
+            const auto* at = payload + aligned(sizeof(RangeHeader));
+            const auto* buffers = arrayAt<VkCommandBuffer>(at, header.count);
+            CommandEncoder::Unwrap(functions.cmdExecuteCommands)(target, header.count, buffers);
+        }, RangeHeader{0, count}, std::span(buffers, count));
+        return;
+    }
+    CommandEncoder::Unwrap(slots()[S].real.cmdExecuteCommands)(commands, count, buffers);
+}
+
 struct BarrierHeader {
     VkPipelineStageFlags source;
     VkPipelineStageFlags destination;
@@ -381,6 +395,7 @@ void install(DeviceFunctions& table) {
     APS5_DIRECT(cmdUpdateBuffer);
     APS5_PLAIN(cmdFillBuffer);
     APS5_PLAIN(cmdBindPipeline);
+    APS5_CUSTOM(cmdExecuteCommands, executeCommands);
     APS5_CUSTOM(cmdBindDescriptorSets, bindDescriptorSets);
     APS5_CUSTOM(cmdPushConstants, pushConstants);
     APS5_PLAIN(cmdDispatch);

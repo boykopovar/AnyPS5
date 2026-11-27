@@ -110,6 +110,12 @@ VKAPI_ATTR void VKAPI_CALL FakeEndRenderPass(VkCommandBuffer commands) {
     Log(commands, "end");
 }
 
+VKAPI_ATTR void VKAPI_CALL FakeExecuteCommands(VkCommandBuffer commands, std::uint32_t count, const VkCommandBuffer* buffers) {
+    std::string text = "execute";
+    for (std::uint32_t index = 0; index < count; ++index) text += " " + std::to_string(Raw(buffers[index]));
+    Log(commands, text);
+}
+
 DeviceFunctions FakeTable() {
     DeviceFunctions table{};
     table.cmdDraw = &FakeDraw;
@@ -122,6 +128,7 @@ DeviceFunctions FakeTable() {
     table.cmdUpdateBuffer = &FakeUpdateBuffer;
     table.cmdBeginRenderPass = &FakeBeginRenderPass;
     table.cmdEndRenderPass = &FakeEndRenderPass;
+    table.cmdExecuteCommands = &FakeExecuteCommands;
     return table;
 }
 
@@ -417,6 +424,28 @@ void NestedWindowKeepsOrder() {
     table.cmdDraw(outer, 7, 1, 0, 0);
     encoder.Quiesce();
     Compare({{outer, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0", "draw 5 1 0 0", "draw 6 1 0 0", "draw 7 1 0 0"}}, {inner, {"draw 4 1 0 0"}}}, "nested windows");
+}
+
+// A pass begun for secondary contents runs its pooled recordings through vkCmdExecuteCommands on the
+// batch's primary: the call must queue behind the pass's begin and ahead of the draws after it, and copy
+// the secondary handles it was given.
+void ExecuteCommandsKeepsOrder() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x45);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    const auto primary = Handle<VkCommandBuffer>(0x800);
+    VkCommandBuffer secondary[2]{Handle<VkCommandBuffer>(0x810), Handle<VkCommandBuffer>(0x820)};
+    encoder.Open(primary, RecordingOf(primary));
+    table.cmdDraw(primary, 1, 1, 0, 0);
+    CommandEncoder::Unwrap(table.cmdExecuteCommands)(primary, 2, secondary);
+    secondary[0] = VK_NULL_HANDLE;
+    secondary[1] = VK_NULL_HANDLE;
+    table.cmdDraw(primary, 2, 1, 0, 0);
+    encoder.Close();
+    encoder.Quiesce();
+    Compare({{primary, {"draw 1 1 0 0", "execute " + std::to_string(0x810) + " " + std::to_string(0x820), "draw 2 1 0 0"}}}, "execute commands");
 }
 
 void LargeRecordsSpanChunks() {
@@ -1503,6 +1532,7 @@ int main(int argc, char** argv) {
         HookDuringUnencodedOpsWaits();
         EveryCommandOfTheTableIsInterposed();
         NestedWindowKeepsOrder();
+        ExecuteCommandsKeepsOrder();
         LargeRecordsSpanChunks();
         UnwindingSettlesQueuedRecording();
         OwnersOutliveTheUnwindDrain();
