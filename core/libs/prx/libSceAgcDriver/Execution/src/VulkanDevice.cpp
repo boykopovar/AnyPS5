@@ -1706,7 +1706,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->indexedIndirectPatches = IndexedIndirectPatchesUsable(driver.driverID);
         state->hostInterpolationFirst = HostInterpolationPreferred(driver.driverID) && std::getenv("APS5_NO_HOST_INTERPOLATION_FIRST") == nullptr;
         APS5_LOG_OUT("Pixel interpolation driver=%d hostInterpolationFirst=%d", static_cast<int>(driver.driverID), state->hostInterpolationFirst ? 1 : 0);
-        state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
+        state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID, state->properties.driverVersion);
+        APS5_LOG_OUT("Wave LDS barriers driver=%d version=0x%08x subgroupControlBarriers=%d", static_cast<int>(driver.driverID), state->properties.driverVersion, state->subgroupControlBarriers ? 1 : 0);
         state->workgroupScopeFences = WorkgroupScopeFenceUsable(driver.driverID);
         state->ldsLockFences = LdsLockFencesRequired(driver.driverID);
         state->deviceAtomicWorkgroupMemoryBarriers = DeviceAtomicWorkgroupMemoryBarriersRequired(driver.driverID);
