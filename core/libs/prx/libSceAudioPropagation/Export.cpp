@@ -146,13 +146,25 @@ void require(bool condition, const char* function) {
 }
 
 template <typename T>
-bool copyGuestIn(T& dst, const T* src);
+bool copyGuestIn(T& dst, const T* src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
 
 template <typename T>
-bool copyGuestOut(T* dst, const T& src);
+bool copyGuestOut(T* dst, const T& src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
 
 void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32_t id, std::size_t size, const char* function) {
-    require(desc != nullptr && desc->id == id && desc->size == size, function);
+    require(desc != nullptr, function);
+    AudioPropagationStructDescriptor copy{};
+    require(copyGuestIn(copy, desc) && copy.id == id && copy.size == size, function);
 }
 
 std::vector<Attribute> requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
@@ -231,22 +243,6 @@ std::int32_t writeRaysCount(std::uint32_t* count, const char* function) {
 
 void requireNoPropagation(bool none, const char* function) {
     if (!none) throw std::runtime_error(std::string(function) + ": rays or audio paths are outside the no-propagation model");
-}
-
-template <typename T>
-bool copyGuestIn(T& dst, const T* src) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
-    errno = savedErrno;
-    return copied;
-}
-
-template <typename T>
-bool copyGuestOut(T* dst, const T& src) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
-    errno = savedErrno;
-    return copied;
 }
 
 SourceInfo DefaultSourceInfo(AudioPropagationHandle system) {

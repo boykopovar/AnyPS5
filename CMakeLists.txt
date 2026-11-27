@@ -699,6 +699,9 @@ if(BUILD_TESTING)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
         set_tests_properties(configure_seed_paths PROPERTIES TIMEOUT 20)
+        add_test(NAME configure_seed_check_name_round_trips COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedCheckNameRoundTripTests)
+        set_tests_properties(configure_seed_check_name_round_trips PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
         set_tests_properties(configure_seed_round_trips PROPERTIES TIMEOUT 30)
@@ -734,6 +737,9 @@ if(BUILD_TESTING)
             add_test(NAME vulkan_validation_gate_nested_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py NestedContainmentTests)
         endif()
+        add_test(NAME frame_capture_minimize_replay COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tools/tests/test_frame_capture_minimize_replay.py)
+        set_tests_properties(frame_capture_minimize_replay PROPERTIES TIMEOUT 20)
         add_test(NAME vulkan_validation_gate_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ArgumentTests)
         add_test(NAME vulkan_validation_gate_identity COMMAND ${Python3_EXECUTABLE}
