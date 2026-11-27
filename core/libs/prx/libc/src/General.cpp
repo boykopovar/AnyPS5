@@ -29,6 +29,7 @@
 #endif
 #include <windows.h>
 #include <io.h>
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #else
 #include <ctime>
 #include <fcntl.h>
@@ -175,8 +176,11 @@ bool CaseInsensitiveDirectoryWindows(const std::filesystem::path& directory) {
     const std::unique_ptr<void, decltype(&CloseHandle)> owner(handle, &CloseHandle);
     struct { ULONG flags; } information{};
     constexpr auto caseSensitiveInfo = static_cast<FILE_INFO_BY_HANDLE_CLASS>(23);
-    return GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)) &&
-        (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    if (GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)))
+        return (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    const auto error = GetLastError();
+    return error == ERROR_CALL_NOT_IMPLEMENTED || error == ERROR_INVALID_PARAMETER || error == ERROR_NOT_SUPPORTED ||
+        error == ERROR_INVALID_FUNCTION;
 }
 
 std::error_code MatchNamesWindows(const std::filesystem::path& directory, std::span<NameMatch> names) {
@@ -369,14 +373,23 @@ std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::s
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
     const auto host = HostPath(state, names);
     std::error_code error;
+#ifdef _WIN32
+    const auto hostStatus = [](const std::filesystem::path& path, std::error_code& failure) {
+        std::error_code verbatimError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(path, verbatimError);
+        return std::filesystem::status(verbatimError ? path : verbatim, failure);
+    };
+    const auto status = hostStatus(host, error);
+#else
     const auto status = std::filesystem::status(host, error);
+#endif
     if (std::filesystem::is_directory(status)) return;
     if (!error) error = std::make_error_code(std::filesystem::exists(status) ? std::errc::not_a_directory : std::errc::no_such_file_or_directory);
 #ifdef _WIN32
     if (error == std::errc::no_such_file_or_directory) {
         for (auto prefix = host.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
             std::error_code prefixError;
-            const auto prefixStatus = std::filesystem::status(prefix, prefixError);
+            const auto prefixStatus = hostStatus(prefix, prefixError);
             if (!std::filesystem::exists(prefixStatus)) continue;
             if (!std::filesystem::is_directory(prefixStatus)) error = std::make_error_code(std::errc::not_a_directory);
             break;
@@ -529,13 +542,79 @@ int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::too_many_symbolic_link_levels) return 62;
     return 5;
 }
+bool IsDirectory(const std::filesystem::path& path, std::error_code& error) {
+#ifdef _WIN32
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    if (error) return false;
+    return std::filesystem::is_directory(verbatim, error);
+#else
+    return std::filesystem::is_directory(path, error);
+#endif
+}
+
+#ifdef _WIN32
+std::optional<std::filesystem::path> FinalDirectoryPath(const std::filesystem::path& path, bool& notDirectory) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    if (error) return std::nullopt;
+    const HANDLE handle = ::CreateFileW(verbatim.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return std::nullopt;
+    FILE_BASIC_INFO basic{};
+    std::wstring final(MAX_PATH, L'\0');
+    DWORD length = 0;
+    if (::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic))) {
+        notDirectory = (basic.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+        if (!notDirectory) {
+            length = ::GetFinalPathNameByHandleW(handle, final.data(), static_cast<DWORD>(final.size()), FILE_NAME_NORMALIZED);
+            if (length >= final.size()) {
+                final.resize(length);
+                length = ::GetFinalPathNameByHandleW(handle, final.data(), length, FILE_NAME_NORMALIZED);
+            }
+        }
+    }
+    ::CloseHandle(handle);
+    if (length == 0 || length >= final.size()) return std::nullopt;
+    final.resize(length);
+    if (final.starts_with(LR"(\\?\UNC\)")) final.replace(0, 8, LR"(\\)");
+    else if (final.starts_with(LR"(\\?\)")) final.erase(0, 4);
+    return std::filesystem::path(std::move(final));
+}
+
+int SetLongWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved, const std::error_code& failure) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(resolved, error);
+    if (error || !verbatim.native().starts_with(LR"(\\?\)")) return DirectoryFailure(failure);
+    bool notDirectory = false;
+    const auto target = FinalDirectoryPath(resolved, notDirectory);
+    if (notDirectory) return 20;
+    if (!target) return DirectoryFailure(failure);
+    const auto root = FinalDirectoryPath(state.root, notDirectory);
+    if (!root) return DirectoryFailure(failure);
+    const auto relative = target->lexically_relative(*root);
+    if (relative.empty() || *relative.begin() == "..") return 45;
+    state.current = relative == "." ? state.root : state.root / relative;
+    return 0;
+}
+#endif
+
 int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved) {
     std::error_code error;
     const auto canonical = std::filesystem::canonical(resolved, error);
+#ifdef _WIN32
+    if (error) return SetLongWorkingDirectory(state, resolved, error);
+#else
     if (error) return DirectoryFailure(error);
+#endif
     if (!std::filesystem::is_directory(canonical, error)) return error ? DirectoryFailure(error) : 20;
     auto relative = canonical.lexically_relative(state.root);
 #ifdef _WIN32
+    if (relative.empty() || *relative.begin() == "..") {
+        bool notDirectory = false;
+        const auto target = FinalDirectoryPath(canonical, notDirectory);
+        const auto root = FinalDirectoryPath(state.root, notDirectory);
+        if (target && root) relative = target->lexically_relative(*root);
+    }
     if (relative.empty() || *relative.begin() == "..") {
         auto ancestor = canonical;
         while (!std::filesystem::equivalent(ancestor, state.root, error)) {
@@ -844,6 +923,40 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
     return ResolveLocked(path, module, true);
 }
 
+extern "C" bool GuestReadable_nid_no_patch(const void* source, std::size_t bytes) {
+    const RestoreErrno restore;
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    for (auto address = start; address < start + bytes;) {
+#ifdef _WIN32
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
+            (memory.Protect & PAGE_GUARD) != 0 ||
+            (memory.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
+        address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+#elif defined(__linux__)
+        const auto mapping = HostMapping::Find(address, "GuestReadable");
+        if (!mapping || !mapping->readable) return false;
+        address = mapping->end;
+#elif defined(__APPLE__)
+        mach_vm_address_t region = address;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        const auto result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+            reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+        if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+        if (result != KERN_SUCCESS || region > address || (info.protection & VM_PROT_READ) == 0) return false;
+        address = region + size;
+#else
+        throw std::runtime_error("GuestReadable: no checked read is available on this host");
+#endif
+    }
+    return true;
+}
+
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
     const RestoreErrno restore;
     if (bytes == 0) return true;
@@ -1075,7 +1188,7 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
         std::error_code error;
-        if (!std::filesystem::is_directory(state.current, error)) {
+        if (!IsDirectory(state.current, error)) {
             errno = error ? DirectoryFailure(error) : 2; return nullptr;
         }
         const auto relative = state.current.lexically_relative(state.root);

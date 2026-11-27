@@ -1,9 +1,20 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+
+namespace {
+
+int StreamWriteNoEntry() {
+    *__error_nid_postfix() = ENOENT;
+    return SCE_KERNEL_ERROR_ENOENT;
+}
+
+}
 
 extern "C" {
 
@@ -22,19 +33,9 @@ int APS5_VABI rfork_thread_nid_postfix(int flags, void* stack, int (APS5_VABI* f
     return 0;
 }
 
-int APS5_VABI sceKernelRdup(int pid, int fd) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("aAQZSjb2fho", sceKernelUnknown16);
 int APS5_VABI sceKernelUnknown16(void) {
     NotImplemented_nid_no_patch("aAQZSjb2fho");
-    return 0;
-}
-
-int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -44,31 +45,31 @@ int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int
 }
 
 int APS5_VABI sceKernelStreamWriteActivate(void) {
-    return SCE_KERNEL_ERROR_EBADF;
+    return StreamWriteNoEntry();
 }
 
 int APS5_VABI sceKernelStreamWriteCreate(void) {
-    return SCE_KERNEL_ERROR_ENOSYS;
+    return StreamWriteNoEntry();
 }
 
 int APS5_VABI sceKernelStreamWriteDeactivate(void) {
-    return SCE_KERNEL_ERROR_EBADF;
+    return StreamWriteNoEntry();
 }
 
 int APS5_VABI sceKernelStreamWriteDelete(void) {
-    return SCE_KERNEL_ERROR_EBADF;
+    return StreamWriteNoEntry();
 }
 
 int APS5_VABI sceKernelStreamWriteRead(void) {
-    return SCE_KERNEL_ERROR_EBADF;
+    return StreamWriteNoEntry();
 }
 
 int APS5_VABI sceKernelStreamWriteStat(void) {
-    return SCE_KERNEL_ERROR_EBADF;
+    return StreamWriteNoEntry();
 }
 
 int APS5_VABI sceKernelStreamWriteWrite(void) {
-    return SCE_KERNEL_ERROR_EBADF;
+    return StreamWriteNoEntry();
 }
 
 }

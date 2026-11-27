@@ -14,8 +14,8 @@
 
 ## change `_FErfc`, `_FHypot`, `_FLogpoly`
 
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
 
 ## change `_LAtan`, `_LErfc`, `_LHypot`, `_LLogpoly`
 
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LAtan`, `_LHypot`, `_LLogpoly`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LAtan`

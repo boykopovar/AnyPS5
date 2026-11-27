@@ -1,0 +1,179 @@
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "Recompiler.hpp"
+#include "VulkanTestDevice.hpp"
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <iostream>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace {
+
+using AgcDriver::Graphics::Require;
+using ShaderRecompiler::ShaderStage;
+
+constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Inputs = 4;
+constexpr std::uint32_t Results = 16;
+alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
+alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+
+alignas(256) constexpr std::array<std::uint32_t, 51> Code{
+    0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xd70fea0au, 0x00020b04u, 0xd501000bu,
+    0x01a90280u, 0xd710ea0cu, 0x00020b04u, 0xd501000du, 0x01a90280u, 0xd719ea0eu, 0x00020b04u, 0xd501000fu,
+    0x01a90280u, 0x7d8a0c80u, 0xd528ea10u, 0x01aa0b04u, 0xd5010011u, 0x01a90280u, 0x7d8a0c80u, 0xd529ea12u,
+    0x01aa0b04u, 0xd5010013u, 0x01a90280u, 0x7d8a0c80u, 0xd52aea14u, 0x01aa0b04u, 0xd5010015u, 0x01a90280u,
+    0xd4c5000au, 0x00020c80u, 0xd5288b16u, 0x002a0b04u, 0xd5010017u, 0x002d0280u, 0xd7108b18u, 0x00010304u,
+    0xd5010019u, 0x002d0280u, 0xe0781000u, 0x80010a02u, 0xe0781010u, 0x80010e02u, 0xe0781020u, 0x80011202u,
+    0xe0781030u, 0x80011602u, 0xbf810000u,
+};
+
+constexpr std::uint32_t Rows[Threads][Inputs] = {
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000001u, 0x00000000u},
+    {0xfffffffeu, 0x00000001u, 0x00000001u, 0x00000000u},
+    {0xfffffffeu, 0x00000001u, 0x00000000u, 0x00000000u},
+    {0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u},
+    {0x80000000u, 0x7fffffffu, 0x00000001u, 0x00000000u},
+    {0x7fffffffu, 0x80000000u, 0x00000000u, 0x00000000u},
+    {0x00000005u, 0x00000003u, 0x00000000u, 0x00000000u},
+    {0x00000003u, 0x00000005u, 0x00000000u, 0x00000000u},
+    {0x00000003u, 0x00000003u, 0x00000001u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u},
+    {0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u},
+    {0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u},
+    {0x00000001u, 0x00000001u, 0x00000001u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0xffffffffu, 0xffffffffu, 0x00000001u, 0x00000000u},
+    {0xffffffffu, 0xffffffffu, 0x00000000u, 0x00000000u},
+    {0x00000002u, 0x00000003u, 0x00000001u, 0x00000000u},
+    {0x00000003u, 0x00000002u, 0x00000001u, 0x00000000u},
+    {0x80000001u, 0x80000000u, 0x00000001u, 0x00000000u},
+    {0x80000000u, 0x80000001u, 0x00000000u, 0x00000000u},
+    {0x12345678u, 0xedcba987u, 0x00000001u, 0x00000000u},
+    {0x12345678u, 0xedcba987u, 0x00000000u, 0x00000000u},
+    {0xedcba988u, 0x12345678u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000001u, 0xffffffffu, 0x00000000u, 0x00000000u},
+    {0x7fffffffu, 0x7fffffffu, 0x00000001u, 0x00000000u},
+    {0x00000001u, 0x00000002u, 0x00000000u, 0x00000000u},
+    {0x00000002u, 0x00000001u, 0x00000001u, 0x00000000u},
+    {0xdeadbeefu, 0xdeadbeefu, 0x00000001u, 0x00000000u},
+    {0xdeadbeefu, 0xdeadbeefu, 0x00000000u, 0x00000000u}
+};
+
+constexpr std::uint32_t Expected[Threads][Results] = {
+    {0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0xfffffffdu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffcu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffdu, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0xfffffffdu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000000u, 0xfffffffdu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000000u, 0xfffffffdu, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x7fffffffu, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0x7fffffffu, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0xffffffffu, 0x00000000u, 0x7ffffffeu, 0x00000000u},
+    {0x00000008u, 0x00000000u, 0x00000002u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000008u, 0x00000000u, 0x00000002u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000008u, 0x00000000u, 0x00000004u, 0x00000000u},
+    {0x00000008u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u, 0x00000000u, 0x00000008u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u, 0x00000000u, 0x00000008u, 0x00000000u, 0x00000002u, 0x00000000u},
+    {0x00000006u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000007u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000007u, 0x00000000u, 0x00000002u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u},
+    {0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u},
+    {0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000002u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000003u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000003u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0xfffffffeu, 0x00000000u},
+    {0x00000005u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000006u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000006u, 0x00000000u, 0x00000001u, 0x00000000u},
+    {0x00000005u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000006u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000006u, 0x00000000u, 0x00000002u, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0x80000000u, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x7fffffffu, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xdb97530fu, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0xdb97530eu, 0x00000000u, 0xffffffffu, 0x00000001u, 0x12345677u, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xdb97530fu, 0x00000000u, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xdb97530fu, 0x00000000u, 0xffffffffu, 0x00000000u, 0x12345677u, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0xdb975310u, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xdb975310u, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xedcba987u, 0x00000000u},
+    {0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0xfffffffeu, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u},
+    {0xffffffffu, 0x00000000u, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000000u, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000000u, 0xfffffffeu, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0xfffffffeu, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0xfffffffeu, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u},
+    {0xfffffffeu, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000000u, 0x7ffffffeu, 0x00000000u},
+    {0x00000003u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000003u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000001u, 0x00000000u, 0x00000003u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000003u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000004u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000004u, 0x00000000u, 0x00000001u, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u, 0xffffffffu, 0x00000001u, 0xdeadbeeeu, 0x00000000u},
+    {0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000001u, 0xdeadbeeeu, 0x00000000u}
+};
+
+constexpr const char* Names[Results] = {
+    "v_add_co_u32 vcc_lo, v4, v5 clamp",
+    "carry out of v_add_co_u32 vcc_lo, v4, v5 clamp",
+    "v_sub_co_u32 vcc_lo, v4, v5 clamp",
+    "carry out of v_sub_co_u32 vcc_lo, v4, v5 clamp",
+    "v_subrev_co_u32 vcc_lo, v4, v5 clamp",
+    "carry out of v_subrev_co_u32 vcc_lo, v4, v5 clamp",
+    "v_add_co_ci_u32 vcc_lo, v4, v5, vcc_lo clamp",
+    "carry out of v_add_co_ci_u32 vcc_lo, v4, v5, vcc_lo clamp",
+    "v_sub_co_ci_u32 vcc_lo, v4, v5, vcc_lo clamp",
+    "carry out of v_sub_co_ci_u32 vcc_lo, v4, v5, vcc_lo clamp",
+    "v_subrev_co_ci_u32 vcc_lo, v4, v5, vcc_lo clamp",
+    "carry out of v_subrev_co_ci_u32 vcc_lo, v4, v5, vcc_lo clamp",
+    "v_add_co_ci_u32 s11, v4, v5, s10 clamp",
+    "carry out of v_add_co_ci_u32 s11, v4, v5, s10 clamp",
+    "v_sub_co_u32 s11, v4, 1 clamp",
+    "carry out of v_sub_co_u32 s11, v4, 1 clamp"
+};
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
+}
+
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
+
+void Run(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(Code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+}
+
+int main() {
+    try {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+        Run(*device);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            for (std::uint32_t index = 0; index < Results; ++index) {
+                const std::uint32_t actual = Output[tid * Results + index];
+                Require(actual == Expected[tid][index], std::string("VOP3 carry clamp: lane ") + std::to_string(tid) + " " + Names[index] + " of " + Hex(Rows[tid][0]) + ", " + Hex(Rows[tid][1]) +
+                                                            " and carry in " + std::to_string(Rows[tid][2]) + " is " + Hex(actual) + ", expected " + Hex(Expected[tid][index]));
+            }
+        }
+        std::puts("VOP3 carry clamp tests passed");
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

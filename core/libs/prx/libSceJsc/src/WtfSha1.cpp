@@ -30,17 +30,84 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "prx/libSceJsc/include/WtfSha1Exports.hpp"
+/*
+ * Copyright (C) 2011, 2014-2015 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Derived from Source/WTF/wtf/persistence/PersistentCoders.cpp@c55364d53f971f63a709976f168d932d558b8909
+ */
 
+/*
+ * Copyright (C) 2010, 2014 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Derived from Source/WTF/wtf/persistence/PersistentEncoder.cpp@c55364d53f971f63a709976f168d932d558b8909
+ */
+
+#include "prx/libSceJsc/include/WtfSha1Exports.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libSceJsc/src/WtfStringAbi.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
+using Jsc::WtfAbi::PersistenceAllocator;
+using Jsc::WtfAbi::PersistenceEncoder;
 using Jsc::WtfAbi::SHA1;
+
+std::atomic<const PersistenceAllocator*> registeredPersistenceAllocator{nullptr};
 
 constexpr std::size_t BlockSize = 64;
 constexpr std::size_t LengthOffset = 56;
@@ -135,6 +202,66 @@ void Reset(SHA1& sha1) {
     std::memset(sha1.buffer, 0, sizeof(sha1.buffer));
 }
 
+void EnsureEncoderCapacity(PersistenceEncoder& encoder, std::size_t additional) {
+    if (encoder.size > std::numeric_limits<unsigned>::max() - additional)
+        throw std::length_error("WTF::Persistence::Coder<SHA1::Digest>::encode: buffer size overflow");
+    const std::size_t required = static_cast<std::size_t>(encoder.size) + additional;
+    if (required <= encoder.capacity) return;
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate || !allocator->deallocate)
+        throw std::runtime_error("WTF::Persistence::Coder<SHA1::Digest>::encode: buffer growth requires libSceNKWebKit fastMalloc");
+    const std::size_t maxUnsigned = std::numeric_limits<unsigned>::max();
+    const std::size_t doubled = static_cast<std::size_t>(encoder.capacity) * 2;
+    const std::size_t nextCapacity = std::min(maxUnsigned, std::max(doubled, required));
+    auto* nextBuffer = static_cast<std::uint8_t*>(allocator->allocate(nextCapacity));
+    if (!nextBuffer) throw std::bad_alloc();
+    if (encoder.size) std::memcpy(nextBuffer, encoder.buffer, encoder.size);
+    if (encoder.buffer != encoder.inlineBuffer) allocator->deallocate(encoder.buffer);
+    encoder.buffer = nextBuffer;
+    encoder.capacity = static_cast<unsigned>(nextCapacity);
+}
+
+constexpr unsigned BoolSalt = 3;
+constexpr unsigned UInt32Salt = 11;
+constexpr unsigned DataSalt = 101;
+constexpr std::uint32_t NullStringLength = std::numeric_limits<std::uint32_t>::max();
+constexpr std::uint32_t MaxDecodedLength = std::numeric_limits<std::int32_t>::max();
+
+void CheckDecoder(const void* result, const Jsc::WtfAbi::PersistenceDecoder* decoder, const std::string& name) {
+    if (!result || !decoder) throw std::invalid_argument(name + " requires return storage and a decoder");
+    if (decoder->sha1.cursor >= BlockSize) throw std::invalid_argument(name + ": buffer cursor out of range");
+    if (decoder->bufferPosition > decoder->bufferEnd) throw std::invalid_argument(name + ": position past the buffer end");
+}
+
+std::size_t Remaining(const Jsc::WtfAbi::PersistenceDecoder& decoder) {
+    return static_cast<std::size_t>(decoder.bufferEnd - decoder.bufferPosition);
+}
+
+bool DecodeNumber(Jsc::WtfAbi::PersistenceDecoder& decoder, unsigned salt, void* value, std::size_t size) {
+    if (Remaining(decoder) < size) return false;
+    std::memcpy(value, decoder.bufferPosition, size);
+    decoder.bufferPosition += size;
+    AddBytes(decoder.sha1, reinterpret_cast<const std::uint8_t*>(&salt), sizeof(salt));
+    AddBytes(decoder.sha1, static_cast<const std::uint8_t*>(value), size);
+    return true;
+}
+
+void DecodeData(Jsc::WtfAbi::PersistenceDecoder& decoder, std::uint8_t* data, std::size_t size) {
+    std::memcpy(data, decoder.bufferPosition, size);
+    decoder.bufferPosition += size;
+    AddBytes(decoder.sha1, reinterpret_cast<const std::uint8_t*>(&DataSalt), sizeof(DataSalt));
+    AddBytes(decoder.sha1, data, size);
+}
+
+void* FastMalloc(std::size_t size, const std::string& name) {
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate || !allocator->deallocate)
+        throw std::runtime_error(name + ": the string requires libSceNKWebKit fastMalloc");
+    void* storage = allocator->allocate(size);
+    if (!storage) throw std::bad_alloc();
+    return storage;
+}
+
 }
 
 extern "C" {
@@ -155,6 +282,30 @@ void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(SHA1* self, Jsc::WtfA
     Reset(*self);
 }
 
+Jsc::WtfAbi::OwnedCString APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(const Jsc::WtfAbi::SHA1Digest* digest) {
+    if (!digest) throw std::invalid_argument("WTF::SHA1::hexDigest requires a digest");
+    Jsc::WtfAbi::SHA1Digest value{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(value.data(), digest, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::SHA1::hexDigest: unreadable digest");
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate)
+        throw std::runtime_error("WTF::SHA1::hexDigest: CString allocation requires libSceNKWebKit fastMalloc");
+    constexpr std::size_t HexLength = value.size() * 2;
+    void* memory = allocator->allocate(sizeof(Jsc::WtfAbi::CStringBuffer) + HexLength + 1);
+    if (!memory) throw std::bad_alloc();
+    auto* buffer = new (memory) Jsc::WtfAbi::CStringBuffer{1u, HexLength};
+    auto* output = reinterpret_cast<char*>(buffer + 1);
+    static constexpr char Digits[] = "0123456789ABCDEF";
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        output[2 * i] = Digits[value[i] >> 4];
+        output[2 * i + 1] = Digits[value[i] & 15];
+    }
+    output[HexLength] = '\0';
+    return Jsc::WtfAbi::OwnedCString(buffer);
+}
+
 Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder) {
     if (!decoder) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode requires a decoder");
     if (decoder->sha1.cursor >= BlockSize) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode: buffer cursor out of range");
@@ -170,4 +321,90 @@ Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhL
     return result;
 }
 
+void APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(
+    PersistenceEncoder* encoder, const Jsc::WtfAbi::SHA1Digest* digest) {
+    if (!encoder || !digest)
+        throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::encode requires an encoder and a digest");
+    if (encoder->sha1.cursor >= BlockSize)
+        throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::encode: buffer cursor out of range");
+    if (!encoder->buffer || encoder->size > encoder->capacity)
+        throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::encode: invalid encoder buffer state");
+    const Jsc::WtfAbi::SHA1Digest value = *digest;
+    EnsureEncoderCapacity(*encoder, value.size());
+    const unsigned typeSalt = 101;
+    AddBytes(encoder->sha1, reinterpret_cast<const std::uint8_t*>(&typeSalt), sizeof(typeSalt));
+    AddBytes(encoder->sha1, value.data(), value.size());
+    std::memcpy(encoder->buffer + encoder->size, value.data(), value.size());
+    encoder->size += static_cast<unsigned>(value.size());
 }
+
+Jsc::WtfAbi::OptionalCString* APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE(
+    Jsc::WtfAbi::OptionalCString* result, Jsc::WtfAbi::PersistenceDecoder* decoder) {
+    const std::string name = "WTF::Persistence::Coder<CString>::decode";
+    CheckDecoder(result, decoder, name);
+    *result = {};
+    std::uint32_t length = 0;
+    if (!DecodeNumber(*decoder, UInt32Salt, &length, sizeof(length))) return result;
+    if (length == NullStringLength) {
+        result->hasValue = true;
+        return result;
+    }
+    if (Remaining(*decoder) < length) return result;
+    if (length > MaxDecodedLength) throw std::length_error(name + ": length above INT32_MAX");
+    using Jsc::WtfAbi::CStringBuffer;
+    auto* buffer = new (FastMalloc(sizeof(CStringBuffer) + length + 1, name)) CStringBuffer{1u, length};
+    auto* characters = reinterpret_cast<std::uint8_t*>(buffer + 1);
+    DecodeData(*decoder, characters, length);
+    characters[length] = 0;
+    result->value.buffer = buffer;
+    result->hasValue = true;
+    return result;
+}
+
+Jsc::WtfAbi::OptionalString* APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE(
+    Jsc::WtfAbi::OptionalString* result, Jsc::WtfAbi::PersistenceDecoder* decoder) {
+    const std::string name = "WTF::Persistence::Coder<String>::decode";
+    CheckDecoder(result, decoder, name);
+    *result = {};
+    std::uint32_t length = 0;
+    if (!DecodeNumber(*decoder, UInt32Salt, &length, sizeof(length))) return result;
+    if (length == NullStringLength) {
+        result->hasValue = true;
+        return result;
+    }
+    std::uint8_t is8Bit = 0;
+    if (!DecodeNumber(*decoder, BoolSalt, &is8Bit, sizeof(is8Bit))) return result;
+    if (is8Bit > 1) throw std::invalid_argument(name + ": the 8-bit flag byte is neither 0 nor 1");
+    const std::size_t byteLength = static_cast<std::size_t>(length) * (is8Bit ? 1 : 2);
+    if (Remaining(*decoder) < byteLength) return result;
+    if (!length) NotImplemented_nid_no_patch(__func__);
+    if (length > MaxDecodedLength) throw std::length_error(name + ": length above INT32_MAX");
+    using Jsc::WtfAbi::StringImpl;
+    constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
+    const std::size_t allocationSize = std::max<std::size_t>(sizeof(StringImpl), charactersOffset + byteLength);
+    void* storage = FastMalloc(allocationSize, name);
+    auto* characters = static_cast<std::uint8_t*>(storage) + charactersOffset;
+    auto* string = new (storage) StringImpl{2u, length, characters, is8Bit ? Jsc::WtfAbi::StringImplFlag8Bit : 0u};
+    DecodeData(*decoder, characters, byteLength);
+    result->value = string;
+    result->hasValue = true;
+    return result;
+}
+
+void RegisterPersistenceAllocator_nid_no_patch(const PersistenceAllocator* allocator) {
+    registeredPersistenceAllocator.store(allocator, std::memory_order_release);
+}
+
+const PersistenceAllocator* RegisteredPersistenceAllocator_nid_no_patch() {
+    return registeredPersistenceAllocator.load(std::memory_order_acquire);
+}
+
+}
+
+namespace Jsc::WtfAbi {
+
+const PersistenceAllocator* RegisteredFastMalloc() {
+    return registeredPersistenceAllocator.load(std::memory_order_acquire);
+}
+
+} // namespace Jsc::WtfAbi

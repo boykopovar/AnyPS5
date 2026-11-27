@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
@@ -35,7 +36,7 @@ struct FloatSize {
     float m_height{0.0f};
 
     float aspectRatio() const {
-        return m_height != 0.0f ? (m_width / m_height) : 0.0f;
+        return m_width / m_height;
     }
 };
 
@@ -121,7 +122,7 @@ struct LayoutRect {
 
 enum class ScrollBehaviorForFixedElements : bool { StickToDocumentBounds, StickToViewportBounds };
 
-enum class LayoutViewportConstraint : bool { Unconstrained, ConstrainedToDocumentRect };
+enum class LayoutViewportConstraint : std::int32_t { ConstrainedToDocumentRect, Unconstrained };
 
 struct RoundedRect {
     struct Radii {
@@ -273,6 +274,29 @@ struct ViewportArguments {
     bool widthWasExplicit{false};
 };
 
+enum ViewportErrorCode : int {
+    UnrecognizedViewportArgumentKeyError,
+    UnrecognizedViewportArgumentValueError,
+    TruncatedViewportArgumentValueError,
+    MaximumScaleTooLargeError
+};
+
+struct ViewportErrorCallableWrapper;
+
+struct ViewportErrorCallableWrapperVtable {
+    void (APS5_VABI* completeDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* deletingDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* call)(ViewportErrorCallableWrapper* self, ViewportErrorCode errorCode, const NKWebKit::WtfAbi::String& message);
+};
+
+struct ViewportErrorCallableWrapper {
+    const ViewportErrorCallableWrapperVtable* vtable;
+};
+
+struct ViewportErrorHandler {
+    ViewportErrorCallableWrapper* callableWrapper;
+};
+
 struct ProtectionSpaceBase {
     NKWebKit::WtfAbi::StringImpl* m_host;
     NKWebKit::WtfAbi::StringImpl* m_realm;
@@ -378,7 +402,8 @@ static_assert(sizeof(LayoutPoint) == 8);
 static_assert(sizeof(LayoutSize) == 8);
 static_assert(sizeof(LayoutRect) == 16);
 static_assert(sizeof(ScrollBehaviorForFixedElements) == 1);
-static_assert(sizeof(LayoutViewportConstraint) == 1);
+static_assert(sizeof(LayoutViewportConstraint) == 4);
+static_assert(static_cast<std::int32_t>(LayoutViewportConstraint::ConstrainedToDocumentRect) == 0);
 static_assert(sizeof(RoundedRect) == 48);
 static_assert(sizeof(FourCC) == 4);
 static_assert(alignof(FourCC) == 4);
@@ -420,6 +445,9 @@ static_assert(sizeof(ViewportArguments) == 56);
 static_assert(offsetof(ViewportArguments, width) == 4);
 static_assert(offsetof(ViewportArguments, viewportFit) == 52);
 static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ViewportErrorCode) == 4);
+static_assert(offsetof(ViewportErrorCallableWrapperVtable, call) == 16);
+static_assert(sizeof(ViewportErrorHandler) == 8);
 static_assert(sizeof(ProtectionSpaceBase) == 24);
 static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
 static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);

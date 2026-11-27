@@ -109,20 +109,22 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, state.stencilRefVariable);
         const auto reference = Unary(state, spv::OpBitcast, TypeU32(state), value);
-        const auto masked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), reference, ConstantU32(state, 0xffu));
         const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::StencilReferenceOffset, state.program.Metadata().bindings.stencilReferenceDword);
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), offset);
         const auto expected = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
         if (state.stencilReplayLateStore) {
-            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffu)), [&] {
+            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffffu)), [&] {
                 const auto address = state.module.AllocateId();
                 state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), address, Unary(state, spv::OpUConvert, TypeScalarU64(state), ConstantU32(state, 0u)));
                 state.module.AddFunction(spv::OpStore, address, ConstantU32(state, 0u), spv::MemoryAccessAlignedMask, 4u);
             });
         }
-        EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), masked, expected));
+        const auto ignored = Binary(state, spv::OpShiftRightLogical, TypeU32(state), expected, ConstantU32(state, 8u));
+        const auto checked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpNot, TypeU32(state), ignored), ConstantU32(state, 0xffu));
+        const auto differs = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpBitwiseXor, TypeU32(state), reference, expected), checked);
+        EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), differs, ConstantU32(state, 0u)));
     }
     EmitReturnReleasingScratch(state);
 }
@@ -323,6 +325,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::UnlinkedCall: return Invoke(EmitUnlinkedCall, ctx, inst);
         case IrOpcode::WindowLaneGuard: return Invoke(EmitWindowLaneGuard, ctx, inst);
         case IrOpcode::DescriptorFault: return Invoke(EmitDescriptorFault, ctx, inst);
+        case IrOpcode::SplitStateGuard: return Invoke(EmitSplitStateGuard, ctx, inst);
         case IrOpcode::GetUserData: return Invoke(EmitGetUserData, ctx, inst);
         case IrOpcode::GetShaderBase: return Invoke(EmitGetShaderBase, ctx, inst);
         case IrOpcode::ShaderClock: return Invoke(EmitShaderClock, ctx, inst);
@@ -346,6 +349,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SetVectorRegister: return Invoke(EmitSetVectorRegister, ctx, inst);
         case IrOpcode::LoadVectorWindow: return Invoke(EmitLoadVectorWindow, ctx, inst);
         case IrOpcode::StoreVectorWindow: return Invoke(EmitStoreVectorWindow, ctx, inst);
+        case IrOpcode::LoadSplitState: return Invoke(EmitLoadSplitState, ctx, inst);
+        case IrOpcode::StoreSplitState: return Invoke(EmitStoreSplitState, ctx, inst);
         case IrOpcode::GetGotoVariable: return Invoke(EmitGetGotoVariable, ctx, inst);
         case IrOpcode::SetGotoVariable: return Invoke(EmitSetGotoVariable, ctx, inst);
         case IrOpcode::GetScc: return Invoke(EmitGetScc, ctx, inst);
@@ -397,6 +402,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPAdd16x2: return Invoke(EmitFPAdd16x2, ctx, inst);
         case IrOpcode::FPMul16x2: return Invoke(EmitFPMul16x2, ctx, inst);
         case IrOpcode::FPFma16x2: return Invoke(EmitFPFma16x2, ctx, inst);
+        case IrOpcode::SplatLowU16x2: return Invoke(EmitSplatLowU16x2, ctx, inst);
         case IrOpcode::IAdd16x2: return Invoke(EmitIAdd16x2, ctx, inst);
         case IrOpcode::ISub16x2: return Invoke(EmitISub16x2, ctx, inst);
         case IrOpcode::IMul16x2: return Invoke(EmitIMul16x2, ctx, inst);
@@ -732,6 +738,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageAtomicAnd64: return Invoke(EmitImageAtomicAnd64, ctx, inst);
         case IrOpcode::ImageAtomicOr64: return Invoke(EmitImageAtomicOr64, ctx, inst);
         case IrOpcode::ImageAtomicXor64: return Invoke(EmitImageAtomicXor64, ctx, inst);
+        case IrOpcode::ImageAtomicInc64: return Invoke(EmitImageAtomicInc64, ctx, inst);
+        case IrOpcode::ImageAtomicDec64: return Invoke(EmitImageAtomicDec64, ctx, inst);
         case IrOpcode::ImageAtomicCmpSwap64: return Invoke(EmitImageAtomicCmpSwap64, ctx, inst);
         case IrOpcode::GetAttribute: return Invoke(EmitGetAttribute, ctx, inst);
         case IrOpcode::GetInterpolationParameter: return Invoke(EmitGetInterpolationParameter, ctx, inst);
@@ -1026,7 +1034,8 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         members.erase(region[first++]);
     }
     const auto suffix = std::span(region).subspan(first);
-    auto exact = ctx;
+    std::vector<const IrValue*> fastDefined;
+    ctx.definitions.RecordAdded(&fastDefined);
     auto& state = ctx.state;
     const auto exceptional = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
@@ -1059,13 +1068,29 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
     }
     EmitLabel(state, exceptional);
-    for (const auto* value : suffix) EmitDirectInstruction(exact, *value);
+    ctx.definitions.RecordAdded(nullptr);
+    std::vector<std::pair<const IrValue*, std::uint32_t>> fastIds;
+    fastIds.reserve(fastDefined.size());
+    for (const auto* value : fastDefined) {
+        fastIds.emplace_back(value, *ctx.definitions.Find(value));
+        ctx.definitions.Erase(value);
+    }
+    std::vector<const IrValue*> exactDefined;
+    ctx.definitions.RecordAdded(&exactDefined);
+    for (const auto* value : suffix) EmitDirectInstruction(ctx, *value);
+    std::vector<std::uint32_t> exactIds;
+    exactIds.reserve(suffix.size());
+    for (const auto* output : suffix) exactIds.push_back(ctx.Def(output));
+    ctx.definitions.RecordAdded(nullptr);
+    for (const auto* value : exactDefined) ctx.definitions.Erase(value);
+    for (const auto& [value, id] : fastIds) ctx.definitions.Emplace(value, id);
     const auto exactLabel = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
-    for (const auto* output : suffix) {
+    for (std::size_t index = 0; index < suffix.size(); ++index) {
+        const auto* output = suffix[index];
         const auto result = state.module.AllocateId();
-        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
+        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exactIds[index], exactLabel);
         ctx.definitions.Erase(output);
         ctx.definitions.Emplace(output, result);
     }
@@ -1502,6 +1527,12 @@ void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
     auto& state = ctx.state;
     if (state.faultBufferVariable == 0) ctx.Fail(inst, "reports an invalid descriptor without a fault buffer");
     EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, low, high, ConstantU32(state, 0u), programCounter, BdaAbi::FaultReason::InvalidDescriptor); });
+}
+
+void EmitSplitStateGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t saved, std::uint32_t current, std::uint32_t reg) {
+    auto& state = ctx.state;
+    if (state.faultBufferVariable == 0) ctx.Fail(inst, "checks an assumed split state register without a fault buffer");
+    EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, saved, current, reg, ConstantU32(state, 0u), BdaAbi::FaultReason::SplitState); });
 }
 
 void EmitControlNop(SpirvValueEmitContext& context) {

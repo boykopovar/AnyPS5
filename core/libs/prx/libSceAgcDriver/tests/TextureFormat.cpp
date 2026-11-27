@@ -23,7 +23,7 @@ VkFormat unsampledFormats[2]{};
 
 void unsampledFormatProperties(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
     *properties = {};
-    if (format != unsampledFormats[0] && format != unsampledFormats[1]) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if (format != unsampledFormats[0] && format != unsampledFormats[1]) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
 }
 
 std::uint32_t decodedWithout(VkFormat first = VK_FORMAT_UNDEFINED, VkFormat second = VK_FORMAT_UNDEFINED) {
@@ -94,6 +94,11 @@ void sampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* pro
     properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 }
 
+void transferSampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+}
+
 void noSampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
     *properties = {};
 }
@@ -116,6 +121,23 @@ void scaledFormatTests() {
     reject([&] { SampledTextureFormat(context, 10u); }, "unsupported guest texture format");
     Require(SampledTextureFormat(context, 4u) == VK_FORMAT_R8_SSCALED && SampledTextureFormat(context, 9u) == VK_FORMAT_R16_USCALED, "scaled formats the host samples must resolve");
     Require(SampledTextureFormat(context, 128u) == VK_FORMAT_R8_SRGB, "a device without scaled-image support still samples sRGB");
+}
+
+void optionalFormatTests() {
+    Context context{};
+    context.optionalSampledFormats = OptionalSampledFormats(transferSampledFormatProperties, VK_NULL_HANDLE);
+    Require(SampledTextureFormat(context, 51u) == VK_FORMAT_A2B10G10R10_SNORM_PACK32 && SampledTextureFormat(context, 55u) == VK_FORMAT_A2B10G10R10_SINT_PACK32, "10_10_10_2 SNORM and SINT must sample natively where the host supports them");
+    Require(SampledTextureFormat(context, 137u) == VK_FORMAT_R4G4_UNORM_PACK8, "4_4 must sample natively where the host supports R4G4_UNORM_PACK8");
+    context.optionalSampledFormats = OptionalSampledFormats(sampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : {51u, 55u, 137u}) reject([&] { SampledTextureFormat(context, format); }, "unsupported guest texture format " + std::to_string(format));
+    context.optionalSampledFormats = OptionalSampledFormats(noSampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : {51u, 55u, 137u}) reject([&] { SampledTextureFormat(context, format); }, "unsupported guest texture format " + std::to_string(format));
+    Require(SampledTextureFormat(context, 50u) == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && SampledTextureFormat(context, 54u) == VK_FORMAT_A2B10G10R10_UINT_PACK32, "10_10_10_2 UNORM and UINT do not depend on the optional formats");
+    unsampledFormats[0] = VK_FORMAT_A2B10G10R10_SINT_PACK32;
+    unsampledFormats[1] = VK_FORMAT_A2B10G10R10_SINT_PACK32;
+    context.optionalSampledFormats = OptionalSampledFormats(unsampledFormatProperties, VK_NULL_HANDLE);
+    Require(SampledTextureFormat(context, 51u) == VK_FORMAT_A2B10G10R10_SNORM_PACK32, "10_10_10_2 SNORM must sample where only SINT is missing");
+    reject([&] { SampledTextureFormat(context, 55u); }, "unsupported guest texture format 55");
 }
 
 void packedChannelTests() {
@@ -204,6 +226,10 @@ void convertedDccClearTests() {
         resource.format = format;
         return TextureClearKeys(resource, keys.size() * 256u);
     };
+    reject([&] { read(131u, 0x40); }, "DCC clear code 0001 of converted texture format 131");
+    reject([&] { read(131u, 0x80); }, "DCC clear code 1110 of converted texture format 131");
+    reject([&] { read(131u, 0xc0); }, "DCC clear code 1111 of converted texture format 131");
+    Require(read(131u, 0x00) == DccKeys::Clear0000, "format 131 must keep its 0000 DCC clear code");
     for (const std::uint32_t format : {30u, 34u, 37u, 41u, 44u, 48u}) {
         reject([&] { read(format, 0x40); }, "DCC clear code 0001 of converted texture format " + std::to_string(format));
         reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
@@ -311,6 +337,7 @@ void RunTextureFormatTests() {
     srgbDecodeTests();
     srgbTwinTests();
     scaledFormatTests();
+    optionalFormatTests();
     packedChannelTests();
     repackedFormatTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
@@ -372,6 +399,10 @@ void RunTextureFormatTests() {
     Require(BytesPerElement(34) == BytesPerElement(20), "remapped format 34 must share the width of format 20");
     Require(ResolveTextureFormat(30) == ResolveTextureFormat(20), "format 30 must remap to format 20");
     Require(BytesPerElement(30) == 4u, "remapped format 30 must be four bytes wide");
+    Require(ResolveTextureFormat(131) == VK_FORMAT_R32_UINT && BytesPerElement(131) == 4u && !IsBlockCompressed(131), "format 131 must be held in a four-byte R32_UINT image");
+    Require(IsConvertedTextureFormat(131) && !IsRepackedTextureFormat(131), "format 131 must be converted in the shader and have no repacked copy");
+    Require(ShaderRecompiler::SampledTextureNumericClass(ShaderRecompiler::IrBufferFormat::Format6E4Float) == ShaderRecompiler::IrTextureNumericClass::Uint, "format 131 must be read as unsigned integer words");
+    Require(ShaderRecompiler::RemapTextureFormat(ShaderRecompiler::IrBufferFormat::Format6E4Float) == ShaderRecompiler::IrBufferFormat::Format32UInt && ShaderRecompiler::RemapStorageTextureFormat(ShaderRecompiler::IrBufferFormat::Format6E4Float) == ShaderRecompiler::IrBufferFormat::Format32UInt, "format 131 must remap to a 32-bit unsigned integer format");
     for (std::uint32_t format = 0; format < 512u; ++format) {
         const auto remapped = static_cast<std::uint32_t>(ShaderRecompiler::RemapTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format)));
         if (remapped == format) continue;
@@ -385,8 +416,8 @@ void RunTextureFormatTests() {
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
     for (const std::uint32_t format : {128u, 129u, 130u, 170u, 172u, 174u, 182u}) Require(IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must be an sRGB texture format");
     for (const std::uint32_t format : {1u, 14u, 56u, 71u, 169u, 171u, 173u, 181u}) Require(!IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must not be an sRGB texture format");
-    for (const std::uint32_t format : {7u, 13u, 22u, 36u, 50u, 77u, 132u, 133u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
-    for (const std::uint32_t format : {1u, 2u, 14u, 15u, 56u, 57u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
+    for (const std::uint32_t format : {7u, 11u, 13u, 20u, 22u, 28u, 36u, 50u, 51u, 55u, 62u, 70u, 74u, 75u, 77u, 132u, 133u, 135u, 141u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
+    for (const std::uint32_t format : {1u, 2u, 5u, 6u, 14u, 15u, 18u, 19u, 56u, 57u, 60u, 61u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();

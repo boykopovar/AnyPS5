@@ -29,6 +29,18 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_frame_capture_startup PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        add_test(NAME agc_driver_frame_capture_waiting_log COMMAND agc_driver_frame_capture_eop_tests waiting_log)
+        set_tests_properties(agc_driver_frame_capture_waiting_log PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-waiting-log;APS5_FRAME_CAPTURE_TRIGGER=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-waiting-log-trigger;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 120)
+        add_test(NAME agc_driver_frame_capture_waiting_log_scheduled COMMAND agc_driver_frame_capture_eop_tests waiting_log)
+        set_tests_properties(agc_driver_frame_capture_waiting_log_scheduled PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-waiting-log-scheduled;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 120)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_capture_waiting_log agc_driver_frame_capture_waiting_log_scheduled PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
         foreach(mode IN ITEMS before_first before_trigger before_flip before_prior before_default)
             set(captureEnv "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-${mode};APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0")
             if(NOT mode STREQUAL "before_default")

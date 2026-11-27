@@ -26,8 +26,12 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include "tests/TemporaryFile.hpp"
 #ifdef _WIN32
+#include <io.h>
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace {
@@ -491,11 +495,88 @@ void testRecorderStartsAfterAdmittedCalls() {
 
 }
 
+template<class Function>
+std::string capturedStandardError(Function function) {
+    std::fflush(stderr);
+    std::FILE* const captured = TemporaryFile::Open();
+    check(captured != nullptr, "could not open a temporary file for standard error");
+#ifdef _WIN32
+    const int saved = ::_dup(::_fileno(stderr));
+    check(saved >= 0 && ::_dup2(::_fileno(captured), ::_fileno(stderr)) == 0, "could not redirect standard error");
+#else
+    const int saved = ::dup(::fileno(stderr));
+    check(saved >= 0 && ::dup2(::fileno(captured), ::fileno(stderr)) == ::fileno(stderr), "could not redirect standard error");
+#endif
+    std::exception_ptr failure;
+    try {
+        function();
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    std::fflush(stderr);
+#ifdef _WIN32
+    const bool restored = ::_dup2(saved, ::_fileno(stderr)) == 0 && ::_close(saved) == 0;
+#else
+    const bool restored = ::dup2(saved, ::fileno(stderr)) == ::fileno(stderr) && ::close(saved) == 0;
+#endif
+    std::rewind(captured);
+    std::string text;
+    char buffer[4096];
+    while (const auto read = std::fread(buffer, 1, sizeof(buffer), captured)) text.append(buffer, read);
+    std::fclose(captured);
+    check(restored, "could not restore standard error");
+    if (failure) std::rethrow_exception(failure);
+    return text;
+}
+
+std::size_t occurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    for (auto at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
+
+void testWaitingRecorderReportsProgress() {
+    auto* const recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "the frame recorder is not active");
+    const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
+    const bool triggerFile = trigger != nullptr && *trigger != '\0';
+    const char* scheduled = std::getenv("APS5_FRAME_CAPTURE_AT_FLIP");
+    check(triggerFile != (scheduled != nullptr && *scheduled != '\0'), "the waiting log test needs exactly one of APS5_FRAME_CAPTURE_TRIGGER and APS5_FRAME_CAPTURE_AT_FLIP");
+    const std::filesystem::path directory(captureDirectory());
+    std::filesystem::remove_all(directory);
+    if (triggerFile) std::ofstream(trigger) << 1;
+    std::uint64_t waits = 0;
+    AgcDriver::FrameRecorder::SetStartIdleWaitForTest([&] {
+        ++waits;
+        return false;
+    });
+    struct Restore {
+        ~Restore() { AgcDriver::FrameRecorder::SetStartIdleWaitForTest({}); }
+    } restore;
+    const auto log = capturedStandardError([&] { recorder->RewindTailFlips(650); });
+    if (triggerFile) std::filesystem::remove(trigger);
+    check(waits == 600, "the recorder did not try to start once per frame boundary until it gave up: " + std::to_string(waits) + " tries");
+    check(occurrences(log, "[frame-capture] waiting to start the capture:") == 12, "the waiting recorder did not report at the first and every 50th boundary:\n" + log);
+    for (const auto attempt : {1u, 50u, 100u, 550u}) {
+        check(log.find("at " + std::to_string(attempt) + " of up to 600 frame boundaries") != std::string::npos, "no waiting report at boundary " + std::to_string(attempt) + ":\n" + log);
+    }
+    check(log.find("at 2 of up to 600") == std::string::npos && log.find("at 600 of up to 600") == std::string::npos, "the waiting recorder reported between its intervals or at its last try:\n" + log);
+    check(occurrences(log, "[frame-capture] giving up:") == 1, "the waiting recorder did not give up once after 600 boundaries:\n" + log);
+    check(log.find("giving up") > log.rfind("[frame-capture] waiting to start the capture:"), "the waiting recorder reported after it gave up:\n" + log);
+    check(log.find("trigger") == std::string::npos, "the waiting recorder mentioned a trigger:\n" + log);
+    check(log.find("[frame-capture] started") == std::string::npos && !std::filesystem::exists(directory / FrameCaptureWriter::MemoryName), "the capture started although the driver never went idle");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc > 1 && std::string(argv[1]).starts_with("before_")) {
             testRecorderBeforeFirstSubmission(argv[1]);
             std::puts("frame capture first submission tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "waiting_log") {
+            testWaitingRecorderReportsProgress();
+            std::puts("frame capture waiting log tests passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "rewind") {
