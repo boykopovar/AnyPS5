@@ -15,6 +15,7 @@ constexpr int DEBUG_UNAVAILABLE = static_cast<int>(0x8A6C1000);
 constexpr int DRIVER_FEATURE_UNAVAILABLE = static_cast<int>(0x8A6D0001);
 constexpr int DRIVER_NULL_OUTPUT = static_cast<int>(0x8A6D0003);
 constexpr int GPU_RESET_UNAVAILABLE = static_cast<int>(0x8A6C0045);
+constexpr int APPLICATION_GPU_DEBUG_UNAVAILABLE = static_cast<int>(0x8A6C0047);
 constexpr int MODULE_REGISTRATION_FAILED = static_cast<int>(0x8A6D0003);
 constexpr std::size_t TOOL_MEMORY_RANGE_SIZE = 12;
 
@@ -173,43 +174,43 @@ int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* rang
 }
 
 int APS5_VABI sceAgcDriverIsCoredumpValid() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAgcDriverSetTFRingDirect() {
-    NotImplemented_nid_no_patch(__func__);
+    return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverIsSuspendPointInFlightDirect() {
-    NotImplemented_nid_no_patch(__func__);
+    return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverReleaseRazorACQ() {
-    NotImplemented_nid_no_patch(__func__);
+    return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverSdmaCopyLinearBlocking() {
-    NotImplemented_nid_no_patch(__func__);
+    return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverRegisterCaptureInterface() {
-    NotImplemented_nid_no_patch(__func__);
+    return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverDeregisterCaptureInterface() {
-    NotImplemented_nid_no_patch(__func__);
+    return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgdSetApplicationGpuDebug() {
-    NotImplemented_nid_no_patch(__func__);
+    return APPLICATION_GPU_DEBUG_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgdGetApplicationGpuDebug() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAgdGetSystemGpuDebug() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

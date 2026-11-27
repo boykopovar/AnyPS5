@@ -31,9 +31,9 @@ asm(
 #endif
 "movq %rdi,%r10\nmovq 128(%r10),%r11\n"
 "movq 0(%r10),%rax\nmovq 8(%r10),%rdx\nmovq 16(%r10),%rcx\nmovq 24(%r10),%rbx\n"
-"movq 32(%r10),%rsi\nmovq 40(%r10),%rdi\nmovq 48(%r10),%rbp\nmovq 56(%r10),%rsp\n"
+"movq 32(%r10),%rsi\nmovq 40(%r10),%rdi\nmovq 48(%r10),%rbp\n"
 "movq 64(%r10),%r8\nmovq 72(%r10),%r9\nmovq 96(%r10),%r12\n"
-"movq 104(%r10),%r13\nmovq 112(%r10),%r14\nmovq 120(%r10),%r15\njmp *%r11\n"
+"movq 104(%r10),%r13\nmovq 112(%r10),%r14\nmovq 120(%r10),%r15\nmovq 56(%r10),%rsp\njmp *%r11\n"
 #ifndef __APPLE__
 ".size LibcRestoreRegisters,.-LibcRestoreRegisters\n"
 #endif
@@ -85,9 +85,9 @@ asm(
 "movdqu 360(%r10),%xmm14\n"
 "movdqu 376(%r10),%xmm15\n"
 "movq 0(%r10),%rax\nmovq 8(%r10),%rdx\nmovq 16(%r10),%rcx\nmovq 24(%r10),%rbx\n"
-"movq 32(%r10),%rsi\nmovq 40(%r10),%rdi\nmovq 48(%r10),%rbp\nmovq 56(%r10),%rsp\n"
+"movq 32(%r10),%rsi\nmovq 40(%r10),%rdi\nmovq 48(%r10),%rbp\n"
 "movq 64(%r10),%r8\nmovq 72(%r10),%r9\nmovq 96(%r10),%r12\n"
-"movq 104(%r10),%r13\nmovq 112(%r10),%r14\nmovq 120(%r10),%r15\njmp *%r11\n"
+"movq 104(%r10),%r13\nmovq 112(%r10),%r14\nmovq 120(%r10),%r15\nmovq 56(%r10),%rsp\njmp *%r11\n"
 );
 #else
 void LibcCaptureRegisters(std::uintptr_t*) { std::abort(); }

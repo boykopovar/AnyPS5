@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdio>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -15,6 +16,7 @@
 static std::atomic<uint64_t> g_coredumpHandler{0};
 static std::atomic<uint64_t> g_coredumpContext{0};
 static std::atomic<std::uint32_t> coredumpSdkVersion{0};
+static std::mutex g_coredumpHandlerMutex;
 
 static constexpr int SCE_COREDUMP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x81180000u);
 static constexpr int SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER = static_cast<int>(0x81180003u);
@@ -30,6 +32,7 @@ static int userFileResult() {
 extern "C" {
 
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_size, uint64_t context) {
+    std::lock_guard<std::mutex> lock(g_coredumpHandlerMutex);
     if (g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180002u);
     if (!handler || stack_size < 0x4000 || stack_size >= 0x20000000) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
     coredumpSdkVersion.store(ApplicationCompiledSdkVersion(), std::memory_order_relaxed);
@@ -39,6 +42,7 @@ int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_
 }
 
 int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
+    std::lock_guard<std::mutex> lock(g_coredumpHandlerMutex);
     if (!g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180001u);
     g_coredumpHandler.store(0, std::memory_order_relaxed);
     g_coredumpContext.store(0, std::memory_order_relaxed);
