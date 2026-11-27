@@ -94,7 +94,12 @@ struct GuestRollbackGuard {
     bool committed = false;
 
     ~GuestRollbackGuard() {
-        if (!committed) static_cast<void>(GuestCopyOut_nid_no_patch(target, &previous, sizeof(T)));
+        if (!committed) {
+            try {
+                static_cast<void>(GuestCopyOut_nid_no_patch(target, &previous, sizeof(T)));
+            } catch (...) {
+            }
+        }
     }
 };
 
@@ -108,6 +113,7 @@ bool DomainMatchesLoopback(const StringImpl* impl, const char* function) {
     if (!header.data) throw std::invalid_argument("WebCore::AdClickAttribution: string with null characters and a nonzero length");
     const bool is8Bit = (header.hashAndFlags & 4u) != 0;
     const std::size_t byteLength = static_cast<std::size_t>(header.length) * (is8Bit ? 1u : sizeof(char16_t));
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(header.data, byteLength);
     if (!GuestReadable_nid_no_patch(header.data, byteLength))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (header.length != Localhost.size()) return false;
@@ -166,6 +172,7 @@ GuestString ReadGuestString(const StringImpl* impl, const char* function, const 
     if (!header.length) return result;
     if (!header.data) throw std::invalid_argument(nullCharactersMessage);
     const std::size_t byteLength = static_cast<std::size_t>(header.length) * (result.is8Bit ? 1u : sizeof(char16_t));
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(header.data, byteLength);
     if (!GuestReadable_nid_no_patch(header.data, byteLength))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (result.is8Bit) {
