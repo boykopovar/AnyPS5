@@ -475,7 +475,7 @@ struct HostImports {
     std::map<std::uint64_t, std::uint64_t> spaceUses;
     bool dmaBufSelected = false;
     std::uint64_t budgetRefusals = 0;
-    std::array<const HostImport*, 4> recentImports{};
+    std::array<const HostImport*, 16> recentImports{};
     std::uint64_t recentEpoch = std::numeric_limits<std::uint64_t>::max();
     std::size_t recentSize = 0;
     std::size_t recentNext = 0;
@@ -507,6 +507,7 @@ void rememberImport(HostImports& state, const HostImport* entry) {
         state.recentImports = {};
         state.recentEpoch = state.epoch;
         state.recentSize = state.imports.size();
+        state.recentNext = 0;
     }
     state.recentImports[state.recentNext++ % state.recentImports.size()] = entry;
 }
@@ -1678,6 +1679,12 @@ void decideImportWatch(const Context& context, HostImports& state) {
 #endif
 }
 
+#ifdef _WIN32
+bool settlesPrivateImports(const Context& context, const HostImports& state) {
+    return state.watchPrivateImports && context.settleQueue != VK_NULL_HANDLE && context.settleQueueMutex != nullptr;
+}
+#endif
+
 struct ImportWatching {
     bool settled = false;
     bool hostPointer = false;
@@ -1687,7 +1694,7 @@ struct ImportWatching {
 ImportWatching importWatching(const Context& context, HostImports& state, bool alias, bool writable, std::uint64_t bytes) {
     decideImportWatch(context, state);
 #ifdef _WIN32
-    const bool settled = !alias && state.watchPrivateImports && writable && bytes >= PrivateSettleFloorBytes();
+    const bool settled = !alias && settlesPrivateImports(context, state) && writable && bytes >= PrivateSettleFloorBytes();
     const bool watched = alias || !state.unwatchImports || settled;
     return {settled, watched, watched};
 #else
@@ -2816,7 +2823,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     entry.lastUse = ++state.useCounter;
     state.pendingImports.insert(base);
 #ifdef _WIN32
-    if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && state.watchPrivateImports && writable) {
+    if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && settlesPrivateImports(context, state) && writable) {
         if (entry.unwatched) {
             state.pendingSettles.insert_or_assign(base, PendingSettle{});
             state.settleWanted.push_back(base);
@@ -3057,8 +3064,14 @@ const HostImport* peekImport(const HostImports& state, std::uint64_t begin, std:
 }
 
 const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    if (recentImportsEnabled()) {
+        if (const auto* recent = recentImport(state, begin, end)) return recent;
+    }
     const auto* entry = peekImport(state, begin, end);
-    if (entry != nullptr) entry->lastUse = ++state.useCounter;
+    if (entry != nullptr) {
+        entry->lastUse = ++state.useCounter;
+        if (recentImportsEnabled()) rememberImport(state, entry);
+    }
     return entry;
 }
 
@@ -5334,17 +5347,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 #endif
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
-        if (recentImportsEnabled()) {
-            if (const auto* entry = recentImport(state, address, address + bytes)) {
-                entry->lastUse = ++state.useCounter;
-                return entry;
-            }
-        }
-        if (const auto* entry = findImport(state, address, address + bytes)) {
-            entry->lastUse = ++state.useCounter;
-            if (recentImportsEnabled()) rememberImport(state, entry);
-            return entry;
-        }
+        if (const auto* entry = findImport(state, address, address + bytes)) return entry;
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
@@ -5380,10 +5383,7 @@ const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t addr
 #endif
     const auto end = address + bytes;
     if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
-        if (const auto* entry = findImport(state, address, end)) {
-            entry->lastUse = ++state.useCounter;
-            return entry;
-        }
+        if (const auto* entry = findImport(state, address, end)) return entry;
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);

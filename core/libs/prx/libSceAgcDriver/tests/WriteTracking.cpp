@@ -919,6 +919,39 @@ void CheckRewatch() {
     GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
 }
 
+enum class LostDriverStore { Piece, PossiblePiece, Whole, PossibleWhole };
+
+void CheckRewatchKeepsDriverStores(LostDriverStore kind) {
+    constexpr std::size_t Page = 4096;
+    constexpr std::size_t Bytes = 2 * Block;
+    void* memory = GuestArena::GuestArenaAllocate_nid_postfix(Bytes, Block);
+    GuestArena::GuestArenaCommit_nid_postfix(memory, Bytes, PAGE_READWRITE, 16384);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    Require(Watched(base, Bytes), "the rewatched driver store fixture is not watched");
+    std::memset(memory, 0x11, Bytes);
+    BumpCollectEpoch();
+    const auto taken = CollectWritesUncached(base, Bytes);
+    Require(taken != 0, "the rewatched driver store fixture was not collected");
+    const auto stored = base + 2 * Page;
+    const auto rewatched = base + 9 * Page;
+    switch (kind) {
+        case LostDriverStore::Piece: Require(MarkWritten(stored + 8, 16) != 0, "the driver store was not stamped"); break;
+        case LostDriverStore::PossiblePiece: Require(MarkPossiblyWritten(stored + 8, 16) != 0, "the possible driver store was not stamped"); break;
+        case LostDriverStore::Whole: Require(MarkWritten(base, Block) != 0, "the whole-block driver store was not stamped"); break;
+        case LostDriverStore::PossibleWhole: Require(MarkPossiblyWritten(base, Block) != 0, "the possible whole-block driver store was not stamped"); break;
+    }
+    Require(!UnchangedSince(stored, Page, taken) && StoredOver(stored, Page, taken), "the driver store does not read as a store before the rewatch");
+    Unwatch(rewatched, Page);
+    Require(!Watched(rewatched, Page), "the rewatched page did not leave the write watch");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{rewatched, rewatched + Page}}};
+    Rewatch(span);
+    Require(Watched(base, Bytes), "the page did not return to the write watch");
+    Require(!UnchangedSince(stored, Page, taken), "rewatching another page of the block made a driver store read as unchanged");
+    Require(StoredOver(stored, Page, taken), "rewatching another page of the block made a driver store read as not stored over");
+    GuestArena::GuestArenaReset_nid_postfix(memory, Bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(memory, Bytes);
+}
+
 using RewatchSpan = std::array<std::pair<std::uint64_t, std::uint64_t>, 1>;
 
 RewatchSpan BlockSpan(std::uint64_t address, std::size_t bytes) {
@@ -2184,6 +2217,82 @@ void CheckImportWindowOverAlias() {
     munmap(raw, 3 * Block);
     close(file);
 }
+
+struct WriteInReportWindow {
+    std::uintptr_t page;
+    bool wrote = false;
+    bool seenAfterWrite = false;
+};
+
+void WriteAfterFirstReport(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& probe = *static_cast<WriteInReportWindow*>(context);
+    if (probe.wrote) {
+        probe.seenAfterWrite = probe.seenAfterWrite || (begin <= probe.page && probe.page < end);
+        return;
+    }
+    probe.wrote = true;
+    *reinterpret_cast<volatile std::uint8_t*>(probe.page) = 0x5a;
+}
+
+void CheckWriteAfterFreshReport() {
+    void* memory = mmap(nullptr, Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(memory != MAP_FAILED, "cannot map the fresh report block");
+    std::memset(memory, 0, Block);
+    const auto base = reinterpret_cast<std::uintptr_t>(memory);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, Block);
+    WriteInReportWindow probe{base + 0x1000};
+    for (int pass = 0; pass < 2; ++pass) {
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(base, Block, &WriteAfterFirstReport, &probe), "cannot collect the fresh report block");
+    }
+    Require(probe.wrote, "the fresh range was not reported");
+    Require(probe.seenAfterWrite, "a store made after a fresh range was reported was never reported");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, Block);
+    munmap(memory, Block);
+}
+
+struct LinkInCollectWindow {
+    std::uintptr_t low;
+    std::uintptr_t high;
+    bool linked = false;
+    bool aliased = false;
+    bool throughHigh = false;
+};
+
+void LinkAndWriteAfterFirstReport(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& probe = *static_cast<LinkInCollectWindow*>(context);
+    if (!probe.linked) {
+        probe.linked = true;
+        probe.aliased = GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(reinterpret_cast<void*>(probe.low), reinterpret_cast<void*>(probe.high), Block);
+        *reinterpret_cast<volatile std::uint8_t*>(probe.low + 0x1100) = 0x22;
+        return;
+    }
+    probe.throughHigh = probe.throughHigh || (begin <= probe.high + 0x1100 && probe.high + 0x1100 < end);
+}
+
+void IgnoreReport(void*, std::uintptr_t, std::uintptr_t) {
+}
+
+void CheckLinkDuringCollect() {
+    const int file = memfd_create("aps5-link-during-collect", 0);
+    Require(file >= 0 && ftruncate(file, Block) == 0, "cannot create the link window backing");
+    void* raw = mmap(nullptr, 3 * Block, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "cannot reserve the link window");
+    const auto low = (reinterpret_cast<std::uintptr_t>(raw) + Block - 1) & ~static_cast<std::uintptr_t>(Block - 1);
+    const auto high = low + Block;
+    for (const auto view : {low, high}) {
+        Require(mmap(reinterpret_cast<void*>(view), Block, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != MAP_FAILED, "cannot map a link window view");
+        std::memset(reinterpret_cast<void*>(view), 0, Block);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<void*>(view), Block);
+    }
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(high, Block, &IgnoreReport, nullptr), "cannot arm the second view");
+    LinkInCollectWindow probe{low, high};
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(low, Block, &LinkAndWriteAfterFirstReport, &probe), "cannot collect the first view");
+    Require(probe.linked && probe.aliased, "the views were not linked during the collect");
+    Require(probe.throughHigh, "a store through a view linked during a collect was not reported at its alias");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<void*>(low), 2 * Block);
+    munmap(raw, 3 * Block);
+    close(file);
+}
 #endif
 
 void CheckImportWindowFootprint() {
@@ -2828,6 +2937,7 @@ int main(int argc, char** argv) {
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
         CheckRewatch();
+        for (const auto kind : {LostDriverStore::Piece, LostDriverStore::PossiblePiece, LostDriverStore::Whole, LostDriverStore::PossibleWhole}) CheckRewatchKeepsDriverStores(kind);
         CheckUntrackedHint();
         CheckHostHoleInChild(HostHoleMode, ChildHostHole());
         CheckHostHoleInChild(MetadataCommitMode, ProbedHostHole());
@@ -2846,6 +2956,8 @@ int main(int argc, char** argv) {
         CheckImportWindowAcrossThreads();
 #if defined(__linux__)
         CheckImportWindowOverAlias();
+        CheckWriteAfterFreshReport();
+        CheckLinkDuringCollect();
 #endif
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
