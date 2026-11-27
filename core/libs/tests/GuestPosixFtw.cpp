@@ -179,7 +179,9 @@ int main() {
 #ifdef _WIN32
     PSECURITY_DESCRIPTOR owner = nullptr;
     const PACL original = DenyListing(locked.wstring(), owner);
-    const bool unreadable = true;
+    std::error_code listing;
+    { std::filesystem::directory_iterator probe(locked, listing); }
+    const bool unreadable = static_cast<bool>(listing);
 #else
     std::filesystem::permissions(locked, std::filesystem::perms::none);
     std::error_code listing;
