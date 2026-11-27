@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -11,6 +12,13 @@
 #include <string>
 #include <string_view>
 #include <utility>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
@@ -435,6 +443,182 @@ static void TestSameSiteInfo() {
     Require(Throws([] { _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE(nullptr); }));
 }
 
+template<typename TFunction>
+static bool ThrowsNotImplemented(TFunction&& function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* Writable() const { return base; }
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+
+    template<typename T>
+    T* SplitReadOnlyToGuard() const {
+        return reinterpret_cast<T*>(base + pageSize * 2 - sizeof(T) / 2);
+    }
+};
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    constexpr auto collect = &_ZN7WebCore28collectVaryingRequestHeadersEPKNS_9CookieJarERKNS_15ResourceRequestERKNS_16ResourceResponseE;
+    constexpr auto verify = &_ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJarERKN3WTF6VectorISt4pairINS3_6StringES6_ELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEERKNS_15ResourceRequestE;
+    constexpr auto sameSite = &_ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE;
+
+    Request request;
+    request.Set("Accept", "text/html").Set("X-Custom", "c");
+    Response response("Accept");
+    Response cookieResponse("Cookie");
+
+    const auto* unmappedRequest = reinterpret_cast<const LegacyResourceRequestBase*>(pages.Guard());
+    const auto* splitRequest = pages.SplitReadOnlyToGuard<const LegacyResourceRequestBase>();
+    const auto* readOnlyRequest = reinterpret_cast<const LegacyResourceRequestBase*>(pages.ReadOnly());
+    const auto* unmappedResponse = reinterpret_cast<const ResourceResponseBase*>(pages.Guard());
+    const auto* splitResponse = pages.SplitReadOnlyToGuard<const ResourceResponseBase>();
+    const auto* unmappedJar = reinterpret_cast<const LegacyCookieJar*>(pages.Guard());
+    const auto* splitJar = pages.SplitReadOnlyToGuard<const LegacyCookieJar>();
+    const auto* unmappedHeaders = reinterpret_cast<const Vector<LegacyVaryingRequestHeader>*>(pages.Guard());
+    const auto* splitHeaders = pages.SplitReadOnlyToGuard<const Vector<LegacyVaryingRequestHeader>>();
+
+    Require(ThrowsNotImplemented([&] { sameSite(unmappedRequest); }));
+    Require(ThrowsNotImplemented([&] { sameSite(splitRequest); }));
+    Require(ThrowsNotImplemented([&] { sameSite(readOnlyRequest); }));
+
+    {
+        Request badMethod;
+        StringImpl* const orig = std::exchange(badMethod.base.httpMethod.impl, reinterpret_cast<StringImpl*>(pages.Guard()));
+        badMethod.base.resourceRequestUpdated = false;
+        Require(ThrowsNotImplemented([&] { sameSite(&badMethod.base); }));
+        Require(!badMethod.base.resourceRequestUpdated);
+        StringImpl badMethodData{2, 8, pages.Guard(), 4};
+        badMethod.base.httpMethod.impl = &badMethodData;
+        Require(ThrowsNotImplemented([&] { sameSite(&badMethod.base); }));
+        Require(!badMethod.base.resourceRequestUpdated);
+        badMethod.base.httpMethod.impl = orig;
+    }
+
+    Require(ThrowsNotImplemented([&] { collect(nullptr, unmappedRequest, response.Base()); }));
+    Require(ThrowsNotImplemented([&] { collect(nullptr, splitRequest, response.Base()); }));
+    Require(ThrowsNotImplemented([&] { collect(nullptr, readOnlyRequest, response.Base()); }));
+    Require(ThrowsNotImplemented([&] { collect(nullptr, &request.base, unmappedResponse); }));
+    Require(ThrowsNotImplemented([&] { collect(nullptr, &request.base, splitResponse); }));
+    Require(ThrowsNotImplemented([&] { collect(unmappedJar, &request.base, cookieResponse.Base()); }));
+    Require(ThrowsNotImplemented([&] { collect(splitJar, &request.base, cookieResponse.Base()); }));
+
+    const LegacyCookieJar badVtableJar{reinterpret_cast<const LegacyCookieJarVtable*>(pages.Guard()), 1, nullptr};
+    const LegacyCookieJar splitVtableJar{pages.SplitReadOnlyToGuard<const LegacyCookieJarVtable>(), 1, nullptr};
+    Require(ThrowsNotImplemented([&] { collect(&badVtableJar, &request.base, cookieResponse.Base()); }));
+    Require(ThrowsNotImplemented([&] { collect(&splitVtableJar, &request.base, cookieResponse.Base()); }));
+
+    {
+        Response badResponse;
+        badResponse.Base()->httpHeaderFields.common.buffer = reinterpret_cast<NKWebKit::HttpAbi::CommonHeader*>(pages.Guard());
+        badResponse.Base()->httpHeaderFields.common.capacity = 1;
+        badResponse.Base()->httpHeaderFields.common.size = 1;
+        Require(ThrowsNotImplemented([&] { collect(nullptr, &request.base, badResponse.Base()); }));
+        badResponse.Base()->httpHeaderFields.common = {};
+    }
+
+    {
+        Request badReqHeaders;
+        auto* const origCommon = std::exchange(badReqHeaders.Map().common.buffer, reinterpret_cast<NKWebKit::HttpAbi::CommonHeader*>(pages.Guard()));
+        const auto origCap = std::exchange(badReqHeaders.Map().common.capacity, 1u);
+        const auto origSize = std::exchange(badReqHeaders.Map().common.size, 1u);
+        badReqHeaders.base.resourceRequestUpdated = false;
+        Require(ThrowsNotImplemented([&] { collect(nullptr, &badReqHeaders.base, response.Base()); }));
+        Require(!badReqHeaders.base.resourceRequestUpdated);
+        badReqHeaders.Map().common.buffer = origCommon;
+        badReqHeaders.Map().common.capacity = origCap;
+        badReqHeaders.Map().common.size = origSize;
+    }
+
+    Vector<LegacyVaryingRequestHeader> validHeaders(1);
+    validHeaders.append(LegacyVaryingRequestHeader{Text("Accept"), Text("text/html")});
+    Require(ThrowsNotImplemented([&] { verify(nullptr, unmappedHeaders, &request.base); }));
+    Require(ThrowsNotImplemented([&] { verify(nullptr, splitHeaders, &request.base); }));
+    Require(ThrowsNotImplemented([&] { verify(nullptr, &validHeaders, unmappedRequest); }));
+    Require(ThrowsNotImplemented([&] { verify(nullptr, &validHeaders, splitRequest); }));
+    Require(ThrowsNotImplemented([&] { verify(nullptr, &validHeaders, readOnlyRequest); }));
+
+    {
+        Vector<LegacyVaryingRequestHeader> badStorage(0);
+        badStorage.buffer = reinterpret_cast<LegacyVaryingRequestHeader*>(pages.Guard());
+        badStorage.capacity = 1;
+        badStorage.size = 1;
+        Require(ThrowsNotImplemented([&] { verify(nullptr, &badStorage, &request.base); }));
+        badStorage.buffer = nullptr;
+        badStorage.capacity = 0;
+        badStorage.size = 0;
+    }
+
+    {
+        Vector<LegacyVaryingRequestHeader> badEntry(1);
+        badEntry.append(LegacyVaryingRequestHeader{Text("Accept"), Text("text/html")});
+        StringImpl* const origName = std::exchange(badEntry.buffer[0].name.impl, reinterpret_cast<StringImpl*>(pages.Guard()));
+        Require(ThrowsNotImplemented([&] { verify(nullptr, &badEntry, &request.base); }));
+        StringImpl badData{2, 8, pages.Guard(), 4};
+        badEntry.buffer[0].name.impl = &badData;
+        Require(ThrowsNotImplemented([&] { verify(nullptr, &badEntry, &request.base); }));
+        badEntry.buffer[0].name.impl = origName;
+        StringImpl* const origVal = std::exchange(badEntry.buffer[0].value.impl, reinterpret_cast<StringImpl*>(pages.Guard()));
+        Require(ThrowsNotImplemented([&] { verify(nullptr, &badEntry, &request.base); }));
+        badEntry.buffer[0].value.impl = &badData;
+        Require(ThrowsNotImplemented([&] { verify(nullptr, &badEntry, &request.base); }));
+        badEntry.buffer[0].value.impl = origVal;
+    }
+
+    Vector<LegacyVaryingRequestHeader> cookieHeaders(1);
+    cookieHeaders.append(LegacyVaryingRequestHeader{Text("Cookie"), Text("jar=1")});
+    Require(ThrowsNotImplemented([&] { verify(unmappedJar, &cookieHeaders, &request.base); }));
+    Require(ThrowsNotImplemented([&] { verify(&badVtableJar, &cookieHeaders, &request.base); }));
+}
+
 int main() {
     TestSameSiteInfo();
     TestVerify();
@@ -442,6 +626,7 @@ int main() {
     TestStrings();
     TestCookieJar();
     TestUpdatedFlagAndArguments();
+    TestGuestPointers();
     std::puts("libSceNKWebKit varying request headers tests passed");
     return 0;
 }
