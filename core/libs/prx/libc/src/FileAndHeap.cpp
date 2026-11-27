@@ -821,7 +821,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     auto* handle = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
-    if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
+    if (count > std::numeric_limits<std::size_t>::max() / size) return 0;
     const auto bytes = size * count;
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fwrite: buffer address overflow");
     if (!stream->SwitchToWriting()) return 0;

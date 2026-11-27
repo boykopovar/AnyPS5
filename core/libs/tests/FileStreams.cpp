@@ -4,6 +4,7 @@
 #include "tests/TemporaryFile.hpp"
 #include <array>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <algorithm>
 #include <barrier>
@@ -1452,6 +1453,24 @@ int main(int argc, char** argv) {
     Require(fflush_nid_postfix(stream) == EOF);
     Require(ferror_nid_postfix(stream) != 0);
     static_cast<void>(fclose_nid_postfix(stream));
-    Require(std::remove(argv[1]) == 0);
+    {
+        auto* stream = fopen_nid_postfix(argv[1], "wb");
+        Require(stream != nullptr);
+        char buffer[16]{};
+        const auto result = fwrite_nid_postfix(buffer, 2, std::numeric_limits<std::size_t>::max(), stream);
+        Require(result == 0);
+        Require(fclose_nid_postfix(stream) == 0);
+        Require(std::remove(argv[1]) == 0);
+    }
+    {
+        auto* stream = fopen_nid_postfix(argv[1], "wb");
+        Require(stream != nullptr);
+        char buffer[16]{};
+        const auto result = fwrite_nid_postfix(buffer, std::numeric_limits<std::size_t>::max() / 2 + 1, 2, stream);
+        Require(result == 0);
+        Require(fclose_nid_postfix(stream) == 0);
+        Require(std::filesystem::file_size(argv[1]) == 0);
+        Require(std::remove(argv[1]) == 0);
+    }
     std::cout << "PASS: stream objects, file operations, EOF and error handling\n";
 }
