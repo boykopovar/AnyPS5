@@ -19,9 +19,10 @@ struct Instruction {
 struct Region {
     VirtualAddress Begin;
     VirtualAddress End;
-    std::set<VirtualAddress> Edges;
+    std::map<VirtualAddress, bool> Edges;
     std::set<VirtualAddress> Imports;
     std::set<VirtualAddress> Instructions;
+    std::set<VirtualAddress> TrustedInstructions;
     std::size_t IndirectTransfers = 0;
     bool UnknownSegmentAccess = false;
 };
@@ -85,7 +86,7 @@ public:
             result.ImportSlots.insert(region.Imports.begin(), region.Imports.end());
             unknownSegmentAccess |= region.UnknownSegmentAccess;
             result.IndirectTransfers += region.IndirectTransfers;
-            for (const auto target : region.Edges) enqueue(target);
+            for (const auto& edge : region.Edges) enqueue(edge.first);
         }
         if (unknownSegmentAccess) result.ImportSlots = input.ImportSlots;
         result.LiveRegions = live.size();
@@ -99,11 +100,16 @@ private:
     Codegen::X64InstructionDecoder decoder;
     std::map<VirtualAddress, Region> regions;
     std::vector<StrictCodeRegion> sortedFunctions;
-    std::set<VirtualAddress> decodedRoots;
+    std::map<VirtualAddress, bool> decodedRoots;
     std::vector<VirtualAddress> addressTaken;
     std::set<VirtualAddress> tableBases;
     StrictReachabilityResult result;
     Region* lastOwner = nullptr;
+
+    void addEdge(Region& region, VirtualAddress target, bool trusted) {
+        const auto [position, inserted] = region.Edges.emplace(target, trusted);
+        if (!inserted) position->second = position->second || trusted;
+    }
 
     bool isCode(VirtualAddress address) const {
         return address >= input.TextVaddr && address - input.TextVaddr < input.Text.size();
@@ -172,7 +178,7 @@ private:
                 throw RelinkerException("Strict filter: invalid or overlapping function range", function.Begin);
             addGap(previousEnd, function.Begin);
             Region region{function.Begin, function.End, {}, {}, {}};
-            region.Edges.insert(function.ExtraTargets.begin(), function.ExtraTargets.end());
+            for (const auto target : function.ExtraTargets) addEdge(region, target, true);
             regions.emplace(function.Begin, std::move(region));
             previousEnd = function.End;
         }
@@ -183,10 +189,11 @@ private:
         if (isCode(target) || input.ImportSlots.contains(target)) addressTaken.push_back(target);
     }
 
-    void decodeFrom(VirtualAddress begin, Region& region, VirtualAddress limit, bool tolerateInvalid) {
+    void decodeFrom(VirtualAddress begin, Region& region, VirtualAddress limit, bool tolerateInvalid, bool stopAtTerminal) {
         const auto effectiveEnd = trailingZeroStart(begin, limit);
         Codegen::ControlFlowKind lastFlow = Codegen::ControlFlowKind::Sequential;
         auto address = begin;
+        bool incomplete = false;
         while (address < effectiveEnd) {
             Instruction instruction;
             try {
@@ -194,12 +201,15 @@ private:
             } catch (const RelinkerException&) {
                 if (!tolerateInvalid) throw;
                 region.UnknownSegmentAccess = true;
+                incomplete = true;
                 break;
             }
             const auto& info = instruction.Info;
             const auto next = address + info.Length;
             const auto offset = static_cast<std::size_t>(address - input.TextVaddr);
             const auto newInstruction = region.Instructions.insert(address).second;
+            if (!tolerateInvalid) region.TrustedInstructions.insert(address);
+            lastFlow = info.FlowKind;
             if (info.SegmentPrefix != 0 && info.HasMemoryOperand) region.UnknownSegmentAccess = true;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const bool overflows = (info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
@@ -207,15 +217,17 @@ private:
                 if (overflows) {
                     if (!tolerateInvalid) throw RelinkerException("Strict filter: direct branch leaves code", address);
                     region.UnknownSegmentAccess = true;
+                    incomplete = true;
                     break;
                 }
                 const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
                 if (!isCode(target)) {
                     if (!tolerateInvalid) throw RelinkerException("Strict filter: direct branch leaves code", address);
                     region.UnknownSegmentAccess = true;
+                    incomplete = true;
                     break;
                 }
-                region.Edges.insert(target);
+                addEdge(region, target, !tolerateInvalid);
             }
             if (info.HasRipRelativeDisp) {
                 std::int32_t displacement = 0;
@@ -228,7 +240,7 @@ private:
                         addAddressTaken(target);
                         tableBases.insert(target);
                     }
-                    if (const auto pointer = input.Pointers.find(target); pointer != input.Pointers.end()) region.Edges.insert(pointer->second);
+                    if (const auto pointer = input.Pointers.find(target); pointer != input.Pointers.end()) addEdge(region, pointer->second, false);
                 }
             }
             using enum Codegen::ControlFlowKind;
@@ -241,17 +253,17 @@ private:
                     addAddressTaken(value);
                 }
             }
-            lastFlow = info.FlowKind;
             address = next;
+            if (stopAtTerminal && endsFlow(info.FlowKind)) break;
         }
-        if (address < limit) lastFlow = Codegen::ControlFlowKind::Sequential;
-        if (!endsFlow(lastFlow) && isCode(limit)) region.Edges.insert(limit);
+        if (!incomplete && address < limit && (!stopAtTerminal || !endsFlow(lastFlow))) lastFlow = Codegen::ControlFlowKind::Sequential;
+        if (!incomplete && !endsFlow(lastFlow) && isCode(limit)) addEdge(region, limit, !tolerateInvalid);
     }
 
     void buildEdges() {
         for (auto& [begin, region] : regions) {
-            decodedRoots.insert(begin);
-            decodeFrom(begin, region, region.End, false);
+            decodedRoots.emplace(begin, true);
+            decodeFrom(begin, region, region.End, false, false);
         }
     }
 
@@ -269,7 +281,7 @@ private:
         for (const auto& function : input.Functions)
             for (const auto target : function.ExtraTargets) enqueueRoot(target, true);
         for (const auto& [begin, region] : regions)
-            for (const auto target : region.Edges) enqueueRoot(target, true);
+            for (const auto& [target, trusted] : region.Edges) enqueueRoot(target, trusted);
         std::size_t addressTakenIndex = 0;
         const auto enqueueAddressTaken = [&] {
             while (addressTakenIndex < addressTaken.size()) enqueueRoot(addressTaken[addressTakenIndex++], false);
@@ -280,11 +292,15 @@ private:
             pending.pop_front();
             const auto trusted = queued.at(target);
             queued.erase(target);
-            if (!decodedRoots.insert(target).second) continue;
+            const auto [decoded, inserted] = decodedRoots.emplace(target, trusted);
+            if (!inserted) {
+                if (decoded->second || !trusted) continue;
+                decoded->second = true;
+            }
             auto& region = owner(target);
-            if (region.Instructions.contains(target)) continue;
-            decodeFrom(target, region, rootLimit(target), !trusted);
-            for (const auto edge : region.Edges) enqueueRoot(edge, true);
+            if (region.TrustedInstructions.contains(target) || (region.Instructions.contains(target) && !trusted)) continue;
+            decodeFrom(target, region, rootLimit(target), !trusted, true);
+            for (const auto& [edge, edgeTrusted] : region.Edges) enqueueRoot(edge, edgeTrusted);
             enqueueAddressTaken();
         }
     }

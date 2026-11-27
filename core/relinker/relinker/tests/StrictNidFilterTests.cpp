@@ -152,6 +152,30 @@ void conditionalTailCall() {
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Conditional tail call was removed");
 }
 
+void independentRootStopsAtTerminalInstruction() {
+    auto input = fixture();
+    emit(input, 0, {0x48, 0xB8, 0xC3, 0xE9, 0xFF, 0xFF, 0xFF, 0x7F, 0x00, 0x00, 0xC3});
+    input.Entries.push_back(0x1002);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.Instructions.contains(0x1002), "Independent root terminal instruction was not decoded");
+    require(!result.Instructions.contains(0x1003), "Independent root decoded bytes after a terminal instruction");
+}
+
+void untrustedBranchDescendantsRemainUntrusted() {
+    auto input = fixture();
+    emit(input, 0, {0xB8, 0xEB, 0x0D, 0x90, 0x90, 0xC3});
+    emit(input, 15, {0xB8, 0xEB, 0x7F, 0x90, 0x90, 0xC3});
+    input.Pointers.emplace(0x2000, 0x1001);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.ImportSlots == input.ImportSlots, "An out-of-code branch reached from an untrusted descendant did not preserve all imports");
+
+    auto trusted = input;
+    trusted.Entries.push_back(0x1001);
+    trusted.Entries.push_back(0x1010);
+    requireFailureMessage([&] { AnalyzeStrictReachability(trusted); }, "direct branch leaves code",
+                          "An independently trusted branch descendant was treated as speculative");
+}
+
 void fallthroughAfterZeroPadding() {
     auto input = fixture();
     ripOperand(input, 0, {0xE9}, 0x1000);
@@ -1780,6 +1804,8 @@ int main() {
         ud1DeadTail();
         conditionalTailCall();
         fallthroughAfterZeroPadding();
+        independentRootStopsAtTerminalInstruction();
+        untrustedBranchDescendantsRemainUntrusted();
         addressSizeOverrideImport();
         ripDisplacementOverflowUnderflowBounds();
         callbackAndRelocationRoots();
