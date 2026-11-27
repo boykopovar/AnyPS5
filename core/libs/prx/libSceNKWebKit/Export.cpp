@@ -26,11 +26,6 @@ int APS5_VABI WKErrorCopyLocalizedDescription() {
 }
 
 
-int APS5_VABI WKSecurityOriginCreateFromString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI _ZN9Inspector17ScriptDebugServer23removeBreakpointActionsEm() {
     NotImplemented_nid_no_patch(__func__);
 }

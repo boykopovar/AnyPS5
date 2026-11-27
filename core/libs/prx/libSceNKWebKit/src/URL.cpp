@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include <cctype>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -104,7 +105,12 @@ std::u16string PortString(std::uint16_t port) {
     return {text.begin(), text.end()};
 }
 
-}  // namespace
+bool IsSpecialScheme(std::u16string_view scheme) {
+    return scheme == u"http" || scheme == u"https" || scheme == u"ftp" ||
+           scheme == u"file" || scheme == u"ws" || scheme == u"wss";
+}
+
+}
 
 extern "C" {
 
@@ -113,6 +119,61 @@ const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* h
     if (port && port <= 65535) validPort = static_cast<std::uint16_t>(port);
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(
         *NKWebKit::Cast<NKWebKit::String>(protocol, __func__), *NKWebKit::Cast<NKWebKit::String>(host, __func__), validPort));
+}
+
+const void* APS5_VABI WKSecurityOriginCreateFromString(const void* stringRef) {
+    const auto* str = NKWebKit::Cast<NKWebKit::String>(stringRef, __func__);
+    if (str->null || str->characters.empty()) {
+        auto origin = NKWebKit::Make<SecurityOrigin>();
+        origin->isOpaque = true;
+        return NKWebKit::ToRef(origin);
+    }
+    auto utf8 = str->Utf8();
+    if (utf8.size() >= 5) {
+        std::string prefix = utf8.substr(0, 5);
+        for (auto& c : prefix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (prefix == "blob:") {
+            utf8 = utf8.substr(5);
+        }
+    }
+    const ParsedURL parsed = Parse(Wtf::URL{}, utf8.c_str());
+    if ((parsed.fields.bits & 1) == 0) {
+        auto origin = NKWebKit::Make<SecurityOrigin>();
+        origin->isOpaque = true;
+        return NKWebKit::ToRef(origin);
+    }
+    const auto protocolView = _ZNK3WTF3URL8protocolEv(&parsed.fields);
+    const auto hostView = _ZNK3WTF3URL4hostEv(&parsed.fields);
+    auto port = NKWebKit::WtfAbi::PortOf(parsed.fields);
+    auto protocol = Units(protocolView);
+    auto host = Units(hostView);
+    for (auto& c : protocol) {
+        if (c >= u'A' && c <= u'Z') c += (u'a' - u'A');
+    }
+    for (auto& c : host) {
+        if (c >= u'A' && c <= u'Z') c += (u'a' - u'A');
+    }
+    if (protocol.empty() || !IsSpecialScheme(protocol)) {
+        auto origin = NKWebKit::Make<SecurityOrigin>();
+        origin->isOpaque = true;
+        return NKWebKit::ToRef(origin);
+    }
+    if ((protocol == u"http" || protocol == u"https" || protocol == u"ftp") && host.empty()) {
+        auto origin = NKWebKit::Make<SecurityOrigin>();
+        origin->isOpaque = true;
+        return NKWebKit::ToRef(origin);
+    }
+    if (protocol == u"file") {
+        port = std::nullopt;
+    } else if (port) {
+        if ((protocol == u"http" && *port == 80) ||
+            (protocol == u"https" && *port == 443) ||
+            (protocol == u"ftp" && *port == 21)) {
+            port = std::nullopt;
+        }
+    }
+    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(
+        NKWebKit::String(std::move(protocol)), NKWebKit::String(std::move(host)), port));
 }
 
 const void* APS5_VABI WKSecurityOriginCopyProtocol(const void* origin) {
@@ -131,6 +192,7 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* origin) {
 
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
+    if (value->isOpaque) return CopyOriginString(u"null");
     if (value->protocol == u"file") return CopyOriginString(u"file://");
     if (value->protocol.empty() && value->host.empty()) return CopyOriginString(std::u16string());
     auto text = value->protocol + u"://" + value->host;
