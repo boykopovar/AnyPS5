@@ -134,6 +134,20 @@ void CheckFeraise() {
         const int error = (raised & 0x01) != 0 || (raised & 0x1c) == 0 ? 33 : 34;
         Require(*__error_nid_postfix() == error, "_Feraise sets EDOM or ERANGE");
     }
+    for (const int invalid : {0x40, 0x2001, 0x6008, 0x8048, 0x10004, -1}) {
+        const auto seeded = SeedFlags(0x05, 0x12);
+        *__error_nid_postfix() = 123;
+        bool threw = false;
+        try {
+            _Feraise_nid_postfix(invalid);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "_Feraise rejects unsupported exception bits");
+        const auto after = ReadEnvironment();
+        Require(SameEnvironment(after, seeded), "_Feraise preserves floating-point state on invalid bits");
+        Require(*__error_nid_postfix() == 123, "_Feraise preserves errno on invalid bits");
+    }
     SeedFlags(0, 0);
 }
 

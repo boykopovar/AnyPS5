@@ -103,6 +103,7 @@ alignas(256) std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 
 alignas(256) std::array<std::uint32_t, 9> WriterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000202u, 0x7e020203u, 0x7e040204u, 0xe07c0000u, 0x80020000u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 9> ImageWriterCode{0x7e000280u, 0x7e020280u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0xf0201f08u, 0x00000200u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 4> GdsWriterCode{0x7e000280u, 0xd8360000u, 0x00000000u, 0xbf810000u};
+alignas(256) std::array<std::uint32_t, 6> PointerStoreCode{0x7e1a0280u, 0x7e1802ffu, 0x00000001u, 0xdc708000u, 0x00020c0du, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 16> StreamCopyCode{0xd7460008u, 0x04010e08u, 0x8f6a8708u, 0xd76d0009u, 0x0401806au, 0xe00c2000u, 0x80000008u, 0xe00c2000u, 0x80000409u, 0xbf8c3f71u, 0xe01c2000u, 0x80010008u, 0xbf8c3f70u, 0xe01c2000u, 0x80010409u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 9> FillKernelCode{0xd7460004u, 0x04010c08u, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 69> DwordPatternFillCode{
@@ -193,6 +194,11 @@ void GdsWrite(std::vector<std::uint32_t>& words) {
     words.insert(words.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
 }
 
+void PointerStore(std::vector<std::uint32_t>& words, const void* target) {
+    Program(words, PointerStoreCode.data(), {0u, 0u, Low(target), High(target)});
+    words.insert(words.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
+}
+
 void StreamCopyDescriptor(std::vector<std::uint32_t>& words, const void* source, const void* destination) {
     constexpr std::uint32_t format = 0x0004bfacu;
     Program(words, StreamCopyCode.data(), {
@@ -263,6 +269,7 @@ int main() {
         std::uint32_t* importedCopySourceDescriptor = imported.Dwords(512);
         std::uint32_t* importedPolluteDescriptor = imported.Dwords(768);
         std::uint32_t* importedPolluteMetaDescriptor = imported.Dwords(1024);
+        std::uint32_t* importedPointerTarget = imported.Dwords(1280);
         const auto stale = Descriptor(Stale.data(), sizeof(Stale));
         const auto fresh = Descriptor(Fresh.data(), sizeof(Fresh));
         FirstDescriptor = Descriptor(First.data(), sizeof(First));
@@ -290,6 +297,7 @@ int main() {
         WriteThreeDwords(warmUp, importedPolluteMetaDescriptor, fresh[0], fresh[1], fresh[2]);
         ImageWriteDescriptor(warmUp, importedSecondDescriptor, stale);
         GdsWrite(warmUp);
+        PointerStore(warmUp, importedPointerTarget);
         warmUp.insert(warmUp.end(), {0xc0033700u, 0x00100200u, Low(&Done), High(&Done), 2u});
         Packet first{warmUp.data(), static_cast<std::uint32_t>(warmUp.size()), 0, {}};
         Require(sceAgcDriverSubmitAcb(0x20, &first) == 0, "warm-up submit failed");
@@ -371,26 +379,30 @@ int main() {
             ImageWriteDescriptor(cmd, importedSecondDescriptor, fresh);
         }, 3, true);
 
-        {
+        const auto runWriterBetweenCounts = [&](const std::string& label, std::uint64_t expectedAdopted, const auto& emitWriter) {
             First[0] = 0;
             Stale[0] = 0;
             Fresh[0] = 0;
             Done = 0;
             SecondDescriptor = fresh;
             const auto adoptedBefore = AgcDriverDispatchesAdoptedAhead_nid_postfix();
-            std::vector<std::uint32_t> gdsWords;
-            gdsWords.insert(gdsWords.end(), {0xc0053c00u, 0x13u, Low(&Gate), High(&Gate), 1u, 0xffffffffu, 0x19u});
-            Count(gdsWords, FirstDescriptor.data());
-            GdsWrite(gdsWords);
-            Count(gdsWords, SecondDescriptor.data());
-            gdsWords.insert(gdsWords.end(), {0xc0033700u, 0x00100200u, Low(&Done), High(&Done), 1u});
-            Packet gdsPacket{gdsWords.data(), static_cast<std::uint32_t>(gdsWords.size()), 0, {}};
-            Require(sceAgcDriverSubmitAcb(0x20, &gdsPacket) == 0, "GDS unbounded write submit failed");
+            std::vector<std::uint32_t> words;
+            words.insert(words.end(), {0xc0053c00u, 0x13u, Low(&Gate), High(&Gate), 1u, 0xffffffffu, 0x19u});
+            Count(words, FirstDescriptor.data());
+            emitWriter(words);
+            Count(words, SecondDescriptor.data());
+            words.insert(words.end(), {0xc0033700u, 0x00100200u, Low(&Done), High(&Done), 1u});
+            Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+            Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, label + ": submit failed");
             AgcDriverWaitIdle_nid_postfix();
             const auto adopted = AgcDriverDispatchesAdoptedAhead_nid_postfix() - adoptedBefore;
-            Require(Done == 1 && First[0] == 1 && Fresh[0] == 1, "GDS unbounded write submission did not run");
-            Require(adopted == 2, "unbounded GDS write did not stop resolveGroupAhead (expected 2 adopted ahead, got " + std::to_string(adopted) + ")");
-        }
+            Require(Done == 1 && First[0] == 1 && Fresh[0] == 1, label + ": submission did not run");
+            Require(adopted == expectedAdopted, label + ": expected " + std::to_string(expectedAdopted) + " dispatches adopted ahead, got " + std::to_string(adopted));
+        };
+        runWriterBetweenCounts("GDS write bounded to the GDS range", 3, [](std::vector<std::uint32_t>& words) { GdsWrite(words); });
+        *importedPointerTarget = 0;
+        runWriterBetweenCounts("unbounded store through a pointer", 2, [&](std::vector<std::uint32_t>& words) { PointerStore(words, importedPointerTarget); });
+        Require(*importedPointerTarget == 1, "the store through a pointer did not land");
 
         std::cout << "write data written ahead test passed\n";
         AgcDriverShutdown_nid_postfix();

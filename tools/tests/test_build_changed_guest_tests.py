@@ -95,6 +95,14 @@ class GuestTestTargets(unittest.TestCase):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
 
+    def test_a_product_library_source_change_selects_its_guest_consumer(self):
+        guest = self.target("guest_pad_tests", source="core/libs/tests/GuestPad.cpp", fragment="libc.prx")
+        unrelated = self.target("guest_http_tests", source="core/libs/tests/GuestHttp.cpp", fragment="libc.prx")
+        product = self.target("libScePad", target_type="SHARED_LIBRARY", source="core/libs/prx/libScePad/Export.cpp")
+        guest["dependencies"] = [{"id": product["id"]}]
+        build = self.fixture([guest, unrelated, product])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libScePad/Export.cpp"]), ["guest_pad_tests"])
+
     def test_changed_static_fixture_selects_its_guest_consumer(self):
         guest = self.target("guest_jxr_tests", source="core/libs/tests/GuestJxr.cpp", fragment="libc.prx")
         unrelated = self.target("guest_pad_tests", fragment="libc.prx")
@@ -327,6 +335,16 @@ class Main(unittest.TestCase):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
         self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
 
+    def test_selects_guest_sources_in_git_nul_delimited_paths(self):
+        source = "core/libs/tests/Café.cpp"
+        build = self.fixture([self.target("guest_tests", source=source, fragment="libc.prx")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(("docs/file.md\0" + source + "\0").encode("utf-8"))
+        with mock.patch.object(build_changed_guest_tests, "run") as run:
+            self.assertEqual(build_changed_guest_tests.main([str(build), str(changed)]), 0)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[1], ["guest_tests"])
+
     def test_a_changed_list_with_a_bom_keeps_the_first_path(self):
         build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
         listing = json.dumps({"tests": [
@@ -425,6 +443,61 @@ class Main(unittest.TestCase):
             'add_test("nid_one" "/old/nid_one_tests")\nadd_test("removed" "/old/removed_tests")\n', encoding="utf-8")
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
+
+    def test_changed_python_wrapper_matches_its_absolute_source_path(self):
+        root = Path(self.temporary.name).resolve()
+        script = "core/libs/prx/libc/tests/GuestLibcxxVerboseAbort.py"
+        tests = [
+            {"name": "guest_libcxx", "command": ["python", (root / script).as_posix(), "/b/guest_libcxx_tests"]},
+            {"name": "same_filename", "command": ["python", (root / "other" / Path(script).name).as_posix()]},
+            {"name": "guest_pad", "command": ["/b/guest_pad_tests"]},
+        ]
+        changes = [script, "core/libs/tests/Guest.cpp", "tools/Guest.py"]
+        wrappers = build_changed_guest_tests.changed_python_wrappers(root, changes)
+        self.assertEqual(wrappers, {root / script})
+        with mock.patch.object(build_changed_guest_tests, "ctest_tests", return_value=tests):
+            self.assertEqual(build_changed_guest_tests.script_test_indices(root / "build", (), wrappers), [1])
+
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest") and shutil.which("ninja")
+                         and (shutil.which("gcc") or shutil.which("cc")), "requires CMake, CTest, Ninja and a C compiler")
+    def test_changed_python_wrapper_runs_only_its_cases_and_builds_both_executables(self):
+        source = Path(self.temporary.name)
+        build = source / "build"
+        script = "core/libs/tests/test_timed_join_imports.py"
+        wrapper = source / script
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text(
+            "from pathlib import Path\n"
+            "import subprocess\n"
+            "import sys\n"
+            "subprocess.run([sys.argv[1]], check=True)\n"
+            "subprocess.run([sys.argv[3]], check=True)\n"
+            "Path(sys.argv[2]).touch()\n", encoding="utf-8")
+        (source / "CMakeLists.txt").write_text(
+            """cmake_minimum_required(VERSION 3.20)
+project(ChangedWrapper LANGUAGES C)
+enable_testing()
+add_custom_target(libs)
+add_executable(relinker EXCLUDE_FROM_ALL main.c)
+add_executable(guest_timed_join_tests EXCLUDE_FROM_ALL main.c)
+foreach(provider libkernel_sys libkernel_web)
+    add_test(NAME guest_timed_join_import_${provider} COMMAND "${wrapper_python}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/libs/tests/test_timed_join_imports.py"
+        $<TARGET_FILE:relinker> ${provider} $<TARGET_FILE:guest_timed_join_tests>)
+endforeach()
+add_test(NAME unrelated COMMAND "${wrapper_python}" -c "raise SystemExit(1)" $<TARGET_FILE:relinker>)
+""", encoding="utf-8")
+        (source / "main.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        query = build / ".cmake" / "api" / "v1" / "query" / "codemodel-v2"
+        query.parent.mkdir(parents=True)
+        query.touch()
+        compiler = shutil.which("gcc") or shutil.which("cc")
+        subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
+                        f"-DCMAKE_C_COMPILER={compiler}", f"-Dwrapper_python={Path(sys.executable).as_posix()}"],
+                       check=True, capture_output=True, text=True)
+        self.assertEqual(self.main(build, [script]), 0)
+        for provider in ("libkernel_sys", "libkernel_web"):
+            self.assertTrue((build / provider).is_file(), provider)
 
     def test_registered_commands_preserve_empty_arguments(self):
         build = Path(self.temporary.name)
@@ -606,7 +679,7 @@ int main(int argc, char **argv) {
     return fclose(marker);
 }
 """, encoding="utf-8")
-        compiler = shutil.which("gcc") or shutil.which("cc")
+        compiler = Path(shutil.which("gcc") or shutil.which("cc")).as_posix()
         subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
                         f"-DCMAKE_C_COMPILER={compiler}"], check=True, capture_output=True)
         targets = {name: name for name in ("producer", "aux_producer", "validator", "verifier", "cleaner", "unrelated")}
