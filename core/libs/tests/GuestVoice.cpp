@@ -85,6 +85,13 @@ int main() {
     Require(sceVoiceSetVolume(128, 1.0f) == notInitialized);
     Require(sceVoiceSetMuteFlag(128, 1) == notInitialized);
     Require(sceVoiceDeletePort(128) == notInitialized);
+    Require(sceVoiceDeletePort(0) == notInitialized);
+    Require(sceVoiceConnectIPortToOPort(0, 1) == notInitialized);
+    Require(sceVoiceDisconnectIPortFromOPort(0, 0) == notInitialized);
+    Require(sceVoiceDisconnectIPortFromOPort(1, 2) == notInitialized);
+    Require(sceVoiceDisconnectIPortFromOPort(127, 127) == notInitialized);
+    Require(sceVoiceDisconnectIPortFromOPort(128, 0) == notInitialized);
+    Require(sceVoiceDisconnectIPortFromOPort(0xFFFFFFFFu, 0xFFFFFFFFu) == notInitialized);
     Require(sceVoiceResetPort(0) == notInitialized);
     Require(sceVoicePausePort(0) == notInitialized);
     Require(sceVoiceResumePort(0) == notInitialized);
