@@ -206,9 +206,34 @@ void Test64BitScalarDescriptorVccLoAndRefusals() {
 
 }
 
+void TestGfx1013OnlyFormsDecode() {
+    const std::array<std::uint32_t, 2> dsAddSrc2Words = {(0x36u << 26u) | (0xC0u << 18u) | 2u, (4u << 24u) | (6u << 16u) | (5u << 8u) | 7u};
+    const RdnaInstruction dsAddSrc2 = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(dsAddSrc2Words), 0u);
+    EXPECT_EQ(dsAddSrc2.op, RdnaOpcode::DsAddSrc2U64);
+    EXPECT_EQ(dsAddSrc2.dataDwordCount, 2u);
+    EXPECT_EQ(dsAddSrc2.memoryOffset, 0u);
+    EXPECT_EQ(dsAddSrc2.secondaryOffset, 8u);
+
+    const std::array<std::uint32_t, 2> storeWords = {(0x3Du << 26u) | (0x10u << 18u) | (3u << 6u) | 2u, 0x40u};
+    const RdnaInstruction store = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(storeWords), 0u);
+    EXPECT_EQ(store.op, RdnaOpcode::SStoreDword);
+    EXPECT_EQ(store.dataDwordCount, 1u);
+
+    const std::array<std::uint32_t, 2> bufferStoreWords = {(0x3Du << 26u) | (0x1Au << 18u) | (3u << 6u) | 2u, 0u};
+    const RdnaInstruction bufferStore = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(bufferStoreWords), 0u);
+    EXPECT_EQ(bufferStore.op, RdnaOpcode::SBufferStoreDwordx4);
+    EXPECT_EQ(bufferStore.dataDwordCount, 4u);
+
+    const std::array<std::uint32_t, 2> atomicWords = {(0x3Du << 26u) | (0xA2u << 18u) | (3u << 6u) | 2u, 0u};
+    const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(atomicWords), 0u);
+    EXPECT_EQ(atomic.op, RdnaOpcode::SAtomicAddX2);
+    EXPECT_EQ(atomic.dataDwordCount, 2u);
+}
+
 int main() {
     TestDsWriteAddtidTolerance();
     TestDsReadAddtidTolerance();
     Test64BitScalarDescriptorVccLoAndRefusals();
+    TestGfx1013OnlyFormsDecode();
     return 0;
 }
