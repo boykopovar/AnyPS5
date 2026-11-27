@@ -913,7 +913,13 @@ private:
         if (address && immediateU32(offset, descriptorOffset)) {
             return TryMakeIndirectColumn(handle, *heapHandle, sampler, words, descriptorOffset, first, plan);
         }
-        if (!MatchAffineOffset(offset, key, stride, addend)) {
+        std::uint32_t fixedOffset = 0;
+        const bool fixed = !address && !buffer && immediateU32(offset, fixedOffset);
+        if (fixed) {
+            key = &m_builder.Constant(0u);
+            stride = width * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+            addend = fixedOffset;
+        } else if (!MatchAffineOffset(offset, key, stride, addend)) {
             if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
                 return false;
             }
@@ -921,7 +927,9 @@ private:
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
-        if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
+        if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
+            if (fixed) return false;
+        } else {
             if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
@@ -1100,37 +1108,164 @@ private:
         return true;
     }
 
-    bool PointerRecordPairs(IrValue* low, IrValue* high, std::vector<IrValue*>& lowReads, std::vector<IrValue*>& highReads) const {
-        std::vector<std::pair<IrValue*, IrValue*>> pending{{low, high}};
-        std::set<std::pair<const IrValue*, const IrValue*>> seen;
-        while (!pending.empty()) {
-            auto* lowWord = pending.back().first->Resolve();
-            auto* highWord = pending.back().second->Resolve();
-            pending.pop_back();
-            if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord)) continue;
-            if (lowWord->IsPhi()) {
-                const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
-                for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
-                    IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
-                    if (edge == nullptr) return false;
-                    if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
-                    pending.emplace_back(lowWord->Argument(index), edge);
-                }
-                continue;
-            }
-            if (IrValue* word = MaskedRecordWord(*lowWord)) {
-                pending.emplace_back(word, highWord);
-                continue;
-            }
-            if (!PointerRecordRead(*lowWord, lowReads)) return false;
-            if (highWord->IsPhi()) {
-                for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
-            } else if (IrValue* word = MaskedRecordWord(*highWord)) {
-                pending.emplace_back(lowWord, word);
-            } else if (!PointerFreeWord(*highWord) && !PointerRecordRead(*highWord, highReads)) {
+    struct ChaseSite {
+        IrValue* handle = nullptr;
+        IrValue* pointer = nullptr;
+        PointerChase chase;
+        std::vector<std::size_t> inner;
+    };
+
+    bool ChaseRead(IrValue& read, IrValue*& handle, std::uint32_t& readOffset, std::uint32_t& readImmediate) const {
+        std::uint32_t memory = 0;
+        const MemoryInfo* info = ScalarReadMemory(read, memory);
+        if (info == nullptr || !MemoryIndexBelongsTo(memory, read) || !immediateU32(read.Argument(1), readOffset)) return false;
+        handle = read.Argument(0)->Resolve();
+        readImmediate = info->offset;
+        return handle->Opcode() == IrOpcode::GetBufferResource && handle->ArgumentCount() == 4u;
+    }
+
+    static IrValue* EditedWord(IrValue* word, DescriptorWordEdit& edit) {
+        word = word->Resolve();
+        std::uint32_t operand = 0;
+        if (word->ArgumentCount() != 2u) return word;
+        if (word->Opcode() == IrOpcode::ShiftLeftLogical32) {
+            if (!immediateU32(word->Argument(1), operand) || operand > 31u) return word;
+            edit.shift = operand;
+            return word->Argument(0)->Resolve();
+        }
+        if (word->Opcode() != IrOpcode::BitwiseAnd32 && word->Opcode() != IrOpcode::BitwiseOr32) return word;
+        const bool left = immediateU32(word->Argument(0), operand);
+        if (!left && !immediateU32(word->Argument(1), operand)) return word;
+        (word->Opcode() == IrOpcode::BitwiseAnd32 ? edit.mask : edit.bits) = operand;
+        return word->Argument(left ? 1u : 0u)->Resolve();
+    }
+
+    bool ChaseVsharp(IrValue& handle, IrValue*& pointer, PointerChase& chase) const {
+        for (std::uint32_t dword = 0; dword < 4u; dword++) {
+            IrValue* word = EditedWord(handle.Argument(dword), chase.edits[dword]);
+            std::uint32_t memoryIndex = 0;
+            const MemoryInfo* memory = ScalarAddressMemory(*word, memoryIndex);
+            std::uint32_t offset = 0;
+            if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *word) || !immediateU32(word->Argument(1), offset)) return false;
+            IrValue* address = word->Argument(0)->Resolve();
+            if (address->Opcode() != IrOpcode::GetAddressResource || address->ArgumentCount() != 2u) return false;
+            if (dword == 0u) {
+                pointer = address;
+                chase.offset = offset;
+                chase.immediate = memory->offset;
+            } else if (offset != chase.offset || memory->offset != chase.immediate + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (address != pointer && !EquivalentValue(m_program.Resources(), pointer, address))) {
                 return false;
             }
         }
+        return true;
+    }
+
+    bool ChaseHighRead(IrValue& read, const IrValue& handle, std::uint32_t readOffset, std::uint32_t readImmediate) const {
+        IrValue* highHandle = nullptr;
+        std::uint32_t highOffset = 0;
+        std::uint32_t highImmediate = 0;
+        return ChaseRead(read, highHandle, highOffset, highImmediate) && (highHandle == &handle || EquivalentValue(m_program.Resources(), &handle, highHandle)) && highOffset == readOffset && highImmediate == readImmediate + static_cast<std::uint32_t>(sizeof(std::uint32_t));
+    }
+
+    bool PointerRecordPairs(IrValue* low, IrValue* high, std::vector<IrValue*>& lowReads, std::vector<IrValue*>& highReads, std::vector<PointerChase>& chases, std::uint32_t& chaseDepth) const {
+        std::vector<ChaseSite> sites;
+        std::vector<const IrValue*> looseHandles;
+        const auto site = [&](IrValue& handle, IrValue& pointer, const PointerChase& chase) {
+            const auto found = std::ranges::find_if(sites, [&](const ChaseSite& known) { return known.chase == chase && (known.handle == &handle || EquivalentValue(m_program.Resources(), known.handle, &handle)); });
+            if (found != sites.end()) return static_cast<std::size_t>(found - sites.begin());
+            sites.push_back(ChaseSite{&handle, &pointer, chase, {}});
+            return sites.size() - 1u;
+        };
+        const auto walk = [&](IrValue* rootLow, IrValue* rootHigh, std::vector<std::size_t>& reached) {
+            std::vector<std::pair<IrValue*, IrValue*>> pending{{rootLow, rootHigh}};
+            std::set<std::pair<const IrValue*, const IrValue*>> seen;
+            while (!pending.empty()) {
+                auto* lowWord = pending.back().first->Resolve();
+                auto* highWord = pending.back().second->Resolve();
+                pending.pop_back();
+                if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord)) continue;
+                if (lowWord->IsPhi()) {
+                    const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
+                    for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
+                        IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
+                        if (edge == nullptr) return false;
+                        if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
+                        pending.emplace_back(lowWord->Argument(index), edge);
+                    }
+                    continue;
+                }
+                if (IrValue* word = MaskedRecordWord(*lowWord)) {
+                    pending.emplace_back(word, highWord);
+                    continue;
+                }
+                IrValue* handle = nullptr;
+                IrValue* pointer = nullptr;
+                PointerChase chase;
+                std::uint32_t looseOffset = 0;
+                std::uint32_t looseImmediate = 0;
+                if (ChaseRead(*lowWord, handle, chase.readOffset, chase.readImmediate) && ChaseVsharp(*handle, pointer, chase)) {
+                    if (highWord->IsPhi()) {
+                        for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
+                        continue;
+                    }
+                    if (!ChaseHighRead(*highWord, *handle, chase.readOffset, chase.readImmediate)) return false;
+                    const auto index = site(*handle, *pointer, chase);
+                    if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
+                    continue;
+                }
+                if (!PointerRecordRead(*lowWord, lowReads)) return false;
+                if (highWord->IsPhi()) {
+                    for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
+                } else if (IrValue* word = MaskedRecordWord(*highWord)) {
+                    pending.emplace_back(lowWord, word);
+                } else if (PointerFreeWord(*highWord) || PointerRecordRead(*highWord, highReads)) {
+                    continue;
+                } else if (IrValue* highHandle = nullptr; ChaseRead(*highWord, highHandle, looseOffset, looseImmediate)) {
+                    looseHandles.push_back(highHandle);
+                } else {
+                    return false;
+                }
+            }
+            return true;
+        };
+        std::vector<std::size_t> roots;
+        if (!walk(low, high, roots)) return false;
+        for (std::size_t index = 0; index < sites.size(); ++index) {
+            std::vector<std::size_t> inner;
+            if (!walk(sites[index].pointer->Argument(0), sites[index].pointer->Argument(1), inner)) return false;
+            sites[index].inner = std::move(inner);
+        }
+        if (!std::ranges::all_of(looseHandles, [&](const IrValue* handle) {
+            return std::ranges::any_of(sites, [&](const ChaseSite& known) { return known.handle == handle || EquivalentValue(m_program.Resources(), known.handle, handle); });
+        })) return false;
+        std::vector<std::uint32_t> depths(sites.size(), 0u);
+        std::vector<std::uint8_t> states(sites.size(), 0u);
+        const auto depthOf = [&](const auto& self, std::size_t index) -> std::optional<std::uint32_t> {
+            if (states[index] == 2u) return depths[index];
+            if (states[index] == 1u) return std::nullopt;
+            states[index] = 1u;
+            std::uint32_t deepest = 0;
+            for (const auto inner : sites[index].inner) {
+                const auto depth = self(self, inner);
+                if (!depth.has_value()) return std::nullopt;
+                deepest = std::max(deepest, *depth);
+            }
+            states[index] = 2u;
+            depths[index] = deepest + 1u;
+            return depths[index];
+        };
+        chaseDepth = 0;
+        for (const auto root : roots) {
+            const auto depth = depthOf(depthOf, root);
+            if (!depth.has_value()) return false;
+            chaseDepth = std::max(chaseDepth, *depth);
+        }
+        if (chaseDepth > MaxPointerChaseDepth) return false;
+        chases.clear();
+        for (const auto& known : sites) {
+            if (std::ranges::find(chases, known.chase) == chases.end()) chases.push_back(known.chase);
+        }
+        if (chaseDepth == 0u) chases.clear();
         return !lowReads.empty() && !highReads.empty();
     }
 
@@ -1396,10 +1531,12 @@ private:
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
         const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
         const bool pointerKeyed = merged && !buffer;
-        if (!hops.empty() && (buffer || merged)) return false;
+        if (!hops.empty() && buffer) return false;
         std::vector<IrValue*> lowReads;
         std::vector<IrValue*> highReads;
-        if (pointerKeyed ? !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads) : merged && !PointerRecordReads(pointer->Argument(0), lowReads)) return false;
+        std::vector<PointerChase> chases;
+        std::uint32_t chaseDepth = 0;
+        if (pointerKeyed ? !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads, chases, chaseDepth) : merged && !PointerRecordReads(pointer->Argument(0), lowReads)) return false;
         auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
         if (low == nullptr) return false;
         auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
@@ -1483,6 +1620,8 @@ private:
         column.indirectImmediate = descriptorImmediate;
         column.pointerKeyed = pointerKeyed;
         column.pointerHops = std::move(hops);
+        column.pointerChases = std::move(chases);
+        column.pointerChaseDepth = chaseDepth;
         const auto domain = merged ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
