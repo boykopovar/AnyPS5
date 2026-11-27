@@ -93,14 +93,16 @@ bool ComputeDimensions(const std::uint8_t* cfg, std::uint32_t recFlag2c, DimInfo
     out.flag9 = (ReadU32(cfg + 0x00) == 2u);
     const std::int32_t wIn = ReadI32(cfg + 0x14);
     const std::int32_t hIn = ReadI32(cfg + 0x18);
+    const std::int32_t hLimit = static_cast<std::int32_t>(limit >> 6);
+    const bool wValid = (wIn == -1) || (wIn >= 0 && wIn <= 0x80);
+    const bool hValid = (hIn == -1) || (hIn >= 0 && hIn <= hLimit);
+    if (!wValid || !hValid) {
+        return false;
+    }
     if (wIn == -1 || hIn == -1) {
         out.w = 0x2000u;
         out.h = limit;
         return true;
-    }
-    const std::int32_t hLimit = static_cast<std::int32_t>(limit >> 6);
-    if (wIn < 0 || hIn < 0 || wIn > 0x80 || hIn > hLimit) {
-        return false;
     }
     out.w = static_cast<std::uint32_t>(wIn) << 6;
     out.h = static_cast<std::uint32_t>(hIn) << 6;

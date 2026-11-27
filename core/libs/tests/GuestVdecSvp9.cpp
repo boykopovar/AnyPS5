@@ -240,6 +240,14 @@ void TestMemoryQuery() {
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=-2");
     cfg.Init(0u, 40, 0u, 8, 30, -2);
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw h=-2");
+    cfg.Init(0u, 40, 0u, 8, -1, -2);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=-1 h=-2");
+    cfg.Init(0u, 40, 0u, 8, -2, -1);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=-2 h=-1");
+    cfg.Init(0u, 40, 0u, 8, -1, 0x41);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=-1 h=0x41");
+    cfg.Init(0u, 40, 0u, 8, 0x81, -1);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=0x81 h=-1");
     cfg.Init(0u, 40, 0u, 8, 30, 0x04000000);
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw h=0x04000000");
     cfg.Init(0u, 40, 0u, 8, 0x101, 17);
