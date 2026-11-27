@@ -1037,9 +1037,17 @@ void CheckKnownZeroShared() {
 void CheckResidentRunNoAccessTransitions() {
     constexpr std::size_t Page = 16384;
     constexpr std::size_t Large = 4 * Bytes;
+    constexpr std::size_t Chunk = 0x200000;
     auto& mappings = Mappings::Get();
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
-    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    unsigned char* first = nullptr;
+    for (int attempt = 0; attempt < 8 && first == nullptr; ++attempt) {
+        auto* span = static_cast<unsigned char*>(VirtualAlloc(nullptr, 2 * Chunk, MEM_RESERVE, PAGE_NOACCESS));
+        Require(span != nullptr, "cannot find an address range for the resident run");
+        const auto aligned = (reinterpret_cast<std::uintptr_t>(span) + Chunk - 1) & ~static_cast<std::uintptr_t>(Chunk - 1);
+        VirtualFree(span, 0, MEM_RELEASE);
+        first = static_cast<unsigned char*>(mappings.Reserve(reinterpret_cast<void*>(aligned), Large));
+    }
     Require(section && first, "cannot allocate resident no-access transition test memory");
     mappings.ForgetSection(section);
     const auto address = reinterpret_cast<std::uintptr_t>(first);
