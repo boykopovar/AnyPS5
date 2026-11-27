@@ -47,16 +47,16 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 1008, "State changed: update CanonicalPipelineState and the recipe codec");
-static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
-static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
+static_assert(sizeof(State) == 1016, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(ShaderStages) == 172, "ShaderStages changed: update the recipe codec");
+static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 44, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
 #endif
 
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 19u;
+constexpr std::uint32_t FileFormat = 20u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -159,11 +159,11 @@ void encodeOptional(Writer& writer, const std::optional<TValue>& value, void (*e
 }
 
 void encodeMesh(Writer& writer, const ShaderRecompiler::MeshConfiguration& mesh) {
-    for (const auto value : {mesh.inputPrimitive, mesh.primitivesPerGroup, mesh.verticesPerGroup, mesh.maxVertices, mesh.maxPrimitives, mesh.threadsPerGroup, mesh.ldsSizeDwords, mesh.provokingVertex, mesh.esgsItemSize, mesh.outputPrimitiveSize}) writer.U32(value);
+    for (const auto value : {mesh.inputPrimitive, mesh.primitivesPerGroup, mesh.verticesPerGroup, mesh.maxVertices, mesh.maxPrimitives, mesh.threadsPerGroup, mesh.ldsSizeDwords, mesh.provokingVertex, mesh.esgsItemSize, mesh.outputPrimitiveSize, mesh.verticesPerPrimitive}) writer.U32(value);
 }
 
 void decodeMesh(Reader& reader, ShaderRecompiler::MeshConfiguration& mesh) {
-    for (auto* value : {&mesh.inputPrimitive, &mesh.primitivesPerGroup, &mesh.verticesPerGroup, &mesh.maxVertices, &mesh.maxPrimitives, &mesh.threadsPerGroup, &mesh.ldsSizeDwords, &mesh.provokingVertex, &mesh.esgsItemSize, &mesh.outputPrimitiveSize}) *value = reader.U32();
+    for (auto* value : {&mesh.inputPrimitive, &mesh.primitivesPerGroup, &mesh.verticesPerGroup, &mesh.maxVertices, &mesh.maxPrimitives, &mesh.threadsPerGroup, &mesh.ldsSizeDwords, &mesh.provokingVertex, &mesh.esgsItemSize, &mesh.outputPrimitiveSize, &mesh.verticesPerPrimitive}) *value = reader.U32();
 }
 
 void encodeTessellation(Writer& writer, const ShaderRecompiler::TessellationConfiguration& tessellation) {

@@ -365,7 +365,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& firstIndex = argument(MeshArgumentFirstIndexDword);
         IrValue& vertices = minimum(subtractSaturate(indexCount, firstVertex), u32(mesh.verticesPerGroup));
         IrValue& primitives = entryIr.Select(entryIr.ULessThan(vertices, u32(size)), u32(0u), entryIr.IAdd(entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&subtractSaturate(vertices, u32(size)), &step}), u32(1u)));
-        entryIr.SetScalarReg(static_cast<ScalarReg>(2), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(vertices, u32(12u)), entryIr.ShiftLeftLogical(primitives, u32(22u))));
+        IrValue& groupVertices = minimum(entryIr.IMul(primitives, u32(mesh.verticesPerPrimitive != 0u ? mesh.verticesPerPrimitive : mesh.outputPrimitiveSize)), u32(mesh.maxVertices));
+        entryIr.SetScalarReg(static_cast<ScalarReg>(2), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(groupVertices, u32(12u)), entryIr.ShiftLeftLogical(primitives, u32(22u))));
         IrValue& wave = entryIr.ShiftRightLogical(local, u32(options.waveSize == 32u ? 5u : 6u));
         IrValue& waveBase = entryIr.BitwiseAnd(local, u32(~(options.waveSize - 1u)));
         IrValue& vertexCount = mesh.capturedInput ? u32(0u) : minimum(subtractSaturate(vertices, waveBase), u32(options.waveSize));

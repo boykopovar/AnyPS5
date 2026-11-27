@@ -1252,7 +1252,7 @@ void ShaderStageTests() {
         const auto state = AgcDriver::Graphics::DecodeState(fast);
         Require(state.stages.path == AgcDriver::Graphics::ShaderPath::Geometry && state.stages.vertexWaveSize == 32 && state.stages.mesh, "a fast-launch draw did not decode as wave32 geometry");
         const auto& mesh = *state.stages.mesh;
-        Require(mesh.inputPrimitive == 1 && mesh.primitivesPerGroup == 1 && mesh.verticesPerGroup == 1 && mesh.maxVertices == 32 && mesh.maxPrimitives == 64 && mesh.threadsPerGroup == 64 && mesh.ldsSizeDwords == 128, "a fast-launch subgroup did not decode as one point amplified by PRIM_AMP_FACTOR");
+        Require(mesh.inputPrimitive == 1 && mesh.primitivesPerGroup == 1 && mesh.verticesPerGroup == 1 && mesh.maxVertices == 32 && mesh.maxPrimitives == 64 && mesh.threadsPerGroup == 64 && mesh.ldsSizeDwords == 128 && mesh.verticesPerPrimitive == 32, "a fast-launch subgroup did not decode as one point amplified by PRIM_AMP_FACTOR");
         fast.context[0x29b] = 1;
         const auto fastLines = AgcDriver::Graphics::DecodeState(fast);
         Require(fastLines.stages.mesh->outputPrimitiveSize == 2 && fastLines.stages.mesh->maxPrimitives == 64 && AgcDriver::Graphics::RasterPrimitiveOf(fastLines) == ShaderRecompiler::RasterPrimitive::Line, "a fast-launch line strip did not take its line count from PRIM_AMP_FACTOR");
@@ -1287,11 +1287,11 @@ void ShaderStageTests() {
         auto state = AgcDriver::Graphics::DecodeState(lines);
         Require(state.stages.path == AgcDriver::Graphics::ShaderPath::Geometry && state.stages.mesh && AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Line, "a geometry program that outputs line strips did not decode as geometry rasterized as lines");
         auto mesh = *state.stages.mesh;
-        Require(mesh.inputPrimitive == 1 && mesh.primitivesPerGroup == 51 && mesh.verticesPerGroup == 51 && mesh.maxVertices == 255 && mesh.maxPrimitives == 255 && mesh.threadsPerGroup == 256 && mesh.outputPrimitiveSize == 2, "a line-strip subgroup did not decode as 51 points with a line slot per output vertex");
+        Require(mesh.inputPrimitive == 1 && mesh.primitivesPerGroup == 51 && mesh.verticesPerGroup == 51 && mesh.maxVertices == 255 && mesh.maxPrimitives == 255 && mesh.threadsPerGroup == 256 && mesh.outputPrimitiveSize == 2 && mesh.verticesPerPrimitive == 5, "a line-strip subgroup did not decode as 51 points with a line slot per output vertex");
         lines.context[0x29b] = 2;
         state = AgcDriver::Graphics::DecodeState(lines);
         mesh = *state.stages.mesh;
-        Require(mesh.maxPrimitives == 153 && mesh.threadsPerGroup == 256 && mesh.outputPrimitiveSize == 3 && AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Triangle, "the triangle-strip subgroup of the same draw changed");
+        Require(mesh.maxPrimitives == 153 && mesh.threadsPerGroup == 256 && mesh.outputPrimitiveSize == 3 && mesh.verticesPerPrimitive == 5 && AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Triangle, "the triangle-strip subgroup of the same draw changed");
         Require(mesh.provokingVertex == 0, "a first-vertex geometry draw does not take its flat inputs and layer from the first vertex of each output primitive");
         const auto raster = lines.context.at(0x205);
         lines.context[0x205] = raster | (1u << 19u);

@@ -133,7 +133,7 @@ private:
         if (request.shader.stage != ShaderStage::Mesh) return;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
-        for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize, mesh->verticesPerPrimitive}) append(key, value);
         if (request.graphics->tessellation) append(key, 0x63617074ull);
         const auto& barycentrics = request.graphics->meshBarycentrics;
         append(key, barycentrics.has_value());
