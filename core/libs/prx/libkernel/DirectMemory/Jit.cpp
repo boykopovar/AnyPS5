@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -58,7 +60,19 @@ std::uint64_t MaxBackingBytes() {
 
 bool PreservedGuestWritable(void* address, std::size_t bytes) {
     const PreserveErrno preserve;
-    return GuestWritable_nid_no_patch(address, bytes);
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    if (start == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - start) return false;
+    if (bytes <= 8) {
+        std::array<std::uint8_t, 8> probe{};
+        if (PreservedGuestCopyIn(probe.data(), address, bytes)) return PreservedGuestCopyOut(address, probe.data(), bytes);
+    }
+    try {
+        const GuestArena::HostWrite guard(address, bytes);
+        return guard.Open() && GuestWritable_nid_no_patch(address, bytes);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
 }
 
 bool PreservedGuestCopyIn(void* destination, const void* source, std::size_t bytes) {
@@ -225,6 +239,7 @@ void DuplicateJitSharedMemory(int from, int to) {
 extern "C" {
 
 int APS5_VABI sceKernelJitCreateSharedMemory(const char* name, std::size_t len, int maxProt, int* fdOut) {
+    const PreserveErrno preserve;
     static_cast<void>(name);
     if (fdOut == nullptr || len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || (maxProt & ~CpuProtection) != 0) return SCE_KERNEL_ERROR_EINVAL;
     if (static_cast<std::uint64_t>(len) > MaxBackingBytes()) return SCE_KERNEL_ERROR_ENOMEM;
@@ -245,6 +260,7 @@ int APS5_VABI sceKernelJitCreateSharedMemory(const char* name, std::size_t len, 
 }
 
 int APS5_VABI sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, int* fdOut) {
+    const PreserveErrno preserve;
     if (fdOut == nullptr || (maxProt & ~CpuProtection) != 0) return SCE_KERNEL_ERROR_EINVAL;
     int alias = -1;
     {
@@ -266,6 +282,7 @@ int APS5_VABI sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, int* fd
 }
 
 int APS5_VABI sceKernelJitMapSharedMemory(int fd, int prot, void** startOut) {
+    const PreserveErrno preserve;
     if (startOut == nullptr || (prot & ~CpuProtection) != 0) return SCE_KERNEL_ERROR_EINVAL;
     void* address = nullptr;
     if (!PreservedGuestCopyIn(&address, startOut, sizeof(address))) return SCE_KERNEL_ERROR_EFAULT;

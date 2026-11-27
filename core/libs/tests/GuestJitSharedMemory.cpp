@@ -260,6 +260,17 @@ void OversizedAndWritablePrechecks() {
     Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read, roFdOut) == SCE_KERNEL_ERROR_EFAULT);
     Require(errno == 202);
 
+    int emfileFd = -1;
+    errno = 203;
+    Require(sceKernelJitCreateSharedMemory("emfile-create", Size, Read | Write | Execute, &emfileFd) == SCE_KERNEL_ERROR_EMFILE);
+    Require(emfileFd == -1);
+    Require(errno == 203);
+
+    errno = 204;
+    Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read, &emfileFd) == SCE_KERNEL_ERROR_EMFILE);
+    Require(emfileFd == -1);
+    Require(errno == 204);
+
     for (const int extra : exhausted) Require(close_nid_postfix(extra) == 0);
     Require(close_nid_postfix(seed) == 0);
 #else
@@ -279,9 +290,20 @@ void OversizedAndWritablePrechecks() {
     const int aliasResult = sceKernelJitCreateAliasOfSharedMemory(fd, Read, roFdOut);
     const int aliasErrno = errno;
 
+    int emfileFd = -1;
+    errno = 203;
+    const int createEmfileResult = sceKernelJitCreateSharedMemory("emfile-create", Size, Read | Write | Execute, &emfileFd);
+    const int createEmfileErrno = errno;
+    errno = 204;
+    const int aliasEmfileResult = sceKernelJitCreateAliasOfSharedMemory(fd, Read, &emfileFd);
+    const int aliasEmfileErrno = errno;
+
     Require(::setrlimit(RLIMIT_NOFILE, &previous) == 0);
     Require(createResult == SCE_KERNEL_ERROR_EFAULT && createErrno == 201);
     Require(aliasResult == SCE_KERNEL_ERROR_EFAULT && aliasErrno == 202);
+    Require(emfileFd == -1);
+    Require(createEmfileResult == SCE_KERNEL_ERROR_EMFILE && createEmfileErrno == 203);
+    Require(aliasEmfileResult == SCE_KERNEL_ERROR_EMFILE && aliasEmfileErrno == 204);
 #endif
 
     g_mappingObserved = false;
