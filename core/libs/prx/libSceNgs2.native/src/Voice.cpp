@@ -832,10 +832,12 @@ void Ngs2Voice::ApplyPendingControls() {
         if (event == SCE_NGS2_VOICE_EVENT_PLAY) {
             restart = true;
             stop = kill = false;
+            stopEvent = 0;
             pause = 0;
         } else if (event == SCE_NGS2_VOICE_EVENT_KILL) {
             restart = stop = false;
             kill = true;
+            stopEvent = 0;
             pause = 0;
         } else if (event == SCE_NGS2_VOICE_EVENT_STOP || event == SCE_NGS2_VOICE_EVENT_STOP_IMM) {
             stop = true;
