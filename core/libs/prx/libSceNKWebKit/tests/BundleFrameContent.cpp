@@ -4,9 +4,17 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -34,6 +42,131 @@ std::string ToString(const void* ref) {
     }
     const auto* str = static_cast<const NKWebKit::String*>(ref);
     return str->Utf8();
+}
+
+template<class Function>
+void RequireNotImplemented(Function function) {
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        Require(false);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+
+    template<typename T>
+    T* SplitReadWriteToReadOnly() const {
+        return reinterpret_cast<T*>(base + pageSize - sizeof(T) / 2);
+    }
+
+    template<typename T>
+    T* SplitReadOnlyToGuard() const {
+        return reinterpret_cast<T*>(base + pageSize * 2 - sizeof(T) / 2);
+    }
+};
+
+void TestGuestPointers(const void* frameRef, const void* nodeHandleRef, const void* urlRef) {
+    GuardedPages pages;
+    const void* unmappedRef = pages.Guard();
+    const void* splitObjRef = pages.SplitReadOnlyToGuard<const NKWebKit::Object>();
+    auto* unmappedDouble = reinterpret_cast<double*>(pages.Guard());
+    auto* readOnlyDouble = reinterpret_cast<double*>(pages.ReadOnly());
+    auto* splitDouble = pages.SplitReadWriteToReadOnly<double>();
+    const std::size_t splitHead = sizeof(double) / 2;
+
+    RequireNotImplemented([&] { WKBundleFrameCopyCounterValue(unmappedRef, nodeHandleRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyCounterValue(splitObjRef, nodeHandleRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyCounterValue(frameRef, unmappedRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyCounterValue(frameRef, splitObjRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyInnerText(unmappedRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyInnerText(splitObjRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyLayerTreeAsText(unmappedRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyLayerTreeAsText(splitObjRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyMIMETypeForResourceWithURL(unmappedRef, urlRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopyMIMETypeForResourceWithURL(frameRef, unmappedRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopySuggestedFilenameForResourceWithURL(unmappedRef, urlRef); });
+    RequireNotImplemented([&] { WKBundleFrameCopySuggestedFilenameForResourceWithURL(frameRef, unmappedRef); });
+
+    double r = 7.0;
+    double g = 8.0;
+    double b = 9.0;
+    double a = 10.0;
+
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(unmappedRef, &r, &g, &b, &a); });
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(splitObjRef, &r, &g, &b, &a); });
+    Require(r == 7.0 && g == 8.0 && b == 9.0 && a == 10.0);
+
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, unmappedDouble, &g, &b, &a); });
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, readOnlyDouble, &g, &b, &a); });
+    std::memset(splitDouble, 0x5A, splitHead);
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, splitDouble, &g, &b, &a); });
+    for (std::size_t i = 0; i < splitHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitDouble)[i] == 0x5A);
+    Require(g == 8.0 && b == 9.0 && a == 10.0);
+
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, unmappedDouble, &b, &a); });
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, readOnlyDouble, &b, &a); });
+    std::memset(splitDouble, 0x6B, splitHead);
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, splitDouble, &b, &a); });
+    for (std::size_t i = 0; i < splitHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitDouble)[i] == 0x6B);
+    Require(r == 7.0 && b == 9.0 && a == 10.0);
+
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, &g, unmappedDouble, &a); });
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, &g, readOnlyDouble, &a); });
+    std::memset(splitDouble, 0x7C, splitHead);
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, &g, splitDouble, &a); });
+    for (std::size_t i = 0; i < splitHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitDouble)[i] == 0x7C);
+    Require(r == 7.0 && g == 8.0 && a == 10.0);
+
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, &g, &b, unmappedDouble); });
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, &g, &b, readOnlyDouble); });
+    std::memset(splitDouble, 0x4D, splitHead);
+    RequireNotImplemented([&] { WKBundleFrameGetDocumentBackgroundColor(frameRef, &r, &g, &b, splitDouble); });
+    for (std::size_t i = 0; i < splitHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitDouble)[i] == 0x4D);
+    Require(r == 7.0 && g == 8.0 && b == 9.0);
 }
 
 }
@@ -114,6 +247,8 @@ int main() {
     RequireInvalidArgument([&] { WKBundleFrameCopySuggestedFilenameForResourceWithURL(dummy.Get(), urlRef); });
     RequireInvalidArgument([&] { WKBundleFrameCopySuggestedFilenameForResourceWithURL(frameRef, dummy.Get()); });
     RequireInvalidArgument([&] { WKBundleFrameGetDocumentBackgroundColor(dummy.Get(), &r, &g, &b, &a); });
+
+    TestGuestPointers(frameRef, nodeHandleRef, urlRef);
 
     return 0;
 }
