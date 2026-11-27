@@ -90,6 +90,8 @@ constexpr int GuestDontWait = 0x80;
 constexpr int GuestNoSignal = 0x20000;
 constexpr int GuestSendFlags = GuestNoSignal | GuestDontWait;
 constexpr int GuestReceiveFlags = GuestPeek | GuestWaitAll | GuestDontWait;
+constexpr int GuestKeptStatusFlags = 0x8 | 0x40 | 0x80 | 0x200 | 0x10000;
+constexpr int GuestPosixSharedMemoryFlag = 0x100;
 int NativeSendFlags(int flags) {
 #ifdef _WIN32
     static_cast<void>(flags);
@@ -142,6 +144,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     int type;
     std::mutex modeMutex;
     GuestSockets::SocketOptionState options;
+    int statusFlags = 0;
     bool receiveShut = false;
     bool sendShut = false;
     bool localAddressCleared = false;
@@ -2002,10 +2005,10 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0); // F_GETFL, O_RDWR
+    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0) | socket->statusFlags;
     if (command == 4) {
         const int flags = static_cast<int>(argument);
-        if ((flags & ~7) != 0) return Fail(45);
+        if ((flags & GuestPosixSharedMemoryFlag) != 0) return Fail(45);
 #ifdef _WIN32
         unsigned long enabled = (flags & 4) != 0;
         if (ioctlsocket(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
@@ -2014,6 +2017,7 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         if (::ioctl(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
 #endif
         socket->options.nonblocking = enabled != 0;
+        socket->statusFlags = flags & GuestKeptStatusFlags;
         return 0;
     }
     if ((command >= 7 && command <= 9) || (command >= 11 && command <= 13) || command == 15 || command == 16) return Fail(9);
@@ -2376,6 +2380,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         {
             std::lock_guard modeLock(listener->modeMutex);
             inheritNonblocking = listener->options.nonblocking;
+            accepted->statusFlags = listener->statusFlags;
             accepted->options.noSignal = listener->options.noSignal;
             accepted->options.keptFlags = listener->options.keptFlags;
             accepted->options.sendTimeout = listener->options.sendTimeout;

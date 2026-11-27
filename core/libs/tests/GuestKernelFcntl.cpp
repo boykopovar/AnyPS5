@@ -203,7 +203,11 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, DuplicateCommand, -1) == SceEinval);
     Require(sceKernelFcntl(socket, DuplicateCloseOnExec, -1) == SceEnotsup);
     Require(sceKernelFcntl(socket, Duplicate2Command, -1) == SceEbadf);
-    Require(sceKernelFcntl(socket, SetFlags, 0x8000) == SceEnotsup);
+    Require(sceKernelFcntl(socket, SetFlags, 0x8000 | AsyncFlag) == 0);
+    Require(sceKernelFcntl(socket, GetFlags) == (ReadWrite | AsyncFlag));
+    Require(sceKernelFcntl(socket, SetFlags, 0) == 0);
+    Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
+    Require(sceKernelFcntl(socket, SetFlags, 0x100 | AsyncFlag) == SceEnotsup);
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     Require(sceKernelFcntl(socket, 5) == SceEinval);
     Require(sceKernelFcntl(socket + 4096, GetFlags) == SceEbadf);
