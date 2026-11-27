@@ -333,7 +333,7 @@ void Api() {
     ubrk_close(iterator);
     const auto count = ubrk_countAvailable();
     Expect(count > 100, "locale availability");
-    for (const auto index : {-1, count}) {
+    for (const auto index : {-1, count, count + 1}) {
         bool threw = false;
         try {
             ubrk_getAvailable(index);
@@ -342,7 +342,6 @@ void Api() {
         }
         Expect(threw, "locale bounds throw where ICU reads outside its array");
     }
-    Expect(!ubrk_getAvailable(count + 1), "locale index beyond count returns null");
     bool en = false;
     bool th = false;
     for (int i = 0; i < count; ++i) {

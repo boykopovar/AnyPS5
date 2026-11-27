@@ -227,13 +227,7 @@ std::int32_t APS5_VABI ubrk_countAvailable() {
 
 const char* APS5_VABI ubrk_getAvailable(std::int32_t index) {
     const auto count = ubrk_countAvailable_78();
-    if (index < 0 || index == count) {
-        if (count > 0) APS5_INVALID_ARG_EX;
-        UErrorCode status = U_ZERO_ERROR;
-        auto* available = uloc_openAvailableByType(ULOC_AVAILABLE_DEFAULT, &status);
-        uenum_close(available);
-        if (U_SUCCESS(status)) APS5_INVALID_ARG_EX;
-    }
+    if (index < 0 || index >= count) APS5_INVALID_ARG_EX;
     return ubrk_getAvailable_78(index);
 }
 
