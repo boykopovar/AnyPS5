@@ -1,0 +1,7 @@
+if(BUILD_TESTING AND WIN32)
+    add_test_executable(libc_host_thread_local_fls_retry_tests ${LIBS_INCLUDE_DIR}/tests/HostThreadLocalFlsRetry.cpp)
+    target_include_directories(libc_host_thread_local_fls_retry_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(libc_host_thread_local_fls_retry_tests)
+    add_test(NAME libc_host_thread_local_fls_retry COMMAND libc_host_thread_local_fls_retry_tests)
+    set_tests_properties(libc_host_thread_local_fls_retry PROPERTIES TIMEOUT 20 RUN_SERIAL TRUE)
+endif()

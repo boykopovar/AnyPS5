@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_HOSTTHREADLOCAL_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_HOSTTHREADLOCAL_HPP
 
+#include <atomic>
 #include <memory>
 #include <stdexcept>
 #ifdef _WIN32
@@ -10,12 +11,18 @@
 template<typename TValue, typename TTag>
 TValue& HostThreadLocal() {
 #ifdef _WIN32
-    static const DWORD slot = FlsAlloc(+[](void* value) { delete static_cast<TValue*>(value); });
-    if (slot == FLS_OUT_OF_INDEXES) throw std::runtime_error("host thread-local slot allocation failed");
-    auto* value = static_cast<TValue*>(FlsGetValue(slot));
+    static std::atomic<DWORD> slot{FLS_OUT_OF_INDEXES};
+    DWORD current = slot.load(std::memory_order_acquire);
+    if (current == FLS_OUT_OF_INDEXES) [[unlikely]] {
+        const DWORD allocated = FlsAlloc(+[](void* value) { delete static_cast<TValue*>(value); });
+        if (allocated == FLS_OUT_OF_INDEXES) throw std::runtime_error("host thread-local slot allocation failed");
+        if (slot.compare_exchange_strong(current, allocated, std::memory_order_acq_rel, std::memory_order_acquire)) current = allocated;
+        else FlsFree(allocated);
+    }
+    auto* value = static_cast<TValue*>(FlsGetValue(current));
     if (value == nullptr) {
         auto created = std::make_unique<TValue>();
-        if (!FlsSetValue(slot, created.get())) throw std::runtime_error("host thread-local value registration failed");
+        if (!FlsSetValue(current, created.get())) throw std::runtime_error("host thread-local value registration failed");
         value = created.release();
     }
     return *value;
