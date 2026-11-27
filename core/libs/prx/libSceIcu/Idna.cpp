@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -82,27 +83,23 @@ std::int32_t TransformName(const UIDNA* idna, const char16_t* name, std::int32_t
                            const char* caller, TCall call) {
     const auto incoming = ReadStatus(pErrorCode, caller);
     if (incoming > 0) return 0;
-    Icu::IdnaBackend::Info hostInfo{};
     if (!pInfo) {
         WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
         return 0;
     }
+    std::int16_t guestInfoSize = 0;
     {
         const int savedErrno = errno;
-        const bool okSize = GuestCopyIn_nid_no_patch(&hostInfo.size, pInfo, sizeof(hostInfo.size));
+        const bool okSize = GuestCopyIn_nid_no_patch(&guestInfoSize, pInfo, sizeof(guestInfoSize));
         errno = savedErrno;
         if (!okSize) NotImplemented_nid_no_patch(caller);
     }
-    if (hostInfo.size < static_cast<std::int16_t>(sizeof(hostInfo))) {
+    if (guestInfoSize < static_cast<std::int16_t>(sizeof(Icu::IdnaBackend::Info))) {
         WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
         return 0;
     }
-    {
-        const int savedErrno = errno;
-        const bool ok = GuestCopyIn_nid_no_patch(&hostInfo, pInfo, sizeof(hostInfo));
-        errno = savedErrno;
-        if (!ok) NotImplemented_nid_no_patch(caller);
-    }
+    Icu::IdnaBackend::Info hostInfo{};
+    hostInfo.size = static_cast<std::int16_t>(sizeof(hostInfo));
     if ((name == nullptr) ? length != 0 : length < -1) {
         WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
         return 0;
@@ -128,15 +125,19 @@ std::int32_t TransformName(const UIDNA* idna, const char16_t* name, std::int32_t
     auto local = incoming;
     const std::int32_t outLen = call(
         idna, namePtr, nameLen, capacity > 0 ? buffer.data() : nullptr, capacity, &hostInfo, &local);
+    hostInfo.size = guestInfoSize;
     {
+        const auto totalBytes = static_cast<std::size_t>(guestInfoSize);
+        std::vector<std::uint8_t> outInfo(totalBytes, 0);
+        std::memcpy(outInfo.data(), &hostInfo, sizeof(hostInfo));
         const int savedErrno = errno;
-        const bool ok = GuestCopyOut_nid_no_patch(pInfo, &hostInfo, sizeof(hostInfo));
+        const bool ok = GuestCopyOut_nid_no_patch(pInfo, outInfo.data(), outInfo.size());
         errno = savedErrno;
         if (!ok) NotImplemented_nid_no_patch(caller);
     }
     if (capacity > 0 && outLen >= 0 && local != Icu::IllegalArgument) {
-        const std::size_t count = (std::min)(static_cast<std::size_t>(capacity),
-                                             static_cast<std::size_t>(outLen) + (outLen < capacity ? 1u : 0u));
+        const std::size_t requested = static_cast<std::size_t>(outLen) + (outLen < capacity ? 1u : 0u);
+        const std::size_t count = (std::min)(buffer.size(), (std::min)(static_cast<std::size_t>(capacity), requested));
         if (count > 0) {
             const int savedErrno = errno;
             const bool ok = GuestCopyOut_nid_no_patch(dest, buffer.data(), count * sizeof(char16_t));

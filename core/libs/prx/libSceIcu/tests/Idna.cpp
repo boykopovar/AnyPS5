@@ -305,6 +305,14 @@ void Run() {
         const std::int32_t uniLen = uidna_nameToUnicode_nid_postfix(idna, domain.data(), 11, uni.data(), 32, pInfo, &status);
         Require(uniLen == 11 && status <= 0 && info[2] == 0 && info[3] == 0);
         Require(std::memcmp(uni.data(), domain.data(), 12 * sizeof(char16_t)) == 0);
+        std::array<std::int16_t, 12> extInfo{};
+        extInfo.fill(0x5a5a);
+        extInfo[0] = 24;
+        status = 0;
+        const std::int32_t extLen = uidna_nameToASCII_nid_postfix(
+            idna, domain.data(), 11, out.data(), 32, reinterpret_cast<UIDNAInfo*>(extInfo.data()), &status);
+        Require(extLen == 11 && status <= 0 && extInfo[0] == 24);
+        for (std::size_t i = 1; i < extInfo.size(); ++i) Require(extInfo[i] == 0);
         uidna_close_nid_postfix(idna);
     }
 
