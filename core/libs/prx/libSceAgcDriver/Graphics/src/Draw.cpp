@@ -3284,11 +3284,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             pushBytes = &movedPush;
         }
     }
-    const auto recordPassOpen = [&](CommandState& rec, bool secondaryContents) {
+    const auto recordPassSetup = [&](CommandState& rec) {
     const auto cb = rec.Commands();
-    if (continued) {
-        record.pipeline->Continue(rec, state, record.masked);
-    } else {
+    if (!continued) {
         for (const auto& proxy : record.proxies) {
             proxy->RecordAttachmentProxyLoad(cb, VK_IMAGE_LAYOUT_GENERAL);
             countBarrier(2);
@@ -3324,9 +3322,15 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             for (auto& object : kept) recorder->Keep(std::move(object));
         }
         for (const auto& write : record.staged) RecordStagedClear(context, cb, *write.temporary);
-        APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
-        record.pipeline->Begin(rec, *record.framebuffer, state.renderExtent, state, record.masked, secondaryContents);
     }
+    };
+    const auto recordPassOpen = [&](CommandState& rec, bool secondaryContents) {
+    if (continued) {
+        record.pipeline->Continue(rec, state, record.masked);
+        return;
+    }
+    APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
+    record.pipeline->Begin(rec, *record.framebuffer, state.renderExtent, state, record.masked, secondaryContents);
     };
     const auto recordBody = [&](CommandState& rec, DrawNotes* notes) {
     const auto cb = rec.Commands();
@@ -3376,13 +3380,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (drawBindings == nullptr) resources.PrepareDrawUse(drawUse.get());
     for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     if (parallelThis) {
-        if (!continued) recordPassOpen(recording, true);
         auto& pool = DeviceRecordingPool(context);
         const auto depthFormat = record.pipeline->DepthFormat();
         const RecordingPool::Inheritance inheritance{depthFormat, HasStencil(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, record.pipeline->ColorSlotCount()};
         OrderedAssembly<RecordingPool::Result> assembly;
         const auto sequence = assembly.Reserve();
         DrawNotes notes;
+        recordPassSetup(recording);
         pool.Record(assembly, sequence, inheritance, [&](VkCommandBuffer cb) {
             CommandState pooled;
             pooled.Begin(cb);
@@ -3391,10 +3395,17 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         });
         auto result = assembly.Take(sequence);
         if (result.error != nullptr) std::rethrow_exception(result.error);
-        if (notes.sampled) recorder->NoteSampledDraw(recording.Commands());
-        recorder->ExecuteSecondary(result.commands, std::move(result.release));
+        if (!continued) recordPassOpen(recording, true);
+        try {
+            if (notes.sampled) recorder->NoteSampledDraw(recording.Commands());
+            recorder->ExecuteSecondary(result.commands, std::move(result.release));
+        } catch (...) {
+            if (!continued) EndRenderPass(context, recording.Commands());
+            throw;
+        }
         if (notes.guestWork) NoteGuestWorkIn(context, recording.Commands());
     } else {
+        recordPassSetup(recording);
         recordPassOpen(recording, false);
         recordBody(recording, nullptr);
     }

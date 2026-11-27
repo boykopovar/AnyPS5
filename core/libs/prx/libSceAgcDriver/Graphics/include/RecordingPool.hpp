@@ -39,6 +39,7 @@ public:
 
     void Record(OrderedAssembly<Result>& assembly, std::uint64_t sequence, const Inheritance& inheritance, std::function<void(VkCommandBuffer)> record);
     static std::uint64_t RecordedBuffers();
+    static void FailNextRecordingsForTest(unsigned count);
 
 private:
     struct Task {

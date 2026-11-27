@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 
 #include <atomic>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace AgcDriver::Graphics {
@@ -10,6 +11,7 @@ namespace {
 constexpr std::uint32_t RecordingThreads = 4;
 
 std::atomic<std::uint64_t> recordedBuffers{0};
+std::atomic<unsigned> injectedRecordingFailures{0};
 
 std::mutex& DevicePoolsMutex() {
     static std::mutex poolsMutex;
@@ -25,6 +27,10 @@ std::unordered_map<VkDevice, std::unique_ptr<RecordingPool>>& DevicePools() {
 
 std::uint64_t RecordingPool::RecordedBuffers() {
     return recordedBuffers.load(std::memory_order_relaxed);
+}
+
+void RecordingPool::FailNextRecordingsForTest(unsigned count) {
+    injectedRecordingFailures.store(count, std::memory_order_relaxed);
 }
 
 struct RecordingPool::Returned {
@@ -137,6 +143,7 @@ void RecordingPool::run(VkCommandPool pool, const std::shared_ptr<Returned>& ret
             begin.pInheritanceInfo = &inheritance;
             Check(beginBuffer(result.commands, &begin), "vkBeginCommandBuffer recording worker");
             recording = true;
+            if (injectedRecordingFailures.load(std::memory_order_relaxed) != 0 && injectedRecordingFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::runtime_error("AGC graphics: injected recording failure");
             task.record(result.commands);
             recording = false;
             Check(endBuffer(result.commands), "vkEndCommandBuffer recording worker");

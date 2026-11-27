@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libc/include/RunReport.hpp"
@@ -14,7 +15,9 @@
 #include <functional>
 #include <iostream>
 #include <mutex>
+#include <new>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +38,11 @@ using ShaderRecompiler::ShaderStage;
 PFN_vkCmdBindPipeline NativeBind = nullptr;
 std::atomic<std::uint64_t> GraphicsBinds{0u};
 
+PFN_vkCmdBeginRenderingKHR NativeBeginRendering = nullptr;
+PFN_vkCmdEndRenderingKHR NativeEndRendering = nullptr;
+std::atomic<std::uint64_t> RenderingsBegun{0u};
+std::atomic<std::uint64_t> RenderingsEnded{0u};
+
 PFN_vkCmdDraw NativeDraw = nullptr;
 PFN_vkCmdDrawIndexed NativeDrawIndexed = nullptr;
 std::atomic<std::uint64_t> GraphicsDraws{0u};
@@ -42,6 +50,16 @@ std::atomic<std::uint64_t> GraphicsDraws{0u};
 VKAPI_ATTR void VKAPI_CALL CountBind(VkCommandBuffer commands, VkPipelineBindPoint point, VkPipeline pipeline) {
     if (point == VK_PIPELINE_BIND_POINT_GRAPHICS) ++GraphicsBinds;
     NativeBind(commands, point, pipeline);
+}
+
+VKAPI_ATTR void VKAPI_CALL CountBeginRendering(VkCommandBuffer commands, const VkRenderingInfo* rendering) {
+    ++RenderingsBegun;
+    NativeBeginRendering(commands, rendering);
+}
+
+VKAPI_ATTR void VKAPI_CALL CountEndRendering(VkCommandBuffer commands) {
+    ++RenderingsEnded;
+    NativeEndRendering(commands);
 }
 
 VKAPI_ATTR void VKAPI_CALL CountDraw(VkCommandBuffer commands, std::uint32_t vertices, std::uint32_t instances, std::uint32_t firstVertex, std::uint32_t firstInstance) {
@@ -63,14 +81,22 @@ struct BindTrace {
         NativeBind = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
         NativeDraw = reinterpret_cast<PFN_vkCmdDraw>(context.deviceProc(context.device, "vkCmdDraw"));
         NativeDrawIndexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(context.deviceProc(context.device, "vkCmdDrawIndexed"));
+        NativeBeginRendering = functions->cmdBeginRendering;
+        NativeEndRendering = functions->cmdEndRendering;
         functions->cmdBindPipeline = CountBind;
         functions->cmdDraw = CountDraw;
         functions->cmdDrawIndexed = CountDrawIndexed;
+        if (NativeBeginRendering != nullptr && NativeEndRendering != nullptr) {
+            functions->cmdBeginRendering = CountBeginRendering;
+            functions->cmdEndRendering = CountEndRendering;
+        }
     }
     ~BindTrace() {
         functions->cmdBindPipeline = NativeBind;
         functions->cmdDraw = NativeDraw;
         functions->cmdDrawIndexed = NativeDrawIndexed;
+        functions->cmdBeginRendering = NativeBeginRendering;
+        functions->cmdEndRendering = NativeEndRendering;
     }
 };
 
@@ -229,7 +255,7 @@ void Check(const std::function<bool(std::uint32_t, std::uint32_t)>& drawn, std::
 int main(int argc, char** argv) {
     try {
         const std::string_view mode = argc > 1 ? argv[1] : "";
-        const bool depthOnly = mode == "--pooled" || mode == "--traced";
+        const bool depthOnly = mode == "--pooled" || mode == "--pooled-fault" || mode == "--traced";
         std::unique_lock setup(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
         if (depthOnly) setup.lock();
         const auto device = OpenVulkanTestDevice();
@@ -264,16 +290,51 @@ int main(int argc, char** argv) {
             if (guestWorkChecked) Require(LibcRunReportEnabled_nid_no_patch(), "the guest-work check ran without the run report");
             const AgcDriver::Graphics::DrawTraceContext trace{1u};
             if (mode == "--traced") DrawTrace = &trace;
-            const auto recorded = AgcDriver::Graphics::RecordingPool::RecordedBuffers();
-            Draw(*device, alternating, exported, replace(), 3u, 1u, false, [](AgcDriver::Graphics::State& state) {
+            const auto depthOnlyState = [](AgcDriver::Graphics::State& state) {
                 state.hasColorTarget = false;
                 state.color = {};
                 state.colors.clear();
                 state.blends.clear();
-            });
+            };
+            if (mode == "--pooled-fault") {
+                Require(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).functions->cmdBeginRendering == CountBeginRendering, "dynamic rendering is not counted");
+                const auto idle = [&] {
+                    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                    device->WaitIdle();
+                };
+                auto begun = RenderingsBegun.load();
+                AgcDriver::Graphics::RecordingPool::FailNextRecordingsForTest(1);
+                bool workerFailed = false;
+                try {
+                    Draw(*device, alternating, exported, replace(), 3u, 1u, false, depthOnlyState);
+                } catch (const std::runtime_error& error) {
+                    workerFailed = std::string_view(error.what()) == "AGC graphics: injected recording failure";
+                    if (!workerFailed) throw;
+                }
+                AgcDriver::Graphics::RecordingPool::FailNextRecordingsForTest(0);
+                Require(workerFailed, "the injected recording failure of a pooled draw did not surface");
+                idle();
+                Require(RenderingsBegun.load() == begun, "a pooled draw whose recording failed began rendering");
+                Require(RenderingsBegun.load() == RenderingsEnded.load(), "a pooled draw whose recording failed left rendering open");
+                begun = RenderingsBegun.load();
+                AgcDriver::Graphics::Recorder::FailNextSecondaryRetentionsForTest(1);
+                bool refused = false;
+                try {
+                    Draw(*device, alternating, exported, replace(), 3u, 1u, false, depthOnlyState);
+                } catch (const std::bad_alloc&) {
+                    refused = true;
+                }
+                AgcDriver::Graphics::Recorder::FailNextSecondaryRetentionsForTest(0);
+                Require(refused, "the injected retention failure of a pooled draw did not surface");
+                idle();
+                Require(RenderingsBegun.load() > begun, "a pooled draw whose retention failed began no rendering");
+                Require(RenderingsBegun.load() == RenderingsEnded.load(), "a pooled draw whose retention failed left its rendering open");
+            }
+            const auto recorded = AgcDriver::Graphics::RecordingPool::RecordedBuffers();
+            Draw(*device, alternating, exported, replace(), 3u, 1u, false, depthOnlyState);
             DrawTrace = nullptr;
             const bool pooled = AgcDriver::Graphics::RecordingPool::RecordedBuffers() != recorded;
-            if (mode == "--pooled") Require(pooled, "a depth-only stencil replay was not recorded on the recording pool");
+            if (mode != "--traced") Require(pooled, "a depth-only stencil replay was not recorded on the recording pool");
             else Require(!pooled, "a depth-only draw traced to its batch was recorded on the recording pool");
             if (guestWorkChecked) Require(DrawGuestWork, "the batch that executed a pooled guest draw was not marked as guest work");
             Draw(*device, PlainPixelCode, plain, equal(255u));
