@@ -9,6 +9,15 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -701,6 +710,51 @@ void CheckTitleContextsA() {
     Require(sceNpWordFilterDeleteTitleCtx(filter) == 0, "sceNpWordFilterCreateTitleCtxA", "the context could not be deleted");
 }
 
+void CheckTruncatedAsyncParam() {
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = static_cast<std::size_t>(info.dwPageSize);
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    const long rawPageSize = sysconf(_SC_PAGESIZE);
+    pageSize = rawPageSize > 0 ? static_cast<std::size_t>(rawPageSize) : 4096;
+    void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* pages = mapped == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(mapped);
+#endif
+    Require(pages != nullptr, "CheckTruncatedAsyncParam", "allocating two pages failed");
+    if (!pages) return;
+    bool guarded = false;
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    guarded = VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtect) != 0;
+#else
+    guarded = mprotect(pages + pageSize, pageSize, PROT_NONE) == 0;
+#endif
+    Require(guarded, "CheckTruncatedAsyncParam", "protecting guard page failed");
+    if (guarded) {
+        auto* truncatedParam = reinterpret_cast<std::uint64_t*>(pages + pageSize - sizeof(std::uint64_t));
+        *truncatedParam = 0x18;
+        const int lookupCtx = sceNpLookupCreateTitleCtx(selfNpId);
+        const int wordFilterCtx = sceNpWordFilterCreateTitleCtx(selfNpId);
+        Require(lookupCtx > 0 && wordFilterCtx > WordFilterTitleCtxBase, "CheckTruncatedAsyncParam", "creating contexts failed");
+        errno = 71;
+        Require(sceNpLookupCreateAsyncRequest(lookupCtx, truncatedParam) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a truncated 0x18-byte async parameter crossing a guard page was taken");
+        Require(errno == 71, "sceNpLookupCreateAsyncRequest", "errno was not preserved on truncated async parameter");
+        errno = 71;
+        Require(sceNpWordFilterCreateAsyncRequest(wordFilterCtx, truncatedParam) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a truncated 0x18-byte async parameter crossing a guard page was taken");
+        Require(errno == 71, "sceNpWordFilterCreateAsyncRequest", "errno was not preserved on truncated async parameter");
+        Require(sceNpLookupDeleteTitleCtx(lookupCtx) == 0, "sceNpLookupDeleteTitleCtx", "deleting lookup context failed");
+        Require(sceNpWordFilterDeleteTitleCtx(wordFilterCtx) == 0, "sceNpWordFilterDeleteTitleCtx", "deleting word filter context failed");
+    }
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, pageSize * 2);
+#endif
+}
+
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
@@ -721,6 +775,7 @@ int main() {
     CheckLookupAsync();
     CheckWordFilterAsync();
     CheckTitleContextsA();
+    CheckTruncatedAsyncParam();
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     if (failures != 0) return 1;
