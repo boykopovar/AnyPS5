@@ -21,11 +21,13 @@
 #include <utility>
 #include <limits>
 #include <cstdarg>
+#include <deque>
 #include <memory>
 #include <new>
 #include <mutex>
 #include <iterator>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #ifdef _WIN32
@@ -221,6 +223,46 @@ namespace {
 long HostLong(int64_t value) {
     if (value < LONG_MIN || value > LONG_MAX) throw std::out_of_range("libcurl guest long");
     return static_cast<long>(value);
+}
+
+struct HostForm {
+    std::deque<curl_httppost> nodes;
+    std::unordered_set<const guest_curl_httppost*> visited;
+    bool cyclic = false;
+};
+
+curl_httppost* HostFormFromGuest(const guest_curl_httppost* guest, HostForm& form) {
+    if (!guest) return nullptr;
+    if (!form.visited.insert(guest).second) {
+        form.cyclic = true;
+        return nullptr;
+    }
+    auto& host = form.nodes.emplace_back();
+    host.more = HostFormFromGuest(guest->more, form);
+    host.next = HostFormFromGuest(guest->next, form);
+    host.name = guest->name;
+    host.namelength = HostLong(guest->namelength);
+    host.contents = guest->contents;
+    host.contentslength = HostLong(guest->contentslength);
+    host.buffer = guest->buffer;
+    host.bufferlength = HostLong(guest->bufferlength);
+    host.contenttype = guest->contenttype;
+    host.contentheader = reinterpret_cast<curl_slist*>(guest->contentheader);
+    host.flags = HostLong(guest->flags);
+    host.showfilename = guest->showfilename;
+    host.userp = guest->userp;
+    host.contentlen = guest->contentlen;
+    return &host;
+}
+
+struct FormGetTarget {
+    guest_curl_formget_callback append;
+    void* arg;
+};
+
+size_t FormGetAppend(void* target, const char* buffer, size_t length) {
+    const auto* const guest = static_cast<FormGetTarget*>(target);
+    return guest->append(guest->arg, buffer, length);
 }
 
 struct CallbackSlot {
@@ -569,6 +611,7 @@ bool NamesFile(CURLoption option) {
     case CURLOPT_NETRC_FILE:
     case CURLOPT_HSTS:
     case CURLOPT_ALTSVC:
+    case CURLOPT_UNIX_SOCKET_PATH:
         return true;
     default:
         return false;
@@ -1092,7 +1135,12 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
 }
 
 int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* arg, guest_curl_formget_callback append) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!append) return CURLE_BAD_FUNCTION_ARGUMENT;
+    HostForm host;
+    auto* const first = HostFormFromGuest(form, host);
+    if (host.cyclic) return CURLE_BAD_FUNCTION_ARGUMENT;
+    FormGetTarget target{append, arg};
+    return ::curl_formget(first, &target, FormGetAppend);
 }
 
 std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {

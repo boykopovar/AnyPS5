@@ -57,13 +57,17 @@ bool Driver::verifyDrawRecipe() {
     return verify;
 }
 
-std::size_t Driver::drawCacheEntries() {
+std::size_t Driver::DrawCacheEntries() {
     static const std::size_t entries = [] {
         const char* text = std::getenv("APS5_DRAW_CACHE_ENTRIES");
         const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
-        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::size_t{65536};
+        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::size_t{262144};
     }();
     return entries;
+}
+
+std::size_t Driver::DrawKeySightingKeys() {
+    return std::min<std::size_t>(DrawCacheEntries(), 65536) * DrawKeySightings::Ways;
 }
 
 std::uint64_t Driver::DrawCacheBytes() {
@@ -167,7 +171,7 @@ bool Driver::drawEntriesThisDraw() {
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     std::lock_guard cacheLock(drawCacheMutex);
     if (drawCache.contains(key)) return true;
-    if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    if (!drawKeySightings) drawKeySightings.emplace(DrawKeySightingKeys());
     bool seen = drawKeySightings->SeenBefore(key);
     const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
@@ -185,7 +189,7 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
         }
     }
     if (seen || shape == 0 || drawShapes.contains(shape)) return seen;
-    if (!drawShapeSightings) drawShapeSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    if (!drawShapeSightings) drawShapeSightings.emplace(DrawKeySightingKeys());
     return drawShapeSightings->SeenBefore(shape);
 }
 
@@ -246,8 +250,8 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
         found->second = std::move(replacement);
     }
-    while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
-        const bool overBytes = drawCache.size() <= drawCacheEntries();
+    while (drawCache.size() > DrawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
+        const bool overBytes = drawCache.size() <= DrawCacheEntries();
         const auto last = drawCache.find(drawOrder.back());
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);

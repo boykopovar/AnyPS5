@@ -424,6 +424,7 @@ void EmitStoreVectorWindow(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitLoadSplitState(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitStoreSplitState(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t LoadSplitStateWord(SpirvEmitterState& state, std::uint32_t element);
+std::uint32_t SplitSliceGroup(SpirvEmitterState& state);
 void EmitGetGotoVariable(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitSetGotoVariable(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitGetScc(SpirvValueEmitContext& ctx, const IrValue& inst);
