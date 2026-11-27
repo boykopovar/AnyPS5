@@ -2635,7 +2635,7 @@ void RunPointerChaseDirectTests(AgcDriver::VulkanDevice& device) {
     Table = {};
     Keys = {};
     const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
-    const std::array<std::uint32_t, 4> imageOf{0u, 1u, 0u, 1u};
+    const std::array<std::uint32_t, 4> imageOf{0u, 1u, 0u, 0u};
     std::array<std::uint32_t, 4> next{};
     const auto address = [](const void* data) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data)); };
     const auto link = [&](std::uint32_t from, const void* to) {
