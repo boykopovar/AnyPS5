@@ -49,6 +49,9 @@ struct DriverTestAccess {
         std::lock_guard lock(driver.labelStoresMutex);
         return driver.labelTakes.Taken(queue, reinterpret_cast<std::uintptr_t>(address));
     }
+    static void CopyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
+        Driver::copyCommands(submission, guest, words);
+    }
     static bool FindWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token) {
         return Driver::Get().findWaitProducer(address, bytes, token);
     }
@@ -72,8 +75,8 @@ std::size_t rootCommandBufferFlushBytes = 0;
 std::size_t rootCommandBufferFlushCalls = 0;
 
 void flushRootCommandBufferForTest(std::uint64_t address, std::size_t bytes) {
-    if (rootCommandBufferToFlush == nullptr || address != reinterpret_cast<std::uintptr_t>(rootCommandBufferToFlush) || bytes != rootCommandBufferFlushBytes) return;
     ++rootCommandBufferFlushCalls;
+    if (rootCommandBufferToFlush == nullptr || address != reinterpret_cast<std::uintptr_t>(rootCommandBufferToFlush) || bytes != rootCommandBufferFlushBytes) return;
     *rootCommandBufferToFlush = 0xffff1000u;
 }
 
@@ -247,6 +250,28 @@ void testSubmissionFlushesRootCommandBuffer() {
     AgcDriver::GuestMemory::SetFlushHook(previous);
     rootCommandBufferToFlush = nullptr;
     check(rootCommandBufferFlushCalls == 1, "root command-buffer copy did not flush exactly its submitted guest range");
+}
+
+void testSubmissionChecksRootCopyBeforeFlush() {
+    auto* const previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    rootCommandBufferToFlush = nullptr;
+    rootCommandBufferFlushCalls = 0;
+    AgcDriver::GuestMemory::SetFlushHook(&flushRootCommandBufferForTest);
+    try {
+        AgcDriver::DriverDetail::Submission submission{};
+        const auto* const invalid = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x1000});
+        const auto overBudget = (std::size_t{1} << 26u) + 1u;
+        expectFailure([&] { AgcDriver::DriverDetail::DriverTestAccess::CopyCommands(submission, invalid, overBudget); });
+        check(rootCommandBufferFlushCalls == 0, "root command-buffer copy budget was checked after the flush hook");
+        expectFailure([&] { AgcDriver::DriverDetail::DriverTestAccess::CopyCommands(submission, invalid, 1); });
+        check(rootCommandBufferFlushCalls == 0, "root command-buffer range was checked after the flush hook");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        rootCommandBufferToFlush = nullptr;
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    rootCommandBufferToFlush = nullptr;
 }
 
 void testSubmissions() {
@@ -1375,6 +1400,7 @@ int main(int argc, char** argv) {
         testClearState();
         testSubmissions();
         testSubmissionFlushesRootCommandBuffer();
+        testSubmissionChecksRootCopyBeforeFlush();
         testEndOfPipeInterrupts();
         testLabelStoredSinceSubmission();
         testEndOfPipeLabelsWithoutWork();
