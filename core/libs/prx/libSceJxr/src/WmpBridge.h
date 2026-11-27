@@ -33,6 +33,10 @@ void* JxrWmpRetainProxy_nid_no_patch(void* record, size_t size);
 void JxrWmpMissingCallback_nid_no_patch(const char* name);
 
 size_t JxrWmpEncodeParameterSize_nid_no_patch(void);
+int32_t JxrWmpEncodePixelSpan_nid_no_patch(const void* encoder, uint32_t lines, uint32_t stride, size_t* bytes,
+                                           int32_t* overflow);
+int32_t JxrWmpDecodePixelSpan_nid_no_patch(const void* decoder, int32_t height, uint32_t stride,
+                                           size_t* bytes, int32_t* overflow);
 int64_t JxrWmpEncodeInitialize_nid_no_patch(void* encoder, void* stream, void* parameters, size_t size);
 int64_t JxrWmpEncodeTerminate_nid_no_patch(void* encoder);
 int64_t JxrWmpEncodeSetDescriptiveMetadata_nid_no_patch(void* encoder, const void* metadata, int32_t* refusal);
