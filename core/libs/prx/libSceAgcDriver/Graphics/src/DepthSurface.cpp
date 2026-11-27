@@ -439,6 +439,7 @@ DepthSamplingState prepareUniformPlaneSampling(const Context& context, const Dep
         StorageTexture::FlushPending(range.address, range.bytes);
         GuestMemory::FlushGpuWrites(range.address, range.bytes);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) || !GuestMemory::Watched(range.address, range.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
+        GuestMemory::MaterializeKnownZero(range.address, range.bytes);
         range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
         if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     }
@@ -549,6 +550,7 @@ DepthSamplingState prepareDepthPlaneSampling(const Context& context, const Depth
     StorageTexture::FlushPending(plane.address, plane.bytes);
     GuestMemory::FlushGpuWrites(plane.address, plane.bytes);
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(plane.address), plane.bytes) || !GuestMemory::Watched(plane.address, plane.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
+    GuestMemory::MaterializeKnownZero(plane.address, plane.bytes);
     plane.generation = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
     if (plane.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     if (state.aliasDepth) state.initialDepth = *state.aliasDepth;
@@ -835,6 +837,8 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
         const VkClearDepthStencilValue clear{0.25f, 0xa5u};
         const VkImageSubresourceRange depthOnly{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
         context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &depthOnly);
+        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, shadow->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &aspects);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         VkImageViewCreateInfo sourceViewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         sourceViewInfo.image = source->image;
         sourceViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -984,6 +988,11 @@ public:
             if (target.samples == 1 && sampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            if (target.samples != 1) {
+                VkImageFormatProperties attachment{};
+                const auto result = context.imageFormatProperties(context.physical, hostFormat, info.imageType, info.tiling, info.usage, info.flags, &attachment);
+                Require(result == VK_SUCCESS && (attachment.sampleCounts & info.samples) != 0u, "depth/stencil format " + std::to_string(hostFormat) + " cannot hold " + std::to_string(target.samples) + " samples on this device");
+            }
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage depth");
             VkMemoryRequirements requirements{};
             context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
@@ -4937,11 +4946,21 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         std::snprintf(text, sizeof(text), "AGC graphics: sampling the %s planes of depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u texture of guest format %u (vk %d), dimension %d, %u slices, levels %u-%u, base slice %u is not implemented (last array %u, depth bits %d, copy format %d)", stencil ? "stencil" : "depth", static_cast<unsigned long long>(base.address), base.extent.width, base.extent.height, static_cast<int>(base.format), resource.width, resource.height, resource.format, static_cast<int>(format), static_cast<int>(resource.dimension), layers, resource.baseLevel, resource.lastLevel, resource.baseArray, resource.depthOrLastArray, depthBits ? 1 : 0, static_cast<int>(copyFormat));
         throw std::runtime_error(text);
     }
+    const auto imageFormat = stencil ? copyFormat : integer ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_D16_UNORM : VK_FORMAT_D32_SFLOAT;
+    const VkExtent2D extent{resource.width, resource.height};
+    auto& copies = planeCopies();
+    using CopyKey = std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat>;
+    const auto planeAddress = stencil ? base.stencilAddress : base.address;
+    const auto whole = copies.find(CopyKey{context.device, planeAddress, extent.width, extent.height, imageFormat});
+    const bool shared = whole != copies.end() && whole->second != nullptr && whole->second->layers >= layers;
+    const auto viewed = cube || shared ? resource : ViewedArrayWindow(resource, true);
+    const auto viewedLayers = viewed.baseAddress == resource.baseAddress ? layers : viewed.depthOrLastArray + 1u;
+    const auto viewedAddress = planeAddress + (viewed.baseAddress - resource.baseAddress);
     std::vector<DepthPlaneSlice> slices;
-    const auto geometry = DescribeSurface(resource);
+    const auto geometry = DescribeSurface(viewed);
     Require(!geometry.levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
-    for (std::uint32_t layer = 0; layer < layers; ++layer) {
-        const auto address = (stencil ? base.stencilAddress : base.address) + geometry.GuestLayerOffset(layer);
+    for (std::uint32_t layer = 0; layer < viewedLayers; ++layer) {
+        const auto address = viewedAddress + geometry.GuestLayerOffset(layer);
         auto* slice = stencil ? stencilSlice(context.device, address, base) : depthSlice(context.device, address, base);
         if (slice != nullptr) {
             if (stencil && slice != found && slice->StencilMirrorable()) slice->SyncStencilFromMemory(stencilResource(slice->target));
@@ -4951,15 +4970,12 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
             slices.push_back({});
         }
     }
-    const auto imageFormat = stencil ? copyFormat : integer ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_D16_UNORM : VK_FORMAT_D32_SFLOAT;
-    const VkExtent2D extent{resource.width, resource.height};
-    auto& copies = planeCopies();
-    const std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat> copyKey{context.device, stencil ? base.stencilAddress : base.address, extent.width, extent.height, imageFormat};
+    const CopyKey copyKey{context.device, viewedAddress, extent.width, extent.height, imageFormat};
     auto& copy = copies[copyKey];
-    if (copy == nullptr || copy->layers < layers) copy = std::make_unique<DepthPlaneCopy>(context, extent, imageFormat, layers);
+    if (copy == nullptr || copy->layers < viewedLayers) copy = std::make_unique<DepthPlaneCopy>(context, extent, imageFormat, viewedLayers);
     copy->lastUse = ++planeCopyClock();
     copy->lastPresent = Recorder::Presents();
-    auto texture = copy->Refresh(slices, resource, components, cube || resource.dimension == TextureDimension::k2DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, layered && !cube ? resource.baseArray : 0u);
+    auto texture = copy->Refresh(slices, viewed, components, cube || resource.dimension == TextureDimension::k2DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, layered && !cube ? viewed.baseArray : 0u);
     if (DepthPlaneReuse() && !texture->HasReuseLookup()) {
         texture->SetReuseLookup([context, lookupWords = std::vector<std::uint32_t>(words.begin(), words.end()), resource, components] { return DepthSurfaceTexture(context, lookupWords, resource, components); });
     }
@@ -5225,15 +5241,18 @@ std::vector<LayeredSlice> layeredSlices(const Context& context, const LayeredDep
 }
 
 std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, DepthSurface& surface, const GuestTextureResource& resource, std::uint32_t mip) {
-    const auto& target = surface.target;
+    auto target = surface.target;
+    target.address = resource.baseAddress;
     const auto layers = resource.depthOrLastArray + 1u;
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto bytesPerTexel = d16 ? 2u : 4u;
     surface.RequireStorable(resource);
     Require(!DescribeSurface(resource).levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
-    auto& entry = layeredStorages()[{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray}];
-    if (entry == nullptr) entry = std::make_unique<LayeredDepthStorage>(context, resource, target, bytesPerTexel, resource.baseArray, layers);
-    else static_cast<void>(entry->storage->Refresh());
+    const std::tuple key{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray};
+    auto found = layeredStorages().find(key);
+    if (found == layeredStorages().end()) found = layeredStorages().emplace(key, std::make_unique<LayeredDepthStorage>(context, resource, target, bytesPerTexel, resource.baseArray, layers)).first;
+    else static_cast<void>(found->second->storage->Refresh());
+    auto& entry = found->second;
     const auto slices = layeredSlices(context, *entry);
     for (const auto& slice : slices) slice.surface->ApplyFastClear();
     entry->Copy(slices, true);
@@ -5261,7 +5280,7 @@ std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std:
     const bool stencil = surface.target.stencilAddress != 0 && surface.target.stencilAddress == resource.baseAddress;
     if (stencil || resource.dimension != TextureDimension::k2DArray || (resource.baseArray == 0 && resource.depthOrLastArray == 0)) return surface.Storage(words, resource, mip);
     if (!surface.StorageViewMatches(words, resource)) return nullptr;
-    return layeredDepthStorage(context, surface, resource, mip);
+    return layeredDepthStorage(context, surface, ViewedArrayWindow(resource, true), mip);
 }
 
 DepthCopySourceScope::DepthCopySourceScope(bool active) : previous(depthCopySourceActive) {

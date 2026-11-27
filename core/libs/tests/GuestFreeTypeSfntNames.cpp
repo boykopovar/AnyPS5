@@ -6,6 +6,7 @@
 #include FT_SFNT_NAMES_H
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -134,6 +135,17 @@ int main() {
             InvalidQuery(&empty.guest.rec, empty.oracle, index);
             InvalidQuery(nullptr, nullptr, index);
         }
+        static const GuestSfntName readOnlyName{0x1111, 0x2222, 0x3333, 0x4444, nullptr, 99};
+        errno = 71;
+        Require(FT_Get_Sfnt_Name_nid_postfix(&first.guest.rec, 0, const_cast<GuestSfntName*>(&readOnlyName)) == FT_Err_Invalid_Argument);
+        Require(errno == 71 && readOnlyName.platform_id == 0x1111 && readOnlyName.string_len == 99);
+        errno = 71;
+        Require(FT_Get_Sfnt_Name_nid_postfix(&first.guest.rec, 0, reinterpret_cast<GuestSfntName*>(std::uintptr_t{0x10})) == FT_Err_Invalid_Argument);
+        Require(errno == 71);
+        errno = 71;
+        Require(FT_Get_Sfnt_Name_nid_postfix(&first.guest.rec, static_cast<std::uint32_t>(records.size()), const_cast<GuestSfntName*>(&readOnlyName)) ==
+                FT_Get_Sfnt_Name(first.oracle, static_cast<FT_UInt>(records.size()), nullptr));
+        Require(errno == 71 && readOnlyName.platform_id == 0x1111 && readOnlyName.string_len == 99);
     }
     Require(FT_Done_FreeType(library.host) == 0);
     Require(FT_Done_FreeType(nativeLibrary) == 0);

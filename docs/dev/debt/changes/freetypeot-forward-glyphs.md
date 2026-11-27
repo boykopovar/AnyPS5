@@ -14,6 +14,6 @@
 
 - [FT_Get_Renderer](../../../core/libs/prx/libSceFreeType/src/ModuleManagement.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). The renderer handle is a native object owned by the library and is invalid after `FT_Remove_Module` or `FT_Done_FreeType`. libSceFreeType does not export it, but the libSceFreeTypeOt provider forwards it, so guests importing from Ot can obtain the handle. Tests call the wrapper directly, and its console NID/signature remain unverified
 
-## change [FT_Set_Renderer]
+## change LP64 `FT_Parameter` layout are unverified
 
 - [FT_Set_Renderer](../../../core/libs/prx/libSceFreeType/src/RendererSelection.cpp) (libSceFreeType) - console signature and the 16-byte LP64 `FT_Parameter` layout are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). The renderer handle must come from `FT_Get_Renderer` on the same library; libSceFreeType does not export that getter, but the libSceFreeTypeOt provider forwards it, so guests importing from Ot can obtain it. Tests call the local adapter directly. Parameter data pointers are passed to the native renderer unchanged. A parameter tag above the host `FT_ULong` range throws on Windows, where the native type is 32 bits
