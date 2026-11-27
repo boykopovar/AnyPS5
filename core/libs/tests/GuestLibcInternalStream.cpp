@@ -22,14 +22,22 @@ static void Check(bool condition, int line) {
 #define Require(value) Check((value), __LINE__)
 
 int main() {
+    *__error_nid_postfix() = 42;
     Require(__fflush_nid_postfix(nullptr) == 0);
+    Require(*__error_nid_postfix() == 42);
+
+    *__error_nid_postfix() = 0;
+    Require(__fflush_nid_postfix(reinterpret_cast<FileStream*>(0x10)) == -1);
+    Require(*__error_nid_postfix() == 14);
 
     const auto filePath = "guest_libc_internal_stream_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
     auto* stream = fopen_nid_postfix(filePath.c_str(), "w+b");
     Require(stream != nullptr);
     const char message[] = "libc internal stream test payload";
     Require(fwrite_nid_postfix(message, 1, sizeof(message), stream) == sizeof(message));
+    *__error_nid_postfix() = 42;
     Require(__fflush_nid_postfix(stream) == 0);
+    Require(*__error_nid_postfix() == 42);
 
     {
         std::ifstream in(filePath, std::ios::binary);
@@ -42,9 +50,9 @@ int main() {
 
     FileStream closedStream(TemporaryFile::Open());
     closedStream.Close();
-    *__error_nid_postfix() = 0;
+    *__error_nid_postfix() = 42;
     Require(__fflush_nid_postfix(&closedStream) == 0);
-    Require(*__error_nid_postfix() == 0);
+    Require(*__error_nid_postfix() == 42);
 
     const auto fileA = "guest_libc_internal_stream_a_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
     const auto fileB = "guest_libc_internal_stream_b_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";

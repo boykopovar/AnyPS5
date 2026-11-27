@@ -23,17 +23,11 @@ void* operator new(std::size_t bytes) {
 }
 
 void* operator new[](std::size_t bytes) { return ::operator new(bytes); }
-void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
-    try {
-        return ::operator new(bytes);
-    } catch (const std::bad_alloc&) {
-        return nullptr;
-    }
-}
-void* operator new[](std::size_t bytes, const std::nothrow_t&) noexcept { return ::operator new(bytes, std::nothrow); }
 void operator delete(void* allocation) noexcept { std::free(allocation); }
 void operator delete[](void* allocation) noexcept { std::free(allocation); }
 void operator delete(void* allocation, std::size_t) noexcept { std::free(allocation); }
 void operator delete[](void* allocation, std::size_t) noexcept { std::free(allocation); }
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept { return std::malloc(bytes == 0 ? 1 : bytes); }
+void* operator new[](std::size_t bytes, const std::nothrow_t&) noexcept { return std::malloc(bytes == 0 ? 1 : bytes); }
 void operator delete(void* allocation, const std::nothrow_t&) noexcept { std::free(allocation); }
 void operator delete[](void* allocation, const std::nothrow_t&) noexcept { std::free(allocation); }
