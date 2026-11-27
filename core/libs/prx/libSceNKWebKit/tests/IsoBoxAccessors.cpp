@@ -1,12 +1,23 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace NKWebKit::IsoAbi;
 using NKWebKit::WtfAbi::String;
@@ -174,12 +185,90 @@ static void WebVTTCueJSON() {
     Require(rejected);
 }
 
+struct GuardedCuePages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedCuePages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedCuePages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 2) == 0);
+#endif
+    }
+
+    unsigned char* Guard() const { return base + pageSize; }
+};
+
+template <typename Action>
+static bool ThrowsNotImplemented(Action action, const char* symbol) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void WebVTTCueJSONGuestPointers() {
+    constexpr const char* kSymbol = "_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv";
+    GuardedCuePages pages;
+
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(reinterpret_cast<const WebVTTCue*>(0x10))); }, kSymbol));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(reinterpret_cast<const WebVTTCue*>(pages.Guard()))); }, kSymbol));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(reinterpret_cast<const WebVTTCue*>(pages.Guard() - 32))); }, kSymbol));
+
+    alignas(WebVTTCue) unsigned char rawCue[sizeof(WebVTTCue)]{};
+    auto* cuePtr = reinterpret_cast<const WebVTTCue*>(rawCue);
+    const auto* badImpl = reinterpret_cast<const NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+    std::memcpy(rawCue + offsetof(WebVTTCue, cueText), &badImpl, sizeof(badImpl));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(cuePtr)); }, kSymbol));
+
+    std::memset(rawCue, 0, sizeof(rawCue));
+    std::memcpy(rawCue + offsetof(WebVTTCue, sourceID), &badImpl, sizeof(badImpl));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(cuePtr)); }, kSymbol));
+
+    std::memset(rawCue, 0, sizeof(rawCue));
+    NKWebKit::WtfAbi::StringImpl badDataImpl{2, 8, pages.Guard() - 4, 4};
+    const auto* badDataPtr = &badDataImpl;
+    std::memcpy(rawCue + offsetof(WebVTTCue, settings), &badDataPtr, sizeof(badDataPtr));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(cuePtr)); }, kSymbol));
+
+    std::memset(rawCue, 0, sizeof(rawCue));
+    NKWebKit::WtfAbi::StringImpl nullDataImpl{2, 4, nullptr, 4};
+    const auto* nullDataPtr = &nullDataImpl;
+    std::memcpy(rawCue + offsetof(WebVTTCue, identifier), &nullDataPtr, sizeof(nullDataPtr));
+    Require(ThrowsInvalidArgument([&] { static_cast<void>(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(cuePtr)); }));
+}
+
 int main() {
     BoxAndFullBox();
     TrackEncryptionBoxFields();
     ProtectionSystemSpecificHeaderFields();
     WebVTTCueFields();
     WebVTTCueJSON();
+    WebVTTCueJSONGuestPointers();
     std::puts("IsoBoxAccessors passed");
     return 0;
 }
