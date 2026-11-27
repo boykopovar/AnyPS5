@@ -62,8 +62,7 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
         std::uint32_t rva = 0;
         if (section == Relinker::AbsoluteSection) {
             if (type == 6) throw Domain::RelinkerException("Unsupported executable TLS export section: " + symbolName);
-            const bool functionRoot = functionSymbolRoots && type == 2;
-            const auto extent = functionRoot ? 1 : std::max<std::uint64_t>(symbol.Size, 1);
+            const auto extent = std::max<std::uint64_t>(symbol.Size, 1);
             const std::uint32_t flags = type == 2 ? 1 : 0;
             const bool mapped = std::any_of(headers.begin(), headers.end(), [&](const auto& header) {
                 if (header.Type != 1 || (header.Flags & flags) != flags || symbol.Value < header.MappedAddress) return false;
