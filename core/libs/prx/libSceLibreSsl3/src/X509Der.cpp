@@ -101,7 +101,7 @@ std::vector<unsigned char> BitStringContent(const LibreSsl3Asn1String& bits) {
     AppendGuestBytes(data, bits.data, bits.length, "signature");
     std::size_t used = data.size();
     int unused = 0;
-    if ((bits.flags & BitsLeftFlag) != 0) {
+    if (bits.length > 0 && (bits.flags & BitsLeftFlag) != 0) {
         unused = static_cast<int>(bits.flags & 0x07);
     } else {
         while (used > 0 && data[used - 1] == 0) --used;

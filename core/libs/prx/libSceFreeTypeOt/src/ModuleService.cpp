@@ -20,9 +20,15 @@
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
+#include <cstdint>
 #include <iterator>
 
 namespace {
+
+template <typename TValue>
+bool Misaligned(const TValue* value) {
+    return reinterpret_cast<std::uintptr_t>(value) % alignof(TValue) != 0;
+}
 
 template <typename TValue>
 TValue Read(const TValue* source, const char* function) {
@@ -35,9 +41,9 @@ TValue Read(const TValue* source, const char* function) {
 }
 
 void* Request(FreeType::GuestServiceModuleRec* module, const char* serviceId, const char* function) {
-    if (!module) NotImplemented_nid_no_patch(function);
+    if (!module || Misaligned(module)) NotImplemented_nid_no_patch(function);
     const auto* clazz = Read(&module->clazz, function);
-    if (!clazz) NotImplemented_nid_no_patch(function);
+    if (!clazz || Misaligned(clazz)) NotImplemented_nid_no_patch(function);
     const auto requester = reinterpret_cast<FreeType::GuestServiceRequester>(Read(&clazz->get_interface, function));
     return requester ? requester(module, serviceId) : nullptr;
 }
@@ -48,7 +54,7 @@ extern "C" void* APS5_VABI ft_module_get_service_nid_postfix(FreeType::GuestServ
     if (!module) return nullptr;
     if (void* service = Request(module, serviceId, __func__)) return service;
     const auto* library = Read(&module->library, __func__);
-    if (!library) NotImplemented_nid_no_patch(__func__);
+    if (!library || Misaligned(library)) NotImplemented_nid_no_patch(__func__);
     const auto count = Read(&library->numModules, __func__);
     if (count > std::size(library->modules)) NotImplemented_nid_no_patch(__func__);
     for (std::uint32_t i = 0; i < count; ++i) {

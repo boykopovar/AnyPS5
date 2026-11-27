@@ -1,12 +1,14 @@
 #include "prx/libSceVdecsw/libSceVdecsw.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -259,6 +261,11 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units) {
             checkGenericPictureInfo(output, info);
             const auto unit = DisplayOrderUnits[pictures];
             check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit && info.profileIdc == 100, "pictures out of display order");
+            const auto avc = std::bit_cast<SceVideodec2::AvcPictureInfo>(info);
+            check(avc.levelIdc == 10, "AVC level differs from the SPS");
+            check(avc.aspectRatioInfoPresentFlag == 1 && avc.aspectRatioIdc == 1 && avc.sarWidth == 1 && avc.sarHeight == 1, "AVC sample aspect ratio differs");
+            check(avc.timingInfoPresentFlag == 1 && avc.numUnitsInTick == 1 && avc.timeScale == 60, "AVC timing differs");
+            check(avc.auDelimiterPresentFlag == 1 && avc.sequenceParameterSetPresentFlag == (unit == 0) && avc.pictureParameterSetPresentFlag == (unit == 0), "AVC NAL presence differs");
             check(info.idrPictureFlag == (unit == 0 ? 1 : 0), "picture " + std::to_string(pictures) + " IDR flag differs from its nal_unit_type");
             check(info.picWidthInMbsMinus1 == Width / 16 - 1 && info.picHeightInMapUnitsMinus1 == CodedHeight / 16 - 1 && info.frameMbsOnlyFlag == 1 && info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == (CodedHeight - Height) / 2, "picture geometry in the picture info is wrong");
             check(hashNv12(static_cast<const std::uint8_t*>(output.frameBuffer), output.framePitch, output.frameHeight) == PictureHashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
@@ -319,6 +326,9 @@ void testHevc() {
             checkGenericPictureInfo(output, info);
             const auto unit = HevcDisplayOrderUnits[pictures];
             check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "HEVC pictures out of display order");
+            check(info.aspectRatioInfoPresentFlag == 1 && info.aspectRatioIdc == 1 && info.sarWidth == 1 && info.sarHeight == 1, "HEVC sample aspect ratio differs");
+            check(info.timingInfoPresentFlag == 1 && info.numUnitsInTick == 1 && info.timeScale == 30, "HEVC timing differs");
+            check(info.presentFlags[0] == (unit == 0) && info.presentFlags[1] == (unit == 0) && info.presentFlags[2] == (unit == 0), "HEVC VPS/SPS/PPS presence differs");
             check(info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.irapPictureFlag == (pictures == 0 ? 1 : 0), "HEVC random access flags differ");
             check(info.generalProfileIdc == 1 && info.generalLevelIdc == 30 && info.bitDepthLumaMinus8 == 0 && info.bitDepthChromaMinus8 == 0, "HEVC profile, level or bit depth differs");
             check(info.picWidthInLumaSamples == Width && info.picHeightInLumaSamples == Height && info.conformanceWindowFlag == 0 && info.frameCroppingFlag == 0, "HEVC picture geometry in the picture info is wrong");
@@ -347,12 +357,12 @@ void testHevc() {
     check(pictures == HevcHashes.size(), "missing HEVC pictures after finalizing the sequence");
 }
 
-void testHevcCrop() {
+void testHevcCrop(std::span<const std::uint8_t> stream, std::array<std::uint32_t, 4> offsets) {
     Session session(CodecHevc, 1, 30);
     std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
     const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
     check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "cropped HEVC output buffer was rejected");
-    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), HevcCroppedStream.data(), HevcCroppedStream.size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), stream.data(), stream.size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "cropped HEVC decode input was rejected");
     InputResult consumed{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "the cropped HEVC access unit was not consumed");
@@ -363,8 +373,8 @@ void testHevcCrop() {
     check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "cropped HEVC picture info missing");
     checkGenericPictureInfo(output, info);
     check(info.picWidthInLumaSamples == 64 && info.picHeightInLumaSamples == 40, "cropped HEVC coded size differs");
-    check(info.conformanceWindowFlag == 1 && info.confWinLeftOffset == 0 && info.confWinRightOffset == 0 && info.confWinTopOffset == 0 && info.confWinBottomOffset == 2, "HEVC conformance window differs");
-    check(info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == 2, "HEVC frame cropping differs");
+    check(info.conformanceWindowFlag == 1 && std::array{info.confWinLeftOffset, info.confWinRightOffset, info.confWinTopOffset, info.confWinBottomOffset} == offsets, "HEVC conformance window differs");
+    check(info.frameCroppingFlag == 1 && std::array{info.frameCropLeftOffset, info.frameCropRightOffset, info.frameCropTopOffset, info.frameCropBottomOffset} == offsets, "HEVC frame cropping differs");
 }
 
 void testWithoutOutput() {
@@ -678,7 +688,9 @@ int main() {
         testDecode();
         testDecodeRecoveryPoint();
         testHevc();
-        testHevcCrop();
+        testHevcCrop(HevcCroppedStream, {0, 0, 0, 2});
+        testHevcCrop(HevcCropped422Stream, {1, 2, 6, 8});
+        testHevcCrop(HevcCropped444Stream, {2, 4, 6, 8});
         testHevcMain10();
         testWithoutOutput();
         testUnmappedSyncAndPictureInfo();

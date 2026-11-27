@@ -14,22 +14,28 @@ QUOTED_DELIMITER = re.compile(r'":[A-Z]+=')
 
 
 def checks(cache):
+    cache = Path(cache)
+    if not stat.S_ISREG(cache.stat().st_mode):
+        raise OSError("configure cache must be a regular file")
     found, doc = {}, []
-    for line in Path(cache).read_text(encoding="utf-8-sig").split("\n"):
-        if line.startswith("//"):
-            doc.append(line)
-            continue
-        if QUOTED_ENTRY.match(line) and len(QUOTED_DELIMITER.findall(line)) > 1:
-            match = None
-        else:
-            match = QUOTED_ENTRY.match(line) or ENTRY.match(line)
-        if match and match.group(2) == "INTERNAL" and doc and CHECK.match(doc[0]):
-            help_text = "".join("\n" + line[4:] if line.startswith("//\\n") else line[2:] for line in doc)
-            value = match.group(3)
-            if len(value) >= 2 and value[0] == value[-1] == "'":
-                value = value[1:-1]
-            found[match.group(1)] = (value, help_text)
-        doc = []
+    with cache.open(encoding="utf-8-sig") as source:
+        for raw in source:
+            line = raw.removesuffix("\n")
+            if line.startswith("//"):
+                doc.append(line)
+                continue
+            quoted = QUOTED_ENTRY.match(line)
+            match = (None if len(QUOTED_DELIMITER.findall(line)) > 1 else quoted) if quoted else ENTRY.match(line)
+            if match:
+                name, kind, value = match.groups()
+                if kind == "INTERNAL" and doc and CHECK.match(doc[0]):
+                    help_text = "".join("\n" + line[4:] if line.startswith("//\\n") else line[2:] for line in doc)
+                    if len(value) >= 2 and value[0] == value[-1] == "'":
+                        value = value[1:-1]
+                    found[name] = (value, help_text)
+                else:
+                    found.pop(name, None)
+            doc = []
     architecture_sizes = {name for name, (value, doc) in found.items()
                           if value == "0" and doc.startswith("CHECK_TYPE_SIZE: ")}
     if architecture_sizes:

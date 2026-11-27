@@ -855,6 +855,7 @@ int main() {
     Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x80020016u));
     Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelDebugOutText(0, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000eu));
     auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
 #ifdef _WIN32
@@ -1988,6 +1989,13 @@ int main() {
     Require(sceKernelOpen(invalidFlagsName.c_str(), 0x20a02, 0600) == static_cast<int>(0x80020016u));
     Require(open_nid_postfix(invalidFlagsName.c_str(), 0x20a00, 0600) == -1 && *__error_nid_postfix() == 22);
     Require(!std::filesystem::exists(invalidFlagsName));
+    Require(sceKernelOpen(missingName.c_str(), 0x20200, 0600) == static_cast<int>(0x80020002u));
+    Require(!std::filesystem::exists(missing));
+    Require(sceKernelOpen(presentName.c_str(), 0x20200, 0600) == static_cast<int>(0x80020014u));
+    Require(open_nid_postfix(presentName.c_str(), 0x20200, 0600) == -1 && *__error_nid_postfix() == 20);
+    const int lookedUpDirectory = sceKernelOpen(rootName.c_str(), 0x20200, 0);
+    Require(lookedUpDirectory >= 0 && sceKernelClose(lookedUpDirectory) == 0);
+    Require(sceKernelOpen(rootName.c_str(), 0x20202, 0) == static_cast<int>(0x80020015u));
     Require(open_nid_postfix(nullptr, 3, 0) == -1 && *__error_nid_postfix() == 22);
     Require(open_nid_postfix("", 0x20a00, 0600) == -1 && *__error_nid_postfix() == 22);
     Require(_open_nid_postfix(nullptr, 0x403) == -1 && *__error_nid_postfix() == 22);

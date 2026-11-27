@@ -65,6 +65,8 @@ def prepare_notes(source, body, full, check=False, *, marker=None):
             if (os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second)) or
                     (first.exists() and second.exists() and first.samefile(second))):
                 raise ValueError("Release note input and outputs must be distinct files")
+    if not stat.S_ISREG(source.stat().st_mode):
+        raise ValueError(f"{source}: release note input must be a regular file")
     try:
         payload = json.loads(source.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_release_object)
     except RecursionError as error:
@@ -78,32 +80,45 @@ def prepare_notes(source, body, full, check=False, *, marker=None):
     body_text = release_body(notes, BODY_LIMIT - len(suffix)) + suffix
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
+    outputs = ((body, body_text.encode("utf-8")), (full, notes.encode("utf-8")))
     if check:
         try:
-            return body.read_bytes() == body_text.encode("utf-8") and full.read_bytes() == notes.encode("utf-8")
+            for destination, expected in outputs:
+                info = destination.stat()
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError(f"{destination}: release note output must be a regular file")
+                if info.st_size != len(expected):
+                    return False
+                with destination.open("rb") as output:
+                    if output.read(len(expected) + 1) != expected:
+                        return False
+            return True
         except FileNotFoundError:
             return False
-    for destination in (body, full):
+    destinations = []
+    for destination, expected in outputs:
         target = resolve_output_path(destination)
+        destinations.append((target, expected))
         try:
-            target.stat()
+            info = target.stat()
         except FileNotFoundError:
-            pass
-        if target.is_dir():
+            continue
+        if stat.S_ISDIR(info.st_mode):
             raise IsADirectoryError(str(destination))
-        if os.name == "nt" and target.exists() and target.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"{destination}: release note output must be a regular file")
+        if os.name == "nt" and info.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
             raise PermissionError(f"Release note destination is read-only: {destination}")
     staged = []
     try:
-        for destination, text in ((full, notes), (body, body_text)):
-            target = resolve_output_path(destination)
+        for target, expected in reversed(destinations):
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.parent / (".release-notes-" + secrets.token_hex(16))
             with temporary.open("xb") as output:
                 staged.append((temporary, target))
                 if target.exists():
                     temporary.chmod(stat.S_IMODE(target.stat().st_mode))
-                output.write(text.encode("utf-8"))
+                output.write(expected)
         promoted = []
         backed_up = []
         try:

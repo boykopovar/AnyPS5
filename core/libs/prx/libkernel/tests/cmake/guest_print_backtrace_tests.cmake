@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_print_backtrace_tests ${LIBS_INCLUDE_DIR}/tests/GuestPrintBacktrace.cpp)
+    target_include_directories(guest_print_backtrace_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_print_backtrace_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_print_backtrace_tests)
+    add_test(NAME guest_print_backtrace COMMAND guest_print_backtrace_tests)
+    set_tests_properties(guest_print_backtrace PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_print_backtrace PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

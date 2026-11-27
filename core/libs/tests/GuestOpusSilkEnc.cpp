@@ -178,6 +178,12 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(encodeFloat(ToState(marked), floatPcm.data(), 0, packet.data(), 1500, 50) == EncoderError(0x03));
     Require(encodeFloat(ToState(blank), floatPcm.data(), 960, nullptr, 0, 0) == EncoderError(0x15));
     Require(encodeFloat(ToState(wideMarker), floatPcm.data(), 960, packet.data(), 1500, 50) == EncoderError(0x15));
+    Require(encodeFloat(ToState(marked), floatPcm.data(), 960, nullptr, 0, 0) == EncoderError(0x04));
+    Require(encodeFloat(ToState(marked), floatPcm.data(), 960, packet.data(), 0, 0) == EncoderError(0x05));
+    for (const std::uint32_t priority : std::array<std::uint32_t, 5>{0u, 19u, 101u, 0x80000000u, 0xFFFFFFFFu})
+        Require(encodeFloat(ToState(marked), floatPcm.data(), 7, packet.data(), 1500, priority) == EncoderError(0x14));
+    for (const int frameSize : std::array<int, 3>{40, 80, 1920})
+        Require(encodeFloat(ToState(marked), floatPcm.data(), frameSize, packet.data(), 1500, 50) == EncoderError(0x03));
 
     Require(sceOpusSilkEncCtl(nullptr, 4000) == EncoderError(0x01));
     errno = 71;
@@ -489,6 +495,21 @@ int main() {
     std::array<std::uint8_t, 1024> floatExpected{};
     const int floatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
     Require(floatExpectedBytes == floatResult && std::equal(packet, packet + floatResult, floatExpected.begin()));
+    const int priorityFloatResult = sceOpusSilkEncEncodeFloatWithPriority(ToState(floatState), floatSamples.data(), 960, packet, static_cast<int>(sizeof(packet)), 20u);
+    Require(priorityFloatResult > 2 && static_cast<int>(packet[0]) >> 3 < 12);
+    const int priorityFloatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
+    Require(priorityFloatExpectedBytes == priorityFloatResult && std::equal(packet, packet + priorityFloatResult, floatExpected.begin()));
+    std::uint32_t timeoutBatchId = 0x12345678u;
+    const int timeoutFloatResult = sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(ToState(floatState), floatSamples.data(), 960, packet, static_cast<int>(sizeof(packet)), 100u, 0xFFFFFFFFu, &timeoutBatchId);
+    Require(timeoutFloatResult > 2 && static_cast<int>(packet[0]) >> 3 < 12 && timeoutBatchId == 0x12345678u);
+    const int timeoutFloatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
+    Require(timeoutFloatExpectedBytes == timeoutFloatResult && std::equal(packet, packet + timeoutFloatResult, floatExpected.begin()));
+    const int timeoutIntResult = sceOpusSilkEncEncodeWithPriorityAndTimeout(ToState(floatState), samples.data(), 960, packet, static_cast<int>(sizeof(packet)), 40u, 0xFFFFFFFFu, nullptr);
+    Require(timeoutIntResult > 2 && static_cast<int>(packet[0]) >> 3 < 12);
+    const int timeoutIntExpectedBytes = opus_encode(floatReference, samples.data(), 960, floatExpected.data(), sizeof(floatExpected));
+    Require(timeoutIntExpectedBytes == timeoutIntResult && std::equal(packet, packet + timeoutIntResult, floatExpected.begin()));
+    RequireThrows([&] { sceOpusSilkEncEncodeWithPriorityAndTimeout(ToState(floatState), samples.data(), 960, packet, static_cast<int>(sizeof(packet)), 40u, 1000u, &timeoutBatchId); });
+    RequireThrows([&] { sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(ToState(floatState), floatSamples.data(), 960, packet, static_cast<int>(sizeof(packet)), 40u, 1000u, &timeoutBatchId); });
     opus_encoder_destroy(floatReference);
     Require(sceOpusSilkEncDestroy(ToState(floatState)) == 0);
 

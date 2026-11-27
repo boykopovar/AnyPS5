@@ -3,6 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -41,6 +42,9 @@ public:
         std::vector<Domain::VirtualAddress> result;
         for (const auto& [slot, target] : Values) result.push_back(target);
         return result;
+    }
+    std::map<Domain::VirtualAddress, Domain::VirtualAddress> SlotTargets() const override {
+        return Values;
     }
 };
 
@@ -357,7 +361,8 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
-        const auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
         if (!sceFunctions.empty() || functions.empty() || !isCode(target) || inTable(target) || inFunction(target)) {
             addPointerRoot(target);
             return;
@@ -454,6 +459,9 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }
+        } else {
+            const auto symbolOffset = table(6, 0x61000039, symbolCount * 24);
+            symbolCount = ElfReader(bytes).ReadDynamicSymbolCount(symbolOffset, firstSymbol);
         }
     }
     std::uint64_t symbols = 0;

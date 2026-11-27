@@ -30,6 +30,11 @@ def number(value, name):
     return value
 
 
+def unsigned_count(value, name, bits=64, minimum=0):
+    if type(value) is not int or not minimum <= value < 1 << bits:
+        raise ValueError(f"{name} must be an unsigned {bits}-bit integer of at least {minimum}")
+
+
 def validate(summary):
     for key in ("commit", "trace", *CONTEXT):
         if not isinstance(summary.get(key), str):
@@ -38,8 +43,8 @@ def validate(summary):
         if key in summary and not isinstance(summary[key], str):
             raise ValueError(f"{key} must be a string")
     for key in OPTIONAL_INTEGERS:
-        if key in summary and (type(summary[key]) is not int or summary[key] < 0):
-            raise ValueError(f"{key} must be a non-negative integer")
+        if key in summary:
+            unsigned_count(summary[key], key, 32 if key == "cpu_threads" else 64)
     if type(summary.get("trace_dropped")) is not bool:
         raise ValueError("trace_dropped must be a boolean")
     if "trace_dropped_threads" in summary:
@@ -53,6 +58,8 @@ def validate(summary):
                 raise ValueError(f"trace_dropped_threads.{name}.totals_full must be a boolean")
             if "events_lost" in thread and (type(thread["events_lost"]) is not int or thread["events_lost"] < 0):
                 raise ValueError(f"trace_dropped_threads.{name}.events_lost must be a non-negative integer")
+            if not summary["trace_dropped"] and (thread.get("events_lost", 0) or thread.get("totals_full", False)):
+                raise ValueError(f"trace_dropped_threads.{name} disagrees with trace_dropped")
     if "dirty" not in summary or (summary["dirty"] is not None and type(summary["dirty"]) is not bool):
         raise ValueError("dirty must be a boolean or null")
     env = summary.get("env")
@@ -63,11 +70,8 @@ def validate(summary):
         raise ValueError("window must contain a string spec")
     if number(window.get("ms"), "window.ms") == 0:
         raise ValueError("window.ms must be positive")
-    if type(window.get("first_present")) is not int or window["first_present"] < 0:
-        raise ValueError("window.first_present must be a non-negative integer")
-    if type(summary.get("presents")) is not int or summary["presents"] <= 0:
-        raise ValueError("presents must be a positive integer")
-    number(summary["presents"], "presents")
+    unsigned_count(window.get("first_present"), "window.first_present")
+    unsigned_count(summary.get("presents"), "presents", minimum=1)
     frames = summary.get("frame_ms")
     if not isinstance(frames, dict):
         raise ValueError("frame_ms must be an object")
@@ -85,9 +89,12 @@ def validate(summary):
         raise ValueError("top_phases_ms_per_frame must be an object")
     for name, value in phases.items():
         number(value, f"top_phases_ms_per_frame.{name}")
-    graphics = summary.get("graphics_track", {})
-    if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
-        raise ValueError("graphics_track must map names to non-negative integers")
+    for field in ("graphics_track", "owned_draw_counts"):
+        counters = summary.get(field, {})
+        if not isinstance(counters, dict) or any(not isinstance(name, str) for name in counters):
+            raise ValueError(f"{field} must map names to unsigned 64-bit integers")
+        for name, value in counters.items():
+            unsigned_count(value, f"{field}.{name}")
     return summary
 
 
@@ -98,6 +105,18 @@ def unique_json_object(pairs):
             raise ValueError(f"duplicate JSON field: {name!r}")
         result[name] = value
     return result
+
+
+def check_finite_json(record):
+    pending = list(record.values())
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("summary contains a non-finite JSON number")
 
 
 def load_summary(path, trace=None):
@@ -127,7 +146,9 @@ def load_summary(path, trace=None):
                          "or provide a file containing one summary line")
     line_number, record = selected
     try:
-        return validate(record)
+        validate(record)
+        check_finite_json(record)
+        return record
     except ValueError as error:
         raise ValueError(f"{path}:{line_number}: {error}") from error
 
@@ -181,7 +202,7 @@ def compare(baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
         context["window.spec"] = summary["window"]["spec"]
-        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+|summary_every [0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
         context.update({f"env.{key}": value for key, value in summary["env"].items()
                         if key != "APS5_TRACE_DIR"})

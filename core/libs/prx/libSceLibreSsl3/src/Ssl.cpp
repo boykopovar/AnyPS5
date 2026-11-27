@@ -85,7 +85,7 @@ int RetainGuest(T* object, const char* function) {
 
 extern "C" {
 
-int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
+int APS5_VABI SSL_up_ref_nid_postfix(LibreSslSsl* ssl) {
     if (!ssl)
         throw std::invalid_argument("SSL_up_ref requires an SSL");
     return RetainGuest(ssl, __func__);

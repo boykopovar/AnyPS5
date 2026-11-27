@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [Cube texel offsets](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) (shader recompiler) - a sample or gather through a cube T# drops the instruction's texel offset (`MakeSampleSetup`), as measured on RDNA2 (gfx1036, PC) with the [hardware oracle](../HW_ORACLE.md), not on the PS5's gfx1013. On a 64x64 32_FLOAT cube, each of these returned what the same instruction without an offset returns, on 32 coordinates for each of eleven offsets from (0, 0, 0) to (-32, 31, 0) and (1, 1, 5): `image_sample_o`, `_lz_o`, `_l_o`, `_b_o`, `_cl_o`, `_b_cl_o`, `_c_o`, `_c_lz_o`, `_c_l_o` and `_c_b_o`, and `image_gather4_o`, `_lz_o`, `_l_o`, `_b_o`, `_cl_o`, `_c_o` and `_c_lz_o`. The first eight were measured with DIM CUBE, DIM 2D and DIM 2D_ARRAY under point and bilinear filters, the others with DIM CUBE under a point filter. On a 2D-array T#, the same offsets moved the result. Offsets of derivative samples (`image_sample_d_o`, `image_sample_c_d_o`) are not measured on a cube.

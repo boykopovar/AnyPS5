@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -437,8 +438,8 @@ int APS5_VABI sceSysmoduleIsCalledFromSysModule(const void* address) {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleIsCameraPreloaded() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSysmoduleIsCameraPreloaded(void) {
+    if (sceKernelIsPs4Process() == 1) NotImplemented_nid_no_patch("sceSysmoduleIsCameraPreloaded in a PS4 process");
     return 0;
 }
 
@@ -480,9 +481,8 @@ int APS5_VABI sceSysmodulePreloadModuleForLibkernel() {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleUnloadModuleByNameInternal() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSysmoduleUnloadModuleByNameInternal(KernelModule handle, std::size_t args, const void* argp, std::uint32_t flags, int* res) {
+    return sceKernelStopUnloadModule(handle, args, argp, flags, nullptr, res);
 }
 
 }

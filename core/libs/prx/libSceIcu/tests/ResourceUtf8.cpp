@@ -31,6 +31,8 @@ void StoreInt32(std::uint8_t* bundle, std::size_t offset, std::int32_t value) {
 int main() {
     alignas(8) std::uint8_t pool[160] = {};
     const std::uint8_t* root = pool;
+    StoreInt32(pool, 0, 1);
+    StoreUInt16(pool, 4, u'z');
     StoreInt32(pool, 8, 2);
     StoreUInt16(pool, 12, u'h');
     StoreUInt16(pool, 14, u'i');
@@ -58,6 +60,9 @@ int main() {
     StoreInt32(pool, 104, 2);
     StoreUInt16(pool, 108, 0x00ff);
     StoreUInt16(pool, 110, 0x00ff);
+    StoreUInt16(pool, 112, 1);
+    StoreUInt16(pool, 114, 96);
+    StoreUInt32(pool, 116, 0u);
 
     alignas(8) std::uint8_t stringBundle[BundleSize] = {};
     std::memcpy(stringBundle + 48, &root, sizeof(root));
@@ -94,6 +99,17 @@ int main() {
     StoreUInt32(multibyteBundle, ResourceOffset, 26u);
     StoreInt32(multibyteBundle, SizeOffset, 1);
     auto* multibyteResource = reinterpret_cast<UResourceBundle*>(multibyteBundle);
+
+    alignas(8) std::uint8_t zeroBundle[BundleSize] = {};
+    std::memcpy(zeroBundle + 48, &root, sizeof(root));
+    StoreInt32(zeroBundle, SizeOffset, 1);
+    auto* zeroResource = reinterpret_cast<UResourceBundle*>(zeroBundle);
+
+    alignas(8) std::uint8_t zeroTableBundle[BundleSize] = {};
+    std::memcpy(zeroTableBundle + 48, &root, sizeof(root));
+    StoreUInt32(zeroTableBundle, ResourceOffset, (2u << 28) | 28u);
+    StoreInt32(zeroTableBundle, SizeOffset, 1);
+    auto* zeroTableResource = reinterpret_cast<UResourceBundle*>(zeroTableBundle);
 
     std::int32_t status = 0;
     std::int32_t length = 8;
@@ -148,6 +164,33 @@ int main() {
     result = ures_getUTF8String_nid_postfix(emptyResource, empty, &length, 0, &status);
     Require(result != nullptr && *result == 0 && status == 0 && length == 0,
         "ures_getUTF8String did not return the empty string");
+
+    status = 0;
+    length = 4;
+    char zero[4] = {'x', 'x', 'x', 'x'};
+    result = ures_getUTF8String_nid_postfix(zeroResource, zero, &length, 1, &status);
+    Require(result == zero && status == 0 && length == 0 && zero[0] == 0,
+        "ures_getUTF8String did not read resource 0 as the empty string");
+
+    status = 0;
+    length = 4;
+    result = ures_getUTF8String_nid_postfix(zeroResource, zero, &length, 0, &status);
+    Require(result != nullptr && *result == 0 && status == 0 && length == 0,
+        "ures_getUTF8String did not return resource 0 as the empty string");
+
+    status = 0;
+    length = 4;
+    zero[0] = 'x';
+    result = ures_getUTF8StringByIndex_nid_postfix(zeroTableResource, 0, zero, &length, 1, &status);
+    Require(result == zero && status == 0 && length == 0 && zero[0] == 0,
+        "ures_getUTF8StringByIndex did not read a resource 0 item as the empty string");
+
+    status = 0;
+    length = 4;
+    zero[0] = 'x';
+    result = ures_getUTF8StringByKey_nid_postfix(zeroTableResource, "a", zero, &length, 1, &status);
+    Require(result == zero && status == 0 && length == 0 && zero[0] == 0,
+        "ures_getUTF8StringByKey did not read a resource 0 item as the empty string");
 
     status = 0;
     length = 8;

@@ -221,6 +221,10 @@ void TestHeaps() {
     Require(allocatorEx.allocator.context == &memoryHeap && allocatorEx.outOfMemoryError == 0x1234,
         "the extended allocator carries the caller's error code");
     UseAllocator(allocatorEx.allocator);
+    NpAllocator memoryAllocator {};
+    sceNpMemoryHeapGetAllocator(&memoryHeap, &memoryAllocator);
+    Require(memoryAllocator.context == &memoryHeap && memoryAllocator.allocate == allocatorEx.allocator.allocate,
+        "the memory heap allocator getter writes the allocator");
     sceNpMemoryHeapDestroy(&memoryHeap);
 
     Require(memoryHeap.memory.address == nullptr && memoryHeap.heap.mspace == nullptr, "destroying clears the memory heap");
@@ -239,6 +243,13 @@ void TestHeaps() {
 
     Require(allocator.context == &heap, "the heap allocator uses the heap as its context");
     UseAllocator(allocator);
+    errno = 71;
+    sceNpHeapGetAllocator(&heap, reinterpret_cast<NpAllocator*>(0x10));
+    sceNpMemoryHeapGetAllocator(&memoryHeap, reinterpret_cast<NpAllocator*>(0x10));
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, reinterpret_cast<NpAllocatorEx*>(0x10));
+    sceNpGlobalHeapGetAllocator(reinterpret_cast<NpAllocator*>(0x10));
+    sceNpGlobalHeapGetAllocatorEx(reinterpret_cast<NpAllocatorEx*>(0x10));
+    Require(errno == 71, "unwritable allocator outputs are skipped and errno is kept");
     NpHeapStat stat {};
     Require(sceNpHeapGetStat(&heap, &stat) == 0 && stat.maxInuseSize >= stat.currentInuseSize, "heap statistics are reported");
     errno = 71;
@@ -264,8 +275,24 @@ void TestHeaps() {
     Require(sceNpArchInit() == 0 && sceNpArchInit() == 0, "the library initialises more than once");
     NpAllocatorEx* global = sceNpGlobalHeapGetAllocatorExPtr();
     Require(global->outOfMemoryError == NpOutOfMemory, "the global allocator reports the library's out-of-memory error");
+    NpAllocator globalAllocator {};
+    sceNpGlobalHeapGetAllocator(&globalAllocator);
+    NpAllocatorEx globalAllocatorEx {};
+    sceNpGlobalHeapGetAllocatorEx(&globalAllocatorEx);
+    Require(globalAllocator.context == global->allocator.context && globalAllocator.allocate == global->allocator.allocate
+            && globalAllocatorEx.allocator.context == global->allocator.context && globalAllocatorEx.outOfMemoryError == NpOutOfMemory,
+        "the global allocator getters write the global heap allocator");
+    NpAllocator* globalPointer = sceNpGlobalHeapGetAllocatorPtr();
+    Require(globalPointer != nullptr && globalPointer->context == global->allocator.context && globalPointer->allocate == global->allocator.allocate,
+        "sceNpGlobalHeapGetAllocatorPtr returns the global heap allocator");
+    UseAllocator(*globalPointer);
     UseAllocator(global->allocator);
     sceNpArchTerm();
+
+    std::array<std::uint32_t, 16> randoms {};
+    for (auto& value : randoms) value = sceNpGetRandom();
+    Require(std::any_of(randoms.begin() + 1, randoms.end(), [&](std::uint32_t value) { return value != randoms[0]; }),
+        "sceNpGetRandom returns varying values");
 
     UseAllocator(sceNpGlobalHeapGetAllocatorExPtr()->allocator);
     sceNpArchTerm();
@@ -1104,6 +1131,19 @@ void TestCalloutSelfTermination() {
     Require(context.initialized == 0, "the restarted context terminates from another thread");
 }
 
+void TestCalloutFarDeadline() {
+    NpCalloutContext context {};
+    NpCallout callout {};
+    Require(sceNpCalloutInitCtx(&context, "np-far", 0x4000, 0, 0) == 0, "a callout context starts for a far deadline");
+    Require(sceNpCalloutStartOnCtx64(&context, &callout, UINT64_MAX, RecordUnexpected, nullptr) == 0,
+        "a callout with the largest delay is queued");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    int wasPending = 0;
+    Require(sceNpCalloutStopOnCtx(&context, &callout, &wasPending) == 0 && wasPending == 1,
+        "a callout whose deadline would overflow is not run at once");
+    sceNpCalloutTermCtx(&context);
+}
+
 bool Equals(const char* actual, const char* expected) {
     return std::strcmp(actual, expected) == 0;
 }
@@ -1444,6 +1484,19 @@ void TestJsonParser() {
     const std::size_t cut = escaped.find("\\n") + 1;
     Require(ParseJson(&strings, escaped, {cut, 2, escaped.size() - cut - 2}) == 0 && joined() == decoded,
         "an escape and a UTF-8 sequence split between calls still decode");
+    const std::string stray = "{\"s\":\"\xE6" "A\"}";
+    const std::string strayDecoded = "5 0 0 s - -1|6 0 0 s 4:\xE6" "A -1";
+    Require(ParseJson(&strings, stray) == 0 && joined() == strayDecoded, "a lead byte that the next byte does not continue is decoded alone");
+    Require(ParseJson(&strings, stray, {7, 2, 1}) == 0 && joined() == strayDecoded,
+        "a lead byte split from the bytes that do not continue it keeps the bytes after it");
+    const std::string strayThree = "{\"s\":\"\xF0" "AB\"}";
+    const std::string strayThreeDecoded = "5 0 0 s - -1|6 0 0 s 4:\xF0" "AB -1";
+    Require(ParseJson(&strings, strayThree, {7, 1, 2, 1}) == 0 && joined() == strayThreeDecoded,
+        "a lead byte split across three calls keeps every byte after it");
+    const std::string partial = "{\"s\":\"\xF0\x90" "AB\"}";
+    const std::string partialDecoded = "5 0 0 s - -1|6 0 0 s 4:\xF0\x90" "AB -1";
+    Require(ParseJson(&strings, partial, {8, 1, 2, 1}) == 0 && joined() == partialDecoded,
+        "a partial multi-byte prefix split across three calls keeps its buffered continuation byte");
 
     const NpJsonRule anyElement[] = {{2, nullptr, 1}, {0, "", 0}};
     const NpJsonRule* deepLevels[] = {anyElement};
@@ -2379,6 +2432,7 @@ int main() {
     TestHexAndCopies();
     TestCallouts();
     TestCalloutSelfTermination();
+    TestCalloutFarDeadline();
     TestIds();
     TestUtilGuestPointers();
     TestJid();

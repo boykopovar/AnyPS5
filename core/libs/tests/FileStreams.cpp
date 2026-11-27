@@ -61,7 +61,8 @@ static void CheckWriteFlushErrno(const std::string& base) {
         Require(fputs_nid_postfix("", stream) >= 0 && errno == 35);
         Require(fflush_nid_postfix(stream) == 0 && errno == 35);
         Require(fflush_nid_postfix(nullptr) == 0 && errno == 35);
-        Require(fclose_nid_postfix(stream) == 0 && std::remove(path.c_str()) == 0);
+        Require(fclose_nid_postfix(stream) == 0 && errno == 35);
+        Require(std::remove(path.c_str()) == 0);
     }
 #ifndef _WIN32
     int fds[2];
@@ -243,6 +244,23 @@ static void CheckWriteFlushErrno(const std::string& base) {
         Require(errno == 35);
         drainPipe();
         Require(stream.Close() == 0);
+    }
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOFBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+        char payload[16] = "close test";
+        Require(fwrite_nid_postfix(payload, 1, sizeof(payload), &stream) == sizeof(payload));
+        errno = 0;
+        Require(fclose_nid_postfix(&stream) == EOF);
+        Require(errno == 35, "fclose leaked the native errno of its final flush");
+        Require(!stream.IsOpen());
+        drainPipe();
     }
     struct LineBufferCase {
         void (*controlWrite)(FileStream*);
