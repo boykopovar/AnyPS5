@@ -723,7 +723,7 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     return {};
 }
 
-static std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
+std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, registered] : registry.threads) {
