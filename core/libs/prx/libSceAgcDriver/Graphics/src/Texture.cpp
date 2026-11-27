@@ -1522,8 +1522,9 @@ void Texture::createFirstLayerView(const GuestTextureResource& descriptor, VkIma
         info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         arrayInfo = info;
     }
-    if (descriptor.dimension != TextureDimension::k2DArray && (viewInfo.viewType != VK_IMAGE_VIEW_TYPE_2D_ARRAY || descriptor.dimension != TextureDimension::k1DArray)) return;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    const bool line = descriptor.dimension == TextureDimension::k1DArray && viewInfo.viewType == VK_IMAGE_VIEW_TYPE_1D_ARRAY;
+    if (!line && descriptor.dimension != TextureDimension::k2DArray && (viewInfo.viewType != VK_IMAGE_VIEW_TYPE_2D_ARRAY || descriptor.dimension != TextureDimension::k1DArray)) return;
+    viewInfo.viewType = line ? VK_IMAGE_VIEW_TYPE_1D : VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.subresourceRange.layerCount = 1;
     Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &firstLayerView), "vkCreateImageView first layer");
     firstLayerRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
@@ -1565,7 +1566,7 @@ VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
         info.subresourceRange.layerCount = 1;
     } else {
         if (firstLayer) {
-            info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            info.viewType = info.viewType == VK_IMAGE_VIEW_TYPE_1D_ARRAY ? VK_IMAGE_VIEW_TYPE_1D : VK_IMAGE_VIEW_TYPE_2D;
             info.subresourceRange.layerCount = 1;
         }
         if (srgbMinLod != 0.0f) {

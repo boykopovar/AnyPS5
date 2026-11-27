@@ -137,6 +137,7 @@ public:
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
     static void SetCaptureCheckHook(void (*hook)());
+    static void SetDispatchItemHook(void (*hook)(std::span<const Graphics::GuestMemorySnapshot>));
 
 private:
     class RecaptureScope {

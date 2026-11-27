@@ -1802,20 +1802,34 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         std::lock_guard lock(snapshot.prepared->mutex);
         if (std::ranges::find(offsets, codeOffset) == offsets.end()) offsets.push_back(codeOffset);
     };
+    ShaderRecompiler::NanSpeculationRetryScope retry(request.shader.codeAddress, static_cast<std::uint32_t>(request.shader.stage));
+    const auto abandon = [&] { retry.Abandoned(); };
     while (true) {
         try {
-            return memory.Capture(invocation);
+            auto capture = memory.Capture(invocation);
+            retry.Succeeded();
+            return capture;
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
-            if (invocation.Request().context.convertedSamples) throw;
+            if (invocation.Request().context.convertedSamples) { abandon(); throw; }
             record(snapshot.prepared->convertedSamples);
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
-            if (invocation.Request().context.layerRowSamples) throw;
+            if (invocation.Request().context.layerRowSamples) { abandon(); throw; }
             record(snapshot.prepared->layerRowSamples);
         } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
-            if (invocation.Request().context.typedBufferLoads) throw;
+            if (invocation.Request().context.typedBufferLoads) { abandon(); throw; }
             record(snapshot.prepared->typedBufferLoads);
+        } catch (const ShaderRecompiler::NanSpeculationRetry&) {
+            retry.Retried();
+        } catch (...) {
+            abandon();
+            throw;
         }
-        invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
+        try {
+            invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
+        } catch (...) {
+            abandon();
+            throw;
+        }
     }
 }
 namespace {

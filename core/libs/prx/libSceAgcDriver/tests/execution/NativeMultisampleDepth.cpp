@@ -2155,6 +2155,22 @@ void CheckUnwrittenGuestAccess(Context context, VkFormat format, std::uint32_t f
 
 enum class BufferWrite { DepthPlane, Htile };
 
+bool FixtureImportsInPlace() {
+    if (SharedMemoryReachableByGpuStores()) return true;
+    const Device importing(true);
+    const auto context = importing.GetContext();
+    TargetMemory probe(65536u, true);
+    Recorder recorder(context);
+    recorder.Activate();
+    GuestBufferMemory buffer(context);
+    buffer.AddWritable(probe.Address(), 65536u);
+    buffer.Upload(false);
+    const bool imported = HostImportCovers(context, probe.Address(), 65536u);
+    buffer.WriteBack();
+    recorder.Sync();
+    return imported;
+}
+
 void CheckBufferWrite(Context context, VkFormat format, std::uint32_t fragments, BufferWrite write) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, fragments));
@@ -2194,6 +2210,10 @@ void CheckBufferWrite(Context context, VkFormat format, std::uint32_t fragments,
 void CheckBufferWrites(Context context, VkFormat format, std::uint32_t fragments) {
     if (context.hostImportAlignment == 0u) {
         std::printf("skipped native depth buffer writes: the device lacks VK_EXT_external_memory_host, VK_KHR_buffer_device_address or the bufferDeviceAddress feature\n");
+        return;
+    }
+    if (!FixtureImportsInPlace()) {
+        std::printf("skipped native depth buffer writes: /dev/udmabuf cannot be opened and the fixture is not imported in place without it\n");
         return;
     }
     for (const auto write : {BufferWrite::DepthPlane, BufferWrite::Htile}) CheckBufferWrite(context, format, fragments, write);
@@ -5886,8 +5906,12 @@ int main(int argc, char** argv) {
             ++checked;
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::ImportWindowWrite, ClearSource::HtileDispatch, lock);
             ++checked;
-            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DriverDispatch, ClearSource::HtileDispatch, lock);
-            ++checked;
+            if (FixtureImportsInPlace()) {
+                CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DriverDispatch, ClearSource::HtileDispatch, lock);
+                ++checked;
+            } else {
+                std::puts("skipped native depth clear through the driver: /dev/udmabuf cannot be opened and the fixture is not imported in place without it");
+            }
             std::printf("Native depth completed clear cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
@@ -6109,6 +6133,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--buffer-clear") {
+            if (!FixtureImportsInPlace()) {
+                std::puts("skipped, /dev/udmabuf cannot be opened and the fixture is not imported in place without it");
+                return VulkanTestSkipped;
+            }
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::DriverBufferDispatch, ClearSource::HtileDispatch, lock);
             std::puts("Native depth clear by the buffer HTILE mask kernel through PM4 checked");
             return 0;

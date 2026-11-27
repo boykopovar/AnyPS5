@@ -28,6 +28,24 @@ public:
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled, bool fma, bool hostNans) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; float16HostNans = enabled && hostNans; }
     void SetNativeInteger16(bool enabled) { nativeInteger16 = enabled; }
+    void SetNanFast(bool enabled) { nanFast = enabled; }
+    [[nodiscard]] IrValue* TakeNanSeen() {
+        IrValue* seen = nanSeen;
+        nanSeen = nullptr;
+        ++nanRegion;
+        return seen;
+    }
+    void SwitchBlock(IrBlock& next) { ir.SetInsertionPoint(next); }
+    struct SpeculationState {
+        bool execLowInactive = false;
+        bool execHighInactive = false;
+    };
+    [[nodiscard]] SpeculationState SaveSpeculationState() const { return {execLowInactive, execHighInactive}; }
+    void RestoreSpeculationState(const SpeculationState& state) {
+        execLowInactive = state.execLowInactive;
+        execHighInactive = state.execHighInactive;
+    }
+    [[nodiscard]] IrValue& WaveAny(IrValue& flag);
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
@@ -105,6 +123,8 @@ private:
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
+    void noteNan(IrValue& condition, IrValue& value, std::uint8_t lanes);
+    IrU1 anyHalfNan(IrU32 word);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr, bool multiplication = false);
     IrValue* propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result);
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
@@ -435,6 +455,9 @@ private:
     bool relativeVectorRead = false;
     bool execLowInactive = false;
     bool execHighInactive = false;
+    bool nanFast = false;
+    IrValue* nanSeen = nullptr;
+    std::uint32_t nanRegion = 0;
 };
 
 // Debug aid: APS5_PROBE=<pc hex>:<vgpr>[:<shift>] copies VGPR <vgpr> into v255 right after the

@@ -1,18 +1,65 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Recompiler.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace ShaderRecompiler {
 
 namespace {
+
+bool UsesTessellationLanes(ShaderStageKind stage) {
+    return stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation;
+}
+
+std::optional<IrOpcode> SpeculationReader(IrOpcode write) {
+    switch (write) {
+        case IrOpcode::SetRegister: return IrOpcode::GetRegister;
+        case IrOpcode::SetThreadBitScalarRegister: return IrOpcode::GetThreadBitScalarRegister;
+        case IrOpcode::SetScalarMaskTag: return IrOpcode::GetScalarMaskTag;
+        case IrOpcode::SetScalarRegister: return IrOpcode::GetScalarRegister;
+        case IrOpcode::SetVectorRegister: return IrOpcode::GetVectorRegister;
+        case IrOpcode::SetScc: return IrOpcode::GetScc;
+        case IrOpcode::SetExec: return IrOpcode::GetExec;
+        case IrOpcode::SetExecLo: return IrOpcode::GetExecLo;
+        case IrOpcode::SetExecHi: return IrOpcode::GetExecHi;
+        case IrOpcode::SetVcc: return IrOpcode::GetVcc;
+        case IrOpcode::SetVccLo: return IrOpcode::GetVccLo;
+        case IrOpcode::SetVccHi: return IrOpcode::GetVccHi;
+        case IrOpcode::SetM0: return IrOpcode::GetM0;
+        default: return std::nullopt;
+    }
+}
+
+bool WritesSpeculationState(IrOpcode opcode) {
+    switch (opcode) {
+        case IrOpcode::SetGotoVariable:
+        case IrOpcode::SetTessellationAttribute:
+        case IrOpcode::SetAttribute:
+            return true;
+        default:
+            return IrOpcodeName(opcode).starts_with("Store") || IrOpcodeName(opcode).starts_with("Image") || IrOpcodeName(opcode).starts_with("Atomic") || IrOpcodeName(opcode).starts_with("Export");
+    }
+}
+
+std::uint64_t SpeculationKey(const IrValue& write) {
+    std::uint64_t key = static_cast<std::uint64_t>(write.Opcode()) << 40u;
+    if (write.ArgumentCount() > 1u) {
+        const GuestRegister target = write.Argument(0)->Register();
+        key |= (static_cast<std::uint64_t>(target.bank) << 32u) | target.index;
+    }
+    return key;
+}
 
 IrShaderStage toIrShaderStage(ShaderStageKind stage) {
     switch (stage) {
@@ -536,6 +583,35 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
 
 }
 
+bool NanSpeculationRestorable(const IrBlock& block, std::size_t firstInstruction) {
+    const auto& instructions = block.Instructions();
+    return std::none_of(std::next(instructions.begin(), static_cast<std::ptrdiff_t>(firstInstruction)), instructions.end(), [](const IrValue* write) { return !SpeculationReader(write->Opcode()).has_value() && WritesSpeculationState(write->Opcode()); });
+}
+
+bool NanSpeculationLaneLocal(const IrBlock& block, std::size_t firstInstruction) {
+    const auto& instructions = block.Instructions();
+    return std::none_of(std::next(instructions.begin(), static_cast<std::ptrdiff_t>(firstInstruction)), instructions.end(), [](const IrValue* value) {
+        switch (value->Opcode()) {
+            case IrOpcode::ReadFirstLane:
+            case IrOpcode::ReadLane:
+            case IrOpcode::Ballot:
+            case IrOpcode::DppMoveU32:
+            case IrOpcode::DppUpdateU32:
+            case IrOpcode::WqmU64:
+            case IrOpcode::Permlane16U32:
+            case IrOpcode::SwizzleU32:
+            case IrOpcode::WindowLaneGuard:
+            case IrOpcode::FPInterpolateF32:
+            case IrOpcode::FPInterpolateF16:
+            case IrOpcode::InterpolateHostP1:
+            case IrOpcode::InterpolateHostP2:
+                return true;
+            default:
+                return false;
+        }
+    });
+}
+
 IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const ControlFlowGraph& cfg, const TranslateOptions& options) const {
     validateTranslateOptions(options);
     if (cfg.linkEscapeWaveSize == options.waveSize) {
@@ -646,18 +722,107 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     blocks.push_back(&program.CreateBlock());
     blockInfos.push_back(BlockInfo{entryBlockId, cfg.blocks.front().startProgramCounter, cfg.blocks.front().startProgramCounter, entryTerminator});
 
+    struct SpeculationRegion {
+        std::uint32_t begin = 0;
+        std::uint32_t end = 0;
+        std::size_t exactIndex = 0;
+        std::size_t mergeIndex = 0;
+    };
+    const auto& speculation = NanSpeculation();
+    const auto pureVector = [&](const RdnaInstruction& instruction) {
+        switch (GetRdnaInstructionFamily(instruction.rawWords[0])) {
+            case RdnaInstructionFamily::VOP1:
+            case RdnaInstructionFamily::VOP2:
+            case RdnaInstructionFamily::VOP3:
+            case RdnaInstructionFamily::VOP3P:
+            case RdnaInstructionFamily::VOPC:
+                break;
+            default:
+                return false;
+        }
+        if (instruction.destination.kind == RdnaOperandKind::ScalarRegister) return false;
+        switch (instruction.op) {
+            case RdnaOpcode::VReadfirstlaneB32:
+            case RdnaOpcode::VReadlaneB32:
+            case RdnaOpcode::VMovreldB32:
+            case RdnaOpcode::VMovrelsB32:
+            case RdnaOpcode::VMovrelsdB32:
+            case RdnaOpcode::VMovrelsd2B32:
+            case RdnaOpcode::VSwaprelB32:
+            case RdnaOpcode::VPermlane16B32:
+            case RdnaOpcode::VPermlanex16B32:
+                return false;
+            default:
+                break;
+        }
+        if (isCodeTableLoad(cfg, instruction.programCounter) || isUnlinkedCall(cfg, instruction.programCounter)) return false;
+        if (cfg.hasFetchCall && instruction.programCounter == cfg.fetchCallProgramCounter) return false;
+        return options.embeddedFetch == nullptr || std::ranges::find(options.embeddedFetch->loads, instruction.programCounter, &EmbeddedFetchLoad::programCounter) == options.embeddedFetch->loads.end();
+    };
+    const auto regionsOf = [&](const BasicBlock& source) {
+        std::vector<SpeculationRegion> regions;
+        if (!speculation.enabled || NanSpeculationSuppressed(options.shaderHash) || UsesTessellationLanes(options.stage) || ((speculation.stageMask >> static_cast<std::uint32_t>(options.stage)) & 1u) == 0u || source.terminator.loopHeader || relativeBlocks.contains(source.id)) return regions;
+        std::uint32_t index = source.instructionBegin;
+        while (index < source.instructionEnd) {
+            if (!pureVector(decoded.instructions[index])) {
+                ++index;
+                continue;
+            }
+            std::uint32_t end = index;
+            while (end < source.instructionEnd && end - index < speculation.maximumVectorInstructions && pureVector(decoded.instructions[end])) ++end;
+            if (end - index >= speculation.stageMinimum[static_cast<std::size_t>(options.stage)]) regions.push_back({index, end});
+            index = end;
+        }
+        return regions;
+    };
+
     std::unordered_map<std::uint32_t, std::size_t> blockIndices;
+    std::unordered_map<std::uint32_t, std::size_t> lastIndices;
+    std::unordered_map<std::uint32_t, std::vector<SpeculationRegion>> regionsByBlock;
     blockIndices.reserve(cfg.blocks.size());
+    std::uint32_t nextBlockId = entryBlockId + 1u;
     for (const auto& sourceBlock : cfg.blocks) {
         if (!blockIndices.emplace(sourceBlock.id, blocks.size()).second) {
             throw std::runtime_error("control flow graph contains duplicate block id " + std::to_string(sourceBlock.id));
         }
+        auto regions = regionsOf(sourceBlock);
+        program.Metadata().nanSpeculationCandidates += static_cast<std::uint32_t>(regions.size());
+        std::size_t current = blocks.size();
         blocks.push_back(&program.CreateBlock());
         blockInfos.push_back(BlockInfo{sourceBlock.id, sourceBlock.startProgramCounter, sourceBlock.endProgramCounter, sourceBlock.terminator});
+        for (auto& region : regions) {
+            const std::uint32_t exactId = nextBlockId++;
+            const std::uint32_t mergeId = nextBlockId++;
+            const std::uint32_t regionStart = decoded.instructions[region.begin].programCounter;
+            const std::uint32_t regionEnd = decoded.instructions[region.end - 1u].programCounter;
+            const Terminator original = blockInfos[current].terminator;
+            Terminator speculative;
+            speculative.kind = TerminatorKind::ConditionalBranch;
+            speculative.condition = BranchCondition::ScalarInstruction;
+            speculative.trueBlock = exactId;
+            speculative.falseBlock = mergeId;
+            speculative.mergeBlock = mergeId;
+            blockInfos[current].terminator = speculative;
+            Terminator rejoin;
+            rejoin.kind = TerminatorKind::Branch;
+            rejoin.trueBlock = mergeId;
+            region.exactIndex = blocks.size();
+            blocks.push_back(&program.CreateBlock());
+            blockInfos.push_back(BlockInfo{exactId, regionStart, regionEnd, rejoin});
+            region.mergeIndex = blocks.size();
+            blocks.push_back(&program.CreateBlock());
+            blockInfos.push_back(BlockInfo{mergeId, regionEnd, sourceBlock.endProgramCounter, original});
+            blocks[current]->AddBranch(blocks[region.exactIndex]);
+            blocks[current]->AddBranch(blocks[region.mergeIndex]);
+            blocks[region.exactIndex]->AddBranch(blocks[region.mergeIndex]);
+            current = region.mergeIndex;
+        }
+        lastIndices.emplace(sourceBlock.id, current);
+        regionsByBlock.emplace(sourceBlock.id, std::move(regions));
     }
 
     for (const auto& sourceBlock : cfg.blocks) {
-        const auto sourceIndex = blockIndices.at(sourceBlock.id);
+        const auto sourceIndex = lastIndices.at(sourceBlock.id);
         for (const auto successor : sourceBlock.successors) {
             const auto target = blockIndices.find(successor);
             if (target == blockIndices.end()) {
@@ -710,7 +875,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 if (point.programCounter == programCounter && point.afterInstruction == afterInstruction) context.TranslateSplitState(*options.splitState, point);
             }
         };
-        for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
+        const auto translateOne = [&](std::uint32_t index) {
             const auto& instruction = decoded.instructions[index];
             if (index != cfgBlock.instructionBegin) splitPoints(decoded.instructions[index - 1u].programCounter, true);
             splitPoints(instruction.programCounter, false);
@@ -718,11 +883,11 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 const auto table = std::find_if(cfg.codeTableLoads.begin(), cfg.codeTableLoads.end(), [&](const auto& entry) { return entry.programCounter == instruction.programCounter; });
                 if (table == cfg.codeTableLoads.end()) throw std::runtime_error("missing shader code table values");
                 context.TranslateCodeTableLoad(instruction, *table);
-                continue;
+                return;
             }
             if (isUnlinkedCall(cfg, instruction.programCounter)) {
                 context.TranslateUnlinkedCall(instruction);
-                continue;
+                return;
             }
             if (options.embeddedFetch != nullptr) {
                 const auto load = std::ranges::find(options.embeddedFetch->loads, instruction.programCounter, &EmbeddedFetchLoad::programCounter);
@@ -733,7 +898,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                     while (attribute < static_cast<std::uint32_t>(vertex.resourcesNum) && vertex.resourcesDst[attribute].attrId != load->attributeId) ++attribute;
                     if (attribute == static_cast<std::uint32_t>(vertex.resourcesNum)) throw std::runtime_error("prepared vertex fetch has no matching semantic");
                     context.TranslateEmbeddedFetch(instruction, attribute, load->componentCount);
-                    continue;
+                    return;
                 }
             }
             context.TranslateInstruction(instruction);
@@ -742,12 +907,102 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                     context.TranslateEmbeddedFetch(fetch, attribute, fetch.dataDwordCount);
                 });
             }
+        };
+        std::size_t currentIndex = typedIndex;
+        const auto& regions = regionsByBlock.at(cfgBlock.id);
+        auto region = regions.begin();
+        for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd;) {
+            if (region == regions.end() || index != region->begin) {
+                translateOne(index++);
+                continue;
+            }
+            IrBlock& fast = *blocks[currentIndex];
+            auto& instructions = fast.Instructions();
+            const auto before = instructions.size();
+            const auto state = context.SaveSpeculationState();
+            const auto checksBefore = program.Metadata().nanSpeculationChecks.size();
+            const auto laneWritesBefore = program.Metadata().nanSpeculationLaneWrites.size();
+            const auto fastOpsBefore = program.Metadata().nanSpeculationFastOps;
+            context.SetNanFast(true);
+            for (std::uint32_t inner = region->begin; inner < region->end; ++inner) translateOne(inner);
+            context.SetNanFast(false);
+            IrValue* seen = context.TakeNanSeen();
+            const auto fastOps = program.Metadata().nanSpeculationFastOps - fastOpsBefore;
+            const auto emitted = static_cast<std::uint64_t>(instructions.size() - before);
+            const bool cheap = seen != nullptr && (fastOps < speculation.minimumFastOps || static_cast<std::uint64_t>(fastOps) * 100u < emitted * speculation.minimumDensityPercent);
+            const bool declined = seen != nullptr && (cheap || !NanSpeculationRestorable(fast, before) || (options.stage == ShaderStageKind::Pixel && !NanSpeculationLaneLocal(fast, before)));
+            if (declined) {
+                while (instructions.size() > before) {
+                    IrValue* dropped = instructions.back();
+                    fast.RemoveInstruction(dropped);
+                    dropped->Invalidate();
+                }
+                program.Metadata().nanSpeculationChecks.resize(checksBefore);
+                program.Metadata().nanSpeculationLaneWrites.resize(laneWritesBefore);
+                program.Metadata().nanSpeculationFastOps = fastOpsBefore;
+                context.RestoreSpeculationState(state);
+                for (std::uint32_t inner = region->begin; inner < region->end; ++inner) translateOne(inner);
+                ++program.Metadata().nanSpeculationDeclines;
+            }
+            if (seen == nullptr && !declined) ++program.Metadata().nanSpeculationClean;
+            if (seen == nullptr || declined) {
+                IrBlock& merge = *blocks[region->mergeIndex];
+                std::erase(fast.Successors(), &merge);
+                std::erase(merge.Predecessors(), &fast);
+                Terminator straight;
+                straight.kind = TerminatorKind::Branch;
+                straight.trueBlock = blockInfos[region->exactIndex].id;
+                blockInfos[currentIndex].terminator = straight;
+                currentIndex = region->mergeIndex;
+                context.SwitchBlock(merge);
+                index = region->end;
+                ++region;
+                continue;
+            }
+            ++program.Metadata().nanSpeculationKept;
+            MarkNanSpeculationApplied(options.shaderHash);
+            IrValue* first = before < instructions.size() ? *std::next(instructions.begin(), static_cast<std::ptrdiff_t>(before)) : nullptr;
+            std::vector<std::pair<IrValue*, IrValue*>> restores;
+            std::unordered_set<std::uint64_t> restored;
+            for (auto position = std::next(instructions.begin(), static_cast<std::ptrdiff_t>(before)); position != instructions.end(); ++position) {
+                IrValue* write = *position;
+                const auto reader = SpeculationReader(write->Opcode());
+                if (!reader.has_value()) continue;
+                if (!restored.insert(SpeculationKey(*write)).second) continue;
+                IrValue& snapshot = program.CreateValue(*reader, IrOpcodeType(*reader));
+                for (std::size_t argument = 0; argument + 1u < write->ArgumentCount(); ++argument) snapshot.AddArgument(write->Argument(argument));
+                fast.InsertInstructionBefore(first, &snapshot);
+                restores.emplace_back(write, &snapshot);
+            }
+            IrBuilder fastIr(program);
+            fastIr.SetInsertionPoint(fast);
+            IrValue& condition = options.stage == ShaderStageKind::Pixel ? *seen : context.WaveAny(*seen);
+            (void)fastIr.Emit(IrOpcode::Reference, IrType::Void, {&condition});
+            blockInfos[currentIndex].condition = &condition;
+            IrBlock& exact = *blocks[region->exactIndex];
+            IrBuilder exactIr(program);
+            exactIr.SetInsertionPoint(exact);
+            for (const auto& [write, snapshot] : restores) {
+                std::vector<IrValue*> arguments;
+                for (std::size_t argument = 0; argument + 1u < write->ArgumentCount(); ++argument) arguments.push_back(write->Argument(argument));
+                arguments.push_back(snapshot);
+                IrValue& set = program.CreateValue(write->Opcode(), IrType::Void);
+                for (IrValue* argument : arguments) set.AddArgument(argument);
+                exact.AppendInstruction(&set);
+            }
+            context.RestoreSpeculationState(state);
+            context.SwitchBlock(exact);
+            for (std::uint32_t inner = region->begin; inner < region->end; ++inner) translateOne(inner);
+            currentIndex = region->mergeIndex;
+            context.SwitchBlock(*blocks[currentIndex]);
+            index = region->end;
+            ++region;
         }
         if (cfgBlock.instructionEnd != cfgBlock.instructionBegin) splitPoints(decoded.instructions[cfgBlock.instructionEnd - 1u].programCounter, true);
         if (syncsWindow(!insideWindow) && std::ranges::any_of(cfgBlock.successors, [&](std::uint32_t successor) { return windowRegion.contains(successor) != insideWindow && !syncedOnEntry(successor); })) {
             context.SyncVectorWindow(!insideWindow);
         }
-        context.AddBranchCondition(cfgBlock, blockInfos[typedIndex]);
+        context.AddBranchCondition(cfgBlock, blockInfos[currentIndex]);
     }
 
     program.Metadata().blockInfo = std::move(blockInfos);

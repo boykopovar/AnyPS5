@@ -2003,7 +2003,23 @@ DiskStore& store() {
 }
 
 std::uint64_t SourceVersion() {
-    return ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    return SourceVersionFor(NanSpeculation(), ExactF32Arithmetic());
+}
+
+std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exactF32) {
+    auto version = exactF32 ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    if (!speculation.enabled) return version;
+    const auto mix = [&](std::uint64_t value) {
+        version = (version ^ value) * 0x9e3779b97f4a7c15ull;
+        version ^= version >> 29u;
+    };
+    mix(0x6a09e667f3bcc909ull);
+    mix(speculation.minimumVectorInstructions);
+    mix(speculation.maximumVectorInstructions);
+    mix(speculation.stageMask);
+    for (std::size_t stage = 0; stage < speculation.stageMinimum.size(); ++stage) mix((static_cast<std::uint64_t>(stage) << 32u) | speculation.stageMinimum[stage]);
+    mix((static_cast<std::uint64_t>(speculation.minimumFastOps) << 32u) | speculation.minimumDensityPercent);
+    return version;
 }
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key) {
