@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
@@ -21,10 +22,28 @@ namespace AgcDriver::DriverDetail {
 struct DriverTestAccess {
     static void ExecuteAfterDeferredWait(std::span<const std::uint32_t> wait,
                                          std::span<const std::uint32_t> command) {
+        Driver::notePendingWait(wait, ComputeQueue, 0);
+        Execute(command);
+    }
+
+    static void ExecuteAfterDeferredLabel(std::uint64_t address, std::uint64_t value,
+                                          std::span<const std::uint32_t> command) {
+        auto& labels = deferredLabels();
+        auto& label = labels.labels.emplace_back();
+        label.address = address;
+        label.size = sizeof(value);
+        std::memcpy(label.bytes.data(), &value, sizeof(value));
+        labels.since = std::chrono::steady_clock::now();
+        Execute(command);
+    }
+
+private:
+    static constexpr std::uint32_t ComputeQueue = 0x20;
+
+    static void Execute(std::span<const std::uint32_t> command) {
         Submission submission{};
-        submission.queue = 0x20;
+        submission.queue = ComputeQueue;
         submission.commands.assign(command.begin(), command.end());
-        Driver::notePendingWait(wait, submission.queue, submission.received);
         Driver::Get().execute(submission);
     }
 };
@@ -299,6 +318,37 @@ void pendingWait() {
           "CP atomic ran before the deferred wait published its producer's value");
 }
 
+void deferredLabel() {
+    static_cast<void>(AgcDriver::DriverDetail::Driver::Get());
+    Storage storage;
+    storage.words[1] = 11;
+    const auto address = reinterpret_cast<std::uintptr_t>(&storage.words[1]);
+    const auto command = packet(&storage.words[1], 0x6f, 5);
+    auto& gpu = AgcDriver::GuestMemory::GpuMutex();
+    std::atomic<bool> finished{false};
+    bool failed = false;
+    std::unique_lock lock(gpu);
+    std::thread worker([&] {
+        try {
+            AgcDriver::DriverDetail::DriverTestAccess::ExecuteAfterDeferredLabel(address, 37, command);
+        } catch (...) {
+            failed = true;
+        }
+        finished.store(true, std::memory_order_release);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (gpu.Waiters() == 0 && !finished.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool contended = gpu.Waiters() != 0;
+    lock.unlock();
+    worker.join();
+
+    check(contended && !failed, "deferred-label fixture did not complete under GPU lock contention");
+    check(storage.words[1] == 42, "CP atomic ran before the deferred label published its value");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -312,6 +362,7 @@ int main(int argc, char** argv) {
         else if (mode == "exclusion") exclusion();
         else if (mode == "range_flush") rangeFlush();
         else if (mode == "pending_wait") pendingWait();
+        else if (mode == "deferred_label") deferredLabel();
         else throw std::runtime_error("unknown atomic test mode");
         LibcRunShutdown_nid_postfix();
         std::puts("atomic memory tests passed");
