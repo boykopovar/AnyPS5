@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/Patch/include/CondExec.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
 #include <cerrno>
@@ -23,7 +24,8 @@ bool ReadCondExecPacket(const std::uint32_t* cmd, std::array<std::uint32_t, 5>& 
 
 bool WriteCondExecWords(std::uint32_t* cmd, std::size_t wordOffset, const std::uint32_t* words, std::size_t wordCount) {
     const int savedErrno = errno;
-    const bool writable = GuestWritable_nid_no_patch(cmd, sizeof(std::uint32_t) * 5);
+    const GuestArena::HostWrite guard(cmd, sizeof(std::uint32_t) * 5);
+    const bool writable = guard.Open() && GuestWritable_nid_no_patch(cmd, sizeof(std::uint32_t) * 5);
     const bool copied = writable && GuestCopyOut_nid_no_patch(cmd + wordOffset, words, wordCount * sizeof(std::uint32_t));
     errno = savedErrno;
     return copied;
