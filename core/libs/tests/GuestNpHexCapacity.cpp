@@ -103,6 +103,11 @@ static void CheckRingBufPointerProbing() {
     NpRingBuf ring{};
 
     errno = EACCES;
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    Require(errno == EACCES && ring.vtable != nullptr && ring.buf == nullptr && ring.readPointer == nullptr &&
+            ring.writePointer == nullptr && ring.size == 0 && ring.bufSize == 0);
+
+    errno = EACCES;
     _ZN3sce2np7RingBuf4ctorEv(&ring);
     Require(errno == EACCES && ring.buf == nullptr && ring.readPointer == nullptr &&
             ring.writePointer == nullptr && ring.size == 0 && ring.bufSize == 0);
@@ -129,6 +134,10 @@ static void CheckRingBufPointerProbing() {
     Require(errno == EACCES);
 
     auto* const unmapped = reinterpret_cast<NpRingBuf*>(std::uintptr_t{0x10});
+    errno = EACCES;
+    _ZN3sce2np7RingBufC1Ev(unmapped);
+    Require(errno == EACCES);
+
     errno = EACCES;
     _ZN3sce2np7RingBufD1Ev(unmapped);
     Require(errno == EACCES);
