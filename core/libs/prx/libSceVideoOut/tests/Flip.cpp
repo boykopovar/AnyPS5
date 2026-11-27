@@ -1588,7 +1588,7 @@ void testOutputResolution() {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     SDL_DisplayMode mode{};
     check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
-    const std::uint32_t expected = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    const std::uint32_t expected = (mode.w >= 3840 || mode.h >= 1440) ? 2u : 1u;
     VideoOutOutputStatus status{};
     check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "a port without buffers did not report the display's resolution");
     const std::uint32_t width = expected == 2u ? 1920u : 3840u;
@@ -1629,7 +1629,7 @@ void testOutputResolutionOverride() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     SDL_DisplayMode mode{};
     check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
-    const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    const std::uint32_t following = (mode.w >= 3840 || mode.h >= 1440) ? 2u : 1u;
     std::array<std::byte, 80> fresh{};
     check(sceVideoOutGetOutputStatusWithVrr(handle, fresh.data()) == static_cast<int>(0x8029001Cu), "the VRR status of a handle without buffers was not refused");
     std::vector<std::byte> allocation(65536 + 65535);
@@ -1647,7 +1647,7 @@ void testOutputResolutionOverride() {
     };
     setOutputResolution("");
     check(reported() == following, "an unset override changed the display's resolution");
-    const std::pair<const char*, std::uint32_t> overrides[] = {{"1920x1080", 1u}, {"1280x720", 1u}, {"3840x2160", 2u}, {"2560x2160", 2u}, {"3840X1", 2u}};
+    const std::pair<const char*, std::uint32_t> overrides[] = {{"1920x1080", 1u}, {"1280x720", 1u}, {"2560x1080", 1u}, {"2560x1440", 1u}, {"3440x1440", 1u}, {"3840x2160", 2u}, {"2560x2160", 2u}, {"3840X1", 2u}};
     for (const auto& [value, expected] : overrides) {
         setOutputResolution(value);
         check(reported() == expected, (std::string("the override ") + value + " did not set the reported resolution").c_str());

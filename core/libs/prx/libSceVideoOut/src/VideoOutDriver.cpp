@@ -83,6 +83,10 @@ std::uint32_t resolutionIndex(std::uint32_t width, std::uint32_t height) {
     return (width >= 3840 || height >= 2160) ? VIDEO_OUT_RESOLUTION_2160P : VIDEO_OUT_RESOLUTION_1080P;
 }
 
+std::uint32_t hostResolutionIndex(std::uint32_t width, std::uint32_t height) {
+    return (width >= 3840 || height >= 1440) ? VIDEO_OUT_RESOLUTION_2160P : VIDEO_OUT_RESOLUTION_1080P;
+}
+
 std::optional<std::uint32_t> configuredResolution() {
     const char* value = std::getenv("APS5_OUTPUT_RESOLUTION");
     if (value == nullptr || *value == '\0') return std::nullopt;
@@ -622,7 +626,7 @@ void VideoOutDriver::updateDisplayRefreshRate() {
     } else if (SDL_GetCurrentDisplayMode(display, &mode) != 0) {
         failure = std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError();
     } else {
-        measured = HostDisplayMode{mode.refresh_rate, resolutionIndex(mode.w, mode.h)};
+        measured = HostDisplayMode{mode.refresh_rate, hostResolutionIndex(mode.w, mode.h)};
     }
     const auto kept = KeepHostDisplayMode(knownDisplayMode, measured, failure);
     knownDisplayMode = kept;
