@@ -8,6 +8,13 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 using NKWebKit::AdClickAbi::AdClickAttribution;
@@ -456,6 +463,243 @@ void TestToString() {
     Require(Throws<std::invalid_argument>([] { ToString(nullptr); }));
 }
 
+template<typename TAction> bool ThrowsNotImplemented(TAction action) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::logic_error&) {
+        return false;
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* Writable() const { return base; }
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+
+    template<typename T>
+    T* SplitReadWriteToReadOnly() const {
+        return reinterpret_cast<T*>(base + pageSize - sizeof(T) / 2);
+    }
+
+    template<typename T>
+    T* SplitReadOnlyToGuard() const {
+        return reinterpret_cast<T*>(base + pageSize * 2 - sizeof(T) / 2);
+    }
+};
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    const auto* unmappedUrl = reinterpret_cast<const URL*>(pages.Guard());
+    const auto* splitUrl = pages.SplitReadOnlyToGuard<const URL>();
+    auto* unmappedExpected = reinterpret_cast<ExpectedConversion*>(pages.Guard());
+    auto* readOnlyExpected = reinterpret_cast<ExpectedConversion*>(pages.ReadOnly());
+    auto* splitExpected = pages.SplitReadWriteToReadOnly<ExpectedConversion>();
+
+    Text validUrlText(std::string("https://example.com/.well-known/ad-click-attribution/12/34"));
+    const OwnedURL validUrl(ParseBase(validUrlText));
+    Require((validUrl.value.bits & 1) != 0);
+
+    ExpectedConversion sentinel{};
+    std::memset(&sentinel, 0x5A, sizeof(sentinel));
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(&sentinel, unmappedUrl); }));
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(&sentinel, splitUrl); }));
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(unmappedExpected, &validUrl.value); }));
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(readOnlyExpected, &validUrl.value); }));
+
+    const std::size_t splitExpectedHead = sizeof(ExpectedConversion) / 2;
+    std::memset(splitExpected, 0x6B, splitExpectedHead);
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(splitExpected, &validUrl.value); }));
+    for (std::size_t i = 0; i < splitExpectedHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitExpected)[i] == 0x6B);
+
+    URL badImplUrl = validUrl.value;
+    badImplUrl.impl = reinterpret_cast<StringImpl*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(&sentinel, &badImplUrl); }));
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+
+    StringImpl badDataImpl{2, 64, pages.Guard(), 4};
+    URL badDataUrl = validUrl.value;
+    badDataUrl.impl = &badDataImpl;
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(&sentinel, &badDataUrl); }));
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+
+    StringImpl splitDataImpl{2, 16, pages.Guard() - 4, 4};
+    URL splitDataUrl = validUrl.value;
+    splitDataUrl.impl = &splitDataImpl;
+    Require(ThrowsNotImplemented([&] { ParseConversionRequest(&sentinel, &splitDataUrl); }));
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+
+    Text source(std::string("source.example"));
+    Text destination(std::string("destination.example"));
+    Text localhost(std::string("localhost"));
+    AdClickAttribution attribution = Make(12, &source.impl, &destination.impl);
+    const AdClickAttribution originalAttribution = attribution;
+    OptionalSeconds optSentinel{};
+    std::memset(&optSentinel, 0x4C, sizeof(optSentinel));
+    const Conversion validConversion{7, 3, false};
+
+    auto* unmappedAttr = reinterpret_cast<AdClickAttribution*>(pages.Guard());
+    auto* readOnlyAttr = reinterpret_cast<AdClickAttribution*>(pages.ReadOnly());
+    auto* splitAttrRwRo = pages.SplitReadWriteToReadOnly<AdClickAttribution>();
+    const auto* splitAttrRoGuard = pages.SplitReadOnlyToGuard<const AdClickAttribution>();
+    auto* unmappedOpt = reinterpret_cast<OptionalSeconds*>(pages.Guard());
+    auto* readOnlyOpt = reinterpret_cast<OptionalSeconds*>(pages.ReadOnly());
+    auto* splitOpt = pages.SplitReadWriteToReadOnly<OptionalSeconds>();
+    const auto* unmappedConv = reinterpret_cast<const Conversion*>(pages.Guard());
+    const auto* splitConv = pages.SplitReadOnlyToGuard<const Conversion>();
+
+    Require(ThrowsNotImplemented([&] { Convert(unmappedOpt, &attribution, &validConversion); }));
+    Require(std::memcmp(&attribution, &originalAttribution, sizeof(attribution)) == 0);
+    Require(ThrowsNotImplemented([&] { Convert(readOnlyOpt, &attribution, &validConversion); }));
+    Require(std::memcmp(&attribution, &originalAttribution, sizeof(attribution)) == 0);
+    const std::size_t splitOptHead = sizeof(OptionalSeconds) / 2;
+    std::memset(splitOpt, 0x7D, splitOptHead);
+    Require(ThrowsNotImplemented([&] { Convert(splitOpt, &attribution, &validConversion); }));
+    for (std::size_t i = 0; i < splitOptHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitOpt)[i] == 0x7D);
+    Require(std::memcmp(&attribution, &originalAttribution, sizeof(attribution)) == 0);
+
+    Require(ThrowsNotImplemented([&] { Convert(&optSentinel, unmappedAttr, &validConversion); }));
+    for (std::size_t i = 0; i < sizeof(optSentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&optSentinel)[i] == 0x4C);
+    Require(ThrowsNotImplemented([&] { Convert(&optSentinel, readOnlyAttr, &validConversion); }));
+    for (std::size_t i = 0; i < sizeof(optSentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&optSentinel)[i] == 0x4C);
+    const std::size_t splitAttrHead = sizeof(AdClickAttribution) / 2;
+    std::memset(splitAttrRwRo, 0x3E, splitAttrHead);
+    Require(ThrowsNotImplemented([&] { Convert(&optSentinel, splitAttrRwRo, &validConversion); }));
+    for (std::size_t i = 0; i < splitAttrHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitAttrRwRo)[i] == 0x3E);
+    for (std::size_t i = 0; i < sizeof(optSentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&optSentinel)[i] == 0x4C);
+
+    Require(ThrowsNotImplemented([&] { Convert(&optSentinel, &attribution, unmappedConv); }));
+    Require(ThrowsNotImplemented([&] { Convert(&optSentinel, &attribution, splitConv); }));
+    for (std::size_t i = 0; i < sizeof(optSentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&optSentinel)[i] == 0x4C);
+    Require(std::memcmp(&attribution, &originalAttribution, sizeof(attribution)) == 0);
+
+    AdClickAttribution aliased = Make(5, &source.impl, &destination.impl);
+    aliased.conversion = {false, {11, 9, true}};
+    OptionalSeconds aliasedResult{};
+    Require(Convert(&aliasedResult, &aliased, &aliased.conversion.value) == &aliasedResult);
+    Require(aliasedResult.engaged && aliased.conversion.engaged && aliased.conversion.value.data == 11 && aliased.conversion.value.priority == 9 && aliased.conversion.value.wasSent);
+
+    Require(ThrowsNotImplemented([&] { HasHigherPriorityThan(unmappedAttr, &attribution); }));
+    Require(ThrowsNotImplemented([&] { HasHigherPriorityThan(splitAttrRoGuard, &attribution); }));
+    Require(ThrowsNotImplemented([&] { HasHigherPriorityThan(&attribution, unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { HasHigherPriorityThan(&attribution, splitAttrRoGuard); }));
+
+    Require(ThrowsNotImplemented([&] { Url(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { Url(splitAttrRoGuard); }));
+    Require(ThrowsNotImplemented([&] { Referrer(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { Referrer(splitAttrRoGuard); }));
+
+    AdClickAttribution ready = Make(12, &source.impl, &destination.impl);
+    ready.conversion = {true, {7, 3, false}};
+    ready.earliestTimeToSend = {true, 1.0};
+    AdClickAttribution badSource = ready;
+    badSource.source = reinterpret_cast<StringImpl*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { Url(&badSource); }));
+    Require(ThrowsNotImplemented([&] { Referrer(&badSource); }));
+    Require(ThrowsNotImplemented([&] { ToString(&badSource); }));
+    badSource.source = &badDataImpl;
+    Require(ThrowsNotImplemented([&] { Url(&badSource); }));
+    Require(ThrowsNotImplemented([&] { ToString(&badSource); }));
+    badSource.source = &splitDataImpl;
+    Require(ThrowsNotImplemented([&] { Url(&badSource); }));
+
+    AdClickAttribution badDest = ready;
+    badDest.destination = reinterpret_cast<StringImpl*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { Url(&badDest); }));
+    Require(ThrowsNotImplemented([&] { Referrer(&badDest); }));
+    Require(ThrowsNotImplemented([&] { ToString(&badDest); }));
+    badDest.destination = &badDataImpl;
+    Require(ThrowsNotImplemented([&] { Referrer(&badDest); }));
+    Require(ThrowsNotImplemented([&] { ToString(&badDest); }));
+
+    Text baseText(std::string("http://127.0.0.1:8000/report?a=b"));
+    const OwnedURL baseUrl(ParseBase(baseText));
+    AdClickAttribution local = Make(9, &localhost.impl, &destination.impl);
+    local.conversion = {true, {5, 1, false}};
+    Require(ThrowsNotImplemented([&] { UrlForTesting(unmappedAttr, &baseUrl.value); }));
+    Require(ThrowsNotImplemented([&] { UrlForTesting(splitAttrRoGuard, &baseUrl.value); }));
+    Require(ThrowsNotImplemented([&] { UrlForTesting(&local, unmappedUrl); }));
+    Require(ThrowsNotImplemented([&] { UrlForTesting(&local, splitUrl); }));
+    URL badBaseImpl = baseUrl.value;
+    badBaseImpl.impl = reinterpret_cast<StringImpl*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { UrlForTesting(&local, &badBaseImpl); }));
+    URL badBaseData = baseUrl.value;
+    badBaseData.impl = &badDataImpl;
+    Require(ThrowsNotImplemented([&] { UrlForTesting(&local, &badBaseData); }));
+    URL splitBaseData = baseUrl.value;
+    splitBaseData.impl = &splitDataImpl;
+    Require(ThrowsNotImplemented([&] { UrlForTesting(&local, &splitBaseData); }));
+    AdClickAttribution localBadSource = local;
+    localBadSource.source = reinterpret_cast<StringImpl*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { UrlForTesting(&localBadSource, &baseUrl.value); }));
+
+    Require(ThrowsNotImplemented([&] { MarkAsExpired(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { MarkAsExpired(readOnlyAttr); }));
+    std::memset(splitAttrRwRo, 0x2A, splitAttrHead);
+    Require(ThrowsNotImplemented([&] { MarkAsExpired(splitAttrRwRo); }));
+    for (std::size_t i = 0; i < splitAttrHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitAttrRwRo)[i] == 0x2A);
+
+    Require(ThrowsNotImplemented([&] { HasExpired(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { HasExpired(splitAttrRoGuard); }));
+
+    Require(ThrowsNotImplemented([&] { MarkConversionAsSent(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { MarkConversionAsSent(readOnlyAttr); }));
+    std::memset(splitAttrRwRo, 0x1B, splitAttrHead);
+    Require(ThrowsNotImplemented([&] { MarkConversionAsSent(splitAttrRwRo); }));
+    for (std::size_t i = 0; i < splitAttrHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitAttrRwRo)[i] == 0x1B);
+
+    Require(ThrowsNotImplemented([&] { WasConversionSent(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { WasConversionSent(splitAttrRoGuard); }));
+
+    Require(ThrowsNotImplemented([&] { ToString(unmappedAttr); }));
+    Require(ThrowsNotImplemented([&] { ToString(splitAttrRoGuard); }));
+}
+
 }
 
 int main() {
@@ -466,5 +710,6 @@ int main() {
     TestUrlForTesting();
     TestParseConversionRequest();
     TestToString();
+    TestGuestPointers();
     return 0;
 }

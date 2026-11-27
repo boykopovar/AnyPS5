@@ -25,6 +25,8 @@
  */
 
 #include "prx/libSceNKWebKit/include/AdClickAttributionExports.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
@@ -34,6 +36,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -46,10 +50,92 @@ using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringView;
 using NKWebKit::WtfAbi::URL;
 
+static_assert(std::is_trivially_copyable_v<AdClickAttribution>);
+static_assert(std::is_trivially_copyable_v<Conversion>);
+static_assert(std::is_trivially_copyable_v<OptionalSeconds>);
+static_assert(std::is_trivially_copyable_v<ExpectedConversion>);
+static_assert(std::is_trivially_copyable_v<URL>);
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+
 constexpr std::uint32_t MaxEntropy = 63;
 constexpr double SecondsPerDay = 24.0 * 60.0 * 60.0;
 constexpr double MaxAge = SecondsPerDay * 7.0;
 constexpr char PathPrefix[] = "/.well-known/ad-click-attribution/";
+
+template <typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename T>
+void RequireWritableGuestValue(T* pointer, const char* function) {
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, sizeof(T));
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, sizeof(T));
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template <typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T))) return true;
+    static_cast<void>(GuestCopyOut_nid_no_patch(pointer, &previous, sizeof(T)));
+    return false;
+}
+
+struct GuestString {
+    std::vector<unsigned char> narrow;
+    std::vector<char16_t> wide;
+    unsigned length = 0;
+    bool is8Bit = true;
+    bool isNull = true;
+
+    StringView View() const {
+        if (isNull || !length) return StringView{nullptr, 0, is8Bit};
+        return StringView{is8Bit ? static_cast<const void*>(narrow.data()) : static_cast<const void*>(wide.data()), length, is8Bit};
+    }
+
+    String ToWtfString() const {
+        if (isNull) return String{};
+        if (length > static_cast<unsigned>(std::numeric_limits<std::int32_t>::max()))
+            throw std::length_error("WebCore::AdClickAttribution: string exceeds the maximum length");
+        void* characters = nullptr;
+        String result(NKWebKit::WtfAbi::CreateUninitialized(length, is8Bit, characters));
+        if (length) {
+            if (is8Bit) std::memcpy(characters, narrow.data(), length);
+            else std::memcpy(characters, wide.data(), static_cast<std::size_t>(length) * sizeof(char16_t));
+        }
+        return result;
+    }
+};
+
+GuestString ReadGuestString(const StringImpl* impl, const char* function, const char* nullCharactersMessage) {
+    GuestString result{};
+    if (!impl) return result;
+    const StringImpl header = ReadGuestValue(impl, function);
+    result.isNull = false;
+    result.length = header.length;
+    result.is8Bit = (header.hashAndFlags & 4u) != 0;
+    if (!header.length) return result;
+    if (!header.data) throw std::invalid_argument(nullCharactersMessage);
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (result.is8Bit ? 1u : sizeof(char16_t));
+    if (!GuestReadable_nid_no_patch(header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (result.is8Bit) {
+        result.narrow.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(result.narrow.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    } else {
+        result.wide.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(result.wide.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return result;
+}
 
 struct Builder {
     std::u16string text;
@@ -65,8 +151,8 @@ struct Builder {
         for (unsigned index = 0; index < view.length; ++index) text.push_back(NKWebKit::WtfAbi::CodeUnitAt(view, index));
     }
 
-    void Append(const StringImpl* impl) {
-        if (impl) Append(NKWebKit::WtfAbi::ViewOf(impl));
+    void Append(const GuestString& value) {
+        if (!value.isNull) Append(value.View());
     }
 
     void AppendNumber(std::uint32_t number) {
@@ -85,38 +171,44 @@ struct Builder {
     }
 };
 
-bool Equals(const StringImpl* impl, std::string_view literal) {
-    if (!impl) return false;
-    const StringView view = NKWebKit::WtfAbi::ViewOf(impl);
+bool Equals(const GuestString& value, std::string_view literal) {
+    if (value.isNull) return false;
+    const StringView view = value.View();
     if (view.length != literal.size()) return false;
-    if (view.length && !view.data) throw std::invalid_argument("WebCore::AdClickAttribution: string with null characters and a nonzero length");
     for (unsigned index = 0; index < view.length; ++index) {
         if (NKWebKit::WtfAbi::CodeUnitAt(view, index) != static_cast<unsigned char>(literal[index])) return false;
     }
     return true;
 }
 
-bool DomainIsEmpty(const StringImpl* domain) {
-    return !domain || !domain->length || Equals(domain, "nullOrigin");
+bool DomainIsEmpty(const GuestString& domain) {
+    return domain.isNull || !domain.length || Equals(domain, "nullOrigin");
 }
 
 bool ConversionIsValid(const Conversion& conversion) {
     return conversion.data <= MaxEntropy && conversion.priority <= MaxEntropy;
 }
 
-bool IsValid(const AdClickAttribution& self) {
-    return self.conversion.engaged && ConversionIsValid(self.conversion.value) && self.campaignId <= MaxEntropy && !DomainIsEmpty(self.source) &&
-           !DomainIsEmpty(self.destination) && self.earliestTimeToSend.engaged;
+struct ValidDomains {
+    bool valid = false;
+    GuestString source;
+    GuestString destination;
+};
+
+ValidDomains ValidateAttribution(const AdClickAttribution& self, const char* function) {
+    ValidDomains domains{};
+    if (!self.conversion.engaged || !ConversionIsValid(self.conversion.value) || self.campaignId > MaxEntropy) return domains;
+    domains.source = ReadGuestString(self.source, function, "WebCore::AdClickAttribution: string with null characters and a nonzero length");
+    if (DomainIsEmpty(domains.source)) return domains;
+    domains.destination = ReadGuestString(self.destination, function, "WebCore::AdClickAttribution: string with null characters and a nonzero length");
+    if (DomainIsEmpty(domains.destination) || !self.earliestTimeToSend.engaged) return domains;
+    domains.valid = true;
+    return domains;
 }
 
-const AdClickAttribution& Checked(const AdClickAttribution* self) {
+AdClickAttribution ReadChecked(const AdClickAttribution* self, const char* function) {
     if (!self) throw std::invalid_argument("WebCore::AdClickAttribution: null this");
-    return *self;
-}
-
-AdClickAttribution& Checked(AdClickAttribution* self) {
-    if (!self) throw std::invalid_argument("WebCore::AdClickAttribution: null this");
-    return *self;
+    return ReadGuestValue(self, function);
 }
 
 const Conversion& RequiredConversion(const AdClickAttribution& self) {
@@ -146,11 +238,8 @@ double RandomNumber() {
     return static_cast<double>(bits) / (static_cast<double>(std::numeric_limits<std::uint32_t>::max()) + 1.0);
 }
 
-StringView WholeString(const URL& url) {
-    if (!url.impl) return StringView{nullptr, 0, true};
-    const StringView view = NKWebKit::WtfAbi::ViewOf(url.impl);
-    if (view.length && !view.data) throw std::invalid_argument("WebCore::AdClickAttribution: URL string with null characters and a nonzero length");
-    return view;
+GuestString WholeString(const URL& url, const char* function) {
+    return ReadGuestString(url.impl, function, "WebCore::AdClickAttribution: URL string with null characters and a nonzero length");
 }
 
 StringView Substring(const StringView& view, unsigned start, unsigned length) {
@@ -220,67 +309,94 @@ ExpectedConversion* APS5_VABI _ZN7WebCore18AdClickAttribution22parseConversionRe
     constexpr unsigned PrioritySize = 2;
     if (!result) throw std::invalid_argument("WebCore::AdClickAttribution::parseConversionRequest: null result");
     if (!redirectURL) throw std::invalid_argument("WebCore::AdClickAttribution::parseConversionRequest: null URL");
-    std::memset(result, 0, sizeof(*result));
-    const URL& url = *redirectURL;
-    const StringView whole = WholeString(url);
+    const URL url = ReadGuestValue(redirectURL, __func__);
+    const ExpectedConversion previousResult = ReadGuestValue(result, __func__);
+    RequireWritableGuestValue(result, __func__);
+    const GuestString wholeStorage = WholeString(url, __func__);
+    const StringView whole = wholeStorage.View();
+    ExpectedConversion output{};
+    std::memset(&output, 0, sizeof(output));
+    const auto publish = [&]() -> ExpectedConversion* {
+        if (!TryPublishGuestValue(result, output, previousResult))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return result;
+    };
     const bool hasCredentials = url.passwordEnd > url.userStart;
     const bool hasQuery = url.queryEnd > url.pathEnd;
     const bool hasFragment = (url.bits & 1) && whole.length > url.queryEnd;
-    if (!ProtocolIsHttps(url, whole) || hasCredentials || hasQuery || hasFragment) return result;
+    if (!ProtocolIsHttps(url, whole) || hasCredentials || hasQuery || hasFragment) return publish();
     const unsigned pathStart = url.hostEnd + ((url.bits >> 3) & 7);
     const StringView path = Substring(whole, pathStart, url.pathEnd - pathStart);
-    if (!path.length || !StartsWith(path, Prefix)) return result;
+    if (!path.length || !StartsWith(path, Prefix)) return publish();
     const unsigned prefixLength = static_cast<unsigned>(Prefix.size());
     std::uint64_t data = 0;
     if (path.length == prefixLength + DataSize) {
-        if (!ToUInt64Strict(Substring(path, prefixLength, DataSize), data) || data > MaxEntropy) return result;
-        result->value = Conversion{static_cast<std::uint32_t>(data), 0, false};
-        result->has = true;
-        return result;
+        if (!ToUInt64Strict(Substring(path, prefixLength, DataSize), data) || data > MaxEntropy) return publish();
+        output.value = Conversion{static_cast<std::uint32_t>(data), 0, false};
+        output.has = true;
+        return publish();
     }
     if (path.length == prefixLength + DataSize + 1 + PrioritySize) {
-        if (!ToUInt64Strict(Substring(path, prefixLength, DataSize), data) || data > MaxEntropy) return result;
+        if (!ToUInt64Strict(Substring(path, prefixLength, DataSize), data) || data > MaxEntropy) return publish();
         std::uint64_t priority = 0;
-        if (!ToUInt64Strict(Substring(path, prefixLength + DataSize + 1, PrioritySize), priority) || priority > MaxEntropy) return result;
-        result->value = Conversion{static_cast<std::uint32_t>(data), static_cast<std::uint32_t>(priority), false};
-        result->has = true;
-        return result;
+        if (!ToUInt64Strict(Substring(path, prefixLength + DataSize + 1, PrioritySize), priority) || priority > MaxEntropy) return publish();
+        output.value = Conversion{static_cast<std::uint32_t>(data), static_cast<std::uint32_t>(priority), false};
+        output.has = true;
+        return publish();
     }
-    return result;
+    return publish();
 }
 
 OptionalSeconds* APS5_VABI _ZN7WebCore18AdClickAttribution31convertAndGetEarliestTimeToSendEONS0_10ConversionE(OptionalSeconds* result, AdClickAttribution* self, const Conversion* conversion) {
     if (!result) throw std::invalid_argument("WebCore::AdClickAttribution::convertAndGetEarliestTimeToSend: null result");
-    AdClickAttribution& attribution = Checked(self);
+    const AdClickAttribution previousSelf = ReadChecked(self, __func__);
     if (!conversion) throw std::invalid_argument("WebCore::AdClickAttribution::convertAndGetEarliestTimeToSend: null conversion");
-    std::memset(result, 0, sizeof(*result));
-    if (!ConversionIsValid(*conversion) || (attribution.conversion.engaged && attribution.conversion.value.priority >= conversion->priority)) return result;
-    attribution.conversion.value.data = conversion->data;
-    attribution.conversion.value.priority = conversion->priority;
-    attribution.conversion.value.wasSent = conversion->wasSent;
-    attribution.conversion.engaged = true;
+    const Conversion localConversion = ReadGuestValue(conversion, __func__);
+    const OptionalSeconds previousResult = ReadGuestValue(result, __func__);
+    RequireWritableGuestValue(result, __func__);
+    RequireWritableGuestValue(self, __func__);
+    OptionalSeconds outputResult{};
+    std::memset(&outputResult, 0, sizeof(outputResult));
+    if (!ConversionIsValid(localConversion) || (previousSelf.conversion.engaged && previousSelf.conversion.value.priority >= localConversion.priority)) {
+        if (!TryPublishGuestValue(result, outputResult, previousResult))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return result;
+    }
+    AdClickAttribution updatedSelf = previousSelf;
+    updatedSelf.conversion.value.data = localConversion.data;
+    updatedSelf.conversion.value.priority = localConversion.priority;
+    updatedSelf.conversion.value.wasSent = localConversion.wasSent;
+    updatedSelf.conversion.engaged = true;
     const double seconds = SecondsPerDay + RandomNumber() * SecondsPerDay;
-    attribution.earliestTimeToSend.value = Now() + seconds;
-    attribution.earliestTimeToSend.engaged = true;
-    result->value = seconds;
-    result->engaged = true;
+    updatedSelf.earliestTimeToSend.value = Now() + seconds;
+    updatedSelf.earliestTimeToSend.engaged = true;
+    outputResult.value = seconds;
+    outputResult.engaged = true;
+    if (!TryPublishGuestValue(self, updatedSelf, previousSelf))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!TryPublishGuestValue(result, outputResult, previousResult)) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(self, &previousSelf, sizeof(previousSelf)));
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return result;
 }
 
 bool APS5_VABI _ZNK7WebCore18AdClickAttribution21hasHigherPriorityThanERKS0_(const AdClickAttribution* self, const AdClickAttribution* other) {
-    const AdClickAttribution& attribution = Checked(self);
+    const AdClickAttribution attribution = ReadChecked(self, __func__);
     if (!other) throw std::invalid_argument("WebCore::AdClickAttribution::hasHigherPriorityThan: null other");
-    if (!other->conversion.engaged) return true;
+    const AdClickAttribution otherAttribution = ReadGuestValue(other, __func__);
+    if (!otherAttribution.conversion.engaged) return true;
     if (!attribution.conversion.engaged) return false;
-    return attribution.conversion.value.priority > other->conversion.value.priority;
+    return attribution.conversion.value.priority > otherAttribution.conversion.value.priority;
 }
 
 URL APS5_VABI _ZNK7WebCore18AdClickAttribution3urlEv(const AdClickAttribution* self) {
-    const AdClickAttribution& attribution = Checked(self);
-    if (!IsValid(attribution)) return URL{};
+    const AdClickAttribution attribution = ReadChecked(self, __func__);
+    const ValidDomains domains = ValidateAttribution(attribution, __func__);
+    if (!domains.valid) return URL{};
     Builder builder;
     builder.Append("https://");
-    builder.Append(attribution.source);
+    builder.Append(domains.source);
     builder.Append(PathPrefix);
     builder.AppendNumber(attribution.conversion.value.data);
     builder.Append("/");
@@ -289,57 +405,76 @@ URL APS5_VABI _ZNK7WebCore18AdClickAttribution3urlEv(const AdClickAttribution* s
 }
 
 URL APS5_VABI _ZNK7WebCore18AdClickAttribution13urlForTestingERKN3WTF3URLE(const AdClickAttribution* self, const URL* baseURL) {
-    const AdClickAttribution& attribution = Checked(self);
+    const AdClickAttribution attribution = ReadChecked(self, __func__);
     if (!baseURL) throw std::invalid_argument("WebCore::AdClickAttribution::urlForTesting: null base URL");
-    if (!Equals(attribution.source, "localhost") && !Equals(attribution.source, "127.0.0.1")) return URL{};
+    const URL base = ReadGuestValue(baseURL, __func__);
+    const GuestString source = ReadGuestString(attribution.source, __func__, "WebCore::AdClickAttribution: string with null characters and a nonzero length");
+    if (!Equals(source, "localhost") && !Equals(source, "127.0.0.1")) return URL{};
     const Conversion& conversion = RequiredConversion(attribution);
+    const GuestString baseWhole = WholeString(base, __func__);
     Builder builder;
     builder.Append("?conversion=");
     builder.AppendNumber(conversion.data);
     builder.Append("&campaign=");
     builder.AppendNumber(attribution.campaignId);
-    if (baseURL->queryEnd > baseURL->pathEnd) {
+    if (base.queryEnd > base.pathEnd) {
         builder.Append("&");
-        builder.Append(Substring(WholeString(*baseURL), baseURL->pathEnd + 1, baseURL->queryEnd - (baseURL->pathEnd + 1)));
+        builder.Append(Substring(baseWhole.View(), base.pathEnd + 1, base.queryEnd - (base.pathEnd + 1)));
     }
-    return Parse(*baseURL, builder.ToString());
+    URL safeBase = base;
+    const String ownedBase = baseWhole.ToWtfString();
+    safeBase.impl = ownedBase.impl;
+    return Parse(safeBase, builder.ToString());
 }
 
 URL APS5_VABI _ZNK7WebCore18AdClickAttribution8referrerEv(const AdClickAttribution* self) {
-    const AdClickAttribution& attribution = Checked(self);
-    if (!IsValid(attribution)) return URL{};
+    const AdClickAttribution attribution = ReadChecked(self, __func__);
+    const ValidDomains domains = ValidateAttribution(attribution, __func__);
+    if (!domains.valid) return URL{};
     Builder builder;
     builder.Append("https://");
-    builder.Append(attribution.destination);
+    builder.Append(domains.destination);
     builder.Append("/");
     return ValidOrNull(Parse(URL{}, builder.ToString()));
 }
 
 void APS5_VABI _ZN7WebCore18AdClickAttribution13markAsExpiredEv(AdClickAttribution* self) {
-    Checked(self).timeOfAdClick = 0.0;
+    const AdClickAttribution previous = ReadChecked(self, __func__);
+    RequireWritableGuestValue(self, __func__);
+    AdClickAttribution updated = previous;
+    updated.timeOfAdClick = 0.0;
+    if (!TryPublishGuestValue(self, updated, previous))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 bool APS5_VABI _ZNK7WebCore18AdClickAttribution10hasExpiredEv(const AdClickAttribution* self) {
-    return Now() > Checked(self).timeOfAdClick + MaxAge;
+    return Now() > ReadChecked(self, __func__).timeOfAdClick + MaxAge;
 }
 
 void APS5_VABI _ZN7WebCore18AdClickAttribution20markConversionAsSentEv(AdClickAttribution* self) {
-    AdClickAttribution& attribution = Checked(self);
-    if (attribution.conversion.engaged) attribution.conversion.value.wasSent = true;
+    const AdClickAttribution previous = ReadChecked(self, __func__);
+    RequireWritableGuestValue(self, __func__);
+    if (!previous.conversion.engaged) return;
+    AdClickAttribution updated = previous;
+    updated.conversion.value.wasSent = true;
+    if (!TryPublishGuestValue(self, updated, previous))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 bool APS5_VABI _ZNK7WebCore18AdClickAttribution17wasConversionSentEv(const AdClickAttribution* self) {
-    const AdClickAttribution& attribution = Checked(self);
+    const AdClickAttribution attribution = ReadChecked(self, __func__);
     return attribution.conversion.engaged && attribution.conversion.value.wasSent;
 }
 
 String APS5_VABI _ZNK7WebCore18AdClickAttribution8toStringEv(const AdClickAttribution* self) {
-    const AdClickAttribution& attribution = Checked(self);
+    const AdClickAttribution attribution = ReadChecked(self, __func__);
+    const GuestString source = ReadGuestString(attribution.source, __func__, "WebCore::AdClickAttribution: string with null characters and a nonzero length");
+    const GuestString destination = ReadGuestString(attribution.destination, __func__, "WebCore::AdClickAttribution: string with null characters and a nonzero length");
     Builder builder;
     builder.Append("Source: ");
-    builder.Append(attribution.source);
+    builder.Append(source);
     builder.Append("\nDestination: ");
-    builder.Append(attribution.destination);
+    builder.Append(destination);
     builder.Append("\nCampaign ID: ");
     builder.AppendNumber(attribution.campaignId);
     if (attribution.conversion.engaged) {
