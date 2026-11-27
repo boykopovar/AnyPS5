@@ -2,10 +2,19 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using ElementCallback = void (APS5_VABI *)(void*);
 using CopyCallback = void (APS5_VABI *)(void*, void*);
@@ -93,8 +102,11 @@ void require(bool condition, const char* message) {
     std::abort();
 }
 
-void reset(std::byte* first) {
+const std::byte* expectedSource = nullptr;
+
+void reset(std::byte* first, const std::byte* expected = source.data()) {
     destination = first;
+    expectedSource = expected;
     constructed = copied = destroyed = allocated = freed = 0;
     failAllocation = false;
     failConstruct = failCopy = failDestroy = false;
@@ -108,7 +120,7 @@ void APS5_VABI construct(void* pointer) {
 
 void APS5_VABI copy(void* target, void* original) {
     require(copied < Count && target == destination + copied * ElementBytes, "copy constructor received the wrong destination");
-    require(original == source.data() + copied * ElementBytes, "copy constructor received the wrong source");
+    require(original == expectedSource + copied * ElementBytes, "copy constructor received the wrong source");
     if (failCopy && copied == 2) throw 73;
     std::memcpy(target, original, ElementBytes);
     ++copied;
@@ -291,6 +303,109 @@ void checkCopyRollback() {
     require(copied == 2 && destroyed == 2, "copy constructor rollback failed");
 }
 
+template<typename TAction>
+void requireInvalidArgument(TAction action, const char* message) {
+    try { action(); }
+    catch (const std::invalid_argument&) { return; }
+    require(false, message);
+}
+
+void checkGuestPointers() {
+    reset(storage.data());
+    void* unmapped = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    errno = 43;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(unmapped, source.data(), Count, ElementBytes, copy, destroy); }, "unmapped destination");
+    require(errno == 43, "unmapped destination preserves errno");
+    require(copied == 0 && destroyed == 0, "unmapped destination invoked callbacks");
+
+    reset(storage.data());
+    errno = 44;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), unmapped, Count, ElementBytes, copy, destroy); }, "unmapped source");
+    require(errno == 44, "unmapped source preserves errno");
+    require(copied == 0 && destroyed == 0, "unmapped source invoked callbacks");
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = static_cast<std::size_t>(info.dwPageSize);
+    auto* roPage = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    require(roPage != nullptr, "readonly allocation");
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* roPage = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(roPage != MAP_FAILED, "readonly allocation");
+#endif
+
+    std::memset(roPage, 0x5A, page * 2);
+    auto* roDestination = roPage;
+#ifdef _WIN32
+    DWORD previous = 0;
+    require(VirtualProtect(roPage, page * 2, PAGE_READONLY, &previous) != 0, "readonly protection");
+#else
+    require(mprotect(roPage, page * 2, PROT_READ) == 0, "readonly protection");
+#endif
+
+    reset(storage.data());
+    errno = 45;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(roDestination, source.data(), Count, ElementBytes, copy, destroy); }, "read-only destination");
+    require(errno == 45, "read-only destination preserves errno");
+    require(copied == 0 && destroyed == 0, "read-only destination invoked callbacks");
+
+    reset(storage.data(), reinterpret_cast<const std::byte*>(roPage));
+    __cxa_vec_cctor_nid_postfix(storage.data(), roPage, Count, ElementBytes, copy, destroy);
+    require(copied == Count && destroyed == 0, "read-only source copies");
+    for (std::size_t i = 0; i < Count * ElementBytes; ++i) {
+        require(storage[i] == std::byte{0x5A}, "read-only source bytes");
+    }
+
+#ifdef _WIN32
+    require(VirtualProtect(roPage + page, page, PAGE_NOACCESS, &previous) != 0, "noaccess protection");
+#else
+    require(mprotect(roPage + page, page, PROT_NONE) == 0, "noaccess protection");
+#endif
+
+    reset(storage.data());
+    errno = 49;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), roPage + page, Count, ElementBytes, copy, destroy); }, "no-access source");
+    require(errno == 49, "no-access source preserves errno");
+    require(copied == 0 && destroyed == 0, "no-access source invoked callbacks");
+
+    reset(storage.data());
+    errno = 50;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), roPage + page - 16, Count, ElementBytes, copy, destroy); }, "cross-page no-access source");
+    require(errno == 50, "cross-page no-access source preserves errno");
+    require(copied == 0 && destroyed == 0, "cross-page no-access source invoked callbacks");
+
+    reset(storage.data());
+    errno = 46;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(nullptr, source.data(), Count, ElementBytes, copy, destroy); }, "null destination");
+    require(errno == 46, "null destination preserves errno");
+    require(copied == 0 && destroyed == 0, "null destination invoked callbacks");
+
+    reset(storage.data());
+    errno = 47;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), nullptr, Count, ElementBytes, copy, destroy); }, "null source");
+    require(errno == 47, "null source preserves errno");
+    require(copied == 0 && destroyed == 0, "null source invoked callbacks");
+
+    reset(storage.data());
+    errno = 48;
+    const std::size_t wrappedCount = std::numeric_limits<std::size_t>::max() / 2 + 1;
+    requireInvalidArgument([&] { __cxa_vec_cctor_nid_postfix(storage.data(), source.data(), wrappedCount, 2, copy, destroy); }, "wrapped range");
+    require(errno == 48, "wrapped range preserves errno");
+    require(copied == 0 && destroyed == 0, "wrapped range invoked callbacks");
+
+#ifdef _WIN32
+    require(VirtualFree(roPage, 0, MEM_RELEASE) != 0, "readonly release");
+#else
+    require(munmap(roPage, page * 2) == 0, "readonly release");
+#endif
+
+    reset(storage.data());
+    __cxa_vec_cctor_nid_postfix(storage.data(), source.data(), Count, ElementBytes, copy, destroy);
+    require(copied == Count && std::memcmp(storage.data(), source.data(), source.size()) == 0, "valid guest buffers still copy");
+}
+
 }
 
 int main() {
@@ -302,6 +417,7 @@ int main() {
     checkRollback(false);
     checkRollback(true);
     checkCopyRollback();
+    checkGuestPointers();
     checkDefaultRollback();
     std::puts("guest array callback arguments and lifecycle: PASS");
 }

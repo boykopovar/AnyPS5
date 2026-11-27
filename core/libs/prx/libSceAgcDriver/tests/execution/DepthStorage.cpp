@@ -280,6 +280,7 @@ void Run(Context context, std::uint8_t* block) {
     Require(CountFloats(block, 0.5f) == Side * Side, "the two-layer 2D array view did not receive the layer the depth surface holds");
     layeredDepth.baseArray = 1;
     Require(DepthSurfaceStorage(context, {}, layeredDepth, 0) != nullptr, "a 2D array view from layer 1 of the depth plane was not taken as a storage image");
+    Require(DepthSurfaceStorage(context, {}, layeredDepth, 0)->ImageLayers() == 1, "a 2D array view of layer 1 alone over the depth plane was not given a storage image of that layer alone");
     const auto own = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
     const std::array<std::uint32_t, 4> eighth{std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f)};
     Require(own->FillClear(eighth, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the storage image could not be filled");
@@ -308,6 +309,11 @@ void Run(Context context, std::uint8_t* block) {
     submit(recorder);
     readBack(*spanningView);
     Require(CountFloats(block + layerPitch, overlapping) == Side * Side, "the layer that only overlaps the depth surface did not hold the guest bytes that were there");
+    auto limited = context;
+    limited.limits.maxImageArrayLayers = 2;
+    auto threeLayers = spanning;
+    threeLayers.depthOrLastArray = 2;
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(limited, {}, threeLayers, 0)); }, "maxImageArrayLayers", "a three-layer view under a two-layer limit was built, so the store back below would not follow a failed construction");
     Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
 }
 

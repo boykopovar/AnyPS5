@@ -48,8 +48,8 @@ int APS5_VABI __freeze_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sceKernelGetGPI_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI __sceKernelGetGPI_nid_postfix() {
+    return sceKernelGetGPI();
 }
 
 int APS5_VABI __sys_debug_init_nid_postfix() {
