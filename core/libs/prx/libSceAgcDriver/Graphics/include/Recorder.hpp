@@ -844,6 +844,7 @@ private:
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
+        bool unwound = false;
         std::unordered_set<const void*> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
@@ -1192,6 +1193,7 @@ private:
     std::unique_ptr<ReplayExecutor> makeExecutor();
     bool defers() const;
     void poisonOpen() noexcept;
+    std::exception_ptr failureOf(const Batch& batch) const;
     void overlayListed();
     void noteDemotion(const Demotion& demotion);
     VkCommandBuffer live() { return open->commands; }
@@ -1209,7 +1211,7 @@ private:
     std::atomic<std::uint64_t> directBatches{0};
     std::atomic<std::uint64_t> demotedBatches{0};
     std::atomic<std::uint64_t> poisonedBatches{0};
-    const std::exception_ptr unwoundDrawReason = std::make_exception_ptr(std::runtime_error("AGC graphics: a draw threw while recording into a deferred batch, so the batch holds part of it"));
+    const std::exception_ptr unwoundDrawReason = std::make_exception_ptr(std::runtime_error("AGC graphics: a draw threw while recording, so the batch holds part of it"));
     std::atomic<std::uint64_t> replayedBatches{0};
     std::atomic<std::uint64_t> failedReplays{0};
     mutable std::mutex demotionMutex;

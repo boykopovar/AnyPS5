@@ -2505,6 +2505,38 @@ void deferredBatchTests(const Device& device) {
         recorder.Sync();
         Require(recorder.StreamCounts().replayed == 1, "the batch after a poisoned one was not replayed");
     }
+    const auto unwindsThrough = [&](Recorder& recorder, VkCommandBuffer commands, const Context& through) {
+        bool caught = false;
+        try {
+            const auto guard = recorder.UnwindGuard();
+            recordBarrierThrough(through, commands);
+            recordBarrierThrough(through, commands);
+            throw std::runtime_error("draw failed mid-batch");
+        } catch (const std::runtime_error&) {
+            caught = true;
+        }
+        Require(caught, "the unwinding draw did not throw");
+        try {
+            recorder.Submit();
+        } catch (const std::runtime_error& error) {
+            return std::string(error.what()).find("a draw threw while recording") != std::string::npos;
+        }
+        return false;
+    };
+    {
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, true);
+        Recorder recorder(context, false, true, context.queueFamily);
+        const auto commands = recorder.Commands();
+        RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
+        Require(!recorder.Deferred() && !CommandStream::IsHandle(commands), "APS5_DIRECT_BATCHES opened a deferred batch");
+        recordBarrierThrough(context, commands);
+        Require(unwindsThrough(recorder, commands, context), "a direct batch that a draw unwound through was submitted");
+        Require(recorder.StreamCounts().poisoned == 1 && recorder.StreamCounts().direct == 1, "the poisoned direct batch was not counted: " + recorder.StreamReport());
+        recordBarrierThrough(context, recorder.Commands());
+        recorder.Submit();
+        recorder.Sync();
+        Require(recorder.StreamCounts().direct == 1 && recorder.StreamCounts().poisoned == 1 && recorder.StreamCounts().replayed == 1, "the batch after a poisoned direct one was not replayed: " + recorder.StreamReport());
+    }
     passedDeviceProc = context.deviceProc;
     passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
     passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
@@ -2525,6 +2557,21 @@ void deferredBatchTests(const Device& device) {
         const auto demotions = recorder.Demotions();
         Require(recorder.StreamCounts().demoted == 1 && recorder.StreamCounts().replayed == 0, "the demoted batch was replayed: " + recorder.StreamReport());
         Require(demotions.size() == 1 && demotions[0].first == "vkCmdPipelineBarrier/" + std::to_string(VK_STRUCTURE_TYPE_MEMORY_BARRIER) && demotions[0].second == 1, "the demotion was not counted by command: " + recorder.StreamReport());
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        Recorder recorder(failing, false, true, context.queueFamily);
+        const auto commands = recorder.Commands();
+        recordBarrierThrough(failing, commands);
+        demoteThrough(failing, commands);
+        Require(!recorder.Deferred(), "a pNext-chained command did not demote the batch");
+        Require(unwindsThrough(recorder, commands, failing), "a demoted batch that a draw unwound through was submitted");
+        Require(recorder.StreamCounts().poisoned == 1 && recorder.StreamCounts().demoted == 1 && recorder.StreamCounts().replayed == 0, "the poisoned demoted batch was not counted: " + recorder.StreamReport());
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.Submit();
+        recorder.Sync();
+        Require(recorder.StreamCounts().replayed == 1 && recorder.StreamCounts().poisoned == 1, "the batch after a poisoned demoted one was not replayed: " + recorder.StreamReport());
     }
     {
         Context failing = context;

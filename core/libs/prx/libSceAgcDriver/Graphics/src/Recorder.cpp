@@ -2300,8 +2300,14 @@ VkCommandBuffer Recorder::Begin(CommandStream& stream) {
 }
 
 void Recorder::poisonOpen() noexcept {
-    if (open == nullptr || open->stream == nullptr || open->stream->Materialized() != VK_NULL_HANDLE || open->stream->Poisoned()) return;
-    open->stream->Poison(unwoundDrawReason);
+    if (open == nullptr || open->unwound) return;
+    open->unwound = true;
+    if (open->stream != nullptr && open->stream->Materialized() == VK_NULL_HANDLE) open->stream->Poison(unwoundDrawReason);
+}
+
+std::exception_ptr Recorder::failureOf(const Batch& batch) const {
+    if (batch.stream != nullptr && batch.stream->Poisoned()) return batch.stream->Reason();
+    return batch.unwound ? unwoundDrawReason : nullptr;
 }
 
 std::unique_ptr<ReplayExecutor> Recorder::makeExecutor() {
@@ -5126,11 +5132,11 @@ std::unique_ptr<Recorder::Batch> Recorder::sealOpen() {
             if (batch != nullptr) recorder.discard(std::move(batch));
         }
     };
-    if (open->stream != nullptr && open->stream->Poisoned()) {
+    if (const auto reason = failureOf(*open)) {
         auto failed = std::move(open);
         const DiscardUnsealed discardFailed{*this, failed};
         poisonedBatches.fetch_add(1, std::memory_order_relaxed);
-        std::rethrow_exception(failed->stream->Reason());
+        std::rethrow_exception(reason);
     }
     if (latch.Failed() || latch.DeviceLost()) {
         auto failed = std::move(open);
@@ -5166,9 +5172,9 @@ std::unique_ptr<Recorder::Batch> Recorder::sealOpen() {
     }
     auto batch = std::move(open);
     const DiscardUnsealed discardUnsealed{*this, batch};
-    if (batch->stream != nullptr && batch->stream->Poisoned()) {
+    if (const auto reason = failureOf(*batch)) {
         poisonedBatches.fetch_add(1, std::memory_order_relaxed);
-        std::rethrow_exception(batch->stream->Reason());
+        std::rethrow_exception(reason);
     }
     const std::uint64_t serial = ++sealedThrough;
     try {
