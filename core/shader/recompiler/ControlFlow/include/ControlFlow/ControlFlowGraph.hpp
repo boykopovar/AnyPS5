@@ -125,6 +125,7 @@ struct ControlFlowGraph {
     [[nodiscard]] const BasicBlock& FindBlockByProgramCounter(std::uint32_t programCounter) const;
     [[nodiscard]] BasicBlock& FindBlockByProgramCounter(std::uint32_t programCounter);
     [[nodiscard]] bool Dominates(std::uint32_t dominator, std::uint32_t blockId) const;
+    [[nodiscard]] bool EveryPathReaches(std::uint32_t targetBlock) const;
     [[nodiscard]] bool PostDominates(std::uint32_t postDominator, std::uint32_t blockId) const;
     [[nodiscard]] std::uint32_t FindNearestCommonPostDominator(std::uint32_t firstBlock, std::uint32_t secondBlock) const;
 };
