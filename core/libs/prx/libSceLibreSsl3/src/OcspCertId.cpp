@@ -172,16 +172,40 @@
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <cerrno>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+template<typename T>
+T ReadGuestStruct(const T* source, const char* function, const char* what) {
+    T copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, source, sizeof(copy));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": " + what);
+    return copy;
+}
+
+}
 
 extern "C" void APS5_VABI OCSP_CERTID_free_nid_postfix(OCSP_CERTID* id) {
     if (!id) return;
-    ASN1_INTEGER_free_nid_postfix(id->serialNumber);
-    ASN1_OCTET_STRING_free_nid_postfix(id->issuerKeyHash);
-    ASN1_OCTET_STRING_free_nid_postfix(id->issuerNameHash);
-    if (id->hashAlgorithm) {
-        ASN1_TYPE_free_nid_postfix(reinterpret_cast<Asn1Type*>(id->hashAlgorithm->parameter));
-        ASN1_OBJECT_free_nid_postfix(static_cast<Asn1Object_nid_no_patch*>(id->hashAlgorithm->algorithm));
-        free_nid_postfix(id->hashAlgorithm);
+    const OCSP_CERTID guestId = ReadGuestStruct(id, __func__, "unreadable cert id");
+    LibreSsl3X509Algor guestAlgorithm{};
+    if (guestId.hashAlgorithm) {
+        guestAlgorithm = ReadGuestStruct(guestId.hashAlgorithm, __func__, "unreadable hash algorithm");
+    }
+    ASN1_INTEGER_free_nid_postfix(guestId.serialNumber);
+    ASN1_OCTET_STRING_free_nid_postfix(guestId.issuerKeyHash);
+    ASN1_OCTET_STRING_free_nid_postfix(guestId.issuerNameHash);
+    if (guestId.hashAlgorithm) {
+        ASN1_TYPE_free_nid_postfix(reinterpret_cast<Asn1Type*>(guestAlgorithm.parameter));
+        ASN1_OBJECT_free_nid_postfix(static_cast<Asn1Object_nid_no_patch*>(guestAlgorithm.algorithm));
+        free_nid_postfix(guestId.hashAlgorithm);
     }
     free_nid_postfix(id);
 }

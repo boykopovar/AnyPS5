@@ -1,0 +1,5 @@
+# shader
+
+## change [EXEC read as a value]
+
+- [EXEC read as a value](../../../core/shader/recompiler/Translation/src/TranslationContext/ExecMask.cpp) (`s_mov_b64 sN, exec`, the `s_*_saveexec` copy, ALU sources) holds only lanes in a host ballot. The console's also holds helpers that whole-quad mode ([RDNA 2 ISA, S_WQM_B32/B64, page 111](https://gpuopen.com/download/rdna2-shader-instruction-set-architecture.pdf#page=119)) put into EXEC where the driver keeps them out of ballots (AMD's Windows driver), and lanes the host lacks, e.g. 32-63 of a wave64 on 32 host lanes: a waterfall over EXEC skips them and `s_bcnt1` does not count them. In a pixel program an EXEC copy to an SGPR or VCC keeps each lane's bit; one through a VGPR or a 32-bit scalar op other than `s_mov_b32` and the logic ops keeps only the value. A wave32 pixel program split across a 64-lane subgroup loops on AMD's Windows driver 26.11.2 (RX 9070 XT), so [they](../../../core/shader/recompiler/Recompiler.cpp) run on required 32-lane subgroups where the driver allows it.

@@ -465,10 +465,10 @@ int main() {
         ZeroFillBelowTheNextSegment();
         DataAndZeroFillBelowTheNextSegment();
         ZeroFileBytesStayInPlace();
-        ZeroPageBelowASegmentWithoutFileBytesStaysInPlace();
-        IncongruentSegmentWithoutFileBytes();
-        ZeroFillBelowASegmentWithoutFileBytes();
         DataBelowASegmentWithoutFileBytes();
+        ZeroFillBelowASegmentWithoutFileBytes();
+        IncongruentSegmentWithoutFileBytes();
+        ZeroPageBelowASegmentWithoutFileBytesStaysInPlace();
         EmptyLoadInsideSharedPagePreservesAlignment();
         TrampolineDisplacementAcrossInt64Max();
         TrampolineDisplacementBeyondInt64Range();

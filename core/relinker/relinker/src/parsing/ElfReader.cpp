@@ -135,6 +135,9 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
         throw RelinkerException("FileByteOffset out of bounds", header.ProgramHeaderOffset);
     }
+    if (header.ProgramHeaderCount == PN_XNUM) {
+        throw RelinkerException("Extended program header counts are not supported", 0x38);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
@@ -262,6 +265,10 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
 
         if ((sh.Type == SHT_SYMTAB || sh.Type == SHT_DYNSYM) && sh.EntrySize != kSymEntrySize) {
             throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type == SHT_DYNAMIC && sh.EntrySize != kDynEntrySize) {
+            throw RelinkerException("Invalid dynamic section entry size", offset + kShdrEntSizeOffset);
         }
 
         if (sh.Type == SHT_RELA && sh.EntrySize != kRelaEntrySize) {

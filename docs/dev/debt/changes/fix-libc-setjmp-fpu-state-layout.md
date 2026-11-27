@@ -1,0 +1,9 @@
+# libc
+
+## change [setjmp, longjmp]
+
+- [setjmp, longjmp](../../../core/libs/prx/libc/src/JumpBuffer.cpp) (libc) save the x87 control word at 64, MXCSR at 68 and the signal mask at 72 in the jump buffer and restore the mask, as a PS5 payload process (firmware 11.60, probe `libc_setjmp_dl`, build `564feefb83ff`) did with a zeroed buffer, and as FreeBSD 11.4's [`setjmp` and `longjmp`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/amd64/gen/setjmp.S#L51-L85) do. Not measured: whether the console restores the control word and MXCSR, and whether its `setjmp` writes the flag at 88, which is 1 here (that buffer held 0 at 80 and 88 afterwards); `sigsetjmp` and `siglongjmp` are not exported by `libSceLibcInternal.sprx`. They go through the `sigprocmask` libkernel registers when it loads and mark the buffer at 88 as `sigsetjmp` does, so a buffer saved before then is jumped to without changing the mask. `sigsetjmp` here saves only the control word, not MXCSR.
+
+## change [_setjmp, _longjmp, longjmp]
+
+- [_setjmp, _longjmp, longjmp](../../../core/libs/prx/libc/src/JumpBuffer.cpp) (libc) - `_setjmp` and `_longjmp` use the buffer layout of `setjmp` here, which holds the x87 control word at 64 and MXCSR at 68 like the `libc.prx` bundled with PPSA21564 (build `J03093718`), whose `_setjmp` (0x1153a0) also stores the stack pointer at the call, as FreeBSD 11.4's [`_setjmp.S`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/amd64/gen/_setjmp.S) does. `_setjmp` also writes 0 at 88, where that binary's leaves the buffer, so `longjmp` restores no signal mask from it. `longjmp` restores the saved MXCSR exception flags, while that binary's `longjmp` (0x54900) and `_longjmp` (0x1153e0) keep the current flags and take only the other MXCSR bits from the buffer, as `_longjmp` here does

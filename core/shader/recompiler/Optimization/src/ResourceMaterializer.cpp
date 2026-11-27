@@ -165,7 +165,7 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
 }
 
 bool multisamplePlaneRead(const ImageResource& image) {
-    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible && !image.gathered;
 }
 
 DescriptorValue gcnTableImageWords(DescriptorValue descriptor) {
@@ -381,7 +381,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
-    const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
+    const bool packedNarrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt;
+    const bool rawSintStorage = storage && (wideSint || (narrowSint && (!base.packed || packedNarrowSint))) && base.written && !base.read && !base.atomic;
     const bool rawFloat16Storage = storage && base.written && !base.read && !base.atomic &&
         (remappedFormat == IrBufferFormat::Format16Float || remappedFormat == IrBufferFormat::Format16_16Float || remappedFormat == IrBufferFormat::Format16_16_16_16Float);
     decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(remappedFormat);
@@ -1884,12 +1885,10 @@ bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValu
 bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
     const auto& buffer = plan.info.buffers[index];
     if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
-    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
     bool accessed = false;
     for (const auto& memory : plan.memoryInfo) {
         if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
         if (memory.typed || memory.gpuDescriptor) return false;
-        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
         accessed = true;
     }
     return accessed;
@@ -2160,6 +2159,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 if (image.packed && image.resourceClass == ImageResourceClass::Storage) {
                     auto viewFormat = mode.packedFormat;
                     switch (viewFormat) {
+                        case IrBufferFormat::Format16SInt: viewFormat = IrBufferFormat::Format16UInt; break;
+                        case IrBufferFormat::Format8_8SInt: viewFormat = IrBufferFormat::Format8_8UInt; break;
+                        case IrBufferFormat::Format16_16SInt: viewFormat = IrBufferFormat::Format16_16UInt; break;
                         case IrBufferFormat::Format32SInt: viewFormat = IrBufferFormat::Format32UInt; break;
                         case IrBufferFormat::Format32_32SInt: viewFormat = IrBufferFormat::Format32_32UInt; break;
                         case IrBufferFormat::Format32_32_32_32SInt: viewFormat = IrBufferFormat::Format32_32_32_32UInt; break;
@@ -2408,6 +2410,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                 offer(declaredArray ? RdnaImageDimension::Dim1DArray : RdnaImageDimension::Dim3D);
             }
             if (declaredArray) offer(RdnaImageDimension::Dim2D);
+            if (!declaredArray && !table && image.read && image.fmaskCompatible && image.cubeFaceCompatible) offer(RdnaImageDimension::Dim2DMsaa);
             auto cube = mode;
             cube.dimension = RdnaImageDimension::Dim2DArray;
             cube.cube = true;
@@ -2510,12 +2513,13 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             const auto info = GetFormatInfo(format);
             if (info.packedBitfield || info.componentCount == 0u || (storage && info.byteSize == 12u)) continue;
             if (image.byElements != 0u && info.byteSize * 8u * image.byElements > 32u) continue;
-            const auto numeric = storage && (format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt) ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
+            const bool rawSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt || format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt;
+            const auto numeric = storage && rawSint ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
             bool supported = numeric != IrTextureNumericClass::Unsupported && (!storage || numeric != IrTextureNumericClass::Sint);
             for (std::uint32_t component = 0u; component < info.componentCount; ++component) {
                 const auto bits = info.componentBits[component];
                 const bool exactRead = info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint || (info.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (info.type == SpirvFormatComponentType::Float && bits == 32u);
-                const bool exactWrite = info.type == SpirvFormatComponentType::Uint || (bits == 32u && (info.type == SpirvFormatComponentType::Sint || info.type == SpirvFormatComponentType::Float));
+                const bool exactWrite = info.type == SpirvFormatComponentType::Uint || (info.type == SpirvFormatComponentType::Sint && rawSint) || (bits == 32u && info.type == SpirvFormatComponentType::Float);
                 supported &= storage ? exactWrite : exactRead;
             }
             if (supported) append(numeric, IrBufferFormat::Invalid, format, false, false);
@@ -2655,7 +2659,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         if (storage && packedFormat.byteSize == 12u) return reject(PoisonReason::InvalidFormat, "runtime packed image uses a format the hardware does not write");
         for (std::uint32_t component = 0u; component < packedFormat.componentCount; ++component) {
             const auto bits = packedFormat.componentBits[component];
-            const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || (bits == 32u && (packedFormat.type == SpirvFormatComponentType::Sint || packedFormat.type == SpirvFormatComponentType::Float)) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
+            const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || (packedFormat.type == SpirvFormatComponentType::Sint && (bits == 32u || decoded.packedFormat == IrBufferFormat::Format16SInt || decoded.packedFormat == IrBufferFormat::Format8_8SInt || decoded.packedFormat == IrBufferFormat::Format16_16SInt)) || (bits == 32u && packedFormat.type == SpirvFormatComponentType::Float) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
             if (!exact) return reject(PoisonReason::InvalidFormat, storage ? "runtime packed image bits are not reproducible through the view" : "runtime packed image bits are not recoverable from the view");
         }
     }

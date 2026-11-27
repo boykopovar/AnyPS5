@@ -140,10 +140,10 @@ public:
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
         const auto plan = aliasPlan(begin, end);
-        Fanout fanout{&plan.own, written, context};
+        Fanout fanout{this, begin, end, plan.version, &plan.own, written, context};
         if (!takeFresh(begin, end, true, &Fanout::Report, &fanout) || !scanWritten(begin, end, &Fanout::Report, &fanout)) return false;
         for (const auto& alias : plan.aliases) {
-            Fanout through{&alias.translations, written, context};
+            Fanout through{this, alias.begin, alias.end, plan.version, &alias.translations, written, context};
             if (!takeFresh(alias.begin, alias.end, false, &Fanout::Report, &through) || !scanWritten(alias.begin, alias.end, &Fanout::Report, &through)) return false;
         }
         return true;
@@ -162,10 +162,10 @@ public:
             while (it != _fresh.end() && it->first < end && it->second <= begin) ++it;
             if (it == _fresh.end() || it->first >= end) return true;
         }
-        Fanout fanout{&plan.own, written, context};
+        Fanout fanout{this, begin, end, plan.version, &plan.own, written, context};
         if (!takeFresh(begin, end, false, &Fanout::Report, &fanout)) return false;
         for (const auto& alias : plan.aliases) {
-            Fanout through{&alias.translations, written, context};
+            Fanout through{this, alias.begin, alias.end, plan.version, &alias.translations, written, context};
             if (!takeFresh(alias.begin, alias.end, false, &Fanout::Report, &through)) return false;
         }
         return true;
@@ -186,12 +186,12 @@ public:
             plan = aliasPlanLocked(begin, end);
             for (const auto& alias : plan.aliases) aliasArmed.push_back(armedParts(alias.begin, alias.end));
         }
-        Fanout fanout{&plan.own, written, context};
+        Fanout fanout{this, begin, end, plan.version, &plan.own, written, context};
         for (const auto& [from, to] : armed) {
             if (!scanWritten(from, to, &Fanout::Report, &fanout)) return false;
         }
         for (std::size_t index = 0; index < plan.aliases.size(); ++index) {
-            Fanout through{&plan.aliases[index].translations, written, context};
+            Fanout through{this, plan.aliases[index].begin, plan.aliases[index].end, plan.version, &plan.aliases[index].translations, written, context};
             for (const auto& [from, to] : aliasArmed[index]) {
                 if (!scanWritten(from, to, &Fanout::Report, &through)) return false;
             }
@@ -213,23 +213,38 @@ private:
     };
 
     struct AliasPlan {
+        std::uint64_t version = 0;
         std::vector<Translation> own;
         std::vector<AliasRange> aliases;
     };
 
     struct Fanout {
+        Watch* watch;
+        std::uintptr_t rangeBegin;
+        std::uintptr_t rangeEnd;
+        std::uint64_t version;
         const std::vector<Translation>* translations;
         void (*written)(void*, std::uintptr_t, std::uintptr_t);
         void* context;
+        std::vector<Translation> refreshed;
 
         static void Report(void* self, std::uintptr_t begin, std::uintptr_t end) {
             auto& fanout = *static_cast<Fanout*>(self);
+            fanout.refresh();
             fanout.written(fanout.context, begin, end);
             for (const auto& [from, to, partner] : *fanout.translations) {
                 const auto left = std::max(from, begin);
                 const auto right = std::min(to, end);
                 if (left < right) fanout.written(fanout.context, partner + (left - from), partner + (right - from));
             }
+        }
+
+        void refresh() {
+            if (watch->_linkVersion.load(std::memory_order_acquire) == version) return;
+            std::shared_lock lock(watch->_lock);
+            version = watch->_linkVersion.load(std::memory_order_relaxed);
+            refreshed = watch->translations(rangeBegin, rangeEnd);
+            translations = &refreshed;
         }
     };
 
@@ -245,6 +260,7 @@ private:
 
     AliasPlan aliasPlanLocked(std::uintptr_t begin, std::uintptr_t end) const {
         AliasPlan plan;
+        plan.version = _linkVersion.load(std::memory_order_relaxed);
         plan.own = translations(begin, end);
         for (const auto& [from, to, partner] : plan.own) {
             const auto stop = partner + (to - from);
@@ -281,6 +297,7 @@ private:
     void link(std::uintptr_t begin, std::uintptr_t end, std::uintptr_t partner) {
         _links.emplace(begin, Link{end, partner});
         _linkBytes = std::max(_linkBytes, end - begin);
+        _linkVersion.fetch_add(1, std::memory_order_release);
     }
 
     void cut(std::uintptr_t begin, std::uintptr_t end) {
@@ -294,6 +311,7 @@ private:
                 continue;
             }
             it = _links.erase(it);
+            _linkVersion.fetch_add(1, std::memory_order_release);
             std::vector<std::pair<std::uintptr_t, std::uintptr_t>> pieces{{0, bytes}};
             for (const auto base : {from, partner}) {
                 const auto low = std::min(bytes, begin > base ? begin - base : 0);
@@ -326,18 +344,20 @@ private:
             for (const auto& [from, to] : fresh) remove(_fresh, from, to);
         }
         for (const auto& [from, to] : fresh) {
-            written(context, from, to);
             if (protect(from, to)) continue;
-            std::unique_lock lock(_lock);
-            for (const auto& [left, right] : fresh) {
-                if (!covers(left, right)) continue;
-                remove(_fresh, left, right);
-                insert(_fresh, left, right);
+            {
+                std::unique_lock lock(_lock);
+                for (const auto& [left, right] : fresh) {
+                    if (!covers(left, right)) continue;
+                    remove(_fresh, left, right);
+                    insert(_fresh, left, right);
+                }
             }
             if (whole) written(context, begin, end);
             else for (const auto& [left, right] : fresh) written(context, left, right);
             return false;
         }
+        for (const auto& [from, to] : fresh) written(context, from, to);
         return true;
     }
 
@@ -368,6 +388,10 @@ private:
 
 private:
     Watch() {
+        const struct ErrnoGuard {
+            int saved = errno;
+            ~ErrnoGuard() { errno = saved; }
+        } restoreErrno{};
         if (std::getenv("APS5_NO_WRITE_WATCH") == nullptr) open();
         else std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "disabled by APS5_NO_WRITE_WATCH");
     }
@@ -495,6 +519,7 @@ private:
     std::map<std::uintptr_t, std::uintptr_t> _fresh;
     std::multimap<std::uintptr_t, Link> _links;
     std::uintptr_t _linkBytes = 0;
+    std::atomic<std::uint64_t> _linkVersion{0};
 };
 
 const bool g_opened = (Watch::Get(), true);
