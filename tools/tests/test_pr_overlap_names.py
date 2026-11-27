@@ -161,6 +161,9 @@ class NamesAliasTests(NamesLookupFixture):
         pr = {"ref": "refs/pr/4", "sha": sha, "author": "author4", "title": "handler edit", "depends": set()}
         self.assertEqual(pr_overlap.pull_requests_with(["done"], {4: pr}, 2), {"done": [4]})
 
+
+
+class NamesReportTests(NamesLookupFixture):
     def test_reports_the_state_on_the_base_through_names_and_nid_aliases(self):
         status = pr_overlap.main_status(["done", "pending", "legacy_target", "absent"], "refs/pr/base")
         library = "core/libs/prx/libSceExample"
@@ -169,8 +172,6 @@ class NamesAliasTests(NamesLookupFixture):
         self.assertEqual(status["legacy_target"], {library: "stub"})
         self.assertEqual(status["absent"], {})
 
-
-class NamesReportTests(NamesLookupFixture):
     def test_report_lists_state_and_pull_requests(self):
         names = ["pending", "absent"]
         found = pr_overlap.pull_requests_with(names, self.prs, 2)
