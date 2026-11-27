@@ -1608,7 +1608,7 @@ private:
                 out.recordStride = column.stride;
                 out.recordBytes = column.dwordCount * 4u;
             }
-        } else if (linear && !column.address && records.size != 0u && (column.offset & 3u) == 0u && span + column.offset <= 0xffffffffull) {
+        } else if (linear && !column.address && records.size != 0u && (column.offset & 3u) == 0u && span + column.offset <= 0xffffffffull && static_cast<std::uint64_t>(column.offset) + static_cast<std::uint64_t>(column.dwordCount) * 4u <= 0xffffffffull) {
             out.recordStart = records.base + column.addend + column.offset;
             out.recordStride = column.stride;
             out.recordBytes = column.dwordCount * 4u;
