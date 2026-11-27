@@ -3202,12 +3202,14 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 const auto packed = d[4u + position / 2u];
                 return EmitF16BitsToF32(state, position % 2u == 0u ? op(spv::OpBitwiseAnd, u32, packed, uint(0xffffu)) : op(spv::OpShiftRightLogical, u32, packed, uint(16u)));
             };
-            const auto nanMax = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(a), op(spv::OpFOrdGreaterThan, boolean, a, b)), a, b); };
-            const auto nanMin = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(a), op(spv::OpFOrdLessThan, boolean, a, b)), a, b); };
+            const auto nanMax = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(b), op(spv::OpFOrdGreaterThan, boolean, a, b)), a, b); };
+            const auto nanMin = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(b), op(spv::OpFOrdLessThan, boolean, a, b)), a, b); };
             const auto zero = real(0u);
             const auto growFactor = op(spv::OpFAdd, f32, real(0x3f800000u), op(spv::OpFMul, f32, Unary(state, spv::OpConvertUToF, f32, boxGrow), real(0x33800000u)));
             std::array<std::uint32_t, 4> children{};
             std::array<std::uint32_t, 4> keys{};
+            auto rayNan = either(isNan(origin[0]), isNan(inverse[0]));
+            for (std::uint32_t axis = 1; axis < 3u; ++axis) rayNan = either(rayNan, either(isNan(origin[axis]), isNan(inverse[axis])));
             for (std::uint32_t child = 0; child < 4u; ++child) {
                 std::uint32_t enter = 0;
                 std::uint32_t leave = 0;
@@ -3220,7 +3222,7 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
                     enter = axis == 0u ? near : nanMax(enter, near);
                     leave = axis == 0u ? far : nanMin(leave, far);
                 }
-                const auto nan = either(isNan(enter), isNan(leave));
+                const auto nan = either(rayNan, either(isNan(enter), isNan(leave)));
                 const auto minT = selectF(nan, real(0x7f800000u), selectF(op(spv::OpFOrdGreaterThan, boolean, enter, zero), enter, zero));
                 const auto maxT = selectF(nan, real(0xff800000u), selectF(op(spv::OpFOrdLessThan, boolean, leave, extent), leave, extent));
                 const auto hit = op(spv::OpFOrdLessThanEqual, boolean, minT, op(spv::OpFMul, f32, maxT, growFactor));
