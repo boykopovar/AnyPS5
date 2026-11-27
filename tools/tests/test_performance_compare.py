@@ -164,6 +164,21 @@ class PerformanceCompareTests(unittest.TestCase):
             self.assertIsNone(report["top_phases_ms_per_frame"][phase]["change_pct"])
         self.assertIn("n/a", performance_compare.markdown(report))
 
+    def test_ranked_out_phases_use_each_captures_recorded_total(self):
+        self.baseline.update(top_phases_ms_per_frame={"falling": 8.25, "steady": 1},
+                             phase_totals_ms={"rising": 16, "steady": 4.1, "other": 4})
+        self.candidate.update(presents=8, top_phases_ms_per_frame={"rising": 12, "steady": 1},
+                              phase_totals_ms={"falling": 0, "steady": 8.1, "other": 2})
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        phases = json.loads(result.stdout)["top_phases_ms_per_frame"]
+        self.assertEqual(phases["rising"], {"baseline": 4, "candidate": 12, "change": 8, "change_pct": 200})
+        self.assertEqual(phases["falling"], {"baseline": 8.25, "candidate": 0, "change": -8.25, "change_pct": -100})
+        self.assertEqual(phases["steady"]["change"], 0)
+        self.assertNotIn("other", phases)
+
     def test_exact_trace_selection_does_not_pick_the_last_session(self):
         self.write(self.before, self.baseline, self.candidate)
         self.write(self.after, self.candidate, self.baseline)
@@ -256,6 +271,17 @@ class PerformanceCompareTests(unittest.TestCase):
                     self.assertIn("after.jsonl:2: trace_dropped_threads.worker disagrees with trace_dropped",
                                   result.stderr)
 
+    def test_unbound_draws_and_thread_event_loss_are_reported_independently(self):
+        self.candidate.update(trace_dropped=True, owned_draw_counts={"OwnedDraw.unbound": 3})
+        for lost in (False, True):
+            with self.subTest(lost=lost):
+                if lost:
+                    self.candidate["trace_dropped_threads"] = {"worker": {"events_lost": 2}}
+                report = performance_compare.compare(self.baseline, self.candidate)
+                notes = "\n".join(report["notes"])
+                self.assertIn("candidate: 3 unbound", notes)
+                self.assertEqual("candidate: trace events were dropped" in notes, lost)
+
     def test_legacy_trace_loss_warning_is_preserved_without_thread_details(self):
         for dropped in (False, True):
             with self.subTest(dropped=dropped):
@@ -322,6 +348,7 @@ class PerformanceCompareTests(unittest.TestCase):
                   (("gpu_busy_ms_per_present",), float("-inf")), (("window",), None),
                   (("window", "first_present"), True), (("env",), []), (("env",), {"APS5_TRACE_FRAMES": 4}),
                   (("trace_dropped",), "false"), (("dirty",), 1), (("trace",), None),
+                  (("phase_totals_ms",), []), (("phase_totals_ms",), {"phase": -1}),
                   (("top_phases_ms_per_frame",), []), (("top_phases_ms_per_frame",), {"phase": -1})]
         cases += [((field,), value) for field in ("cpu", "title_id", "title", "content_version")
                   for value in (None, True, 12, [])]
