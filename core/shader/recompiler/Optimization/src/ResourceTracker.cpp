@@ -280,6 +280,7 @@ private:
         std::optional<KeyDomain> keyDomain;
         std::vector<IrValue*> heapLive;
         std::vector<IrValue*> heapPlanned;
+        std::vector<const IrValue*> adjustedWords;
     };
 
     struct DescriptorGuard {
@@ -313,7 +314,7 @@ private:
         }
     }
 
-    IrValue* canonicalizeSampleAdjustDword3(IrValue* value) {
+    IrValue* canonicalizeSampleAdjustDword3(IrValue* value, std::vector<const IrValue*>* stripped = nullptr) {
         for (;;) {
             value = value->Resolve();
             if ((possibleU32Bits(value) & ~samplerDword3ReservedMask) == 0u) {
@@ -326,13 +327,13 @@ private:
             IrValue* right = value->Argument(1)->Resolve();
             const bool leftReserved = (possibleU32Bits(left) & ~samplerDword3ReservedMask) == 0u;
             const bool rightReserved = (possibleU32Bits(right) & ~samplerDword3ReservedMask) == 0u;
-            if (leftReserved) {
-                value = right;
-            } else if (rightReserved) {
-                value = left;
-            } else {
+            if (!leftReserved && !rightReserved) {
                 return value;
             }
+            if (stripped != nullptr) {
+                stripped->push_back(value);
+            }
+            value = leftReserved ? right : left;
         }
     }
 
@@ -840,7 +841,7 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
-    bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
+    bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false, bool sampleAdjust = false) {
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
         if (handle.Opcode() != expected || handle.ArgumentCount() != width) {
@@ -868,7 +869,11 @@ private:
         FirstLaneOffset baseLane;
         bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
-            IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
+            IrValue* word = handle.Argument(dword);
+            if (sampler && sampleAdjust && dword == 3u) {
+                word = canonicalizeSampleAdjustDword3(word, &plan.adjustedWords);
+            }
+            IrValue* read = ResolveInvariantPhi(m_program.Resources(), word);
             if (read == nullptr) return false;
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
@@ -1526,12 +1531,12 @@ private:
         return found == m_tableColumns.end() ? nullptr : &*found;
     }
 
-    bool PlanTableColumn(IrValue& handle, bool sampler, bool r128) {
+    bool PlanTableColumn(IrValue& handle, bool sampler, bool r128, bool sampleAdjust = false) {
         if (FindTableColumn(handle) != nullptr) {
             return true;
         }
         TableColumnPlan plan;
-        if (!TryMakeTableColumn(handle, sampler, r128, plan)) {
+        if (!TryMakeTableColumn(handle, sampler, r128, plan, false, sampleAdjust)) {
             return false;
         }
         m_tableColumns.push_back(std::move(plan));
@@ -2401,16 +2406,19 @@ private:
                     static_cast<void>(PlanTableColumn(image, false, memory.imageR128));
                 }
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
-                    static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
+                    static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false, (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u));
                 }
             }
         }
+        const auto plannedUses = [&](const TableColumnPlan& plan, const IrValue& value, auto&& self) -> bool {
+            return std::ranges::all_of(value.Uses(), [&](const IrValue* user) {
+                return FindTableColumn(*user) != nullptr || (std::ranges::find(plan.adjustedWords, user) != plan.adjustedWords.end() && self(plan, *user, self));
+            });
+        };
         for (const auto& plan : m_tableColumns) {
             for (std::size_t index = 0; index < plan.reads.size(); index++) {
                 const IrValue* read = plan.reads[index];
-                const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return FindTableColumn(*user) != nullptr;
-                });
+                const bool planned = plannedUses(plan, *read, plannedUses);
                 if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
                     m_tablePlanningReads.push_back(read);
                     m_tablePlanningMemory.push_back(plan.memory[index]);

@@ -6877,6 +6877,41 @@ void verifyEvaluableHeapSamplerDirect() {
     require(perLane->info.samplers.size() == 1u && perLane->info.samplers[0].table != NoTable && perLane->descriptorSources.at(perLane->info.samplers[0].source).tableColumn.has_value(), "evaluable heap sampler: an S# read from a heap at an offset keyed per lane was not planned through a sampler table");
 }
 
+void verifyAdjustedTableSamplerDword3() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    FillTableSrt(guest, heap.data(), 32u, 2u);
+    const auto userData = TableUserData(guest);
+    const auto tableSampler = [](std::uint32_t word0) {
+        auto code = TableWholeCode;
+        const auto direct = std::find(code.begin(), code.end(), 0xf4080200u);
+        require(direct != code.end() && direct[1] == 0xfa000010u, "adjusted table sampler: the program has no S# load from the SRT");
+        code.erase(direct, direct + 2);
+        const auto shift = std::find(code.begin(), code.end(), 0x8f108510u);
+        require(shift != code.end(), "adjusted table sampler: the program has no key shift");
+        code.insert(shift + 1, {0xf4280202u, 0x20000000u, 0x7d8a0080u, 0x8720ff6au, 0x000000ffu, 0x8f208c20u, 0x880b200bu});
+        const auto sample = std::find(code.begin(), code.end(), 0xf09c0f08u);
+        require(sample != code.end(), "adjusted table sampler: the program has no image_sample_lz");
+        *sample = word0;
+        return code;
+    };
+    const auto adjusted = GetResourcePlan(TableRequest(tableSampler(0xf0800f09u), userData));
+    require(adjusted->info.samplers.size() == 1u && adjusted->info.samplers[0].table != NoTable && adjusted->descriptorSources.at(adjusted->info.samplers[0].source).tableColumn.has_value(), "adjusted table sampler: an image_sample_a whose table S# dword 3 also holds a ballot in its reserved bits was not planned through a sampler table");
+    std::uint32_t tableReads = 0;
+    for (const auto& memory : adjusted->memoryInfo) {
+        if (memory.kind != ResourceKind::ScalarBuffer) continue;
+        require(memory.planningOnly, "adjusted table sampler: a table descriptor read stayed a GPU memory access");
+        tableReads++;
+    }
+    require(tableReads == 12u, "adjusted table sampler: the program does not read one T# and one S# from the table");
+    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(tableSampler(0xf0800f08u), userData))); }, "GetSamplerResource dword 0 is not a valid runtime value", "adjusted table sampler: an image_sample whose table S# dword 3 holds a ballot was accepted");
+}
+
 void verifySelectedRecordUniformIndex() {
     using namespace ShaderRecompiler;
     static TableTexture textures[2];
@@ -13749,6 +13784,7 @@ int main(int argc, char** argv) {
             verifySelectedRecordOffsetCarry();
             verifySelectedRecordDirectOperations();
             verifyEvaluableHeapSamplerDirect();
+            verifyAdjustedTableSamplerDword3();
             verifySelectedRecordUniformIndex();
             verifyChainedTableOffset();
             verifyPointerChainImageTable();
