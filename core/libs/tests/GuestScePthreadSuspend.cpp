@@ -11,6 +11,9 @@
 #include <stdexcept>
 #include <thread>
 #ifdef __linux__
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/System/include/UserContext.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <signal.h>
 #endif
 
@@ -189,6 +192,89 @@ static void SuspendStopsThreadOfParkSignalBlockingCreator() {
     RequireRunning(workers, stopped, "a thread created with SIGUSR2 blocked did not continue after scePthreadResume");
     Finish(spin, workers[0]);
 }
+
+enum class ContextMove : int { Keep, Escape, Restore };
+
+static constexpr int GUEST_SIGUSR1 = 30;
+static constexpr auto BLOCK_WINDOW = std::chrono::milliseconds(20);
+alignas(16) static unsigned char escapeStack[256 * 1024];
+static UserMcontext waitContext{};
+static std::atomic<ContextMove> contextMove{ContextMove::Keep};
+static std::atomic<int> deliveries{0};
+static std::atomic<int> escapedMarked{-1};
+
+[[noreturn]] static void APS5_VABI EscapedFromWait() {
+    escapedMarked.store(TimedWait::InSuspendSafeWait() ? 1 : 0);
+    contextMove.store(ContextMove::Restore);
+    sceKernelRaiseException(scePthreadSelf(), GUEST_SIGUSR1);
+    std::abort();
+}
+
+static void APS5_VABI MoveContext(int, void* opaque) {
+    auto& context = static_cast<UserUcontext*>(opaque)->mcontext;
+    switch (contextMove.load()) {
+    case ContextMove::Escape:
+        waitContext = context;
+        context.rip = reinterpret_cast<std::uint64_t>(&EscapedFromWait);
+        context.rsp = reinterpret_cast<std::uint64_t>(escapeStack + sizeof(escapeStack)) - sizeof(std::uint64_t);
+        break;
+    case ContextMove::Restore:
+        context = waitContext;
+        break;
+    case ContextMove::Keep:
+        break;
+    }
+    deliveries.fetch_add(1);
+}
+
+struct MutexWaiter {
+    PthreadMutex mutex = nullptr;
+    std::atomic<bool> started{false};
+    std::atomic<int> markedAfter{-1};
+};
+
+static void* APS5_VABI LockThenReport(void* opaque) {
+    auto& waiter = *static_cast<MutexWaiter*>(opaque);
+    waiter.started.store(true);
+    Require(scePthreadMutexLock(&waiter.mutex) == SCE_OK, "scePthreadMutexLock in the waiting thread failed");
+    waiter.markedAfter.store(TimedWait::InSuspendSafeWait() ? 1 : 0);
+    Require(scePthreadMutexUnlock(&waiter.mutex) == SCE_OK, "scePthreadMutexUnlock in the waiting thread failed");
+    return FINISHED;
+}
+
+static void WaitForDeliveries(int expected, const char* message) {
+    const auto deadline = std::chrono::steady_clock::now() + PROGRESS_LIMIT;
+    while (deliveries.load() < expected) {
+        Require(std::chrono::steady_clock::now() < deadline, message);
+        std::this_thread::yield();
+    }
+}
+
+static void ExceptionHandlerContextMoveDropsSuspendSafeMarker() {
+    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&MoveContext)) == SCE_OK, "sceKernelInstallExceptionHandler failed");
+    MutexWaiter waiter;
+    Require(scePthreadMutexInit(&waiter.mutex, nullptr, nullptr) == SCE_OK, "scePthreadMutexInit failed");
+    Require(scePthreadMutexLock(&waiter.mutex) == SCE_OK, "scePthreadMutexLock in the holding thread failed");
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, LockThenReport, &waiter, "mutex waiter") == SCE_OK, "scePthreadCreate failed");
+    while (!waiter.started.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(BLOCK_WINDOW);
+    contextMove.store(ContextMove::Keep);
+    Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == SCE_OK, "sceKernelRaiseException failed");
+    WaitForDeliveries(1, "the exception handler never ran in the mutex wait");
+    Require(scePthreadSuspend(thread) == SCE_OK, "scePthreadSuspend of a thread back in its mutex wait after an exception handler did not return SCE_OK");
+    Require(scePthreadResume(thread) == SCE_OK, "scePthreadResume failed");
+    contextMove.store(ContextMove::Escape);
+    Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == SCE_OK, "sceKernelRaiseException failed");
+    WaitForDeliveries(3, "the thread moved out of its mutex wait never moved back");
+    Require(escapedMarked.load() == 0, "a thread an exception handler moved out of its mutex wait kept the wait's suspend-safe marker");
+    Require(scePthreadMutexUnlock(&waiter.mutex) == SCE_OK, "scePthreadMutexUnlock in the holding thread failed");
+    void* result = nullptr;
+    Require(scePthreadJoin(thread, &result) == SCE_OK && result == FINISHED, "joining the mutex waiter failed");
+    Require(waiter.markedAfter.load() == 0, "a mutex wait an exception handler moved back into left the suspend-safe marker set after it returned");
+    Require(scePthreadMutexDestroy(&waiter.mutex) == SCE_OK, "scePthreadMutexDestroy failed");
+    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == SCE_OK, "sceKernelRemoveExceptionHandler failed");
+}
 #endif
 
 static void SuspendErrorsThrow() {
@@ -250,6 +336,7 @@ int main() {
     ConcurrentSuspendsResumeOnce();
 #ifdef __linux__
     SuspendStopsThreadOfParkSignalBlockingCreator();
+    ExceptionHandlerContextMoveDropsSuspendSafeMarker();
 #endif
     SuspendErrorsThrow();
     SuspendAllStopsEveryOtherThread();

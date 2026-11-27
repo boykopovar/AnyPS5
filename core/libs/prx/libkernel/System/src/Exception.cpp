@@ -1167,9 +1167,12 @@ void Deliver(int signum, siginfo_t*, void* context) {
     auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
     GuestUcontext ucontext{};
     FromHost(host, ucontext.mcontext);
+    const std::uint64_t interruptedRip = ucontext.mcontext.rip;
+    const std::uint64_t interruptedRsp = ucontext.mcontext.rsp;
     {
-        const TimedWait::SuspendSafeWaitHidden hidden;
+        TimedWait::SuspendSafeWaitHidden hidden;
         CallHandler(handler, RaisedSignal, ucontext);
+        if (ucontext.mcontext.rip != interruptedRip || ucontext.mcontext.rsp != interruptedRsp) hidden.Abandon();
     }
     ToHost(ucontext.mcontext, host);
 }

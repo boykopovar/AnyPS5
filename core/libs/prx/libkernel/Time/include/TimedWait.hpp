@@ -167,6 +167,9 @@ public:
     ~SuspendSafeWait();
     SuspendSafeWait(const SuspendSafeWait&) = delete;
     SuspendSafeWait& operator=(const SuspendSafeWait&) = delete;
+
+private:
+    int depth;
 };
 
 class SuspendSafeWaitHidden {
@@ -175,6 +178,7 @@ public:
     ~SuspendSafeWaitHidden();
     SuspendSafeWaitHidden(const SuspendSafeWaitHidden&) = delete;
     SuspendSafeWaitHidden& operator=(const SuspendSafeWaitHidden&) = delete;
+    void Abandon();
 
 private:
     int depth;

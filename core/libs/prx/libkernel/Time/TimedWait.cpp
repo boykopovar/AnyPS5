@@ -533,12 +533,11 @@ constinit thread_local std::atomic<int> suspendSafeDepth{0};
 
 class DeliveryAllowance {
 public:
-    DeliveryAllowance() : depth(deferralDepth.exchange(0)) {
-        suspendSafeDepth.fetch_add(1);
+    DeliveryAllowance() : depth(deferralDepth.exchange(0)), safeDepth(suspendSafeDepth.fetch_add(1)) {
         DeliverDeferred();
     }
     ~DeliveryAllowance() {
-        suspendSafeDepth.fetch_sub(1);
+        suspendSafeDepth.store(safeDepth);
         deferralDepth.store(depth);
     }
     DeliveryAllowance(const DeliveryAllowance&) = delete;
@@ -546,6 +545,7 @@ public:
 
 private:
     int depth;
+    int safeDepth;
 };
 
 }
@@ -574,18 +574,20 @@ bool InSuspendSafeWait() {
     return suspendSafeDepth.load() != 0;
 }
 
-SuspendSafeWait::SuspendSafeWait() {
-    suspendSafeDepth.fetch_add(1);
-}
+SuspendSafeWait::SuspendSafeWait() : depth(suspendSafeDepth.fetch_add(1)) {}
 
 SuspendSafeWait::~SuspendSafeWait() {
-    suspendSafeDepth.fetch_sub(1);
+    suspendSafeDepth.store(depth);
 }
 
 SuspendSafeWaitHidden::SuspendSafeWaitHidden() : depth(suspendSafeDepth.exchange(0)) {}
 
 SuspendSafeWaitHidden::~SuspendSafeWaitHidden() {
     suspendSafeDepth.store(depth);
+}
+
+void SuspendSafeWaitHidden::Abandon() {
+    depth = 0;
 }
 
 #ifdef __APPLE__
