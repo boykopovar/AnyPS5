@@ -83,10 +83,8 @@ const sqlite3_io_methods archiveMethods = {
 
 bool HasRecoveryFile(std::filesystem::path path, const char* suffix) {
     path += suffix;
-    if (AppArchiveOnly_nid_no_patch(path)) {
-        AppArchiveNode node{};
-        return AppArchiveLookup_nid_no_patch(path, &node) && (node.Directory || node.Size != 0);
-    }
+    AppArchiveNode node{};
+    if (AppArchiveLookup_nid_no_patch(path, &node) && (node.Directory || node.Size != 0)) return true;
     return std::filesystem::exists(path) && std::filesystem::file_size(path) != 0;
 }
 

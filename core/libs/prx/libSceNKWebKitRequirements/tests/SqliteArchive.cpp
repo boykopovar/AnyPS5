@@ -37,6 +37,12 @@ void CheckValue(sqlite3* database, const char* query, int expected) {
     Require(Run(database, query, &actual) == SQLITE_ROW && actual == expected, query);
 }
 
+void CheckRefused(const char* path) {
+    sqlite3* database = nullptr;
+    Require(sqlite3_open_v2_nid_postfix(path, &database, SQLITE_OPEN_READONLY, nullptr) == SQLITE_CANTOPEN, path);
+    Require(sqlite3_close_nid_postfix(database) == SQLITE_OK, "close refused handle");
+}
+
 }
 
 int main() {
@@ -89,12 +95,18 @@ int main() {
     Require(sqlite3_close_nid_postfix(database) == SQLITE_OK, "close loose database");
 
     for (const char* path : {"/app0/data", "/app0/missing.db", "/app0/wal.db", "/app0/journal.db", "/app0/loose-wal.db"}) {
-        Require(sqlite3_open_v2_nid_postfix(path, &database, SQLITE_OPEN_READONLY, nullptr) == SQLITE_CANTOPEN, path);
-        Require(sqlite3_close_nid_postfix(database) == SQLITE_OK, "close refused handle");
+        CheckRefused(path);
     }
     Require(std::distance(std::filesystem::directory_iterator(root / "app0"), {}) == 3,
         "only the loose database, existing sidecar and sce_sys remain in app0");
     Require(!std::filesystem::exists(root / "app0" / "data"), "archived database stays packed");
+    std::ofstream(root / "app0" / "wal.db-wal", std::ios::binary).close();
+    std::ofstream(root / "app0" / "journal.db-journal", std::ios::binary).close();
+    Require(std::filesystem::file_size(root / "app0" / "wal.db-wal") == 0, "loose WAL is empty");
+    Require(std::filesystem::file_size(root / "app0" / "journal.db-journal") == 0, "loose journal is empty");
+    CheckRefused("/app0/wal.db");
+    CheckRefused("/app0/journal.db");
     std::filesystem::current_path(previous);
-    std::filesystem::remove_all(root);
+    std::error_code cleanupError;
+    std::filesystem::remove_all(root, cleanupError);
 }
