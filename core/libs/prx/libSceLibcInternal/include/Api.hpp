@@ -20,6 +20,17 @@ struct GuestOption {
     int value;
 };
 
+struct GuestCmsghdr {
+    std::uint32_t cmsg_len;
+    std::int32_t cmsg_level;
+    std::int32_t cmsg_type;
+};
+
+struct GuestIp6Ext {
+    std::uint8_t ip6e_nxt;
+    std::uint8_t ip6e_len;
+};
+
 struct GuestDirectoryEntry;
 struct GuestLocaleFacade;
 
@@ -88,6 +99,19 @@ std::uint32_t APS5_VABI __inet_lnaof_nid_postfix(std::uint32_t address);
 std::uint32_t APS5_VABI inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
+int APS5_VABI inet6_option_space_nid_postfix(int nbytes);
+int APS5_VABI inet6_option_init_nid_postfix(void* bp, GuestCmsghdr** cmsgp, int type);
+int APS5_VABI inet6_option_append_nid_postfix(GuestCmsghdr* cmsg, const std::uint8_t* typep, int multx, int plusy);
+std::uint8_t* APS5_VABI inet6_option_alloc_nid_postfix(GuestCmsghdr* cmsg, int datalen, int multx, int plusy);
+int APS5_VABI inet6_option_next_nid_postfix(const GuestCmsghdr* cmsg, std::uint8_t** tptrp);
+int APS5_VABI inet6_option_find_nid_postfix(const GuestCmsghdr* cmsg, std::uint8_t** tptrp, int type);
+int APS5_VABI inet6_opt_init_nid_postfix(void* extbuf, std::uint32_t extlen);
+int APS5_VABI inet6_opt_append_nid_postfix(void* extbuf, std::uint32_t extlen, int offset, std::uint8_t type, std::uint32_t len, std::uint8_t align, void** databufp);
+int APS5_VABI inet6_opt_finish_nid_postfix(void* extbuf, std::uint32_t extlen, int offset);
+int APS5_VABI inet6_opt_set_val_nid_postfix(void* databuf, int offset, void* val, std::uint32_t vallen);
+int APS5_VABI inet6_opt_next_nid_postfix(void* extbuf, std::uint32_t extlen, int offset, std::uint8_t* typep, std::uint32_t* lenp, void** databufp);
+int APS5_VABI inet6_opt_find_nid_postfix(void* extbuf, std::uint32_t extlen, int offset, std::uint8_t type, std::uint32_t* lenp, void** databufp);
+int APS5_VABI inet6_opt_get_val_nid_postfix(void* databuf, int offset, void* val, std::uint32_t vallen);
 std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
