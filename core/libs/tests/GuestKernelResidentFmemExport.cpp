@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -39,7 +40,7 @@ static void* FindSymbol(void* module, const char* name) {
 
 int main(int argc, char** argv) {
     Require(argc == 3);
-    const auto directory = std::filesystem::absolute(argv[1]);
+    const auto directory = std::filesystem::absolute(ArgumentPath(argv, 1));
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     auto* kernel = LoadLibraryFile(directory / "libkernel.prx");
     const char* name = patched ? "a7DM+5cDkAg" : "sceKernelGetResidentFmemCount";

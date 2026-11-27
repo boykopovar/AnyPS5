@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -36,8 +37,12 @@ alignas(256) constexpr std::array<std::uint32_t, 10> PixelCode{
     0xbefe0a7e, 0x10040010, 0x06060300, 0x10060611, 0xf0800f08, 0x00610402, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 9> BiasPixelCode{
-    0x10040010, 0x06060300, 0x10060611, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
+alignas(256) constexpr std::array<std::uint32_t, 11> BiasZeroPixelCode{
+    0xbefe0a7e, 0x10040010, 0x06060300, 0x10060611, 0x7e020280, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 11> BiasOnePixelCode{
+    0xbefe0a7e, 0x10040010, 0x06060300, 0x10060611, 0x7e0202f2, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
 };
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
@@ -188,14 +193,19 @@ void Check(std::uint32_t level, std::uint32_t swizzle = 0xfacu) {
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device) {
-    std::string refusal;
-    try {
-        Draw(device, BiasPixelCode, 1.0f / static_cast<float>(Size));
-    } catch (const std::exception& error) {
-        refusal = error.what();
+void CheckBias(std::uint32_t level, float scale, float bias) {
+    const auto texels = Size >> level;
+    const auto what = "image_sample_b 2d on a 1D texture with bias " + std::to_string(bias) + " and the first coordinate advancing " + std::to_string(scale * static_cast<float>(Size)) + " texels per pixel";
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            const auto texel = static_cast<std::uint32_t>(std::floor((static_cast<float>(x) + 0.5f) * scale * static_cast<float>(texels))) % texels;
+            const std::array<std::uint32_t, 4> expected{LevelMark(level), texel * 8u, 99u, 255u};
+            for (std::uint32_t component = 0; component < 4u; ++component) {
+                const auto value = std::to_integer<std::uint32_t>(Pixels[(y * Width + x) * 4u + component]);
+                Require(value == expected[component], what + ": pixel " + std::to_string(x) + "," + std::to_string(y) + " component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(expected[component]));
+            }
+        }
     }
-    Require(refusal.find("incompatible with the static runtime image interface") != std::string::npos, "image_sample_b 2d on a 1D texture was not refused: " + refusal);
 }
 
 }
@@ -234,7 +244,10 @@ int main() {
         const auto restored = Draw(*device, PixelCode, scale);
         Require(!device->Target().registrationModules || restored == original, "line swizzle did not restore its original registered artifact");
         Check(0u);
-        RequireRefused(*device);
+        Draw(*device, BiasZeroPixelCode, scale);
+        CheckBias(0u, scale, 0.0f);
+        Draw(*device, BiasOnePixelCode, scale);
+        CheckBias(1u, scale, 1.0f);
         std::puts("image plane address on line implicit LOD tests passed");
         return 0;
     } catch (const std::exception& error) {

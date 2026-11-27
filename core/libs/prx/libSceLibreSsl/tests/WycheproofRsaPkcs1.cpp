@@ -4,8 +4,8 @@
  * 65ca494727a52944c204441c860b039e6786b99b
  * (https://github.com/C2SP/wycheproof/tree/65ca494727a52944c204441c860b039e6786b99b/testvectors_v1).
  * Altered: all 1034 tests of the four files are run through RSA_verify with the digest of the message.
- * Each test that RSA_verify answers must give the result and the RSA library error codes that RSA_verify
- * gives in LibreSSL 2.5.4; a test whose DigestInfo uses a BER form that is not implemented must throw.
+ * Each test that RSA_verify answers must give the result and the error codes that RSA_verify gives in
+ * LibreSSL 2.5.4; a test whose DigestInfo uses a BER form that is not implemented must throw.
  * LibreSSL 2.5.4 decodes the DigestInfo with its BER decoder and does not compare it with its DER
  * re-encoding, so it accepts 143 of the tests, among them every test that Project Wycheproof lists as
  * valid.
@@ -110,12 +110,10 @@ std::vector<LibreSslRsa*> LoadKeys() {
     return keys;
 }
 
-constexpr std::uint64_t RsaLibrary = 4;
-
-std::vector<std::uint64_t> RsaLibraryErrors(const std::array<std::uint64_t, 5>& codes) {
+std::vector<std::uint64_t> ExpectedErrors(const std::array<std::uint64_t, 5>& codes) {
     std::vector<std::uint64_t> errors;
     for (const auto code : codes)
-        if (code >> 24 == RsaLibrary) errors.push_back(code);
+        if (code) errors.push_back(code);
     return errors;
 }
 
@@ -148,7 +146,7 @@ void Verify(const std::vector<LibreSslRsa*>& keys) {
             continue;
         }
         Require(result == vector.expectedVerify, "RSA_verify gives the result of LibreSSL 2.5.4", &vector);
-        Require(QueuedErrors() == RsaLibraryErrors(vector.expectedErrors), "RSA_verify queues the RSA errors of LibreSSL 2.5.4", &vector);
+        Require(QueuedErrors() == ExpectedErrors(vector.expectedErrors), "RSA_verify queues the errors of LibreSSL 2.5.4", &vector);
     }
 }
 
