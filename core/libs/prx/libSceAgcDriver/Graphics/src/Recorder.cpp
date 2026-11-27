@@ -1548,9 +1548,14 @@ std::uint64_t Recorder::RecordedWorkSinceSubmit() {
 }
 
 bool Recorder::NoteGuestWork(VkCommandBuffer commands) {
+    GuestMemory::AssertGpuLockHeld("Recorder::NoteGuestWork");
     if (open == nullptr || open->commands != commands) return false;
     open->guestWork = true;
     return true;
+}
+
+bool Recorder::OpenGuestWorkForTest() const {
+    return open != nullptr && open->guestWork;
 }
 
 void Recorder::CountRecordedWork() {
@@ -2961,6 +2966,7 @@ std::uint64_t Recorder::SamplesTotal() {
 }
 
 void Recorder::NoteSampledDraw(VkCommandBuffer commands) {
+    GuestMemory::AssertGpuLockHeld("Recorder::NoteSampledDraw");
     if (open == nullptr) return;
     if (segmentMode()) {
         if (countingSamples && commands == open->commands && !open->segmentActive) beginSegment(*open);

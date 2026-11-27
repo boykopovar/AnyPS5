@@ -634,6 +634,7 @@ public:
     static std::uint64_t RecordedWorkSinceSubmit();
     static void CountRecordedWork();
     bool NoteGuestWork(VkCommandBuffer commands);
+    bool OpenGuestWorkForTest() const;
 
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
