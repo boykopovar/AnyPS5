@@ -777,7 +777,7 @@ constexpr short NativePollIn = POLLIN;
 constexpr short NativePollPriority = POLLPRI;
 #endif
 constexpr PollFlag RequestFlags[] = {
-    {0x1, NativePollIn}, {GuestPollPriority, NativePollPriority}, {0x4, POLLOUT}, {0x40, POLLRDNORM}, {0x80, POLLRDBAND}, {0x100, POLLWRBAND}};
+    {0x1, NativePollIn}, {GuestPollPriority, NativePollPriority}, {0x4, POLLOUT}, {0x40, POLLRDNORM}, {0x80, POLLRDBAND}};
 constexpr PollFlag StatusFlags[] = {{0x8, POLLERR}, {0x10, POLLHUP}, {GuestPollInvalid, POLLNVAL}};
 template <typename Descriptor>
 bool UrgentPending(Descriptor descriptor) {
