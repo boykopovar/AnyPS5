@@ -806,6 +806,8 @@ def check_ps4_import_modules(work, relinker):
 
 
 def main():
+    if os.name == 'nt':
+        ctypes.windll.kernel32.SetErrorMode(0x8003)
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-import-modules-') as directory:
         work = Path(directory)

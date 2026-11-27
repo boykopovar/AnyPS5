@@ -303,7 +303,7 @@ class ConfigureSeedProject(unittest.TestCase):
         cls.root = Path(cls.directory.name)
         (cls.root / "source").mkdir()
         (cls.root / "source" / "CMakeLists.txt").write_text(PROJECT, encoding="utf-8")
-        cls.compiler = shutil.which("gcc") or shutil.which("cc")
+        cls.compiler = Path(shutil.which("gcc") or shutil.which("cc")).as_posix()
         cls.fresh = cls.configure("fresh")
 
     @classmethod
@@ -319,6 +319,14 @@ class ConfigureSeedProject(unittest.TestCase):
         seed = self.root / name
         subprocess.run([sys.executable, str(TOOL), str(cache), str(seed)], check=True, capture_output=True)
         return seed
+
+    def configure_cache_only(self, name, *extra):
+        source = self.root / "cache-only-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(cache_round_trip NONE)\n", encoding="utf-8")
+        return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja"],
+                              check=True, capture_output=True, text=True).stdout
 
 
 class ConfigureSeedTests(ConfigureSeedProject):
@@ -358,7 +366,7 @@ class ConfigureSeedTests(ConfigureSeedProject):
         self.assertEqual(seed.read_text(encoding="utf-8"), "")
 
 
-class ConfigureSeedRoundTripTests(ConfigureSeedProject):
+class ConfigureSeedCheckNameRoundTripTests(ConfigureSeedProject):
     def test_check_names_with_leading_slashes_round_trip_through_cmake(self):
         source = self.root / "slash-check-source"
         source.mkdir()
@@ -383,14 +391,6 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertNotIn("Looking for puts", output)
         self.assertNotIn("Looking for mini_missing_function", output)
         self.assertEqual(configure_seed.checks(self.root / "slash-seeded" / "CMakeCache.txt"), found)
-
-    def configure_cache_only(self, name, *extra):
-        source = self.root / "cache-only-source"
-        source.mkdir(exist_ok=True)
-        (source / "CMakeLists.txt").write_text(
-            "cmake_minimum_required(VERSION 3.20)\nproject(cache_round_trip NONE)\n", encoding="utf-8")
-        return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja"],
-                              check=True, capture_output=True, text=True).stdout
 
     def test_check_names_with_spaces_round_trip_through_cmake(self):
         cache = self.root / "named-check.txt"
@@ -419,6 +419,8 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertEqual(configure_seed.checks(self.root / "colon-seeded" / "CMakeCache.txt"),
                          configure_seed.checks(cache))
 
+
+class ConfigureSeedRoundTripTests(ConfigureSeedProject):
     def test_seeded_configure_runs_no_check_and_gets_the_same_results(self):
         self.assertRegex(self.fresh, r"Looking for|Performing Test|Check size of")
         output = self.configure("seeded", "-C", str(self.seed(self.root / "fresh" / "CMakeCache.txt", "seed.cmake")))

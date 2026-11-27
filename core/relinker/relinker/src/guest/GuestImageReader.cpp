@@ -100,11 +100,11 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         }
     }
     if (!terminated) fail("Unterminated dynamic segment");
-    for (const auto unsupported : {15u, 16u, 22u}) {
+    for (const auto unsupported : {15u, 22u}) {
         if (tags.contains(unsupported)) fail("Unsupported dynamic tag " + std::to_string(unsupported));
     }
     if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull | 16ull)) != 0) fail("Unsupported guest dynamic flags");
-    image.Symbolic = tags.contains(30) && (tags.at(30) & 2ull) != 0;
+    image.Symbolic = tags.contains(16) || (tags.contains(30) && (tags.at(30) & 2ull) != 0);
     const auto mapped = [&](std::uint64_t address, std::uint64_t size, std::uint32_t flags) {
         for (const auto& header : image.Headers) {
             if (header.Type == 1 && (header.Flags & flags) == flags && address >= header.MappedAddress && address - header.MappedAddress <= header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress)) return;
@@ -333,16 +333,20 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 relativeAddress(addend);
             } else if (relocation == 1 || relocation == 6 || relocation == 7) {
                 const auto& symbol = image.Symbols[info >> 32];
-                if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
+                if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation == 7 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
             } else {
                 const auto& symbol = image.Symbols[info >> 32];
                 const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
-                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock;
-                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (symbol.Section == 0 && symbol.Name.empty() && (symbol.Info >> 4) != 0) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                ownTlsBlock = (info >> 32) != 0 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock && (((relocation == 16 || relocation == 17) && symbol.Info == 3) || (symbol.Info == 6 && symbol.Name.empty()));
+                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || (symbol.Info == 6 && symbol.Section == 0 && symbol.Name.empty() && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (symbol.Section == 0 && symbol.Name.empty() && (symbol.Info >> 4) != 0) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
             if (ownTlsBlock) Io::WriteU64(output, position + 8, relocation);
+            if (relocation == 6 && addend != 0) {
+                Io::WriteU64(output, position + 16, 0);
+                ++image.IgnoredGlobDatAddends;
+            }
             if (relative) relativeEntries.emplace(target, position);
         }
     };

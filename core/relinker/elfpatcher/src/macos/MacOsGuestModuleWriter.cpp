@@ -40,7 +40,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbolIndex = info >> 32;
             const auto& symbol = guest.Symbols.at(symbolIndex);
-            const bool imported = symbolIndex != 0 && symbol.Section == 0;
+            const bool ownTls = symbolIndex == 0 || (symbol.Section == 0 && symbol.Name.empty() && symbol.Info == 6);
+            const bool imported = symbolIndex != 0 && symbol.Section == 0 && !ownTls;
             const bool tlsSymbol = (symbol.Info & 15) == 6;
             const auto rva = image.GetRva(target, 8);
             for (const auto& header : guest.Headers) {
@@ -92,6 +93,13 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
             continue;
         }
         input.Exports.push_back({name, image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1)), flags});
+    }
+
+    for (const auto& [index, alias] : guest.BindingAliases) {
+        const auto& symbol = guest.Symbols.at(index);
+        const auto flags = (symbol.Info >> 4) == 2 ? ExportWeakDefinition : std::uint64_t{0};
+        if ((symbol.Info & 15) == 6) input.TlsExports.push_back({"_" + alias, symbol.Value, flags});
+        else input.Exports.push_back({"_" + alias, image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1)), flags});
     }
 
     for (const auto& dependency : dependencies) input.Dylibs.push_back(MachODependency(dependency, "@loader_path"));
