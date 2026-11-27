@@ -95,7 +95,12 @@ struct NetStatisticsInfo {
     std::int32_t libnet_mem_free_size;
     std::int32_t libnet_mem_free_min;
 };
-struct NetInterfaceStats;
+struct NetInterfaceStats {
+    std::uint64_t txBytes;
+    std::uint64_t rxBytes;
+    std::uint32_t reserved[12];
+};
+static_assert(sizeof(NetInterfaceStats) == 64);
 struct NetRouteInfo;
 struct NetDebugParameter;
 struct NetArpInfo;

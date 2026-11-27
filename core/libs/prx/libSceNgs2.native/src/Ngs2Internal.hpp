@@ -318,6 +318,11 @@ struct Ngs2Rack {
     bool destroying = false;
 };
 
+struct Ngs2Stream {
+    Ngs2System* system = nullptr;
+    bool destroying = false;
+};
+
 struct Ngs2JobManager {
     Ngs2JobSchedulerOption option{};
     std::uintptr_t handle = 0;
@@ -339,6 +344,7 @@ struct Ngs2System {
     std::uint32_t controlCallbacks = 0;
     std::uintptr_t userData = 0;
     std::vector<Ngs2Rack*> racks;
+    std::vector<Ngs2Stream*> streams;
     std::atomic<std::uint64_t> callbackSequence{0};
     std::array<std::array<std::uint8_t, 24>, 32> slotData{};
     std::array<bool, 32> slotSet{};
@@ -390,6 +396,7 @@ const TParam& ParamAs(const Ngs2VoiceParamHeader& param) {
 std::vector<Ngs2Rack*>& Ngs2DetachedRacks();
 Ngs2Rack* Ngs2FindRack(Ngs2Handle handle);
 Ngs2Voice* Ngs2FindVoice(Ngs2Handle handle);
+Ngs2Stream* Ngs2FindStream(Ngs2Handle handle);
 void* Ngs2Place(const Ngs2ContextBufferInfo* bufferInfo, std::size_t size, std::size_t alignment);
 int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo);
 int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInfo bufferInfo, Ngs2ContextBufferInfo* outBufferInfo);

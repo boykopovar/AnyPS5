@@ -67,10 +67,6 @@ int APS5_VABI RSAPublicKey_dup_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_print_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

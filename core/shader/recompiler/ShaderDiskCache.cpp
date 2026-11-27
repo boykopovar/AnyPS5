@@ -90,7 +90,7 @@ namespace ShaderRecompiler::ShaderDiskCache {
 static_assert(sizeof(CompiledShaderArtifact) == 296, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 568, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -2007,7 +2007,23 @@ DiskStore& store() {
 }
 
 std::uint64_t SourceVersion() {
-    return ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    return SourceVersionFor(NanSpeculation(), ExactF32Arithmetic());
+}
+
+std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exactF32) {
+    auto version = exactF32 ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    if (!speculation.enabled) return version;
+    const auto mix = [&](std::uint64_t value) {
+        version = (version ^ value) * 0x9e3779b97f4a7c15ull;
+        version ^= version >> 29u;
+    };
+    mix(0x6a09e667f3bcc909ull);
+    mix(speculation.minimumVectorInstructions);
+    mix(speculation.maximumVectorInstructions);
+    mix(speculation.stageMask);
+    for (std::size_t stage = 0; stage < speculation.stageMinimum.size(); ++stage) mix((static_cast<std::uint64_t>(stage) << 32u) | speculation.stageMinimum[stage]);
+    mix((static_cast<std::uint64_t>(speculation.minimumFastOps) << 32u) | speculation.minimumDensityPercent);
+    return version;
 }
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key) {
@@ -2068,6 +2084,7 @@ bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result, std
     decodeInvocation(reader, result);
     reader.Value(result.workgroupMemoryDwords);
     reader.Values(result.shaderDataUserWords);
+    result.drawKeyMemo = {};
     result.cacheHit = false;
     return reader.Done() && result.runtimeAbiVersion == RuntimeAbi::Version;
 }

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1010,7 +1011,13 @@ LibreSsl3X509Extension* PlainExtension(void* conf, int nid, bool critical, std::
 extern "C" LibreSsl3X509Extension* APS5_VABI X509V3_EXT_conf_nid_nid_postfix(void* conf,
     LibreSsl3X509V3Context* ctx, int ext_nid, const char* value) {
     if (!value) return nullptr;
-    std::string_view text(value);
+    std::string copied;
+    const int savedErrno = errno;
+    int error = CopyGuestString_nid_no_patch(value, 65536, copied);
+    if (error == 63) error = CopyGuestString_nid_no_patch(value, 1u << 20, copied);
+    errno = savedErrno;
+    if (error != 0) return nullptr;
+    std::string_view text(copied);
     const bool critical = ConsumeCritical(text);
     const int generic = ConsumeGeneric(text);
     if (generic == 1) {
