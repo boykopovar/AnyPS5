@@ -1,0 +1,5 @@
+# libSceAgc
+
+## change Whether the console checks address bits above 48 was not measured
+
+- [sceAgcCbCondWrite](../../../core/libs/prx/libSceAgc/Cb/src/Branch.cpp) (libSceAgc) - a console encoded every compare function, write space and address it was given, including a write address of 0x1000000000000 (bit 48); the write address is no longer checked above bit 48 here, and only that value was measured. Whether the console checks the poll address above bit 48 was not measured, so that address still throws. The compare function keeps its low 3 bits, the write space its low 2, addresses are written unaligned and null is accepted. Argument order and the 9-dword layout follow the clean-room [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/main/src/game_compat.c) and [sharpemu](https://github.com/sharpemu/sharpemu/blob/main/src/SharpEmu.Libs/Agc/AgcExports.CommandPackets.cs), which agree on them; SharpProspero lists another order. The driver executes only memory-space writes with compare functions 0 to 6 and aligned addresses, and rejects other packets when they are submitted.

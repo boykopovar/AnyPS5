@@ -1,0 +1,10 @@
+add_test_executable(guest_fundamental_type_info_tests ${LIBS_INCLUDE_DIR}/tests/GuestFundamentalTypeInfo.cpp)
+target_include_directories(guest_fundamental_type_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_fundamental_type_info_tests PRIVATE libc)
+configure_windows_unwind(guest_fundamental_type_info_tests)
+add_test(NAME guest_fundamental_type_info COMMAND guest_fundamental_type_info_tests)
+set_tests_properties(guest_fundamental_type_info PROPERTIES TIMEOUT 10)
+if(WIN32)
+    set_tests_properties(guest_fundamental_type_info PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
