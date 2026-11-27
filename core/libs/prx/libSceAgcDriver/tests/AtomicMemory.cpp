@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
@@ -14,6 +15,21 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static void ExecuteAfterDeferredWait(std::span<const std::uint32_t> wait,
+                                         std::span<const std::uint32_t> command) {
+        Submission submission{};
+        submission.queue = 0x20;
+        submission.commands.assign(command.begin(), command.end());
+        Driver::notePendingWait(wait, submission.queue, submission.received);
+        Driver::Get().execute(submission);
+    }
+};
+
+}
 
 namespace {
 
@@ -197,6 +213,92 @@ void exclusion() {
     check(!failed.load() && storage.words[1] == 1, "excluded atomic did not finish after the GPU transaction released");
 }
 
+struct FlushObservation {
+    std::uint64_t* target = nullptr;
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    unsigned calls = 0;
+    bool heldDeviceLock = false;
+};
+
+thread_local FlushObservation atomicFlush;
+
+class ScopedFlushHook {
+public:
+    explicit ScopedFlushHook(decltype(AgcDriver::GuestMemory::CurrentFlushHook()) hook)
+        : previous(AgcDriver::GuestMemory::CurrentFlushHook()) {
+        AgcDriver::GuestMemory::SetFlushHook(hook);
+    }
+    ~ScopedFlushHook() { AgcDriver::GuestMemory::SetFlushHook(previous); }
+
+private:
+    decltype(AgcDriver::GuestMemory::CurrentFlushHook()) previous;
+};
+
+void publishAtomicProducer(std::uint64_t address, std::size_t bytes) {
+    ++atomicFlush.calls;
+    atomicFlush.address = address;
+    atomicFlush.bytes = bytes;
+    atomicFlush.heldDeviceLock = AgcDriver::GuestMemory::GpuMutex().HeldByThisThread();
+    if (address == reinterpret_cast<std::uintptr_t>(atomicFlush.target) &&
+        bytes == sizeof(*atomicFlush.target)) {
+        *atomicFlush.target = 37;
+    }
+}
+
+void rangeFlush() {
+    Storage storage;
+    storage.words = {9, 11, 13};
+    const auto command = packet(&storage.words[1], 0x6f, 5);
+    const auto address = reinterpret_cast<std::uintptr_t>(&storage.words[1]);
+    atomicFlush = {&storage.words[1]};
+    const ScopedFlushHook hook(&publishAtomicProducer);
+
+    AgcDriver::QueueState queue;
+    AgcDriver::Pm4::Execute(command, queue);
+
+    check(atomicFlush.calls == 1 && atomicFlush.address == address &&
+              atomicFlush.bytes == sizeof(storage.words[1]),
+          "CP atomic did not flush its exact destination range once");
+    check(atomicFlush.heldDeviceLock, "CP atomic flushed outside the GPU transaction");
+    check(storage.words == std::array<std::uint64_t, 8>{9, 42, 13},
+          "CP atomic did not use the value published by the flush or changed an adjacent word");
+}
+
+struct PendingProducer {
+    std::uint32_t* gate = nullptr;
+    std::uint64_t* target = nullptr;
+};
+
+thread_local PendingProducer pendingProducer;
+
+void publishWaitedProducer(std::uint64_t address, std::size_t bytes) {
+    if (address == reinterpret_cast<std::uintptr_t>(pendingProducer.gate) &&
+        bytes == sizeof(*pendingProducer.gate)) {
+        *pendingProducer.target = 37;
+        std::atomic_ref(*pendingProducer.gate).store(1, std::memory_order_release);
+    }
+}
+
+void pendingWait() {
+    Storage storage;
+    MemoryStorage<std::uint32_t> gate;
+    storage.words[1] = 11;
+    const auto address = reinterpret_cast<std::uintptr_t>(&gate.words[0]);
+    const std::array<std::uint32_t, 7> wait{
+        0xc0053c00u, 0x13u, static_cast<std::uint32_t>(address),
+        static_cast<std::uint32_t>(address >> 32u), 1u, 0xffffffffu, 0x19u,
+    };
+    const auto command = packet(&storage.words[1], 0x6f, 5);
+    pendingProducer = {&gate.words[0], &storage.words[1]};
+    const ScopedFlushHook hook(&publishWaitedProducer);
+
+    AgcDriver::DriverDetail::DriverTestAccess::ExecuteAfterDeferredWait(wait, command);
+
+    check(gate.words[0] == 1 && storage.words[1] == 42,
+          "CP atomic ran before the deferred wait published its producer's value");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -208,6 +310,8 @@ int main(int argc, char** argv) {
         else if (mode == "concurrent32") concurrent(false);
         else if (mode == "concurrent64") concurrent(true);
         else if (mode == "exclusion") exclusion();
+        else if (mode == "range_flush") rangeFlush();
+        else if (mode == "pending_wait") pendingWait();
         else throw std::runtime_error("unknown atomic test mode");
         LibcRunShutdown_nid_postfix();
         std::puts("atomic memory tests passed");
