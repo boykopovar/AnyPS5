@@ -210,6 +210,20 @@ public:
                 memory.sampler = patch.sampler;
             }
         }
+        std::vector<std::pair<IrValue*, IrValue*>> unrewritten;
+        for (const auto& plan : m_tableColumns) {
+            for (IrValue* read : plan.reads) {
+                IrValue* buffer = read->Argument(0)->Resolve();
+                if (FindTableColumn(*buffer) == nullptr || std::ranges::find(m_tablePlanningReads, read) != m_tablePlanningReads.end()) continue;
+                auto copy = std::ranges::find(unrewritten, buffer, &std::pair<IrValue*, IrValue*>::first);
+                if (copy == unrewritten.end()) {
+                    std::vector<IrValue*> words;
+                    for (std::uint32_t argument = 0; argument < buffer->ArgumentCount(); argument++) words.push_back(buffer->Argument(argument));
+                    copy = unrewritten.emplace(unrewritten.end(), buffer, EmitCopy(*buffer, words, *buffer));
+                }
+                read->ReplaceArgument(0, copy->second);
+            }
+        }
         std::vector<const IrValue*> referenced;
         for (const auto& plan : m_tableColumns) {
             const auto& column = *m_sources[plan.source].tableColumn;
@@ -257,7 +271,7 @@ private:
         IrValue* offset = nullptr;
         IrValue* parentPointer = nullptr;
         std::vector<std::uint32_t> memory;
-        std::vector<const IrValue*> reads;
+        std::vector<IrValue*> reads;
         std::vector<std::uint32_t> hopMemory;
         std::vector<const IrValue*> hopReads;
         std::optional<KeyDomain> keyDomain;
@@ -823,6 +837,22 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
+    static bool DescriptorWordReads(const IrValue& buffer, bool rereadable) {
+        return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
+            const auto descriptor = [](const IrValue* user) { return user->Opcode() == IrOpcode::GetImageResource || user->Opcode() == IrOpcode::GetSamplerResource; };
+            return read->Opcode() == IrOpcode::ReadConstBuffer && (rereadable ? std::ranges::any_of(read->Uses(), descriptor) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), descriptor));
+        });
+    }
+
+    bool RereadableVsharp(const IrValue& handle, const TableColumnPlan& parent) const {
+        if (handle.ArgumentCount() != parent.reads.size()) return false;
+        for (std::uint32_t dword = 0; dword < handle.ArgumentCount(); dword++) {
+            const IrValue* read = parent.reads[dword];
+            if (handle.Argument(dword)->Resolve() != read || read->Opcode() != IrOpcode::LoadAddressU32 || m_program.Resources().memoryInfo[read->Flags<MemoryFlags>().index].planningOnly) return false;
+        }
+        return true;
+    }
+
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
@@ -913,7 +943,13 @@ private:
         if (address && immediateU32(offset, descriptorOffset)) {
             return TryMakeIndirectColumn(handle, *heapHandle, sampler, words, descriptorOffset, first, plan);
         }
-        if (!MatchAffineOffset(offset, key, stride, addend)) {
+        std::uint32_t fixedOffset = 0;
+        const bool fixed = !address && !buffer && immediateU32(offset, fixedOffset);
+        if (fixed) {
+            key = &m_builder.Constant(0u);
+            stride = width * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+            addend = fixedOffset;
+        } else if (!MatchAffineOffset(offset, key, stride, addend)) {
             if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
                 return false;
             }
@@ -921,7 +957,9 @@ private:
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
-        if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
+        if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
+            if (fixed) return false;
+        } else {
             if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
@@ -930,13 +968,17 @@ private:
                 }
                 return true;
             };
-            if (!std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); })) return false;
+            const bool otherUsers = !std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); });
             TableColumnPlan parent;
             if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
             if (parent.parentPointer == nullptr) return false;
+            const bool rereadable = RereadableVsharp(*heapHandle, parent);
+            if (otherUsers && !rereadable) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return user->Opcode() == IrOpcode::GetBufferResource && std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); });
+                    if (user->Opcode() != IrOpcode::GetBufferResource) return false;
+                    if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
+                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable);
                 });
             })) return false;
             heapIndex = parent.source;
@@ -1396,7 +1438,7 @@ private:
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
         const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
         const bool pointerKeyed = merged && !buffer;
-        if (!hops.empty() && (buffer || merged)) return false;
+        if (!hops.empty() && buffer) return false;
         std::vector<IrValue*> lowReads;
         std::vector<IrValue*> highReads;
         if (pointerKeyed ? !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads) : merged && !PointerRecordReads(pointer->Argument(0), lowReads)) return false;
@@ -2371,15 +2413,21 @@ private:
                 }
             }
         }
-        for (const auto& plan : m_tableColumns) {
-            for (std::size_t index = 0; index < plan.reads.size(); index++) {
-                const IrValue* read = plan.reads[index];
-                const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return FindTableColumn(*user) != nullptr;
-                });
-                if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
-                    m_tablePlanningReads.push_back(read);
-                    m_tablePlanningMemory.push_back(plan.memory[index]);
+        for (bool marked = true; marked;) {
+            marked = false;
+            for (const auto& plan : m_tableColumns) {
+                for (std::size_t index = 0; index < plan.reads.size(); index++) {
+                    const IrValue* read = plan.reads[index];
+                    const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
+                        return FindTableColumn(*user) != nullptr && std::ranges::all_of(user->Uses(), [&](const IrValue* use) {
+                            return BufferAccessOf(use->Opcode()) == BufferAccess::None || std::ranges::find(m_tablePlanningReads, use) != m_tablePlanningReads.end();
+                        });
+                    });
+                    if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
+                        m_tablePlanningReads.push_back(read);
+                        m_tablePlanningMemory.push_back(plan.memory[index]);
+                        marked = true;
+                    }
                 }
             }
         }
