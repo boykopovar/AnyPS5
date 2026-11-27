@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cfloat>
 #include <cmath>
 #include <cstdlib>
 
@@ -17,7 +18,7 @@ __complex__ long double Make(long double real, long double imaginary) {
 }
 
 bool Close(long double value, long double expected) {
-    return std::fabs(value - expected) <= 1e-17L * std::fabs(expected);
+    return std::fabs(value - expected) <= 64 * LDBL_EPSILON * std::fabs(expected);
 }
 
 bool Near(__complex__ long double value, long double real, long double imaginary) {
@@ -86,7 +87,7 @@ int main() {
             Require(Close(__imag__ mirrored, std::sinh(2 * x) / denominator));
         }
     }
-    for (const long double x : {6000.0L, 11357.0L, 1e5L, 1e4000L}) {
+    for (const long double x : {6000.0L, 11357.0L, 1e5L, LDBL_MAX}) {
         const __complex__ long double positive = ctanhl_nid_postfix(Make(x, 1.0L));
         Require(__real__ positive == 1.0L && __imag__ positive == 0.0L && !std::signbit(__imag__ positive));
         const __complex__ long double negativeReal = ctanhl_nid_postfix(Make(-x, -1.0L));
