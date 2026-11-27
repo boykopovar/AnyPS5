@@ -18,6 +18,7 @@ struct Generation {
     bool alive = true;
     bool writable = false;
     std::unique_ptr<WritableTree> tree;
+    Generation* retiredNext = nullptr;
 };
 
 std::shared_ptr<Generation> NewGeneration();

@@ -25,12 +25,13 @@ std::shared_ptr<Generation> NewGeneration() {
     return std::shared_ptr<Generation>(new Generation, [](Generation* generation) {
         generation->alive = false;
         generation->buffers = {};
-        generation->lentBuffers = {};
+        std::vector<Buffers>{}.swap(generation->lentBuffers);
         generation->tree.reset();
         static std::mutex retiredMutex;
-        static auto* retired = new std::vector<Generation*>();
+        static Generation* retired = nullptr;
         std::lock_guard lock(retiredMutex);
-        retired->push_back(generation);
+        generation->retiredNext = retired;
+        retired = generation;
     });
 }
 
