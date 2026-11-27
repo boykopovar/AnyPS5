@@ -1,6 +1,8 @@
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 
+#include <cerrno>
 #include <cstring>
 
 #include "SDL_keyboard.h"
@@ -25,7 +27,13 @@ void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     ImeHostInput input{};
     switch (event.type) {
         case SDL_TEXTEDITING_EXT:
-            if (event.editExt.windowID != windowId || event.editExt.text == nullptr) return;
+            if (event.editExt.windowID != windowId) return;
+            if (event.editExt.text == nullptr) {
+                const int savedErrno = errno;
+                APS5_LOG_CHARS_ERR("Ime: cannot forward extended preedit because its text is null");
+                errno = savedErrno;
+                return;
+            }
             ImePublishPreedit_nid_postfix(event.editExt.text, std::strlen(event.editExt.text), event.editExt.start, event.editExt.length);
             return;
         case SDL_TEXTEDITING:
