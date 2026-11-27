@@ -27,16 +27,20 @@
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace WebCore {
 
@@ -393,15 +397,37 @@ struct RegionFields {
     Region::Shape* shape;
 };
 
+struct VectorHeaderLayout {
+    void* buffer;
+    unsigned capacity;
+    unsigned size;
+};
+
 static_assert(sizeof(RegionFields) == sizeof(Region));
 static_assert(offsetof(RegionFields, bounds) == offsetof(Region, m_bounds));
 static_assert(offsetof(RegionFields, shape) == offsetof(Region, m_shape));
+static_assert(offsetof(Region::Shape, m_segments) == 0);
+static_assert(offsetof(Region::Shape, m_spans) == 144);
+static_assert(sizeof(VectorHeaderLayout) == 16);
+
+static bool IsReadableGuestBytes(const void* pointer, std::size_t size) {
+    if (!size) return true;
+    if (!pointer) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    return GuestReadable_nid_no_patch(pointer, size);
+}
 
 static bool LoadRegion(RegionFields& fields, const Region* region) {
+    if (!IsReadableGuestBytes(region, sizeof(fields)))
+        return false;
     return GuestCopyIn_nid_no_patch(&fields, region, sizeof(fields));
 }
 
 static bool StoreRegion(Region* region, const RegionFields& fields, Region::Shape* previous) {
+    if (!region) return false;
+    const GuestArena::HostWrite writeGuard(region, sizeof(fields));
+    if (!writeGuard.Open() || !GuestWritable_nid_no_patch(region, sizeof(fields)))
+        return false;
     if (!GuestCopyOut_nid_no_patch(region, &fields, sizeof(fields)))
         return false;
     if (previous != fields.shape)
@@ -416,28 +442,256 @@ static bool StoreRegion(Region* region, const IntRect& bounds, std::unique_ptr<R
     return true;
 }
 
-static Region::Shape RegionShape(const RegionFields& region) {
-    return region.shape ? *region.shape : Region::Shape(region.bounds);
+static bool LoadShapeCopy(const Region::Shape* guestShape, Region::Shape& out) {
+    if (!IsReadableGuestBytes(guestShape, sizeof(Region::Shape)))
+        return false;
+    VectorHeaderLayout segHeader{};
+    VectorHeaderLayout spanHeader{};
+    const auto* raw = reinterpret_cast<const unsigned char*>(guestShape);
+    if (!GuestCopyIn_nid_no_patch(&segHeader, raw + offsetof(Region::Shape, m_segments), sizeof(segHeader)) ||
+        !GuestCopyIn_nid_no_patch(&spanHeader, raw + offsetof(Region::Shape, m_spans), sizeof(spanHeader)))
+        return false;
+    if (segHeader.size > segHeader.capacity || spanHeader.size > spanHeader.capacity)
+        return false;
+    if ((segHeader.size > 0 && !segHeader.buffer) || (spanHeader.size > 0 && !spanHeader.buffer))
+        return false;
+    if (segHeader.size > std::numeric_limits<std::size_t>::max() / sizeof(int) ||
+        spanHeader.size > std::numeric_limits<std::size_t>::max() / sizeof(Region::Span))
+        return false;
+
+    std::vector<int> rawSegments(segHeader.size);
+    if (segHeader.size > 0) {
+        const std::size_t segBytes = static_cast<std::size_t>(segHeader.size) * sizeof(int);
+        if (!IsReadableGuestBytes(segHeader.buffer, segBytes) ||
+            !GuestCopyIn_nid_no_patch(rawSegments.data(), segHeader.buffer, segBytes))
+            return false;
+    }
+
+    std::vector<Region::Span> rawSpans(spanHeader.size);
+    if (spanHeader.size > 0) {
+        const std::size_t spanBytes = static_cast<std::size_t>(spanHeader.size) * sizeof(Region::Span);
+        if (!IsReadableGuestBytes(spanHeader.buffer, spanBytes) ||
+            !GuestCopyIn_nid_no_patch(rawSpans.data(), spanHeader.buffer, spanBytes))
+            return false;
+    }
+
+    for (std::size_t i = 0; i < rawSpans.size(); ++i) {
+        if (rawSpans[i].segmentIndex > rawSegments.size())
+            return false;
+        if (i > 0 && rawSpans[i].segmentIndex < rawSpans[i - 1].segmentIndex)
+            return false;
+    }
+    if (!rawSpans.empty() && rawSpans.back().segmentIndex != rawSegments.size())
+        return false;
+
+    WTF::Vector<int, 32> segments;
+    if (!rawSegments.empty())
+        segments.appendRange(rawSegments.data(), rawSegments.data() + rawSegments.size());
+    WTF::Vector<Region::Span, 16> spans;
+    if (!rawSpans.empty())
+        spans.appendRange(rawSpans.data(), rawSpans.data() + rawSpans.size());
+    out = Region::Shape(std::move(segments), std::move(spans));
+    return true;
 }
 
-static bool RegionContains(const RegionFields& region, const RegionFields& other) {
-    if (!RectContains(region.bounds, other.bounds))
-        return false;
-    if (!region.shape)
+static bool LoadRegionShape(const RegionFields& region, Region::Shape& out) {
+    if (!region.shape) {
+        out = Region::Shape(region.bounds);
         return true;
-    return Region::Shape::compareShapes<Region::Shape::CompareContainsOperation>(*region.shape, RegionShape(other));
+    }
+    return LoadShapeCopy(region.shape, out);
+}
+
+static bool RegionContains(const RegionFields& region, const RegionFields& other, bool& result) {
+    if (!RectContains(region.bounds, other.bounds)) {
+        result = false;
+        return true;
+    }
+    if (!region.shape) {
+        result = true;
+        return true;
+    }
+    Region::Shape aShape;
+    Region::Shape bShape;
+    if (!LoadShapeCopy(region.shape, aShape) || !LoadRegionShape(other, bShape))
+        return false;
+    result = Region::Shape::compareShapes<Region::Shape::CompareContainsOperation>(aShape, bShape);
+    return true;
 }
 
 static bool SetRegionShape(Region* self, const RegionFields& region, Region::Shape&& shape) {
     const IntRect bounds = shape.bounds();
     if (shape.isRect())
         return StoreRegion(self, RegionFields{bounds, nullptr}, region.shape);
-    if (!region.shape)
-        return StoreRegion(self, bounds, std::make_unique<Region::Shape>(std::move(shape)), nullptr);
-    if (!GuestWritable_nid_no_patch(self, sizeof(RegionFields)))
+    return StoreRegion(self, bounds, std::make_unique<Region::Shape>(std::move(shape)), region.shape);
+}
+
+static bool TranslateShapeGuest(Region::Shape* self, const IntSize& delta) {
+    if (!IsReadableGuestBytes(self, sizeof(Region::Shape)))
         return false;
-    *region.shape = std::move(shape);
-    return StoreRegion(self, RegionFields{bounds, region.shape}, region.shape);
+    const GuestArena::HostWrite shapeWrite(self, sizeof(Region::Shape));
+    if (!shapeWrite.Open() || !GuestWritable_nid_no_patch(self, sizeof(Region::Shape)))
+        return false;
+    VectorHeaderLayout segHeader{};
+    VectorHeaderLayout spanHeader{};
+    const auto* raw = reinterpret_cast<const unsigned char*>(self);
+    if (!GuestCopyIn_nid_no_patch(&segHeader, raw + offsetof(Region::Shape, m_segments), sizeof(segHeader)) ||
+        !GuestCopyIn_nid_no_patch(&spanHeader, raw + offsetof(Region::Shape, m_spans), sizeof(spanHeader)))
+        return false;
+    if (segHeader.size > segHeader.capacity || spanHeader.size > spanHeader.capacity)
+        return false;
+    if ((segHeader.size > 0 && !segHeader.buffer) || (spanHeader.size > 0 && !spanHeader.buffer))
+        return false;
+    if (segHeader.size > std::numeric_limits<std::size_t>::max() / sizeof(int) ||
+        spanHeader.size > std::numeric_limits<std::size_t>::max() / sizeof(Region::Span))
+        return false;
+
+    const std::size_t segBytes = static_cast<std::size_t>(segHeader.size) * sizeof(int);
+    const std::size_t spanBytes = static_cast<std::size_t>(spanHeader.size) * sizeof(Region::Span);
+    std::vector<int> origSegments(segHeader.size);
+    if (segBytes > 0) {
+        if (!IsReadableGuestBytes(segHeader.buffer, segBytes) ||
+            !GuestCopyIn_nid_no_patch(origSegments.data(), segHeader.buffer, segBytes))
+            return false;
+    }
+    std::vector<Region::Span> spans(spanHeader.size);
+    if (spanBytes > 0) {
+        if (!IsReadableGuestBytes(spanHeader.buffer, spanBytes) ||
+            !GuestCopyIn_nid_no_patch(spans.data(), spanHeader.buffer, spanBytes))
+            return false;
+    }
+
+    std::deque<GuestArena::HostWrite> bufWrites;
+    if (segBytes > 0) {
+        auto& guard = bufWrites.emplace_back(segHeader.buffer, segBytes);
+        if (!guard.Open() || !GuestWritable_nid_no_patch(segHeader.buffer, segBytes))
+            return false;
+    }
+    if (spanBytes > 0) {
+        auto& guard = bufWrites.emplace_back(spanHeader.buffer, spanBytes);
+        if (!guard.Open() || !GuestWritable_nid_no_patch(spanHeader.buffer, spanBytes))
+            return false;
+    }
+
+    std::vector<int> updatedSegments = origSegments;
+    for (int& value : updatedSegments) value += delta.m_width;
+    for (Region::Span& span : spans) span.y += delta.m_height;
+
+    if (segBytes > 0 && !GuestCopyOut_nid_no_patch(segHeader.buffer, updatedSegments.data(), segBytes))
+        return false;
+    if (spanBytes > 0 && !GuestCopyOut_nid_no_patch(spanHeader.buffer, spans.data(), spanBytes)) {
+        if (segBytes > 0)
+            GuestCopyOut_nid_no_patch(segHeader.buffer, origSegments.data(), segBytes);
+        return false;
+    }
+    return true;
+}
+
+static bool ComputeRegionRects(const Region* self, WTF::Vector<IntRect, 1>& rectList) {
+    RegionFields region;
+    if (!LoadRegion(region, self))
+        return false;
+    if (!region.shape) {
+        if (region.bounds.m_size.m_width > 0 && region.bounds.m_size.m_height > 0)
+            rectList.uncheckedAppend(region.bounds);
+        return true;
+    }
+    Region::Shape shape;
+    if (!LoadShapeCopy(region.shape, shape))
+        return false;
+    for (Region::Shape::SpanIterator span = shape.spans_begin(), end = shape.spans_end(); span != end && span + 1 != end; ++span) {
+        const int y = span->y;
+        const int height = (span + 1)->y - y;
+        for (Region::Shape::SegmentIterator segment = shape.segments_begin(span), segEnd = shape.segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
+            const int x = *segment;
+            const int width = *(segment + 1) - x;
+            rectList.append(IntRect{IntPoint{x, y}, IntSize{width, height}});
+        }
+    }
+    return true;
+}
+
+static Region& MoveAssignRegion(Region* self, Region* other, const char* function) {
+    RegionFields region;
+    RegionFields source;
+    if (!LoadRegion(region, self) || !LoadRegion(source, other))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (self == other) {
+        const GuestArena::HostWrite selfWrite(self, sizeof(region));
+        if (!selfWrite.Open() || !GuestWritable_nid_no_patch(self, sizeof(region)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        return *self;
+    }
+    const GuestArena::HostWrite selfWrite(self, sizeof(region));
+    const GuestArena::HostWrite otherWrite(other, sizeof(source));
+    if (!selfWrite.Open() || !otherWrite.Open() ||
+        !GuestWritable_nid_no_patch(self, sizeof(region)) ||
+        !GuestWritable_nid_no_patch(other, sizeof(source)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const RegionFields clearedOther{source.bounds, nullptr};
+    if (!GuestCopyOut_nid_no_patch(other, &clearedOther, sizeof(clearedOther)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) {
+        GuestCopyOut_nid_no_patch(other, &source, sizeof(source));
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    if (region.shape != source.shape)
+        delete region.shape;
+    return *self;
+}
+
+static Region& CopyAssignRegion(Region* self, const Region* other, const char* function) {
+    RegionFields region;
+    RegionFields source;
+    if (!LoadRegion(region, self) || !LoadRegion(source, other))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    std::unique_ptr<Region::Shape> copiedShape;
+    if (source.shape) {
+        Region::Shape shape;
+        if (!LoadShapeCopy(source.shape, shape))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        copiedShape = std::make_unique<Region::Shape>(std::move(shape));
+    }
+    if (!StoreRegion(self, source.bounds, std::move(copiedShape), region.shape))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return *self;
+}
+
+static NKWebKit::WtfAbi::TextStream& DumpRegionToStream(NKWebKit::WtfAbi::TextStream* stream, const Region* region, const char* function) {
+    if (!IsReadableGuestBytes(stream, sizeof(NKWebKit::WtfAbi::TextStream)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const GuestArena::HostWrite streamWrite(stream, sizeof(NKWebKit::WtfAbi::TextStream));
+    if (!streamWrite.Open() || !GuestWritable_nid_no_patch(stream, sizeof(NKWebKit::WtfAbi::TextStream)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    WTF::Vector<IntRect, 1> rects;
+    if (!ComputeRegionRects(region, rects))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    int indent = 0;
+    unsigned char* const indentPtr = reinterpret_cast<unsigned char*>(stream) + offsetof(NKWebKit::WtfAbi::TextStream, indent);
+    if (!GuestCopyIn_nid_no_patch(&indent, indentPtr, sizeof(indent)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    _ZN3WTF10TextStreamlsEPKc(stream, "\n");
+    const int incremented = indent + 1;
+    if (!GuestCopyOut_nid_no_patch(indentPtr, &incremented, sizeof(incremented)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    struct IndentScope {
+        unsigned char* indentAddress;
+        int originalIndent;
+        ~IndentScope() {
+            GuestCopyOut_nid_no_patch(indentAddress, &originalIndent, sizeof(originalIndent));
+        }
+    } indentScope{indentPtr, indent};
+
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+        _ZN3WTF10TextStream11writeIndentEv(stream);
+        _ZN3WTF10TextStreamlsEPKc(stream, "(rect ");
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(*stream, rects.data()[i]);
+        _ZN3WTF10TextStreamlsEPKc(stream, ")\n");
+    }
+    return *stream;
 }
 
 }  // namespace WebCore
@@ -446,12 +700,10 @@ extern "C" {
 
 void APS5_VABI _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(WebCore::Region::Shape* self, const WebCore::IntSize& offset) {
     WebCore::IntSize delta;
-    if (!GuestCopyIn_nid_no_patch(&delta, &offset, sizeof(delta)))
+    if (!WebCore::IsReadableGuestBytes(&offset, sizeof(delta)) ||
+        !GuestCopyIn_nid_no_patch(&delta, &offset, sizeof(delta)) ||
+        !WebCore::TranslateShapeGuest(self, delta))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    for (std::size_t i = 0; i < self->m_segments.size(); ++i)
-        self->m_segments[i] += delta.m_width;
-    for (std::size_t i = 0; i < self->m_spans.size(); ++i)
-        self->m_spans[i].y += delta.m_height;
 }
 
 void APS5_VABI _ZN7WebCore6Region5uniteERKS0_(WebCore::Region* self, const WebCore::Region& other) {
@@ -462,7 +714,14 @@ void APS5_VABI _ZN7WebCore6Region5uniteERKS0_(WebCore::Region* self, const WebCo
     if (WebCore::RectIsEmpty(source.bounds))
         return;
     if (WebCore::RectIsEmpty(region.bounds)) {
-        if (!WebCore::StoreRegion(self, source.bounds, source.shape ? std::make_unique<WebCore::Region::Shape>(*source.shape) : nullptr, region.shape))
+        std::unique_ptr<WebCore::Region::Shape> copiedShape;
+        if (source.shape) {
+            WebCore::Region::Shape shape;
+            if (!WebCore::LoadShapeCopy(source.shape, shape))
+                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            copiedShape = std::make_unique<WebCore::Region::Shape>(std::move(shape));
+        }
+        if (!WebCore::StoreRegion(self, source.bounds, std::move(copiedShape), region.shape))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
@@ -471,10 +730,16 @@ void APS5_VABI _ZN7WebCore6Region5uniteERKS0_(WebCore::Region* self, const WebCo
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
-    if (WebCore::RegionContains(region, source))
+    bool contains = false;
+    if (!WebCore::RegionContains(region, source, contains))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (contains)
         return;
 
-    if (!WebCore::SetRegionShape(self, region, WebCore::Region::Shape::unionShapes(WebCore::RegionShape(region), WebCore::RegionShape(source))))
+    WebCore::Region::Shape aShape;
+    WebCore::Region::Shape bShape;
+    if (!WebCore::LoadRegionShape(region, aShape) || !WebCore::LoadRegionShape(source, bShape) ||
+        !WebCore::SetRegionShape(self, region, WebCore::Region::Shape::unionShapes(aShape, bShape)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
@@ -488,7 +753,10 @@ void APS5_VABI _ZN7WebCore6Region8subtractERKS0_(WebCore::Region* self, const We
     if (!WebCore::RectIntersects(region.bounds, source.bounds))
         return;
 
-    if (!WebCore::SetRegionShape(self, region, WebCore::Region::Shape::subtractShapes(WebCore::RegionShape(region), WebCore::RegionShape(source))))
+    WebCore::Region::Shape aShape;
+    WebCore::Region::Shape bShape;
+    if (!WebCore::LoadRegionShape(region, aShape) || !WebCore::LoadRegionShape(source, bShape) ||
+        !WebCore::SetRegionShape(self, region, WebCore::Region::Shape::subtractShapes(aShape, bShape)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
@@ -510,41 +778,74 @@ void APS5_VABI _ZN7WebCore6Region9intersectERKS0_(WebCore::Region* self, const W
         return;
     }
 
-    if (!WebCore::SetRegionShape(self, region, WebCore::Region::Shape::intersectShapes(WebCore::RegionShape(region), WebCore::RegionShape(source))))
+    WebCore::Region::Shape aShape;
+    WebCore::Region::Shape bShape;
+    if (!WebCore::LoadRegionShape(region, aShape) || !WebCore::LoadRegionShape(source, bShape) ||
+        !WebCore::SetRegionShape(self, region, WebCore::Region::Shape::intersectShapes(aShape, bShape)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6Region9translateERKNS_7IntSizeE(WebCore::Region* self, const WebCore::IntSize& offset) {
     WebCore::RegionFields region;
     WebCore::IntSize delta;
-    if (!WebCore::LoadRegion(region, self) || !GuestCopyIn_nid_no_patch(&delta, &offset, sizeof(delta)))
+    if (!WebCore::LoadRegion(region, self) ||
+        !WebCore::IsReadableGuestBytes(&offset, sizeof(delta)) ||
+        !GuestCopyIn_nid_no_patch(&delta, &offset, sizeof(delta)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    region.bounds.m_location.m_x += delta.m_width;
-    region.bounds.m_location.m_y += delta.m_height;
-    if (!WebCore::StoreRegion(self, region, region.shape))
+    const GuestArena::HostWrite selfWrite(self, sizeof(region));
+    if (!selfWrite.Open() || !GuestWritable_nid_no_patch(self, sizeof(region)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (region.shape)
-        _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(region.shape, delta);
+    if (region.shape && !WebCore::TranslateShapeGuest(region.shape, delta))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    WebCore::RegionFields updated = region;
+    updated.bounds.m_location.m_x += delta.m_width;
+    updated.bounds.m_location.m_y += delta.m_height;
+    if (!GuestCopyOut_nid_no_patch(self, &updated, sizeof(updated))) {
+        if (region.shape) {
+            const WebCore::IntSize inverse{-delta.m_width, -delta.m_height};
+            WebCore::TranslateShapeGuest(region.shape, inverse);
+        }
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1EOS0_(WebCore::Region* self, WebCore::Region&& other) {
     WebCore::RegionFields source;
-    if (!WebCore::LoadRegion(source, &other) || !GuestWritable_nid_no_patch(&other, sizeof(source)) ||
-        !WebCore::StoreRegion(self, source, nullptr) ||
-        !WebCore::StoreRegion(&other, WebCore::RegionFields{source.bounds, nullptr}, nullptr))
+    if (!WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const GuestArena::HostWrite selfWrite(self, sizeof(source));
+    const GuestArena::HostWrite otherWrite(&other, sizeof(source));
+    if (!selfWrite.Open() || !otherWrite.Open() ||
+        !GuestWritable_nid_no_patch(self, sizeof(source)) ||
+        !GuestWritable_nid_no_patch(&other, sizeof(source)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const WebCore::RegionFields clearedOther{source.bounds, nullptr};
+    if (!GuestCopyOut_nid_no_patch(&other, &clearedOther, sizeof(clearedOther)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1ERKNS_7IntRectE(WebCore::Region* self, const WebCore::IntRect& rect) {
     WebCore::IntRect bounds;
-    if (!GuestCopyIn_nid_no_patch(&bounds, &rect, sizeof(bounds)) || !WebCore::StoreRegion(self, WebCore::RegionFields{bounds, nullptr}, nullptr))
+    if (!WebCore::IsReadableGuestBytes(&rect, sizeof(bounds)) ||
+        !GuestCopyIn_nid_no_patch(&bounds, &rect, sizeof(bounds)) ||
+        !WebCore::StoreRegion(self, WebCore::RegionFields{bounds, nullptr}, nullptr))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore6RegionC1ERKS0_(WebCore::Region* self, const WebCore::Region& other) {
     WebCore::RegionFields source;
-    if (!WebCore::LoadRegion(source, &other) ||
-        !WebCore::StoreRegion(self, source.bounds, source.shape ? std::make_unique<WebCore::Region::Shape>(*source.shape) : nullptr, nullptr))
+    if (!WebCore::LoadRegion(source, &other))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    std::unique_ptr<WebCore::Region::Shape> copiedShape;
+    if (source.shape) {
+        WebCore::Region::Shape shape;
+        if (!WebCore::LoadShapeCopy(source.shape, shape))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        copiedShape = std::make_unique<WebCore::Region::Shape>(std::move(shape));
+    }
+    if (!WebCore::StoreRegion(self, source.bounds, std::move(copiedShape), nullptr))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
@@ -580,23 +881,11 @@ void APS5_VABI _ZN7WebCore6RegionD2Ev(WebCore::Region* self) {
 }
 
 WebCore::Region& APS5_VABI _ZN7WebCore6RegionaSEOS0_(WebCore::Region* self, WebCore::Region&& other) {
-    WebCore::RegionFields region;
-    WebCore::RegionFields source;
-    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other) ||
-        !GuestWritable_nid_no_patch(self, sizeof(region)) || !GuestWritable_nid_no_patch(&other, sizeof(source)) ||
-        !WebCore::StoreRegion(&other, WebCore::RegionFields{source.bounds, nullptr}, nullptr) ||
-        !WebCore::StoreRegion(self, source, region.shape))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    return *self;
+    return WebCore::MoveAssignRegion(self, &other, __func__);
 }
 
 WebCore::Region& APS5_VABI _ZN7WebCore6RegionaSERKS0_(WebCore::Region* self, const WebCore::Region& other) {
-    WebCore::RegionFields region;
-    WebCore::RegionFields source;
-    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other) ||
-        !WebCore::StoreRegion(self, source.bounds, source.shape ? std::make_unique<WebCore::Region::Shape>(*source.shape) : nullptr, region.shape))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    return *self;
+    return WebCore::CopyAssignRegion(self, &other, __func__);
 }
 
 bool APS5_VABI _ZNK7WebCore6Region10intersectsERKS0_(const WebCore::Region* self, const WebCore::Region& other) {
@@ -608,72 +897,50 @@ bool APS5_VABI _ZNK7WebCore6Region10intersectsERKS0_(const WebCore::Region* self
         return false;
     if (!region.shape && !source.shape)
         return true;
-    return WebCore::Region::Shape::compareShapes<WebCore::Region::Shape::CompareIntersectsOperation>(
-        WebCore::RegionShape(region), WebCore::RegionShape(source));
+    WebCore::Region::Shape aShape;
+    WebCore::Region::Shape bShape;
+    if (!WebCore::LoadRegionShape(region, aShape) || !WebCore::LoadRegionShape(source, bShape))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return WebCore::Region::Shape::compareShapes<WebCore::Region::Shape::CompareIntersectsOperation>(aShape, bShape);
 }
 
 WTF::Vector<WebCore::IntRect, 1> APS5_VABI _ZNK7WebCore6Region5rectsEv(const WebCore::Region* self) {
-    WebCore::RegionFields region;
-    if (!WebCore::LoadRegion(region, self))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     WTF::Vector<WebCore::IntRect, 1> rectList;
-    if (!region.shape) {
-        if (region.bounds.m_size.m_width > 0 && region.bounds.m_size.m_height > 0)
-            rectList.uncheckedAppend(region.bounds);
-        return rectList;
-    }
-
-    for (WebCore::Region::Shape::SpanIterator span = region.shape->spans_begin(), end = region.shape->spans_end(); span != end && span + 1 != end; ++span) {
-        int y = span->y;
-        int height = (span + 1)->y - y;
-
-        for (WebCore::Region::Shape::SegmentIterator segment = region.shape->segments_begin(span), segEnd = region.shape->segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
-            int x = *segment;
-            int width = *(segment + 1) - x;
-            rectList.append(WebCore::IntRect{WebCore::IntPoint{x, y}, WebCore::IntSize{width, height}});
-        }
-    }
+    if (!WebCore::ComputeRegionRects(self, rectList))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return rectList;
 }
 
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& region) {
-    _ZN3WTF10TextStreamlsEPKc(&stream, "\n");
-    struct IndentScope {
-        NKWebKit::WtfAbi::TextStream& stream;
-        explicit IndentScope(NKWebKit::WtfAbi::TextStream& target) : stream(target) { ++stream.indent; }
-        ~IndentScope() { --stream.indent; }
-    } indentScope(stream);
-    const WTF::Vector<WebCore::IntRect, 1> rects = _ZNK7WebCore6Region5rectsEv(&region);
-    for (std::size_t i = 0; i < rects.size(); ++i) {
-        _ZN3WTF10TextStream11writeIndentEv(&stream);
-        _ZN3WTF10TextStreamlsEPKc(&stream, "(rect ");
-        _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(stream, rects.data()[i]);
-        _ZN3WTF10TextStreamlsEPKc(&stream, ")\n");
-    }
-    return stream;
+    return WebCore::DumpRegionToStream(&stream, &region, __func__);
 }
 
 bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Region* self, const WebCore::IntPoint& point) {
     WebCore::RegionFields region;
     WebCore::IntPoint location;
-    if (!WebCore::LoadRegion(region, self) || !GuestCopyIn_nid_no_patch(&location, &point, sizeof(location)))
+    if (!WebCore::LoadRegion(region, self) ||
+        !WebCore::IsReadableGuestBytes(&point, sizeof(location)) ||
+        !GuestCopyIn_nid_no_patch(&location, &point, sizeof(location)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     if (!WebCore::RectContains(region.bounds, location))
         return false;
     if (!region.shape)
         return true;
 
-    for (WebCore::Region::Shape::SpanIterator span = region.shape->spans_begin(), end = region.shape->spans_end(); span != end && span + 1 != end; ++span) {
-        int y = span->y;
-        int maxY = (span + 1)->y;
+    WebCore::Region::Shape shape;
+    if (!WebCore::LoadShapeCopy(region.shape, shape))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    for (WebCore::Region::Shape::SpanIterator span = shape.spans_begin(), end = shape.spans_end(); span != end && span + 1 != end; ++span) {
+        const int y = span->y;
+        const int maxY = (span + 1)->y;
         if (y > location.m_y)
             break;
         if (maxY <= location.m_y)
             continue;
 
-        for (WebCore::Region::Shape::SegmentIterator segment = region.shape->segments_begin(span), segEnd = region.shape->segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
-            int x = *segment;
-            int maxX = *(segment + 1);
+        for (WebCore::Region::Shape::SegmentIterator segment = shape.segments_begin(span), segEnd = shape.segments_end(span); segment != segEnd && segment + 1 != segEnd; segment += 2) {
+            const int x = *segment;
+            const int maxX = *(segment + 1);
             if (x > location.m_x)
                 break;
             if (maxX > location.m_x)
@@ -686,14 +953,18 @@ bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Regio
 bool APS5_VABI _ZNK7WebCore6Region8containsERKS0_(const WebCore::Region* self, const WebCore::Region& other) {
     WebCore::RegionFields region;
     WebCore::RegionFields source;
-    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other))
+    bool result = false;
+    if (!WebCore::LoadRegion(region, self) || !WebCore::LoadRegion(source, &other) ||
+        !WebCore::RegionContains(region, source, result))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    return WebCore::RegionContains(region, source);
+    return result;
 }
 
 std::uint64_t APS5_VABI _ZNK7WebCore6Region9totalAreaEv(const WebCore::Region* self) {
     std::uint64_t total = 0;
-    auto rectList = _ZNK7WebCore6Region5rectsEv(self);
+    WTF::Vector<WebCore::IntRect, 1> rectList;
+    if (!WebCore::ComputeRegionRects(self, rectList))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     for (std::size_t i = 0; i < rectList.size(); ++i) {
         total += static_cast<std::uint64_t>(rectList[i].m_size.m_width) * static_cast<std::uint64_t>(rectList[i].m_size.m_height);
     }
