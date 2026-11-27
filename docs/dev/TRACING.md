@@ -80,6 +80,7 @@ python tools/symbolize_samples.py later.collapsed.txt --libs path/to/runtime --s
 
 `--require-matching-window` requires matching module records in both snapshots and rejects decreasing sample counters.
 Take both snapshots from the same process because these checks cannot establish that the snapshots came from one run.
+`--top <n>` sets how many functions each table lists, and with `--compare` how many changes each comparison table lists. It defaults to 30 and must be at least 1; `--json` output is limited the same way.
 
 ## Performance captures
 
