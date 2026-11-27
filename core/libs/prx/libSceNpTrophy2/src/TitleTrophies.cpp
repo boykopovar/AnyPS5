@@ -2,7 +2,6 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -171,9 +170,7 @@ int CopyIcon(int context, IconKind kind, std::int32_t id, void* buffer, std::siz
     if (capacity < icon->size()) {
         throw std::runtime_error(std::string(caller) + ": the buffer holds " + std::to_string(capacity) + " bytes and the icon " + std::to_string(icon->size()) + ", and the console's answer to that is not known");
     }
-    const GuestArena::HostWrite destination(buffer, icon->size());
-    if (!destination.Open()) throw std::runtime_error(std::string(caller) + ": the icon buffer is not writable");
-    std::memcpy(buffer, icon->data(), icon->size());
+    if (!GuestCopyOut_nid_no_patch(buffer, icon->data(), icon->size())) throw std::invalid_argument(std::string(caller) + ": invalid argument");
     writeSize(icon->size());
     return SCE_NP_TROPHY2_OK;
 }

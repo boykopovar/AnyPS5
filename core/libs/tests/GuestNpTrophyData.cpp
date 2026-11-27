@@ -253,6 +253,10 @@ static void ReportIcons(int context) {
                 ThrowsInvalidArgument([context, unwritable, &buffer] { sceNpTrophy2GetTrophyIcon(context, 1, 1, buffer, unwritable); }) &&
                 ThrowsInvalidArgument([context, unwritable] { sceNpTrophy2GetRewardIcon(context, 1, 1, nullptr, unwritable); }) && errno == 71,
             "an icon size was read or written through a pointer that is not guest memory, or errno changed");
+    std::size_t capacity = 4096;
+    errno = 71;
+    Require(ThrowsInvalidArgument([context, &capacity] { sceNpTrophy2GetGameIcon(context, 1, reinterpret_cast<void*>(0x10), &capacity); }) && capacity == 4096 && errno == 71,
+            "an icon was copied to a buffer that is not guest memory, its size was written, or errno changed");
     std::size_t hiddenSize = 0;
     Require(ThrowsRuntimeError([context, &hiddenSize] { sceNpTrophy2GetTrophyIcon(context, 1, 6, nullptr, &hiddenSize); }) &&
                 ThrowsRuntimeError([context, &hiddenSize] { sceNpTrophy2GetRewardIcon(context, 1, 6, nullptr, &hiddenSize); }),
