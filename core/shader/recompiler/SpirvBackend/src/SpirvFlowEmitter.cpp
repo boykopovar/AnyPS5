@@ -1460,7 +1460,6 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     const auto ticket = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), ticket, arrival, scope, acquireRelease, ConstantU32(state, 1u));
     const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
-    // WorkgroupLocalSize is the emitted SPIR-V invocation count; SetMeshOutputsEXT only sets output counts.
     const std::uint32_t participants = local[0] * local[1] * local[2];
     const auto last = Binary(state, spv::OpIEqual, TypeBool(state), ticket, ConstantU32(state, participants - 1u));
     const auto lastSubgroup = EmitHostSubgroupAny(state, last);
