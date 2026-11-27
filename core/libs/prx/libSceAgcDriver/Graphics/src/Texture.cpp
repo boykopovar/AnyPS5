@@ -1821,7 +1821,7 @@ bool Float16TransfersKeepBits(const Context& context, VkFormat format, bool colo
         known.emplace(key, keeps);
         return keeps;
     } catch (const std::exception& error) {
-        AGC_LOG_DEFERRED(stdout, "FP16 storage transfer probe failed for format=%d attachment=%d: %s; using UINT backing", static_cast<int>(format), colorAttachment ? 1 : 0, error.what());
+        APS5_LOG_OUT("FP16 storage transfer probe failed for format=%d attachment=%d: %s; using UINT backing", static_cast<int>(format), colorAttachment ? 1 : 0, error.what());
         known.emplace(key, false);
         return false;
     }
