@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -58,7 +59,6 @@ public:
     }
 
     int getStr(int64_t key, char* out, int len) {
-        if (len == 0) NotImplemented_nid_no_patch(__func__);
         if (out == nullptr || len < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -73,7 +73,6 @@ public:
     }
 
     int getBin(int64_t key, void* out, int size) {
-        if (size == 0) NotImplemented_nid_no_patch(__func__);
         if (out == nullptr || size < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -220,14 +219,14 @@ int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int string
     return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
-    if (size == 0) NotImplemented_nid_no_patch(__func__);
+    if (size == 0) throw std::runtime_error("sceRegMgrSetBin: a zero-length write is unmeasured");
     return gStore.setBin(optionId, data, size);
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
     return gStore.setInt(static_cast<std::uint32_t>(optionId), inInt);
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
-    if (stringLength == 0) NotImplemented_nid_no_patch(__func__);
+    if (stringLength == 0) throw std::runtime_error("sceRegMgrSetStr: a zero-length write is unmeasured");
     return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t type, std::int32_t* data) {
@@ -262,8 +261,7 @@ int APS5_VABI sceRegMgrGetStrInitVal(void) {
 }
 
 int APS5_VABI sceRegMgrGetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x01140001);
 }
 
 int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer) {
@@ -458,14 +456,95 @@ int APS5_VABI sceRegMgrEvtGetRegIdForPS4(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrStrncpy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI sceRegMgrStrncpy(char* destination, const char* source, std::size_t size) {
+    if (destination == nullptr || source == nullptr)
+        return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+    if (size == 0) return destination;
+    const int savedErrno = errno;
+    const auto dstAddress = reinterpret_cast<std::uintptr_t>(destination);
+    const auto srcAddress = reinterpret_cast<std::uintptr_t>(source);
+    std::array<char, 4096> chunk{};
+    bool terminated = false;
+    std::size_t offset = 0;
+    while (offset < size && !terminated) {
+        if (offset > UINTPTR_MAX - srcAddress || offset > UINTPTR_MAX - dstAddress) {
+            errno = savedErrno;
+            return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+        }
+        const std::size_t count = std::min(size - offset, chunk.size());
+        const auto currentSrc = srcAddress + offset;
+        std::size_t readCount = count;
+        if (count - 1 <= UINTPTR_MAX - currentSrc &&
+            GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(currentSrc), count)) {
+            const auto end = std::find(chunk.begin(), chunk.begin() + count, '\0');
+            if (end != chunk.begin() + count) {
+                readCount = static_cast<std::size_t>(end - chunk.begin()) + 1;
+                terminated = true;
+            }
+        } else {
+            readCount = 0;
+            for (std::size_t index = 0; index < count; ++index) {
+                char character = 0;
+                if (index > UINTPTR_MAX - currentSrc ||
+                    !GuestCopyIn_nid_no_patch(&character, reinterpret_cast<const void*>(currentSrc + index), 1)) {
+                    errno = savedErrno;
+                    return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+                }
+                chunk[index] = character;
+                ++readCount;
+                if (character == '\0') {
+                    terminated = true;
+                    break;
+                }
+            }
+        }
+        if (readCount - 1 > UINTPTR_MAX - (dstAddress + offset) ||
+            !GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(dstAddress + offset), chunk.data(), readCount)) {
+            errno = savedErrno;
+            return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+        }
+        offset += readCount;
+    }
+    if (offset < size) {
+        chunk.fill('\0');
+        while (offset < size) {
+            if (offset > UINTPTR_MAX - dstAddress) {
+                errno = savedErrno;
+                return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+            }
+            const std::size_t count = std::min(size - offset, chunk.size());
+            if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(dstAddress + offset), chunk.data(), count)) {
+                errno = savedErrno;
+                return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+            }
+            offset += count;
+        }
+    }
+    errno = savedErrno;
+    return destination;
 }
 
-int APS5_VABI sceRegMgrMemset(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI sceRegMgrMemset(void* destination, int value, std::size_t size) {
+    if (destination == nullptr) return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    if (size == 0) return destination;
+    std::array<std::uint8_t, 4096> fill{};
+    fill.fill(static_cast<std::uint8_t>(value));
+    const int savedErrno = errno;
+    const auto base = reinterpret_cast<std::uintptr_t>(destination);
+    for (std::size_t offset = 0; offset < size;) {
+        if (offset > UINTPTR_MAX - base) {
+            errno = savedErrno;
+            return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+        }
+        const std::size_t count = std::min(size - offset, fill.size());
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(base + offset), fill.data(), count)) {
+            errno = savedErrno;
+            return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+        }
+        offset += count;
+    }
+    errno = savedErrno;
+    return destination;
 }
 
 int APS5_VABI sceRegMgrSetbin(void) {

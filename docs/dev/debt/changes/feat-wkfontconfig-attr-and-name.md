@@ -1,0 +1,8 @@
+# libSceWkFontConfig
+
+## change [libSceWkFontConfig font lookups]
+
+- [libSceWkFontConfig font lookups](../../../core/libs/prx/libSceWkFontConfig/Export.cpp) - `sceWkFontConfigGetFont`, `sceWkFontConfigGetFontFromFontName` and `sceWkFontConfigGetFontPath` throw once their argument checks pass. The first two fill a font record from the module's own font tables, which are firmware-specific: PS4's `libSceWkFontConfig.sprx` lists PS4 fonts such as `SCEPS4Yoongd`, and 13.42's `sceWkFontConfigGetFontFromFontName` is smaller than PS4's, so the PS4 tables are not copied. In PS4's module, `sceWkFontConfigGetFontPath` returns `/`, `sceKernelGetFsSandboxRandomWord()` and the record's path. 13.42's copy is larger, so that layout is not assumed for PS5. The exports also throw when a field or attribute they reach cannot be read (the console module reads them unchecked, one at a time, returning at the first that fails its check). Argument types give only the widths read; the meaning of the font ID and attribute fields is unknown. Only the 32-bit results are claimed.
+## add Functional
+
+- [sceWkFontConfigGetAttr and sceWkFontConfigGetFontName](../../../core/libs/prx/libSceWkFontConfig/Export.cpp) - inaccessible guest memory throws where the console module faults. The attribute offset and copy order follow the [firmware 13.42 disassembly](https://github.com/boykopovar/AnyPS5/pull/18722) at `0x61f` through `0x62c`. The final four bytes are copied before the first sixteen. The name pointer at offset 8, the `0x813C0002` capacity error and the zero padding follow [the PS4 module](https://github.com/boykopovar/AnyPS5/pull/23361). The PS5 name layout and copy behavior still lack confirmation.

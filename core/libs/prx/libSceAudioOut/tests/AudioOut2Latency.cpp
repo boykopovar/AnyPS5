@@ -255,6 +255,8 @@ void TestSetSystemDebugState() {
     Require(set(1, nullptr, 4) == errorInvalidPointer, "the param pointer of debug state 1 is checked before its size");
     Require(set(2, nullptr, 8) == errorInvalidPointer, "the param pointer of debug state 2 is checked before its id");
     Require(sceAudioOut2SetSystemDebugState(nullptr) == errorInvalidPointer, "a null debug state is refused");
+    errno = 71;
+    Require(sceAudioOut2SetSystemDebugState(reinterpret_cast<const AudioOut2SystemDebugStateParam*>(std::uintptr_t{0x10})) == errorInvalidPointer && errno == 71, "an unreadable debug state is refused without changing errno");
 }
 
 void TestEnableChat() {

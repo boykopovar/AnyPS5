@@ -70,7 +70,12 @@ static void CheckUserDefinedParams(const std::filesystem::path& path) {
                                         R"("userDefinedParam1":23566,"userDefinedParam3":-7,"userDefinedParam4":2147483647})");
     Require(parsed.userDefinedParams[0] == 23566 && parsed.userDefinedParams[1] == 0 && parsed.userDefinedParams[2] == -7 &&
             parsed.userDefinedParams[3] == 2147483647, "Incorrect user defined params");
-    for (const auto* text : {"2147483648", "1.5", "1e3", "\"1\"", "true"}) {
+    const auto unsignedParams = ParseText(path, R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},)"
+                                                R"("userDefinedParam1":2147483648,"userDefinedParam2":3368540011,"userDefinedParam3":4294967295,"userDefinedParam4":-2147483648})");
+    Require(unsignedParams.userDefinedParams[0] == std::numeric_limits<std::int32_t>::min() && unsignedParams.userDefinedParams[1] == -926427285 &&
+            unsignedParams.userDefinedParams[2] == -1 && unsignedParams.userDefinedParams[3] == std::numeric_limits<std::int32_t>::min(),
+            "Unsigned 32-bit user defined params were not kept as their 32-bit value");
+    for (const auto* text : {"4294967296", "-2147483649", "1.5", "1e3", "\"1\"", "true"}) {
         bool rejected = false;
         try {
             ParseText(path, std::string(R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"userDefinedParam2":)") + text + "}");

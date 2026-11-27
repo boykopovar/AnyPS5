@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = 'public_headers_manifest.py'
 TOOLS = Path(__file__).resolve().parents[1]
@@ -47,6 +48,34 @@ class Tests(unittest.TestCase):
         self.fixture()
         self.assert_manifest_matches_recursive_package_bytes()
 
+    def test_hash_rejects_a_file_that_grows_while_it_is_being_read(self):
+        sys.path.insert(0, str(TOOLS))
+        self.addCleanup(sys.path.pop, 0)
+        import public_headers_manifest
+        path = self.fixture() / "Api.hpp"
+        before = path.stat()
+        path.write_bytes(path.read_bytes() + b"\nstruct New {};\n")
+        after = path.stat()
+        with patch.object(public_headers_manifest.os, "fstat", side_effect=[before, after]):
+            with self.assertRaisesRegex(ValueError, "changed while hashing"):
+                public_headers_manifest.hash_input(path)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX inode change time")
+    def test_hash_rejects_changes_that_preserve_file_size_and_mtime(self):
+        sys.path.insert(0, str(TOOLS))
+        self.addCleanup(sys.path.pop, 0)
+        import public_headers_manifest
+        path = self.fixture() / "Api.hpp"
+        old = path.stat()
+        os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns - 2_000_000_000))
+        before = path.stat()
+        path.write_bytes(b"x" * before.st_size)
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = path.stat()
+        with patch.object(public_headers_manifest.os, "fstat", side_effect=[before, after]):
+            with self.assertRaisesRegex(ValueError, "changed while hashing"):
+                public_headers_manifest.hash_input(path)
+
     def test_bom_prefixed_umbrella_and_nested_header_keep_manifest_sizes_and_hashes(self):
         directory = self.fixture()
         nested = directory / "Nested.hpp"
@@ -63,6 +92,36 @@ class Tests(unittest.TestCase):
                 finally:
                     header.write_bytes(original)
 
+    def test_manifest_matches_archives_for_symlink_alias(self):
+        import hashlib
+        import tarfile
+        import zipfile
+        sys.path.insert(0, str(TOOLS))
+        self.addCleanup(sys.path.pop, 0)
+        import package_headers
+        directory = self.fixture()
+        target = directory / "Target.hpp"
+        target.write_bytes(b"struct Target {};\n")
+        alias = directory / "Alias.hpp"
+        try:
+            alias.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        (directory / "Api.hpp").write_bytes(b'#include "Alias.hpp"\n')
+        result = self.run_tool("--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        output = self.root / "output"
+        package_headers.package(self.root, output, "v1")
+        with zipfile.ZipFile(output / "prx-headers-v1.zip") as archive:
+            files = {name: archive.read(name) for name in archive.namelist()}
+        with tarfile.open(output / "prx-headers-v1.tar.gz") as archive:
+            self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, files)
+        entries = [{"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                   for name, data in sorted(files.items())]
+        self.assertEqual(report["entries"], entries)
+        self.assertIn("include/anyps5/prx/libExample/Alias.hpp", files)
+
     def test_missing_dependency_and_license_fail_without_json(self):
         directory = self.fixture()
         (directory / "Api.hpp").unlink()
@@ -72,6 +131,18 @@ class Tests(unittest.TestCase):
         result = self.run_tool("--root", self.root)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
+
+    def test_comments_raw_strings_and_digit_separators_do_not_create_false_includes(self):
+        directory = self.fixture()
+        (directory / "Api.hpp").write_bytes(
+            b'#include <cstdint>\n'
+            b'// #include "MissingLineComment.hpp"\n'
+            b'/*\n#include "MissingBlockComment.hpp"\n*/\n'
+            b'constexpr auto kRaw = R"delim(\n#include "MissingRaw.hpp"\n)delim";\n'
+            b'constexpr uint64_t kNum = 1\'000\'000;\n'
+            b'constexpr char kQuote = \'"\';\n'
+        )
+        self.assert_manifest_matches_recursive_package_bytes()
 
     def test_linked_header_directories_keep_the_package_manifest(self):
         self.fixture()

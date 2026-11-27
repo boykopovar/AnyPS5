@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -69,7 +70,9 @@ void LibcHeapTraceInfo_nid_no_patch(LibcHeapInfo* info) {
 }
 
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName) {
-    std::fprintf(stderr, "[%s] backtrace requested from guest 0x%llx\n", heapName ? heapName : "",
+    std::string name;
+    if (heapName != nullptr && CopyGuestString_nid_no_patch(heapName, 65536, name) != 0) name.clear();
+    std::fprintf(stderr, "[%s] backtrace requested from guest 0x%llx\n", name.c_str(),
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(__builtin_return_address(0))));
 }
 

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RelocationRuns.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -158,11 +159,6 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
             if (reads[i].second >= 0 && ((reads[i].first & 3u) != 0 || !covered(reads[i].first))) drop(reads[i].second);
         }
     }
-    const auto origin = [&](std::uint64_t address) -> std::int8_t {
-        const auto found = std::lower_bound(reads.begin(), reads.end(), std::make_pair(address, std::numeric_limits<std::int32_t>::min()));
-        if (found == reads.end() || found->first != address || found->second < 0) return -1;
-        return (relocatable >> found->second & 1u) != 0 ? static_cast<std::int8_t>(found->second) : std::int8_t {-1};
-    };
     variant.relocatableWords = relocatable;
     for (std::size_t index = 0; index < regions.size(); ++index) {
         const auto& region = regions[index];
@@ -175,17 +171,11 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
             variant.runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
             continue;
         }
-        std::size_t start = 0;
-        auto current = count != 0 ? origin(region.guestAddress) : std::int8_t {-1};
-        for (std::size_t word = 1; word <= count; ++word) {
-            const auto next = word < count ? origin(region.guestAddress + word * sizeof(std::uint32_t)) : std::int8_t {-2};
-            if (next == current) continue;
-            AppendSharedWords(variant.shared, variant.runs.size(), offset + start, region.bytes.subspan(start * sizeof(std::uint32_t), (word - start) * sizeof(std::uint32_t)), supplied);
-            variant.runs.emplace_back(region.guestAddress + start * sizeof(std::uint32_t), region.guestAddress + word * sizeof(std::uint32_t));
-            variant.runBases.push_back(current);
-            start = word;
-            current = next;
-        }
+        ForEachRelocationRun(region.guestAddress, count, reads, relocatable, [&](std::size_t first, std::size_t last, std::int8_t origin) {
+            AppendSharedWords(variant.shared, variant.runs.size(), offset + first, region.bytes.subspan(first * sizeof(std::uint32_t), (last - first) * sizeof(std::uint32_t)), supplied);
+            variant.runs.emplace_back(region.guestAddress + first * sizeof(std::uint32_t), region.guestAddress + last * sizeof(std::uint32_t));
+            variant.runBases.push_back(origin);
+        });
     }
 }
 
@@ -214,8 +204,11 @@ void Driver::learnPendingRelocation() {
     drawRelocationPending = {};
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);
-    if (inserted == drawCache.end() || inserted->second->decode == nullptr) return;
-    const auto& entry = *inserted->second;
+    std::shared_ptr<const DrawEntry> learned;
+    if (inserted != drawCache.end() && inserted->second->decode != nullptr) learned = inserted->second;
+    else if (const auto donor = pending.donor.lock(); donor != nullptr && donor->decode != nullptr) learned = donor;
+    if (learned == nullptr) return;
+    const auto& entry = *learned;
     const auto& programs = entry.decode->programs;
     if (entry.stages.size() != programs.size()) return;
     const auto known = drawRelocations.find(pending.identity);
@@ -245,7 +238,7 @@ void Driver::learnPendingRelocation() {
                 word.reads.emplace_back(0, length);
                 word.high = program.userData[index + 1];
             }
-            const auto base = AlignedWord(program.userData[index]);
+            const auto base = (static_cast<std::uint64_t>(word.high) << 32) + AlignedWord(program.userData[index]);
             for (std::size_t run = 0; run < variant.runs.size() && run < variant.runBases.size(); ++run) {
                 if (variant.runBases[run] != static_cast<std::int8_t>(index)) continue;
                 word.reads.emplace_back(static_cast<std::int64_t>(variant.runs[run].first - base), static_cast<std::uint32_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t)));
