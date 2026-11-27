@@ -185,6 +185,12 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 0, packet.data(), 1500, 50) == EncoderError(0x03));
     Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(blank), floatPcm.data(), 960, nullptr, 0, 0) == EncoderError(0x16));
     Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(wideMarker), floatPcm.data(), 960, packet.data(), 1500, 50) == EncoderError(0x16));
+    Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 960, nullptr, 0, 0) == EncoderError(0x04));
+    Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 960, packet.data(), 0, 0) == EncoderError(0x05));
+    for (const std::uint32_t priority : std::array<std::uint32_t, 5>{0u, 19u, 101u, 0x80000000u, 0xFFFFFFFFu})
+        Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 7, packet.data(), 1500, priority) == EncoderError(0x15));
+    for (const int frameSize : std::array<int, 3>{39, 41, 1920})
+        Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), frameSize, packet.data(), 1500, 50) == EncoderError(0x03));
 
     std::uint32_t ajmContext = 0x12345678u;
     Require(sceOpusCeltEncGetAjmContext(nullptr, &ajmContext) == EncoderError(0x01));
@@ -532,6 +538,10 @@ int main() {
     std::array<std::uint8_t, 1024> floatExpected{};
     const int floatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
     Require(floatExpectedBytes == floatResult && std::equal(packet, packet + floatResult, floatExpected.begin()));
+    const int priorityFloatResult = sceOpusCeltEncEncodeFloatWithPriority(ToState(floatState), floatSamples.data(), 960, packet, static_cast<int>(sizeof(packet)), 20u);
+    Require(priorityFloatResult > 2 && static_cast<int>(packet[0]) >> 3 >= 16);
+    const int priorityFloatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
+    Require(priorityFloatExpectedBytes == priorityFloatResult && std::equal(packet, packet + priorityFloatResult, floatExpected.begin()));
     opus_encoder_destroy(floatReference);
     Require(sceOpusCeltEncDestroy(ToState(floatState)) == 0);
 
