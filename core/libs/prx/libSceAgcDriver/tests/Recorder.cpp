@@ -6945,6 +6945,20 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     const auto below = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex);
     Require(!below.reused && std::memcmp(below.buffer->Bytes().data(), windowGuest, windowBytes) == 0, "an owned vertex window served a draw that starts below it");
 #endif
+    const auto paddedAddress = address + 32768u;
+    const auto padded = CopyDrawInput(context, &recorder, paddedAddress, 80u, 1u, Use::Vertex, 0, false, 0, 96u);
+    Require(!padded.reused && padded.guestBytes == 80u && padded.buffer->Bytes().size() == 96u &&
+        std::memcmp(padded.buffer->Bytes().data(), static_cast<const std::byte*>(block) + 32768u, 80u) == 0 &&
+        std::all_of(padded.buffer->Bytes().begin() + 80, padded.buffer->Bytes().end(), [](std::byte value) { return value == std::byte{0}; }),
+        "a padded owned vertex input did not preserve its guest span");
+    const bool paddedOwned = !padded.owned.words.empty();
+    Require(paddedOwned == reusable, "a padded vertex input did not arm the expected owned proof");
+    const auto ownedBeforePaddedKeep = recorder.OwnedDrawInputEntries();
+    KeepDrawInput(&recorder, paddedAddress, padded, Use::Vertex, 0);
+    Require(recorder.OwnedDrawInputEntries() == ownedBeforePaddedKeep + (reusable ? 1u : 0u), "a padded owned vertex input was not kept with its guest byte count");
+    const auto paddedAgain = CopyDrawInput(context, &recorder, paddedAddress, 80u, 1u, Use::Vertex, 0, false, 0, 96u);
+    Require(paddedAgain.reused == reusable && paddedAgain.buffer->Bytes().size() == 96u && (!reusable || paddedAgain.buffer == padded.buffer),
+        "a padded owned vertex input was not reused within its guest span");
     recorder.Sync();
 }
 
