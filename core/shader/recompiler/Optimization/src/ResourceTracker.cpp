@@ -2745,7 +2745,9 @@ private:
         const bool flatLineExplicitLod = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLod;
         const bool flatLineLevelZero = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;
         const bool flatLineGather = op == IrOpcode::ImageGatherRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;
-        const bool flatLineAccess = image.dimension == RdnaImageDimension::Dim2DArray ? flatLineLevelZero || flatLineExplicitLod : flatLineLoad || flatLineSample || flatLineExplicitLod || flatLineGather;
+        const bool flatLineBiasOrOffset = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags & (RdnaImageSampleFlagBias | RdnaImageSampleFlagOffset)) != 0u && (memory.imageSampleFlags & ~(RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagLod | RdnaImageSampleFlagBias | RdnaImageSampleFlagOffset)) == 0u;
+        const bool flatLineMipLoad = op == IrOpcode::ImageRead && memory.imageHasMip && memory.imageSampleFlags == 0u;
+        const bool flatLineAccess = image.dimension == RdnaImageDimension::Dim2DArray ? flatLineLevelZero || flatLineExplicitLod : flatLineLoad || flatLineMipLoad || flatLineSample || flatLineExplicitLod || flatLineGather || flatLineBiasOrOffset;
         image.flatLineCompatible = image.flatLineCompatible && flatLineAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.flatVolumeLineCompatible = image.flatVolumeLineCompatible && (flatLineLoad || flatLineSample) && !memory.imagePacked && memory.imageByElements == 0u;
         const bool layerRowsSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags == RdnaImageSampleFlagLevelZero || memory.imageSampleFlags == RdnaImageSampleFlagLod);
