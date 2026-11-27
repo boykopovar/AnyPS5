@@ -216,7 +216,9 @@ public:
         return _handle != nullptr;
     }
 
-    static bool IsOpenInBytes(const std::byte (&raw)[sizeof(FileStream)]) {
+    template <std::size_t N>
+    static bool IsOpenInBytes(const std::byte (&raw)[N]) {
+        static_assert(N == sizeof(FileStream), "raw must hold a complete FileStream");
         std::FILE* handle = nullptr;
         std::memcpy(&handle, raw + offsetof(FileStream, _handle), sizeof(handle));
         return handle != nullptr;
