@@ -23,6 +23,13 @@ BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
 EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
 FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
+_STATEMENT_DELIM = re.compile(r"[()[\]{};]")
+_LAMBDA_BEFORE = re.compile(r"\b(?:co_await|co_yield|throw)$")
+_QUALIFIED_KEYWORDS = frozenset({
+    "return", "else", "do", "throw", "co_return", "co_await", "co_yield",
+    "and", "or", "not", "xor", "bitand", "bitor", "compl",
+})
+_WRAPPER_CANDIDATE = re.compile(r"\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{")
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 ELF_SYMBOL_TAGS = {
@@ -720,29 +727,67 @@ def hashed_nid(symbol):
         return symbol
 
 
+def _is_qualified(text, pos):
+    end = pos
+    while end > 0 and text[end - 1].isspace():
+        end -= 1
+    if end == 0:
+        return False
+    character = text[end - 1]
+    if character == ".":
+        return True
+    if character == ">":
+        return end >= 2 and text[end - 2] == "-"
+    if character == ":" and end >= 2 and text[end - 2] == ":":
+        index = end - 2
+        while index > 0 and text[index - 1].isspace():
+            index -= 1
+        if index == 0:
+            return False
+        if text[index - 1] == ">":
+            return True
+        word_end = index
+        while index > 0 and (text[index - 1].isalnum() or text[index - 1] == "_"):
+            index -= 1
+        return index < word_end and text[index:word_end] not in _QUALIFIED_KEYWORDS
+    return False
+
+
+def _iter_top_level_statements(body):
+    braces, parens, start = 0, 0, 1
+    limit = len(body) - 1
+    if limit > 1:
+        for match in _STATEMENT_DELIM.finditer(body, 1, limit):
+            character = match.group()
+            if character == "(" or character == "[":
+                parens += 1
+            elif character == ")" or character == "]":
+                parens -= 1
+            elif character == "{":
+                braces += 1
+            elif character == "}":
+                braces -= 1
+                if not braces and not parens:
+                    end = match.end()
+                    yield start, body[start:end]
+                    start = end
+            elif not braces and not parens:
+                end = match.end()
+                yield start, body[start:end]
+                start = end
+    yield start, body[start:-1]
+
+
 def top_level_statements(body):
-    braces, parens, start, parts = 0, 0, 1, []
-    for i, character in enumerate(body[1:-1], 1):
-        if character in "([":
-            parens += 1
-        elif character in ")]":
-            parens -= 1
-        elif character == "{":
-            braces += 1
-        elif character == "}":
-            braces -= 1
-            if not braces and not parens:
-                parts.append((start, body[start:i + 1]))
-                start = i + 1
-        elif character == ";" and not braces and not parens:
-            parts.append((start, body[start:i + 1]))
-            start = i + 1
-    parts.append((start, body[start:-1]))
-    return parts
+    return list(_iter_top_level_statements(body))
 
 
 def function_exit(body):
-    for _, statement in top_level_statements(body):
+    if "return" not in body and "goto" not in body:
+        return False
+    for _, statement in _iter_top_level_statements(body):
+        if "return" not in statement and "goto" not in statement:
+            continue
         depth, end, capture_depth, callable_scope = 0, 0, 0, False
         for match in FLOW_TOKEN.finditer(statement):
             if match.start() < end:
@@ -752,7 +797,7 @@ def function_exit(body):
                 before = statement[:match.start()].rstrip()
                 if not depth and not statement.startswith("[[", match.start()) and (
                         not before or before[-1] in "=({,:;?!~&|+-*/%^<>" or before.endswith("]]")
-                        or re.search(r"\b(?:co_await|co_yield|throw)$", before)):
+                        or _LAMBDA_BEFORE.search(before)):
                     capture_depth = depth + 1
                 depth += 1
             elif token == "(":
@@ -775,6 +820,8 @@ def function_exit(body):
 
 
 def branch_variants(body):
+    if "#" not in body:
+        return iter((body,))
     root = []
     lists, groups = [root], []
     position = 0
@@ -841,28 +888,92 @@ def variant_calls(body):
 
 def unconditional_calls(body):
     names = set()
-    for offset, statement in top_level_statements(body):
+    if "(" not in body:
+        return names
+    has_exit = "return" in body or "goto" in body
+    for offset, statement in _iter_top_level_statements(body):
         block = statement.strip()
         if block.startswith("{") and block.endswith("}"):
             names |= unconditional_calls(block)
-        elif not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+        elif "(" in statement and not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+            has_brace = "{" in statement or "}" in statement
             for call in progress.CALL.finditer(statement):
-                before = statement[:call.start()]
-                if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
+                if (not has_brace or statement.count("{", 0, call.start()) == statement.count("}", 0, call.start())) and not _is_qualified(body, offset + call.start()):
                     names.add(call.group(1))
-        if function_exit("{" + statement + "}"):
+        if has_exit and function_exit("{" + statement + "}"):
             break
     return names
 
 
-def always_stub_calls(text):
-    helpers = {}
-    possible = progress.stub_calls(text)
-    for match in progress.STUB_WRAPPER.finditer(text):
-        if match.group(1) not in possible:
+def _calls_any_unconditionally(body, calls):
+    if "(" not in body or not any(call_name in body for call_name in calls):
+        return False
+    has_exit = "return" in body or "goto" in body
+    for offset, statement in _iter_top_level_statements(body):
+        block = statement.strip()
+        if block.startswith("{") and block.endswith("}"):
+            if _calls_any_unconditionally(block, calls):
+                return True
+        elif "(" in statement and not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+            has_brace = "{" in statement or "}" in statement
+            for call in progress.CALL.finditer(statement):
+                if call.group(1) in calls and (not has_brace or statement.count("{", 0, call.start()) == statement.count("}", 0, call.start())) and not _is_qualified(body, offset + call.start()):
+                    return True
+        if has_exit and function_exit("{" + statement + "}"):
+            break
+    return False
+
+
+def _iter_stub_wrappers(text):
+    if "(" not in text or "{" not in text:
+        return
+    position = 0
+    for candidate in _WRAPPER_CANDIDATE.finditer(text):
+        end = candidate.end()
+        if end <= position:
             continue
-        body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
-        helpers.setdefault(match.group(1), []).extend(variant_calls(body))
+        param_end = candidate.start()
+        bound = max(position, text.rfind(";", position, param_end) + 1, text.rfind("{", position, param_end) + 1)
+        if bound == 0 or text[bound - 1] == "\n":
+            search_start = bound
+        else:
+            newline = text.find("\n", bound, param_end)
+            if newline < 0:
+                continue
+            search_start = newline + 1
+        if "(" not in text[search_start:param_end]:
+            continue
+        match = progress.STUB_WRAPPER.search(text, search_start, end)
+        if match is not None:
+            yield match
+            position = match.end()
+
+
+def always_stub_calls(text):
+    if progress.STUB not in text:
+        return {progress.STUB}
+    wrapper_bodies = {}
+    raw_targets = {}
+    for match in _iter_stub_wrappers(text):
+        name = match.group(1)
+        open_brace = match.end() - 1
+        close_brace = progress.body_end(text, open_brace)
+        body_inner = text[open_brace:close_brace]
+        wrapper_bodies.setdefault(name, []).append(text[open_brace:close_brace + 1])
+        if "(" in body_inner:
+            raw_targets.setdefault(name, set()).update(call.group(1) for call in progress.CALL.finditer(body_inner))
+    possible = {progress.STUB}
+    while True:
+        found = {name for name, targets in raw_targets.items() if name not in possible and targets & possible}
+        if not found:
+            break
+        possible |= found
+    helpers = {}
+    for name, bodies in wrapper_bodies.items():
+        if name not in possible:
+            continue
+        for body in bodies:
+            helpers.setdefault(name, []).extend(variant_calls(body))
     calls = {progress.STUB}
     while True:
         found = {name for name, bodies in helpers.items() if name not in calls and all(targets & calls for targets in bodies)}
@@ -871,19 +982,46 @@ def always_stub_calls(text):
         calls |= found
 
 
+def _library_cpp_sources(library):
+    paths = []
+    case_insensitive = os.name == "nt"
+    stack = [os.fspath(library)]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name != "tests":
+                        stack.append(entry.path)
+                elif (entry.name.lower().endswith(".cpp") if case_insensitive else entry.name.endswith(".cpp")) and entry.is_file():
+                    paths.append(entry.path)
+    paths.sort()
+    return (Path(path).read_text(encoding="utf-8", errors="ignore") for path in paths)
+
+
 def conditional_stubs(library):
     conditional = set()
-    flavor = PureWindowsPath if os.name == "nt" else Path
-    library_flavored = flavor(str(library))
-    for source in library.rglob("*.cpp"):
-        if "tests" in flavor(str(source)).relative_to(library_flavored).parts:
+    for raw in _library_cpp_sources(library):
+        if "APS5_VABI" not in raw and progress.STUB not in raw and "\\\n" not in raw and "\\\r\n" not in raw:
             continue
-        text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
+        text = progress.code(raw)
+        if "APS5_VABI" not in text:
+            if progress.STUB in text:
+                always_stub_calls(text)
+            continue
+        matches = [(match.group(1), match.end() - 1) for match in progress.DEFINITION.finditer(text)]
+        if not matches:
+            if progress.STUB in text:
+                always_stub_calls(text)
+            continue
         calls = always_stub_calls(text)
-        for match in progress.DEFINITION.finditer(text):
-            body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
-            if not all(targets & calls for targets in variant_calls(body)):
-                conditional.add(match.group(1))
+        for name, open_brace in matches:
+            body = text[open_brace:progress.body_end(text, open_brace) + 1]
+            if "#" not in body:
+                if not _calls_any_unconditionally(body, calls):
+                    conditional.add(name)
+            elif not all(_calls_any_unconditionally(variant, calls) for variant in branch_variants(body)):
+                conditional.add(name)
     return conditional
 
 
@@ -898,12 +1036,16 @@ def source_stub_classes(source):
     partial = set()
     shared = {}
     done_by_library = {}
-    for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
+    libraries = sorted(item for item in Path(source).iterdir() if item.is_dir())
+    library_groups = {}
+    if Path(source) == progress.PRX:
+        library_groups = {g["name"]: g for g in progress.collect_libraries()["groups"]}
+    for library in libraries:
         aliases = {}
         for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
-        group = progress.scan_library(library)
+        group = library_groups.get(library.name) or progress.scan_library(library)
         shared[library.name] = progress.shared_source_owners(library)
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
         done_by_library[library.name] = done
@@ -1047,6 +1189,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if name:
             if name in tuple("libSceGnmDriver_padebug" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
                 name = "libSceGnmDriver.prx"
+            if name in tuple("libSceSsl2" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
+                name = "libSceSsl.prx"
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
                     normalized = name[:-len(suffix)] + ".prx"
@@ -1096,7 +1240,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         exact = {provider for provider, names in guest_names.items() if filename in names.files}
         return exact or {provider for provider, names in guest_names.items() if name in names}
 
-    host_libc_follows = "libSceLibcInternal.prx" in {needed_name(name) for name in needed_libraries}
+    host_libc_follows = "libSceLibcInternal.prx" in {needed_name(name) for name in needed_libraries} and "libSceLibcInternal.prx" not in modules
 
     def resolve(symbol, record):
         library = record["library"]
