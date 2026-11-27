@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -10,6 +11,13 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using Jsc::WtfAbi::StringImpl;
 using Jsc::YarrAbi::RegularExpression;
@@ -307,6 +315,164 @@ void TestCountEmptyAndBadArguments() {
     Destroy(&star);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    void ProtectReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+#endif
+    }
+
+    unsigned char* Writable() const { return base; }
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TCall>
+void RequireNotImplemented(TCall&& call) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    const std::string text = "a.b";
+    const StringImpl impl = Latin1(text);
+    const StringReference ref{const_cast<StringImpl*>(&impl)};
+    const StringReference nullContent{nullptr};
+    RegularExpression valid = Make("a", true, Regex);
+
+    std::memcpy(pages.ReadOnly(), &ref, sizeof(ref));
+    std::memcpy(pages.ReadOnly() + 64, &valid, sizeof(valid));
+    pages.ProtectReadOnly();
+
+    RegularExpression created{};
+    Require(Create(&created, reinterpret_cast<const StringReference*>(pages.ReadOnly()), true, ContainsString) == &created);
+    Require(created.d != nullptr);
+    Destroy(&created);
+
+    Require(Count(reinterpret_cast<const RegularExpression*>(pages.ReadOnly() + 64), reinterpret_cast<const StringReference*>(pages.ReadOnly())) == 1);
+
+    for (const int type : {Regex, ExactString, ContainsString}) {
+        RequireNotImplemented([&] {
+            Create(reinterpret_cast<RegularExpression*>(pages.Guard()), &ref, true, type);
+        });
+        RequireNotImplemented([&] {
+            Create(reinterpret_cast<RegularExpression*>(pages.ReadOnly()), &ref, true, type);
+        });
+        unsigned char* const splitResult = pages.ReadOnly() - 4;
+        std::memset(splitResult, 0x5A, 4);
+        RequireNotImplemented([&] {
+            Create(reinterpret_cast<RegularExpression*>(splitResult), &ref, true, type);
+        });
+        for (std::size_t i = 0; i < 4; ++i) Require(splitResult[i] == 0x5A);
+
+        RegularExpression out{};
+        RequireNotImplemented([&] {
+            Create(&out, reinterpret_cast<const StringReference*>(pages.Guard()), true, type);
+        });
+        Require(out.d == nullptr);
+
+        const StringReference badImplRef{reinterpret_cast<StringImpl*>(pages.Guard())};
+        RequireNotImplemented([&] {
+            Create(&out, &badImplRef, true, type);
+        });
+        Require(out.d == nullptr);
+
+        StringImpl badCharsImpl{2, 4, pages.Guard(), 4};
+        const StringReference badCharsRef{&badCharsImpl};
+        RequireNotImplemented([&] {
+            Create(&out, &badCharsRef, true, type);
+        });
+        Require(out.d == nullptr);
+
+        StringImpl splitCharsImpl{2, 4, pages.Guard() - 2, 0};
+        const StringReference splitCharsRef{&splitCharsImpl};
+        RequireNotImplemented([&] {
+            Create(&out, &splitCharsRef, true, type);
+        });
+        Require(out.d == nullptr);
+    }
+
+    RequireNotImplemented([&] {
+        Count(reinterpret_cast<const RegularExpression*>(pages.Guard()), &nullContent);
+    });
+    RequireNotImplemented([&] {
+        Count(reinterpret_cast<const RegularExpression*>(pages.Guard() - 4), &ref);
+    });
+
+    const RegularExpression guardPrivate{reinterpret_cast<Jsc::YarrAbi::RegularExpressionPrivate*>(pages.Guard())};
+    RequireNotImplemented([&] {
+        Count(&guardPrivate, &ref);
+    });
+    const RegularExpression roPrivate{reinterpret_cast<Jsc::YarrAbi::RegularExpressionPrivate*>(pages.ReadOnly())};
+    RequireNotImplemented([&] {
+        Count(&roPrivate, &ref);
+    });
+
+    RequireNotImplemented([&] {
+        Count(&valid, reinterpret_cast<const StringReference*>(pages.Guard()));
+    });
+    const StringReference badContentImplRef{reinterpret_cast<StringImpl*>(pages.Guard())};
+    RequireNotImplemented([&] {
+        Count(&valid, &badContentImplRef);
+    });
+    StringImpl badContentChars{2, 4, pages.Guard(), 4};
+    const StringReference badContentCharsRef{&badContentChars};
+    RequireNotImplemented([&] {
+        Count(&valid, &badContentCharsRef);
+    });
+    StringImpl splitContentChars{2, 4, pages.Guard() - 2, 4};
+    const StringReference splitContentCharsRef{&splitContentChars};
+    RequireNotImplemented([&] {
+        Count(&valid, &splitContentCharsRef);
+    });
+
+    Destroy(&valid);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -323,6 +489,7 @@ int main() {
     TestCreateRejectsBadArguments();
     TestCount();
     TestCountEmptyAndBadArguments();
+    TestGuestPointers();
     Require(live.empty());
     return 0;
 }
