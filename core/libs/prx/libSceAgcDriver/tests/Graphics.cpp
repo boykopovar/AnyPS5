@@ -12898,10 +12898,17 @@ void unorm4_4_4_4TargetTests() {
         unmergedCounting.context.pixel->targetMerges = {};
         static_cast<void>(ShaderRecompiler::Recompile(unmergedCounting));
     }
-    for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 2u}, std::pair{0u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
+    for (const auto& [swap, redMask] : {std::pair{0u, 0x000fu}, std::pair{1u, 0x0f00u}, std::pair{2u, 0xf000u}, std::pair{3u, 0x00f0u}}) {
         changed = queue;
-        changed.context[0x31c] = (changed.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 19 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+        changed.context[0x31c] = (changed.context[0x31c] & ~(3u << 11u)) | (swap << 11u);
+        changed.context[0x8e] = 1u;
+        const auto partial = AgcDriver::Graphics::DecodeState(changed);
+        Require(partial.color.partialWriteMask == redMask, "a red-only 4_4_4_4 write selected the wrong nibble for component swap " + std::to_string(swap));
+    }
+    for (const auto number : {1u, 4u}) {
+        changed = queue;
+        changed.context[0x31c] |= number << 8u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 19 number type " + std::to_string(number) + " component swap 2");
     }
     changed = queue;
     changed.context[0x31c] |= 0x10000000u;

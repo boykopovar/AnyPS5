@@ -33,6 +33,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -46,7 +47,7 @@ constexpr std::uint32_t Width = 256;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
-constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u) | (2u << 11u);
+constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u);
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Float16Export = 4;
@@ -205,17 +206,17 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t swap) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Unorm4_4_4_4Info;
+    cx[0x31c] = Unorm4_4_4_4Info | (swap << 11u);
     cx[0x31d] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = TiledAttrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R16_UINT && color.componentMapping == 0x1bu && color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && color.tileMode == ColorTileMode::RenderTarget && color.bytes == block.bytes, "the tiled 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
+    Require(color.format == VK_FORMAT_R16_UINT && color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && color.tileMode == ColorTileMode::RenderTarget && color.bytes == block.bytes, "the tiled 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
     return color;
 }
 
@@ -481,7 +482,7 @@ int main() {
         }
         const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 2);
         Block block(layout.Bytes());
-        const auto color = DecodeTarget(block);
+        const auto color = DecodeTarget(block, 2u);
         Require(AgcDriver::Graphics::PackedWriteMask(color.componentMapping, 1u) == 0xf000u && AgcDriver::Graphics::PackedWriteMask(color.componentMapping, 8u) == 0x000fu && AgcDriver::Graphics::PackedWriteMask(color.componentMapping, 5u) == 0xf0f0u, "the export components did not map to the guest nibbles (X in 15..12, W in 3..0)");
         const std::array<Case, 9> cases{{
             {0x1u, 0xf000u, {1.0f, 0.0f, 0.0f, 0.0f}},
@@ -526,7 +527,13 @@ int main() {
         SameDrawOverdraw(*device, block, layout, color, 0.8f, 0.2f, 402u);
         DepthRejection(*device, block, layout, color);
         CountedKill(*device, block, layout, color);
-        std::printf("4_4_4_4 unorm partial write tests passed: %zu masked draws, 3 back-to-back sequences, 4 checkerboard-killing draws, 2 same-draw overdraws of 16 layers, a depth-rejected merge and a refused killing merge while samples are counted, into a %ux%u tiled target, the killed, rejected and unscissored pixels kept\n", cases.size() + 1u, Width, Height);
+        const auto red = Float32Program({1.0f, 0.0f, 0.0f, 0.0f});
+        for (const auto& [swap, redMask] : {std::pair{1u, 0x0f00u}, std::pair{0u, 0x000fu}, std::pair{3u, 0x00f0u}}) {
+            before = Fill(block, 601u + swap);
+            DrawCase(*device, DecodeTarget(block, swap), 1u, redMask, Float32Export, red);
+            ExpectSurface(*device, block, layout, before, redMask, redMask, "a red-only 4_4_4_4 write with component swap " + std::to_string(swap));
+        }
+        std::printf("4_4_4_4 unorm partial write tests passed: %zu masked draws, 3 back-to-back sequences, 4 checkerboard-killing draws, 2 same-draw overdraws of 16 layers, a depth-rejected merge and a refused killing merge while samples are counted, into a %ux%u tiled target, the killed, rejected and unscissored pixels kept\n", cases.size() + 4u, Width, Height);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

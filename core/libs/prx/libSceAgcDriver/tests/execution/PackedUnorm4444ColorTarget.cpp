@@ -30,6 +30,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -43,7 +44,7 @@ constexpr std::uint32_t Width = 256;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
-constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u) | (2u << 11u);
+constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u);
 constexpr std::uint32_t LinearAttrib3 = 0x09000000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Float16Export = 4;
@@ -152,17 +153,17 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, std::uint32_t swap) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Unorm4_4_4_4Info;
+    cx[0x31c] = Unorm4_4_4_4Info | (swap << 11u);
     cx[0x31d] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R16_UINT && color.elementBytes == 2 && color.componentMapping == 0x1bu && color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && color.bytes == block.bytes, "the 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
+    Require(color.format == VK_FORMAT_R16_UINT && color.elementBytes == 2 && color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && color.bytes == block.bytes, "the 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
     return color;
 }
 
@@ -275,7 +276,7 @@ std::string Describe(std::array<float, 4> rgba) {
 void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind) {
     const ColorTargetLayout layout(Width, Height, mode, 2);
     Require(layout.Bytes() == block.bytes, "the test surface size disagrees with its layout");
-    const auto color = DecodeTarget(block, attrib3);
+    const auto color = DecodeTarget(block, attrib3, 2u);
     auto before = Fill(block);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
@@ -310,6 +311,11 @@ void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t at
         Draw(device, color, Float16Export, Float16Program(golden.rgba));
         ExpectSurface(device, block, layout, before, golden.word, std::string("an FP16_ABGR export of ") + Describe(golden.rgba) + " into a " + kind + " 4_4_4_4 unorm target");
         before = ReadBack(device, block);
+    }
+    const auto distinctChannels = Float32Program({1.0f / 15.0f, 2.0f / 15.0f, 7.0f / 15.0f, 14.0f / 15.0f});
+    for (const auto& [swap, word] : {std::pair{1u, 0xe127u}, std::pair{0u, 0xe721u}, std::pair{3u, 0x721eu}}) {
+        Draw(device, DecodeTarget(block, attrib3, swap), Float32Export, distinctChannels);
+        ExpectSurface(device, block, layout, before, word, "a 4_4_4_4 unorm target with component swap " + std::to_string(swap));
     }
 }
 

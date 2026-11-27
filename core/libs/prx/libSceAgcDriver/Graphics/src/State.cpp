@@ -1097,6 +1097,7 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
         throw std::runtime_error("AGC graphics: unsupported color format " + std::to_string(format) + " number type " + std::to_string(number) + " component swap " + std::to_string(swap));
     };
     const bool alternate = swap == 1;
+    const auto rgbaMapping = static_cast<std::uint8_t>(alternate ? 0xc6u : swap == 2 ? 0x1bu : swap == 3 ? 0x93u : 0xe4u);
     const auto single = [&](VkFormat vkFormat, std::uint32_t bytes) { return DecodedColorFormat{vkFormat, bytes, static_cast<std::uint8_t>((0xe4u & ~3u) | swap)}; };
     if (swap > 1 && format != 1 && format != 2 && format != 4 && format != 7 && format != 10 && format != 12 && format != 16 && format != 19) return fail();
     switch (format) {
@@ -1160,14 +1161,12 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             if (number == floating) return {VK_FORMAT_R32G32_SFLOAT, 8};
             if (number == uint) return {VK_FORMAT_R32G32_UINT, 8};
             return fail();
-        case 12: {
-            const auto reversed = static_cast<std::uint8_t>(alternate ? 0xc6u : swap == 2 ? 0x1bu : swap == 3 ? 0x93u : 0xe4u);
-            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8, reversed};
-            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8, reversed};
-            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8, reversed};
-            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8, reversed};
+        case 12:
+            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8, rgbaMapping};
+            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8, rgbaMapping};
+            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8, rgbaMapping};
+            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8, rgbaMapping};
             return fail();
-        }
         case 14:
             if (swap != 0) return fail();
             if (number == floating) return {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
@@ -1180,8 +1179,8 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             if (swap != 0 || number != unorm) return fail();
             return {VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, 0xc6u};
         case 19:
-            if (swap != 2 || number != unorm) return fail();
-            return {VK_FORMAT_R16_UINT, 2, 0x1bu, ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4};
+            if (swap > 3 || number != unorm) return fail();
+            return {VK_FORMAT_R16_UINT, 2, rgbaMapping, ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4};
         default:
             return fail();
     }
