@@ -4160,8 +4160,7 @@ int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
 }
 
 int APS5_VABI sceNetSetDns6InfoToKernel(const NetDns6Info* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetDns6Info(info, flags);
 }
 
 int APS5_VABI sceNetShowRoute6ForBuffer(char* buffer, std::int32_t bufferSize, std::int32_t poolId) {
