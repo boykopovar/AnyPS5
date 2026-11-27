@@ -1,0 +1,5 @@
+# libSceNpSessionSignaling
+
+## change [sceNpSessionSignalingGetMemoryInfo and sceNpSessionSignalingGetConnectionStatistics]
+
+- [sceNpSessionSignalingGetMemoryInfo and sceNpSessionSignalingGetConnectionStatistics](../../../core/libs/prx/libSceNpSessionSignaling/Export.cpp) (libSceNpSessionSignaling) - the wrapper checks initialization (0x80553301) and a null output (0x80553303) before delegating; returning `SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT` (`0x80553303`) with caller `errno` preserved when copying to an unwritable output fails via `GuestCopyOut_nid_no_patch` is a host-safety fallback with console behavior unmeasured. The host stores the pool size from initialization and reports zero used and peak sizes because it allocates no signaling pool, and reports all connection statistics as zero because no connection ever activates. The console's actual usage and statistics values were not measured. Measured on firmware 11.60 in a payload process (two runs): GetMemoryInfo, called before initialization with a 4096-byte output (layout assumed), returns `0x80553301` and writes nothing.
