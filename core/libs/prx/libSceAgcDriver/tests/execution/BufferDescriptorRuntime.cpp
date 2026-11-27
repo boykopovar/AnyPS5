@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -293,7 +294,8 @@ void DisabledMultiwordLoads(AgcDriver::VulkanDevice& device) {
             refuses(0xe2082000u, word3);
             refuses(0xe0042000u, word3);
         }
-        for (const auto word3 : {0x31016facu, 0x91016facu, 0xd1016facu, 0x31016facu}) {
+        for (const auto& [word3, typedLoads] : {std::pair{0x31016facu, false}, std::pair{0x91016facu, false}, std::pair{0xd1016facu, false}, std::pair{0x31016facu, true}, std::pair{0x31000facu, true}}) {
+            request.context.typedBufferLoads = typedLoads;
             auto source = BufferDescriptor(input.data(), sizeof(input));
             source[3] = word3;
             std::copy(source.begin(), source.end(), userData.begin());
@@ -304,7 +306,7 @@ void DisabledMultiwordLoads(AgcDriver::VulkanDevice& device) {
             for (std::uint32_t lane = 0u; lane < Lanes; ++lane) {
                 for (std::uint32_t component = 0u; component < 4u; ++component) {
                     const auto offset = lane * 4u + component;
-                    const auto expected = word3 == 0x31016facu && component < width ? input[offset] : previous[component];
+                    const auto expected = component >= width || word3 >> 30u != 0u ? previous[component] : word3 == 0x31000facu ? 0u : input[offset];
                     Require(output[offset] == expected, "multiword TYPE V# load width " + std::to_string(width) + " word3 " + Hex(word3) + " lane " + std::to_string(lane) + " component " + std::to_string(component) + " returned " + Hex(output[offset]) + ", expected " + Hex(expected));
                 }
             }
