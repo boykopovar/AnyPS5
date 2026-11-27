@@ -12,6 +12,7 @@ void Require(bool value) {
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x81B60001u);
+    constexpr int alreadyInitialized = static_cast<int>(0x81B60002u);
     for (int call = 0; call < 2; ++call) {
         Require(sceFlexContentTerminate() == notInitialized);
         Require(sceFlexContentUnknown00() == notInitialized);
@@ -25,5 +26,9 @@ int main() {
         Require(sceFlexContentUnknown03() == notInitialized);
         Require(sceFlexContentUnknown04() == notInitialized);
     }
+    Require(sceFlexContentInitialize() == 0);
+    Require(sceFlexContentInitialize() == alreadyInitialized);
+    Require(sceFlexContentTerminate() == 0);
+    Require(sceFlexContentTerminate() == notInitialized);
     return 0;
 }
