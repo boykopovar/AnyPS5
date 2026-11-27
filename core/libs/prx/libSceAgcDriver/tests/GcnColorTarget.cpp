@@ -46,6 +46,7 @@ constexpr std::uint32_t Format8888 = 10u;
 constexpr std::uint32_t BlendClamp = 1u << 15u;
 constexpr std::uint32_t FastClear = 1u << 13u;
 constexpr std::uint32_t Compression = 1u << 14u;
+constexpr std::uint32_t LinearGeneral = 1u << 7u;
 constexpr std::uint32_t Thin1D = 13u;
 constexpr std::uint32_t Display2D = 10u;
 constexpr std::uint32_t Thin2D = 14u;
@@ -237,6 +238,34 @@ void LaterSlicesDecode() {
     Check(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
 }
 
+AgcDriver::Graphics::ColorTarget DecodeLinearGeneral(std::uint32_t format, std::uint32_t pitch, std::uint32_t height, std::uint32_t view, std::uint32_t attrib, std::uint32_t flags) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(AddressOf(colorMemory) >> 8u);
+    cx[0x319] = pitch / 8u - 1u;
+    cx[0x31a] = pitch * height / 64u - 1u;
+    cx[0x31b] = view;
+    cx[0x31c] = (format << 2u) | BlendClamp | flags;
+    cx[0x31d] = attrib;
+    return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+}
+
+void LinearGeneralTargetsDecode() {
+    using AgcDriver::Graphics::ColorTileMode;
+    constexpr std::uint32_t Format8 = 1u;
+    constexpr std::uint32_t Pitch = 24u;
+    constexpr std::uint32_t Rows = 8u;
+    const auto base = AddressOf(colorMemory);
+    const auto offset = DecodeLinearGeneral(Format8888, Width, Height, 0x40u | (3u << 13u), Thin2D, LinearGeneral);
+    Check(offset.tileMode == ColorTileMode::GcnLinearGeneral && offset.address == base + 0x40u && offset.surfaceAddress == offset.address && offset.bytes == ColorBytes && offset.pipeBankXor == 0u, "a linear-general GCN target did not decode as a linear surface at CB_COLOR_BASE plus SLICE_START's low byte, whatever its tile mode index");
+    const auto narrow = DecodeLinearGeneral(Format8, Pitch, Rows, 0x07u, Thin1D, LinearGeneral);
+    Check(narrow.tileMode == ColorTileMode::GcnLinearGeneral && narrow.extent.width == Pitch && narrow.extent.height == Rows && narrow.elementBytes == 1u && narrow.bytes == std::size_t{Pitch} * Rows && narrow.address == base + 7u, "an 8-bit linear-general GCN target with a 24-texel pitch did not decode unpadded at a byte offset");
+    Check(Failure([] { DecodeLinearGeneral(Format8, Pitch, Rows, 0u, 8u, 0u); }).find("not padded the way its tile mode pads them") != std::string::npos, "an 8-bit linear-aligned GCN target with a 24-texel pitch was accepted");
+    Check(Failure([] { DecodeLinearGeneral(Format8888, Width, Height, 0x100u, Thin1D, LinearGeneral); }).find("SLICE_START bits above its low address byte") != std::string::npos, "a linear-general GCN view with SLICE_START above 0xff was accepted");
+    Check(Failure([] { DecodeLinearGeneral(Format8888, Width, Height, 0u, Thin1D | (2u << 12u) | (2u << 15u), LinearGeneral); }).find("multisampled linear-general") != std::string::npos, "a 4x linear-general GCN target was accepted");
+    Check(Failure([] { DecodeLinearGeneral(Format8888, Width, Height, 0u, 31u, 0u); }).find("tile mode index 31") != std::string::npos, "GCN tile mode index 31 without CB_COLOR_INFO LINEAR_GENERAL was accepted");
+    Check(Failure([] { DecodeLinearGeneral(Format8888, Width, Height, 0u, Thin1D, 1u); }).find("endian-swapped") != std::string::npos, "an endian-swapped GCN target was accepted");
+}
+
 void PaddedTargetsAreCovered() {
     Check(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
     const auto padded = FmaskDecompress(Height - 4u);
@@ -261,11 +290,12 @@ int main() {
         MultisampledSlicesDecode();
         PaddedTargetsAreCovered();
         LaterSlicesDecode();
+        LinearGeneralTargetsDecode();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
     if (failures != 0) return 1;
-    std::puts("GCN multisampled color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
+    std::puts("GCN multisampled color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, a metadata pass over the visible rows of a padded target is covered, and linear-general targets decode unpadded at CB_COLOR_BASE plus SLICE_START's low byte");
     return 0;
 }

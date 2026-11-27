@@ -2487,10 +2487,13 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     Require(fragments <= color.coverageSamples, "GCN color targets with more fragments than samples are not implemented");
     color.samples = fragments == 1u ? 1u : color.coverageSamples;
     if (fragments > 1u && fragments < color.coverageSamples) color.eqaaFragments = fragments;
-    Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
+    Require((info & 0x3u) == 0, "endian-swapped GCN color targets are not implemented");
+    const bool linearGeneral = (info & 0x80u) != 0;
+    Require(!linearGeneral || color.coverageSamples == 1u, "multisampled linear-general GCN color targets are not implemented");
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
-    const auto slice = view & 0x7ffu;
+    Require(!linearGeneral || (view & 0x700u) == 0, "a linear-general GCN color view with SLICE_START bits above its low address byte is not implemented");
+    const auto slice = linearGeneral ? 0u : view & 0x7ffu;
     const auto lastSlice = (view >> 13u) & 0x7ffu;
     Require(lastSlice >= slice, "the color view ends before its first slice");
     const auto exports = find(cx, 0x207);
@@ -2500,7 +2503,8 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     color.extent = {pitch, sliceElements / pitch};
     color.surfaceExtent = color.extent;
     color.elementBytes = decoded.elementBytes;
-    switch (attrib & 0x1fu) {
+    if (linearGeneral) color.tileMode = ColorTileMode::GcnLinearGeneral;
+    else switch (attrib & 0x1fu) {
         case 8u: color.tileMode = ColorTileMode::GcnLinear; break;
         case 5u: case 13u: color.tileMode = ColorTileMode::GcnThin1D; break;
         case 9u: color.tileMode = ColorTileMode::GcnDisplay1D; break;
@@ -2514,7 +2518,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     color.mipCount = 1;
     const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
-    color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes() * fragments;
+    color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + (linearGeneral ? view & 0xffu : static_cast<std::uint64_t>(slice) * layout.Bytes() * fragments);
     color.address = color.surfaceAddress;
     color.bytes = layout.Bytes();
     color.format = decoded.format;

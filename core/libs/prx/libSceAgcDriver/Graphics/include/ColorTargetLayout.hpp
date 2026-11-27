@@ -26,15 +26,16 @@ enum class ColorTileMode : std::uint32_t {
     GcnDisplay1D = 0x101,
     GcnDisplay2D = 0x102,
     GcnThin2D = 0x103,
-    GcnLinear = 0x104
+    GcnLinear = 0x104,
+    GcnLinearGeneral = 0x109
 };
 
 constexpr bool ColorTileModeIsGcn(ColorTileMode mode) {
-    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D || mode == ColorTileMode::GcnLinear;
+    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D || mode == ColorTileMode::GcnLinear || mode == ColorTileMode::GcnLinearGeneral;
 }
 
 constexpr bool ColorTileModeIsLinear(ColorTileMode mode) {
-    return mode == ColorTileMode::Linear || mode == ColorTileMode::GcnLinear;
+    return mode == ColorTileMode::Linear || mode == ColorTileMode::GcnLinear || mode == ColorTileMode::GcnLinearGeneral;
 }
 
 constexpr bool ColorTileModeIsXor(ColorTileMode mode) {
@@ -42,6 +43,7 @@ constexpr bool ColorTileModeIsXor(ColorTileMode mode) {
 }
 
 constexpr std::uint32_t ColorTileModeBlockBytes(ColorTileMode mode) {
+    if (mode == ColorTileMode::GcnLinearGeneral) return 1u;
     return ColorTileModeIsLinear(mode) ? 256u : mode == ColorTileMode::Standard4KB || mode == ColorTileMode::S4KBX || mode == ColorTileMode::D4KBX ? 4096u : 65536u;
 }
 
