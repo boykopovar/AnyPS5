@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestArenaDriverMemory.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +19,11 @@ static bool OverlapsSystemReserved(const void* pointer, std::size_t bytes) {
     constexpr std::uintptr_t end = 0x0000001000000000ull;
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     return address < end && address + bytes > start;
+}
+
+static bool OverlapsDriverMemory(const void* pointer, std::size_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    return address < GuestArena::AgcDriverMemoryAddress + GuestArena::AgcDriverMemoryBytes && address + bytes > GuestArena::AgcDriverMemoryAddress;
 }
 
 int main() {
@@ -54,6 +60,16 @@ int main() {
     Require(again == bufferHint);
     Require(again[0] == 0);
 
+    void* driver = mmap_nid_postfix(reinterpret_cast<void*>(GuestArena::AgcDriverMemoryAddress), bufferBytes, 3, 0x1002, -1, 0);
+    std::fprintf(stderr, "System reserved hint: driver=%p\n", driver);
+    Require(driver != failed && !OverlapsDriverMemory(driver, bufferBytes));
+    constexpr std::size_t wideBytes = std::size_t{4} << 30;
+    void* wide = mmap_nid_postfix(reinterpret_cast<void*>(0xF00000000ull), wideBytes, 0, 0x1002, -1, 0);
+    std::fprintf(stderr, "System reserved hint: wide=%p\n", wide);
+    Require(wide != failed && !OverlapsDriverMemory(wide, wideBytes));
+
+    Require(munmap_nid_postfix(wide, wideBytes) == 0);
+    Require(munmap_nid_postfix(driver, bufferBytes) == 0);
     Require(munmap_nid_postfix(again, bufferBytes) == 0);
     Require(munmap_nid_postfix(below, bufferBytes) == 0);
     Require(munmap_nid_postfix(ordinary, ordinaryBytes) == 0);

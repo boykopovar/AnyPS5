@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestArenaDriverMemory.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -66,8 +67,8 @@ constexpr std::uint64_t DriverMemoryAddress = MacOsDriverMemoryBase;
 constexpr std::size_t DriverMemoryBytes = DriverMemorySpan;
 constexpr std::uint64_t FsTableAddress = RetargetPs5DriverMemory(0xfe0040000ull);
 #else
-constexpr std::uint64_t DriverMemoryAddress = 0xfe0000000ull + GuestArena::GuestAddressOffset;
-constexpr std::size_t DriverMemoryBytes = 2u << 20u;
+constexpr std::uint64_t DriverMemoryAddress = GuestArena::AgcDriverMemoryAddress;
+constexpr std::size_t DriverMemoryBytes = GuestArena::AgcDriverMemoryBytes;
 constexpr std::uint64_t FsTableAddress = DriverMemoryAddress + 0x40000ull;
 #endif
 constexpr std::uint64_t FsTableSlotBytes = 16u;
@@ -84,8 +85,7 @@ constexpr std::uint64_t FsTableDword3 = 0x5204u;
 void MapDriverMemory() {
     void* mapped;
 #ifdef _WIN32
-    mapped = GuestArena::GuestArenaAllocateFromHint_nid_postfix(DriverMemoryAddress, DriverMemoryBytes, DriverMemoryBytes);
-    if (reinterpret_cast<std::uint64_t>(mapped) != DriverMemoryAddress) throw std::runtime_error("the AGC driver memory was not mapped at its fixed address");
+    mapped = reinterpret_cast<void*>(DriverMemoryAddress);
     GuestArena::GuestArenaCommit_nid_postfix(mapped, DriverMemoryBytes, PAGE_READWRITE, DriverMemoryBytes);
 #elif defined(__APPLE__)
     mapped = mmap(reinterpret_cast<void*>(DriverMemoryAddress), DriverMemoryBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestArenaDriverMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostRegionIndex.hpp"
 #include "prx/libc/include/WindowsMappings.hpp"
@@ -231,6 +232,7 @@ private:
         }
         _hostRegions = _holes;
         if (std::getenv("APS5_NO_HOST_REGION_INDEX") == nullptr) _hostIndex.Build(_hostRegions);
+        _holes.emplace_back(GuestArena::AgcDriverMemoryAddress, GuestArena::AgcDriverMemoryAddress + GuestArena::AgcDriverMemoryBytes);
         for (const auto& [holeStart, holeEnd] : _holes) _used.emplace(holeStart, holeEnd);
         _base = ArenaStart;
         _end = end;
