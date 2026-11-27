@@ -1,0 +1,15 @@
+add_library(libJavaScriptCore SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libJavaScriptCore PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libJavaScriptCore)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_java_script_core_tests ${LIBS_INCLUDE_DIR}/tests/GuestJavaScriptCore.cpp)
+    target_include_directories(guest_java_script_core_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_java_script_core_tests PRIVATE libJavaScriptCore libc)
+    configure_windows_unwind(guest_java_script_core_tests)
+    add_test(NAME guest_java_script_core COMMAND guest_java_script_core_tests)
+    if(WIN32)
+        set_tests_properties(guest_java_script_core PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libJavaScriptCore>")
+    endif()
+endif()

@@ -24,6 +24,12 @@
 
 - [NpToolkit Future](../../../core/libs/prx/libSceNpToolkit/Export.cpp) (libSceNpToolkit) - the four `sce::Toolkit::NP::Utilities` Future methods (`Future<NpUser>::get`, `~Future`, `FutureImpl::hasError`, `FutureImpl::hasResult`) throw as unimplemented, which Battlefield 1 (CUSA02429) imports from `libSceNpToolkit.prx` with no bundled provider; the class layout, call semantics and return values are unmeasured, as are the placeholder signatures. Closes when: measured on a console.
 
+# libJavaScriptCore
+
+## add Unknown function info
+
+- [JavaScriptCore gaps](../../../core/libs/prx/libJavaScriptCore/Export.cpp) (libJavaScriptCore) - four imports that Battlefield 1 (CUSA02429) names from `libJavaScriptCore.prx` have no provider in the host libraries or the title's bundled `JavaScriptCore.prx` and no aerolib name; each throws as unimplemented. The other imports from that library resolve on Linux through the bundled module under a provider mismatch. The functions' identities, signatures and behavior are unmeasured, as are the placeholder signatures. Closes when: measured on a console.
+
 # libSceNgs2.native
 
 ## change [NGS2 rack block limit]
