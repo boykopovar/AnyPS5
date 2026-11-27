@@ -41,6 +41,10 @@ inline bool IdenticalOrdinaryFunctionExport(const GuestSymbol& left, const Guest
         left.Section == right.Section && left.Value == right.Value && left.Size == right.Size;
 }
 
+inline bool OwnTlsSymbol(const GuestSymbol& symbol) {
+    return symbol.Section == 0 && symbol.Value == 0 && symbol.Name.empty() && symbol.Info == 6;
+}
+
 struct GuestImage {
     std::filesystem::path SourcePath;
     std::string OutputName;

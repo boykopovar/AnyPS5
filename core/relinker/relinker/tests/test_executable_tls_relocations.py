@@ -155,6 +155,55 @@ def main():
         assert any(struct.unpack_from("<I", elf, 64 + index * 56)[0] == PT_TLS
                    for index in range(struct.unpack_from("<H", elf, 0x38)[0])), "PT_TLS must be kept"
 
+        def unnamed_local(kind, addend, tls=True, info=0x06, value=0):
+            data = image([(0x1000, kind, IMPORTED, addend)], tls=tls)
+            struct.pack_into("<IBBHQQ", data, 0x4900 + IMPORTED * 24, 0, info, 0, 0, value, 0)
+            return data
+
+        for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4), (TPOFF64, 4)):
+            for label, flags in (("linux", ()), ("lazy", ("--lazy-binding",))):
+                name = f"{label}-unnamed-local-{kind}"
+                result, output = relink(relinker, directory, name, unnamed_local(kind, addend), *flags)
+                assert result.returncode == 0, (name, result.stdout, result.stderr)
+                tls = [relocation for relocation in dynamic_relocations(output.read_bytes()) if relocation[1] in (DTPMOD64, DTPOFF64, TPOFF64)]
+                assert tls == [(0x1000 if flags else DEFAULT_BASE + 0x1000, kind, "", 0, addend)], (name, tls)
+
+        for kind, addend, expected in ((DTPOFF64, 4, 4), (TPOFF64, 4, 4 - TLS_BLOCK)):
+            result, output = relink(relinker, directory, f"windows-unnamed-local-{kind}", unnamed_local(kind, addend), "--windows")
+            assert result.returncode == 0, (kind, result.stdout, result.stderr)
+            value = struct.unpack("<q", pe_bytes_at(output.read_bytes(), 0x10000 + 0x1000, 8))[0]
+            assert value == expected, (kind, value, expected)
+            result, output = relink(relinker, directory, f"macos-unnamed-local-{kind}", unnamed_local(kind, addend), "--macos")
+            assert result.returncode == 0, (kind, result.stdout, result.stderr)
+            value = struct.unpack("<q", macho_bytes_at(output.read_bytes(), 0x140010000 + 0x1000, 8))[0]
+            assert value == expected, (kind, value, expected)
+
+        for flags, target in TARGETS.items():
+            name = f"{target}-unnamed-local-dtpmod"
+            result, output = relink(relinker, directory, name, unnamed_local(DTPMOD64, 0), *flags)
+            if target in ("windows", "macos"):
+                assert result.returncode == 2 and "DTPMOD64 relocation is not supported" in result.stderr, (name, result.stderr)
+                assert not output.exists(), name
+            else:
+                assert result.returncode == 0 and output.exists(), (name, result.stdout, result.stderr)
+
+        for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4), (TPOFF64, 4)):
+            for info in (0x16, 0x26):
+                name = f"unnamed-import-{kind}-{info:x}"
+                result, output = relink(relinker, directory, name, unnamed_local(kind, addend, info=info))
+                assert result.returncode == 2 and "Unnamed import symbol is not a null symbol entry" in result.stderr, (name, result.stderr)
+                assert not output.exists(), name
+            name = f"unnamed-local-valued-{kind}"
+            result, output = relink(relinker, directory, name, unnamed_local(kind, addend, value=0x10))
+            assert result.returncode == 2 and "Unnamed import symbol is not a null symbol entry" in result.stderr, (name, result.stderr)
+            assert not output.exists(), name
+            for flags, target in TARGETS.items():
+                name = f"{target}-unnamed-local-empty-tls-{kind}"
+                result, output = relink(relinker, directory, name, unnamed_local(kind, addend, tls=False), *flags)
+                assert result.returncode == 2 and "without a non-empty PT_TLS segment" in result.stderr, (name, result.stderr)
+                assert not output.exists(), name
+
+
         for value, size in ((TLS_MEMSZ - 4, 4), (TLS_MEMSZ, 0), (TLS_MEMSZ + 1, 0), (TLS_MEMSZ - 1, 2), (0xffffffffffffffff, 1)):
             for flags, target in TARGETS.items():
                 data = image([(0x1000, TPOFF64, TLS_SYMBOL, 0)])

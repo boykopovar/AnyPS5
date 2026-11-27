@@ -5,9 +5,10 @@ import subprocess
 import sys
 import tempfile
 
-from test_guest_intel_trampolines import main_fixture
+from test_guest_intel_trampolines import main_fixture, pe_sections
 from test_guest_none_relocations import FUNCTION, TARGET, change_tag, module
 from test_guest_symbol_names import dynamic_tags, file_offset
+from test_macos_output import MachO
 
 
 DTPMOD64 = 16
@@ -41,6 +42,96 @@ def relocations(data):
     tags = dynamic_tags(data)
     start = file_offset(data, tags[7])
     return [struct.unpack_from("<QQq", data, position) for position in range(start, start + tags[8], 24)]
+
+
+def data_directory(data, index):
+    header, = struct.unpack_from("<I", data, 0x3C)
+    return struct.unpack_from("<II", data, header + 24 + 112 + index * 8)
+
+
+def pe_bytes(data, rva, size):
+    for _, section_rva, raw_size, raw_offset, _ in pe_sections(data):
+        if section_rva <= rva and rva + size <= section_rva + raw_size:
+            start = raw_offset + rva - section_rva
+            return data[start:start + size]
+    raise AssertionError(f"PE RVA {rva:#x} is not mapped")
+
+
+def base_relocated(data, rva):
+    directory, size = data_directory(data, 5)
+    block = pe_bytes(data, directory, size)
+    page = rva & ~0xFFF
+    position = 0
+    while position < size:
+        block_page, block_size = struct.unpack_from("<II", block, position)
+        if block_page == page:
+            for entry in struct.unpack_from(f"<{(block_size - 8) // 2}H", block, position + 8):
+                if entry >> 12 == 10 and entry & 0xFFF == rva & 0xFFF:
+                    return True
+        position += block_size
+    return False
+
+
+def first_load(image):
+    offset, = struct.unpack_from("<Q", image, 32)
+    size, count = struct.unpack_from("<HH", image, 54)
+    return min(struct.unpack_from("<Q", image, offset + index * size + 16)[0]
+               for index in range(count)
+               if struct.unpack_from("<I", image, offset + index * size)[0] == 1) & ~0xFFF
+
+
+def macho_bytes(data, address, size):
+    for segment in MachO(data).segments:
+        if segment["vmaddr"] <= address and address + size <= segment["vmaddr"] + segment["filesize"]:
+            start = segment["fileoff"] + address - segment["vmaddr"]
+            return data[start:start + size]
+    raise AssertionError(f"Mach-O address {address:#x} is not mapped")
+
+
+def read_uleb(stream, position):
+    value = shift = 0
+    while True:
+        byte = stream[position]
+        position += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, position
+
+
+def read_sleb(stream, position):
+    value = shift = 0
+    while True:
+        byte = stream[position]
+        position += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value - (1 << shift) if byte & 0x40 else value, position
+
+
+def bind_symbols(data):
+    macho = MachO(data)
+    info = macho.dyld_info
+    assert info is not None
+    offset, size = info[2], info[3]
+    stream = data[offset:offset + size]
+    assert stream[:2] == bytes((0x3E, 0x51)), stream[:8].hex()
+    position = 2
+    symbols = []
+    while stream[position] != 0:
+        assert stream[position] in (0x40, 0x41), hex(stream[position])
+        position += 1
+        end = stream.index(b"\0", position)
+        symbols.append(stream[position:end].decode())
+        position = end + 1
+        assert stream[position] == 0x60, hex(stream[position])
+        _, position = read_sleb(stream, position + 1)
+        assert 0x70 <= stream[position] <= 0x7F, hex(stream[position])
+        _, position = read_uleb(stream, position + 1)
+        assert stream[position] == 0x90, hex(stream[position])
+        position += 1
+    return symbols
 
 
 def main():
@@ -134,6 +225,31 @@ def main():
                 image = with_flags(fixture(sce, info=6, section=1, kind=TPOFF64, addend=4), flags)
                 result, artifact, output = convert(f"{sce}-unsupported-flags-{flags}", "linux", image)
                 assert result.returncode == 2 and "Unsupported guest dynamic flags" in result.stderr, (sce, flags, result.stderr)
+        tls_memory = 16
+        slot = 0x10000 + TARGET - first_load(fixture(False, info=6))
+        for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4), (TPOFF64, 4)):
+            image = fixture(False, info=6, kind=kind, addend=addend)
+            result, artifact, output = convert(f"unnamed-local-{kind}", "windows", image)
+            assert result.returncode == 0, (kind, result.stdout, result.stderr)
+            data = artifact.read_bytes()
+            directory, size = data_directory(data, 9)
+            assert directory != 0 and size >= 40, (kind, directory, size)
+            index = struct.unpack("<Q", pe_bytes(data, directory + 16, 8))[0]
+            expected = {DTPMOD64: index, DTPOFF64: addend, TPOFF64: addend - tls_memory}[kind]
+            value = struct.unpack("<q", pe_bytes(data, slot, 8))[0]
+            assert value == expected, (kind, value, expected)
+            if kind == DTPMOD64:
+                assert base_relocated(data, slot), slot
+            result, artifact, output = convert(f"unnamed-local-{kind}", "macos", image)
+            assert result.returncode == 0, (kind, result.stdout, result.stderr)
+            data = artifact.read_bytes()
+            descriptor = MachO(data).segment("__APS5DATA")["vmaddr"] + 0x20
+            expected = {DTPMOD64: descriptor, DTPOFF64: addend, TPOFF64: addend - tls_memory}[kind]
+            value = struct.unpack("<q", macho_bytes(data, 0x140000000 + slot, 8))[0]
+            assert value == expected, (kind, value, expected)
+            symbols = bind_symbols(data)
+            assert symbols and all(symbols) and "_" not in symbols, symbols
+
     print("Guest own TLS relocation tests passed")
 
 

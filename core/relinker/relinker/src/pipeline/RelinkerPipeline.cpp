@@ -410,8 +410,15 @@ RelinkResult RelinkerPipeline::Relink() {
         const auto type = raw[symOff + 4] & 15;
         if (section == SHN_UNDEF && type != STT_TLS)
             throw RelinkerException("TLS relocation names an undefined symbol that is not STT_TLS", pos);
-        if (section == SHN_UNDEF)
-            return std::nullopt;
+        if (section == SHN_UNDEF) {
+            if ((raw[symOff + 4] >> 4) != STB_LOCAL || (raw[symOff + 5] & 3) != 0) return std::nullopt;
+            std::uint32_t nameOff = 0;
+            std::uint64_t value = 0;
+            std::memcpy(&nameOff, raw.data() + symOff, sizeof(nameOff));
+            std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+            if (value != 0 || !readCStr(nameOff).empty()) return std::nullopt;
+            return std::uint64_t{};
+        }
         if (type != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
         if (section >= SHN_LORESERVE)
