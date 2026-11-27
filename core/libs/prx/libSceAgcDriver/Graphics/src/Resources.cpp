@@ -10,6 +10,8 @@
 #include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdio>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
@@ -19,6 +21,9 @@ namespace AgcDriver::Graphics {
 void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands);
 
 namespace {
+
+std::atomic<std::uint64_t> stalledWaits{0};
+std::atomic<std::uint64_t> stalledSlices{0};
 
 #ifdef __APPLE__
 void ClearPooledTail(void* mapping, std::size_t size, VkDeviceSize mappedBytes, VkMemoryPropertyFlags properties) {
@@ -461,12 +466,23 @@ void CommandBatch::Wait() {
     Require(submitted, "command batch has not been submitted");
     if (!pending) return;
     PerformanceTimer timing("Graphics.Wait");
-    const auto result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
+    const auto waitFences = context.Function<PFN_vkWaitForFences>("vkWaitForFences");
+    auto result = waitFences(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
+    if (result == VK_TIMEOUT) stalledWaits.fetch_add(1, std::memory_order_relaxed);
+    for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
+        stalledSlices.fetch_add(1, std::memory_order_relaxed);
+        std::fprintf(stderr, "[gpu] command batch still running on the GPU after %d s\n", waited);
+        result = waitFences(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
+    }
     timing.Mark("fence_wait");
     if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) pending = false;
     Check(result, "vkWaitForFences graphics");
     // Recorded batches preceded this one, so their completions (write-backs) can run now.
     if (auto* recorder = Recorder::Active()) recorder->Reap();
+}
+
+CommandBatchStalls CommandBatchWaitStalls() {
+    return {stalledWaits.load(std::memory_order_relaxed), stalledSlices.load(std::memory_order_relaxed)};
 }
 
 }

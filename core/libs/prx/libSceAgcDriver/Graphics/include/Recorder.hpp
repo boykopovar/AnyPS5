@@ -180,7 +180,7 @@ public:
     static bool DispatchOverlapEnabled();
     static void SetDispatchOrder(std::uint32_t queueKey, bool unordered);
     static std::uint32_t TakeDispatchOrder(bool& unordered);
-    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
+    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2, RunAccessBuffer = 4;
     using RunAccess = std::array<std::uint64_t, 3>;
     static std::uint32_t PeekUnorderedDispatch();
     VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::source_location where = std::source_location::current());
@@ -225,6 +225,7 @@ public:
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
+    bool KeepWithOutstanding(const std::shared_ptr<void>& object) noexcept;
     void KeepThroughHold(std::shared_ptr<void> object);
     void ReserveRetention(std::size_t additional);
     template<typename T>

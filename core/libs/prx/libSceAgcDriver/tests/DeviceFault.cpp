@@ -381,6 +381,32 @@ void TokenCheckpoint() {
     checkpointToken = 0;
 }
 
+void BatchBeginCheckpoint() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken stale = ring.Claim();
+    Require(stale != 0, "the stale token is invalid");
+    ClaimBracketToken(ring, stale, 3, 0x9000ull, 4, "stale text of an earlier draw");
+    AgcDriver::FaultTokenEntry* staleSlot = ring.Mutable(stale);
+    staleSlot->argCount = 4;
+    for (std::size_t i = 1; i < AgcDriver::FaultTokenRing::Capacity; ++i) ring.Claim();
+    const AgcDriver::FaultToken token = AgcDriver::ClaimBatchBeginToken(ring, 7);
+    Require(token != 0, "the batch-begin token is invalid");
+    Require(static_cast<std::size_t>(token) % AgcDriver::FaultTokenRing::Capacity == static_cast<std::size_t>(stale) % AgcDriver::FaultTokenRing::Capacity, "the batch-begin token did not reuse the stale slot");
+    const auto found = ring.Find(token);
+    Require(found.has_value(), "the batch-begin token was not published");
+    Require(found->submitSerial == 7 && found->programAddress == 0 && found->variantId == 0 && found->argCount == 0 && found->argBuffer == 0, "the batch-begin token kept fields of the earlier occupant of its slot");
+    Require(std::strcmp(found->desc, "batch begin") == 0, "the batch-begin token description changed");
+    checkpointToken = token;
+    const AgcDriver::SubmitBracket bracket{7, 5, token, token};
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockTokenCheckpointData, 0, nullptr, bracket, ring);
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: token %u batch 7 queue 0x2000 program 0x0 variant 0 batch begin observed at bottom-of-pipe", static_cast<unsigned>(token));
+    bool named = false;
+    for (const auto& line : lines) named = named || line == expected;
+    Require(named, "a device loss before the first draw does not name the batch by its begin token");
+    checkpointToken = 0;
+}
+
 void ReportBracketOnly() {
     AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
     const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
@@ -738,6 +764,7 @@ int main() {
         FaultResultZero();
         EffectiveSerialZeroHasNoMarker();
         TokenCheckpoint();
+        BatchBeginCheckpoint();
         ReportBracketOnly();
         ExtraQueueEmptyBracket();
         TokenReuse();

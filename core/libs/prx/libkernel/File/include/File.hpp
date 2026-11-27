@@ -79,6 +79,7 @@ inline std::size_t TransferPartBytes(std::size_t total, std::size_t done) {
 }
 #elif defined(__APPLE__)
 std::int64_t WritevAtEnd(int descriptor, const iovec* iov, int iovcnt);
+[[nodiscard]] std::optional<PositionedTransferLock> LockAppendingTransfer(int descriptor);
 #endif
 #ifndef _WIN32
 std::int64_t TransferInParts(int descriptor, const iovec* iov, int iovcnt, const std::int64_t* offset, bool write);
