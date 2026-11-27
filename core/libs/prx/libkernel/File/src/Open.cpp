@@ -193,9 +193,16 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
 }
 static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     const auto result = File::SeekSharedMemory_nid_no_patch(fd, offset, whence);
-    return result == -2 ? ::lseek(fd, static_cast<off_t>(offset), whence) : result;
+    if (result != -2) return result;
+#ifdef __APPLE__
+    const auto appending = File::LockAppendingTransfer(fd);
+#endif
+    return ::lseek(fd, static_cast<off_t>(offset), whence);
 }
 static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
+#ifdef __APPLE__
+    const auto appending = File::LockAppendingTransfer(fd);
+#endif
     const iovec whole{buf, n};
     const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, false);
     return parts == -2 ? ::read(fd, buf, n) : parts;
@@ -203,6 +210,9 @@ static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
 static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     const auto result = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
     if (result != -2) return result;
+#ifdef __APPLE__
+    const auto appending = File::LockAppendingTransfer(fd);
+#endif
     const iovec whole{const_cast<void*>(buf), n};
     const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, true);
     return parts == -2 ? ::write(fd, buf, n) : parts;

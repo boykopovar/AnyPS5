@@ -658,8 +658,10 @@ void ShareDescriptor(int from, int to) {
     auto copy = source;
     copy.closeOnExec = false;
     g_entries[to] = std::move(copy);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     File::SharePositionedTransfer(from, to);
+#endif
+#ifdef _WIN32
     GuestFileLockShare_nid_no_patch(from, to);
 #endif
 }
