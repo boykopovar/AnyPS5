@@ -64,6 +64,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -196,8 +197,10 @@ struct Cursor {
     NotImplemented_nid_no_patch((std::string(function) + ": BER " + what).c_str());
 }
 
-bool ReadHeader(const unsigned char* start, std::int64_t available, Element& element) {
-    if (available <= 0) return false;
+enum class Header { Read, Bad, TooLong };
+
+Header ReadObjectHeader(const unsigned char* start, std::int64_t available, Element& element) {
+    if (available <= 0) return Header::Bad;
     const unsigned char* data = start;
     std::int64_t remaining = available;
     const bool constructed = *data & 0x20;
@@ -205,47 +208,51 @@ bool ReadHeader(const unsigned char* start, std::int64_t available, Element& ele
     int tag = *data & 0x1F;
     if (tag == 0x1F) {
         ++data;
-        if (--remaining == 0) return false;
+        if (--remaining == 0) return Header::Bad;
         long value = 0;
         while (*data & 0x80) {
             value = value << 7 | (*data++ & 0x7F);
-            if (--remaining == 0) return false;
-            if (value > (INT_MAX >> 7)) return false;
+            if (--remaining == 0) return Header::Bad;
+            if (value > (INT_MAX >> 7)) return Header::Bad;
         }
         value = value << 7 | (*data++ & 0x7F);
         tag = static_cast<int>(value);
-        if (--remaining == 0) return false;
+        if (--remaining == 0) return Header::Bad;
     } else {
         ++data;
-        if (--remaining == 0) return false;
+        if (--remaining == 0) return Header::Bad;
     }
     int lengthBytes = static_cast<int>(remaining);
-    if (lengthBytes-- < 1) return false;
+    if (lengthBytes-- < 1) return Header::Bad;
     bool indefinite = false;
-    unsigned long length = 0;
+    std::uint64_t length = 0;
     if (*data == 0x80) {
         indefinite = true;
         ++data;
     } else {
         unsigned count = *data & 0x7F;
         if (*data++ & 0x80) {
-            if (lengthBytes < static_cast<int>(count)) return false;
+            if (lengthBytes < static_cast<int>(count)) return Header::Bad;
             while (count && !*data) {
                 ++data;
                 --count;
             }
-            if (count > sizeof(long)) return false;
+            if (count > sizeof(std::uint64_t)) return Header::Bad;
             while (count-- > 0) length = length << 8 | *data++;
         } else {
             length = count;
         }
     }
-    if (length > static_cast<unsigned long>(LONG_MAX)) return false;
-    if (indefinite && !constructed) return false;
+    if (length > static_cast<std::uint64_t>(INT64_MAX)) return Header::Bad;
+    if (indefinite && !constructed) return Header::Bad;
     const long header = data - start;
-    if (static_cast<long>(length) > available - header) return false;
+    if (length > static_cast<std::uint64_t>(available - header)) return Header::TooLong;
     element = {tag, tagClass, constructed, indefinite, data, static_cast<long>(length), data + length};
-    return true;
+    return Header::Read;
+}
+
+bool ReadHeader(const unsigned char* start, std::int64_t available, Element& element) {
+    return ReadObjectHeader(start, available, element) == Header::Read;
 }
 
 bool ReadTop(const unsigned char* data, std::int64_t length, int tag, Element& element) {
@@ -274,26 +281,48 @@ bool ValidObject(const Element& element) {
     return true;
 }
 
-bool ValidAny(const Element& element, const char* function) {
+constexpr int Asn1Library = 13;
+constexpr int NestedAsn1Error = 58;
+constexpr int BadObjectHeader = 102;
+constexpr int BooleanIsWrongLength = 106;
+constexpr int FieldMissing = 121;
+constexpr int HeaderTooLong = 123;
+constexpr int NullIsWrongLength = 144;
+constexpr int SequenceLengthMismatch = 148;
+constexpr int SequenceNotConstructed = 149;
+constexpr int StringTooShort = 152;
+constexpr int TooLong = 155;
+constexpr int TypeNotConstructed = 156;
+constexpr int UnexpectedEoc = 159;
+constexpr int WrongTag = 168;
+constexpr int BmpStringIsWrongLength = 214;
+constexpr int UniversalStringIsWrongLength = 215;
+constexpr int InvalidObjectEncoding = 216;
+
+int AnyReason(const Element& element, const char* function) {
     if (element.tagClass != 0) {
         if (element.indefinite) UnsupportedEncoding(function, "indefinite-length parameter");
-        return true;
+        return 0;
     }
     if (element.tag == 16 || element.tag == 17) {
-        if (!element.constructed) return false;
+        if (!element.constructed) return TypeNotConstructed;
         if (element.indefinite) UnsupportedEncoding(function, "indefinite-length parameter");
-        return true;
+        return 0;
     }
     if (element.constructed) UnsupportedEncoding(function, "constructed parameter");
     switch (element.tag) {
-    case 1: return element.length == 1;
-    case 3: return element.length >= 1;
-    case 5: return element.length == 0;
-    case 6: return ValidObject(element);
-    case 28: return element.length % 4 == 0;
-    case 30: return element.length % 2 == 0;
-    default: return true;
+    case 1: return element.length == 1 ? 0 : BooleanIsWrongLength;
+    case 3: return element.length >= 1 ? 0 : StringTooShort;
+    case 5: return element.length == 0 ? 0 : NullIsWrongLength;
+    case 6: return ValidObject(element) ? 0 : InvalidObjectEncoding;
+    case 28: return element.length % 4 == 0 ? 0 : UniversalStringIsWrongLength;
+    case 30: return element.length % 2 == 0 ? 0 : BmpStringIsWrongLength;
+    default: return 0;
     }
+}
+
+bool ValidAny(const Element& element, const char* function) {
+    return !AnyReason(element, function);
 }
 
 struct Algorithm {
@@ -332,6 +361,81 @@ bool ReadAlgorithm(Cursor& cursor, Algorithm& algorithm, const char* function) {
         algorithm.nullParameter = parameter.tagClass == 0 && parameter.tag == 5;
     }
     return !fields.length;
+}
+
+bool Asn1Fail(std::initializer_list<int> reasons) {
+    for (const int reason : reasons) LibreSslPutError_nid_no_patch(Asn1Library, 0xfff, reason, __FILE__, __LINE__);
+    return false;
+}
+
+bool CheckHeader(Cursor& cursor, int tag, Element& element) {
+    switch (ReadObjectHeader(cursor.data, cursor.length, element)) {
+    case Header::Bad: return Asn1Fail({HeaderTooLong, BadObjectHeader});
+    case Header::TooLong: return Asn1Fail({TooLong, BadObjectHeader});
+    case Header::Read: break;
+    }
+    if (tag >= 0 && (element.tag != tag || element.tagClass != 0)) return Asn1Fail({WrongTag});
+    return true;
+}
+
+bool AtEndOfContents(const Cursor& cursor) {
+    return cursor.length >= 2 && !cursor.data[0] && !cursor.data[1];
+}
+
+bool NextField(const Cursor& fields) {
+    if (!fields.length) return Asn1Fail({FieldMissing});
+    if (AtEndOfContents(fields)) return Asn1Fail({UnexpectedEoc});
+    return true;
+}
+
+bool DecodeSequenceHeader(Cursor& cursor, Element& sequence, const char* function) {
+    if (!CheckHeader(cursor, 16, sequence)) return Asn1Fail({NestedAsn1Error});
+    if (!sequence.constructed) return Asn1Fail({SequenceNotConstructed});
+    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
+    Advance(cursor, sequence);
+    return true;
+}
+
+bool DecodePrimitive(Cursor& cursor, int tag, Element& element, const char* function) {
+    if (!CheckHeader(cursor, tag, element)) return Asn1Fail({NestedAsn1Error});
+    if (element.constructed) UnsupportedEncoding(function, "constructed string");
+    Advance(cursor, element);
+    return true;
+}
+
+bool DecodeAlgorithm(Cursor& cursor, Algorithm& algorithm, const char* function) {
+    Element sequence;
+    if (!DecodeSequenceHeader(cursor, sequence, function)) return false;
+    Cursor fields {sequence.content, sequence.length};
+    Element object;
+    if (!NextField(fields)) return false;
+    if (!DecodePrimitive(fields, 6, object, function)) return Asn1Fail({NestedAsn1Error});
+    if (!ValidObject(object)) return Asn1Fail({InvalidObjectEncoding, NestedAsn1Error});
+    algorithm = {object.content, object.length, false, false};
+    if (!fields.length) return true;
+    if (AtEndOfContents(fields)) return Asn1Fail({UnexpectedEoc});
+    Element parameter;
+    if (!CheckHeader(fields, -1, parameter)) return Asn1Fail({NestedAsn1Error, NestedAsn1Error});
+    if (const int reason = AnyReason(parameter, function)) return Asn1Fail({reason, NestedAsn1Error});
+    Advance(fields, parameter);
+    algorithm.parameter = true;
+    algorithm.nullParameter = parameter.tagClass == 0 && parameter.tag == 5;
+    if (fields.length) return Asn1Fail({SequenceLengthMismatch});
+    return true;
+}
+
+bool DecodeDigestInfo(const unsigned char* data, long length, Algorithm& algorithm, Element& hash, const unsigned char*& end, const char* function) {
+    Cursor cursor {data, length};
+    Element sequence;
+    if (!DecodeSequenceHeader(cursor, sequence, function)) return false;
+    end = cursor.data;
+    Cursor fields {sequence.content, sequence.length};
+    if (!NextField(fields)) return false;
+    if (!DecodeAlgorithm(fields, algorithm, function)) return Asn1Fail({NestedAsn1Error});
+    if (!NextField(fields)) return false;
+    if (!DecodePrimitive(fields, 4, hash, function)) return Asn1Fail({NestedAsn1Error});
+    if (fields.length) return Asn1Fail({SequenceLengthMismatch});
+    return true;
 }
 
 void RejectAddedObject(const Algorithm& algorithm, const char* function) {
@@ -786,14 +890,11 @@ void AppendDerHeader(std::vector<unsigned char>& output, unsigned char tag, std:
 }
 
 int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* data, long length, const char* function) {
-    Element sequence;
-    if (!ReadTop(data, length, 16, sequence) || !sequence.constructed) return 0;
-    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
-    Cursor fields {sequence.content, sequence.length};
     Algorithm algorithm;
     Element hash;
-    if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
-    if (sequence.end != data + length) {
+    const unsigned char* end = nullptr;
+    if (!DecodeDigestInfo(data, length, algorithm, hash, end, function)) return 0;
+    if (end != data + length) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
     }

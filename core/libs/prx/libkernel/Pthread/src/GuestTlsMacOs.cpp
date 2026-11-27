@@ -1,9 +1,48 @@
+#include <algorithm>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+
+namespace {
+
+constexpr std::size_t ThreadControlBlockBytes = 0x100;
+
+}
+
+extern "C" bool Aps5GuestTlsComputeLayout_nid_no_patch(
+    std::uint64_t templateAddress,
+    std::uint64_t templateSize,
+    std::uint64_t blockSize,
+    std::uint64_t alignment,
+    std::size_t* outEffectiveAlignment,
+    std::size_t* outThreadPointerOffset,
+    std::size_t* outBytesOffset,
+    std::size_t* outAllocationSize) {
+    if (!std::has_single_bit(alignment)) return false;
+    if (blockSize % alignment != 0) return false;
+    if (templateSize > blockSize) return false;
+    if (templateSize != 0 && templateAddress == 0) return false;
+    constexpr std::size_t maxSize = std::numeric_limits<std::size_t>::max();
+    if (alignment > maxSize || blockSize > maxSize) return false;
+    const auto alignSize = static_cast<std::size_t>(alignment);
+    const auto blockBytes = static_cast<std::size_t>(blockSize);
+    const auto effectiveAlignment = std::max<std::size_t>(alignSize, 16);
+    const auto prefixBytes = (effectiveAlignment - (blockBytes % effectiveAlignment)) % effectiveAlignment;
+    if (blockBytes > maxSize - prefixBytes) return false;
+    const auto threadPointerOffset = blockBytes + prefixBytes;
+    if (threadPointerOffset > maxSize - ThreadControlBlockBytes) return false;
+    const auto allocationSize = threadPointerOffset + ThreadControlBlockBytes;
+    if (outEffectiveAlignment != nullptr) *outEffectiveAlignment = effectiveAlignment;
+    if (outThreadPointerOffset != nullptr) *outThreadPointerOffset = threadPointerOffset;
+    if (outBytesOffset != nullptr) *outBytesOffset = prefixBytes;
+    if (outAllocationSize != nullptr) *outAllocationSize = allocationSize;
+    return true;
+}
+
 #ifdef __APPLE__
 
 #include <pthread.h>
-#include <algorithm>
-#include <bit>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +63,6 @@ struct TlsIndex {
     std::uint64_t offset;
 };
 
-constexpr std::size_t ThreadControlBlockBytes = 0x100;
 constexpr std::size_t AllocationSlot = ThreadControlBlockBytes - sizeof(void*);
 
 [[noreturn]] void Fail(const char* reason) {
@@ -47,7 +85,15 @@ std::uint8_t Aps5GuestTlsAvx_nid_no_patch = [] {
 
 void Aps5GuestTlsRegister_nid_no_patch(GuestTlsDescriptor* descriptor) {
     if (descriptor == nullptr || descriptor->version != 1) Fail("unknown TLS descriptor");
-    if (!std::has_single_bit(descriptor->alignment) || descriptor->blockSize % descriptor->alignment != 0 || descriptor->templateSize > descriptor->blockSize)
+    if (!Aps5GuestTlsComputeLayout_nid_no_patch(
+            descriptor->templateAddress,
+            descriptor->templateSize,
+            descriptor->blockSize,
+            descriptor->alignment,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr))
         Fail("invalid TLS descriptor layout");
     pthread_key_t key;
     if (pthread_key_create(&key, Release) != 0) Fail("cannot create a thread pointer key");
@@ -56,21 +102,37 @@ void Aps5GuestTlsRegister_nid_no_patch(GuestTlsDescriptor* descriptor) {
 
 void* Aps5GuestTlsAllocateThreadPointer_nid_no_patch(const GuestTlsDescriptor* descriptor) {
     if (descriptor == nullptr || descriptor->version != 1) Fail("unknown TLS descriptor");
+    std::size_t effectiveAlignment = 0;
+    std::size_t threadPointerOffset = 0;
+    std::size_t allocationSize = 0;
+    if (!Aps5GuestTlsComputeLayout_nid_no_patch(
+            descriptor->templateAddress,
+            descriptor->templateSize,
+            descriptor->blockSize,
+            descriptor->alignment,
+            &effectiveAlignment,
+            &threadPointerOffset,
+            nullptr,
+            &allocationSize))
+        Fail("invalid TLS descriptor layout");
     void* base = nullptr;
-    const auto alignment = std::max<std::size_t>(descriptor->alignment, 16);
-    if (posix_memalign(&base, alignment, descriptor->blockSize + ThreadControlBlockBytes) != 0) Fail("cannot allocate a TLS block");
-    auto* bytes = static_cast<std::uint8_t*>(base);
+    if (posix_memalign(&base, effectiveAlignment, allocationSize) != 0) Fail("cannot allocate a TLS block");
+    std::memset(base, 0, allocationSize);
+    auto* threadPointer = static_cast<std::uint8_t*>(base) + threadPointerOffset;
+    auto* bytes = threadPointer - static_cast<std::size_t>(descriptor->blockSize);
     if (descriptor->templateSize != 0)
-        std::memcpy(bytes, reinterpret_cast<const void*>(descriptor->templateAddress), descriptor->templateSize);
-    std::memset(bytes + descriptor->templateSize, 0, descriptor->blockSize - descriptor->templateSize + ThreadControlBlockBytes);
-    auto* threadPointer = bytes + descriptor->blockSize;
+        std::memcpy(bytes, reinterpret_cast<const void*>(descriptor->templateAddress), static_cast<std::size_t>(descriptor->templateSize));
     *reinterpret_cast<void**>(threadPointer) = threadPointer;
     *reinterpret_cast<void**>(threadPointer + AllocationSlot) = base;
-    if (pthread_setspecific(static_cast<pthread_key_t>(descriptor->key), threadPointer) != 0) Fail("cannot store the thread pointer");
+    if (pthread_setspecific(static_cast<pthread_key_t>(descriptor->key), threadPointer) != 0) {
+        std::free(base);
+        Fail("cannot store the thread pointer");
+    }
     return threadPointer;
 }
 
 void* Aps5GuestTlsGetAddr_nid_no_patch(const TlsIndex* index) {
+    if (index == nullptr || index->module == nullptr) Fail("invalid TLS index");
     const auto* descriptor = index->module;
     auto* threadPointer = static_cast<std::uint8_t*>(pthread_getspecific(static_cast<pthread_key_t>(descriptor->key)));
     if (threadPointer == nullptr) threadPointer = static_cast<std::uint8_t*>(Aps5GuestTlsAllocateThreadPointer_nid_no_patch(descriptor));

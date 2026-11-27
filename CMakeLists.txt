@@ -405,6 +405,8 @@ if(BUILD_TESTING)
         set_tests_properties(progress_history_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
+        add_test(NAME progress_fast_analysis COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_fast_analysis.py)
         add_test(NAME progress_open_pr_page COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_open_pr_page.py)
         add_test(NAME progress_prs COMMAND ${Python3_EXECUTABLE}
@@ -579,9 +581,22 @@ if(BUILD_TESTING)
         add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_helpers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_helpers.py)
+        set_tests_properties(conventions_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py RegistrationTests)
         set_tests_properties(test_registration PROPERTIES TIMEOUT 60)
+        set(test_registration_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${test_registration_source}")
+        file(STRINGS "${test_registration_source}" test_registration_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS test_registration_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(NOT test_class STREQUAL "RegistrationTests")
+                add_test(NAME test_registration_${test_class} COMMAND ${Python3_EXECUTABLE} "${test_registration_source}" ${test_class})
+                set_tests_properties(test_registration_${test_class} PROPERTIES TIMEOUT 60)
+            endif()
+        endforeach()
         add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unbuilt_exports.py)
         set_tests_properties(unbuilt_exports PROPERTIES TIMEOUT 20)
@@ -628,7 +643,7 @@ if(BUILD_TESTING)
         add_test(NAME check_skips_ctest_policy COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CtestSkipPolicyTests)
         add_test(NAME check_skips_device_policy COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests EnvironmentLoaderRetentionTests)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests HighRefreshLimitationTests EnvironmentLoaderRetentionTests)
         add_test(NAME check_skips_cli_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py SkipCliOutputTests)
         set_tests_properties(check_skips check_skips_privilege check_skips_ctest_policy
@@ -684,6 +699,9 @@ if(BUILD_TESTING)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
         set_tests_properties(configure_seed_paths PROPERTIES TIMEOUT 20)
+        add_test(NAME configure_seed_check_name_round_trips COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedCheckNameRoundTripTests)
+        set_tests_properties(configure_seed_check_name_round_trips PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
         set_tests_properties(configure_seed_round_trips PROPERTIES TIMEOUT 30)
@@ -719,6 +737,9 @@ if(BUILD_TESTING)
             add_test(NAME vulkan_validation_gate_nested_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py NestedContainmentTests)
         endif()
+        add_test(NAME frame_capture_minimize_replay COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tools/tests/test_frame_capture_minimize_replay.py)
+        set_tests_properties(frame_capture_minimize_replay PROPERTIES TIMEOUT 20)
         add_test(NAME vulkan_validation_gate_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ArgumentTests)
         add_test(NAME vulkan_validation_gate_identity COMMAND ${Python3_EXECUTABLE}
@@ -789,7 +810,9 @@ if(BUILD_TESTING)
         add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
         add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchScanTests)
+        add_test(NAME pr_overlap_branch_scan_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py ExportSourceTests)
         add_test(NAME pr_overlap_progress COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
         add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
@@ -914,6 +937,10 @@ if(BUILD_TESTING)
         add_test(NAME trace_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_timeline.py)
         set_tests_properties(trace_timeline PROPERTIES TIMEOUT 60)
+
+        add_test(NAME trace_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_diff.py)
+        set_tests_properties(trace_diff PROPERTIES TIMEOUT 60)
         set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
         file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")

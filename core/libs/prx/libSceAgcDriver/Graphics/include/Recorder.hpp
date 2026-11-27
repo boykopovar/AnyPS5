@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <string>
@@ -70,6 +71,7 @@ public:
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
+    void ExecuteCommands(const Context& context, std::uint32_t count, const VkCommandBuffer* buffers);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
     void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
@@ -191,8 +193,9 @@ public:
         bool barrier = true;
         PassBreak reason = PassBreak::Continued;
     };
-    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
+    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool secondaryContents = false);
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {}, bool secondaryContents = false);
+    void AfterRenderPass(std::function<void(Recorder&)> work);
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
@@ -284,6 +287,8 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
+    void OnDiscard(std::function<void()> action);
+    void ChangeUndoneOnDiscard(const std::function<void()>& change, std::function<void()> undo);
     void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
@@ -379,6 +384,17 @@ public:
     std::uint64_t OpenBatchSerial();
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     bool RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress source, VkDeviceAddress arguments, const std::array<std::uint32_t, 3>* threadGroup = nullptr);
+    struct StorePageGather {
+        VkDeviceAddress fault = 0;
+        VkDeviceAddress pages = 0;
+        VkDeviceAddress targets = 0;
+        std::uint64_t base = 0;
+        std::uint32_t count = 0;
+        std::uint32_t slots = 0;
+    };
+    void RecordStorePageGather(VkCommandBuffer commands, const StorePageGather& gather);
+    std::unique_ptr<Buffer> TakeStorePagePool(std::size_t bytes);
+    void KeepStorePagePool(std::unique_ptr<Buffer> pool);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.
@@ -414,6 +430,7 @@ public:
         std::uint64_t recordedAtOnce;
         std::uint64_t segments;
         std::uint64_t folds;
+        std::uint64_t capacityFolds;
     };
     static SampleDumpStatistics SampleDumpCounts();
     struct QueuedWrite {
@@ -438,6 +455,7 @@ public:
     std::uint64_t Submissions() const { return submissions; }
     // Batches submitted and not yet finished (what a full Sync() waits for); under GuestMemory::GpuMutex.
     std::size_t InFlightBatches() const { return inFlight.size(); }
+    bool SubmittedWorkRunning() const;
     // Reaps that retired at least one batch so far (the [recorder] line's 'with work' count).
     static std::uint64_t ReapsWithWork();
 
@@ -557,6 +575,7 @@ public:
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
     static void SetQueuedLabelRecorder(void (*recorder)());
     static void FailNextSubmitsForTest(unsigned count);
+    static void FailNextDiscardRegistrationsForTest(unsigned count);
     // Whether the lock-free pending-write snapshot (open, in-flight and finishing batches) overlaps
     // the range: false means no recorded work writes it, so a wait on it has nothing to submit.
     static bool SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes);
@@ -587,6 +606,8 @@ public:
     // before). A write-back over any tracked label dword is counted on the [recorder] line (must
     // stay 0: it would mean a CPU store landed over a label recorded on the GPU).
     static void NoteWrittenBack(std::uint64_t address, std::size_t bytes);
+    static void NoteWrittenBack(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs);
+    static std::uint64_t WriteBacksOverLabels();
 
     // Lock-free readers for the queue workers' packet loops and WAIT_REG_MEM polls (values of the
     // active recorder; a torn-down recorder never publishes):
@@ -670,7 +691,10 @@ public:
     // range index to pass to End, or NoTiming when timing is off or the batch's queries are used up.
     static constexpr std::uint32_t NoTiming = 0xffffffffu;
     static constexpr std::uint64_t DrawTimingFlag = std::uint64_t{1} << 63u;
+    static constexpr std::uint64_t DrawStageTimingFlag = std::uint64_t{1} << 62u;
     static constexpr std::uint64_t DrawTimingKey(std::uint64_t variantId) { return variantId | DrawTimingFlag; }
+    static bool DrawStageTimingEnabled();
+    static std::uint64_t DrawStageTimingKey(std::span<const std::pair<std::uint32_t, std::uint64_t>> stages);
     static std::string TimingKeyLabel(std::uint64_t key);
     static bool GpuTimingEnabled();
     static bool BatchStampsEnabled();
@@ -764,7 +788,16 @@ private:
         bool overwritten = false;
         const Batch* batch = nullptr;
     };
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+        std::uint32_t slot = 0;
+        std::uint64_t batch = 0;
+    };
+    static_assert(std::is_nothrow_move_constructible_v<SampleSegment> && std::is_nothrow_move_assignable_v<SampleSegment>);
     struct Batch {
+        std::uint64_t sampleBatch = 0;
+        std::vector<SampleSegment> foldedSamples;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         CommandState graphicsState;
         VkFence fence = VK_NULL_HANDLE;
@@ -773,6 +806,7 @@ private:
         std::unordered_set<const void*> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
+        std::vector<std::function<void()>> discards;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::uint64_t> stampedNotes;
@@ -890,9 +924,11 @@ private:
         struct RenderPass {
             bool open = false;
             bool fenced = false;
+            bool secondaryContents = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(CommandState&)> afterPass;
+            std::vector<std::function<void(Recorder&)>> afterEnd;
             PassBreak closedBy = PassBreak::NewBatch;
         } renderPass;
         PassHazards passHazards;
@@ -942,12 +978,9 @@ private:
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
     void foldSegments();
     void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
-    struct SampleSegment {
-        std::shared_ptr<void> pool;
-        VkQueryPool handle;
-        std::uint32_t slot = 0;
-    };
+    void reserveSampleRestore(const Batch& batch);
     std::vector<SampleSegment> pendingSamples;
+    std::uint64_t sampleBatches = 0;
     bool countingSamples = false;
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
@@ -971,6 +1004,10 @@ private:
     int dispatchArgumentState = 0;
     VkPipelineLayout dispatchArgumentLayout = VK_NULL_HANDLE;
     VkPipeline dispatchArgumentPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout storePageGatherLayout = VK_NULL_HANDLE;
+    VkPipeline storePageGatherPipeline = VK_NULL_HANDLE;
+    AgcDriver::Mutex storePagePoolsMutex;
+    std::vector<std::unique_ptr<Buffer>> storePagePools;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
@@ -1085,6 +1122,7 @@ private:
     std::uint64_t wideLabelSequence = 0;
     std::atomic<std::size_t> recordedWideLabels{0};
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
+    bool pendingLabelInLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};

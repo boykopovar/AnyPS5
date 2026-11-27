@@ -54,7 +54,6 @@ int APS5_VABI _ZN7WebCore17NowPlayingManagernaEm();
 int APS5_VABI _ZN9Inspector15InspectorTargetD0Ev();
 int APS5_VABI _ZN7WebCore6Editor16pasteAsPlainTextENS0_20FromMenuOrKeyBindingE();
 int APS5_VABI _ZNK7WebCore6Quirks47shouldAvoidScrollingWhenFocusedContentIsVisibleEv();
-int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsD0Ev();
 void APS5_VABI _ZN3WTF6Thread5yieldEv();
 int APS5_VABI _ZN7WebCore24DocumentMarkerController9addMarkerERKNS_11SimpleRangeENS_14DocumentMarker10MarkerTypeERKN3WTF7VariantIJNS6_6StringENS4_13DictationDataENS6_6RefPtrINS_4NodeENS6_13DumbPtrTraitsISB_EEEEEEE();
 int APS5_VABI _ZN7WebCore11DisplayList10StrokePathD0Ev();
@@ -99,7 +98,6 @@ int APS5_VABI _ZThn16_N9Inspector21InspectorRuntimeAgent8evaluateERN3WTF6StringE
 int APS5_VABI _ZN7WebCore9FrameView24forceLayoutForPaginationERKNS_9FloatSizeES3_fNS_19AdjustViewSizeOrNotE();
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 int APS5_VABI _ZNK7WebCore6Widget25convertFromContainingViewERKNS_8IntPointE();
-int APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv();
 int APS5_VABI _ZN7WebCore22DefaultFilterOperationD0Ev();
 int APS5_VABI _ZN7WebCore4Page15setFooterHeightEi();
 int APS5_VABI _ZN7WebCore8JSDOMURL9toWrappedERN3JSC2VMENS1_7JSValueE();

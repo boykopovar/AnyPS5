@@ -66,6 +66,13 @@ def original(blocks=(ALPHA, BETA), items="agc_gamma_tests", tweaks="", image=Tru
 
 
 class SplitTextTests(unittest.TestCase):
+    def test_split_moves_properties_for_a_multiline_bracket_test_name(self):
+        property_call = "set_tests_properties([=[\nagc_alpha]=] PROPERTIES TIMEOUT 20)"
+        alpha = ALPHA.replace("set_tests_properties(agc_alpha PROPERTIES TIMEOUT 20)", property_call)
+        lists, fragments = agc_test_split.migrated(original(blocks=(alpha, BETA)), EXECUTION)
+        self.assertIn(property_call, fragments["agc_alpha_tests"])
+        self.assertNotIn(property_call, lists)
+
     def test_refactor_registers_default_tests_through_a_function(self):
         text = agc_test_split.refactor(original())
         self.assertIn("function(agc_add_default_test agcTest)", text)
@@ -138,6 +145,15 @@ class SplitTextTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_long_bracket_delimiters(self):
+        equals = "=" * 40
+        for prefix, expected in (("", ["A", "x y", "tail"]), ("#", ["A", "tail"])):
+            with self.subTest(prefix=prefix):
+                text = f"set(A {prefix}[{equals}[x y]{equals}] tail)"
+                arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
+                self.assertEqual(arguments, expected)
+                self.assertEqual(end, len(text))
+
     def test_bracket_comment_ends_at_its_closing_bracket(self):
         text = "set(A #[[c]]x)\n"
         arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
@@ -158,6 +174,20 @@ class ArgumentTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("line 1: unterminated", result.stdout)
+
+    def test_bracket_arguments_ignore_only_the_first_immediate_newline(self):
+        values = (("\npath", "path"), ("\n\npath", "\npath"), ("\n path", " path"),
+                  (" \npath", " \npath"), (r"\npath", r"\npath"), ("\n", ""), ("\npath\n", "path\n"))
+        for equals in ("", "=", "==="):
+            for content, expected in values:
+                with self.subTest(equals=equals, content=content):
+                    command = f"set(A [{equals}[{content}]{equals}] tail)"
+                    current, following = agc_test_split.commands(command + "\nset(B next)\n")
+                    self.assertEqual(current.arguments, ["A", expected, "tail"])
+                    self.assertEqual(current.last, command.count("\n"))
+                    self.assertEqual(following.first, current.last + 1)
+        quoted, = agc_test_split.commands('set(A "\npath" tail)\n')
+        self.assertEqual(quoted.arguments, ["A", "\npath", "tail"])
 
 
 class ResolveTests(unittest.TestCase):
@@ -207,6 +237,21 @@ class ResolveTests(unittest.TestCase):
         self.git("checkout", "-q", "change")
         self.assertNotEqual(self.git("rebase", "main", check=False).returncode, 0)
         return self.tool("resolve")
+
+    @unittest.skipIf(os.name == "nt", "Windows paths cannot end in a space")
+    def test_split_runs_in_a_checkout_whose_path_ends_in_a_space(self):
+        parent = self.root
+        self.root = parent / "checkout "
+        self.root.mkdir()
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        self.git("init", "-q", "-b", "main")
+        self.write(LISTS, original())
+        self.write(agc_test_split.EXECUTION + "/Image.cpp", "")
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("4 fragments", result.stdout)
+        self.assertTrue((self.root / FRAGMENTS / "agc_alpha_tests.cmake").is_file())
+        self.assertNotIn("add_test_executable(agc_alpha_tests", self.read(LISTS))
 
     def test_resolve_moves_a_new_test_executable_into_its_own_fragment(self):
         result = self.rebase(original(blocks=(ALPHA, BETA, DELTA)))
@@ -390,6 +435,30 @@ class SubjectNameTests(unittest.TestCase):
         self.assertEqual(facts.subject_tests, set())
         self.assertEqual(facts.dynamic, {'Y'})
         self.assertEqual(facts.test_patterns, {'t${Y}'})
+
+
+class CommandErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def tool(self, command):
+        return subprocess.run([sys.executable, str(TOOL), command], cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_outside_a_git_checkout_is_a_controlled_error(self):
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a git repository", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_registration_file_is_a_controlled_error(self):
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.root, check=True, capture_output=True)
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(LISTS, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

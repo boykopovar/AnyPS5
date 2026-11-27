@@ -67,6 +67,11 @@ int main() {
     Require(Reports(Written(nullptr, nullptr), " of type (unknown)\n"));
     Require(Reports(Written(Unmapped(), Unmapped()), " of type (unknown)\n"));
     Require(Reports(Written(Unmapped(), "lost type"), " of type (unknown), what(): lost type\n"));
+    const std::string longestType(65535, 't');
+    Require(Reports(Written(longestType.c_str(), nullptr), " of type " + longestType + "\n"));
+    const std::string tooLong(65536, 'x');
+    Require(Reports(Written(tooLong.c_str(), "fits"), " of type (unknown), what(): fits\n"));
+    Require(Reports(Written("std::length_error", tooLong.c_str()), " of type std::length_error\n"));
     std::puts("sceKernelDebugWriteCppExceptionInfo reads its type name and message through checked copies");
     return 0;
 }

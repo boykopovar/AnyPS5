@@ -1,19 +1,54 @@
+#include "LibcxxRegexCollation.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <optional>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+
+namespace {
+
+std::optional<char> FindCollatingElement(std::string_view name) {
+    if (name.size() == 1) {
+        const char character = name.front();
+        if ((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')) return character;
+    }
+    using LibcxxRegex::CollatingElements;
+    const auto* entry = std::ranges::lower_bound(CollatingElements, name, {}, &LibcxxRegex::CollatingElement::name);
+    if (entry != std::end(CollatingElements) && entry->name == name) return entry->character;
+    return std::nullopt;
+}
+
+struct ShortString {
+    unsigned char sizeAndTag;
+    char characters[23];
+};
+static_assert(sizeof(ShortString) == 24);
+
+}
 
 namespace GuestRune {
 
+struct RangeEntry {
+    std::int32_t min;
+    std::int32_t max;
+    std::int32_t map;
+    const std::uint64_t* types;
+};
+static_assert(offsetof(RangeEntry, types) == 16);
+static_assert(sizeof(RangeEntry) == 24);
+
 struct Range {
     std::int32_t count;
-    void* entries;
+    const RangeEntry* entries;
 };
 
 struct Locale {
@@ -91,8 +126,49 @@ namespace GuestRune {
 
 constexpr std::uint32_t Weof = 0xffffffff;
 
+const Locale* ActiveLocale() {
+    return _CurrentRuneLocale_nid_postfix != nullptr ? _CurrentRuneLocale_nid_postfix : &_DefaultRuneLocale_nid_postfix;
+}
+
+const RangeEntry* FindEntry(const Range& range, std::int32_t rune) {
+    if (rune < 0 || range.count <= 0 || range.entries == nullptr) return nullptr;
+    std::int32_t low = 0;
+    std::int32_t high = range.count - 1;
+    while (low <= high) {
+        const std::int32_t mid = low + (high - low) / 2;
+        const RangeEntry& entry = range.entries[mid];
+        if (rune < entry.min) {
+            high = mid - 1;
+        } else if (rune > entry.max) {
+            low = mid + 1;
+        } else {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
 int Is(std::uint32_t c, std::uint64_t mask) {
-    return c < 256 && (_CurrentRuneLocale_nid_postfix->types[c] & mask) != 0;
+    const Locale* locale = ActiveLocale();
+    if (c < 256) return (locale->types[c] & mask) != 0;
+    if (c > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return 0;
+    const auto rune = static_cast<std::int32_t>(c);
+    const RangeEntry* entry = FindEntry(locale->typeRanges, rune);
+    if (entry == nullptr) return 0;
+    const std::uint64_t type = entry->types != nullptr
+        ? entry->types[rune - entry->min]
+        : static_cast<std::uint64_t>(static_cast<std::uint32_t>(entry->map));
+    return (type & mask) != 0;
+}
+
+std::uint32_t MapCase(std::uint32_t c, const std::int32_t (Locale::*table)[256], const Range Locale::*ranges) {
+    const Locale* locale = ActiveLocale();
+    if (c < 256) return static_cast<std::uint32_t>((locale->*table)[c]);
+    if (c > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return c;
+    const auto rune = static_cast<std::int32_t>(c);
+    const RangeEntry* entry = FindEntry(locale->*ranges, rune);
+    if (entry == nullptr) return c;
+    return static_cast<std::uint32_t>(entry->map) + static_cast<std::uint32_t>(rune - entry->min);
 }
 
 }
@@ -145,12 +221,51 @@ std::uint64_t APS5_VABI wctype_nid_postfix(const char* property) {
     return 0;
 }
 
+std::uint64_t APS5_VABI _ZNSt3__115__get_classnameEPKcb_nid_postfix(const char* property, bool caseInsensitive) {
+    constexpr auto alnum = GuestRune::Alpha | GuestRune::Digit;
+    constexpr auto letterCase = GuestRune::Lower | GuestRune::Upper;
+    constexpr auto word = 0x80 | alnum | letterCase;
+    static constexpr struct {
+        const char* name;
+        std::uint64_t mask;
+    } classes[] = {
+        {"alnum", alnum}, {"alpha", GuestRune::Alpha}, {"blank", GuestRune::Blank},
+        {"cntrl", GuestRune::Control}, {"d", GuestRune::Digit}, {"digit", GuestRune::Digit},
+        {"graph", alnum | GuestRune::Punct}, {"lower", GuestRune::Lower}, {"print", GuestRune::Print},
+        {"punct", GuestRune::Punct}, {"s", GuestRune::Space}, {"space", GuestRune::Space},
+        {"upper", GuestRune::Upper}, {"w", word}, {"xdigit", GuestRune::Hex},
+    };
+    std::string name;
+    if (CopyGuestString_nid_no_patch(property, sizeof("xdigit"), name) != 0) return 0;
+    for (const auto& entry : classes) {
+        if (name != entry.name) continue;
+        if (caseInsensitive && (entry.mask & letterCase) != 0) return entry.mask | GuestRune::Alpha;
+        return entry.mask;
+    }
+    return 0;
+}
+
+void* APS5_VABI _ZNSt3__120__get_collation_nameEPKc_nid_postfix(void* result, const char* name) {
+    ShortString value{};
+    std::string element;
+    if (CopyGuestString_nid_no_patch(name, sizeof("right-square-bracket"), element) == 0) {
+        if (const auto character = FindCollatingElement(element)) {
+            value.sizeAndTag = 2;
+            value.characters[0] = *character;
+        }
+    }
+    if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) {
+        throw std::invalid_argument("libc++ collation name: unwritable result");
+    }
+    return result;
+}
+
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t c) {
-    return c < 256 ? static_cast<std::uint32_t>(_CurrentRuneLocale_nid_postfix->lower[c]) : c;
+    return GuestRune::MapCase(c, &GuestRune::Locale::lower, &GuestRune::Locale::lowerRanges);
 }
 
 std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t c) {
-    return c < 256 ? static_cast<std::uint32_t>(_CurrentRuneLocale_nid_postfix->upper[c]) : c;
+    return GuestRune::MapCase(c, &GuestRune::Locale::upper, &GuestRune::Locale::upperRanges);
 }
 
 std::uint32_t APS5_VABI btowc_nid_postfix(int c) {
@@ -200,6 +315,52 @@ int APS5_VABI _Tolower_nid_postfix(int c, const void*) {
 
 int APS5_VABI _Toupper_nid_postfix(int c, const void*) {
     return static_cast<unsigned>(c) <= 0x7f ? _Getptoupper_nid_postfix()[c] : c;
+}
+
+void APS5_VABI _ZNKSt3__123__match_any_but_newlineIcE6__execERNS_7__stateIcEE_nid_postfix(const void* matcher, void* state) {
+    struct MatchStatePrefix {
+        std::int32_t action;
+        std::uint32_t padding;
+        const char* first;
+        const char* current;
+        const char* end;
+        std::byte submatchesAndLoops[48];
+        const void* node;
+    };
+    struct MatcherPrefix {
+        const void* vtable;
+        const void* successor;
+    };
+    static_assert(offsetof(MatchStatePrefix, current) == 0x10 && offsetof(MatchStatePrefix, end) == 0x18);
+    static_assert(offsetof(MatchStatePrefix, node) == 0x50 && sizeof(MatchStatePrefix) == 0x58);
+    static_assert(offsetof(MatcherPrefix, successor) == 8);
+    constexpr std::int32_t reject = -993;
+    constexpr std::int32_t consume = -995;
+
+    MatchStatePrefix match{};
+    if (!GuestCopyIn_nid_no_patch(&match, state, sizeof(match))) {
+        throw std::invalid_argument("libc++ regex dot: unreadable match state");
+    }
+    match.action = reject;
+    match.node = nullptr;
+    if (match.current != match.end) {
+        char character = '\0';
+        if (!GuestCopyIn_nid_no_patch(&character, match.current, sizeof(character))) {
+            throw std::invalid_argument("libc++ regex dot: unreadable input");
+        }
+        if (character != '\r' && character != '\n') {
+            MatcherPrefix node{};
+            if (!GuestCopyIn_nid_no_patch(&node, matcher, sizeof(node))) {
+                throw std::invalid_argument("libc++ regex dot: unreadable matcher");
+            }
+            match.action = consume;
+            ++match.current;
+            match.node = node.successor;
+        }
+    }
+    if (!GuestCopyOut_nid_no_patch(state, &match, sizeof(match))) {
+        throw std::invalid_argument("libc++ regex dot: unwritable match state");
+    }
 }
 
 }

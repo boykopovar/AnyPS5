@@ -196,6 +196,7 @@ struct ImageTableReuseCounts {
     std::uint64_t variantSubstituted = 0;
     std::uint64_t variantRejected = 0;
     std::uint64_t arrayViewsShared = 0;
+    std::uint64_t entryMemoHits = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
@@ -252,14 +253,6 @@ public:
         DescriptorCache::SetAllocation fragmentAllocation;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
-        struct InPlace {
-            std::size_t allocation;
-            VkBuffer buffer;
-            VkDeviceSize offset;
-            std::size_t bytes;
-        };
-        std::vector<InPlace> inPlace;
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -270,7 +263,6 @@ public:
         VkBuffer inPlace = VK_NULL_HANDLE;
         VkDeviceSize inPlaceOffset = 0;
         std::uint32_t adjustment = 0;
-        bool dispatchInPlace = false;
     };
     struct DrawUse {
         DrawUse() = default;
@@ -302,7 +294,7 @@ public:
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
     // once the work completed.
-    void MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings = nullptr);
+    void MarkGpuWrites(Recorder& recorder);
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
@@ -315,6 +307,7 @@ public:
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool StorePages() const;
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
@@ -425,7 +418,7 @@ public:
     std::size_t BindingCount() const { return bindings.size(); }
     // Why the fast proof of a Revalidate left the object to the full walk (the [rescache]
     // revalidate line's reasons); Count: it did not.
-    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Depth, Replaced, Audit, Count };
+    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Depth, Replaced, Audit, PerUse, Count };
     struct CollectRefusals {
         std::uint64_t sampled = 0;
         std::uint64_t storage = 0;
@@ -576,7 +569,7 @@ private:
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
-    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const;
+    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry, bool counted = true) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
@@ -655,6 +648,7 @@ private:
         bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
+    bool recordsEveryTexture() const;
     void captureValidation(bool spaceReusable);
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
@@ -810,9 +804,12 @@ private:
         bool singleLevelImage = false;
         bool mipmappedImage = false;
         std::optional<std::uint32_t> pinnedLod;
+        std::vector<OpaqueBlackPairing> opaqueBlackPairings;
+        std::optional<BorderComponentMapping> borderMapping;
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
+    bool perUseTextures = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
     std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;
