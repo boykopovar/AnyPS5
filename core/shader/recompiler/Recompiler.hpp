@@ -384,6 +384,7 @@ struct SpirvTarget {
     bool exactRobustLoads = false;
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
+    bool float32FlushExcludesFloat16Modes = false;
     bool waveLdsMemoryBarriers = false;
     bool float32DenormPreserve = false;
     bool fusedExactArithmetic = false;

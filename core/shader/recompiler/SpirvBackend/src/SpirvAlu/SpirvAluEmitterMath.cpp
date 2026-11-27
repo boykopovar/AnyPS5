@@ -2218,7 +2218,7 @@ static bool NativeF16Rte(const SpirvEmitterState& state) {
     const auto supported = [&](spv::Capability capability) {
         return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
     };
-    return supported(spv::CapabilityFloat16) && supported(spv::CapabilityRoundingModeRTE) && supported(spv::CapabilityDenormPreserve);
+    return state.float16Modes && supported(spv::CapabilityFloat16) && supported(spv::CapabilityRoundingModeRTE) && supported(spv::CapabilityDenormPreserve);
 }
 
 static void EmitNativeF16Modes(SpirvEmitterState& state) {

@@ -612,6 +612,7 @@ struct VulkanDevice::State {
     bool float16DenormPreserve = false;
     bool float32FlushToZeroCandidate = false;
     bool float32FlushToZero = false;
+    bool float32FlushExcludesFloat16Modes = false;
     bool float32FlushComputeOnly = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
@@ -2889,6 +2890,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float32FlushToZero = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f32 denormal flush: %s (%u of %u probe results differ from the emulated flush, %.0f ms)\n", state->float32FlushToZero ? "hardware" : "emulated", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    if (state->float32FlushToZero) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        state->probingFloatControls = true;
+        const auto probe = ProbeFloat32FlushBesideFloat16(*this, Target());
+        state->probingFloatControls = false;
+        state->float32FlushExcludesFloat16Modes = probe.mismatches != 0u;
+        std::fprintf(stderr, "[float-controls] f32 denormal flush beside 16-bit float modes: %s (%u of %u probe results differ from the emulated flush, %.0f ms)\n", state->float32FlushExcludesFloat16Modes ? "lost, so a shader that uses the hardware flush declares no 16-bit float mode" : "hardware", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
     if (state->float32DenormPreserve) {
         const auto probeStart = std::chrono::steady_clock::now();
         state->probingFloatControls = true;
@@ -4897,6 +4906,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
     auto target = state->shaderProfile->Target();
     target.float32FlushToZero = state->float32FlushToZero && !state->float32FlushComputeOnly;
+    target.float32FlushExcludesFloat16Modes = state->float32FlushExcludesFloat16Modes;
     target.float16HostNans = state->float16HostNans;
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.hostInterpolationFirst = state->hostInterpolationFirst;

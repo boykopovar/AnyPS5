@@ -181,6 +181,10 @@ bool HardwareFloat32Flush(const RecompileRequest& request) {
     return request.target.float32FlushToZero && (!request.context.floatMode.has_value() || ((request.context.floatMode->floatMode >> 4u) & 3u) == 0u);
 }
 
+bool Float16Modes(const RecompileRequest& request) {
+    return !request.target.float32FlushExcludesFloat16Modes || !HardwareFloat32Flush(request);
+}
+
 std::atomic<std::uint64_t> frontEndBuilds{0};
 
 }
@@ -279,7 +283,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const bool emulatedBarycentrics = stageKind == ShaderStageKind::Pixel && request.graphics.has_value() && request.graphics->emulateBarycentrics;
     translateOptions.fragmentShaderBarycentricEnabled = emulatedBarycentrics || (request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst);
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
-    translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
+    translateOptions.nativeFloat16 = Float16Modes(request) && supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.nativeFloat16Fma = translateOptions.nativeFloat16 && supports(spv::CapabilityFMAKHR);
     translateOptions.float16HostNans = translateOptions.nativeFloat16 && request.target.float16HostNans;
@@ -847,6 +851,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.registrationModules = registration;
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
+    targetOptions.float16Modes = Float16Modes(request);
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.spannedAnySubgroup = request.target.spannedAnySubgroup;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;

@@ -278,7 +278,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.barycentricPositionsLocation = target.barycentricPositionsLocation;
     state.meshExportedLocations = target.meshExportedLocations;
     state.meshPerVertexLocations = target.meshPerVertexLocations;
-    state.float16DenormPreserve = target.float16DenormPreserve;
+    state.float16DenormPreserve = target.float16DenormPreserve && target.float16Modes;
+    state.float16Modes = target.float16Modes;
     state.robustBufferAccess2 = target.robustBufferAccess2;
     state.exactRobustLoads = target.robustBufferAccess2 && target.exactRobustLoads;
     state.float32FlushToZero = target.float32FlushToZero;

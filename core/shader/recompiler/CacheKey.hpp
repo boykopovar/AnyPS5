@@ -384,6 +384,7 @@ private:
         append(key, value.spannedAnySubgroup);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
+        append(key, value.float32FlushExcludesFloat16Modes);
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
         append(key, value.exactRobustLoads);

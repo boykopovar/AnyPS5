@@ -83,6 +83,7 @@ std::vector<std::uint32_t> Run(VulkanDevice& device, ShaderRecompiler::SpirvTarg
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
     target.float16WidenNans = widen;
     target.float16NarrowNans = narrow;
+    target.float32FlushExcludesFloat16Modes = false;
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},

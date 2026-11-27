@@ -59,6 +59,7 @@ bool g_ldsLockFences = false;
 bool g_deviceAtomicWorkgroupMemoryBarriers = false;
 bool g_shaderFma = false;
 bool g_f16HostNans = false;
+bool g_f32FlushExcludesF16Modes = false;
 bool g_spannedShuffleThroughMemory = false;
 bool g_shaderInt16 = false;
 bool g_code = false;
@@ -102,6 +103,7 @@ bool Replay(const char* path) {
     if (g_ldsLockFences) request.request.target.ldsLockFences = true;
     if (g_deviceAtomicWorkgroupMemoryBarriers) request.request.target.deviceAtomicWorkgroupMemoryBarriers = true;
     if (g_f16HostNans) request.request.target.float16HostNans = true;
+    if (g_f32FlushExcludesF16Modes) request.request.target.float32FlushExcludesFloat16Modes = true;
     if (g_spannedShuffleThroughMemory) request.request.target.spannedShuffleThroughMemory = true;
     if (g_shaderFma) {
         request.supportedCapabilities.push_back(spv::CapabilityFMAKHR);
@@ -267,7 +269,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--spanned-shuffle-memory] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--device-atomic-workgroup-memory-barriers] [--shader-fma] [--shader-int16] [--f16-widen-nans] [--f16-narrow-nans] [--f16-host-nans] [--f32-flush-excludes-f16-modes] [--spanned-shuffle-memory] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -330,6 +332,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--f16-host-nans") {
             g_f16HostNans = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--f32-flush-excludes-f16-modes") {
+            g_f32FlushExcludesF16Modes = true;
             continue;
         }
         if (std::string(argv[i]) == "--spanned-shuffle-memory") {
