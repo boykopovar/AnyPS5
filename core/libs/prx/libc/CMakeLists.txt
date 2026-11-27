@@ -204,6 +204,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strptime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/StringList.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxIntegerToString.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp

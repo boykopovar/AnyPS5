@@ -586,6 +586,15 @@ int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode);
 int APS5_VABI chdir_nid_postfix(const char* path);
 char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
 char* APS5_VABI getwd_nid_postfix(char* buffer);
+struct StringList {
+    char** sl_str;
+    std::size_t sl_max;
+    std::size_t sl_cur;
+};
+StringList* APS5_VABI sl_init_nid_postfix();
+int APS5_VABI sl_add_nid_postfix(StringList* list, char* name);
+void APS5_VABI sl_free_nid_postfix(StringList* list, int all);
+char* APS5_VABI sl_find_nid_postfix(StringList* list, const char* name);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
 int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length);
