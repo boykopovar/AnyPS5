@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <new>
+#include <optional>
 #include <utility>
 #include <type_traits>
 
@@ -20,6 +22,26 @@ struct StringView {
     bool is8Bit;
 };
 
+enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
+
+struct HTMLNonNegativeIntegerResult {
+    union {
+        unsigned value;
+        HTMLIntegerParsingError error;
+    };
+    bool hasValue;
+};
+
+static_assert(sizeof(HTMLIntegerParsingError) == 4);
+static_assert(sizeof(HTMLNonNegativeIntegerResult) == 8);
+static_assert(alignof(HTMLNonNegativeIntegerResult) == 4);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, value) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, error) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, hasValue) == 4);
+static_assert(std::is_trivially_copy_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_move_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_destructible_v<HTMLNonNegativeIntegerResult>);
+
 struct URL {
     StringImpl* impl;
     unsigned bits;
@@ -30,6 +52,12 @@ struct URL {
     unsigned pathAfterLastSlash;
     unsigned pathEnd;
     unsigned queryEnd;
+};
+
+struct LogSiteIdentifier {
+    const char* className;
+    const char* methodName;
+    std::uintptr_t objectPtr;
 };
 
 static_assert(sizeof(URL) == 40);
@@ -53,16 +81,33 @@ void Release(CStringBuffer* buffer);
 
 struct String {
     StringImpl* impl;
-    explicit String(StringImpl* value = nullptr) : impl(value) {}
+    String() : impl(nullptr) {}
+    explicit String(StringImpl* value) : impl(value) {}
     String(const String& other) : impl(other.impl) { if (impl) impl->refCount += 2; }
     String(String&& other) noexcept : impl(std::exchange(other.impl, nullptr)) {}
     ~String() { Release(impl); }
     String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
 };
 
+StringView ViewOf(const StringImpl* impl);
+char16_t CodeUnitAt(const StringView& view, unsigned index);
+std::optional<std::uint16_t> PortOf(const URL& url);
+
+struct StringViewWithUnderlyingString {
+    StringView view;
+    String underlyingString;
+};
+
+static_assert(sizeof(StringViewWithUnderlyingString) == 24);
+static_assert(offsetof(StringViewWithUnderlyingString, view) == 0);
+static_assert(offsetof(StringViewWithUnderlyingString, underlyingString) == 16);
+static_assert(!std::is_trivially_destructible_v<StringViewWithUnderlyingString>);
+
 StringImpl* EmptyStringImpl();
+StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
+String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length);
 
 struct StringVector {
     String* buffer;
@@ -88,11 +133,32 @@ struct ProcessPrivileges {
     unsigned storage;
 };
 
+struct ExpectedCString {
+    union {
+        CString value;
+        std::uint32_t error;
+    };
+    bool has;
+    explicit ExpectedCString(CString&& string) : value(std::move(string)), has(true) {}
+    explicit ExpectedCString(std::uint32_t code) : error(code), has(false) {}
+    ExpectedCString(const ExpectedCString&) = delete;
+    ExpectedCString(ExpectedCString&& other) noexcept : has(other.has) {
+        if (has) new (&value) CString(std::move(other.value));
+        else error = other.error;
+    }
+    ~ExpectedCString() {
+        if (has) value.~CString();
+    }
+};
+
 static_assert(alignof(StringImpl) == 8);
 static_assert(alignof(StringView) == 8);
 static_assert(alignof(CStringBuffer) == 8);
 static_assert(!std::is_trivially_destructible_v<String>);
 static_assert(!std::is_trivially_destructible_v<CString>);
+static_assert(!std::is_trivially_destructible_v<ExpectedCString>);
+static_assert(sizeof(ExpectedCString) == 16);
+static_assert(offsetof(ExpectedCString, has) == 8);
 static_assert(sizeof(StringImpl) == 24);
 static_assert(offsetof(StringImpl, refCount) == 0);
 static_assert(offsetof(StringImpl, length) == 4);
@@ -116,5 +182,9 @@ static_assert(offsetof(CStringBuffer, refCount) == 0);
 static_assert(offsetof(CStringBuffer, length) == 8);
 static_assert(sizeof(ProcessPrivileges) == 4);
 static_assert(offsetof(ProcessPrivileges, storage) == 0);
+static_assert(sizeof(LogSiteIdentifier) == 24);
+static_assert(offsetof(LogSiteIdentifier, className) == 0);
+static_assert(offsetof(LogSiteIdentifier, methodName) == 8);
+static_assert(offsetof(LogSiteIdentifier, objectPtr) == 16);
 
 }  // namespace NKWebKit::WtfAbi

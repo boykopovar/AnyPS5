@@ -1,0 +1,82 @@
+agcbuild_AcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_AcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_AcbCopyData_c	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_AcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_AcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_AcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_AcbInitializeDefaultHardwareState_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbInitializeDefaultHardwareState_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
+agcbuild_AcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
+agcbuild_AcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
+agcbuild_AcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
+agcbuild_AcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
+agcbuild_AcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
+agcbuild_AcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
+agcbuild_AcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
+agcbuild_AcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
+agcbuild_AcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
+agcbuild_AcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
+agcbuild_AcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
+agcbuild_AcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
+agcbuild_CbBranch_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_c	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbCondWrite_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbCondWrite_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbCondWrite_c	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbReleaseMem_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbAtomicMem_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbAtomicMem_c	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbContextStateOp_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbContextStateOp_b	diff	the packet differs from the console's; not yet analysed
+agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_DcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_DcbCopyData_c	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_DcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbDmaData_a	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_b	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_c	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDrawIndexIndirect_a	diff	modifier bit 1 adds fields to the second and third words that are not decoded
+agcbuild_DcbDrawIndexIndirect_b	diff	modifier bit 1 adds fields to the second and third words that are not decoded
+agcbuild_DcbGetLodStats_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbGetLodStats_b	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbGetLodStats_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
+agcbuild_DcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
+agcbuild_DcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
+agcbuild_DcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
+agcbuild_DcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
+agcbuild_DcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
+agcbuild_DcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
+agcbuild_DcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
+agcbuild_DcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
+agcbuild_DcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
+agcbuild_DcbWaitRegMem_b	skip	the ninth argument, pollCycles, comes from the caller's stack, which neither the replay nor the measurement sets
+agcbuild_DcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
+agcbuild_DcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
+agcbuild_DcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
+kx_attr_getstack_default	diff	a 1 MiB default stack on purpose, see docs/dev/debt/libkernel.md
+nh_escape_buffer_too_small	diff	a short buffer is left unfilled and the required size written; #12056 fills it as the console does
+nh_ntop_v6	diff	the console leaves stale bytes after the string, which are not modelled
+nh_player_dialog_param_init	diff	returns void, so the console's return register is not a result
+sceHttpUriUnescape	skip	reads the process parameters that only the title loader sets up
+sema_delete_twice	crash	a deleted semaphore handle reaches freed memory; #10558 returns ESRCH
+sema_poll_deleted	hang	a deleted semaphore handle reaches freed memory; #10558 returns ESRCH
+sema_signal_deleted	hang	a deleted semaphore handle reaches freed memory; #10558 returns ESRCH

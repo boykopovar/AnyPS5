@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -30,13 +31,55 @@ int main() {
     Require(sceSharePlayProhibitController(0) == notInitialized);
     Require(sceSharePlayProhibitController(1) == notInitialized);
     Require(sceSharePlayProhibitController(2) == notInitialized);
+    Require(sceSharePlayCrashDaemon() == notInitialized);
+    Require(sceSharePlayGetCurrentInfo() == notInitialized);
+    Require(sceSharePlayGetEvent() == notInitialized);
+    Require(sceSharePlayNotifyDialogOpen() == notInitialized);
+    Require(sceSharePlayNotifyForceCloseForCdlg() == notInitialized);
+    Require(sceSharePlayResumeScreenForCdlg() == notInitialized);
+    Require(sceSharePlayServerLock() == notInitialized);
+    Require(sceSharePlayServerUnLock() == notInitialized);
+    Require(sceSharePlaySetMode() == notInitialized);
+    Require(sceSharePlaySetProhibition(2) == notInitialized);
+    Require(sceSharePlaySetProhibition(0) == notInitialized);
+    Require(sceSharePlaySetProhibitionModeWithAppId() == notInitialized);
+    Require(sceSharePlayStartStandby() == notInitialized);
+    Require(sceSharePlayStartStreaming() == notInitialized);
+    Require(sceSharePlayStopStandby() == notInitialized);
+    Require(sceSharePlayStopStreaming() == notInitialized);
+    Require(sceSharePlaySetShareScreenStatus() == notInitialized);
+    Require(libSceSharePlayUnknown_891hmdoV7UQ_nid_no_patch() == notInitialized);
+    Require(libSceSharePlayUnknown_LpPA6mprZ8Q_nid_no_patch() == notInitialized);
+    Require(libSceSharePlayUnknown_wcI2co2I4Xc_nid_no_patch() == notInitialized);
+    Require(libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch() == 1);
     Require(sceSharePlayInitialize(nullptr, sizeof(heap)) == 0);
     Require(sceSharePlayInitialize(heap, 0) == alreadyInitialized);
     Require(sceSharePlayTerminate() == 0);
     Require(sceSharePlayInitialize(heap, sizeof(heap)) == 0);
     Require(sceSharePlayTerminate() == 0);
+    Require(sceSharePlayStartStandby() == notInitialized);
+    Require(libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch() == 1);
     for (const std::size_t size : {std::size_t{0}, std::size_t{1}, sizeof(heap) - 1}) Require(sceSharePlayInitialize(heap, size) == invalidArgument);
     Require(sceSharePlayInitialize(nullptr, 0) == 0);
+    Require(sceSharePlayGetEvent() == notInitialized);
+    Require(sceSharePlayGetCurrentInfo() == notInitialized);
+    Require(sceSharePlayCrashDaemon() == notInitialized);
+    Require(sceSharePlayNotifyDialogOpen() == notInitialized);
+    Require(sceSharePlayNotifyForceCloseForCdlg() == notInitialized);
+    Require(sceSharePlayResumeScreenForCdlg() == notInitialized);
+    Require(sceSharePlayServerLock() == notInitialized);
+    Require(sceSharePlayServerUnLock() == notInitialized);
+    Require(sceSharePlaySetMode() == notInitialized);
+    Require(sceSharePlaySetProhibitionModeWithAppId() == notInitialized);
+    Require(sceSharePlayStartStandby() == notInitialized);
+    Require(sceSharePlayStartStreaming() == notInitialized);
+    Require(sceSharePlayStopStandby() == notInitialized);
+    Require(sceSharePlayStopStreaming() == notInitialized);
+    Require(sceSharePlaySetShareScreenStatus() == notInitialized);
+    Require(libSceSharePlayUnknown_891hmdoV7UQ_nid_no_patch() == notInitialized);
+    Require(libSceSharePlayUnknown_LpPA6mprZ8Q_nid_no_patch() == notInitialized);
+    Require(libSceSharePlayUnknown_wcI2co2I4Xc_nid_no_patch() == notInitialized);
+    Require(libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch() == 1);
     SharePlayConnectionInfoA info;
     std::memset(&info, 0x5a, sizeof(info));
     Require(sceSharePlayGetCurrentConnectionInfoA(&info) == 0);
@@ -44,6 +87,9 @@ int main() {
     Require(info.hostOnlineId.data[0] == 0 && info.visitorOnlineId.data[0] == 0 && info.hostOnlineId.pad[2] == 0);
     Require(info.hostUserId == -1 && info.visitorUserId == -1);
     Require(sceSharePlayGetCurrentConnectionInfoA(nullptr) == static_cast<int>(0x810E0001));
+    errno = 71;
+    Require(sceSharePlayGetCurrentConnectionInfoA(reinterpret_cast<SharePlayConnectionInfoA*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     unsigned char plain[sizeof(SharePlayConnectionInfo) + 8];
     std::memset(plain, 0x5a, sizeof(plain));
     auto* plainInfo = reinterpret_cast<SharePlayConnectionInfo*>(plain);
@@ -52,11 +98,20 @@ int main() {
     Require(plainInfo->hostUserId == -1 && plainInfo->visitorUserId == -1);
     for (std::size_t i = sizeof(SharePlayConnectionInfo); i < sizeof(plain); ++i) Require(plain[i] == 0x5a);
     Require(sceSharePlayGetCurrentConnectionInfo(nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceSharePlayGetCurrentConnectionInfo(reinterpret_cast<SharePlayConnectionInfo*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(0) == 0);
     Require(sceSharePlayProhibitController(2) == invalidArgument);
     Require(sceSharePlayProhibitController(255) == invalidArgument);
+    Require(sceSharePlaySetProhibition(0) == 0);
+    Require(sceSharePlaySetProhibition(1) == 0);
+    Require(sceSharePlaySetProhibition(2) == 0);
+    Require(sceSharePlaySetProhibition(3) == invalidArgument);
+    Require(sceSharePlaySetProhibition(-1) == invalidArgument);
+    Require(sceSharePlaySetProhibition(255) == invalidArgument);
     Require(sceSharePlayTerminate() == 0);
     std::memset(&info, 0x5a, sizeof(info));
     Require(sceSharePlayGetCurrentConnectionInfoA(&info) == notInitialized);
@@ -69,5 +124,6 @@ int main() {
     Require(sceSharePlayProhibitController(0) == notInitialized);
     Require(sceSharePlayProhibitController(1) == notInitialized);
     Require(sceSharePlayProhibitController(2) == notInitialized);
+    Require(sceSharePlaySetProhibition(2) == notInitialized);
     Require(sceSharePlayTerminate() == notInitialized);
 }

@@ -551,7 +551,7 @@ NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEd(Encoder* s
     return *self;
 }
 
-bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const Decoder* self, unsigned long size) {
+bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const Decoder* self, std::size_t size) {
     if (!self) throw std::invalid_argument("Decoder::bufferIsLargeEnoughToContain: null this");
     if (!self->bufferData || !self->bufferPosition) return false;
     std::size_t remaining = (self->bufferData + self->bufferSize >= self->bufferPosition) ? static_cast<std::size_t>((self->bufferData + self->bufferSize) - self->bufferPosition) : 0;

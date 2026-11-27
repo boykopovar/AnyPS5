@@ -1,17 +1,27 @@
 #include "prx/libSceNpWebApi2/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #ifdef __APPLE__
 #include <initializer_list>
 #endif
 #include <cstring>
+#include <string>
+#include <vector>
 #include <stdexcept>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int invalidContext = static_cast<int>(0x80553404);
     constexpr int invalidHandle = static_cast<int>(0x8055340D);
     const int context = sceNpWebApi2Initialize(1, 0x20000);
@@ -25,6 +35,9 @@ int main() {
     Require(stats.pool_size == 0x20000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     Require(sceNpWebApi2GetMemoryPoolStats(other, &stats) == 0 && stats.pool_size == 0x8000);
     Require(sceNpWebApi2GetMemoryPoolStats(context, nullptr) == 0);
+    errno = 71;
+    Require(sceNpWebApi2GetMemoryPoolStats(context, reinterpret_cast<NpWebApi2MemoryPoolStats*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(sceNpWebApi2GetMemoryPoolStats(-1, nullptr) == invalidContext);
     Require(sceNpWebApi2PushEventCreateHandle(-1) == invalidContext);
     const int handle = sceNpWebApi2PushEventCreateHandle(context);
@@ -45,11 +58,44 @@ int main() {
     const int user = sceNpWebApi2CreateUserContext(context, 1);
     std::int64_t request = 0;
     Require(user > 0 && sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", nullptr, &request) == 0);
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", nullptr, reinterpret_cast<std::int64_t*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    std::int64_t requestSentinel = 0x5a5a5a5a5a5a5a5a;
+    Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", nullptr, &requestSentinel) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", nullptr, "GET", nullptr, &requestSentinel) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", nullptr, nullptr, &requestSentinel) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", nullptr, nullptr) == static_cast<int>(0x80553402));
+    const std::uint64_t emptyContent[2] = {0x1000, 0};
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", emptyContent, &requestSentinel) == static_cast<int>(0x80553408));
+    Require(sceNpWebApi2CreateRequest(user, nullptr, "/v1/sessions", "GET", emptyContent, &requestSentinel) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", reinterpret_cast<const void*>(0x10), &requestSentinel) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    Require(requestSentinel == 0x5a5a5a5a5a5a5a5a);
+    const std::uint64_t noContent[2] = {0, 0};
+    std::int64_t createdRequest = 0;
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", noContent, &createdRequest) == 0 && createdRequest > 0);
+    Require(sceNpWebApi2DeleteRequest(createdRequest) == 0);
+    const std::uint64_t sizedContent[2] = {0x1000, 16};
+    Require(sceNpWebApi2CreateRequest(user, "sessionManager", "/v1/sessions", "GET", sizedContent, &createdRequest) == 0 && createdRequest > 0);
+    Require(sceNpWebApi2DeleteRequest(createdRequest) == 0);
+    std::int32_t partIndex = 0x5a5a5a5a;
+    Require(sceNpWebApi2AddMultipartPart(request, nullptr, &partIndex) == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2AddMultipartPart(request, nullptr, nullptr) == static_cast<int>(0x80553402));
+    Require(partIndex == 0x5a5a5a5a);
+    Require(sceNpWebApi2SetMultipartContentType(request, nullptr, "boundary") == static_cast<int>(0x80553402));
+    Require(sceNpWebApi2SetMultipartContentType(request, nullptr, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2SetRequestTimeout(request, 30000000) == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2AddWebTraceTag(request, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(sceNpWebApi2DeleteRequest(request) == 0);
+    Require(sceNpWebApi2Terminate(-1) == invalidContext);
     Require(sceNpWebApi2Terminate(context) == 0);
+    Require(sceNpWebApi2Terminate(context) == invalidContext);
     Require(sceNpWebApi2GetMemoryPoolStats(context, &stats) == invalidContext);
     Require(sceNpWebApi2PushEventAbortHandle(context, handle) == invalidContext);
     Require(sceNpWebApi2PushEventSetHandleTimeout(context, handle, 30000) == invalidContext);
@@ -70,18 +116,56 @@ int main() {
     const int presence = sceNpWebApi2InitializeForPresence(1, 0x2000);
     Require(presence > 0 && sceNpWebApi2GetMemoryPoolStats(presence, &stats) == 0 && stats.pool_size == 0x2000);
     constexpr int unavailable = static_cast<int>(0x80553406);
+    constexpr int requestNotFound = static_cast<int>(0x80553406);
     const int multipartUser = sceNpWebApi2CreateUserContext(presence, 1);
     std::int64_t multipart = 0;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, nullptr, "/v1/files", "POST", &multipart) == invalidArgument);
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", nullptr, "POST", &multipart) == invalidArgument);
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", nullptr, &multipart) == invalidArgument);
     Require(multipart == 0);
+    errno = 71;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &multipart) == 0 && multipart > 0);
+    Require(errno == 71);
     std::int64_t nextMultipart = 0;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &nextMultipart) == 0 && nextMultipart > multipart);
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", nullptr) == 0);
-    unsigned char part[4]{1, 2, 3, 4};
-    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    int multipartIndex = 0;
+    const std::uint64_t partParameter[3]{0, 0, 16};
+    Require(sceNpWebApi2AddMultipartPart(multipart, nullptr, &multipartIndex) == invalidArgument);
+    errno = 71;
+    Require(sceNpWebApi2AddMultipartPart(multipart, reinterpret_cast<const void*>(0x10), &multipartIndex) == invalidArgument);
+    Require(errno == 71);
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, &multipartIndex) == 0 && multipartIndex == 1);
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, &multipartIndex) == 0 && multipartIndex == 2);
+    Require(sceNpWebApi2AddMultipartPart(multipart + 100000, partParameter, &multipartIndex) == requestNotFound);
+    errno = 71;
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, &multipartIndex) == 0 && multipartIndex == 3);
+    const std::uint64_t missingHeaders[3]{0, 1, 8};
+    bool threw = false;
+    try {
+        sceNpWebApi2AddMultipartPart(multipart, missingHeaders, &multipartIndex);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(sceNpWebApi2SetMultipartContentType(multipart, nullptr, nullptr) == invalidArgument);
+    Require(sceNpWebApi2SetMultipartContentType(multipart + 100000, "multipart/form-data", "boundary") == requestNotFound);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", "boundary") == 0);
+    Require(errno == 71);
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", nullptr) == 0);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, reinterpret_cast<const char*>(0x10), nullptr) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", reinterpret_cast<const char*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    unsigned char part[4]{1, 2, 3, 4};    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, -1, part, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, 1, nullptr, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, 0, nullptr) == invalidArgument);
@@ -98,7 +182,12 @@ int main() {
     Require(pushLibrary > 0 && pushUser > 0 && otherUser > 0 && otherUser != pushUser);
     std::int64_t sent = 0;
     Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, nullptr) == invalidArgument);
+    errno = 71;
     Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, &sent) == 0 && sent > 0);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceNpWebApi2AddHttpRequestHeader(sent, "Accept", "application/json") == 0);
     Require(sceNpWebApi2SendRequest(sent, nullptr, 0, nullptr) == unavailable);
     Require(sceNpWebApi2AbortRequest(sent) == 0);
@@ -118,7 +207,12 @@ int main() {
     const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nonNullCallback, &userArg);
     Require(callback > 0 && contextCallback > 0 && contextCallback != callback);
     NpWebApi2PushContextId pushContext{};
+    Require(sceNpWebApi2PushEventCreatePushContext(pushUser, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2PushEventCreatePushContext(pushUser, &pushContext) == unavailable);
+    Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, nullptr) == static_cast<int>(0x80553402));
+    errno = 71;
+    Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, reinterpret_cast<const NpWebApi2PushContextId*>(0x10)) == static_cast<int>(0x80553402));
+    Require(errno == 71);
     Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, &pushContext) == 0);
     Require(sceNpWebApi2PushEventUnregisterPushContextCallback(pushUser, contextCallback) == 0);
     Require(sceNpWebApi2PushEventUnregisterCallback(pushUser, callback) == 0);
@@ -127,5 +221,161 @@ int main() {
     Require(sceNpWebApi2PushEventDeleteHandle(pushLibrary, pushHandle) == 0);
     Require(sceNpWebApi2DeleteUserContext(otherUser) == 0 && sceNpWebApi2DeleteUserContext(pushUser) == 0);
     Require(sceNpWebApi2Terminate(pushLibrary) == 0);
+
+    constexpr int invalidLibContextId = static_cast<int>(0x80553403);
+    constexpr int userContextNotFound = static_cast<int>(0x80553405);
+    constexpr int userContextExists = static_cast<int>(0x8055340A);
+    constexpr int notMultipartRequest = static_cast<int>(0x80553414);
+    const int unknownUser = 424242;
+    NpWebApi2MemoryPoolStats untouched{};
+    std::memset(&untouched, 0xb7, sizeof(untouched));
+    Require(sceNpWebApi2GetMemoryPoolStats(-1, &untouched) == invalidContext);
+    const auto* untouchedBytes = reinterpret_cast<const unsigned char*>(&untouched);
+    for (std::size_t index = 0; index < sizeof(untouched); ++index) Require(untouchedBytes[index] == 0xb7);
+    Require(sceNpWebApi2DeleteUserContext(-1) == invalidContext && sceNpWebApi2DeleteUserContext(unknownUser) == invalidContext);
+    Require(sceNpWebApi2PushEventDeleteFilter(-1, -1) == 0 && sceNpWebApi2PushEventDeleteFilter(unknownUser, unknownUser + 7) == 0);
+    Require(sceNpWebApi2PushEventUnregisterCallback(-1, -1) == 0 && sceNpWebApi2PushEventUnregisterCallback(unknownUser, unknownUser + 7) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(-1, -1) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(otherUser, callback) == 0 && sceNpWebApi2PushEventUnregisterPushContextCallback(pushUser, contextCallback) == 0);
+    NpWebApi2PushContextId unknownPush{};
+    std::memset(&unknownPush, 0xb7, sizeof(unknownPush));
+    Require(sceNpWebApi2PushEventDeletePushContext(-1, &unknownPush) == 0 && sceNpWebApi2PushEventDeletePushContext(unknownUser, &unknownPush) == 0);
+    int probeUserArg = 0;
+    void* const probeCallback = &probeUserArg;
+    const int unknownCallback = sceNpWebApi2PushEventRegisterCallback(unknownUser, -1, probeCallback, &probeUserArg);
+    Require(unknownCallback > 0 && unknownCallback != callback && unknownCallback != contextCallback);
+    const int unknownContextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(-1, -424243, probeCallback, &probeUserArg);
+    Require(unknownContextCallback > 0 && unknownContextCallback != unknownCallback && unknownContextCallback != callback && unknownContextCallback != contextCallback);
+
+    const int probeLibrary = sceNpWebApi2Initialize(1, 0x4000);
+    Require(probeLibrary > 0 && probeLibrary < 0x8000);
+    Require(sceNpWebApi2CreateUserContext(0, 1) == invalidLibContextId);
+    Require(sceNpWebApi2CreateUserContext(-1, -1) == invalidLibContextId);
+    Require(sceNpWebApi2CreateUserContext(0x8000, 1) == invalidLibContextId);
+    Require(sceNpWebApi2CreateUserContext(probeLibrary, -1) == invalidArgument);
+    Require(sceNpWebApi2CreateUserContext(0x7fff, 1) == invalidContext);
+    const int probeUser = sceNpWebApi2CreateUserContext(probeLibrary, 1);
+    Require(probeUser > 0 && probeUser != unknownUser);
+    Require(sceNpWebApi2CreateUserContext(probeLibrary, 1) == userContextExists);
+    const int tempUser = sceNpWebApi2CreateUserContext(probeLibrary, 2);
+    Require(tempUser > 0 && tempUser != probeUser);
+    Require(sceNpWebApi2DeleteUserContext(tempUser) == 0);
+    Require(sceNpWebApi2DeleteUserContext(tempUser) == userContextNotFound);
+    const int recreatedUser = sceNpWebApi2CreateUserContext(probeLibrary, 2);
+    Require(recreatedUser > 0 && sceNpWebApi2DeleteUserContext(recreatedUser) == 0);
+
+    const int missingUserInLive = (probeLibrary << 16) | 0x7fff;
+    Require(sceNpWebApi2DeleteUserContext(missingUserInLive) == userContextNotFound);
+    std::int64_t sentinelReq = 0x5a5a5a5a5a5a5a5a;
+    Require(sceNpWebApi2CreateRequest(unknownUser, nullptr, "/v1/sessions", "GET", nullptr, &sentinelReq) == invalidArgument);
+    Require(sceNpWebApi2CreateRequest(unknownUser, "sessionManager", "/v1/sessions", "GET", nullptr, &sentinelReq) == invalidContext);
+    Require(sceNpWebApi2CreateRequest(missingUserInLive, "sessionManager", "/v1/sessions", "GET", nullptr, &sentinelReq) == userContextNotFound);
+    Require(sceNpWebApi2CreateMultipartRequest(unknownUser, nullptr, "/v1/files", "POST", &sentinelReq) == invalidArgument);
+    Require(sceNpWebApi2CreateMultipartRequest(unknownUser, "fileManager", "/v1/files", "POST", &sentinelReq) == invalidContext);
+    Require(sceNpWebApi2CreateMultipartRequest(missingUserInLive, "fileManager", "/v1/files", "POST", &sentinelReq) == userContextNotFound);
+    Require(sentinelReq == 0x5a5a5a5a5a5a5a5a);
+
+    std::int64_t realRequest = 0;
+    Require(sceNpWebApi2CreateRequest(probeUser, "sessionManager", "/v1/sessions", "GET", nullptr, &realRequest) == 0 && realRequest > 0);
+    const std::int64_t farRequest = static_cast<std::int64_t>(0x7fffffffffffffLL);
+    const std::int64_t missingUserRequest = (static_cast<std::int64_t>(static_cast<std::uint32_t>(missingUserInLive)) << 32) | 1;
+    const std::int64_t missingSameUserRequest = realRequest + 100000;
+    for (const std::int64_t badLibReq : {static_cast<std::int64_t>(-1), farRequest, sent}) {
+        Require(sceNpWebApi2AbortRequest(badLibReq) == invalidContext);
+        Require(sceNpWebApi2AddHttpRequestHeader(badLibReq, "Accept", "*/*") == invalidContext);
+        Require(sceNpWebApi2AddWebTraceTag(badLibReq, "trace-tag-2") == invalidContext);
+        Require(sceNpWebApi2SetRequestTimeout(badLibReq, 5) == invalidContext);
+        Require(sceNpWebApi2DeleteRequest(badLibReq) == invalidContext);
+        Require(sceNpWebApi2AddMultipartPart(badLibReq, partParameter, &multipartIndex) == invalidContext);
+        Require(sceNpWebApi2SetMultipartContentType(badLibReq, "multipart/form-data", "boundary") == invalidContext);
+    }
+    Require(sceNpWebApi2AbortRequest(missingUserRequest) == userContextNotFound);
+    Require(sceNpWebApi2AddHttpRequestHeader(missingUserRequest, "Accept", "*/*") == userContextNotFound);
+    Require(sceNpWebApi2AddWebTraceTag(missingUserRequest, "trace-tag-2") == userContextNotFound);
+    Require(sceNpWebApi2SetRequestTimeout(missingUserRequest, 5) == userContextNotFound);
+    Require(sceNpWebApi2DeleteRequest(missingUserRequest) == userContextNotFound);
+    Require(sceNpWebApi2AddMultipartPart(missingUserRequest, partParameter, &multipartIndex) == userContextNotFound);
+    Require(sceNpWebApi2SetMultipartContentType(missingUserRequest, "multipart/form-data", "boundary") == userContextNotFound);
+    Require(sceNpWebApi2AbortRequest(missingSameUserRequest) == requestNotFound);
+    Require(sceNpWebApi2AddHttpRequestHeader(missingSameUserRequest, "Accept", "*/*") == requestNotFound);
+    Require(sceNpWebApi2AddWebTraceTag(missingSameUserRequest, "trace-tag-2") == requestNotFound);
+    Require(sceNpWebApi2SetRequestTimeout(missingSameUserRequest, 5) == requestNotFound);
+    Require(sceNpWebApi2DeleteRequest(missingSameUserRequest) == requestNotFound);
+
+    Require(sceNpWebApi2AddHttpRequestHeader(-1, nullptr, "*/*") == invalidArgument);
+    Require(sceNpWebApi2AddHttpRequestHeader(-1, "Accept", nullptr) == invalidArgument);
+    Require(sceNpWebApi2AddWebTraceTag(-1, nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, reinterpret_cast<const char*>(0x10), "*/*") == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "Accept", reinterpret_cast<const char*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "Accept", "application/json") == 0);
+    const std::string maxHeader(4095, 'a');
+    const std::string tooLongHeader(4096, 'a');
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, maxHeader.c_str(), "v") == 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "k", maxHeader.c_str()) == 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, tooLongHeader.c_str(), "v") == invalidArgument);
+    Require(sceNpWebApi2AddHttpRequestHeader(realRequest, "k", tooLongHeader.c_str()) == invalidArgument);
+    std::int32_t nonMultipartIndex = 0x5a5a5a5a;
+    Require(sceNpWebApi2AddMultipartPart(realRequest, partParameter, &nonMultipartIndex) == notMultipartRequest);
+    Require(nonMultipartIndex == 0x5a5a5a5a);
+    Require(sceNpWebApi2SetMultipartContentType(realRequest, "multipart/form-data", "boundary") == notMultipartRequest);
+
+    const int doomedUser = sceNpWebApi2CreateUserContext(probeLibrary, 3);
+    std::int64_t doomedRequest = 0;
+    Require(doomedUser > 0 && sceNpWebApi2CreateRequest(doomedUser, "sessionManager", "/v1/sessions", "GET", nullptr, &doomedRequest) == 0);
+    Require(sceNpWebApi2DeleteUserContext(doomedUser) == 0);
+    Require(sceNpWebApi2SetRequestTimeout(doomedRequest, 100) == userContextNotFound);
+    Require(sceNpWebApi2AbortRequest(doomedRequest) == userContextNotFound);
+    Require(sceNpWebApi2AddHttpRequestHeader(doomedRequest, "Accept", "*/*") == userContextNotFound);
+    Require(sceNpWebApi2AddWebTraceTag(doomedRequest, "trace-tag-2") == userContextNotFound);
+    Require(sceNpWebApi2DeleteRequest(doomedRequest) == userContextNotFound);
+
+    char headerValue[8];
+    std::memset(headerValue, 0xb7, sizeof(headerValue));
+    std::size_t headerLength = 12345;
+    for (const std::int64_t probeId : {static_cast<std::int64_t>(-1), farRequest, realRequest}) {
+        Require(sceNpWebApi2GetHttpResponseHeaderValue(probeId, "Accept", headerValue, sizeof(headerValue)) == unavailable);
+        const auto* valueBytes = reinterpret_cast<const unsigned char*>(headerValue);
+        for (std::size_t index = 0; index < sizeof(headerValue); ++index) Require(valueBytes[index] == 0xb7);
+        Require(sceNpWebApi2GetHttpResponseHeaderValueLength(probeId, "Accept", &headerLength) == unavailable && headerLength == 12345);
+    }
+    char readBuffer[12];
+    std::memset(readBuffer, 0xb7, sizeof(readBuffer));
+    for (const std::int64_t probeId : {static_cast<std::int64_t>(-1), farRequest, realRequest}) {
+        Require(sceNpWebApi2ReadData(probeId, readBuffer, sizeof(readBuffer)) == unavailable);
+        const auto* dataBytes = reinterpret_cast<const unsigned char*>(readBuffer);
+        for (std::size_t index = 0; index < sizeof(readBuffer); ++index) Require(dataBytes[index] == 0xb7);
+    }
+    Require(sceNpWebApi2DeleteRequest(realRequest) == 0);
+    Require(sceNpWebApi2SetRequestTimeout(realRequest, 100) == requestNotFound);
+    Require(sceNpWebApi2Terminate(probeLibrary) == 0);
+    Require(sceNpWebApi2DeleteUserContext(probeUser) == invalidContext);
+    Require(sceNpWebApi2SetRequestTimeout(realRequest, 100) == invalidContext);
+    errno = 71;
+    Require(sceNpWebApi2IntInitialize(reinterpret_cast<const NpWebApi2IntInitializeArgs*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    Require(sceNpWebApi2IntInitialize2(reinterpret_cast<const NpWebApi2IntInitialize2Args*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    {
+        std::vector<int> liveLibraries;
+        liveLibraries.reserve(0x7FFF);
+        for (int i = 0; i < 0x7FFF; ++i) {
+            const int id = sceNpWebApi2Initialize(0, 0x10000);
+            Require(id >= 1 && id <= 0x7FFF);
+            liveLibraries.push_back(id);
+        }
+        Require(sceNpWebApi2Initialize(0, 0x10000) == invalidContext);
+        for (const int id : liveLibraries) {
+            Require(sceNpWebApi2Terminate(id) == 0);
+        }
+        const int reused = sceNpWebApi2Initialize(0, 0x10000);
+        Require(reused >= 1 && reused <= 0x7FFF);
+        Require(sceNpWebApi2Terminate(reused) == 0);
+    }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

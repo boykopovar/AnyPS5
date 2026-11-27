@@ -20,6 +20,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace AgcDriver {
 
@@ -100,6 +103,55 @@ void ExplicitWrites() {
     std::remove(configured);
 }
 
+void StopUnused() {
+    const char* configured = RequiredPathVariable();
+    AgcDriver::CaptureTrace::Stop();
+    Check(!FileExists(configured), "stopping an unused trace must not create its file or worker");
+}
+
+void StopDrains() {
+    const char* configured = RequiredPathVariable();
+    AgcDriver::CaptureTrace::Log("stop-record before");
+    std::vector<std::thread> callers;
+    for (unsigned i = 0; i < 4; ++i) callers.emplace_back([] { AgcDriver::CaptureTrace::Stop(); });
+    for (auto& caller : callers) caller.join();
+    const auto contents = ReadFile(configured);
+    Check(contents.find("stop-record before\n") != std::string::npos, "stopping lost a queued record");
+    Check(contents.find("capture-trace-summary dropped=0\n") != std::string::npos, "stopping did not write its summary");
+    AgcDriver::CaptureTrace::Log("stop-record after");
+    AgcDriver::CaptureTrace::Stop();
+    Check(ReadFile(configured) == contents, "a repeated stop or a late record changed the completed trace");
+}
+
+#ifdef _WIN32
+void DllShutdown(const char* modulePath, bool processExit = false) {
+    const char* configured = RequiredPathVariable();
+    HMODULE module = LoadLibraryA(modulePath);
+    Check(module != nullptr, "the capture trace DLL could not be loaded");
+    const auto record = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceRecord"));
+    const auto stop = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceStop"));
+    Check(record != nullptr && stop != nullptr, "the capture trace DLL is missing its test entry points");
+    record();
+    stop();
+    stop();
+    if (processExit) {
+        const auto prepare = reinterpret_cast<bool (*)()>(GetProcAddress(module, "CaptureTracePrepareProcessExit"));
+        Check(prepare != nullptr && prepare(), "the capture trace DLL could not prepare its process-exit receipt");
+        ExitProcess(0);
+    }
+    Check(FreeLibrary(module) != 0, "the stopped capture trace DLL could not be unloaded");
+    std::istringstream lines(ReadFile(configured));
+    std::string line;
+    for (unsigned i = 0; i < 32; ++i) {
+        Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" unload-record item=" + std::to_string(i)),
+              "DLL shutdown lost or reordered a queued record");
+    }
+    Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" capture-trace-summary dropped=0"),
+          "DLL shutdown lost its summary");
+    Check(!std::getline(lines, line), "DLL shutdown wrote extra records or a second summary");
+}
+#endif
+
 void DefaultWrites() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
     Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
@@ -153,6 +205,64 @@ void FormatOverflow() {
           "capture tracing did not recover after an oversized record");
     Check(ReadFile(configured).find("capture-trace-format payload=") == std::string::npos,
           "the trace contains a truncated oversized record");
+    std::remove(configured);
+}
+
+void PrefixMatching() {
+    for (const char* empty : {static_cast<const char*>(nullptr), "", ",,,"}) {
+        const AgcDriver::CaptureTraceFilter all(empty);
+        Check(!all.Active() && all.Matches("anything") && all.MayMatchFormat("anything %d"),
+              "an absent or empty prefix list must retain all records");
+    }
+    char configured[] = ",upload image=,image-write ,flip ,";
+    const AgcDriver::CaptureTraceFilter selected(configured);
+    configured[1] = 'x';
+    Check(selected.Active(), "a non-empty prefix list must activate filtering");
+    for (const auto* record : {"upload image=2a", "image-write image=2a", "flip frame=3"}) {
+        Check(selected.Matches(record), "a selected literal prefix was lost or not copied");
+    }
+    for (const auto* record : {"draw frame=3", "xupload image=2a", "upload image", "flipbook frame=3", ""}) {
+        Check(!selected.Matches(record), "filtering must match prefixes including their spaces and separators");
+    }
+    Check(!selected.MayMatchFormat("draw shader=%llx"), "an unrelated literal format must be rejected before formatting");
+    Check(selected.MayMatchFormat("upload image=%llx"), "a selected format must remain eligible");
+    Check(selected.MayMatchFormat("%s"), "a dynamically formatted prefix cannot be rejected before formatting");
+    Check(selected.MayMatchFormat("up%s"), "a partially literal prefix cannot be rejected before formatting");
+    const AgcDriver::CaptureTraceFilter escaped("load %");
+    Check(escaped.MayMatchFormat("load %% %d") && escaped.Matches("load % 7"),
+          "escaped percent signs must be checked after formatting");
+    const AgcDriver::CaptureTraceFilter spaces(" upload");
+    Check(spaces.Matches(" upload image=1") && !spaces.Matches("upload image=1"),
+          "spaces in configured prefixes must remain significant");
+}
+
+void PrefixWrites() {
+    const char* configured = RequiredPathVariable();
+    const std::string oversized(4096, 'x');
+    AgcDriver::CaptureTrace::Log("draw payload=%s", oversized.c_str());
+    AgcDriver::CaptureTrace::Log("upload image=%x", 42);
+    AgcDriver::CaptureTrace::Log("image-write image=%x", 42);
+    AgcDriver::CaptureTrace::Log("%s", "draw dynamically-formatted=1");
+    AgcDriver::CaptureTrace::Log("%s", "upload image=dynamic");
+    AgcDriver::CaptureTrace::Log("upload image=%s", oversized.c_str());
+    Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
+          "selected oversized records must still report loss, while rejected literal formats must not");
+    AgcDriver::CaptureTrace::Log("upload image=recovered");
+    Check(WaitForRecord(configured, "upload image=recovered\n"), "filtered tracing did not recover after overflow");
+    const auto contents = ReadFile(configured);
+    for (const auto* record : {"capture-trace-filter active=1\n", "upload image=2a\n", "image-write image=2a\n", "upload image=dynamic\n"}) {
+        Check(contents.find(record) != std::string::npos, "a selected record or filtered-trace marker is missing");
+    }
+    Check(contents.find("draw ") == std::string::npos, "an excluded formatted record reached the trace");
+    std::istringstream records(contents);
+    std::string record;
+    unsigned long long expected = 0;
+    while (std::getline(records, record)) {
+        std::istringstream fields(record);
+        unsigned long long sequence = 0;
+        fields >> sequence;
+        Check(sequence == ++expected, "excluded records must not create sequence holes");
+    }
     std::remove(configured);
 }
 
@@ -388,16 +498,24 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 2) throw std::runtime_error("expected exactly one test mode argument");
+        if (argc < 2) throw std::runtime_error("expected a test mode argument");
         const std::string mode = argv[1];
         if (mode == "path-default") PathDefault();
         else if (mode == "path-empty") PathEmpty();
         else if (mode == "path-explicit") PathExplicit();
         else if (mode == "explicit-writes") ExplicitWrites();
+        else if (mode == "stop-unused") StopUnused();
+        else if (mode == "stop-drains") StopDrains();
+#ifdef _WIN32
+        else if (mode == "dll-shutdown" && argc == 3) DllShutdown(argv[2]);
+        else if (mode == "dll-process-exit" && argc == 3) DllShutdown(argv[2], true);
+#endif
         else if (mode == "default-writes") DefaultWrites();
         else if (mode == "open-failure") OpenFailure();
         else if (mode == "best-effort-overflow") BestEffortOverflow();
         else if (mode == "format-overflow") FormatOverflow();
+        else if (mode == "prefix-matching") PrefixMatching();
+        else if (mode == "prefix-writes") PrefixWrites();
         else if (mode == "queue-drop") AgcDriver::CaptureTraceTestAccess::QueueDrop(false);
         else if (mode == "queue-drop-shutdown") AgcDriver::CaptureTraceTestAccess::QueueDrop(true);
         else if (mode == "queue-drop-cumulative") AgcDriver::CaptureTraceTestAccess::QueueDrop(false, true);

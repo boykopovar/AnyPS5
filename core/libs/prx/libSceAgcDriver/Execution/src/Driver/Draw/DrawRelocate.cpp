@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RelocationRuns.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -136,6 +137,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
 }
 
 void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied) {
+    variant.userWordsWalked = use.asBase | use.asValue;
     std::uint64_t relocatable = eligible && drawRelocationEnabled() ? use.asBase & ~use.asValue : 0;
     if (hiddenWords != 0) relocatable &= hiddenWords >= 64 ? 0 : ~((std::uint64_t {1} << hiddenWords) - 1);
     std::vector<std::pair<std::uint64_t, std::int32_t>> reads;
@@ -157,11 +159,6 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
             if (reads[i].second >= 0 && ((reads[i].first & 3u) != 0 || !covered(reads[i].first))) drop(reads[i].second);
         }
     }
-    const auto origin = [&](std::uint64_t address) -> std::int8_t {
-        const auto found = std::lower_bound(reads.begin(), reads.end(), std::make_pair(address, std::numeric_limits<std::int32_t>::min()));
-        if (found == reads.end() || found->first != address || found->second < 0) return -1;
-        return (relocatable >> found->second & 1u) != 0 ? static_cast<std::int8_t>(found->second) : std::int8_t {-1};
-    };
     variant.relocatableWords = relocatable;
     for (std::size_t index = 0; index < regions.size(); ++index) {
         const auto& region = regions[index];
@@ -174,17 +171,11 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
             variant.runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
             continue;
         }
-        std::size_t start = 0;
-        auto current = count != 0 ? origin(region.guestAddress) : std::int8_t {-1};
-        for (std::size_t word = 1; word <= count; ++word) {
-            const auto next = word < count ? origin(region.guestAddress + word * sizeof(std::uint32_t)) : std::int8_t {-2};
-            if (next == current) continue;
-            AppendSharedWords(variant.shared, variant.runs.size(), offset + start, region.bytes.subspan(start * sizeof(std::uint32_t), (word - start) * sizeof(std::uint32_t)), supplied);
-            variant.runs.emplace_back(region.guestAddress + start * sizeof(std::uint32_t), region.guestAddress + word * sizeof(std::uint32_t));
-            variant.runBases.push_back(current);
-            start = word;
-            current = next;
-        }
+        ForEachRelocationRun(region.guestAddress, count, reads, relocatable, [&](std::size_t first, std::size_t last, std::int8_t origin) {
+            AppendSharedWords(variant.shared, variant.runs.size(), offset + first, region.bytes.subspan(first * sizeof(std::uint32_t), (last - first) * sizeof(std::uint32_t)), supplied);
+            variant.runs.emplace_back(region.guestAddress + first * sizeof(std::uint32_t), region.guestAddress + last * sizeof(std::uint32_t));
+            variant.runBases.push_back(origin);
+        });
     }
 }
 
@@ -213,8 +204,11 @@ void Driver::learnPendingRelocation() {
     drawRelocationPending = {};
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);
-    if (inserted == drawCache.end() || inserted->second->decode == nullptr) return;
-    const auto& entry = *inserted->second;
+    std::shared_ptr<const DrawEntry> learned;
+    if (inserted != drawCache.end() && inserted->second->decode != nullptr) learned = inserted->second;
+    else if (const auto donor = pending.donor.lock(); donor != nullptr && donor->decode != nullptr) learned = donor;
+    if (learned == nullptr) return;
+    const auto& entry = *learned;
     const auto& programs = entry.decode->programs;
     if (entry.stages.size() != programs.size()) return;
     const auto known = drawRelocations.find(pending.identity);
@@ -244,7 +238,7 @@ void Driver::learnPendingRelocation() {
                 word.reads.emplace_back(0, length);
                 word.high = program.userData[index + 1];
             }
-            const auto base = AlignedWord(program.userData[index]);
+            const auto base = (static_cast<std::uint64_t>(word.high) << 32) + AlignedWord(program.userData[index]);
             for (std::size_t run = 0; run < variant.runs.size() && run < variant.runBases.size(); ++run) {
                 if (variant.runBases[run] != static_cast<std::int8_t>(index)) continue;
                 word.reads.emplace_back(static_cast<std::int64_t>(variant.runs[run].first - base), static_cast<std::uint32_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t)));
@@ -292,6 +286,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
     ++counters.donors;
     auto relocated = std::make_shared<DrawEntry>();
     relocated->decode = donor->decode;
+    relocated->donor = donor->donor != nullptr ? donor->donor : donor;
     relocated->stages.resize(donor->stages.size());
     for (std::size_t i = 0; i < donor->stages.size(); ++i) {
         const bool moved = std::any_of(moves.begin(), moves.end(), [&](const Move& move) { return move.program == i; });
@@ -310,10 +305,12 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
             copy->runs = variant->runs;
             copy->runBases = variant->runBases;
             copy->relocatableWords = variant->relocatableWords;
+            copy->userWordsWalked = variant->userWordsWalked;
             copy->valueWords = variant->valueWords;
             copy->valueSlots = variant->valueSlots;
             copy->calleeWords = variant->calleeWords;
             copy->calleeReads = variant->calleeReads;
+            copy->donor = variant->donor != nullptr ? variant->donor : variant;
             copy->words = variant->words;
             copy->forgetSerial = variant->forgetSerial;
             copy->compiled = variant->compiled;
@@ -352,19 +349,21 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
 void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     if (variant.shaderDataPatches.empty() && variant.descriptorPatches.empty()) return;
     auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
-    for (const auto& [slot, value] : variant.shaderDataPatches) {
-        const auto at = static_cast<std::size_t>(slot) * sizeof(std::uint32_t);
-        if (at + sizeof(std::uint32_t) <= rebased->pushConstants.size()) std::memcpy(rebased->pushConstants.data() + at, &value, sizeof(value));
-        for (auto& binding : rebased->bindings) {
-            if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData && slot < binding.guestDescriptor.size()) binding.guestDescriptor[slot] = value;
-        }
-    }
+    for (const auto& [slot, value] : variant.shaderDataPatches) patchForwardedWord(*rebased, slot, value);
     for (const auto& [binding, word, value] : variant.descriptorPatches) {
         if (binding < rebased->bindings.size() && word < rebased->bindings[binding].guestDescriptor.size()) rebased->bindings[binding].guestDescriptor[word] = value;
     }
     variant.compiled = std::move(rebased);
     variant.shaderDataPatches.clear();
     variant.descriptorPatches.clear();
+}
+
+void Driver::patchForwardedWord(ShaderRecompiler::RecompileResult& result, std::uint32_t slot, std::uint32_t value) {
+    const auto at = static_cast<std::size_t>(slot) * sizeof(std::uint32_t);
+    if (at + sizeof(std::uint32_t) <= result.pushConstants.size()) std::memcpy(result.pushConstants.data() + at, &value, sizeof(value));
+    for (auto& binding : result.bindings) {
+        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData && slot < binding.guestDescriptor.size()) binding.guestDescriptor[slot] = value;
+    }
 }
 
 void Driver::reportDrawRelocation() {

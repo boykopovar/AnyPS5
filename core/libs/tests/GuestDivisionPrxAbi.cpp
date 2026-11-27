@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <cstdint>
@@ -89,7 +90,21 @@ static constexpr Answer small[] = {
         {-2147483648LL, 1LL, -2147483648LL, 0LL},
         {-2147483648LL, 2LL, -1073741824LL, 0LL},
         {-2147483648LL, -3LL, 715827882LL, -2LL},
-        {-2147483648LL, 17LL, -126322567LL, -9LL}
+        {-2147483648LL, 17LL, -126322567LL, -9LL},
+        {1LL, -1LL, -1LL, 0LL},
+        {-7LL, -1LL, 7LL, 0LL},
+        {2147483647LL, -1LL, -2147483647LL, 0LL},
+        {-2147483648LL, -1LL, -2147483648LL, 0LL},
+        {42LL, 42LL, 1LL, 0LL},
+        {-42LL, -42LL, 1LL, 0LL},
+        {42LL, -42LL, -1LL, 0LL},
+        {-42LL, 42LL, -1LL, 0LL},
+        {5LL, 10LL, 0LL, 5LL},
+        {-5LL, 10LL, 0LL, -5LL},
+        {5LL, -10LL, 0LL, 5LL},
+        {-5LL, -10LL, 0LL, -5LL},
+        {1024LL, 16LL, 64LL, 0LL},
+        {-1024LL, 16LL, -64LL, 0LL}
 };
 static constexpr Answer wide[] = {
         {0LL, 1LL, 0LL, 0LL},
@@ -131,7 +146,27 @@ static constexpr Answer wide[] = {
         {9223372036854775807LL, 4294967297LL, 2147483647LL, 2147483648LL},
         {-9223372036854775807LL, 2LL, -4611686018427387903LL, -1LL},
         {-9223372036854775807LL, -7LL, 1317624576693539401LL, 0LL},
-        {-9223372036854775807LL, 4294967297LL, -2147483647LL, -2147483648LL}
+        {-9223372036854775807LL, 4294967297LL, -2147483647LL, -2147483648LL},
+        {1LL, -1LL, -1LL, 0LL},
+        {-7LL, -1LL, 7LL, 0LL},
+        {1099511627809LL, -1LL, -1099511627809LL, 0LL},
+        {9223372036854775807LL, -1LL, -9223372036854775807LL, 0LL},
+        {-9223372036854775807LL - 1LL, -1LL, -9223372036854775807LL - 1LL, 0LL},
+        {42LL, 42LL, 1LL, 0LL},
+        {-42LL, -42LL, 1LL, 0LL},
+        {42LL, -42LL, -1LL, 0LL},
+        {-42LL, 42LL, -1LL, 0LL},
+        {5LL, 10LL, 0LL, 5LL},
+        {-5LL, 10LL, 0LL, -5LL},
+        {5LL, -10LL, 0LL, 5LL},
+        {-5LL, -10LL, 0LL, -5LL},
+        {1024LL, 16LL, 64LL, 0LL},
+        {-1024LL, 16LL, -64LL, 0LL},
+        {9223372036854775807LL, 1LL, 9223372036854775807LL, 0LL},
+        {9223372036854775807LL, 9223372036854775807LL, 1LL, 0LL},
+        {-9223372036854775807LL, 1LL, -9223372036854775807LL, 0LL},
+        {-9223372036854775807LL, -9223372036854775807LL, 1LL, 0LL},
+        {-9223372036854775807LL, 9223372036854775807LL, -1LL, 0LL}
 };
 
 template<typename TFunction, std::size_t TSize>
@@ -149,7 +184,7 @@ static void Check(TFunction function, const Answer (&answers)[TSize]) {
 int main(int argc, char** argv) {
     Require(argc == 3);
     for (int index = 1; index <= 2; ++index) {
-        Module module(std::filesystem::absolute(argv[index]));
+        Module module(std::filesystem::absolute(ArgumentPath(argv, index)));
         const auto name = [&](const char* symbol) { return index == 1 ? std::string(symbol) + "_nid_postfix" : Nid::ComputeNid(symbol, "libc"); };
         Check(module.Resolve<decltype(&div_nid_postfix)>(name("div")), small);
         Check(module.Resolve<decltype(&ldiv_nid_postfix)>(name("ldiv")), wide);

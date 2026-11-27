@@ -70,6 +70,42 @@ int APS5_VABI WKBundleFrameGetJavaScriptWrapperForFileForWorld() {
     return 0;
 }
 
+int APS5_VABI WKBundleFrameHandlesPageScaleGesture() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyDownloadAttribute() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyFormElement() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionCopyHitTestResult() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetEventModifiers() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetEventMouseButton() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetNavigationType() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetShouldOpenExternalURLs() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNavigationActionGetShouldTryAppLinks() {
+    return 0;
+}
+
 int APS5_VABI WKBundleNodeHandleCopyHTMLFrameElementContentFrame() {
     return 0;
 }
@@ -90,14 +126,6 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() {
     return 0;
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled() {
-    return 0;
-}
-
 int APS5_VABI WKBundlePageCopyContextMenuAtPointInWindow() {
     return 0;
 }
@@ -110,20 +138,16 @@ int APS5_VABI WKBundlePageGetBackForwardList() {
     return 0;
 }
 
+int APS5_VABI WKBundlePageIsUsingDarkAppearance() {
+    return 0;
+}
+
 int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes() {
     return 0;
 }
 
 int APS5_VABI WKContextDownloadURLRequest() {
     return 0;
-}
-
-int APS5_VABI WKContextGetIconDatabase() {
-    return 0;
-}
-
-int APS5_VABI WKContextGetMaximumNumberOfProcesses() {
-    return static_cast<int>(0xffffffffu);
 }
 
 int APS5_VABI WKContextMenuCopySubmenuItems() {
@@ -178,19 +202,19 @@ int APS5_VABI WKFrameCreateFrameInfo() {
     return 0;
 }
 
-int APS5_VABI WKFrameIsFrameSet() {
+int APS5_VABI WKKeyValueStorageManagerDeleteAllEntries() {
     return 0;
 }
 
-int APS5_VABI WKIconDatabaseCopyIconDataForPageURL() {
-    return 0;
-}
-
-int APS5_VABI WKIconDatabaseCopyIconURLForPageURL() {
+int APS5_VABI WKKeyValueStorageManagerDeleteEntriesForOrigin() {
     return 0;
 }
 
 int APS5_VABI WKKeyValueStorageManagerGetCreationTimeKey() {
+    return 0;
+}
+
+int APS5_VABI WKKeyValueStorageManagerGetKeyValueStorageOrigins() {
     return 0;
 }
 
@@ -199,6 +223,10 @@ int APS5_VABI WKKeyValueStorageManagerGetModificationTimeKey() {
 }
 
 int APS5_VABI WKKeyValueStorageManagerGetOriginKey() {
+    return 0;
+}
+
+int APS5_VABI WKKeyValueStorageManagerGetStorageDetailsByOrigin() {
     return 0;
 }
 
@@ -218,79 +246,9 @@ int APS5_VABI WKPageIsMockRealtimeMediaSourceCenterEnabled() {
     return 0;
 }
 
-int APS5_VABI WKPlugInInformationReplacementObscuredKey() {
-    return 0;
-}
 
-int APS5_VABI WKPluginInformationBundleIdentifierKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationBundleShortVersionKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationBundleVersionKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationDefaultLoadPolicyKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationDisplayNameKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationFrameURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationHasSandboxProfileKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationMIMETypeKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPageURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPathKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPluginURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationPluginspageAttributeURLKey() {
-    return 0;
-}
-
-int APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetApplicationChromeModeEnabled() {
-    return 0;
-}
 
 int APS5_VABI WKPreferencesGetQTKitEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetTypeID() {
-    return static_cast<int>(0x00000058u);
-}
-
-int APS5_VABI WKUserContentExtensionStoreCreate() {
     return 0;
 }
 
@@ -382,11 +340,71 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17objectContentTypeERKN3WTF3URL
     return 0;
 }
 
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26didReplaceMultipartContentEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient27willReplaceMultipartContentEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient29dispatchDidFinishDocumentLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient29dispatchDidPopStateWithinPageEv() {
+    return 0;
+}
+
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient29hasFrameSpecificStorageAccessEv() {
     return 0;
 }
 
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient30didRestoreFromBackForwardCacheEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient30dispatchDidPushStateWithinPageEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidCancelClientRedirectEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidDispatchOnloadEventsEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidStartProvisionalLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31prepareForDataSourceReplacementEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPageEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient33dispatchDidReplaceStateWithinPageEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv() {
+    return 0;
+}
+
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv() {
     return 0;
 }
 
@@ -459,6 +477,62 @@ int APS5_VABI _ZNK7WebCore20LowPowerModeNotifier21isLowPowerModeEnabledEv() {
 }
 
 int APS5_VABI _ZNK7WebCore20ScrollingCoordinator25scrollableContainerNodeIDERKNS_12RenderObjectE() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient12dispatchShowEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient13didFinishLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient16restoreViewStateEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17cancelPolicyCheckEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17dispatchWillCloseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient17setCopiesOnScrollEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient18frameLoadCompletedEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent2Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent3Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19updateGlobalHistoryEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21dispatchDidFinishLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient21forceLayoutForNonHTMLEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient22provisionalLoadStartedEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25didDisplayInsecureContentEv() {
     return 0;
 }
 

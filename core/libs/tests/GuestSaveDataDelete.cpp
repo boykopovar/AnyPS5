@@ -5,6 +5,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,10 +16,20 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
 constexpr int SaveDataErrorParameter = -2137063424;
+constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorBusy = -2137063421;
 
 int failures = 0;
@@ -35,6 +46,40 @@ int Delete(const char* data, std::size_t size) {
     SaveDataDelete del{};
     del.dir_name = &name;
     return sceSaveDataDelete(&del);
+}
+
+int DeleteUnterminatedBeforeGuardPage() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    DWORD previous = 0;
+    if (pages == nullptr || VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) == 0) {
+        Check(false, "the guard page is mapped");
+        return 0;
+    }
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    const std::size_t page = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 0;
+    void* mapping = page != 0 ? mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) : MAP_FAILED;
+    auto* pages = static_cast<char*>(mapping);
+    if (mapping == MAP_FAILED || mprotect(pages + page, page, PROT_NONE) != 0) {
+        Check(false, "the guard page is mapped");
+        return 0;
+    }
+#endif
+    auto* name = reinterpret_cast<SceSaveDataDirName*>(pages + page - sizeof(SceSaveDataDirName));
+    std::memset(name->data, 'a', sizeof(name->data));
+    SaveDataDelete del{};
+    del.dir_name = name;
+    const int result = sceSaveDataDelete(&del);
+#ifdef _WIN32
+    Check(VirtualFree(pages, 0, MEM_RELEASE) != 0, "the guard page is released");
+#else
+    Check(munmap(pages, page * 2) == 0, "the guard page is released");
+#endif
+    return result;
 }
 
 void Write(const std::filesystem::path& path) {
@@ -74,6 +119,7 @@ int main() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(work);
 
+    Check(DeleteUnterminatedBeforeGuardPage() == SaveDataErrorParameter, "an unterminated name before a guard page is rejected");
     for (const char* invalid : {"../victim", "", ".", "..", "../..", "kept/..", "a\\b", "c:d"}) {
         Check(Delete(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter, std::string("\"") + invalid + "\" is rejected");
         Check(std::filesystem::exists(kept) && std::filesystem::exists(victim), std::string("\"") + invalid + "\" deletes nothing");
@@ -84,10 +130,15 @@ int main() {
     Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null del returns PARAMETER");
     SaveDataDelete nullDirDel{};
     Check(sceSaveDataDelete(&nullDirDel) == SaveDataErrorParameter, "null dir_name returns PARAMETER");
+    Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails before initialization");
+    Check(sceSaveDataDeleteTransactionResource(1) == SaveDataErrorNotInitialized, "delete transaction resource 1 fails before initialization");
 
     constexpr char mountedPayload[] = "live mounted save";
     constexpr char updatedPayload[] = "still mounted";
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
+    Check(sceSaveDataDeleteTransactionResource(0) == 0, "delete transaction resource 0 succeeds after initialization");
+    Check(sceSaveDataDeleteTransactionResource(1) == 0, "delete transaction resource 1 succeeds after initialization");
+    Check(sceSaveDataDeleteTransactionResource(-1) == 0, "delete transaction resource -1 succeeds after initialization");
     SceSaveDataDirName dirName{};
     std::memcpy(dirName.data, "kept", sizeof("kept"));
     SaveDataMount3 mount{};
@@ -125,9 +176,30 @@ int main() {
         Check(sceSaveDataUmount2(0, &mountResult.mount_point) == 0, "the mounted save unmounts");
     }
 
+    SaveDataMount3 badMount3{};
+    badMount3.dir_name = &dirName;
+    badMount3.mount_mode = 2;
+    Check(sceSaveDataMount3(&badMount3, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "unwritable mount3 result returns PARAMETER");
+
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
+
+    errno = 71;
+    Check(sceSaveDataDelete(reinterpret_cast<const SaveDataDelete*>(0x10)) == SaveDataErrorParameter, "unreadable del returns PARAMETER");
+    SaveDataDelete badDirDel{};
+    badDirDel.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataDelete(&badDirDel) == SaveDataErrorParameter, "unreadable dir_name returns PARAMETER");
+    Check(sceSaveDataMount3(reinterpret_cast<const SaveDataMount3*>(0x10), &mountResult) == SaveDataErrorParameter, "unreadable mount3 returns PARAMETER");
+    Check(sceSaveDataMount2(reinterpret_cast<const SaveDataMount2*>(0x10), &mountResult) == SaveDataErrorParameter, "unreadable mount2 returns PARAMETER");
+    Check(sceSaveDataTransferringMount(nullptr, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "unwritable transferringMount result returns PARAMETER");
+    Check(sceSaveDataDirNameSearchPs4(reinterpret_cast<const SaveDataDirNameSearchCond*>(0x10), reinterpret_cast<SaveDataDirNameSearchResult*>(0x10)) == SaveDataErrorParameter, "unreadable searchPs4 returns PARAMETER");
+    Check(sceSaveDataCheckBackupData(reinterpret_cast<const SaveDataCheckBackupData*>(0x10)) == SaveDataErrorParameter, "unreadable checkBackupData returns PARAMETER");
+    Check(sceSaveDataRestoreBackupData(reinterpret_cast<const SaveDataRestoreBackupData*>(0x10)) == SaveDataErrorParameter, "unreadable restoreBackupData returns PARAMETER");
+    Check(errno == 71, "guest-copy failures preserve errno");
+
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates");
+    Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails after termination");
 
     std::filesystem::current_path(previous);
     std::error_code error;

@@ -187,7 +187,6 @@ GeometryLayout ComputeGeometryLayout(const char* function, const Shader* front, 
     ValidateGeometryHalf(function, back);
     ValidateGeometryHalf(function, front);
     GeometryLayout layout{};
-    if (back->embedded_constant_buffer_size_dqw != 0) Fail(function, "fusing a back half with an embedded constant buffer is not implemented");
     const auto program = FrontProgramBytes(function, front);
     layout.frontBytes = program.programBytes;
     layout.backOffset = AlignUp(layout.frontBytes, FusedCodeAlignment);
@@ -357,12 +356,14 @@ extern "C" {
 int APS5_VABI sceAgcFuseShaderHalves_0200(Shader* fused_result, const Shader* front, const Shader* back, void* scratch_mem) {
     if (fused_result == nullptr || front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
+    if (front->specials == nullptr || back->specials == nullptr) Fail("sceAgcFuseShaderHalves_0200", "shader half has no special registers");
     const bool isGs = GeometryHalves(front);
     const std::uint32_t stageBit = isGs ? (1u << 22u) : (1u << 21u);
     if (((front->specials->vgt_shader_stages_en.value ^ back->specials->vgt_shader_stages_en.value) & stageBit) != 0) {
         return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
     }
     if (isGs) return FuseGeometryHalves(fused_result, front, back, scratch_mem);
+    if (scratch_mem == nullptr) Fail("sceAgcFuseShaderHalves_0200", "hull halves need fused shader memory");
     *fused_result = *back;
     fused_result->type = static_cast<std::uint8_t>(ShaderBinaryType::Hs);
     if (scratch_mem != nullptr) {
@@ -409,6 +410,16 @@ int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front,
     if (GeometryHalves(front)) ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
     dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
     dst->m_align = 4;
+    return 0;
+}
+
+int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back) {
+    if (front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
+    if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
+    if (dst == nullptr) APS5_INVALID_ARG_EX;
+    dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
+    const std::uint32_t align = 4;
+    std::memcpy(&dst->m_align, &align, sizeof(align));
     return 0;
 }
 

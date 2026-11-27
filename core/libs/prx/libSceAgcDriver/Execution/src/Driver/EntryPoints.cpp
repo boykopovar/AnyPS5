@@ -4,10 +4,15 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
+#include <exception>
 #include <mutex>
+#include <stdexcept>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver {
@@ -21,6 +26,7 @@ void Submit(const Packet* packet, std::uint32_t queue) try {
         return;
     }
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
+    recorder->RewindTailFlips(driver.RewindTailFlips());
     const auto flips = driver.FlipSubmissions();
     recorder->Submit(*packet, queue, [&] { driver.Submit(packet, queue); });
     if (driver.FlipSubmissions() != flips) recorder->FrameBoundary();
@@ -123,6 +129,10 @@ extern "C" void AgcDriverRequestScreenshot_nid_postfix() {
     AgcDriver::Screenshot::Request();
 }
 
+extern "C" void AgcDriverTracePresent_nid_postfix(std::uint32_t width, std::uint32_t height) {
+    AgcDriver::DriverDetail::Driver::Get().TracePresent(width, height);
+}
+
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     AgcDriver::RegisterShader(shader);
 } catch (const ProcessShutdown&) {
@@ -146,7 +156,10 @@ extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
 
 extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::FlipInfo& info) {
     const auto token = AgcDriver::DriverDetail::Driver::Get().ReserveEopFlip(info);
-    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) recorder->ReserveEopFlip(info, token);
+    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) {
+        recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
+        recorder->ReserveEopFlip(info, token);
+    }
     return token;
 }
 
@@ -161,6 +174,18 @@ extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait*
     return count;
 }
 
+extern "C" void AgcDriverTrackRewindTails_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().TrackRewindTails();
+}
+
+extern "C" bool AgcDriverRewindTailsUnread_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().RewindTailsUnread();
+}
+
+extern "C" void AgcDriverCheckFailure_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().CheckFailure();
+}
+
 extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix() {
     AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
 }
@@ -171,12 +196,29 @@ extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std
     *completed = done;
 }
 
+extern "C" bool AgcDriverHoldSettled_nid_postfix(std::int64_t milliseconds) {
+    return AgcDriver::DriverDetail::Driver::Get().WaitSettledFor(std::chrono::milliseconds(milliseconds));
+}
+
+extern "C" void AgcDriverReleaseSettled_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().ReleaseSettled();
+}
+
+extern "C" bool AgcDriverSettledHeld_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().SettledHeld();
+}
+
+extern "C" bool AgcDriverSettled_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().Settled();
+}
+
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     if (recorder == nullptr) {
         AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
         return;
     }
+    recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
     recorder->Flip(info, [&] { AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info); });
     recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {
@@ -246,4 +288,74 @@ extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Sh
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes) {
     if (AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(address, bytes))
         AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+}
+
+namespace {
+
+std::atomic<void (*)()> transactionHookForTest{nullptr};
+
+template<class Work>
+void captureFailure(std::exception_ptr* failure, Work&& work) noexcept {
+    try {
+        work();
+        *failure = nullptr;
+    } catch (...) {
+        *failure = std::current_exception();
+    }
+}
+
+}
+
+extern "C" void AgcDriverFlushGuestMemory_nid_no_patch(std::uint64_t address, std::size_t bytes, std::exception_ptr* failure) {
+    captureFailure(failure, [&] {
+        AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+        static_cast<void>(AgcDriver::Graphics::StorageTexture::FlushPending(address, bytes));
+        AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+    });
+}
+
+extern "C" void AgcDriverGpuOwnedRanges_nid_no_patch(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::exception_ptr* failure) {
+    captureFailure(failure, [&] { ranges = AgcDriver::Graphics::GpuOwnedRanges(address, bytes); });
+}
+
+extern "C" void AgcDriverResidentOwnersOver_nid_no_patch(std::uint64_t address, std::size_t bytes, bool gpuOnly, std::size_t* owners, std::exception_ptr* failure) {
+    captureFailure(failure, [&] { *owners = AgcDriver::Graphics::ResidentOwnersOver(address, bytes, gpuOnly); });
+}
+
+extern "C" void AgcDriverGuestMemoryChangedSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed, std::uint64_t* generation, std::exception_ptr* failure) {
+    captureFailure(failure, [&] { *generation = AgcDriver::GuestMemory::ChangedSince(address, bytes, since, changed); });
+}
+
+extern "C" void AgcDriverSetGuestMemoryTransactionHookForTest_nid_no_patch(void (*hook)()) {
+    transactionHookForTest.store(hook, std::memory_order_release);
+}
+
+extern "C" void AgcDriverGuestMemoryTransaction_nid_no_patch(void (*body)(void* context), void* context, std::exception_ptr* failure) {
+    captureFailure(failure, [&] {
+        if (AgcDriver::GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("a guest memory transaction was entered with the GPU lock held; it waits for flushes that need that lock");
+        auto& driver = AgcDriver::DriverDetail::Driver::Get();
+        driver.WaitIdle();
+        const auto idle = driver.SerialProgress().second;
+        if (const auto hook = transactionHookForTest.load(std::memory_order_acquire)) hook();
+        {
+            const AgcDriver::Graphics::FlushExclusion exclusion;
+            driver.WaitDeviceIdle();
+            body(context);
+        }
+        if (driver.SerialProgress().first != idle) throw std::runtime_error("a submission was accepted during a guest memory transaction; the caller must stop submitting first");
+    });
+}
+
+extern "C" void AgcDriverRetireGpuOwners_nid_no_patch(std::uint64_t address, std::size_t bytes, AgcDriver::RetiredOwners* retired, std::exception_ptr* failure) {
+    captureFailure(failure, [&] {
+        const auto owners = AgcDriver::Graphics::RetireGpuOwnersOver(address, bytes);
+        retired->color += owners.color;
+        retired->depthOwners += owners.depthOwners;
+        retired->depthSurfaces += owners.depthSurfaces;
+        retired->depthPlanes += owners.depthPlanes;
+    });
+}
+
+extern "C" void AgcDriverOmitGpuOwnersForTest_nid_no_patch(bool omit) {
+    AgcDriver::Graphics::OmitGpuOwnersForTest(omit);
 }

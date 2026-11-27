@@ -2,6 +2,8 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs.native/libSceFontGs.native.hpp"
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +56,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
@@ -166,6 +169,117 @@ struct DrawupFixture {
     ~DrawupFixture() { scePthreadMutexDestroy(&mutex); }
 };
 
+void AgcSurfaceInit() {
+    std::array<std::uint8_t, 0x70> config{};
+    std::array<std::uint8_t, 0x102> surface;
+    auto set = [&](std::size_t offset, auto value) {
+        std::memcpy(config.data() + offset, &value, sizeof(value));
+    };
+    const auto initialize = [&] { return sceFontGraphicsAgcSurfaceInit(surface.data() + 1, config.data()); };
+    set(0, UINT64_C(0x1234501234));
+    set(0x0c, std::uint8_t{4});
+    set(0x0d, std::uint8_t{0x54});
+    set(0x10, 1920u);
+    set(0x14, 1080u);
+    set(0x20, 0x44000u);
+    set(0x24, 0x1000000u);
+    set(0x30, std::uint16_t{0xb65a});
+    set(0x34, 0x69124237u);
+    set(0x40, 0x28u);
+    set(0x58, UINT64_C(0x35856abcde));
+    set(0x60, 0x4686ccffu);
+    set(0x64, 0x78912345u);
+    set(0x68, UINT64_C(0x13020987cd));
+
+    constexpr std::array<std::uint32_t, 64> expected = {
+        0x34501234u, 0x00000012u, 0x00001e00u, 0x47e04004u, 0x00000780u, 0x00000438u, 0x00000000u, 0x00000000u,
+        0x00000780u, 0x00000438u, 0x69124237u, 0x0001b65au, 0x00000000u, 0x00440100u, 0x00000000u, 0x04380780u,
+        0x10000000u, 0x12345012u, 0x10000000u, 0x00000000u, 0x10000000u, 0x00008028u, 0x10000000u, 0x00000000u,
+        0x10000000u, 0x00000048u, 0x10000000u, 0x35856abcu, 0x10000000u, 0x13020987u, 0x10000000u, 0x4686ccffu,
+        0x10000000u, 0x78912345u, 0x10000000u, 0x00000000u, 0x10000000u, 0x00000000u, 0x10000000u, 0x00000000u,
+        0x10000000u, 0x00000000u, 0x10000000u, 0x00000000u, 0x10000000u, 0x01dfc437u, 0x10000000u, 0x45044000u,
+        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u
+    };
+    surface.fill(0xb5);
+    Require(initialize() == 0);
+    Require(std::memcmp(surface.data() + 1, expected.data(), sizeof(expected)) == 0);
+    Require(surface.front() == 0xb5 && surface.back() == 0xb5);
+
+    struct FormatCase {
+        unsigned format, numberType, swap, tile;
+        int result;
+        std::uint8_t surfaceFormat = 0;
+        std::uint32_t colorInfo = 0;
+    };
+    constexpr int unsupported = static_cast<int>(0x8046005c);
+    constexpr FormatCase cases[] = {
+        {0x4, 0, 0x800, 0, 0, 0x10, 0x8804},
+        {0xc, 0x600, 0x1000, 0x6c000, 0, 0x20, 0x980c},
+        {0x20, 0x100, 0x1800, 0x4000, 0, 0x4a, 0x9920},
+        {0x24, 0x400, 0, 0x44000, 0, 0x4a, 0x50424},
+        {0x28, 0x600, 0, 0x60000, 0, 0x40, 0x8628},
+        {0x30, 0x700, 0, 0x8000, 0, 0x4e, 0x40730},
+        {0x38, 0x500, 0, 0x14000, 0, 0x4f, 0x50538},
+        {0x7c, 0x700, 0, 0x24000, 0, 0x4a, 0x4077c},
+        {0x7c, 0x700, 0x2000, 0x24000, 0, 0x4a, 0x4077c},
+        {0x28, 0, 0x801, 0, 0, 0x40, 0x8028},
+        {0x28, 1, 0, 0, InvalidParameter},
+        {0x7c, 0x700, 0x800, 0, InvalidParameter}, {0x38, 0x700, 0, 0x60000, unsupported},
+        {8, 0, 0, 0, unsupported}, {12, 0x100, 0, 0, unsupported},
+        {4, 0x700, 0, 0, InvalidParameter}, {40, 0, 0, 1, unsupported}
+    };
+    for (const auto& c : cases) {
+        set(0x40, c.format);
+        set(0x44, c.numberType);
+        set(0x48, c.swap);
+        set(0x20, c.tile);
+        surface.fill(0xb5);
+        Require(initialize() == c.result);
+        if (c.result == 0) {
+            std::uint32_t colorInfo;
+            std::memcpy(&colorInfo, surface.data() + 1 + 0x54, sizeof(colorInfo));
+            Require(surface[1 + 0x0d] == c.surfaceFormat && colorInfo == c.colorInfo);
+        } else {
+            for (std::size_t i = 1; i <= 256; ++i) Require(surface[i] == 0);
+        }
+        Require(surface.front() == 0xb5 && surface.back() == 0xb5);
+    }
+    set(0x40, 0x28u);
+    set(0x44, 0u);
+    set(0x48, 0u);
+    set(0x20, 0u);
+    for (auto offset : {0x10u, 0x14u}) {
+        for (auto invalid : {0u, 16385u, 0xffffffffu}) {
+            set(offset, invalid);
+            Require(initialize() == unsupported);
+        }
+        set(offset, 16384u);
+        Require(initialize() == 0);
+    }
+    set(0x0c, std::uint8_t{0});
+    Require(initialize() == 0);
+    set(0x0c, std::uint8_t{0xff});
+    Require(initialize() == unsupported);
+    set(0x0c, std::uint8_t{4});
+    for (auto offset : {0x18u, 0x1cu}) {
+        set(offset, 1u);
+        Require(initialize() == unsupported);
+        set(offset, 0u);
+    }
+    std::memcpy(surface.data() + 1, config.data(), config.size());
+    Require(sceFontGraphicsAgcSurfaceInit(surface.data() + 1, surface.data() + 1) == InvalidParameter);
+    for (std::size_t i = 1; i <= 256; ++i) Require(surface[i] == 0);
+    Require(surface.front() == 0xb5 && surface.back() == 0xb5);
+    set(0x0d, std::uint8_t{0xff});
+    Require(initialize() == InvalidParameter);
+    Require(sceFontGraphicsAgcSurfaceInit(nullptr, config.data()) == InvalidParameter);
+    surface.fill(0xa7);
+    Require(sceFontGraphicsAgcSurfaceInit(surface.data() + 1, nullptr) == InvalidParameter);
+    for (std::size_t i = 1; i <= 256; ++i) Require(surface[i] == 0);
+    Require(surface.front() == 0xa7 && surface.back() == 0xa7);
+}
+
 void AgcSelect() {
     Require(sceFontSelectGraphicsAgc(1) == nullptr);
     Require(sceFontSelectGraphicsAgc(0xffffffff) == nullptr);
@@ -176,6 +290,18 @@ void AgcDrawupImage() {
         void* out = reinterpret_cast<void*>(0xdead);
         const int before = g_errorCount;
         Require(sceFontGraphicsAgcDrawupFillTextureImage(nullptr, nullptr, &out, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(out == nullptr);
+        Require(g_errorCount == before);
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        void* out = reinterpret_cast<void*>(0xdead);
+        const int before = g_errorCount;
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(nullptr, &f.surface, &out, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(out == nullptr);
+        out = reinterpret_cast<void*>(0xdead);
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, nullptr, &out, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(out == nullptr);
         Require(g_errorCount == before);
     }
@@ -215,6 +341,9 @@ void AgcDrawupImage() {
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 16830.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, -4.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, 8.0f, -4.0f) == InvalidParameter);
+        errno = 71;
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, reinterpret_cast<void**>(0x10), 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(errno == 71 && f.object.head == nullptr);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, 16834.0f, 16834.0f) == 0);
         Require(out != nullptr);
         const auto* firstRecord = static_cast<const TestDrawupRecord*>(out);
@@ -253,11 +382,33 @@ void AgcDrawupPattern() {
         Require(out == nullptr);
         Require(g_errorCount == before);
         f.surface.initialized = 1;
+        errno = 71;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
+        Require(errno == 71 && f.object.head == nullptr);
         Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == 0);
         Require(out != nullptr);
         const auto* record = static_cast<const TestDrawupRecord*>(out);
         Require(record->state == 1);
         Require(record->mode == 0x22);
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        void* out = reinterpret_cast<void*>(0xdead);
+        const int before = g_errorCount;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(nullptr, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        Require(out == nullptr);
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, nullptr, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        f.surface.tag = 0x57;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        f.surface.tag = 0x58;
+        f.surface.head = nullptr;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        f.surface.head = &f.object;
+        f.surface.busy = 1;
+        Require(sceFontGraphicsAgcDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
+        Require(out == nullptr);
+        Require(g_errorCount == before);
     }
 }
 
@@ -283,6 +434,9 @@ void AgcSequences() {
         Require(out == nullptr && count == 0 && out2 == nullptr && count2 == 0);
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, nullptr, &out2, &count2) == InvalidParameter);
         Require(out == nullptr && out2 == nullptr && count2 == 0);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, nullptr, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, nullptr) == InvalidParameter);
+        Require(out == nullptr && count == 0 && out2 == nullptr);
         Require(g_errorCount == before);
         sequence.tag = 0xf81;
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == InvalidSequence);
@@ -295,6 +449,15 @@ void AgcSequences() {
         sequence.commands = nullptr;
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == Fatal);
         sequence.commands = saved;
+        auto* const badPointer = reinterpret_cast<void**>(0x10);
+        auto* const badCount = reinterpret_cast<std::uint32_t*>(0x10);
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, badPointer, &count, &out2, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, badCount, &out2, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, badPointer, &count2) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, badCount) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(nullptr, badPointer, nullptr, nullptr, nullptr) == InvalidParameter);
+        Require(errno == 71);
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == 0);
         Require(out == firstData && count == 8 && out2 == secondData && count2 == 3);
         Require(g_errorCount == before);
@@ -313,6 +476,11 @@ void AgcSequences() {
         sequence.lock = 1;
         Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, &count) == SequenceLocked);
         sequence.lock = 0;
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, reinterpret_cast<void**>(0x10), &count) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(nullptr, reinterpret_cast<void**>(0x10), nullptr) == InvalidParameter);
+        Require(errno == 71);
         Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, &count) == 0);
         Require(out == firstData && count == 0x20);
         Require(g_errorCount == before);
@@ -324,6 +492,7 @@ void AgcSequences() {
 int main() {
     sceFontSetGraphicsErrorCallback(RecordError);
     AgcSelect();
+    AgcSurfaceInit();
     AgcDrawupImage();
     AgcDrawupPattern();
     AgcSequences();

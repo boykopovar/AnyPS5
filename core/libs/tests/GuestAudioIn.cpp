@@ -1,8 +1,10 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
+#include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -16,16 +18,6 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename TCall>
-static bool ReportsNotImplemented(const char* name, TCall call) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
-
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32
     _putenv_s(name, value.c_str());
@@ -38,19 +30,122 @@ namespace {
 
 constexpr int user = 0x10000000;
 
+void TestCaptureDeviceSelection() {
+    using audioin::detail::CaptureDeviceMatchKind;
+    const std::array<const char*, 3> names{"Microphone A", nullptr, "Microphone B"};
+    auto getName = [&names](int index) { return names[static_cast<std::size_t>(index)]; };
+    Require(audioin::detail::selectCaptureDevice("", 3, getName).kind == CaptureDeviceMatchKind::Default);
+    Require(audioin::detail::selectCaptureDevice("default", 3, getName).kind == CaptureDeviceMatchKind::Default);
+    const auto found = audioin::detail::selectCaptureDevice("Microphone B", 3, getName);
+    Require(found.kind == CaptureDeviceMatchKind::Found && found.index == 2);
+    Require(audioin::detail::selectCaptureDevice("Missing", 3, getName).kind == CaptureDeviceMatchKind::Missing);
+    const auto ambiguousNames = [](int index) { return index < 2 ? "USB microphone" : "Other"; };
+    Require(audioin::detail::selectCaptureDevice("USB microphone", 3, ambiguousNames).kind == CaptureDeviceMatchKind::Ambiguous);
+    Require(audioin::detail::selectCaptureDevice("Microphone A", -1, getName).kind == CaptureDeviceMatchKind::Missing);
+}
+
+void TestConfiguredDeviceUnavailable() {
+    constexpr int invalidDevice = static_cast<int>(0x8026010f);
+    SetEnvironment("SDL_AUDIODRIVER", "none");
+    SetEnvironment("ANYPS5_AUDIO_IN_DEVICE", "AnyPS5 missing capture device 7fd5622b");
+    Require(sceAudioInOpen(user, 0, 0, 256, 48000, 2) == invalidDevice);
+    SetEnvironment("ANYPS5_AUDIO_IN_DEVICE", "");
+}
+
 void TestOpenEx() {
     constexpr int invalidSize = static_cast<int>(0x80260102);
     constexpr int invalidFreq = static_cast<int>(0x80260103);
     constexpr int invalidType = static_cast<int>(0x80260104);
-    Require(sceAudioInOpenEx(user, 2, 0, 7, 256, 48000, 2) == invalidType);
+    Require(sceAudioInOpenEx(user, 6, 0, 7, 256, 48000, 2) == invalidType);
     Require(sceAudioInOpenEx(user, 0, 0, 7, 512, 48000, 2) == invalidSize);
+    constexpr int invalidParam = static_cast<int>(0x80260106);
     Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 44100, 2) == invalidFreq);
+    const int port0 = sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 0);
+    Require(port0 > 0 && sceAudioInClose(port0) == 0);
+    Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 3) == invalidParam);
+    Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 4) == invalidParam);
     Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 44100, 2) == invalidFreq);
+    const int hqPort0 = sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 0);
+    Require(hqPort0 > 0 && sceAudioInClose(hqPort0) == 0);
+    Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 3) == invalidParam);
+    Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 4) == invalidParam);
     int port = sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 2);
     Require(port > 0 && sceAudioInClose(port) == 0);
     port = sceAudioInHqOpenEx(user, 0, 0, 7, 256, 16000, 2);
     Require(port > 0 && sceAudioInClose(port) == 0);
     Require(sceAudioInSetCompressorPreGain() == 0 && sceAudioInSetNoiseGateThreshold() == 0);
+}
+
+void TestActivePortStates(bool hasDevice) {
+    const int expectedState = hasDevice ? 0 : 1;
+    const int openPort = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    Require(openPort > 0);
+    Require(sceAudioInGetSilentState(openPort) == expectedState);
+    Require(sceAudioInClose(openPort) == 0);
+
+    const int openExPort = sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 2);
+    Require(openExPort > 0);
+    Require(sceAudioInGetSilentState(openExPort) == expectedState);
+    Require(sceAudioInClose(openExPort) == 0);
+
+    const int hqPort = sceAudioInHqOpen(user, 0, 0, 128, 48000, 2);
+    Require(hqPort > 0);
+    Require(sceAudioInGetSilentState(hqPort) == expectedState);
+    Require(sceAudioInClose(hqPort) == 0);
+
+    const int hqExPort = sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 2);
+    Require(hqExPort > 0);
+    Require(sceAudioInGetSilentState(hqExPort) == expectedState);
+    Require(sceAudioInClose(hqExPort) == 0);
+
+    const int asyncPort = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 2);
+    Require(asyncPort > 0);
+    Require(sceAudioInGetSilentState(asyncPort) == expectedState);
+    Require(sceAudioInClose(asyncPort) == 0);
+}
+
+void TestBufferBoundaryFaultRejection() {
+    constexpr std::uint8_t guardBefore = 0xAA;
+    constexpr std::uint8_t guardAfter = 0x55;
+
+    struct BufferTestConfig {
+        std::uint32_t len;
+        std::uint32_t freq;
+        std::uint32_t param;
+        std::size_t frameBytes;
+    };
+
+    const BufferTestConfig configs[] = {
+        {256, 48000, 2, 4},
+        {128, 48000, 1, 2},
+        {128, 48000, 0x10, 4},
+        {128, 48000, 0x12, 8},
+        {256, 16000, 1, 2},
+        {256, 16000, 2, 4},
+    };
+
+    for (const auto& cfg : configs) {
+        const int port = sceAudioInOpen(user, 0, 0, cfg.len, cfg.freq, cfg.param);
+        Require(port > 0);
+        Require(sceAudioInInput(port, nullptr) == 0);
+
+        const std::size_t payloadBytes = static_cast<std::size_t>(cfg.len) * cfg.frameBytes;
+        std::vector<std::uint8_t> buffer(payloadBytes + 32, 0);
+        std::fill_n(buffer.begin(), 16, guardBefore);
+        std::fill_n(buffer.begin() + 16 + payloadBytes, 16, guardAfter);
+
+        std::uint8_t* dest = buffer.data() + 16;
+        Require(sceAudioInInput(port, dest) == static_cast<int>(cfg.len));
+
+        for (std::size_t i = 0; i < 16; ++i) {
+            Require(buffer[i] == guardBefore);
+        }
+        for (std::size_t i = 16 + payloadBytes; i < buffer.size(); ++i) {
+            Require(buffer[i] == guardAfter);
+        }
+
+        Require(sceAudioInClose(port) == 0);
+    }
 }
 
 void TestValidation() {
@@ -60,18 +155,20 @@ void TestValidation() {
     constexpr int invalidType = static_cast<int>(0x80260104);
     constexpr int invalidPointer = static_cast<int>(0x80260105);
     constexpr int invalidParam = static_cast<int>(0x80260106);
-    Require(sceAudioInOpen(user, 2, 0, 256, 48000, 2) == invalidType);
+    constexpr int invalidState = static_cast<int>(0x80260109);
+    Require(sceAudioInOpen(user, 6, 0, 256, 48000, 2) == invalidType);
+    Require(sceAudioInOpen(user, 99, 0, 256, 48000, 2) == invalidType);
     Require(sceAudioInOpen(user, 0, 1, 256, 48000, 2) == invalidParam);
     Require(sceAudioInOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
     Require(sceAudioInOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
     Require(sceAudioInOpen(user, 0, 0, 256, 48000, 3) == invalidParam);
-    Require(sceAudioInOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
-    Require(sceAudioInHqOpen(user, 2, 0, 128, 48000, 2) == invalidType);
+    Require(sceAudioInOpen(user, 0, 0, 256, 48000, 0x20) == invalidParam);
+    Require(sceAudioInHqOpen(user, 6, 0, 128, 48000, 2) == invalidType);
     Require(sceAudioInHqOpen(user, 0, 1, 128, 48000, 2) == invalidParam);
     Require(sceAudioInHqOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
     Require(sceAudioInHqOpen(user, 0, 0, 128, 44100, 2) == invalidFreq);
     Require(sceAudioInHqOpen(user, 0, 0, 128, 48000, 3) == invalidParam);
-    Require(sceAudioInAsyncOpen(user, 2, 0, 128, 48000, 2) == invalidType);
+    Require(sceAudioInAsyncOpen(user, 6, 0, 128, 48000, 2) == invalidType);
     Require(sceAudioInAsyncOpen(user, 0, 1, 128, 48000, 2) == invalidParam);
     Require(sceAudioInAsyncOpen(user, 0, 0, 385, 48000, 2) == invalidSize);
     Require(sceAudioInAsyncOpen(user, 0, 0, 200, 48000, 2) == invalidSize);
@@ -79,7 +176,7 @@ void TestValidation() {
     Require(sceAudioInAsyncOpen(user, 0, 0, 256, 48000, 0) == invalidSize);
     Require(sceAudioInHqOpen(user, 0, 0, 256, 48000, 2) == invalidSize);
     Require(sceAudioInHqOpen(user, 0, 0, 128, 16000, 2) == invalidFreq);
-    for (const int badHandle : {-1, 0, 1, 9}) {
+    for (const int badHandle : {-1, 0, 1, 9, invalidHandle}) {
         float gain = -2.5f;
         Require(sceAudioInGetGain(badHandle, &gain) == invalidHandle && gain == 1.0f);
         Require(sceAudioInGetRerouteCount(badHandle) == invalidHandle);
@@ -96,7 +193,7 @@ void TestValidation() {
     Require(sceAudioInGetGain(port, reinterpret_cast<float*>(static_cast<std::uintptr_t>(0x10))) == invalidPointer);
     Require(sceAudioInClose(port) == 0);
     gain = 0.25f;
-    Require(sceAudioInGetGain(port, &gain) == invalidHandle && gain == 1.0f && sceAudioInGetRerouteCount(port) == invalidHandle);
+    Require(sceAudioInGetGain(port, &gain) == invalidState && gain == 1.0f && sceAudioInGetRerouteCount(port) == invalidState);
     port = sceAudioInOpen(user, 0, 0, 256, 48000, 0x10);
     gain = -1.0f;
     Require(port > 0 && sceAudioInGetGain(port, &gain) == 0 && gain == 1.0f && sceAudioInGetRerouteCount(port) == 0 && sceAudioInClose(port) == 0);
@@ -109,10 +206,81 @@ void TestValidation() {
     port = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 0x10);
     gain = 0.5f;
     Require(port > 0 && sceAudioInGetGain(port, &gain) == 0 && gain == 1.0f && sceAudioInGetRerouteCount(port) == 0 && sceAudioInClose(port) == 0);
-    Require(sceAudioInIsPadEmbeddedMic(1) == static_cast<int32_t>(0x80260101));
+    Require(sceAudioInIsPadEmbeddedMic(1) == static_cast<int32_t>(0x80260109));
     const int mic = sceAudioInOpen(user, 0, 0, 256, 48000, 0x10);
     Require(mic > 0 && sceAudioInIsPadEmbeddedMic(mic) == 0 && sceAudioInClose(mic) == 0);
-    Require(sceAudioInIsPadEmbeddedMic(mic) == static_cast<int32_t>(0x80260101));
+    Require(sceAudioInIsPadEmbeddedMic(mic) == static_cast<int32_t>(0x80260109));
+}
+
+void TestFirmwareSignatures() {
+    constexpr int invalidHandle = static_cast<int>(0x80260101);
+    constexpr int invalidSize = static_cast<int>(0x80260102);
+    constexpr int invalidFreq = static_cast<int>(0x80260103);
+    constexpr int invalidType = static_cast<int>(0x80260104);
+    constexpr int invalidParam = static_cast<int>(0x80260106);
+    constexpr int invalidState = static_cast<int>(0x80260109);
+    constexpr int invalidDevice = static_cast<int>(0x8026010f);
+    constexpr std::int32_t handleBase = 0x30000000;
+
+    Require(sceAudioInDeviceIdOpen(user, 6, 0, 256, 44100, 3) == invalidType);
+    Require(sceAudioInDeviceIdOpen(user, 0, 0, 256, 44100, 3) == invalidFreq);
+    Require(sceAudioInDeviceIdOpen(user, 0, 0, 512, 48000, 3) == invalidSize);
+    Require(sceAudioInDeviceIdOpen(user, 0, 0, 256, 48000, 3) == invalidParam);
+    Require(sceAudioInDeviceIdOpen(user, 0, 0, 256, 48000, 0x20) == invalidParam);
+    const int did = sceAudioInDeviceIdOpen(user, 5, 0x1f, 256, 48000, 2);
+    Require(did >= handleBase && (did & 0x7f000000) == handleBase && sceAudioInClose(did) == 0);
+    const int asyncId = sceAudioInDeviceIdAsyncOpen(user, 0, 7, 128, 16000, 0);
+    Require(asyncId >= handleBase && sceAudioInClose(asyncId) == 0);
+    const int hqId = sceAudioInDeviceIdHqOpen(user, 0, 3, 256, 16000, 0x12);
+    Require(hqId >= handleBase && sceAudioInClose(hqId) == 0);
+    const int deviceEx = sceAudioInDeviceOpenEx(user, 4, 0xa, 9, 128, 48000, 0x11);
+    Require(deviceEx >= handleBase && sceAudioInClose(deviceEx) == 0);
+    Require(sceAudioInDeviceHqOpen(user, 0, 512, 48000, 2) == invalidSize);
+    const int deviceHq = sceAudioInDeviceHqOpen(user, 0, 128, 48000, 2);
+    Require(deviceHq >= handleBase && sceAudioInClose(deviceHq) == 0);
+    const int exPort = sceAudioInOpenEx(user, 0, 0, 999, 256, 16000, 0x12);
+    Require(exPort >= handleBase && sceAudioInClose(exPort) == 0);
+    Require(sceAudioInOpenEx(user, 0, 1, 0, 256, 48000, 2) == invalidParam);
+    const int hqExPort = sceAudioInHqOpenEx(user, 0, 0, 55, 256, 48000, 2);
+    Require(hqExPort >= handleBase && sceAudioInClose(hqExPort) == 0);
+    const int devPort = sceAudioInDeviceIdOpen(user, 3, 1234, 128, 48000, 0);
+    Require(devPort >= handleBase && sceAudioInClose(devPort) == 0);
+    const int devAsyncPort = sceAudioInDeviceIdAsyncOpen(user, 2, 5678, 256, 16000, 1);
+    Require(devAsyncPort >= handleBase && sceAudioInClose(devAsyncPort) == 0);
+    const int devIdHqPort = sceAudioInDeviceIdHqOpen(user, 1, 9999, 128, 48000, 2);
+    Require(devIdHqPort >= handleBase && sceAudioInClose(devIdHqPort) == 0);
+    Require(sceAudioInDeviceHqOpen(user, 0, 128, 24000, 0) == invalidFreq);
+    Require(sceAudioInDeviceHqOpen(user, 0, 64, 48000, 0) == invalidSize);
+    const int devHqPort = sceAudioInDeviceHqOpen(user, 42, 256, 48000, 0x10);
+    Require(devHqPort >= handleBase && sceAudioInClose(devHqPort) == 0);
+    const int devExPort = sceAudioInDeviceOpenEx(user, 0, 77, 88, 128, 48000, 2);
+    Require(devExPort >= handleBase && sceAudioInClose(devExPort) == 0);
+
+    Require(sceAudioInIsSharedDevice(8) == invalidState);
+    Require(sceAudioInIsSharedDevice(-1) == invalidState);
+    Require(sceAudioInIsSharedDevice(0) == invalidState);
+    const int shared = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    Require(shared >= handleBase);
+    const int sharedSilent = sceAudioInGetSilentState(shared);
+    Require(sharedSilent == 0 || sharedSilent == 1);
+    Require(sceAudioInGetHandleStatusInfo(0, nullptr) == invalidHandle);
+    Require(sceAudioInGetHandleStatusInfo(shared + 1, nullptr) == invalidHandle);
+    Require(sceAudioInClose(shared) == 0);
+    Require(sceAudioInGetSilentState(shared) == invalidState);
+    Require(sceAudioInGetHandleStatusInfo(shared, nullptr) == invalidState);
+
+    Require(sceAudioInSetMicLevel(1, 0, 101, 0, 0) == invalidParam);
+    Require(sceAudioInSetMicLevel(9, 0, 101, 0, 0) == invalidParam);
+    Require(sceAudioInSetMicLevel(5, 0, 0, 0, 0) == invalidDevice);
+    Require(sceAudioInSetMicLevel(0, 0, 0, 0, 0) == invalidDevice);
+    for (const int badMuteType : {0, 5, 8, 9, 10, 20, -1}) {
+        Require(sceAudioInSetDeviceMuteStatus(badMuteType, 0, 0) == invalidDevice);
+        Require(sceAudioInSetDeviceMuteStatus(badMuteType, 0, 1) == invalidDevice);
+        Require(sceAudioInSetUserMute(badMuteType, 0, 0) == invalidDevice);
+    }
+
+    Require(sceAudioInVmicCreate(user, 512, 44100, 0) == invalidSize);
+    Require(sceAudioInVmicCreate(user, 256, 44100, 0) == invalidFreq);
 }
 
 void InputSound(int handle, std::vector<std::int16_t>& block, int samples = 256) {
@@ -157,8 +325,13 @@ void TestCapture() {
 
     TestValidation();
     TestOpenEx();
+    TestFirmwareSignatures();
+    TestActivePortStates(true);
     const int handle = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
-    Require(handle > 0 && sceAudioInGetSilentState(handle) == 0);
+    Require(handle > 0);
+    const int captureSilent = sceAudioInGetSilentState(handle);
+    Require(captureSilent == 0 || captureSilent == 1);
+    Require(captureSilent == 0);
     std::vector<std::int16_t> block(256 * 2 + 1, 0x5555);
     std::vector<std::int16_t> captured;
     for (int i = 0; i < 4; ++i) {
@@ -170,24 +343,40 @@ void TestCapture() {
     Require(sceAudioInInput(handle, block.data()) == 256);
     for (std::size_t i = 0; i < 256 * 2; ++i) Require(block[i] == 0);
     Require(sceAudioInClose(handle) == 0);
+    constexpr int invalidState = static_cast<int>(0x80260109);
+    Require(sceAudioInGetSilentState(handle) == invalidState);
     const int async = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 2);
-    Require(async == handle && sceAudioInGetSilentState(async) == 0);
+    Require(async == handle);
+    const int asyncSilent = sceAudioInGetSilentState(async);
+    Require(asyncSilent == 0 || asyncSilent == 1);
+    Require(asyncSilent == 0);
     block.assign(128 * 2 + 1, 0x5555);
     InputSound(async, block, 128);
     Require(std::equal(block.begin(), block.end() - 1, recorded.begin()) && block.back() == 0x5555);
     Require(sceAudioInClose(async) == 0);
+    Require(sceAudioInGetSilentState(async) == invalidState);
     std::filesystem::remove(path);
+    TestBufferBoundaryFaultRejection();
 }
 
 void TestNoDevice() {
     constexpr int invalidHandle = static_cast<int>(0x80260101);
+    constexpr int invalidPointer = static_cast<int>(0x80260105);
+    constexpr int invalidState = static_cast<int>(0x80260109);
     constexpr int portFull = static_cast<int>(0x80260107);
     SetEnvironment("SDL_AUDIODRIVER", "none");
-
+    TestConfiguredDeviceUnavailable();
+    TestCaptureDeviceSelection();
     TestValidation();
     TestOpenEx();
+    TestFirmwareSignatures();
+    TestActivePortStates(false);
+    TestBufferBoundaryFaultRejection();
     const int handle = sceAudioInOpen(user, 0, 0, 256, 16000, 0x12);
-    Require(handle > 0 && sceAudioInGetSilentState(handle) == 1);
+    Require(handle > 0);
+    const int handleSilent = sceAudioInGetSilentState(handle);
+    Require(handleSilent == 0 || handleSilent == 1);
+    Require(handleSilent == 1);
     Require(sceAudioInGetSilentState(handle + 1) == invalidHandle);
     Require(sceAudioInInput(handle + 1, nullptr) == invalidHandle);
     std::vector<std::uint8_t> buffer(256 * 8 + 1, 0xCC);
@@ -197,11 +386,17 @@ void TestNoDevice() {
     Require(elapsed >= std::chrono::milliseconds(4 * 16) && elapsed < std::chrono::milliseconds(1000));
     for (std::size_t i = 0; i < 256 * 8; ++i) Require(buffer[i] == 0);
     Require(buffer[256 * 8] == 0xCC);
+    errno = EBUSY;
+    Require(sceAudioInInput(handle, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10))) == invalidPointer && errno == EBUSY);
+    Require(sceAudioInInput(handle, buffer.data()) == 256);
     Require(sceAudioInInput(handle, nullptr) == 0);
     const int hq = sceAudioInHqOpen(user, 0, 0, 128, 48000, 2);
     const int async = sceAudioInAsyncOpen(user, 1, 0, 128, 48000, 0x11);
     Require(hq > 0 && async > 0 && hq != handle && async != handle && hq != async);
-    Require(sceAudioInGetSilentState(hq) == 1 && sceAudioInGetSilentState(async) == 1);
+    const int hqSilent = sceAudioInGetSilentState(hq);
+    const int asyncSilent = sceAudioInGetSilentState(async);
+    Require((hqSilent == 0 || hqSilent == 1) && (asyncSilent == 0 || asyncSilent == 1));
+    Require(hqSilent == 1 && asyncSilent == 1);
     std::fill(buffer.begin(), buffer.end(), 0xCC);
     Require(sceAudioInInput(hq, buffer.data()) == 128);
     for (std::size_t i = 0; i < 128 * 4; ++i) Require(buffer[i] == 0);
@@ -216,15 +411,18 @@ void TestNoDevice() {
     Require(sceAudioInHqOpen(user, 1, 0, 128, 48000, 2) == portFull);
     Require(sceAudioInAsyncOpen(user, 1, 0, 128, 48000, 1) == portFull);
     Require(sceAudioInClose(hq) == 0);
-    Require(sceAudioInClose(hq) == invalidHandle);
-    Require(sceAudioInGetSilentState(hq) == invalidHandle);
+    Require(sceAudioInClose(hq) == invalidState);
+    Require(sceAudioInGetSilentState(hq) == invalidState);
     Require(sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 2) == hq);
     Require(sceAudioInClose(async) == 0);
-    Require(sceAudioInInput(async, buffer.data()) == invalidHandle);
+    Require(sceAudioInClose(async) == invalidState);
+    Require(sceAudioInGetSilentState(async) == invalidState);
+    Require(sceAudioInInput(async, buffer.data()) == invalidState);
     Require(sceAudioInHqOpen(user, 1, 0, 128, 48000, 2) == async);
     Require(sceAudioInClose(handle) == 0);
-    Require(sceAudioInClose(handle) == invalidHandle);
-    Require(sceAudioInInput(handle, buffer.data()) == invalidHandle);
+    Require(sceAudioInClose(handle) == invalidState);
+    Require(sceAudioInGetSilentState(handle) == invalidState);
+    Require(sceAudioInInput(handle, buffer.data()) == invalidState);
     Require(sceAudioInOpen(user, 1, 0, 128, 48000, 0x11) == handle);
 }
 
@@ -234,5 +432,9 @@ int main(int argc, char** argv) {
     Require(argc == 2);
     Require(sceAudioInInit() == 0);
     if (std::strcmp(argv[1], "capture") == 0) TestCapture();
+    else if (std::strcmp(argv[1], "selection") == 0) {
+        TestConfiguredDeviceUnavailable();
+        TestCaptureDeviceSelection();
+    }
     else TestNoDevice();
 }

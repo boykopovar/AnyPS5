@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -25,14 +27,21 @@ using StatusControl = bool (*)(int descriptor, int command, int flags, int* resu
 using IoctlControl = bool (*)(int descriptor, std::uint32_t request, void* argument, int* error);
 struct Forwards {
     int (*family)(int descriptor);
+    int (*listen)(int descriptor, int backlog);
     int (*bind)(int descriptor, const void* address, std::uint32_t length);
+    int (*connect)(int descriptor, const void* address, std::uint32_t length);
     int (*getsockname)(int descriptor, void* address, std::uint32_t* length);
+    int (*accept)(int descriptor, void* address, std::uint32_t* length, int* error);
     std::int64_t (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error);
     std::int64_t (*recvfrom)(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error);
+    int (*shutdown)(int descriptor, int how);
 };
 struct NativeOwner {
     int (*transfer)(NativeOwner* owner, bool send, void* buffer, int length) = nullptr;
+    std::atomic<unsigned> shutdownFlags{0};
 };
+constexpr unsigned ReceiveShut = 1;
+constexpr unsigned SendShut = 2;
 
 using NativeLookup = bool (*)(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
 
@@ -43,6 +52,10 @@ struct Description {
     int type;
     bool nonblocking;
 };
+
+inline std::size_t SelectSetBytes(int scanned) {
+    return static_cast<std::size_t>((scanned + 63) / 64) * sizeof(std::uint64_t);
+}
 }
 
 extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards);
@@ -64,3 +77,5 @@ extern "C" int KernelReserveSocketNumber_nid_no_patch(std::uintptr_t native);
 extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number);
 extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPoll::Description* description);
 extern "C" void KernelListSockets_nid_no_patch(std::vector<int>* descriptors);
+extern "C" bool KernelSelectCheckSets_nid_no_patch(int nfds, const void* readfds, const void* writefds, const void* exceptfds, int* scanned, int* error);
+extern "C" int KernelSelectCheckedSets_nid_no_patch(int scanned, void* readfds, void* writefds, void* exceptfds, const void* limit);

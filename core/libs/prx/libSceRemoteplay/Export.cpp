@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceRemoteplay/include/InventoryExports.hpp"
 #include "prx/libSceRemoteplay/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -24,23 +25,32 @@ enum class RemoteplayState : std::uint32_t {
 std::mutex g_stateMutex;
 RemoteplayState g_state = RemoteplayState::None;
 
+bool IsInitialized() {
+ std::lock_guard lock(g_stateMutex);
+ return g_state == RemoteplayState::Initialized;
+}
+
 }
 
 extern "C" {
 
 int APS5_VABI sceRemoteplayIsRemoteViewering() {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceRemoteplayNotifyCanWakeup() {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceRemoteplayRegistCallback() {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceRemoteplayUnregistCallback() {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -50,7 +60,11 @@ int APS5_VABI sceRemoteplayGetConnectionStatus(int user_id, int* status) {
  std::lock_guard lock(g_stateMutex);
  if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
  if (!status) return REMOTEPLAY_ERROR_INVALID_ARG;
- *status = REMOTEPLAY_CONNECTION_STATUS_DISCONNECT;
+ const int disconnected = REMOTEPLAY_CONNECTION_STATUS_DISCONNECT;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(status, &disconnected, sizeof(disconnected));
+ errno = savedErrno;
+ if (!copied) return REMOTEPLAY_ERROR_INVALID_ARG;
  return 0;
 }
 
@@ -70,51 +84,61 @@ int APS5_VABI sceRemoteplayTerminate(void) {
 }
 
 int APS5_VABI sceRemoteplayApprove(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayClearAllRegistData(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayClearConnectHistory(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayConfirmDeviceRegist(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayDisconnect(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayGeneratePinCode(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayGetApMode(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayGetConnectHistory(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayGetConnectUserId(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayGetMbusDeviceInfo(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -130,16 +154,19 @@ int APS5_VABI sceRemoteplayGetPrimaryUserId(void) {
 }
 
 int APS5_VABI sceRemoteplayGetRemoteplayStatus(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayGetRpMode(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayImeClose(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -165,6 +192,7 @@ int APS5_VABI sceRemoteplayImeNotifyEventResult(void) {
 }
 
 int APS5_VABI sceRemoteplayImeOpen(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -185,41 +213,49 @@ int APS5_VABI sceRemoteplayIsRemoteOskReady(void) {
 }
 
 int APS5_VABI sceRemoteplayIsRemotePlaying(void) {
+    if (!IsInitialized()) return 0;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayNotifyMbusDeviceRegistComplete(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayNotifyNpPushWakeup(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayNotifyPinCodeError(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayNotifySubmitCode(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayNotifyUserDelete(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayPrintAllRegistData(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayProhibit(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -230,46 +266,55 @@ int APS5_VABI sceRemoteplayProhibitStreaming(void) {
 }
 
 int APS5_VABI sceRemoteplayServerLock(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayServerUnLock(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplaySetApMode(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplaySetLogLevel(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplaySetProhibition(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplaySetProhibitionForVsh(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplaySetRpMode(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayDisableInputDevice(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceRemoteplayEnableInputDevice(void) {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -279,8 +324,18 @@ int APS5_VABI sceRemoteplayEnableInputDevice(void) {
 extern "C" {
 
 int APS5_VABI libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch() {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("HV7jZe1frbM", libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI sceRemoteplayGetClientInfo() {
+    if (!IsInitialized()) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch(__func__);
+}
 
 }

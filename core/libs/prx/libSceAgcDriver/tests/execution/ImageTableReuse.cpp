@@ -1,5 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -39,6 +42,7 @@ constexpr std::uint32_t TextureBytes = Width * Height * 4;
 constexpr std::uint32_t Stride = 48;
 constexpr std::uint32_t Records = 48;
 constexpr std::uint32_t Moved = 64;
+constexpr std::uint32_t Viewed = 32;
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2D = 9;
@@ -46,10 +50,13 @@ constexpr std::size_t TexturesOffset = 65536;
 constexpr std::size_t BlockBytes = TexturesOffset + 2 * 65536;
 constexpr std::size_t UnimportableBytes = BlockBytes - 256;
 constexpr std::uint64_t CpuWriteResolutions = 1;
+constexpr std::uint32_t RetakenEntry = 0;
+constexpr float RetakenClearDepth = 0.0625f;
+constexpr float LoadedDepth = 0.75f;
 
 bool chained = false;
 
-alignas(256) std::array<std::uint32_t, Records> Keys{};
+alignas(256) std::array<std::uint32_t, Records> Keys = [] { std::array<std::uint32_t, Records> keys{}; for (std::uint32_t key = 0; key < Records; ++key) keys[key] = key; return keys; }();
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
 
@@ -62,6 +69,10 @@ alignas(256) constexpr std::array<std::uint32_t, 28> TableCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
     0x7e020d00u, 0x082802f7u, 0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0001141eu, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> RestoreCode{
+    0x7e020d00u, 0x082802f6u, 0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0001141eu, 0xbf810000u,
 };
 
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
@@ -120,11 +131,11 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-void SetRecord(const GuestBlock& block, std::uint32_t record, std::uint32_t texture) {
+void SetRecord(const GuestBlock& block, std::uint32_t record, std::uint32_t texture, const GuestBlock* texels = nullptr) {
     auto* words = block.Table() + record * (Stride / 4u);
     std::fill(words, words + Stride / 4u, 0u);
     std::copy(PointClamp.begin(), PointClamp.end(), words);
-    const auto image = Image(block.Texels(texture));
+    const auto image = Image((texels != nullptr ? *texels : block).Texels(texture));
     std::copy(image.begin(), image.end(), words + 4);
 }
 
@@ -132,16 +143,16 @@ void Fill(const GuestBlock& block, std::uint32_t texture, float bias) {
     for (std::uint32_t texel = 0; texel < Width * Height; ++texel) block.Texels(texture)[texel] = bias + static_cast<float>(texture) * 100.0f + static_cast<float>(texel);
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
-    const auto srtAddress = AddressOf(Srt.data());
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& block, const std::uint32_t* srt = Srt.data(), const std::uint32_t* keys = Keys.data()) {
+    const auto srtAddress = AddressOf(srt);
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::span<const std::uint32_t> code(TableCode);
     const std::span<const std::uint32_t> table(block.Table(), Records * Stride / 4u);
     const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
         {AddressOf(code.data()), std::as_bytes(code)},
-        {srtAddress, std::as_bytes(std::span(Srt))},
+        {srtAddress, std::as_bytes(std::span(srt, Srt.size()))},
         {AddressOf(table.data()), std::as_bytes(table)},
-        {AddressOf(Keys.data()), std::as_bytes(std::span(Keys))},
+        {AddressOf(keys), std::as_bytes(std::span(keys, Keys.size()))},
     }};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
     const ShaderRecompiler::RecompileRequest request{
@@ -161,11 +172,10 @@ void SetOutput(const void* output) {
     std::copy(view.begin(), view.end(), Srt.begin() + 8);
 }
 
-void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t texture) {
+void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t texture, std::span<const std::uint32_t> code = StoreCode) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto image = Image(block.Texels(texture));
     std::copy(image.begin(), image.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(StoreCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{AddressOf(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -248,6 +258,409 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::StorageTexture::FlushPending(AddressOf(block.Texels(23)), TextureBytes, nullptr, "test");
     device.WaitIdle();
     Require(Row(block.Texels(23)) == Row(stored.data()), "image table reuse: the image store wrote the wrong values");
+}
+
+bool RunEntryMemo(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
+    using AgcDriver::Graphics::ShaderResources;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    using AgcDriver::Graphics::RuntimeSwitch;
+    const auto& context = device.graphicsContext();
+    auto* srt = block.Table() + 1024u;
+    auto* keys = block.Table() + 2048u;
+    auto* output = block.Table() + 4096u;
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(plain, texture, 0.375f);
+        SetRecord(block, texture, texture, &plain);
+    }
+    for (std::uint32_t key = 0; key < Records; ++key) keys[key] = key;
+    const auto table = Buffer(block.Table(), Records * Stride);
+    const auto keyView = Buffer(keys, static_cast<std::uint32_t>(sizeof(Keys)));
+    const auto outputView = Buffer(output, static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(table.begin(), table.end(), srt);
+    std::copy(keyView.begin(), keyView.end(), srt + 4);
+    std::copy(outputView.begin(), outputView.end(), srt + 8);
+    const auto program = Compile(device, block, srt, keys);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    struct Built {
+        std::shared_ptr<ShaderResources> resources;
+        std::uint64_t reused = 0;
+        std::uint64_t resolved = 0;
+        std::uint64_t memoHits = 0;
+    };
+    const auto make = [&](const std::string& what) {
+        const auto before = AgcDriver::Graphics::ImageTableReuses();
+        Built built{std::make_shared<ShaderResources>(context, shader)};
+        const auto after = AgcDriver::Graphics::ImageTableReuses();
+        built.reused = after.reused - before.reused;
+        built.resolved = after.resolved - before.resolved;
+        built.memoHits = after.entryMemoHits - before.entryMemoHits;
+        Require(built.resources->SampledTextures().size() == Records, "image table entry memo: " + what + ": the build does not hold one texture per table entry");
+        Require(built.reused + built.resolved == 1u, "image table entry memo: " + what + ": the build reused " + std::to_string(built.reused) + " and resolved " + std::to_string(built.resolved) + " tables, not one table");
+        return built;
+    };
+    const auto describe = [](const Built& built) { return std::to_string(built.reused) + " reused, " + std::to_string(built.resolved) + " resolved, " + std::to_string(built.memoHits) + " memo hits"; };
+    const auto build = [&](std::uint64_t reused, std::uint64_t memoHits, const std::string& what) {
+        auto built = make(what);
+        Require(built.reused == reused && built.memoHits == memoHits, "image table entry memo: " + what + ": " + describe(built) + "; expected " + std::to_string(reused) + " reused and " + std::to_string(memoHits) + " memo hits");
+        return built.resources;
+    };
+    const auto settle = [&](const std::string& what) {
+        for (std::uint64_t attempt = 0; attempt <= CpuWriteResolutions; ++attempt) {
+            auto built = make(what);
+            Require(built.memoHits == 0u, "image table entry memo: " + what + ": the memo served a build before any reuse checked the cache by key (" + describe(built) + ")");
+            if (built.reused == 1u) return built.resources;
+        }
+        Require(false, "image table entry memo: " + what + ": the table was not reused within " + std::to_string(CpuWriteResolutions + 1u) + " builds after it was resolved");
+        return std::shared_ptr<ShaderResources>{};
+    };
+    const auto first = build(0, 0, "the first build");
+    const auto second = settle("the first reuse, which checks the cache by key");
+    const auto third = build(1, 1, "the next build, with no cache entry erased since the first reuse");
+    Require(third->SampledTextures() == second->SampledTextures(), "image table entry memo: the build through the memo holds other textures than the reuse that checked the cache by key");
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+    const auto cleared = build(0, 0, "the build after the sampled-texture cache was cleared");
+    for (std::size_t texture = 0; texture < Records; ++texture) Require(cleared->SampledTextures()[texture] != first->SampledTextures()[texture], "image table entry memo: the build after the cache was cleared kept texture " + std::to_string(texture) + " of the erased entries");
+    const auto again = settle("the first reuse after the clear, which checks the cache by key");
+    const auto memo = build(1, 1, "the next reuse after the clear");
+    Require(memo->SampledTextures() == again->SampledTextures(), "image table entry memo: the memo after the clear holds other textures than the reuse before it");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTableEntryMemo, true);
+    const auto control = build(1, 0, "under APS5_NO_TABLE_ENTRY_MEMO");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTableEntryMemo, false);
+    Require(control->SampledTextures() == again->SampledTextures(), "image table entry memo: under APS5_NO_TABLE_ENTRY_MEMO the reuse holds other textures");
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+    return true;
+}
+
+bool RunReusedTableRecords(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
+    using AgcDriver::Graphics::ShaderResources;
+    const bool extended = std::getenv("APS5_NO_EXTENDED_FAST_PROOFS") == nullptr;
+    const auto& context = device.graphicsContext();
+    if (context.hostImportAlignment == 0 || AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "image table reuse records: the table block needs a host import");
+        std::puts("host imports are unavailable: the records of a reused table are not tested");
+        return false;
+    }
+    auto* srt = block.Table() + 1024u;
+    auto* keys = block.Table() + 2048u;
+    auto* firstOutput = block.Table() + 4096u;
+    auto* secondOutput = firstOutput + Lanes * 4u;
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(plain, texture, 0.625f);
+        SetRecord(block, texture, texture, &plain);
+    }
+    for (std::uint32_t key = 0; key < Records; ++key) keys[key] = key;
+    const auto table = Buffer(block.Table(), Records * Stride);
+    const auto keyView = Buffer(keys, static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(table.begin(), table.end(), srt);
+    std::copy(keyView.begin(), keyView.end(), srt + 4);
+    const auto firstView = Buffer(firstOutput, static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(firstView.begin(), firstView.end(), srt + 8);
+    const auto first = Compile(device, block, srt, keys);
+    const auto secondView = Buffer(secondOutput, static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(secondView.begin(), secondView.end(), srt + 8);
+    const auto second = Compile(device, block, srt, keys);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const AgcDriver::Graphics::CompiledShader firstShader{ShaderStage::Compute, &first, 0};
+    const AgcDriver::Graphics::CompiledShader secondShader{ShaderStage::Compute, &second, 0};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    auto firstResources = std::make_shared<ShaderResources>(context, firstShader);
+    auto secondResources = std::make_shared<ShaderResources>(context, secondShader);
+    const auto built = Since(before);
+    Require(built.resolved == 1u && built.reused == 1u, "image table reuse records: the second build did not reuse the first one's table (" + std::to_string(built.reused) + " reused and " + std::to_string(built.resolved) + " resolved tables)");
+    Require(firstResources->Reusable() && secondResources->Reusable(), "image table reuse records: the builds over the table are not reusable");
+    ShaderResources::ProofReport report{};
+    Require(secondResources->Revalidate(secondShader, &report), "image table reuse records: the build over the reused table did not prove current");
+    if (extended) Require(report.path == ShaderResources::ProofPath::Fast, "image table reuse records: the build over the reused table took the full walk instead of the fast proof");
+    else Require(report.path == ShaderResources::ProofPath::Full, "image table reuse records: with the extended fast proofs off the build over the reused table took the fast proof, so the test no longer reaches the case");
+    Require(firstResources->Revalidate(firstShader, &report) && report.path == ShaderResources::ProofPath::Fast, "image table reuse records: the build that resolved the table did not take the fast proof");
+    secondResources.reset();
+    firstResources.reset();
+    return true;
+}
+
+void RunPendingWriteBack(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) return;
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.875f);
+        SetRecord(block, texture, texture);
+    }
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+    SetOutput(Output.data());
+    const auto result = Compile(device, block);
+    SetOutput(block.Texels(13));
+    const auto writer = Compile(device, block);
+    SetOutput(Output.data());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    const auto old = Row(block.Texels(13));
+    Require(Dispatch(device, result, 25) == Row(block.Texels(25)), "image table reuse: the table before a write-back was left pending sampled the wrong entry");
+    Require(Dispatch(device, result, 13) == old, "image table reuse: the table reused before a write-back was left pending sampled the wrong entry");
+    Expect(before, 2 - CpuWriteResolutions, CpuWriteResolutions, "two dispatches of a table before a write-back is left pending");
+    Keys[0] = 13;
+    device.Dispatch(writer, 1, 1, 1, {}, AddressOf(TableCode.data()));
+    const auto& context = device.graphicsContext();
+    if (AgcDriver::Graphics::HostImportCovers(context, AddressOf(block.Texels(13)), TextureBytes) || !AgcDriver::Graphics::AnyPendingCpuWrites(context) || Row(block.Texels(13)) != old) {
+        device.WaitIdle();
+        std::puts("a dispatch's write-back over a table entry was not left pending: a table used over a pending write-back is not tested");
+        return;
+    }
+    const auto sampled = Dispatch(device, result, 13);
+    const auto written = Row(block.Texels(13));
+    Require(written != old && written[4] == old[1], "image table reuse: the dispatch writing into an entry's texels with its write-back left pending stored the wrong values");
+    const auto step = Since(before);
+    Require(sampled == written, std::string("image table reuse: a table used while a dispatch's write-back was pending over an entry sampled ") + (sampled == old ? "the entry's old texels" : "neither the entry's old texels nor the written ones") + " (" + std::to_string(step.reused) + " reused and " + std::to_string(step.resolved) + " resolved tables in the step)");
+    Expect(before, 3 - CpuWriteResolutions, CpuWriteResolutions + 1, "a write-back pending over an entry when its table is used again");
+}
+
+void RunViewedStore(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
+    const auto& context = device.graphicsContext();
+    if (context.hostImportAlignment == 0 || AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "image table reuse: storage-viewed entries require host imports");
+        std::puts("host imports are unavailable: a table of storage-viewed entries is not tested");
+        return;
+    }
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::puts("guest memory has no write watch: a table of storage-viewed entries is not tested");
+        return;
+    }
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        const auto& texels = texture < Viewed ? block : plain;
+        Fill(texels, texture, 0.375f);
+        SetRecord(block, texture, texture, &texels);
+    }
+    Require(!AgcDriver::Graphics::HostImportCovers(context, AddressOf(plain.Texels(Viewed)), TextureBytes), "image table reuse: the entries outside the storage-viewed block are host-imported");
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(Dispatch(device, result, 23) == Row(block.Texels(23)), "image table reuse: a table of storage-viewed entries sampled the wrong entry");
+    Store(device, block, 23);
+    std::vector<float> stored(Width);
+    for (std::uint32_t x = 0; x < Width; ++x) stored[x] = -4.0f - static_cast<float>(x);
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 23) == Row(stored.data()), "image table reuse: a table reused over a storage-viewed entry an image store left pending sampled the old texels");
+    Store(device, block, 23, RestoreCode);
+    std::vector<float> restored(Width);
+    for (std::uint32_t x = 0; x < Width; ++x) restored[x] = 4.0f - static_cast<float>(x);
+    Require(Dispatch(device, result, 23) == Row(restored.data()), "image table reuse: a reused table kept the old texels of a storage-viewed entry a second image store left pending");
+    Require(Dispatch(device, result, 21) == Row(block.Texels(21)), "image table reuse: a reused table of storage-viewed entries sampled the wrong entry");
+    Require(Dispatch(device, result, 40) == Row(plain.Texels(40)), "image table reuse: a reused table sampled the wrong entry outside the storage-viewed block");
+    Expect(before, 4, 0, "a table of storage-viewed and other entries, image stores leaving results pending over one between dispatches");
+    AgcDriver::Graphics::StorageTexture::FlushPending(AddressOf(block.Texels(23)), TextureBytes, nullptr, "test");
+    device.WaitIdle();
+    Require(Row(block.Texels(23)) == Row(restored.data()), "image table reuse: the image stores over a storage-viewed entry wrote the wrong values");
+
+    for (std::uint32_t texture = Viewed; texture < Records; ++texture) {
+        Fill(block, texture, 0.625f);
+        SetRecord(block, texture, texture);
+    }
+    const auto viewedOnly = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto kept = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, viewedOnly, 40) == Row(block.Texels(40)), "image table reuse: a table of only storage-viewed entries sampled the wrong entry");
+    Require(Dispatch(device, viewedOnly, 41) == Row(block.Texels(41)), "image table reuse: a table of only storage-viewed entries resolved again sampled the wrong entry");
+    Expect(kept, 0, 2, "a table of only storage-viewed entries, which has nothing to reuse");
+}
+
+std::array<std::uint32_t, 8> EntryWords(const GuestBlock& block, std::uint32_t texture) {
+    std::array<std::uint32_t, 8> words{};
+    const auto image = Image(block.Texels(texture));
+    std::copy(image.begin(), image.end(), words.begin());
+    return words;
+}
+
+std::vector<std::uint32_t> FilledRow(float value) {
+    const std::vector<float> texels(Width, value);
+    return Row(texels.data());
+}
+
+ShaderRecompiler::RecompileResult CompileTable(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.625f);
+        SetRecord(block, texture, texture);
+    }
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+    SetOutput(Output.data());
+    return Compile(device, block);
+}
+
+bool RunRetakenDepthSurface(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    const auto context = device.graphicsContext();
+    const auto address = AddressOf(block.Texels(RetakenEntry));
+    const auto planeBytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes({Width, Height}, 4u));
+    if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(address, planeBytes)) {
+        std::puts("guest memory has no write watch: a depth surface taken again under a kept image table is not tested");
+        return false;
+    }
+    const auto result = CompileTable(device, block);
+    const auto words = EntryWords(block, RetakenEntry);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    const AgcDriver::Graphics::DepthTarget target{address, 0, {Width, Height}, VK_FORMAT_D32_SFLOAT, RetakenClearDepth, 0};
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "image table reuse: the depth surface at an entry was not created");
+    AgcDriver::Graphics::RetireDepthSurfaces(context.device, address, TextureBytes);
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto before = AgcDriver::Graphics::ImageTableReuses();
+    std::vector<std::uint32_t> remembered;
+    for (std::uint64_t dispatch = 0; dispatch <= CpuWriteResolutions; ++dispatch) {
+        remembered = Dispatch(device, result, RetakenEntry);
+        Require(remembered == Row(block.Texels(RetakenEntry)), "image table reuse: the table over a retired depth surface sampled the wrong entry");
+    }
+    if (AgcDriver::Graphics::HostImportCovers(context, address, TextureBytes)) {
+        std::puts("the entry over the retired depth surface is host-imported: a depth surface taken again under a kept image table is not tested");
+        return false;
+    }
+    Expect(before, 1, CpuWriteResolutions, "a new table's dispatches over a retired depth surface");
+
+    const auto stamp = AgcDriver::GuestMemory::NewestStamp(address, planeBytes);
+    const auto serial = AgcDriver::Graphics::DepthSurfacesSerial();
+    Require(AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {}) == nullptr, "image table reuse: the retired depth surface at an entry serves it before it is taken again");
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "image table reuse: the retired depth surface at an entry was not taken again");
+    const auto retakenSerial = AgcDriver::Graphics::DepthSurfacesSerial();
+    const auto served = AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {});
+    Require(served != nullptr && AgcDriver::Graphics::DepthSurfaceHolds(context, resource, served.get()), "image table reuse: the depth surface taken again at an entry does not serve it, so the step tests nothing");
+    const auto retakenStamp = AgcDriver::GuestMemory::NewestStamp(address, planeBytes);
+
+    before = AgcDriver::Graphics::ImageTableReuses();
+    const auto kept = Dispatch(device, result, RetakenEntry);
+    const auto step = Since(before);
+    std::printf("a depth surface taken again at a kept table's entry: depth surfaces serial %llu before the take and %llu after, newest stamp over its plane %llu before and %llu after, %llu reused and %llu resolved tables in the dispatch after the take\n", static_cast<unsigned long long>(serial), static_cast<unsigned long long>(retakenSerial), static_cast<unsigned long long>(stamp), static_cast<unsigned long long>(retakenStamp), static_cast<unsigned long long>(step.reused), static_cast<unsigned long long>(step.resolved));
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto walked = Dispatch(device, result, RetakenEntry);
+    Require(walked != remembered, "image table reuse: the walk after the depth surface at an entry was taken again sampled what the kept table holds, so the step tests nothing");
+    Require(walked == FilledRow(RetakenClearDepth), "image table reuse: the walk after the depth surface at an entry was taken again did not sample its cleared depth plane");
+    Require(kept == walked, std::string("image table reuse: a table kept while the depth surface at an entry was retired sampled ") + (kept == remembered ? "the entry's guest memory" : "neither the entry's guest memory nor the depth plane") + " after the surface was taken again, where a walk samples the depth plane (" + std::to_string(step.reused) + " reused and " + std::to_string(step.resolved) + " resolved tables in that dispatch)");
+    return true;
+}
+
+bool RunMirroredDepthSurface(AgcDriver::VulkanDevice& device, const GuestBlock& block, bool cleared) {
+    const auto context = device.graphicsContext();
+    const auto address = AddressOf(block.Texels(RetakenEntry));
+    const VkExtent2D extent{Width, Height};
+    const auto planeBytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes(extent, 4u));
+    const auto htileBytes = static_cast<std::size_t>(AgcDriver::Graphics::HtileMetadataBytes(extent));
+    if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(address, planeBytes + htileBytes)) {
+        std::puts("guest memory has no write watch: a Z64KBX depth surface taken again under a kept image table is not tested");
+        return false;
+    }
+    const auto result = CompileTable(device, block);
+    const auto words = EntryWords(block, RetakenEntry);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    AgcDriver::Graphics::DepthTarget target{address, 0, extent, VK_FORMAT_D32_SFLOAT, RetakenClearDepth, 0};
+    target.htileAddress = address + planeBytes;
+    target.depthSwizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "image table reuse: the Z64KBX depth surface at an entry was not created");
+    std::fill_n(block.Texels(RetakenEntry), planeBytes / sizeof(float), LoadedDepth);
+    Require(Dispatch(device, result, RetakenEntry) == FilledRow(LoadedDepth), "image table reuse: the Z64KBX depth surface at an entry did not load the depth the CPU wrote over its plane");
+    const auto loaded = AgcDriver::Graphics::CachedSampledTexture(context, words);
+    Require(loaded != nullptr && AgcDriver::Graphics::DepthSurfaceHolds(context, resource, loaded.get()), "image table reuse: the walk that loaded the Z64KBX depth surface's plane at an entry did not bind the surface's own view");
+    AgcDriver::Graphics::RetireDepthSurfaces(context.device, address, TextureBytes);
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto before = AgcDriver::Graphics::ImageTableReuses();
+    std::vector<std::uint32_t> remembered;
+    for (std::uint64_t dispatch = 0; dispatch <= CpuWriteResolutions; ++dispatch) {
+        remembered = Dispatch(device, result, RetakenEntry);
+        Require(remembered == FilledRow(LoadedDepth), "image table reuse: the table over a retired Z64KBX depth surface sampled the wrong entry");
+    }
+    if (AgcDriver::Graphics::HostImportCovers(context, address, TextureBytes)) {
+        std::puts("the entry over the retired depth surface is host-imported: a Z64KBX depth surface taken again under a kept image table is not tested");
+        return false;
+    }
+    Expect(before, 1, CpuWriteResolutions, "a new table's dispatches over a retired Z64KBX depth surface");
+    const auto snapshot = AgcDriver::Graphics::CachedSampledTexture(context, words);
+
+    const auto stamp = AgcDriver::GuestMemory::NewestStamp(address, planeBytes);
+    const auto serial = AgcDriver::Graphics::DepthSurfacesSerial();
+    Require(!AgcDriver::Graphics::DepthPlanesStale(), "image table reuse: a depth plane is stale before the Z64KBX depth surface at an entry is taken again");
+    Require(AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {}) == nullptr, "image table reuse: the retired Z64KBX depth surface at an entry serves it before it is taken again");
+    if (cleared) AgcDriver::Graphics::NoteHtileDepthClear(target.htileAddress, htileBytes, htileBytes);
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, target, cleared) != VK_NULL_HANDLE, "image table reuse: the retired Z64KBX depth surface at an entry was not taken again");
+    const auto retakenSerial = AgcDriver::Graphics::DepthSurfacesSerial();
+    Require(AgcDriver::Graphics::DepthPlanesStale() == cleared, cleared ? "image table reuse: the Z64KBX depth surface taken again after an HTILE clear with depth written left its plane current" : "image table reuse: the Z64KBX depth surface taken again with no depth work left its plane stale");
+    const auto served = AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {});
+    Require(served != nullptr && AgcDriver::Graphics::DepthSurfaceHolds(context, resource, served.get()), "image table reuse: the Z64KBX depth surface taken again at an entry does not serve it, so the step tests nothing");
+    const auto retakenStamp = AgcDriver::GuestMemory::NewestStamp(address, planeBytes);
+
+    const auto storesBefore = AgcDriver::Graphics::DepthPlaneStoreCounts().stores;
+    before = AgcDriver::Graphics::ImageTableReuses();
+    const auto kept = Dispatch(device, result, RetakenEntry);
+    const auto step = Since(before);
+    const auto storesKept = AgcDriver::Graphics::DepthPlaneStoreCounts().stores;
+    std::printf("%s at a kept table's entry: depth surfaces serial %llu before the take and %llu after, newest stamp over its plane %llu before and %llu after, %llu reused and %llu resolved tables in the dispatch after the take, depth plane stores %llu before that dispatch and %llu after it\n", cleared ? "a Z64KBX depth surface taken again after an HTILE clear with depth written" : "a Z64KBX depth surface taken again with no depth work", static_cast<unsigned long long>(serial), static_cast<unsigned long long>(retakenSerial), static_cast<unsigned long long>(stamp), static_cast<unsigned long long>(retakenStamp), static_cast<unsigned long long>(step.reused), static_cast<unsigned long long>(step.resolved), static_cast<unsigned long long>(storesBefore), static_cast<unsigned long long>(storesKept));
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto walked = Dispatch(device, result, RetakenEntry);
+    std::printf("depth plane stores after the walk: %llu\n", static_cast<unsigned long long>(AgcDriver::Graphics::DepthPlaneStoreCounts().stores));
+    const auto walkedTexture = AgcDriver::Graphics::CachedSampledTexture(context, words);
+    Require(walkedTexture != nullptr && walkedTexture != snapshot && AgcDriver::Graphics::DepthSurfaceHolds(context, resource, walkedTexture.get()), "image table reuse: the walk after the Z64KBX depth surface at an entry was taken again did not bind the surface's own view");
+    if (!cleared) {
+        Require(walked == remembered && kept == walked, "image table reuse: a Z64KBX depth surface whose plane was loaded from memory, taken again with no depth work, sampled other texels than its kept snapshot");
+        return true;
+    }
+    Require(walked != remembered, "image table reuse: the walk after the HTILE-cleared Z64KBX depth surface at an entry was taken again sampled what the kept table holds, so the step tests nothing");
+    Require(walked == FilledRow(RetakenClearDepth), "image table reuse: the walk after the Z64KBX depth surface at an entry was taken again did not sample the depth its HTILE clear left");
+    Require(kept == walked, std::string("image table reuse: a table kept while the Z64KBX depth surface at an entry was retired sampled ") + (kept == remembered ? "the entry's guest memory" : "neither the entry's guest memory nor the depth plane") + " after the surface was taken again with an HTILE clear, where a walk samples the cleared depth plane (" + std::to_string(step.reused) + " reused and " + std::to_string(step.resolved) + " resolved tables in that dispatch)");
+    return true;
+}
+
+bool RunRetiredDepthSurface(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    const auto context = device.graphicsContext();
+    const auto address = AddressOf(block.Texels(RetakenEntry));
+    const VkExtent2D extent{Width, 2u * Height};
+    const auto planeBytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes(extent, 4u));
+    if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(address, planeBytes)) {
+        std::puts("guest memory has no write watch: a depth surface of another extent retired under a kept image table is not tested");
+        return false;
+    }
+    const auto result = CompileTable(device, block);
+    const auto words = EntryWords(block, RetakenEntry);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    const AgcDriver::Graphics::DepthTarget target{address, 0, extent, VK_FORMAT_D32_SFLOAT, RetakenClearDepth, 0};
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "image table reuse: the depth surface of another extent at an entry was not created");
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto before = AgcDriver::Graphics::ImageTableReuses();
+    std::vector<std::uint32_t> remembered;
+    for (std::uint64_t dispatch = 0; dispatch <= CpuWriteResolutions; ++dispatch) {
+        remembered = Dispatch(device, result, RetakenEntry);
+        Require(remembered == Row(block.Texels(RetakenEntry)), "image table reuse: the table over a depth surface of another extent sampled the wrong entry");
+    }
+    if (AgcDriver::Graphics::HostImportCovers(context, address, TextureBytes)) {
+        std::puts("the entry over the depth surface of another extent is host-imported: a depth surface retired under a kept image table is not tested");
+        return false;
+    }
+    Expect(before, 1, CpuWriteResolutions, "a new table's dispatches over a depth surface of another extent");
+    const auto snapshot = AgcDriver::Graphics::CachedSampledTexture(context, words);
+
+    const auto stamp = AgcDriver::GuestMemory::NewestStamp(address, planeBytes);
+    const auto serial = AgcDriver::Graphics::DepthSurfacesSerial();
+    Require(AgcDriver::Graphics::DepthSurfaceAt(address) && AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {}) == nullptr, "image table reuse: the depth surface of another extent at an entry is not live, or serves the entry, before its retire");
+    AgcDriver::Graphics::RetireDepthSurfaces(context.device, address, TextureBytes);
+    const auto retiredSerial = AgcDriver::Graphics::DepthSurfacesSerial();
+    Require(!AgcDriver::Graphics::DepthSurfaceAt(address) && AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, {}) == nullptr, "image table reuse: the depth surface of another extent at an entry is still live, or serves the entry, after its retire");
+    const auto retiredStamp = AgcDriver::GuestMemory::NewestStamp(address, planeBytes);
+
+    before = AgcDriver::Graphics::ImageTableReuses();
+    const auto kept = Dispatch(device, result, RetakenEntry);
+    const auto step = Since(before);
+    std::printf("a depth surface of another extent retired at a kept table's entry: depth surfaces serial %llu before the retire and %llu after, newest stamp over its plane %llu before and %llu after, %llu reused and %llu resolved tables in the dispatch after the retire\n", static_cast<unsigned long long>(serial), static_cast<unsigned long long>(retiredSerial), static_cast<unsigned long long>(stamp), static_cast<unsigned long long>(retiredStamp), static_cast<unsigned long long>(step.reused), static_cast<unsigned long long>(step.resolved));
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto walked = Dispatch(device, result, RetakenEntry);
+    Require(kept == remembered && walked == remembered, "image table reuse: a table kept while a depth surface of another extent was live at an entry sampled other texels after the surface was retired");
+    Require(AgcDriver::Graphics::CachedSampledTexture(context, words) == snapshot, "image table reuse: the walk after the depth surface of another extent at an entry was retired made another texture object for it");
+    return true;
 }
 
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& stores) {
@@ -358,13 +771,48 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const std::string selected = argc > 1 ? argv[1] : "";
+        if (selected == "--retaken-depth-surface" || selected == "--retaken-cleared-depth-surface" || selected == "--retaken-mirrored-depth-surface" || selected == "--retired-depth-surface") {
+            GuestBlock block(UnimportableBytes);
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            const bool tested = selected == "--retaken-depth-surface" ? RunRetakenDepthSurface(*device, block) : selected == "--retired-depth-surface" ? RunRetiredDepthSurface(*device, block) : RunMirroredDepthSurface(*device, block, selected == "--retaken-cleared-depth-surface");
+            if (!tested) return VulkanTestSkipped;
+            auto name = selected.substr(2);
+            std::replace(name.begin(), name.end(), '-', ' ');
+            std::puts(("image table reuse: the " + name + " test passed").c_str());
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "entry-memo") {
+            GuestBlock shared;
+            GuestBlock plain;
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (!RunEntryMemo(*device, shared, plain)) return VulkanTestSkipped;
+            std::puts("image table entry memo tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "records") {
+            GuestBlock shared;
+            GuestBlock plain;
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (!RunReusedTableRecords(*device, shared, plain)) return VulkanTestSkipped;
+            std::puts("image table reuse record tests passed");
+            return 0;
+        }
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
+        GuestBlock pending(UnimportableBytes);
+        GuestBlock viewed;
+        GuestBlock plain;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         RunTests(*device, block, stores);
+        RunPendingWriteBack(*device, pending);
+        RunViewedStore(*device, viewed, plain);
         std::puts("image table reuse tests passed");
         return 0;
     } catch (const std::exception& error) {

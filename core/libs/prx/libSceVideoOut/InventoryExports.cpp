@@ -2,17 +2,30 @@
 #include "prx/libSceVideoOut/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
+#include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
+#include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 
 namespace {
 constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
-constexpr int VideoOutErrorLatestEopHandle = static_cast<int>(0x802900FFu);
+constexpr int VideoOutErrorDeviceFailure = static_cast<int>(0x802900FFu);
+constexpr int VideoOutErrorNoDevice = static_cast<int>(0x80290018u);
+constexpr int VideoOutErrorNoMemory = static_cast<int>(0x8029100Cu);
+constexpr std::uintptr_t VideoOutEventDisplayPosition = 12;
+
+bool OpenPort(int handle) {
+    return VideoOutDriver::Get().HasConfig(handle) && VideoOutDriver::Get().IsOpen(handle);
+}
 
 std::uint32_t ModeFlags(const void* mode) {
-    std::uint32_t flags;
-    std::memcpy(&flags, static_cast<const std::uint8_t*>(mode) + 0x20, sizeof(flags));
+    std::uint32_t flags = 0;
+    if (mode == nullptr || !GuestBytes(static_cast<const std::uint8_t*>(mode) + 0x20).CopyIn(&flags, sizeof(flags))) return 0;
     return flags;
 }
 }
@@ -39,7 +52,11 @@ int APS5_VABI sceVideoOutAddBufferYccPrivilege() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutAddDisplayPositionEvent() {
+int APS5_VABI sceVideoOutAddDisplayPositionEvent(KernelEqueue eq, int handle, void* udata) {
+    (void)udata;
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    if (!EqueuePin_nid_postfix(eq)) return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -48,10 +65,6 @@ int APS5_VABI sceVideoOutAddDriver() {
 }
 
 int APS5_VABI sceVideoOutAddS3dHmdPrivilege() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideoOutAddSetModeEvent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -87,7 +100,23 @@ int APS5_VABI sceVideoOutConfigureOutputModeEx_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutConfigureOutputMode_() {
+int APS5_VABI sceVideoOutConfigureOutputMode_(int handle, std::uint32_t reserved, const void* mode, std::uint64_t forwarded, std::uint64_t unused, std::uint32_t size) {
+    (void)unused;
+    if (mode == nullptr || reserved != 0 || size != 0x10) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t recordSize;
+    std::uint64_t field8;
+    std::uint64_t field10;
+    const auto* bytes = static_cast<const std::uint8_t*>(mode);
+    std::memcpy(&recordSize, bytes, sizeof(recordSize));
+    std::memcpy(&field8, bytes + 8, sizeof(field8));
+    std::memcpy(&field10, bytes + 0x10, sizeof(field10));
+    if (field10 == 0xffffffff21ffffffull && (field8 == 13 || field8 == 16 || field8 == 18)) NotImplemented_nid_no_patch(__func__);
+    if (recordSize != 0x20) return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
+    bool anyMode = forwarded == 0;
+    for (int offset = 4; anyMode && offset < 0x20; ++offset) anyMode = bytes[offset] == 0xff;
+    if (anyMode) return 0;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -131,15 +160,18 @@ int APS5_VABI sceVideoOutDebugTriggerRefresh() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutDeleteDisplayPositionEvent() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutDeleteDisplayPositionEvent(KernelEqueue eq, int handle) {
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    const int result = EqueueDeleteEvent_nid_postfix(eq, VideoOutEventDisplayPosition, EVFILT_VIDEO_OUT);
+    if (result == 0) return 0;
+    if (result == SCE_KERNEL_ERROR_ENOENT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    if (result == SCE_KERNEL_ERROR_ENOMEM) return VideoOutErrorNoMemory;
+    if (result == SCE_KERNEL_ERROR_EBADF) return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
+    return VideoOutErrorDeviceFailure;
 }
 
 int APS5_VABI sceVideoOutDeleteDriver() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideoOutDeleteSetModeEvent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -168,7 +200,7 @@ int APS5_VABI sceVideoOutDriverGetFinishedEopHandle() {
 }
 
 int APS5_VABI sceVideoOutDriverGetLatestEopHandle() {
-    return VideoOutErrorLatestEopHandle;
+    return VideoOutErrorDeviceFailure;
 }
 
 int APS5_VABI sceVideoOutDriverIncrementBufferLabel() {
@@ -191,7 +223,11 @@ int APS5_VABI sceVideoOutGetCoredumpOutputMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutGetCurrentOutputMode_() {
+int APS5_VABI sceVideoOutGetCurrentOutputMode_(std::uint64_t bus, void* mode) {
+    if (mode == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (bus <= static_cast<std::uint64_t>(std::numeric_limits<int>::max()) && VideoOutDriver::Get().IsOpen(static_cast<int>(bus))) {
+        return VideoOutErrorNoDevice;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -199,7 +235,11 @@ int APS5_VABI sceVideoOutGetDeviceInfoExOts_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutGetDeviceInfoEx_() {
+int APS5_VABI sceVideoOutGetDeviceInfoEx_(int handle, const void* reserved, void* info, std::uint32_t size) {
+    if (size != 0x18) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (reserved != nullptr) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (info == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -227,8 +267,9 @@ int APS5_VABI sceVideoOutGetOutputStatusEx() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutGetPipelineStatus() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutGetPipelineStatus(std::uint32_t* out, std::uint64_t reserved) {
+    if (out == nullptr || reserved != 0) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    return VideoOutErrorDeviceFailure;
 }
 
 int APS5_VABI sceVideoOutGetPortStatusInfoByBusSpecifier_() {
@@ -295,8 +336,23 @@ int APS5_VABI sceVideoOutSetBlankAfterResume() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetContentType() {
-    NotImplemented_nid_no_patch(__func__);
+static bool ValidContentRecord(const std::uint8_t* record) {
+    static constexpr std::uint8_t reserved[0x30]{};
+    std::uint16_t mode;
+    std::uint32_t flags;
+    std::memcpy(&mode, record, sizeof(mode));
+    std::memcpy(&flags, record + 8, sizeof(flags));
+    return mode <= 0x1c && (record[2] < 5 || record[2] == 0xff) &&
+           (record[3] == 0 || record[3] == 2) && record[4] <= 1 && flags <= 0xf &&
+           std::memcmp(record + 0x10, reserved, sizeof(reserved)) == 0;
+}
+
+int APS5_VABI sceVideoOutSetContentType(std::uint32_t type, void* record) {
+    if (!record) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    auto* bytes = static_cast<std::uint8_t*>(record);
+    if (type > 4 || !ValidContentRecord(bytes)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    bytes[2] = static_cast<std::uint8_t>(type);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutSetDisplayEventPosition() {
@@ -316,14 +372,6 @@ int APS5_VABI sceVideoOutSetToneMap_() {
 }
 
 int APS5_VABI sceVideoOutSetVrrMaster() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideoOutSubmitChangeBufferAttribute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideoOutSysAddSetModeEvent2() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -371,8 +419,11 @@ int APS5_VABI sceVideoOutSysFloatPort() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSysGetBus() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysGetBus(int handle) try {
+    const int busType = VideoOutDriver::Get().GetBusType(handle);
+    return busType < 0 ? VIDEO_OUT_ERROR_INVALID_HANDLE : busType;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutSysGetColorConversionStatus() {
@@ -432,13 +483,19 @@ int APS5_VABI sceVideoOutSysHdmiMonitorInfoIsMorpheus() {
 }
 
 void APS5_VABI sceVideoOutSysInitMode(void* mode) {
-    std::memset(mode, 0xFF, 0x20);
+    std::array<std::byte, 0x20> bytes{};
+    bytes.fill(std::byte{0xFF});
     const std::uint32_t size = 0x20;
-    std::memcpy(mode, &size, sizeof(size));
+    std::memcpy(bytes.data(), &size, sizeof(size));
+    if (!GuestBytes(mode).CopyOut(bytes.data(), bytes.size())) {
+        throw std::runtime_error("sceVideoOutSysInitMode: VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
 }
 
-int APS5_VABI sceVideoOutSysIsModeS3d() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysIsModeS3d(const void* mode) {
+    std::uint64_t value = 0;
+    if (mode == nullptr || !GuestBytes(static_cast<const std::uint8_t*>(mode) + 0x10).CopyIn(&value, sizeof(value))) return 0;
+    return value - 0xA0u < 2u || value == 0xFFFFFFFF81FFFFFFull ? 1 : 0;
 }
 
 int APS5_VABI sceVideoOutSysIsOutputSupported() {
@@ -462,7 +519,8 @@ int APS5_VABI sceVideoOutSysIsUserStatusVr() {
 }
 
 int APS5_VABI sceVideoOutSysModeIsHdr(const void* mode) {
-    const auto value = static_cast<const std::uint8_t*>(mode)[6];
+    std::uint8_t value = 0;
+    if (mode == nullptr || !GuestBytes(static_cast<const std::uint8_t*>(mode) + 6).CopyIn(&value, sizeof(value))) return 0;
     return static_cast<std::uint8_t>(value - 12u) < 6u ? 1 : 0;
 }
 
@@ -804,42 +862,100 @@ APS5_EXPORT("ys239q8VgXY", libSceVideoOutUnknown_ys239q8VgXY_nid_no_patch);
 
 extern "C" {
 
-int APS5_VABI videoOutLegacyUnknown__plus_epU_plus_rgObyw_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorObtain() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("+epU+rgObyw", videoOutLegacyUnknown__plus_epU_plus_rgObyw_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_6L0_minus_A5piudQ_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorDisable() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("6L0-A5piudQ", videoOutLegacyUnknown_6L0_minus_A5piudQ_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_QSmT3attiVg_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorRelease() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("QSmT3attiVg", videoOutLegacyUnknown_QSmT3attiVg_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_ekwMB_minus_Ftq18_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorIsUpdatePending() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ekwMB-Ftq18", videoOutLegacyUnknown_ekwMB_minus_Ftq18_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_fZgBeiGqE_plus_c_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorSetPosition() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("fZgBeiGqE+c", videoOutLegacyUnknown_fZgBeiGqE_plus_c_nid_no_patch);
 
 int APS5_VABI videoOutLegacyUnknown_spvjek0G4es_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("spvjek0G4es", videoOutLegacyUnknown_spvjek0G4es_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_xwhyGPZkW6w_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorEnable() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("xwhyGPZkW6w", videoOutLegacyUnknown_xwhyGPZkW6w_nid_no_patch);
 
 int APS5_VABI sceVideoOutSetConfigurationMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-7inAKRfvfE", libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("24GHCH4jyzU", libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9jqDAT2tPAg", libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DFNafp+tWs8", libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("G0FPxnpizUc", libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JpVPYbAVxRQ", libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KEOpdUvfQHQ", libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("koLWa3yaO-8", libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch);
+
+int APS5_VABI sceVideoOutLatencyMeasureSetStartPointAuto() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSetDrrMonitorCapability() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysAddFlipEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysDeleteFlipEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysSetBusTransfer() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -863,8 +979,12 @@ int APS5_VABI sceVideoOutPostProcessorRemoveCallback() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetContentDynamicRange() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSetContentDynamicRange(std::uint32_t range, void* record) {
+    if (!record) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    auto* bytes = static_cast<std::uint8_t*>(record);
+    if (range > 1 || !ValidContentRecord(bytes)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    bytes[4] = static_cast<std::uint8_t>(range);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutSysCursorSetSize() {
@@ -896,6 +1016,48 @@ int APS5_VABI sceVideoOutSysSetDrrPegRefreshRate() {
 }
 
 int APS5_VABI sceVideoOutSysSetVrrSetting() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVideoOutUnknown__plus_ZuoGRI_plus_U_minus_g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+ZuoGRI+U-g", libSceVideoOutUnknown__plus_ZuoGRI_plus_U_minus_g_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_96hq3WwT3DE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("96hq3WwT3DE", libSceVideoOutUnknown_96hq3WwT3DE_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_B8siTU85n8M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("B8siTU85n8M", libSceVideoOutUnknown_B8siTU85n8M_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_IkyDS23qu4g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IkyDS23qu4g", libSceVideoOutUnknown_IkyDS23qu4g_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_gQwfLPPIZQ8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gQwfLPPIZQ8", libSceVideoOutUnknown_gQwfLPPIZQ8_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_rJmjlPlreu4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rJmjlPlreu4", libSceVideoOutUnknown_rJmjlPlreu4_nid_no_patch);
+
+int APS5_VABI sceVideoOutGetFlipStatusNative() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysLatencyMeasureGetLatestLatency() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 
 #include "prx/libc/include/General.hpp"
@@ -32,7 +34,7 @@ const void* FindLast(const void* first, const void* last, TValue value) {
     if (first == last) return last;
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress < beginAddress || (endAddress - beginAddress) % sizeof(TValue) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress < beginAddress || (endAddress - beginAddress) % sizeof(TValue) != 0) throw std::invalid_argument(std::string(__func__) + ": null, reversed or partial-element range");
     const auto* begin = static_cast<const unsigned char*>(first);
     auto* current = static_cast<const unsigned char*>(last);
     while (current != begin) {
@@ -109,6 +111,9 @@ void Reverse(void* first, void* last) {
 
 template<std::size_t Size>
 void ReverseCopy(const void* first, const void* last, void* destination) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (endAddress < beginAddress || (endAddress - beginAddress) % Size != 0) throw std::invalid_argument(std::string(__func__) + ": reversed or partial-element range");
     auto* begin = static_cast<const unsigned char*>(first);
     auto* end = static_cast<const unsigned char*>(last);
     auto* out = static_cast<unsigned char*>(destination);
@@ -139,7 +144,7 @@ const void* APS5_VABI __std_find_trivial_unsized_8_nid_postfix(const void* first
 std::int64_t APS5_VABI __std_max_8i_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int64_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::int64_t maximum = Read<std::int64_t>(current);
@@ -158,7 +163,7 @@ std::size_t APS5_VABI __std_count_trivial_8_nid_postfix(const void* first, const
 std::uint64_t APS5_VABI __std_min_8u_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint64_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::uint64_t minimum = Read<std::uint64_t>(current);
@@ -177,7 +182,7 @@ const void* APS5_VABI __std_min_element_8_nid_postfix(const void* first, const v
 std::int32_t APS5_VABI __std_min_4i_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int32_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int32_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::int32_t minimum = Read<std::int32_t>(current);
@@ -194,7 +199,7 @@ const void* APS5_VABI __std_max_element_2_nid_postfix(const void* first, const v
 std::int32_t APS5_VABI __std_max_4i_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int32_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int32_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::int32_t maximum = Read<std::int32_t>(current);
@@ -210,7 +215,7 @@ const void* APS5_VABI __std_max_element_8_nid_postfix(const void* first, const v
 std::uint64_t APS5_VABI __std_max_8u_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint64_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::uint64_t maximum = Read<std::uint64_t>(current);
@@ -229,7 +234,7 @@ MinMaxPointers APS5_VABI __std_minmax_element_8_nid_postfix(const void* first, c
 std::uint32_t APS5_VABI __std_min_4u_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint32_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint32_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::uint32_t minimum = Read<std::uint32_t>(current);
@@ -247,7 +252,7 @@ void APS5_VABI __std_reverse_trivially_swappable_8_nid_postfix(void* first, void
 std::uint32_t APS5_VABI __std_max_4u_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint32_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint32_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::uint32_t maximum = Read<std::uint32_t>(current);
@@ -277,7 +282,7 @@ void APS5_VABI __std_swap_ranges_trivially_swappable_noalias_nid_postfix(void* f
 std::int64_t APS5_VABI __std_min_8i_nid_postfix(const void* first, const void* last) {
     const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
     const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
-    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int64_t) != 0) throw std::invalid_argument(std::string(__func__) + ": null, empty, reversed or partial-element range");
     auto* current = static_cast<const unsigned char*>(first);
     const auto* end = static_cast<const unsigned char*>(last);
     std::int64_t minimum = Read<std::int64_t>(current);

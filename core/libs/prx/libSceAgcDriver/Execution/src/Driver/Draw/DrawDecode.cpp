@@ -2,9 +2,12 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string_view>
 #include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
@@ -29,7 +32,7 @@ void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, program.userDataBase + i);
         program.userData.push_back(staticAbi ? ReadGraphicsRegister(queue.shader, program.userDataBase + i) : readUserData(queue.shader, program.userDataBase + i));
     }
-    if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
+    if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment || program.binary.stage == ShaderRecompiler::ShaderStage::Mesh) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
 }
 
 ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<Graphics::DecodeRead>& reads, std::uint32_t hiddenUserWords) {
@@ -39,11 +42,12 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<c
     };
     if (!DrawPipeline::Active()) return decode();
     auto& queue = DrawPipeline::Queue0();
-    const auto watch = queue.WatchWrites();
+    auto watch = queue.WatchWrites();
     auto info = decode();
     if (watch.items == 0 && !queue.Busy() && queue.Retired() == watch.retired) return info;
-    std::vector<DrawPipeline::Range> ranges;
-    ranges.reserve(reads.size());
+    struct RangesStorage {};
+    auto& ranges = HostThreadLocal<std::vector<DrawPipeline::Range>, RangesStorage>();
+    ranges.clear();
     for (const auto& read : reads) ranges.emplace_back(read.address, read.address + read.size);
     if (!queue.WrittenSince(watch, ranges)) return info;
     queue.NoteDecodeDrain();
@@ -126,6 +130,11 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             codeOffset
         };
         result.resourceRegister = rsrc2;
+        if (!nullPixel) {
+            Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, rsrc2);
+            const auto resources = queue.shader.find(rsrc2);
+            require(resources == queue.shader.end() || (resources->second >> 28u) == 0u, "wave-shared VGPRs of a graphics stage (SPI_SHADER_PGM_RSRC2.SHARED_VGPR_CNT) are not modeled");
+        }
         result.nullPixel = nullPixel;
         ReadUserWords(queue, result, staticAbi);
         return result;
@@ -188,11 +197,24 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     auto product = std::make_shared<DrawDecode>();
     product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, *submission.shaders));
     DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
-    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true); });
-    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
+    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true) || program.binary.codeAddress == StencilCopyPixelProgramAddress(true); });
+    std::span<const std::byte> fragmentHeader;
+    for (const auto& program : product->programs) {
+        if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
+            fragmentHeader = program.binary.header;
+            break;
+        }
+    }
+    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue), fragmentHeader);
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
+    Graphics::ApplyViewportIndex(context, product->state);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
+    static const bool readOnlyDepthBoundsCompare = [] {
+        const auto* value = std::getenv("APS5_READONLY_DEPTH_BOUNDS_COMPARE");
+        return value != nullptr && std::string_view(value) == "1";
+    }();
+    Graphics::ApplyReadOnlyDepthBoundsComparison(product->state, product->pixel, readOnlyDepthBoundsCompare);
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;
     product->pixel.reversedBlend = product->state.reversedBlend;
@@ -203,7 +225,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         const auto localDevice = device.Load();
         if (localDevice != nullptr) product->pixel.sampleOrder = localDevice->HostSampleOrder(product->state);
     }
-    product->pixel.quadSampleMask = Graphics::QuadSampleMasks(product->state, product->pixel.sampleOrder);
+    product->pixel.quadSampleMask = Graphics::QuadSampleMasks(product->state, product->pixel.sampleOrder, context.staticSampleMaskStopsShading);
     if (product->pixel.stencilRefExportEnable && Graphics::StencilReferenceUnused(product->state)) {
         const auto localDevice = device.Load();
         const auto capabilities = localDevice == nullptr ? std::vector<std::uint32_t>{} : localDevice->Target().supportedCapabilities;
@@ -213,6 +235,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     if (product->pixel.ancillary) product->pixel.layerExported = product->state.layerExports != 0;
     product->pixel.ditheredAlphaToCoverage = product->state.ditheredAlphaToCoverage;
     product->pixel.ditheredAlphaSamples = product->state.ditheredAlphaSamples;
+    product->pixel.singleSampleDither = product->state.singleSampleDither;
     product->pixel.iteratesSamples = product->state.perSampleShading;
     product->pixel.sampleLocations = Graphics::PixelSampleLocations(product->state, product->pixel);
     return product;

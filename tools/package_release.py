@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import json
 import os
 import re
@@ -7,13 +8,14 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
 import package_headers
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
+WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "i18n.mjs", "output-directory.mjs", "worker.mjs",
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 
@@ -36,7 +38,7 @@ def windows_runtime(build):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
         raise RuntimeError(f"Missing CMakeCache.txt in build directory: {build}")
-    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+    for line in cache.read_text(encoding="utf-8-sig").split("\n"):
         if line.startswith("CMAKE_CXX_COMPILER:"):
             compiler = line.partition("=")[2]
             if compiler and not compiler.endswith("-NOTFOUND"):
@@ -49,25 +51,105 @@ def windows_runtime(build):
     raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {cache}")
 
 
-def tracy_runtime(platform, build):
+def cmake_option(build, name):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
+        return False
+    lines = cache.read_text(encoding="utf-8-sig").split("\n")
+    value = next((line.partition("=")[2].upper() for line in lines if line.startswith(name + ":")), "OFF")
+    return value not in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") and not value.endswith("-NOTFOUND")
+
+
+def tracy_runtime(platform, build):
+    if not cmake_option(build, "APS5_ENABLE_TRACY"):
         return []
-    lines = cache.read_text(encoding="utf-8-sig").splitlines()
-    enabled = next((line.partition("=")[2].upper() for line in lines if line.startswith("APS5_ENABLE_TRACY:")), "OFF")
-    if enabled in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") or enabled.endswith("-NOTFOUND"):
-        return []
-    pattern = "libTracyClient.dll" if platform == "windows" else "libTracyClient.so.*"
+    pattern = {"windows": "libTracyClient.dll", "linux": "libTracyClient.so.*", "macos": "libTracyClient.*.dylib"}[platform]
     directory = build / "core/libs/libs"
     clients = sorted(directory.glob(pattern))
-    if len(clients) != 1:
+    if len(clients) != 1 or not clients[0].is_file() or clients[0].stat().st_size == 0:
         raise RuntimeError(f"Missing or ambiguous Tracy runtime for APS5_ENABLE_TRACY: {directory / pattern}")
     return clients
+
+
+def native_auxiliary_runtimes(platform, build):
+    names = {"linux": ("libmimalloc.so",), "windows": ("mimalloc.dll", "mimalloc-redirect.dll"), "macos": ("libmimalloc.dylib",)}[platform]
+    if platform == "linux" and any(cmake_option(build, name) for name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN")):
+        names = ()
+    return [build / "core/libs/libs" / name for name in names] + tracy_runtime(platform, build)
+
+
+def promote_native_assets(staging, output):
+    files = sorted(staging.iterdir())
+    backups = Path(tempfile.mkdtemp(prefix=".release-backup-", dir=output))
+    try:
+        for file in files:
+            destination = output / file.name
+            if os.path.lexists(destination):
+                destination.replace(backups / file.name)
+            file.replace(destination)
+    except BaseException as error:
+        failures = []
+        for file in reversed(files):
+            try:
+                previous = backups / file.name
+                if os.path.lexists(previous):
+                    previous.replace(output / file.name)
+                elif not file.exists():
+                    (output / file.name).unlink()
+            except OSError as recovery_error:
+                failures.append(f"{file.name}: {recovery_error}")
+        if failures:
+            raise RuntimeError(f"Native release promotion failed: {error}; rollback failed: {'; '.join(failures)}; recovery files retained at {backups}") from error
+        try:
+            backups.rmdir()
+        except OSError as cleanup_error:
+            raise RuntimeError(f"Native release promotion failed: {error}; rollback completed but backup cleanup failed at {backups}: {cleanup_error}") from error
+        raise
+    shutil.rmtree(backups)
+
+
+def dated_zip_info(name, epoch, mode=0o644):
+    info = zipfile.ZipInfo(name, time.gmtime(max(epoch, 315532800))[:6])
+    info.create_system = 3
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = (stat.S_IFREG | mode) << 16
+    return info
+
+
+def add_zip_file(archive, source, destination, epoch):
+    if epoch is None:
+        archive.write(source, arcname=destination)
+        return
+    metadata = source.stat()
+    info = dated_zip_info(destination, epoch, 0o644 | (metadata.st_mode & 0o111))
+    info.file_size = metadata.st_size
+    with source.open("rb") as content, archive.open(info, "w") as member:
+        shutil.copyfileobj(content, member)
+
+
+def write_tar_archive(target, entries, epoch):
+    if epoch is None:
+        with tarfile.open(target, "w:gz", compresslevel=9, dereference=True) as archive:
+            for source, destination in entries:
+                archive.add(source, arcname=destination)
+        return
+    with target.open("wb") as output, gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=epoch, compresslevel=9) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w", dereference=True) as archive:
+            for source, destination in entries:
+                info = archive.gettarinfo(source, arcname=destination)
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                info.mode = 0o644 | (info.mode & 0o111)
+                info.mtime = epoch
+                info.pax_headers = {}
+                with source.open("rb") as content:
+                    archive.addfile(info, content)
 
 
 def package(platform, build, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
+    epoch = package_headers.source_date_epoch()
     libraries = sorted((build / "core/libs/libs").glob("*.prx"))
     expected = {f"{directory.name}.prx" for directory in (ROOT / "core/libs/prx").iterdir() if directory.is_dir() and not directory.name.startswith(".")}
     missing = expected - {library.name for library in libraries}
@@ -76,9 +158,20 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
     licenses = []
+    if "libharfbuzz.prx" in expected:
+        licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
+        licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
+    if "libcairo.prx" in expected:
+        licenses.append((ROOT / "3rdparty/cairo/COPYING", "libs/licenses/cairo.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-LGPL-2.1", "libs/licenses/cairo-lgpl-2.1.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-MPL-1.1", "libs/licenses/cairo-mpl-1.1.txt"))
+        licenses.append((ROOT / "3rdparty/pixman/COPYING", "libs/licenses/pixman.txt"))
+        licenses.append((ROOT / "3rdparty/libpng/LICENSE", "libs/licenses/libpng.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/LICENSE", "libs/licenses/libyuv.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/PATENTS", "libs/licenses/libyuv-patents.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
@@ -86,16 +179,27 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
     if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
+    if "libSceNKWebKit.prx" in expected:
+        licenses.append((ROOT / "3rdparty/quickjs/LICENSE", "libs/licenses/quickjs.txt"))
     if "libSceNKWebKitRequirements.prx" in expected:
         licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
+        licenses.append((ROOT / "3rdparty/libwpe/COPYING", "libs/licenses/libwpe.txt"))
+    if "libfontconfig.prx" in expected:
+        licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
+        licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
-        files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
-    else:
-        files.append(build / "core/libs/libs/libmimalloc.so")
     licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
-    files.extend(tracy_runtime(platform, build))
+    if expected & {"libSceAjm.native.prx", "libSceAudiodec.prx", "libSceAvPlayer.prx", "libSceVdecCore.prx", "libSceVideodec2.prx"}:
+        ffmpeg_manifest = build / "release-ffmpeg-notices.txt"
+        if not ffmpeg_manifest.is_file():
+            raise RuntimeError(f"Missing FFmpeg notice manifest: {ffmpeg_manifest}; reconfigure the build")
+        ffmpeg_notices = Path(ffmpeg_manifest.read_text(encoding="utf-8").removesuffix("\n"))
+        if not ffmpeg_notices.is_absolute():
+            raise RuntimeError(f"Invalid FFmpeg notice directory in: {ffmpeg_manifest}")
+        licenses.extend((ffmpeg_notices / name, "libs/licenses/ffmpeg/" + name) for name in ("copyright", "SOURCE.txt"))
+    files.extend(native_auxiliary_runtimes(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
     if platform == "windows":
@@ -114,6 +218,10 @@ def package(platform, build, output, version):
             raise RuntimeError("Import library manifest does not match release libraries")
         unpatched.extend((imports[name], "libs/implib/" + imports[name].name) for name in sorted(imports))
     binary = build / "core/relinker" / executable
+    needs_freetype_notices = bool(expected & {"libharfbuzz.prx", "libSceFreeType.prx", "libSceFreeTypeOt.prx", "libSceFontFt.prx"})
+    if needs_freetype_notices:
+        for source, name in (("LICENSE.TXT", "freetype-licenses.txt"), ("docs/FTL.TXT", "freetype-ftl.txt"), ("src/bdf/README", "freetype-bdf.txt"), ("src/pcf/README", "freetype-pcf.txt")):
+            licenses.append((ROOT / "3rdparty/freetype" / source, "libs/licenses/" + name))
     for file in [*files, binary, *(source for source, _ in licenses), *(source for source, _ in unpatched)]:
         if not file.is_file() or file.stat().st_size == 0:
             raise RuntimeError(f"Missing or empty release file: {file}")
@@ -136,16 +244,20 @@ def package(platform, build, output, version):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         staging = Path(temporary)
+        if needs_freetype_notices:
+            attribution = staging / "freetype-attribution.txt"
+            with attribution.open("w", encoding="utf-8", newline="\n") as notice:
+                notice.write("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n")
+            licenses.append((attribution, "libs/licenses/freetype-attribution.txt"))
         for stem, entries in archives.items():
             with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
                 for source, destination in entries + licenses:
-                    archive.write(source, arcname=destination)
-            with tarfile.open(staging / (stem + ".tar.gz"), "w:gz", compresslevel=9, dereference=True) as archive:
-                for source, destination in entries + licenses:
-                    archive.add(source, arcname=destination)
+                    add_zip_file(archive, source, destination, epoch)
+            write_tar_archive(staging / (stem + ".tar.gz"), entries + licenses, epoch)
         shutil.copy2(binary, staging / asset)
-        for file in sorted(staging.iterdir()):
-            file.replace(output / file.name)
+        if needs_freetype_notices:
+            attribution.unlink()
+        promote_native_assets(staging, output)
 
 
 def collect_docs(source, output):
@@ -164,8 +276,23 @@ def collect_docs(source, output):
         staging = Path(temporary)
         for document in documents:
             shutil.copy2(document, staging / document.name)
-        for document in documents:
-            (staging / document.name).replace(output / document.name)
+        try:
+            for document in documents:
+                (staging / document.name).replace(output / document.name)
+        except BaseException as error:
+            failures = []
+            for document in reversed(documents):
+                staged = staging / document.name
+                if staged.exists():
+                    continue
+                published = output / document.name
+                try:
+                    published.replace(staged)
+                except OSError as recovery_error:
+                    failures.append(f"{published}: {recovery_error}")
+            if failures:
+                raise RuntimeError(f"Documentation promotion failed: {error}; rollback failed: {'; '.join(failures)}; remaining published documents require recovery") from error
+            raise
 
 
 def package_web(build, output, version, revision):
@@ -173,6 +300,7 @@ def package_web(build, output, version, revision):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Web release revision must be a full commit SHA")
+    epoch = package_headers.source_date_epoch()
     source = build / "web"
     for name in WEB_FILES:
         file = source / name
@@ -187,8 +315,9 @@ def package_web(build, output, version, revision):
         asset = Path(temporary) / name
         with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
             for file in WEB_FILES:
-                archive.write(source / file, arcname=file)
-            archive.writestr("web-release.json", json.dumps({"tag": version, "revision": revision}) + "\n")
+                add_zip_file(archive, source / file, file, epoch)
+            manifest = "web-release.json" if epoch is None else dated_zip_info("web-release.json", epoch)
+            archive.writestr(manifest, json.dumps({"tag": version, "revision": revision}) + "\n")
         asset.replace(destination)
 
 
@@ -197,7 +326,7 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(epilog="Set SOURCE_DATE_EPOCH to reproduce archive metadata for native, web and header packages.")
     parser.add_argument("--platform", choices=("linux", "windows", "web", "headers"))
     parser.add_argument("--build", type=Path)
     parser.add_argument("--version")

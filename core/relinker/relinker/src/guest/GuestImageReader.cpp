@@ -1,7 +1,9 @@
 #include <unordered_map>
+#include <optional>
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <algorithm>
@@ -15,7 +17,7 @@
 
 namespace Relinker {
 
-GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, const bool windows) const try {
+GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, const bool windows, const bool functionSymbolRoots) const try {
     const auto fail = [&](const std::string& message) { throw Domain::RelinkerException(Io::Utf8Path(path) + ": " + message); };
     const auto range = [&](std::uint64_t offset, std::uint64_t size) {
         if (offset > bytes.size() || size > bytes.size() - offset) {
@@ -32,6 +34,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     range(Io::ReadU64(bytes, 32), static_cast<std::uint64_t>(Io::ReadU16(bytes, 56)) * 56);
     GuestImage image;
     image.SourcePath = path;
+    image.FunctionSymbolRoots = functionSymbolRoots;
     image.OutputName = path.filename().string() + GuestModuleSuffix;
     image.Headers = ElfReader(bytes).ReadProgramHeaders();
     const Domain::ProgramHeader* dynamic = nullptr;
@@ -43,7 +46,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
     constexpr std::uint32_t note = 4;
     for (const auto& header : image.Headers) {
-        if (header.Type == sceComment || header.Type == sceLibVersion) continue;
+        if (header.Type == Elfpatcher::PT_GNU_STACK || header.Type == 0 || header.Type == sceComment || header.Type == sceLibVersion) continue;
         if (header.Type == note && header.MappedAddress == 0 && header.MemorySize == 0) continue;
         range(header.Offset, header.FileSize);
         if (header.Type == 1) {
@@ -76,6 +79,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
     std::vector<std::uint64_t> ps4ModuleImports;
+    std::set<std::uint64_t> ownModules;
     std::vector<std::uint64_t> moduleExports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; dynamic->Offset + dynamic->FileSize - offset >= 16; offset += 16) {
@@ -85,9 +89,14 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag == 1) needed.push_back(value);
         else if (tag == 0x61000045) moduleImports.push_back(value);
         else if (tag == 0x6100000f) ps4ModuleImports.push_back(value);
-        else if (tag == 0x6100000d || tag == 0x61000043) moduleExports.push_back(value);
-        else if (tag < 0x60000000 || tag == 0x6ffffef5 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
-            if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
+        else if (tag == 0x6100000d || tag == 0x61000043) {
+            ownModules.insert(value >> 48);
+            moduleExports.push_back(value);
+        }
+        else if (tag < 0x60000000 || tag == 0x6ffffef5 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)
+                 || tag == 0x6000000c || tag == 0x6000000d || (tag >= 0x60000019 && tag <= 0x6000001c) || tag == 0x60000020 || tag == 0x60000021) {
+            const auto [entry, inserted] = tags.emplace(tag, value);
+            if (!inserted && entry->second != value) fail("Conflicting duplicate dynamic tag " + std::to_string(tag));
         }
     }
     if (!terminated) fail("Unterminated dynamic segment");
@@ -113,9 +122,16 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         fail("Unmapped ELF address " + std::to_string(address));
         return std::uint64_t{};
     };
+    const auto value = [&](std::uint64_t standard, std::uint64_t sce) -> std::optional<std::uint64_t> {
+        if (tags.contains(standard) && tags.contains(sce)) fail("Missing or ambiguous dynamic tag " + std::to_string(standard));
+        if (tags.contains(standard)) return tags.at(standard);
+        if (tags.contains(sce)) return tags.at(sce);
+        return std::nullopt;
+    };
     const auto get = [&](std::uint64_t standard, std::uint64_t sce) {
-        if (tags.contains(standard) == tags.contains(sce)) fail("Missing or ambiguous dynamic tag " + std::to_string(standard));
-        return tags.at(tags.contains(standard) ? standard : sce);
+        const auto result = value(standard, sce);
+        if (!result) fail("Missing or ambiguous dynamic tag " + std::to_string(standard));
+        return *result;
     };
     const auto table = [&](std::uint64_t standard, std::uint64_t sce, std::uint64_t size) {
         const auto value = get(standard, sce);
@@ -192,13 +208,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::string> neededLibraries;
     for (const auto offset : needed) neededLibraries.push_back(string(offset));
     const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
-        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
+        [](const std::string& name) { return Domain::ConsoleModuleSuffix(name); });
     std::map<std::string, std::size_t> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
-        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries) : std::string{};
+        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries, ownModules) : std::string{};
         if (Io::ReadU16(bytes, symOffset + offset + 6) == 0 && library.empty()) {
-            if (auto declared = Domain::DeclaredImportModule(name, importModules); !declared.empty()) image.Dynamic.UnmatchedImportModules.insert(std::move(declared));
+            if (auto declared = Domain::DeclaredImportModule(name, importModules, ownModules); !declared.empty()) image.Dynamic.UnmatchedImportModules.insert(std::move(declared));
         }
         const auto qualifiedName = name;
         name = name.substr(0, name.find('#'));
@@ -216,11 +232,15 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (offset != 0 && ((info >> 4) > 2 || (visibility & ~3u) != 0 || ((info & 15) != 0 && (info & 15) != 1 && (info & 15) != 2 && info != 3 && (info & 15) != 6))) fail("Unsupported symbol attributes: " + name);
         if (section != 0 && (info >> 4) != 0 && visibility != 1 && visibility != 2) {
             const auto [found, inserted] = exports.emplace(name, image.Symbols.size());
-            if (name.empty() || (!inserted && (!windows || !IdenticalOrdinaryFunctionExport(image.Symbols[found->second], symbol)))) fail("Duplicate or empty export after stripping #: " + name);
+            if (name.empty() || (!inserted && !IdenticalOrdinaryFunctionExport(image.Symbols[found->second], symbol))) fail("Duplicate or empty export after stripping #: " + name);
         }
         if (section >= 0xff00 && (section != AbsoluteSection || (info & 15) == 6)) fail("Unsupported special symbol section: " + name);
         if ((info & 15) == 6 && section != 0 && (tls == nullptr || value > tls->MemorySize || size > tls->MemorySize - value)) fail("TLS symbol exceeds TLS segment: " + name);
-        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
+        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) {
+            const bool functionRoot = functionSymbolRoots && (info & 15) == 2;
+            mapped(value, functionRoot ? 1 : std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
+            if (functionRoot) translate(value, 1);
+        }
         if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) fail("String table too large");
         Io::WriteU32(image.Dynamic.DynSymData, offset, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
         Io::AppendString(image.Dynamic.DynStrData, name);
@@ -282,8 +302,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             if (relocation == 0) continue;
             if ((info >> 32) >= image.Symbols.size() || (plt && relocation != 7) || (relocation != 1 && relocation != 6 && relocation != 7 && relocation != 8 && relocation != 16 && relocation != 17 && relocation != 18)) fail("Unsupported relocation or symbol index");
             const auto& referencedSymbol = image.Symbols[info >> 32];
-            if (relocation != 8 && referencedSymbol.Section == 0 && (referencedSymbol.Info >> 4) != 2 && (referencedSymbol.Visibility & 3) != 0)
-                fail("Undefined non-weak symbol has non-default visibility: " + referencedSymbol.Name);
+            if (relocation != 8 && referencedSymbol.Section == 0 && (referencedSymbol.Info >> 4) == 0 && (referencedSymbol.Visibility & 3) != 0)
+                fail("Undefined local symbol has non-default visibility: " + referencedSymbol.Name);
             const auto target = Io::ReadU64(bytes, offset + index);
             const auto addend = Io::ReadU64(bytes, offset + index + 16);
             mapped(target, 8, 2);
@@ -318,7 +338,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 const auto& symbol = image.Symbols[info >> 32];
                 const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
                 ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock;
-                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (symbol.Section == 0 && symbol.Name.empty() && (symbol.Info >> 4) != 0) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
@@ -328,33 +348,33 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     };
     copyRelocations(relaOffset, relaSize, image.Dynamic.RelaData, false);
     copyRelocations(pltOffset, pltSize, image.Dynamic.RelaPltData, true);
-    if (tags.contains(3) || tags.contains(0x61000027)) image.Got = get(3, 0x61000027);
-    if (tags.contains(12)) {
-        image.Init = tags.at(12);
+    if (const auto got = value(3, 0x61000027)) image.Got = *got;
+    if (const auto init = value(12, 0x6000000c)) {
+        image.Init = *init;
         image.HasInit = true;
     }
-    if (tags.contains(13)) {
-        image.Fini = tags.at(13);
+    if (const auto fini = value(13, 0x6000000d)) {
+        image.Fini = *fini;
         image.HasFini = true;
     }
     if (image.HasInit) mapped(image.Init, 1, 1);
     if (image.HasFini) mapped(image.Fini, 1, 1);
-    const auto readLifecycleArray = [&](std::uint64_t addressTag, std::uint64_t sizeTag, std::vector<std::uint64_t>& entries) {
-        if (!tags.contains(sizeTag)) return;
-        if (tags.at(sizeTag) != 0 && !tags.contains(addressTag)) fail("Incomplete guest lifecycle array");
-        const auto size = tags.at(sizeTag);
-        if (size == 0) return;
-        if (size % 8 != 0) fail("Unaligned guest lifecycle array size");
-        const auto address = tags.at(addressTag);
-        mapped(address, size, 4);
-        const auto fileOffset = translate(address, size);
+    const auto readLifecycleArray = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag, std::vector<std::uint64_t>& entries) {
+        const auto size = value(sizeTag, sceSizeTag);
+        if (!size) return;
+        const auto address = value(addressTag, sceAddressTag);
+        if (*size != 0 && !address) fail("Incomplete guest lifecycle array");
+        if (*size == 0) return;
+        if (*size % 8 != 0) fail("Unaligned guest lifecycle array size");
+        mapped(*address, *size, 4);
+        const auto fileOffset = translate(*address, *size);
         std::unordered_map<std::uint64_t, std::vector<std::pair<const std::vector<std::uint8_t>*, std::size_t>>> relocationsAt;
         for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData})
             for (std::size_t position = 0; position < table->size(); position += 24)
                 relocationsAt[Io::ReadU64(*table, position)].emplace_back(table, position);
-        for (std::uint64_t offset = 0; offset < size; offset += 8) {
+        for (std::uint64_t offset = 0; offset < *size; offset += 8) {
             bool relocated = false;
-            const auto found = relocationsAt.find(address + offset);
+            const auto found = relocationsAt.find(*address + offset);
             if (found != relocationsAt.end()) {
                 for (const auto& [table, position] : found->second) {
                     relocated = true;
@@ -370,12 +390,16 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 }
             }
             if (!relocated && Io::ReadU64(bytes, fileOffset + offset) != 0) fail("Unrelocated guest lifecycle pointer");
-            entries.push_back(address + offset);
+            entries.push_back(*address + offset);
         }
     };
-    readLifecycleArray(25, 27, image.InitArray);
-    readLifecycleArray(26, 28, image.FiniArray);
-    if (tags.contains(33) && tags.at(33) != 0 && !image.HasInit) fail("Guest PREINIT_ARRAY has no module initializer");
+    readLifecycleArray(25, 0x60000019, 27, 0x6000001b, image.InitArray);
+    readLifecycleArray(26, 0x6000001a, 28, 0x6000001c, image.FiniArray);
+    const auto preinitAddress = value(32, 0x60000020);
+    const auto preinitSize = value(33, 0x60000021);
+    if (preinitAddress && *preinitAddress != 0 && !preinitSize) fail("Incomplete guest lifecycle array");
+    if (preinitSize && *preinitSize != 0 && !preinitAddress) fail("Incomplete guest lifecycle array");
+    if (preinitSize && *preinitSize != 0 && !image.HasInit) fail("Guest PREINIT_ARRAY has no module initializer");
     image.Bytes = std::move(bytes);
     return image;
 } catch (Domain::RelinkerException& error) {

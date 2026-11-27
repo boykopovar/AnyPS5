@@ -1,8 +1,38 @@
 # Run report
 
-`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](../run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](../run-report-fixtures/) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
+`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](https://github.com/boykopovar/AnyPS5/blob/main/docs/run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](https://github.com/boykopovar/AnyPS5/tree/main/docs/run-report-fixtures) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
+
+Print a readable summary of a report with:
+
+```sh
+python3 tools/run_report_summary.py path/to/anyps5-report.json
+```
+
+The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The tool writes UTF-8 to stdout. It reads the local report and does not upload it.
+
+The command exits with 0 when it prints a summary, even if the run recorded in the report failed. It exits with 2 when it cannot read or interpret the report. Use the summary's `Result` line or the JSON report's `run.exit` field to check how the game ended.
+
+Windows PowerShell 5.1 writes UTF-16LE by default when you redirect a command with `>`. To save the summary as UTF-8, let `cmd` redirect the output.
+
+```powershell
+cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > summary.txt'
+```
 
 The file stays on your machine. Nothing is uploaded unless you share it.
+
+## Triage multiple reports
+
+Pass the report files to `--triage` to print a JSON overview without starting a game:
+
+```sh
+python3 tools/run_report_summary.py --triage run-a/anyps5-report.json run-b/anyps5-report.json
+```
+
+The version 1 `anyps5-run-triage` output includes the input count, unique runs, duplicate reports, and groups by title ID, game content version, build commit, release and modification state. An unknown value stays `null`. These groups describe the supplied reports. They do not establish that the runs used identical hardware or settings.
+
+Each group counts recorded exit types, stages and stop reasons. Its missing-function list counts the runs that observed each function and the total recorded calls. Missing-function coverage separates complete lists, partial lists and runs that did not collect the data. A recovered or incomplete run, or a run that omitted missing functions, has partial coverage when collection was on. Only a complete empty list is counted in `complete_without_observations`. An absent report contributes no evidence.
+
+Copies with the same run ID and matching triage data count once. If two reports disagree about the triage data for a run, the command exits with 2 and identifies the conflicting input by its position. A report it cannot read or interpret also causes exit 2 without a partial summary. The overview omits run IDs, file paths, system details and free-form stop messages.
 
 ## Switching it off
 
@@ -10,13 +40,19 @@ The report is written by default. Turn it off with the launch flag `--aps5-repor
 
 ## Where it goes
 
-`anyps5-report.json` is written next to the game's executable. If that folder can't be written, it goes to the AnyPS5 data folder under `reports/<run id>/` and the runtime prints where. `run.id` is that same id: 32 lowercase hex characters, random per run.
+`anyps5-report.json` is written next to the game's executable. If the report can't be written there, look under `reports/<run id>/` in the AnyPS5 data directory for your operating system.
 
-The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that is killed, crashes or aborts writes no report.
+- Windows uses `%LOCALAPPDATA%\AnyPS5`.
+- Linux uses `$XDG_DATA_HOME/AnyPS5` when `XDG_DATA_HOME` is an absolute path, otherwise `$HOME/.local/share/AnyPS5`.
+- macOS uses `~/Library/Application Support/AnyPS5`.
+
+On a clean exit, the success message shows only the report filename. The fallback folder name is the report's `run.id`, a random string of 32 lowercase hex characters.
+
+The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
 ## What `anyps5.modified` means
 
-`false` means the build's git tree had no change to tracked files, no untracked files that git does not ignore, and no change inside a submodule. `true` means any of those. `null` means the build did not come from a git checkout. A mixed set of libraries from different builds is not detected.
+`true` means the build's Git tree had tracked changes, unignored untracked files, or a modified submodule. A registered library built from a different commit or a modified tree also makes it `true` when library provenance is checked. `false` means the build and all checked libraries were clean and matched. The value is `null` when the build's Git state is unknown, or when an otherwise clean build can't verify a required library.
 
 ## Unknown is null
 
@@ -39,11 +75,18 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
+| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. For `n` sorted intervals, percentile `p` is the value at zero-based position `floor(p * n)`, or the last value when that position is past the end. This is the same math the optional performance trace uses. It is not nearest-rank: with 10 intervals, `p50` is the 6th value and `p90` the 10th, where nearest-rank gives the 5th and the 9th. `tools/presentmon_compare.py` reports nearest-rank, so its `p99` can be one rank lower than this one for the same frames. |
 | `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
+
+## Run recipe
+
+After writing `anyps5-report.json`, the runtime tries to write `anyps5-recipe.json` beside it. The recipe records `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), and `environment` (set `ANYPS5_*` variables that pass the name filter). `configFiles` records the filename from `ANYPS5_INPUT_CONFIG` when supplied. The runtime does not discover default input mappings or per-title profiles for this list.
+
+Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. If writing the recipe fails, the report is still available.
 
 ## Stop
 
-`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. The schema lists the other kinds and reasons; this build writes only these.
+`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. When the host asked the game to quit first, `stop.reason` is `quit-requested`: the message is `The window was closed.` when the window was closed, and says the run was asked to quit without its window being closed when the request came another way, such as SIGTERM from `timeout`, Ctrl+C or a Quit command. A run that ended in `std::terminate` has `stop.reason` `runtime-stop`: `stop.kind` is `missing-function` with the function and its `source` when a function that is not implemented threw, otherwise `other` with the exception's text as the message. The schema lists the other kinds and reasons; this build writes only these.
 
 ## What `system` holds
 
@@ -64,6 +107,7 @@ Every text value in the report goes through the same filter for user names, host
 - `milestones.firstDraw` is set when a batch that carries a recorded guest draw or dispatch has been accepted by the GPU queue. A guest draw counts in either kind of batch the runtime submits; a guest compute dispatch counts only when it is recorded into the runtime's main batch (a dispatch that is submitted and waited for on its own does not set the milestone). `firstPresent` and `framesPresented` count guest display buffers that the swapchain queue accepted (a suboptimal one too); internal clears, test pixels and rejected presents are not counted. `loaded` and `started` come from the entry bridge of the converted executable; only the macOS bridge reports them so far, so on other systems those two are left out.
 - `missing.functions` counts calls to a function the runtime does not implement. The library is the folder the stub is compiled in; a call from older code that does not say where it is made has a null library. The name is the exported name without the runtime's suffix; a name that does not fit the schema is not listed and is counted in `truncated.functions`.
 - `shaders.compiled` and `failed` count compilations where they happen (once per variant); reuse of a variant, in memory or from the disk cache, counts as a cache hit.
+- `shaders.compileMs` is the total wall time spent in those compilations, failed ones included, in milliseconds. `shaders.slowCompiles` counts compilations that took more than 100 ms. Both are left out when shader coverage is off. These are measured on the machine that ran the game, so compare them only on the same machine.
 - `shaders.unsupported` lists instructions the recompiler could not translate, by encoding family and numeric opcode (the name is null). It also lists instructions met in shaders that were prepared and never used, so an entry does not by itself mean the run stopped on it; the stop says that.
 - `shaders.imageFormats` counts guest format lookups, internal ones included, with the use shown as `other`, plus the formats the runtime rejected. It measures how often a format was looked up, not how many images used it. `shaders.descriptors` counts the bindings of shaders as they were prepared for a draw; the count measures use, not distinct shaders.
 - `truncated` counts entries (a function, an instruction, a format, a binding kind) that were dropped, once each however many calls they made. When a hook had to give up an observation because the collector was busy, the matching count is at least 1 and the report is marked `incomplete`.
@@ -79,7 +123,7 @@ Every text value in the report goes through the same filter for user names, host
 - `coverage` says which sections the runtime collected for this run. A list can be empty because nothing happened or because this build doesn't collect it. With a section's coverage off, don't read its empty list as "nothing missing".
 - `truncated` counts the entries dropped from each capped list, so a capped list never looks complete.
 
-Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. When it would be larger, the runtime drops the lowest-ranked list entries first, then optional descriptions, and never the build, game or stop details.
+Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. If it would be larger, the runtime removes the last entry from the list with the most entries and increments that list's `truncated` count. This repeats until the report fits. If it still exceeds the limit with empty lists, the runtime does not write the report.
 
 ## Privacy
 

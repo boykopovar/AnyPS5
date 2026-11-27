@@ -1,0 +1,7 @@
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test_executable(guest_file_metadata_conversion_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileMetadataConversion.cpp)
+    target_include_directories(guest_file_metadata_conversion_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_file_metadata_conversion_tests PRIVATE libkernel libc)
+    add_test(NAME guest_file_metadata_conversion COMMAND guest_file_metadata_conversion_tests)
+    set_tests_properties(guest_file_metadata_conversion PROPERTIES TIMEOUT 20)
+endif()

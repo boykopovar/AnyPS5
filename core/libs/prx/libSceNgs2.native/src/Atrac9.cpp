@@ -1,5 +1,6 @@
 #include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "libatrac9.h"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
@@ -244,10 +246,11 @@ static bool DecodeFrame(Ngs2Voice& voice) {
 }
 
 static bool EnsureFrames(Ngs2Voice& voice, std::size_t count) {
-    while ((voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused || voice.outputTransition == Ngs2VoiceTransition::Stop) && BufferedFrames(voice) < count) {
+    const bool decoding = voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused;
+    while (decoding && BufferedFrames(voice) < count) {
         if (!DecodeFrame(voice)) return false;
     }
-    return voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused || voice.outputTransition == Ngs2VoiceTransition::Stop;
+    return decoding || (voice.outputTransition == Ngs2VoiceTransition::Stop && BufferedFrames(voice) >= count);
 }
 
 std::uint32_t Ngs2ReadSamplerAtrac9(Ngs2Voice& voice, float* dest, std::uint32_t stride, std::uint32_t count) {
@@ -524,85 +527,112 @@ extern "C" {
 
 int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInfo* info) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *info = {};
+    Ngs2WaveformInfo local{};
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (data == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     const auto readBytes = [bytes](std::size_t at, std::size_t) { return bytes + at; };
-    if (IsVag(data_size, bytes)) return ParseVag(data_size, readBytes, *info);
-    RiffChunks chunks;
-    const int result = ReadChunks(data_size, readBytes, chunks);
-    if (result != SCE_NGS2_OK) return result;
-    return ParseWaveform(chunks, data_size, *info);
+    int result;
+    if (IsVag(data_size, bytes)) {
+        result = ParseVag(data_size, readBytes, local);
+    } else {
+        RiffChunks chunks;
+        result = ReadChunks(data_size, readBytes, chunks);
+        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, data_size, local);
+    }
+    return WriteGuest(info, local) ? result : SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
 }
 
 int APS5_VABI sceNgs2ParseWaveformFile(const char* path, uint32_t offset, Ngs2WaveformInfo* info) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *info = {};
+    Ngs2WaveformInfo local{};
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (path == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
-    const auto host = ResolvePath_nid_no_patch(path);
-    std::ifstream file(host, std::ios::binary | std::ios::ate);
-    if (!file) throw std::runtime_error(std::string(__func__) + ": cannot open " + host.string());
-    const auto fileSize = static_cast<std::uint64_t>(file.tellg());
+    const auto host = ResolveArchivedPath_nid_no_patch(path);
+    AppArchiveNode archived{};
+    const bool fromArchive = AppArchiveOnly_nid_no_patch(host);
+    if (fromArchive && !AppArchiveLookup_nid_no_patch(host, &archived)) throw std::logic_error(std::string(__func__) + ": " + host.string() + " left app0.zar while opening");
+    if (fromArchive && archived.Directory) throw std::runtime_error(std::string(__func__) + ": cannot open " + host.string());
+    std::ifstream file;
+    if (!fromArchive) {
+        file.open(host, std::ios::binary | std::ios::ate);
+        if (!file) throw std::runtime_error(std::string(__func__) + ": cannot open " + host.string());
+    }
+    const auto fileSize = fromArchive ? archived.Size : static_cast<std::uint64_t>(file.tellg());
     if (offset > fileSize) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto length = static_cast<std::size_t>(fileSize - offset);
     const std::string function = __func__;
     std::vector<std::vector<std::uint8_t>> pieces;
     const auto readBytes = [&](std::size_t at, std::size_t count) {
         auto& piece = pieces.emplace_back(std::max<std::size_t>(count, 1));
+        if (fromArchive) {
+            if (AppArchiveRead_nid_no_patch(archived.Handle, offset + at, piece.data(), count) != count) throw std::runtime_error(function + ": read failed for " + host.string());
+            return static_cast<const std::uint8_t*>(piece.data());
+        }
         file.seekg(static_cast<std::streamoff>(offset + at));
         if (!file.read(reinterpret_cast<char*>(piece.data()), static_cast<std::streamsize>(count))) throw std::runtime_error(function + ": read failed for " + host.string());
         return static_cast<const std::uint8_t*>(piece.data());
     };
     int result;
     if (IsVag(length, length >= 4 ? readBytes(0, 4) : nullptr)) {
-        result = ParseVag(length, readBytes, *info);
+        result = ParseVag(length, readBytes, local);
     } else {
         RiffChunks chunks;
         result = ReadChunks(length, readBytes, chunks);
-        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, *info);
+        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, local);
     }
-    if (result != SCE_NGS2_OK) return result;
-    info->data_offset += offset;
-    for (std::uint32_t i = 0; i < info->num_blocks; i++) info->block[i].data_offset += offset;
-    return SCE_NGS2_OK;
+    if (result == SCE_NGS2_OK) {
+        local.data_offset += offset;
+        for (std::uint32_t i = 0; i < local.num_blocks; i++) local.block[i].data_offset += offset;
+    }
+    return WriteGuest(info, local) ? result : SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
 }
 
 int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples, Ngs2WaveformBlock* block) {
     if (block == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *block = {};
-    if (format == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
-    const auto type = format->waveform_type;
-    if (IsPcmType(type)) {
-        *block = PcmBlock(type, format->num_channels, sample_pos, num_samples);
-        return SCE_NGS2_OK;
+    Ngs2WaveformFormat formatLocal{};
+    Ngs2WaveformBlock local{};
+    int result = SCE_NGS2_OK;
+    if (!ReadGuest(format, formatLocal)) {
+        result = SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
+    } else if (IsPcmType(formatLocal.waveform_type)) {
+        local = PcmBlock(formatLocal.waveform_type, formatLocal.num_channels, sample_pos, num_samples);
+    } else if (formatLocal.waveform_type == SCE_NGS2_WAVEFORM_TYPE_VAG) {
+        local = VagBlock(formatLocal.num_channels, sample_pos, num_samples);
+    } else if (formatLocal.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        result = SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
+    } else {
+        local = Atrac9Block(formatLocal.config_data, sample_pos, num_samples);
     }
-    if (type == SCE_NGS2_WAVEFORM_TYPE_VAG) {
-        *block = VagBlock(format->num_channels, sample_pos, num_samples);
-        return SCE_NGS2_OK;
-    }
-    if (type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
-    *block = Atrac9Block(format->config_data, sample_pos, num_samples);
-    return SCE_NGS2_OK;
+    if (!WriteGuest(block, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    return result;
 }
 
 int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat* format, uint32_t* out_frame_size, uint32_t* out_num_frame_samples, uint32_t* out_units_per_frame, uint32_t* out_num_delay_samples) {
     if (out_frame_size == nullptr || out_num_frame_samples == nullptr || out_units_per_frame == nullptr || out_num_delay_samples == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    if (format == nullptr || format->num_channels == 0 || format->num_channels > NGS2_MAX_CHANNELS || format->sample_rate == 0 || format->sample_rate > MAX_SAMPLE_RATE) {
+    Ngs2WaveformFormat formatLocal{};
+    if (!ReadGuest(format, formatLocal) || formatLocal.num_channels == 0 || formatLocal.num_channels > NGS2_MAX_CHANNELS || formatLocal.sample_rate == 0 ||
+        formatLocal.sample_rate > MAX_SAMPLE_RATE) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
-        *out_frame_size = static_cast<std::uint32_t>(format->num_channels * Ngs2PcmSampleBytes(format->waveform_type));
-        *out_num_frame_samples = 1;
-        *out_units_per_frame = 1;
-        *out_num_delay_samples = 0;
-        return SCE_NGS2_OK;
+    std::uint32_t frameSize, frameSamples, unitsPerFrame, delaySamples;
+    if (formatLocal.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        frameSize = static_cast<std::uint32_t>(formatLocal.num_channels * Ngs2PcmSampleBytes(formatLocal.waveform_type));
+        frameSamples = 1;
+        unitsPerFrame = 1;
+        delaySamples = 0;
+    } else {
+        Atrac9CodecInfo codec{};
+        if (!MatchingCodecInfo(formatLocal, codec)) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
+        frameSize = static_cast<std::uint32_t>(codec.superframeSize);
+        frameSamples = static_cast<std::uint32_t>(codec.frameSamples * codec.framesInSuperframe);
+        unitsPerFrame = static_cast<std::uint32_t>(codec.framesInSuperframe);
+        delaySamples = static_cast<std::uint32_t>(codec.frameSamples);
     }
-    Atrac9CodecInfo codec{};
-    if (!MatchingCodecInfo(*format, codec)) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
-    *out_frame_size = static_cast<std::uint32_t>(codec.superframeSize);
-    *out_num_frame_samples = static_cast<std::uint32_t>(codec.frameSamples * codec.framesInSuperframe);
-    *out_units_per_frame = static_cast<std::uint32_t>(codec.framesInSuperframe);
-    *out_num_delay_samples = static_cast<std::uint32_t>(codec.frameSamples);
+    if (!WriteGuest(out_frame_size, frameSize) || !WriteGuest(out_num_frame_samples, frameSamples) || !WriteGuest(out_units_per_frame, unitsPerFrame) ||
+        !WriteGuest(out_num_delay_samples, delaySamples)) {
+        return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    }
     return SCE_NGS2_OK;
 }
 

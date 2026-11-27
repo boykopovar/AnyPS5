@@ -1,5 +1,7 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -83,9 +85,213 @@ void TestParameterLifecycle() {
     Require(GuardIntact(copyStorage));
 }
 
+
+struct alignas(16) ActivityModel {
+    std::array<std::byte, 0x10> header;
+    std::array<std::byte, 0x20> activityId;
+    std::array<std::byte, 0x20> name;
+    bool hidden;
+    std::array<std::byte, 7> reserved;
+    std::array<std::byte, 0x20> matchId;
+    bool matchIdSet;
+    std::array<std::byte, 7> guard;
+};
+
+static_assert(offsetof(ActivityModel, activityId) == 0x10);
+static_assert(offsetof(ActivityModel, name) == 0x30);
+static_assert(offsetof(ActivityModel, hidden) == 0x50);
+static_assert(offsetof(ActivityModel, matchId) == 0x58);
+static_assert(offsetof(ActivityModel, matchIdSet) == 0x78);
+static_assert(sizeof(ActivityModel) == 0x80);
+
+void TestActivityModelAccessors() {
+    std::array<ActivityModel, 4> activities{};
+    const std::array getters{
+        &_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv,
+        &_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv,
+        &_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv,
+    };
+    for (std::size_t index = 0; index < activities.size(); ++index) {
+        auto& activity = activities[index];
+        std::memset(&activity, 0xa5, sizeof(activity));
+        activity.hidden = (index & 1u) != 0;
+        activity.matchIdSet = (index & 2u) != 0;
+        const auto before = activities;
+        const std::array<std::byte*, 3> members{activity.activityId.data(), activity.name.data(), activity.matchId.data()};
+        for (std::size_t field = 0; field < getters.size(); ++field) {
+            const auto* reference = getters[field](&activity);
+            Require(reference == members[field]);
+        }
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(&activity) == activity.hidden);
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(&activity) == activity.matchIdSet);
+        Require(std::memcmp(activities.data(), before.data(), sizeof(activities)) == 0);
+        for (std::size_t field = 0; field < getters.size(); ++field) {
+            const auto* reference = getters[field](&activity);
+            const auto value = std::byte{static_cast<unsigned char>(0x31u + index * 3u + field)};
+            std::fill(members[field], members[field] + 0x20, value);
+            const auto updated = activities;
+            Require(std::memcmp(reference, members[field], 0x20) == 0);
+            Require(getters[field](&activity) == reference);
+            Require(std::memcmp(activities.data(), updated.data(), sizeof(activities)) == 0);
+        }
+        activity.hidden = !activity.hidden;
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(&activity) == activity.hidden);
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(&activity) == activity.matchIdSet);
+        activity.matchIdSet = !activity.matchIdSet;
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(&activity) == activity.hidden);
+        Require(_ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(&activity) == activity.matchIdSet);
+    }
+}
+
 void TestRequestIsSignedOut() {
     Require(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi17getUserActivitiesEiRKNS5_28ParameterToGetUserActivitiesERNS1_6Common11TransactionINS9_12IntrusivePtrINS4_26GetUsersActivitiesResponseEEENSB_INS9_18ResponseHeaderBaseEEEEE(
                 0, nullptr, nullptr) == kNotSignedIn);
+}
+
+void TestGetUsersCopiesTheVectorHandle() {
+    alignas(8) std::array<std::uint8_t, 0x50> response;
+    response.fill(0xa5);
+    alignas(8) std::array<std::uint8_t, 0x40> vector;
+    vector.fill(0);
+    const std::uint32_t before = 7;
+    std::memcpy(vector.data() + 0x30, &before, sizeof(before));
+    IntrusivePtr handle{};
+    handle.object = vector.data();
+    handle.deleter = nullptr;
+    handle.libContext = reinterpret_cast<void*>(0x1234);
+    std::memcpy(response.data() + 0x30, &handle, sizeof(handle));
+    IntrusivePtr out{};
+    Require(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(&out, response.data()) == &out);
+    Require(out.object == vector.data());
+    Require(out.deleter == nullptr);
+    Require(out.libContext == reinterpret_cast<void*>(0x1234));
+    std::uint32_t after = 0;
+    std::memcpy(&after, vector.data() + 0x30, sizeof(after));
+    Require(after == before + 1);
+    for (std::size_t index = 0; index < 0x30; ++index) Require(response[index] == 0xa5);
+    for (std::size_t index = 0x48; index < response.size(); ++index) Require(response[index] == 0xa5);
+
+    alignas(8) std::array<std::uint8_t, 0x50> empty{};
+    IntrusivePtr none{};
+    none.object = reinterpret_cast<void*>(0x1);
+    none.deleter = nullptr;
+    none.libContext = nullptr;
+    Require(_ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(&none, empty.data()) == &none);
+    Require(none.object == nullptr);
+    Require(none.deleter == nullptr);
+}
+
+void TestUserActivitiesVectorGlue() {
+    alignas(8) std::array<std::uint8_t, 0x60> elements{};
+    std::array<void*, 3> vector{elements.data(), elements.data() + 0x30, elements.data() + 0x30};
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEE4sizeEv(vector.data()) == 2);
+
+    CommonIterator begin{}, end{};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEE5beginEv(&begin, vector.data()) == &begin);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEE3endEv(&end, vector.data()) == &end);
+    Require(begin.element == elements.data());
+    Require(end.element == elements.data() + 0x30);
+    Require(begin.referenceCount == 0 && end.referenceCount == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEppEv(&begin) == &begin);
+    Require(begin.element == elements.data() + 0x18);
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEdeEv(&begin) == begin.element);
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEneERKSA_(&begin, &end));
+    Require(!_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEneERKSA_(&begin, &begin));
+    Require(_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEED2Ev(&begin) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEED2Ev(&begin) == 0);
+
+    CommonIterator activityIt{};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEE5beginEv(&activityIt, vector.data()) == &activityIt);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEE3endEv(&activityIt, vector.data()) == &activityIt);
+    Require(activityIt.element == elements.data() + 0x30);
+    _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEEppEv(&activityIt);
+    Require(activityIt.element == elements.data() + 0x48);
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEEdeEv(&activityIt) == activityIt.element);
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEEneERKSA_(&activityIt, &begin));
+
+    void* model = elements.data() + 0x18;
+    IntrusivePtr ptr{model, nullptr, reinterpret_cast<void*>(0x2)};
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEptEv(&ptr) == model);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEptEv(&ptr) == model);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEptEv(&ptr) == model);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEEptEv(&ptr) == model);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEEdeEv(&ptr) == model);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities8ActivityEEEEEEdeEv(&ptr) == model);
+
+    alignas(8) std::array<std::uint8_t, 0x40> refcounted{};
+    const std::uint32_t references = 8;
+    std::memcpy(refcounted.data() + 0x30, &references, sizeof(references));
+    IntrusivePtr dying{refcounted.data(), nullptr, nullptr};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEED1Ev(&dying);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities8ActivityEEEEEED1Ev(&dying);
+    std::uint32_t after = 0;
+    std::memcpy(&after, refcounted.data() + 0x30, sizeof(after));
+    Require(after == references - 2);
+}
+
+void TestResonanceTransactions() {
+    constexpr int kTransactionNotStarted = static_cast<int>(0x80553508);
+    constexpr int kParameterNotInitialized = static_cast<int>(0x80553502);
+
+    alignas(16) std::array<std::uint8_t, 0x20> transaction;
+    transaction.fill(0xcc);
+    _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(transaction.data());
+    for (std::size_t index = 0; index < 0x10; ++index) Require(transaction[index] == 0);
+    Require(transaction[0x10] == 0xcc);
+    _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction.data());
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv(transaction.data()) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction.data(), nullptr) == kInvalidArgument);
+    std::uint64_t context = 0;
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction.data(), &context) == kParameterNotInitialized);
+    context = 1;
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction.data(), &context) == kNotSignedIn);
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE21setOnFinishedCallbackEPFvliS9_PvEPFvliSD_ESD_(
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+    void* headers = nullptr;
+    Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSB_(transaction.data(), &headers) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
+
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE21setOnFinishedCallbackEPFvliS8_PvEPFvliSC_ESC_(
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V122UploadDataResponseBodyEEENS4_INS6_7DataApi25UploadDataResponseHeadersEEEE21setOnFinishedCallbackEPFvliS8_PvEPFvliSD_ESD_(
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6BinaryEEENS4_INS1_17TitleCloudStorage2V17DataApi27DownloadDataResponseHeadersEEEE21setOnFinishedCallbackEPFvliS6_PvEPFvliSD_ESD_(
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_15DefaultResponseENS2_12IntrusivePtrINS1_17TitleCloudStorage2V17DataApi26SetDataInfoResponseHeadersEEEE21setOnFinishedCallbackEPFvliS4_PvEPFvliSC_ESC_(
+                transaction.data(), reinterpret_cast<void*>(0x1), reinterpret_cast<void*>(0x2), reinterpret_cast<void*>(0x3), reinterpret_cast<void*>(0x4)) == kTransactionNotStarted);
+    Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_(transaction.data(), &headers) == kTransactionNotStarted);
+    Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS1_17TitleCloudStorage2V17DataApi26SetDataInfoResponseHeadersEEEE18getResponseHeadersERSA_(transaction.data(), &headers) == kTransactionNotStarted);
+    Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6BinaryEEENS4_INS1_17TitleCloudStorage2V17DataApi27DownloadDataResponseHeadersEEEE18getResponseHeadersERSB_(transaction.data(), &headers) == kTransactionNotStarted);
+    Require(_ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSD_(transaction.data(), &headers) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS1_17TitleCloudStorage2V17DataApi26SetDataInfoResponseHeadersEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6BinaryEEENS4_INS1_17TitleCloudStorage2V17DataApi27DownloadDataResponseHeadersEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V122UploadDataResponseBodyEEENS4_INS6_7DataApi25UploadDataResponseHeadersEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption(transaction.data(), &context) == kTransactionNotStarted);
+}
+
+void TestRequestPlayerSessionSetters() {
+    alignas(8) std::array<std::uint8_t, 0x130> request;
+    request.fill(0xa5);
+    const int expiration = 0x11223344;
+    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession17setExpirationTimeERKi(request.data(), &expiration);
+    std::int32_t stored = 0;
+    std::memcpy(&stored, request.data() + 0x11c, sizeof(stored));
+    Require(stored == expiration);
+    Require(request[0x120] == 1);
+
+    const bool nonPsn = true;
+    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession18setNonPsnSupportedERKb(request.data(), &nonPsn);
+    Require(request[0x121] == 1);
+    Require(request[0x122] == 1);
+
+    for (std::size_t index = 0; index < request.size(); ++index) {
+        if (index >= 0x11c && index <= 0x122) continue;
+        Require(request[index] == 0xa5);
+    }
 }
 
 }
@@ -93,5 +299,10 @@ void TestRequestIsSignedOut() {
 int main() {
     TestParameterLifecycle();
     TestRequestIsSignedOut();
+    TestActivityModelAccessors();
+    TestGetUsersCopiesTheVectorHandle();
+    TestUserActivitiesVectorGlue();
+    TestResonanceTransactions();
+    TestRequestPlayerSessionSetters();
     return 0;
 }

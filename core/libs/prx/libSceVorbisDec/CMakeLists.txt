@@ -50,11 +50,21 @@ if(NOT WIN32)
     target_link_libraries(vorbis PRIVATE m)
 endif()
 
-add_library(vorbisfile STATIC EXCLUDE_FROM_ALL ${VORBIS_DIR}/lib/vorbisfile.c)
+set(vorbisfileSource "${VORBIS_DIR}/lib/vorbisfile.c")
+set(vorbisfilePatched "${CMAKE_CURRENT_BINARY_DIR}/vorbisfile.c")
+add_custom_command(
+    OUTPUT "${vorbisfilePatched}"
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${vorbisfileSource}" "-DOUTPUT=${vorbisfilePatched}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/PatchVorbisFile.cmake"
+    DEPENDS "${vorbisfileSource}" "${CMAKE_CURRENT_SOURCE_DIR}/PatchVorbisFile.cmake"
+    VERBATIM
+)
+add_library(vorbisfile STATIC EXCLUDE_FROM_ALL "${vorbisfilePatched}")
 target_include_directories(vorbisfile PRIVATE ${VORBIS_DIR}/lib)
 target_link_libraries(vorbisfile PUBLIC vorbis)
 set_target_properties(ogg vorbis vorbisfile PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 if(MINGW)
+    target_compile_options(vorbisfile PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/VorbisFileRounding.h")
     foreach(library IN ITEMS ogg vorbis vorbisfile)
         target_compile_options(${library} PRIVATE -fexceptions)
     endforeach()
@@ -74,4 +84,16 @@ if(BUILD_TESTING)
     target_include_directories(vorbisenc PRIVATE ${VORBIS_DIR}/lib)
     target_link_libraries(vorbisenc PUBLIC vorbis)
     set_target_properties(vorbisenc PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+
+    add_test_executable(guest_vorbis_dec_tests ${LIBS_INCLUDE_DIR}/tests/GuestVorbisDec.cpp)
+    target_include_directories(guest_vorbis_dec_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_definitions(guest_vorbis_dec_tests PRIVATE OV_EXCLUDE_STATIC_CALLBACKS)
+    target_link_libraries(guest_vorbis_dec_tests PRIVATE libSceVorbisDec vorbisenc vorbisfile vorbis ogg libc)
+    configure_windows_unwind(guest_vorbis_dec_tests)
+    add_test(NAME guest_vorbis_dec COMMAND guest_vorbis_dec_tests)
+    set_tests_properties(guest_vorbis_dec PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_vorbis_dec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVorbisDec>")
+    endif()
 endif()

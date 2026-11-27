@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -171,9 +172,10 @@ int NumericObjectText(char* buffer, int space, const LibreSslAsn1Object* object)
 }
 
 int ObjectText(char* buffer, int space, const LibreSslAsn1Object* object, const char* function) {
-    if (space < 0 || (space > 0 && !buffer)) NotImplemented_nid_no_patch(function);
+    if (space > 0 && !buffer) throw std::invalid_argument(std::string(function) + ": invalid buffer");
     if (space > 0) buffer[0] = '\0';
     if (!object || !object->data) return 0;
+    if (space < 0) throw std::invalid_argument(std::string(function) + ": invalid buffer");
     const int nid = LibreSslObjectNid_nid_no_patch(object);
     if (nid != 0) {
         const char* name = LibreSslObjectLongName_nid_no_patch(nid);
@@ -193,6 +195,22 @@ int ObjectText(char* buffer, int space, const LibreSslAsn1Object* object, const 
     } catch (const std::bad_alloc&) {
         LibreSslPutError_nid_no_patch(BigNumberLibrary, AnyFunction, AllocationFailure);
         return 0;
+    }
+}
+
+std::string GuestShortName(const char* name, const char* function) {
+    constexpr std::uintptr_t Page = 4096;
+    std::string text;
+    auto address = reinterpret_cast<std::uintptr_t>(name);
+    char chunk[Page];
+    for (;;) {
+        const std::size_t size = Page - address % Page;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
+        if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable name");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return text;
+        address += size;
     }
 }
 
@@ -227,6 +245,31 @@ const char* LibreSslObjectLongName_nid_no_patch(int nid) {
 
 int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object) {
     return ObjectText(buffer, length, object, __func__);
+}
+
+int APS5_VABI OBJ_obj2nid_nid_postfix(const LibreSslAsn1Object* object) {
+    return LibreSslObjectNid_nid_no_patch(object);
+}
+
+const char* APS5_VABI OBJ_nid2sn_nid_postfix(int nid) {
+    return Name(nid, false);
+}
+
+int APS5_VABI OBJ_sn2nid_nid_postfix(const char* name) {
+    if (!name) throw std::invalid_argument(std::string(__func__) + ": null name");
+    const std::string text = GuestShortName(name, __func__);
+    if (const int added = LibreSslAddedObjectShortNameNid_nid_no_patch(text.c_str())) return added;
+    int low = 0;
+    int high = LibreSslObjectShortNameOrderCount;
+    while (low < high) {
+        const int middle = (low + high) / 2;
+        const auto& entry = LibreSslObjects_nid_no_patch[LibreSslObjectShortNameOrder_nid_no_patch[middle]];
+        const int comparison = std::strcmp(text.c_str(), entry.shortName);
+        if (comparison < 0) high = middle;
+        else if (comparison > 0) low = middle + 1;
+        else return entry.nid;
+    }
+    return 0;
 }
 
 }

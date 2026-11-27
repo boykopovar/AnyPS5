@@ -4,6 +4,7 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Translation/RoundingMode.hpp"
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <initializer_list>
 #include <utility>
@@ -16,22 +17,30 @@ public:
 
     void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
+    void SetBufferLdsSize(std::uint32_t bytes) { bufferLdsBytes = bytes; }
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
     void SetFloatMode(const std::optional<ShaderFloatMode>& mode) {
         declaredFloatMode = mode;
         floatMode = mode;
         ieeeMode = mode.has_value() && mode->ieeeMode;
-        rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeRoundBits : 0u), 0u};
+        rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeTrackedBits : ModeUndeclaredSeed), 0u};
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
-    void SetNativeFloat16(bool enabled, bool fma) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; }
+    void SetNativeFloat16(bool enabled, bool fma, bool hostNans) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; float16HostNans = enabled && hostNans; }
+    void SetNativeInteger16(bool enabled) { nativeInteger16 = enabled; }
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void SetFloat64(bool enabled) { float64 = enabled; }
+    void SetSharedVectorRegisters(std::uint32_t base, std::uint32_t count) { sharedVectorBase = base; sharedVectorCount = count; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
+    void SetVectorWindowActive(bool active) { ir.SetVectorWindowActive(active); }
+    void SyncVectorWindow(bool toWindow) { ir.SyncVectorWindow(toWindow); }
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+    void TranslateSplitState(const SplitStateAbi::Plan& plan, const SplitStateAbi::Point& point);
+    IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
+    void WriteOperand(const RdnaOperand& operand, IrValue* value) { writeOperand(operand, value); }
 
 private:
     struct AddressOperands {
@@ -60,21 +69,28 @@ private:
     IrValue* readOperand(const RdnaOperand& operand, IrType type);
     IrU1 threadBit(const std::array<IrU32, 2>& mask);
     void writeRawU32(const RdnaOperand& operand, IrU32 value);
+    bool sharedVectorRegister(std::uint32_t reg) const { return reg >= sharedVectorBase && reg - sharedVectorBase < sharedVectorCount; }
+    IrU32 shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction);
+    void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
-    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode);
+    IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
     bool outputModifierApplies(std::uint32_t denormalShift) const;
     bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
     bool fp16Overflow() const { return floatMode.has_value() && floatMode->fp16Overflow; }
     bool nativeFloat16Mode() const { return nativeFloat16 && (!floatMode.has_value() || (floatMode->floatMode & 0xccu) == 0xc0u); }
+    bool hostFloat16Nans(const RdnaInstruction& inst, std::uint32_t count, bool accumulator);
     IrF32 clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources);
-    void rejectHalfOrDoubleOutputModifier(const RdnaOperand& operand) const;
-    IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
+    IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits, bool followsRoundMode = true);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused = false);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
     void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
     bool directedF16Rounding() const;
+    std::uint32_t floatRoundMode(std::uint32_t roundShift) const;
+    bool keepsDenormalResults(std::uint32_t keepBit) const;
+    IrValue& roundedLimit(std::uint32_t rounding, IrU32 sign, IrValue& away, IrValue& towardZero);
     IrU32 flushF16Bits(IrU32 bits, std::uint32_t keepBit);
     IrU32 flushF16Input(IrU32 bits);
     IrU32 flushF16Result(IrU32 bits);
@@ -89,6 +105,7 @@ private:
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr, bool multiplication = false);
+    IrValue* propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result);
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
@@ -97,11 +114,13 @@ private:
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
     std::array<IrU32, 2> flushF64Bits(const std::array<IrU32, 2>& bits, std::uint32_t keepBit);
     IrValue& flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
+    IrValue& nanResultF64(IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
     IrU64 readF64(const RdnaOperand& operand);
     IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false, bool nanPayloadUnused = false);
     IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
     IrU32 readF16SourceBits(const RdnaOperand& operand);
     IrF32 readMixF32(const RdnaOperand& operand);
+    IrF32 mixNanSourceF32(const RdnaOperand& operand, IrF32 value);
     IrU32 readU16LaneRaw(const RdnaOperand& operand, bool highLane);
     IrU32 readU16LaneAsU32(const RdnaOperand& operand, bool highLane, bool signExtend);
     IrU32 readU16AsU32(const RdnaOperand& operand, bool signExtend);
@@ -113,6 +132,7 @@ private:
     IrU1 readMaskValid(const RdnaOperand& operand);
     static bool maskLanesExact(const RdnaOperand& operand);
     std::array<IrU32, 2> writeMask(const RdnaOperand& operand, IrU1 value, bool write64 = false);
+    void writeMaskLanes(const RdnaOperand& operand, IrU1 lane, IrU1 valid);
     void writeCompareResult(const RdnaOperand& operand, IrU1 value);
     MemoryFlags addMemoryInfo(const MemoryInfo& memory, std::uint32_t pc);
     bool floatAtomicFlush(IrOpcode opcode) const;
@@ -155,6 +175,7 @@ private:
     IrValue* loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc);
     IrValue* extractSharedU32(IrValue* value, std::uint32_t width, std::uint32_t index);
     void writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values, const MemoryInfo& memory, std::uint32_t pc);
+    IrU32 dsAddress(const RdnaInstruction& inst);
     bool dsRead(const RdnaInstruction& inst);
     bool dsRead2(const RdnaInstruction& inst);
     bool dsWrite(const RdnaInstruction& inst);
@@ -171,6 +192,7 @@ private:
     bool dsBpermuteB32(const RdnaInstruction& inst);
     bool dsPermuteB32(const RdnaInstruction& inst);
     IrF32 selectF32(IrU1 condition, IrF32 trueValue, IrF32 falseValue);
+    IrU32 orderF16Bits(const IrU32& bits);
     IrU32 minMaxF16Bits(bool maxValue, IrU32 lhs, IrU32 rhs);
     IrU32 convertF32ToU32Saturated(IrF32 value, float upperBound, float safeUpper, std::uint32_t highResult);
     IrU32 convertF32ToI32Saturated(IrF32 value, float lowerBound, float upperBound, float safeUpper, std::uint32_t lowerResult, std::uint32_t upperResult);
@@ -220,14 +242,15 @@ private:
     bool float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand);
     bool float16NativeFma(const RdnaInstruction& inst, bool accumulator);
     IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
+    IrF32 floatUnaryValue(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
+    bool floatUnaryClampInfinity(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opcode);
     bool minMaxF16(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDivScaleF32(const RdnaInstruction& inst);
     bool vDivFmasF32(const RdnaInstruction& inst);
-    IrValue& fmaScaledF32(IrValue& lhs, IrValue& rhs, IrValue& addend, IrValue& powerHigh);
     bool vDivFixupF32(const RdnaInstruction& inst);
     bool vFrexpMantF32(const RdnaInstruction& inst);
     bool vFmaLegacyF32(const RdnaInstruction& inst, bool accumulate);
@@ -275,6 +298,8 @@ private:
     IrU32 saturateInteger16(const RdnaOperand& destination, IrU32 value, bool sign);
     bool packedInteger16Mad(const RdnaInstruction& inst, bool sign);
     bool packedInteger16MinMax(const RdnaInstruction& inst, IrOpcode opcode, bool sign);
+    IrU32 readPackedU16Source(const RdnaOperand& operand);
+    bool packedInteger16Native(const RdnaInstruction& inst, IrOpcode opcode, std::uint32_t first, std::uint32_t second);
     bool sU64Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, IrOpcode bitOpcode, bool negateRhs, bool negateResult, bool unary);
     IrU1 u64MaskBinary(const RdnaInstruction& inst, IrOpcode opcode, bool negateRhs, bool negateResult);
     template <typename TWord>
@@ -378,6 +403,7 @@ private:
     bool emitInterpolation(const RdnaInstruction& inst);
     bool emitMemory(const RdnaInstruction& inst);
 
+    std::uint32_t bufferLdsBytes = 0u;
     IrProgram& program;
     const ShaderPixelInputInfo* pixelInput = nullptr;
     bool fragmentShaderBarycentricEnabled = false;
@@ -387,6 +413,8 @@ private:
     bool ieeeMode = false;
     bool nativeFloat16 = false;
     bool nativeFloat16Fma = false;
+    bool float16HostNans = false;
+    bool nativeInteger16 = false;
     IrBuilder ir;
     IrBlock& block;
     IrU1 instructionBranchCondition;
@@ -398,6 +426,13 @@ private:
     bool float64 = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
+    std::uint32_t sharedVectorBase = 0;
+    std::uint32_t sharedVectorCount = 0;
+    const RdnaInstruction* currentInstruction = nullptr;
+    std::bitset<256> vectorsRead;
+    bool relativeVectorRead = false;
+    bool execLowInactive = false;
+    bool execHighInactive = false;
 };
 
 // Debug aid: APS5_PROBE=<pc hex>:<vgpr>[:<shift>] copies VGPR <vgpr> into v255 right after the

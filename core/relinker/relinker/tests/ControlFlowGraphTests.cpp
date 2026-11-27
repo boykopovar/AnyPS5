@@ -729,6 +729,36 @@ void CheckEmbeddedDataTables() {
     Require(tablesWhirlpool[0].Begin == TextAddress + 32, "Whirlpool table start was incorrect");
 }
 
+void CheckSyscallsBeforeLaterPadding() {
+    for (const auto& opcode : {Bytes{0x0f, 0x05}, Bytes{0x0f, 0x34}, Bytes{0x0f, 0x07}, Bytes{0xcd, 0x80},
+                              Bytes{0xf3, 0x0f, 0x05}, Bytes{0x66, 0x0f, 0x34}, Bytes{0x48, 0x0f, 0x07}, Bytes{0x66, 0xcd, 0x80}}) {
+        for (const auto pad : {std::uint8_t{0x00}, std::uint8_t{0x90}, std::uint8_t{0xcc}}) {
+            for (const auto leadingPadding : {std::size_t{0}, std::size_t{4}}) {
+                constexpr std::size_t tableOffset = 16;
+                Bytes text(80, pad);
+                text[0] = 0x48;
+                text[1] = 0x8d;
+                text[2] = 0x05;
+                SetDisplacement(text, 3, 7, TextAddress + tableOffset);
+                text[7] = 0xc3;
+                const Bytes data{0x0f, 0x78, 0x11, 0x22, 0x33, 0x44};
+                std::memcpy(text.data() + tableOffset, data.data(), data.size());
+                const auto routineOffset = tableOffset + data.size() + leadingPadding;
+                Bytes routine{0x31, 0xc0, 0xb0, 0x3b};
+                routine.insert(routine.end(), opcode.begin(), opcode.end());
+                routine.push_back(0xc3);
+                std::memcpy(text.data() + routineOffset, routine.data(), routine.size());
+                const Bytes lastRoutine{0x31, 0xc0, 0xc3};
+                std::memcpy(text.data() + routineOffset + routine.size() + 4, lastRoutine.data(), lastRoutine.size());
+                const auto tables = Relinker::FindRelativeJumpTables(text, TextAddress,
+                    {{TextAddress, TextAddress + 8}, {TextAddress + text.size(), TextAddress + text.size() + 8}});
+                Require(tables.size() == 1 && tables[0].Begin == TextAddress + tableOffset, "Expected one data table before the syscall block");
+                Require(tables[0].End <= TextAddress + routineOffset, "Later padding hid an earlier syscall block in the data mask");
+            }
+        }
+    }
+}
+
 void CheckDecodedPaddingSuffix() {
     Bytes text(0x38, 0x90);
     text[0] = 0x48;
@@ -843,6 +873,34 @@ void CheckLargeZeroGaps() {
     Require(elapsed < std::chrono::seconds(10), "Large gap analysis took too long");
 }
 
+void CheckRelativeJumpTableDisplacementBounds() {
+    const Bytes underflowBranch{0x75, 0x80};
+    const auto underflowStart = std::chrono::steady_clock::now();
+    const auto underflowTables = Relinker::FindRelativeJumpTables(underflowBranch, 0, {{0, 2}});
+    Require(underflowTables.empty(), "Underflow branch displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - underflowStart < std::chrono::seconds(2), "Underflow branch scan timed out");
+
+    constexpr auto highAddress = std::numeric_limits<VirtualAddress>::max() - 10;
+    const Bytes overflowBranch{0x75, 0x7f, 0xc3};
+    const auto overflowStart = std::chrono::steady_clock::now();
+    const auto overflowTables = Relinker::FindRelativeJumpTables(overflowBranch, highAddress, {{highAddress, highAddress + 2}});
+    Require(overflowTables.empty(), "Overflow branch displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - overflowStart < std::chrono::seconds(2), "Overflow branch scan timed out");
+
+    const Bytes underflowLea{0x48, 0x8d, 0x05, 0x80, 0xff, 0xff, 0xff, 0xcc, 0xc3};
+    const auto leaStart = std::chrono::steady_clock::now();
+    const auto leaTables = Relinker::FindRelativeJumpTables(underflowLea, 0, {{0, 7}, {8, 9}});
+    Require(leaTables.empty(), "Underflow LEA displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - leaStart < std::chrono::seconds(2), "Underflow LEA scan timed out");
+
+    constexpr auto highLeaAddress = std::numeric_limits<VirtualAddress>::max() - 20;
+    const Bytes overflowLea{0x48, 0x8d, 0x05, 0x7f, 0x00, 0x00, 0x00, 0xcc, 0xc3};
+    const auto overflowLeaStart = std::chrono::steady_clock::now();
+    const auto overflowLeaTables = Relinker::FindRelativeJumpTables(overflowLea, highLeaAddress, {{highLeaAddress, highLeaAddress + 7}, {highLeaAddress + 8, highLeaAddress + 9}});
+    Require(overflowLeaTables.empty(), "Overflow LEA displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - overflowLeaStart < std::chrono::seconds(2), "Overflow LEA scan timed out");
+}
+
 }
 
 int main() {
@@ -866,11 +924,13 @@ int main() {
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
         CheckEmbeddedDataTables();
+        CheckSyscallsBeforeLaterPadding();
         CheckDecodedPaddingSuffix();
         CheckStubBeforeUndecodableData();
         CheckTableWithPaddingAndReturnBytes();
         CheckLargeZeroGaps();
         CheckGapWalkBranchTargets();
+        CheckRelativeJumpTableDisplacementBounds();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -101,6 +101,31 @@ inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& 
     }
 }
 
+inline std::uint32_t VertexBufferOutOfBoundsSelect(const ShaderRecompiler::VertexAttribute& attribute) {
+    return (attribute.resource.fields[3] >> 28u) & 3u;
+}
+
+inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    if (NullVertexDescriptor(attribute)) return false;
+    const auto select = VertexBufferOutOfBoundsSelect(attribute);
+    const auto records = attribute.resource.fields[2];
+    if (stride != 0) return (select == 2u && records == 0) || (select == 3u && records < DecodeVertexFormat(attribute).bytes);
+    if (select == 0u) return true;
+    if (select == 3u) return records < DecodeVertexFormat(attribute).bytes;
+    return records == 0;
+}
+
+inline VertexFormat ZeroVertexFormat(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto decoded = DecodeVertexFormat(attribute);
+    const auto format = std::strcmp(decoded.scalar, "u32") == 0 ? VK_FORMAT_R32G32B32A32_UINT : std::strcmp(decoded.scalar, "i32") == 0 ? VK_FORMAT_R32G32B32A32_SINT : VK_FORMAT_R32G32B32A32_SFLOAT;
+    return {format, 16u, 4u, decoded.scalar};
+}
+
+inline bool ZeroVertexChangesLayout(const ShaderRecompiler::VertexAttribute& attribute) {
+    return VertexFetchOutOfRange(attribute) && (((attribute.resource.fields[1] >> 16u) & 0x3fffu) != 0 || DecodeVertexFormat(attribute).format != ZeroVertexFormat(attribute).format);
+}
+
 inline std::string VertexAttributeSignature(const ShaderRecompiler::VertexAttribute& attribute) {
     const auto format = DecodeVertexFormat(attribute);
     return std::string(format.scalar) + (attribute.components == 1 ? "" : "x" + std::to_string(attribute.components));
@@ -117,7 +142,17 @@ inline std::uint32_t VertexReadBytes(const ShaderRecompiler::VertexAttribute& at
 struct VertexInputLayout {
     std::vector<VkVertexInputBindingDescription> bindings;
     std::vector<VkVertexInputAttributeDescription> attributes;
+    std::vector<std::uint32_t> zeroLayoutLocations;
 };
+
+inline bool ZeroVertexLayoutMatches(const VertexInputLayout& layout, std::span<const ShaderRecompiler::VertexAttribute> attributes) {
+    std::size_t index = 0;
+    for (const auto& attribute : attributes) {
+        if (!ZeroVertexChangesLayout(attribute)) continue;
+        if (index == layout.zeroLayoutLocations.size() || layout.zeroLayoutLocations[index++] != attribute.location) return false;
+    }
+    return index == layout.zeroLayoutLocations.size();
+}
 
 inline std::array<char, 160> VertexDescriptorFlagsMessage(const ShaderRecompiler::VertexAttribute& attribute) {
     std::array<char, 160> message{};
@@ -157,7 +192,8 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
     result.attributes.reserve(attributes.size());
     for (const auto& attribute : attributes) {
         const auto& fields = attribute.resource.fields;
-        const auto format = DecodeVertexFormat(attribute);
+        const auto zero = VertexFetchOutOfRange(attribute);
+        const auto format = zero ? ZeroVertexFormat(attribute) : DecodeVertexFormat(attribute);
         const auto duplicate = std::any_of(result.attributes.begin(), result.attributes.end(), [&](const auto& described) { return described.location == attribute.location; });
         Require(attribute.location < context.limits.maxVertexInputAttributes && !duplicate, "invalid or duplicate vertex attribute location");
         Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
@@ -166,29 +202,30 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
         }
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
-        Require(NullVertexDescriptor(attribute) || (address != 0 && address % format.alignment == 0 && stride % format.alignment == 0), "unaligned vertex buffer");
-        Require(stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
+        Require(NullVertexDescriptor(attribute) || zero || (address != 0 && address % format.alignment == 0 && stride % format.alignment == 0), "unaligned vertex buffer");
+        Require(zero || stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
         Require(context.formatProperties != nullptr, "missing vertex format property query");
         const auto supported = [&](VkFormat candidate) {
             return context.vertexFormats != nullptr ? context.vertexFormats->Supported(context, candidate) : QueryVertexBufferFormat(context, candidate);
         };
         auto host = format.format;
         auto hostSupported = supported(host);
-        for (auto components = 1u; !hostSupported && components <= 4u; ++components) {
+        for (auto components = 1u; !zero && !hostSupported && components <= 4u; ++components) {
             host = DecodeVertexFormat(attribute, components).format;
             hostSupported = supported(host);
         }
         if (!hostSupported) Require(false, "device does not support vertex format " + std::to_string(format.format));
         const auto binding = static_cast<std::uint32_t>(result.bindings.size());
-        result.bindings.push_back({binding, stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
+        result.bindings.push_back({binding, zero ? 0u : stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
         result.attributes.push_back({attribute.location, binding, host, 0});
+        if (ZeroVertexChangesLayout(attribute)) result.zeroLayoutLocations.push_back(attribute.location);
     }
     return result;
 }
 
 inline void ValidateVertexAddresses(std::span<const ShaderRecompiler::VertexAttribute> attributes) {
     for (const auto& attribute : attributes) {
-        if (NullVertexDescriptor(attribute)) continue;
+        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) continue;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         if (address == 0 || address % DecodeVertexFormat(attribute).alignment != 0) Require(false, "unaligned vertex buffer");
@@ -247,7 +284,7 @@ private:
     static bool sameShape(std::span<const ShaderRecompiler::VertexAttribute> a, std::span<const ShaderRecompiler::VertexAttribute> b) {
         return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const auto& x, const auto& y) {
             return x.location == y.location && x.components == y.components && x.formatComponents == y.formatComponents && x.fetchIndex == y.fetchIndex &&
-                (x.resource.fields[1] & 0xffff0000u) == (y.resource.fields[1] & 0xffff0000u) && x.resource.fields[3] == y.resource.fields[3] && NullVertexDescriptor(x) == NullVertexDescriptor(y);
+                (x.resource.fields[1] & 0xffff0000u) == (y.resource.fields[1] & 0xffff0000u) && x.resource.fields[3] == y.resource.fields[3] && NullVertexDescriptor(x) == NullVertexDescriptor(y) && ZeroVertexChangesLayout(x) == ZeroVertexChangesLayout(y);
         });
     }
     static std::size_t bypassIndex(std::uint64_t variant) {
@@ -274,20 +311,6 @@ private:
     std::unordered_map<std::uint64_t, Entry> entries;
 };
 
-inline std::uint32_t VertexBufferOutOfBoundsSelect(const ShaderRecompiler::VertexAttribute& attribute) {
-    return (attribute.resource.fields[3] >> 28u) & 3u;
-}
-
-inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attribute) {
-    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
-    if (stride != 0 || NullVertexDescriptor(attribute)) return false;
-    const auto select = VertexBufferOutOfBoundsSelect(attribute);
-    const auto records = attribute.resource.fields[2];
-    if (select == 0u) return true;
-    if (select == 3u) return records < DecodeVertexFormat(attribute).bytes;
-    return records == 0;
-}
-
 inline std::uint64_t ZeroStrideAvailableBytes(const ShaderRecompiler::VertexAttribute& attribute) {
     return VertexFetchOutOfRange(attribute) ? 0u : DecodeVertexFormat(attribute).bytes;
 }
@@ -297,11 +320,21 @@ inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& a
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
+    if (VertexFetchOutOfRange(attribute)) return ZeroVertexFormat(attribute).bytes;
     const auto bytes = stride == 0 ? ZeroStrideAvailableBytes(attribute) : records == 0 ? 0 : static_cast<std::uint64_t>(records - 1u) * stride + DecodeVertexFormat(attribute).bytes;
     Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "empty or oversized vertex buffer descriptor");
     const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
     Require(address != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid vertex buffer address range");
     return static_cast<std::size_t>(bytes);
+}
+
+inline std::uint64_t VertexDescriptorEnd(const ShaderRecompiler::VertexAttribute& attribute, std::size_t widened) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    const auto records = attribute.resource.fields[2];
+    if (stride == 0 || records == 0 || NullVertexDescriptor(attribute)) return 0;
+    const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
+    const auto bytes = static_cast<std::uint64_t>(records - 1u) * stride + DecodeVertexFormat(attribute).bytes + widened;
+    return bytes <= std::numeric_limits<std::uint64_t>::max() - address ? address + bytes : 0;
 }
 
 inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute& attribute, std::uint32_t maxIndex, std::uint32_t instances, std::uint32_t firstInstance = 0) {
@@ -311,11 +344,14 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
+    if (VertexFetchOutOfRange(attribute)) return ZeroVertexFormat(attribute).bytes;
     const auto index = attribute.fetchIndex == 0 ? maxIndex : firstInstance + instances - 1u;
     const auto bytes = DecodeVertexFormat(attribute).bytes;
     const auto select = VertexBufferOutOfBoundsSelect(attribute);
     const auto recordsUnchecked = stride == 0 ? select != 1u : select <= 1u;
-    Require(recordsUnchecked || index < records, "vertex fetch exceeds descriptor record count");
+    if (!recordsUnchecked && index >= records) {
+        Require(false, "vertex fetch exceeds descriptor record count: OOB_SELECT " + std::to_string(select) + ", stride " + std::to_string(stride) + ", NUM_RECORDS " + std::to_string(records) + (attribute.fetchIndex == 0 ? ", vertex index " : ", instance index ") + std::to_string(index));
+    }
     const auto required = static_cast<std::uint64_t>(stride) * index + bytes;
     Require(stride != 0 || required <= ZeroStrideAvailableBytes(attribute), "vertex fetch exceeds descriptor byte range");
     Require(required <= std::numeric_limits<std::size_t>::max(), "vertex fetch exceeds addressable byte range");
@@ -345,6 +381,18 @@ struct VertexCopyPlan {
     std::vector<std::uint64_t> offsets;
     std::vector<std::uint32_t> alignments;
 };
+
+inline std::vector<std::size_t> VertexCopyStarts(const VertexCopyPlan& plan, std::span<const VertexFetch> fetches, std::uint32_t minIndex, std::uint32_t firstInstance) {
+    Require(plan.copyOf.size() == fetches.size(), "vertex copy plan does not match its fetches");
+    std::vector<std::size_t> starts(plan.copies.size(), 0);
+    for (std::size_t i = 0; i < fetches.size(); ++i) {
+        const auto& fetch = fetches[i];
+        Require(fetch.fetchIndex <= 1, "unsupported vertex fetch index");
+        starts[plan.copyOf[i]] = static_cast<std::size_t>(static_cast<std::uint64_t>(fetch.stride) * (fetch.fetchIndex == 0 ? minIndex : firstInstance));
+    }
+    for (std::size_t range = 0; range < starts.size(); ++range) Require(starts[range] < plan.copies[range].second - plan.copies[range].first, "vertex copy starts past its range");
+    return starts;
+}
 
 inline VertexCopyPlan PlanVertexCopies(std::span<const VertexFetch> fetches) {
     VertexCopyPlan plan;
@@ -389,10 +437,15 @@ inline std::optional<std::uint32_t> ZeroFetchVertex(std::span<const ShaderRecomp
     return zeroFrom;
 }
 
-inline std::optional<std::uint32_t> ClampDrawIndices(std::span<std::byte> indices, std::uint32_t indexSize, bool skipRestart, std::uint32_t limit) {
+struct DrawIndexBounds {
+    std::uint32_t lowest;
+    std::uint32_t highest;
+};
+
+inline std::optional<DrawIndexBounds> ClampDrawIndices(std::span<std::byte> indices, std::uint32_t indexSize, bool skipRestart, std::uint32_t limit) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
     const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
-    std::optional<std::uint32_t> highest;
+    std::optional<DrawIndexBounds> bounds;
     for (std::size_t offset = 0; offset + indexSize <= indices.size(); offset += indexSize) {
         std::uint32_t index = 0;
         if (indexSize == 2) {
@@ -412,41 +465,44 @@ inline std::optional<std::uint32_t> ClampDrawIndices(std::span<std::byte> indice
                 std::memcpy(indices.data() + offset, &index, sizeof(index));
             }
         }
-        highest = std::max(highest.value_or(0u), index);
+        bounds = bounds ? DrawIndexBounds{std::min(bounds->lowest, index), std::max(bounds->highest, index)} : DrawIndexBounds{index, index};
     }
-    return highest;
+    return bounds;
 }
 
 template <typename TIndex>
-std::optional<std::uint32_t> HighestDrawIndexOf(std::span<const std::byte> indices, bool skipRestart) {
+std::optional<DrawIndexBounds> DrawIndexBoundsOf(std::span<const std::byte> indices, bool skipRestart) {
     constexpr auto restartIndex = std::numeric_limits<TIndex>::max();
     const auto count = indices.size() / sizeof(TIndex);
     const auto* data = indices.data();
+    TIndex lowest = restartIndex;
     TIndex highest = 0;
     if (!skipRestart) {
         for (std::size_t i = 0; i < count; ++i) {
             TIndex index;
             std::memcpy(&index, data + i * sizeof(TIndex), sizeof(TIndex));
+            lowest = std::min(lowest, index);
             highest = std::max(highest, index);
         }
         if (count == 0) return std::nullopt;
-        return highest;
+        return DrawIndexBounds{lowest, highest};
     }
     TIndex kept = 0;
     for (std::size_t i = 0; i < count; ++i) {
         TIndex index;
         std::memcpy(&index, data + i * sizeof(TIndex), sizeof(TIndex));
         const TIndex valid = index == restartIndex ? TIndex{0} : TIndex(~TIndex{0});
+        lowest = std::min(lowest, index);
         highest = std::max(highest, static_cast<TIndex>(index & valid));
         kept |= valid;
     }
     if (kept == 0) return std::nullopt;
-    return highest;
+    return DrawIndexBounds{lowest, highest};
 }
 
-inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
+inline std::optional<DrawIndexBounds> DrawIndexRange(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
-    return indexSize == 2 ? HighestDrawIndexOf<std::uint16_t>(indices, skipRestart) : HighestDrawIndexOf<std::uint32_t>(indices, skipRestart);
+    return indexSize == 2 ? DrawIndexBoundsOf<std::uint16_t>(indices, skipRestart) : DrawIndexBoundsOf<std::uint32_t>(indices, skipRestart);
 }
 
 inline std::uint32_t CompactListRestart(std::span<std::byte> indices, std::uint32_t indexSize, std::uint32_t primitiveSize) {

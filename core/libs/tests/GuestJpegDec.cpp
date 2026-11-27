@@ -1,8 +1,10 @@
 #include "prx/libSceJpegDec/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -25,6 +27,19 @@ static_assert(offsetof(JpegDecImageInfo, color_space) == 0x8 && offsetof(JpegDec
 static_assert(offsetof(JpegDecImageInfo, component_id) == 0xC && offsetof(JpegDecImageInfo, sampling_factor) == 0x10);
 static_assert(offsetof(JpegDecImageInfo, coefficient_mem_size) == 0x14 && offsetof(JpegDecImageInfo, suitable_csc_attribute) == 0x18);
 static_assert(offsetof(JpegDecImageInfo, output_image_width) == 0x1C && offsetof(JpegDecImageInfo, output_image_height) == 0x20);
+
+static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
+
+static void* gTamperContext = nullptr;
+static std::uintptr_t gWatchReadStart = 0;
+static std::uintptr_t gWatchReadEnd = 0;
+
+static void TamperContextOnRead(std::uintptr_t address, std::size_t) {
+    errno = 99;
+    if (gTamperContext && address >= gWatchReadStart && address < gWatchReadEnd) {
+        std::memset(static_cast<std::uint8_t*>(gTamperContext) + sizeof(void*), 0, 24);
+    }
+}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -60,7 +75,23 @@ static JpegDecDecodeParam DecodeParam(const std::vector<std::uint8_t>& jpeg, std
     return param;
 }
 
+struct StreamFeed {
+    const std::uint8_t* data;
+    std::size_t remaining;
+};
+
+static std::int32_t APS5_VABI FeedStream(JpegDecInputChunk* chunk, void* arg) {
+    auto* feed = static_cast<StreamFeed*>(arg);
+    if (!chunk || !feed) return -1;
+    chunk->data = feed->data;
+    chunk->size = static_cast<std::uint32_t>(feed->remaining);
+    feed->remaining = 0;
+    return 0;
+}
+
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80650001);
     constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80650002);
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80650003);
@@ -71,8 +102,12 @@ int main() {
     JpegDecImageInfo info{};
     const JpegDecParseParam parseParam{jpeg.data(), static_cast<std::uint32_t>(jpeg.size()), 0, 1};
     Require(sceJpegDecParseHeader(nullptr, &info) == invalidAddr);
+    errno = 71;
     Require(sceJpegDecParseHeader(reinterpret_cast<const JpegDecParseParam*>(0x10), &info) == invalidAddr);
+    Require(errno == 71);
+    errno = 71;
     Require(sceJpegDecParseHeader(&parseParam, reinterpret_cast<JpegDecImageInfo*>(0x10)) == invalidAddr);
+    Require(errno == 71);
     Require(sceJpegDecParseHeader(&parseParam, nullptr) == invalidAddr);
     const JpegDecParseParam emptyParam{nullptr, 0, 0, 1};
     Require(sceJpegDecParseHeader(&emptyParam, &info) == invalidAddr);
@@ -133,8 +168,10 @@ int main() {
     Require(sceJpegDecParseHeader(&parseParam, &info) == 0);
 
     const JpegDecCreateParam param{sizeof(JpegDecCreateParam), info.suitable_csc_attribute, info.image_width};
+    errno = 71;
     const std::int32_t memorySize = sceJpegDecQueryMemorySize(&param);
     Require(memorySize == 32128);
+    Require(errno == 71);
     const JpegDecCreateParam fullParam{sizeof(JpegDecCreateParam), 2, info.image_width};
     const std::int32_t fullMemorySize = sceJpegDecQueryMemorySize(&fullParam);
     Require(fullMemorySize == 37504);
@@ -158,8 +195,20 @@ int main() {
     Require(sceJpegDecCreate(&param, memory.data(), 0, &handle) == invalidSize);
     Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), nullptr) == invalidAddr);
     Require(sceJpegDecCreate(reinterpret_cast<const JpegDecCreateParam*>(0x10), memory.data(), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
+    errno = 71;
     Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
     Require(sceJpegDecCreate(&param, reinterpret_cast<void*>(0x10), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
+    std::vector<std::uint8_t> unalignedMemory(static_cast<std::size_t>(memorySize) + 64);
+    void* unalignedHandle = nullptr;
+    std::uint8_t* misalignedAddress = unalignedMemory.data();
+    if (reinterpret_cast<std::uintptr_t>(misalignedAddress) % 32 == 0) misalignedAddress += 1;
+    Require(sceJpegDecCreate(&param, misalignedAddress, static_cast<std::uint32_t>(memorySize), &unalignedHandle) == 0);
+    Require(unalignedHandle != nullptr && reinterpret_cast<std::uintptr_t>(unalignedHandle) % 32 == 0);
+    Require(sceJpegDecDelete(unalignedHandle) == 0);
+    unalignedHandle = reinterpret_cast<void*>(0x12345678);
+    Require(sceJpegDecCreate(&param, reinterpret_cast<void*>(UINTPTR_MAX - 16), static_cast<std::uint32_t>(memorySize), &unalignedHandle) == invalidAddr);
+    Require(unalignedHandle == reinterpret_cast<void*>(0x12345678));
     Require(sceJpegDecCreate(&fullParam, memory.data(), static_cast<std::uint32_t>(fullMemorySize), &handle) == 0);
     Require(handle != nullptr && reinterpret_cast<std::uintptr_t>(handle) % 32 == 0);
     Require(sceJpegDecCreate(&param, memory.data(), 0, nullptr) == invalidSize);
@@ -167,7 +216,9 @@ int main() {
     Require(sceJpegDecDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
     Require(sceJpegDecDelete(handle) == 0);
 
+    errno = 71;
     Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), &handle) == 0);
+    Require(errno == 71);
 
     const std::optional<Decoder::Jpeg::Image> reference = Decoder::Jpeg::Decode(jpeg);
     Require(reference && reference->width == 7 && reference->height == 5 && reference->channels == 3);
@@ -237,6 +288,33 @@ int main() {
     otherMode.decode_mode = 1;
     Require(ThrowsRuntimeError([&] { sceJpegDecDecode(handle, &otherMode, &info); }));
     info = {};
+    errno = 71;
+    Require(sceJpegDecDecode(handle, &decodeParam, &info) == static_cast<std::int32_t>(7 << 16 | 5));
+    Require(errno == 71);
+    void* savedHandle = handle;
+    Require(sceJpegDecCreate(&param, reinterpret_cast<void*>(0x20), static_cast<std::uint32_t>(memorySize), &savedHandle) == invalidAddr);
+    Require(savedHandle == handle);
+    StreamFeed feed{jpeg.data(), jpeg.size()};
+    JpegDecInputControlParam streamParam{};
+    streamParam.input = FeedStream;
+    streamParam.input_argument = &feed;
+    streamParam.operation = 0x10;
+    streamParam.down_scale = 1;
+    info = {};
+    Require(sceJpegDecDecodeWithInputControl(handle, &streamParam, &info) == 0);
+    Require(info.image_width == 7 && info.image_height == 5);
+    errno = 71;
+    Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
+    std::vector<std::uint8_t> streamImage(7 * 5 * 4, 0xCC);
+    streamParam.operation = 0x20;
+    streamParam.image_mem_addr = streamImage.data();
+    streamParam.image_mem_size = static_cast<std::uint32_t>(streamImage.size());
+    streamParam.pixel_format = 0;
+    streamParam.alpha_value = 0xFF;
+    streamParam.image_pitch = 7 * 4;
+    Require(sceJpegDecDecodeWithInputControl(handle, &streamParam, nullptr) == static_cast<std::int32_t>(7 << 16 | 5));
+    Require(streamImage[0] == reference->pixels[0] && streamImage[1] == reference->pixels[1] && streamImage[2] == reference->pixels[2] && streamImage[3] == 0xFF);
     Require(sceJpegDecDecode(handle, &decodeParam, &info) == static_cast<std::int32_t>(7 << 16 | 5));
     Require(info.image_width == 7 && info.image_height == 5);
     Require(info.output_image_width == 7 && info.output_image_height == 5);
@@ -323,6 +401,33 @@ int main() {
     garbageScaled.down_scale = 2;
     Require(sceJpegDecDecode(handle, &garbageScaled, &info) == invalidData);
 
+    errno = 71;
+    Require(sceJpegDecDecodeWithInputControl(handle, reinterpret_cast<const JpegDecInputControlParam*>(0x10), &info) == invalidAddr);
+    Require(errno == 71);
+    {
+        std::vector<std::uint8_t> tamperedMemory(static_cast<std::size_t>(memorySize) + 32);
+        void* tamperedHandle = nullptr;
+        Require(sceJpegDecCreate(&param, tamperedMemory.data(), static_cast<std::uint32_t>(memorySize), &tamperedHandle) == 0);
+        std::vector<std::uint8_t> tamperedImage(7 * 5 * 4, 0xCC);
+        const JpegDecDecodeParam tamperedDecode = DecodeParam(jpeg, tamperedImage, 7 * 4);
+        gTamperContext = tamperedHandle;
+        gWatchReadStart = reinterpret_cast<std::uintptr_t>(jpeg.data());
+        gWatchReadEnd = gWatchReadStart + jpeg.size();
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(TamperContextOnRead);
+        info = {};
+        errno = 71;
+        Require(sceJpegDecDecode(tamperedHandle, &tamperedDecode, &info) == static_cast<std::int32_t>(7 << 16 | 5));
+        Require(errno == 71);
+        gTamperContext = nullptr;
+        gWatchReadStart = 0;
+        gWatchReadEnd = 0;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        Require(sceJpegDecDelete(tamperedHandle) == 0);
+    }
+    errno = 71;
     Require(sceJpegDecDelete(handle) == 0);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

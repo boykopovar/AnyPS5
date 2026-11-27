@@ -12,6 +12,7 @@
 #include <map>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #ifdef _WIN32
@@ -40,6 +41,24 @@ void Check(bool condition, const std::string& what) {
     ++failures;
 }
 
+bool MountedCountThrows(std::int32_t reserved, std::uint32_t* count) {
+    try {
+        static_cast<void>(sceSaveDataGetMountedSaveDataCount(reserved, count));
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+bool Umount2Throws(std::uint32_t mode, const SaveDataMountPoint* point) {
+    try {
+        static_cast<void>(sceSaveDataUmount2(mode, point));
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 void CheckUnmountedCalls() {
     SaveDataMountPoint point{};
     std::memcpy(point.data, "test", sizeof("test"));
@@ -56,19 +75,23 @@ void CheckUnmountedCalls() {
     Check(sceSaveDataMount3(&nullMount, nullptr) == SaveDataErrorParameter, "mount3 null result is PARAMETER");
     Check(sceSaveDataMount3(&nullMount, &mountResult) == SaveDataErrorParameter, "mount3 null dir_name is PARAMETER");
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
+    Check(sceSaveDataUmount2(0, reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, "umount2 unmapped point is PARAMETER");
     Check(sceSaveDataUmount2(0, &point) == SaveDataErrorNotMounted, "umount2 unmounted point is NOT_MOUNTED");
     Check(sceSaveDataLoadIcon(nullptr, &icon) == SaveDataErrorParameter, "loadIcon null point is PARAMETER");
     Check(sceSaveDataLoadIcon(&point, &icon) == SaveDataErrorNotMounted, "loadIcon unmounted point is NOT_MOUNTED");
     Check(sceSaveDataSaveIcon(nullptr, &icon) == SaveDataErrorParameter, "saveIcon null point is PARAMETER");
     Check(sceSaveDataSaveIcon(&point, &icon) == SaveDataErrorNotMounted, "saveIcon unmounted point is NOT_MOUNTED");
-    Check(sceSaveDataSaveIconByPath(&point, "test.png") == 0, "saveIconByPath succeeds");
+    Check(sceSaveDataSaveIconByPath(&point, "test.png") == SaveDataErrorNotMounted, "saveIconByPath on an absent mount returns NOT_MOUNTED");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");
+    Check(sceSaveDataGetMountInfo(reinterpret_cast<const SaveDataMountPoint*>(0x10), &info) == SaveDataErrorParameter, "getMountInfo unmapped point is PARAMETER");
     Check(sceSaveDataGetMountInfo(&point, nullptr) == SaveDataErrorParameter, "getMountInfo null info is PARAMETER");
     Check(sceSaveDataGetMountInfo(&point, &info) == SaveDataErrorNotMounted, "getMountInfo unmounted point is NOT_MOUNTED");
     Check(sceSaveDataGetParam(nullptr, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam null point is PARAMETER");
+    Check(sceSaveDataGetParam(reinterpret_cast<const SaveDataMountPoint*>(0x10), 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unmapped point is PARAMETER");
     Check(sceSaveDataGetParam(&point, 1, nullptr, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam null buf is PARAMETER");
     Check(sceSaveDataGetParam(&point, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorNotMounted, "getParam unmounted point is NOT_MOUNTED");
     Check(sceSaveDataSetParam(nullptr, 1, buf, sizeof(buf)) == SaveDataErrorParameter, "setParam null point is PARAMETER");
+    Check(sceSaveDataSetParam(reinterpret_cast<const SaveDataMountPoint*>(0x10), 1, buf, sizeof(buf)) == SaveDataErrorParameter, "setParam unmapped point is PARAMETER");
     Check(sceSaveDataSetParam(&point, 1, nullptr, sizeof(buf)) == SaveDataErrorParameter, "setParam null buf is PARAMETER");
     Check(sceSaveDataSetParam(&point, 1, buf, sizeof(buf)) == SaveDataErrorNotMounted, "setParam unmounted point is NOT_MOUNTED");
     SaveDataMountPoint unterminatedPoint{};
@@ -83,8 +106,12 @@ void CheckUnmountedCalls() {
     unterminatedPoint.data[sizeof(unterminatedPoint.data) - 1] = '\0';
     Check(sceSaveDataUmount2(0, &unterminatedPoint) == SaveDataErrorNotMounted, "umount2 terminated unmounted point is NOT_MOUNTED");
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "backup null backup is PARAMETER");
+    Check(sceSaveDataBackup(reinterpret_cast<const SaveDataBackup*>(0x10)) == SaveDataErrorParameter, "backup unmapped backup is PARAMETER");
     SaveDataBackup nullDirBackup{};
     Check(sceSaveDataBackup(&nullDirBackup) == SaveDataErrorParameter, "backup null dir_name is PARAMETER");
+    SaveDataBackup unmappedDirBackup{};
+    unmappedDirBackup.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Check(sceSaveDataBackup(&unmappedDirBackup) == SaveDataErrorParameter, "backup unmapped dir_name is PARAMETER");
     char unterminatedBackup[sizeof(SceSaveDataDirName::data)];
     std::memset(unterminatedBackup, 'a', sizeof(unterminatedBackup));
     SaveDataBackup unterminatedBackupParam{};
@@ -101,6 +128,7 @@ void CheckUnmountedCalls() {
     validBackup.user_id = 0x10000000;
     validBackup.dir_name = &validDir;
     Check(sceSaveDataBackup(&validBackup) == 0, "backup valid dir_name succeeds");
+    Check(sceSaveDataGetEventResult(nullptr, reinterpret_cast<SaveDataEvent*>(0x10)) == SaveDataErrorParameter, "getEventResult unwritable event is PARAMETER");
     SaveDataEvent backupEvent{};
     Check(sceSaveDataGetEventResult(nullptr, &backupEvent) == 0, "getEventResult retrieves backup event");
     Check(backupEvent.type == 2, "backup event type is 2");
@@ -141,13 +169,33 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataSaveIcon(&unmounted, nullptr) == SaveDataErrorParameter, "saveIcon null icon is PARAMETER before mount lookup");
     Check(sceSaveDataSaveIcon(point, &icon) == 0, "saveIcon on mounted save succeeds");
     Check(sceSaveDataLoadIcon(point, &icon) == 0, "loadIcon on mounted save succeeds");
-    Check(sceSaveDataSaveIconByPath(point, "icon.png") == 0, "saveIconByPath on mounted save succeeds");
+    Check(sceSaveDataSaveIconByPath(point, "icon.png") == SaveDataErrorNotFound, "saveIconByPath with a missing source returns NOT_FOUND");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");
     Check(sceSaveDataGetMountInfo(point, nullptr) == SaveDataErrorParameter, "getMountInfo null info is PARAMETER");
+    Check(sceSaveDataGetMountInfo(point, reinterpret_cast<SaveDataMountInfo*>(0x10)) == SaveDataErrorParameter, "getMountInfo unwritable info is PARAMETER");
     Check(sceSaveDataGetMountInfo(&unmounted, &info) == SaveDataErrorNotMounted, "getMountInfo unmounted point is NOT_MOUNTED");
     Check(sceSaveDataGetMountInfo(point, &info) == 0, "getMountInfo on mounted save succeeds");
     Check(sceSaveDataGetParam(nullptr, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam null point is PARAMETER");
     Check(sceSaveDataGetParam(point, 1, nullptr, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam null buf is PARAMETER");
+    Check(sceSaveDataGetParam(point, 1, reinterpret_cast<void*>(0x10), sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unwritable buf is PARAMETER");
+    Check(sceSaveDataGetParam(point, 1, buf, sizeof(buf), reinterpret_cast<size_t*>(0x10)) == SaveDataErrorParameter, "getParam unwritable got_size is PARAMETER");
+    char atomicBuf[sizeof(buf)];
+    std::memset(atomicBuf, 'Z', sizeof(atomicBuf));
+    Check(sceSaveDataGetParam(point, 1, atomicBuf, sizeof(atomicBuf), reinterpret_cast<size_t*>(0x10)) == SaveDataErrorParameter, "getParam unwritable got_size returns PARAMETER without writing param_buf");
+    bool paramUntouched = true;
+    for (char byte : atomicBuf) {
+        if (byte != 'Z') paramUntouched = false;
+    }
+    Check(paramUntouched, "getParam unwritable got_size leaves param_buf untouched");
+    static const size_t readOnlyGotSize = 7;
+    Check(sceSaveDataGetParam(point, 1, atomicBuf, sizeof(atomicBuf), const_cast<size_t*>(&readOnlyGotSize)) == SaveDataErrorParameter, "getParam read-only got_size returns PARAMETER");
+    paramUntouched = true;
+    for (char byte : atomicBuf) {
+        if (byte != 'Z') paramUntouched = false;
+    }
+    Check(paramUntouched, "getParam read-only got_size leaves param_buf untouched");
+    size_t atomicGotSize = 12345;
+    Check(sceSaveDataGetParam(point, 1, reinterpret_cast<void*>(0x10), sizeof(buf), &atomicGotSize) == SaveDataErrorParameter && atomicGotSize == 12345, "getParam unwritable buf leaves got_size untouched");
     Check(sceSaveDataGetParam(point, 1, smallBuf, sizeof(smallBuf), &gotSize) == SaveDataErrorParameter, "getParam small buf is PARAMETER");
     Check(sceSaveDataGetParam(&unmounted, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorNotMounted, "getParam unmounted point is NOT_MOUNTED");
     Check(sceSaveDataGetParam(point, 1, buf, sizeof(buf), &gotSize) == 0, "getParam on mounted save succeeds");
@@ -155,6 +203,7 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataGetParam(point, 1, buf, sizeof(buf), nullptr) == 0, "getParam with null got_size on mounted save succeeds");
     Check(sceSaveDataSetParam(nullptr, 1, newTitle, sizeof(newTitle)) == SaveDataErrorParameter, "setParam null point is PARAMETER");
     Check(sceSaveDataSetParam(point, 1, nullptr, sizeof(newTitle)) == SaveDataErrorParameter, "setParam null buf is PARAMETER");
+    Check(sceSaveDataSetParam(point, 1, reinterpret_cast<const void*>(0x10), sizeof(newTitle)) == SaveDataErrorParameter, "setParam unreadable buf is PARAMETER");
     Check(sceSaveDataSetParam(point, 999, newTitle, sizeof(newTitle)) == SaveDataErrorParameter, "setParam invalid type is PARAMETER");
     Check(sceSaveDataSetParam(point, 1, newTitle, 0) == SaveDataErrorParameter, "setParam zero size is PARAMETER");
     Check(sceSaveDataSetParam(point, 4, smallBuf, 1) == SaveDataErrorParameter, "setParam short user param is PARAMETER");
@@ -171,6 +220,8 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataGetMountInfo(&unterminatedMounted, &info) == SaveDataErrorParameter, "getMountInfo unterminated point is PARAMETER on mounted save");
     Check(sceSaveDataGetParam(&unterminatedMounted, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unterminated point is PARAMETER on mounted save");
     Check(sceSaveDataSetParam(&unterminatedMounted, 1, newTitle, sizeof(newTitle)) == SaveDataErrorParameter, "setParam unterminated point is PARAMETER on mounted save");
+    std::uint32_t mounted = 0x5a5a5a5a;
+    Check(sceSaveDataGetMountedSaveDataCount(0, &mounted) == 0 && mounted >= 1, "mounted count reports an open save");
 }
 
 void MountAndCheck(const char* name, std::uint32_t mode, std::uint32_t expectedStatus, const std::string& what) {
@@ -386,10 +437,32 @@ void CheckBackups() {
     Check(sceSaveDataRestoreBackupData(nullptr) == SaveDataErrorParameter, "restoreBackupData null block is PARAMETER");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData null dir_name is PARAMETER");
     Check(sceSaveDataUmountWithBackup(nullptr) == SaveDataErrorParameter, "umountWithBackup null point is PARAMETER");
+    Check(sceSaveDataUmountWithBackup(reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, "umountWithBackup unmapped point is PARAMETER");
     check.dir_name = &fresh;
     restore.dir_name = &fresh;
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData without a backup is NOT_FOUND");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData without a backup is NOT_FOUND");
+
+    const char* const invalidNames[] = {
+        ".",
+        "..",
+        "../traversal",
+        "..\\traversal",
+        "/absolute",
+        "\\absolute",
+        "dir/slash",
+        "dir\\backslash",
+        "c:colon",
+        ":colon"
+    };
+    for (const auto* invalidName : invalidNames) {
+        SceSaveDataDirName invalidDir{};
+        std::strncpy(invalidDir.data, invalidName, sizeof(invalidDir.data) - 1);
+        check.dir_name = &invalidDir;
+        restore.dir_name = &invalidDir;
+        Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorParameter, "checkBackupData invalid dir_name is PARAMETER");
+        Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData invalid dir_name is PARAMETER");
+    }
 
     SaveDataMountResult mounted{};
     Check(MountSave(&kept, MountReadWrite | MountCreate2, &mounted), "the backed-up save mounts");
@@ -401,8 +474,12 @@ void CheckBackups() {
     restore.dir_name = &kept;
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorBusy, "checkBackupData of a mounted save is BUSY");
     Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorBusy, "restoreBackupData of a mounted save is BUSY");
-    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup succeeds");
+    SaveDataMountPoint unterminatedPoint{};
+    std::memset(unterminatedPoint.data, 'a', sizeof(unterminatedPoint.data));
+    Check(sceSaveDataUmountWithBackup(&unterminatedPoint) == SaveDataErrorParameter, "umountWithBackup unterminated point is PARAMETER");
     SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == 0, "umountWithBackup of an unterminated point keeps the save mounted");
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup succeeds");
     Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umountWithBackup unmounts the save");
 
     SaveDataEvent event{};
@@ -421,6 +498,11 @@ void CheckBackups() {
     std::memcpy(running.data, "PPSA00000", sizeof("PPSA00000"));
     check.title_id = &running;
     Check(sceSaveDataCheckBackupData(&check) == 0, "checkBackupData with the running title's id finds the backup");
+    SceSaveDataTitleId badTitleId{};
+    std::strncpy(badTitleId.data, "CUSA99999", sizeof(badTitleId.data) - 1);
+    check.title_id = &badTitleId;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData bad title_id is NOT_FOUND");
+    check.title_id = nullptr;
 
     WriteText(data, "second");
     WriteText(std::filesystem::path("_sd") / "kept" / "added.bin", "added");
@@ -428,6 +510,9 @@ void CheckBackups() {
     const char changedTitle[] = "Changed";
     Check(sceSaveDataSetParam(&mounted.mount_point, 1, changedTitle, sizeof(changedTitle)) == 0, "the title changes after the backup");
     Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the changed save unmounts");
+    restore.title_id = &badTitleId;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData bad title_id is NOT_FOUND");
+    restore.title_id = nullptr;
     Check(sceSaveDataRestoreBackupData(&restore) == 0, "restoreBackupData succeeds");
     Check(ReadText(data) == "first", "restoreBackupData puts back a file changed after the backup");
     Check(!std::filesystem::exists(std::filesystem::path("_sd") / "kept" / "added.bin"), "restoreBackupData removes a file added after the backup");
@@ -772,6 +857,86 @@ void CheckBackupGuestErrors() {
     }
 }
 
+void CheckUmount2BackupModes() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "umount2_backup", sizeof("umount2_backup"));
+    SaveDataMountPoint missing{};
+    std::memcpy(missing.data, "/absent0", sizeof("/absent0"));
+    for (const std::uint32_t mode : {0x10000u, 0x10001u}) {
+        const std::string tag = "umount2(" + std::to_string(mode) + ")";
+        Check(sceSaveDataUmount2(mode, nullptr) == SaveDataErrorParameter, tag + " null point is PARAMETER");
+        Check(sceSaveDataUmount2(mode, reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, tag + " unmapped point is PARAMETER");
+        Check(sceSaveDataUmount2(mode, &missing) == SaveDataErrorNotMounted, tag + " unmounted point is NOT_MOUNTED");
+
+        SaveDataMountResult mounted{};
+        Check(MountSave(&name, MountReadWrite | MountCreate2, &mounted), tag + " save mounts");
+        const auto data = std::filesystem::path("_sd") / "umount2_backup" / "data.bin";
+        const std::string body = "payload-" + std::to_string(mode);
+        WriteText(data, body);
+        const std::string title = "Title " + std::to_string(mode);
+        Check(sceSaveDataSetParam(&mounted.mount_point, 1, title.c_str(), title.size() + 1) == 0, tag + " sets param");
+        Check(sceSaveDataUmount2(mode, &mounted.mount_point) == 0, tag + " succeeds");
+        SaveDataMountInfo info{};
+        Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, tag + " unmounts the save");
+
+        SaveDataEvent event{};
+        Check(sceSaveDataGetEventResult(nullptr, &event) == 0, tag + " posts an event");
+        Check(event.type == 1, tag + " event type is UMOUNT_BACKUP");
+        Check(event.error_code == 0, tag + " event error_code is 0");
+        Check(event.user_id == 7, tag + " event user_id matches");
+        Check(std::strncmp(event.title_id.data, "PPSA00000", sizeof(event.title_id.data)) == 0, tag + " event title_id matches");
+        Check(std::strncmp(event.dir_name.data, "umount2_backup", sizeof(event.dir_name.data)) == 0, tag + " event dir_name matches");
+        Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, tag + " leaves no duplicate events");
+
+        SaveDataParam param{};
+        SaveDataCheckBackupData check{};
+        check.dir_name = &name;
+        check.param = &param;
+        Check(sceSaveDataCheckBackupData(&check) == 0, tag + " creates checkable backup");
+        Check(std::strcmp(param.title, title.c_str()) == 0, tag + " backup stores title");
+        Check(ReadText(std::filesystem::path("_sd_backup") / "umount2_backup" / "save" / "data.bin") == body, tag + " backup stores payload");
+    }
+
+    SaveDataMountResult mounted{};
+    Check(MountSave(&name, MountReadWrite, &mounted), "remount for mode 0 check");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "umount2(0) succeeds");
+    SaveDataEvent empty{};
+    Check(sceSaveDataGetEventResult(nullptr, &empty) == SaveDataErrorNotFound, "umount2(0) does not post a backup event");
+
+    Check(MountSave(&name, MountReadWrite, &mounted), "remount for umount2 backup copy failure");
+    FailStep("backup.copy", 1);
+    Check(sceSaveDataUmount2(0x10000u, &mounted.mount_point) == 0, "umount2(0x10000) returns 0 when backup copy fails");
+    ClearFailingStep();
+    SaveDataEvent failedEvent{};
+    Check(sceSaveDataGetEventResult(nullptr, &failedEvent) == 0 && failedEvent.type == 1 && failedEvent.error_code == SaveDataErrorInternal, "umount2(0x10000) reports INTERNAL when backup copy fails");
+    SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umount2(0x10000) unmounts the save when backup copy fails");
+
+    for (const std::uint32_t unknownMode : {2u, 0x20000u, 0x10002u}) {
+        Check(Umount2Throws(unknownMode, &missing), "umount2 throws on unknown mode " + std::to_string(unknownMode));
+    }
+
+    SaveDataDelete del{};
+    del.dir_name = &name;
+    Check(sceSaveDataDelete(&del) == 0, "umount2 backup save deletes cleanly");
+
+    SceSaveDataDirName forceName{};
+    std::memcpy(forceName.data, "umount2_force", sizeof("umount2_force"));
+    Check(sceSaveDataUmount2(1u, &missing) == SaveDataErrorNotMounted, "umount2(1) unmounted point is NOT_MOUNTED");
+    SaveDataMountResult created{};
+    Check(MountSave(&forceName, MountReadWrite | MountCreate2, &created), "umount2(1) save mounts with CREATE2");
+    WriteText(std::filesystem::path("_sd") / "umount2_force" / "data.bin", "payload-force");
+    Check(sceSaveDataUmount2(1u, &created.mount_point) == 0, "umount2(1) succeeds");
+    Check(sceSaveDataGetMountInfo(&created.mount_point, &info) == SaveDataErrorNotMounted, "umount2(1) unmounts the save");
+    SaveDataEvent forceEvent{};
+    Check(sceSaveDataGetEventResult(nullptr, &forceEvent) == SaveDataErrorNotFound, "umount2(1) does not post a backup event");
+    Check(!std::filesystem::exists(std::filesystem::path("_sd_backup") / "umount2_force"), "umount2(1) does not back up the save");
+    Check(ReadText(std::filesystem::path("_sd") / "umount2_force" / "data.bin") == "payload-force", "umount2(1) keeps the written data");
+    SaveDataDelete forceDel{};
+    forceDel.dir_name = &forceName;
+    Check(sceSaveDataDelete(&forceDel) == 0, "umount2(1) save deletes cleanly");
+}
+
 void CheckMountCapacityAndLifecycle() {
     Check(sceSaveDataAbort() == 0, "abort after init succeeds");
     Check(sceSaveDataClearProgress() == 0, "clearProgress after init succeeds");
@@ -893,9 +1058,18 @@ int main() {
     std::filesystem::current_path(root);
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort pre-init is NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress pre-init is NOT_INITIALIZED");
+    Check(sceSaveDataTerminate() == SaveDataErrorNotInitialized, "terminate pre-init is NOT_INITIALIZED");
+    Check(sceSaveDataIsMounted() == SaveDataErrorNotInitialized, "isMounted pre-init is NOT_INITIALIZED");
+    Check(sceSaveDataGetMountedSaveDataCount(0, nullptr) == SaveDataErrorNotInitialized, "mounted count pre-init is NOT_INITIALIZED");
     CheckUnmountedCalls();
     Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000), "null param rejected in memory sync");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
+    std::uint32_t mounted = 0;
+    Check(sceSaveDataGetMountedSaveDataCount(0, nullptr) == SaveDataErrorParameter, "mounted count null count is PARAMETER");
+    Check(sceSaveDataGetMountedSaveDataCount(0, &mounted) == 0 && mounted == 0, "mounted count is zero before a mount");
+    mounted = 0x5a5a5a5a;
+    Check(MountedCountThrows(0x7fffffff, &mounted), "mounted count throws for a nonzero first argument");
+    Check(mounted == 0x5a5a5a5a, "mounted count writes nothing before throwing");
     CheckHostMountFailures();
     CheckMountCapacityAndLifecycle();
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 1u, "CREATE2 of a missing save");
@@ -911,6 +1085,7 @@ int main() {
     CheckBackupSwap();
     CheckLinkedPaths();
     CheckBackupGuestErrors();
+    CheckUmount2BackupModes();
     Check(sceSaveDataTerminate() == 0, "SaveData terminates");
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort post-terminate returns NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress post-terminate returns NOT_INITIALIZED");

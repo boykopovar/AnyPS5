@@ -26,7 +26,60 @@ static bool Same(const GuestSigaction& left, const GuestSigaction& right) {
 }
 volatile std::sig_atomic_t received = 0;
 volatile std::uintptr_t handlerReturn = 0;
-void APS5_VABI InfoCallback(int, void*, void*) {}
+struct InfoRecord {
+    int runs = 0;
+    int signal = 0;
+    std::int32_t info[20]{};
+    UserUcontext context{};
+    GuestSignalSet mask{};
+};
+InfoRecord infoSeen{};
+GuestSignalSet contextMaskAddition{};
+UserUcontext escape{};
+volatile int escapes = 0;
+void APS5_VABI InfoCallback(int value, void* info, UserUcontext* context) {
+    ++infoSeen.runs;
+    infoSeen.signal = value;
+    std::memcpy(infoSeen.info, info, sizeof(infoSeen.info));
+    std::memcpy(&infoSeen.context, context, sizeof(infoSeen.context));
+    sigprocmask_nid_postfix(1, nullptr, &infoSeen.mask);
+    for (int word = 0; word < 4; ++word) context->sigmask[word] |= contextMaskAddition.bits[word];
+}
+void APS5_VABI EscapeCallback(int value, void* info, UserUcontext* context) {
+    InfoCallback(value, info, context);
+    context->mcontext = escape.mcontext;
+}
+void APS5_VABI RejectedContextCallback(int value, void* info, UserUcontext* context) {
+    EscapeCallback(value, info, context);
+    context->mcontext.flags = 0x8;
+}
+int frameChange = 0;
+void APS5_VABI DeliveryFrameCallback(int value, void* info, UserUcontext* context) {
+    InfoCallback(value, info, context);
+    auto& machine = context->mcontext;
+    if (frameChange == 0) machine.rax ^= 1;
+    else if (frameChange == 1) machine.rbx ^= 1;
+    else if (frameChange == 2) machine.rip = escape.mcontext.rip;
+    else machine.rsp = escape.mcontext.rsp;
+}
+struct NestedSuspend {
+    int runs = 0;
+    int runsAfterRaise = 0;
+    int result = 0;
+    int error = 0;
+    GuestSignalSet mask{};
+};
+NestedSuspend nested{};
+void APS5_VABI NestedSuspendCallback(int) {
+    if (++nested.runs != 1) return;
+    const GuestSignalSet none{{0, 0, 0, 0}};
+    *__error_nid_postfix() = 0;
+    nested.result = sigsuspend_nid_postfix(&none);
+    nested.error = *__error_nid_postfix();
+    sigprocmask_nid_postfix(1, nullptr, &nested.mask);
+    raise_nid_postfix(30);
+    nested.runsAfterRaise = nested.runs;
+}
 struct SuspendWait {
     const GuestSignalSet* mask = nullptr;
     int result = 0;
@@ -50,6 +103,34 @@ void* APS5_VABI EndingEntry(void* arg) {
     while (!state.release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     return nullptr;
 }
+struct MaskProbe {
+    GuestSignalSet inherited{};
+    GuestSignalSet changed{};
+    GuestSignalSet afterUnblock{};
+    int waited = 0;
+};
+void* APS5_VABI ChildChangesMask(void* arg) {
+    auto& probe = *static_cast<MaskProbe*>(arg);
+    const GuestSignalSet hangup{{0x2, 0, 0, 0}};
+    sigprocmask_nid_postfix(1, nullptr, &probe.inherited);
+    sigprocmask_nid_postfix(3, &hangup, nullptr);
+    sigprocmask_nid_postfix(1, nullptr, &probe.changed);
+    return nullptr;
+}
+void* APS5_VABI ChildTakesPending(void* arg) {
+    auto& probe = *static_cast<MaskProbe*>(arg);
+    const GuestSignalSet user2{{1u << 30, 0, 0, 0}};
+    const KernelTimespec none{0, 0};
+    probe.waited = sigtimedwait_nid_postfix(&user2, nullptr, &none);
+    return nullptr;
+}
+void* APS5_VABI ChildUnblocks(void* arg) {
+    auto& probe = *static_cast<MaskProbe*>(arg);
+    const GuestSignalSet user2{{1u << 30, 0, 0, 0}};
+    sigprocmask_nid_postfix(2, &user2, nullptr);
+    sigprocmask_nid_postfix(1, nullptr, &probe.afterUnblock);
+    return nullptr;
+}
 void* APS5_VABI SuspendSend(void* arg) {
     auto& sender = *static_cast<SuspendSender*>(arg);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -67,6 +148,193 @@ void APS5_VABI MaskCallback(int value) {
 
 }
 static void Require(bool value) { if (!value) std::abort(); }
+static bool SameSet(const GuestSignalSet& left, const GuestSignalSet& right) {
+    return std::memcmp(&left, &right, sizeof(left)) == 0;
+}
+static bool ContextHasMask(const UserUcontext& context, const GuestSignalSet& set) {
+    return std::memcmp(context.sigmask, set.bits, sizeof(set.bits)) == 0;
+}
+static void CheckInfo(int signal, std::int32_t code) {
+    Require(infoSeen.runs == 1 && infoSeen.signal == signal);
+    Require(infoSeen.info[0] == signal && infoSeen.info[1] == 0 && infoSeen.info[2] == code);
+    Require(infoSeen.info[3] == getpid_nid_postfix() && infoSeen.info[4] == 0);
+    for (int index = 5; index < 20; ++index) Require(infoSeen.info[index] == 0);
+    Require(infoSeen.context.mcontext.len == 0x480 && infoSeen.context.mcontext.fpformat == 0x10002);
+    Require(infoSeen.context.stackPointer == nullptr && infoSeen.context.stackSize == 0 && infoSeen.context.stackFlags == 4);
+    infoSeen = {};
+}
+static void CheckSiginfoDelivery() {
+    const auto infoCallback = reinterpret_cast<std::uintptr_t>(InfoCallback);
+    const GuestSignalSet none{{0, 0, 0, 0}};
+    const GuestSignalSet before{{1u << 27, 0, 1u << 5, 0}};
+    GuestSignalSet current{};
+    GuestSigaction action{};
+    Require(sigprocmask_nid_postfix(3, &before, nullptr) == 0);
+
+    const GuestSigaction abortInfo{infoCallback, 0x40, {{0, 1u << 3, 0, 0}}};
+    Require(sigaction_nid_postfix(6, &abortInfo, nullptr) == 0);
+    Require(raise_nid_postfix(6) == 0);
+    Require(ContextHasMask(infoSeen.context, before));
+    Require(SameSet(infoSeen.mask, GuestSignalSet{{(1u << 27) | (1u << 5), 1u << 3, 1u << 5, 0}}));
+    CheckInfo(6, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, before));
+    Require(pthread_kill_nid_postfix(scePthreadSelf(), 6) == 0);
+    CheckInfo(6, 0x10007);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 6) == 0);
+    CheckInfo(6, 0x10001);
+    const GuestSigaction abortNodefer{infoCallback, 0x40 | 0x10, {}};
+    Require(sigaction_nid_postfix(6, &abortNodefer, nullptr) == 0);
+    Require(raise_nid_postfix(6) == 0 && SameSet(infoSeen.mask, before));
+    CheckInfo(6, 0x10007);
+    Require(sigaction_nid_postfix(6, nullptr, &action) == 0 && Same(action, abortNodefer));
+
+    const GuestSigaction userReset{infoCallback, 0x40 | 0x4, {}};
+    Require(sigaction_nid_postfix(30, &userReset, nullptr) == 0);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(ContextHasMask(infoSeen.context, before));
+    Require(SameSet(infoSeen.mask, GuestSignalSet{{(1u << 27) | (1u << 29), 0, 1u << 5, 0}}));
+    CheckInfo(30, 0x10001);
+    Require(sigaction_nid_postfix(30, nullptr, &action) == 0 && action.handler == 0 && (action.flags & 0x40) == 0);
+
+    const GuestSignalSet user2{{1u << 30, 0, 0, 0}};
+    const GuestSigaction userInfo{infoCallback, 0x40, {}};
+    Require(sigaction_nid_postfix(31, &userInfo, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(1, &user2, nullptr) == 0);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 31) == 0 && infoSeen.runs == 0);
+    Require(sigprocmask_nid_postfix(2, &user2, nullptr) == 0);
+    Require(ContextHasMask(infoSeen.context, before));
+    Require(SameSet(infoSeen.mask, GuestSignalSet{{(1u << 27) | (1u << 30), 0, 1u << 5, 0}}));
+    CheckInfo(31, 0x10001);
+
+    Require(sigprocmask_nid_postfix(1, &user2, nullptr) == 0);
+    Require(raise_nid_postfix(31) == 0 && infoSeen.runs == 0);
+    *__error_nid_postfix() = 0;
+    Require(sigsuspend_nid_postfix(&none) == -1 && *__error_nid_postfix() == 4);
+    Require(ContextHasMask(infoSeen.context, GuestSignalSet{{(1u << 27) | (1u << 30), 0, 1u << 5, 0}}));
+    Require(SameSet(infoSeen.mask, user2));
+    CheckInfo(31, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, GuestSignalSet{{(1u << 27) | (1u << 30), 0, 1u << 5, 0}}));
+    Require(sigprocmask_nid_postfix(3, &before, nullptr) == 0);
+
+    contextMaskAddition = GuestSignalSet{{1u << 15, 0, 0, 1u << 31}};
+    Require(raise_nid_postfix(31) == 0);
+    CheckInfo(31, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, GuestSignalSet{{(1u << 27) | (1u << 15), 0, 1u << 5, 1u << 31}}));
+    Require(sigprocmask_nid_postfix(3, &before, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(1, &user2, nullptr) == 0);
+    Require(raise_nid_postfix(31) == 0 && infoSeen.runs == 0);
+    Require(sigsuspend_nid_postfix(&none) == -1 && *__error_nid_postfix() == 4);
+    CheckInfo(31, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, GuestSignalSet{{(1u << 27) | (1u << 30) | (1u << 15), 0, 1u << 5, 1u << 31}}));
+    contextMaskAddition = {};
+    Require(sigprocmask_nid_postfix(3, &before, nullptr) == 0);
+
+    const GuestSigaction escaping{reinterpret_cast<std::uintptr_t>(EscapeCallback), 0x40, {}};
+    Require(sigaction_nid_postfix(31, &escaping, nullptr) == 0);
+    escapes = 0;
+    Require(getcontext_nid_postfix(&escape) == 0);
+    const int escaped = escapes;
+    escapes = escaped + 1;
+    if (escaped == 0) {
+        raise_nid_postfix(31);
+        Require(false);
+    }
+    Require(escapes == 2);
+    CheckInfo(31, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, before));
+
+    const GuestSigaction rejecting{reinterpret_cast<std::uintptr_t>(RejectedContextCallback), 0x40, {}};
+    Require(sigaction_nid_postfix(31, &rejecting, nullptr) == 0);
+    bool rejected = false;
+    try {
+        raise_nid_postfix(31);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+    CheckInfo(31, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, before));
+
+    const GuestSigaction deliveryFrame{reinterpret_cast<std::uintptr_t>(DeliveryFrameCallback), 0x40, {}};
+    Require(sigaction_nid_postfix(31, &deliveryFrame, nullptr) == 0);
+    for (frameChange = 0; frameChange < 4; ++frameChange) {
+        rejected = false;
+        try {
+            raise_nid_postfix(31);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        Require(rejected);
+        CheckInfo(31, 0x10007);
+        Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, before));
+    }
+
+    const GuestSigaction user1Info{infoCallback, 0x40, {}};
+    Require(sigaction_nid_postfix(30, &user1Info, nullptr) == 0);
+    SuspendSender sender{scePthreadSelf(), -1};
+    Pthread senderThread = nullptr;
+    Require(scePthreadCreate(&senderThread, nullptr, SuspendSend, &sender, nullptr) == 0);
+    *__error_nid_postfix() = 0;
+    Require(pause_nid_postfix() == -1 && *__error_nid_postfix() == 4);
+    Require(scePthreadJoin(senderThread, nullptr) == 0 && sender.result == 0);
+    Require(ContextHasMask(infoSeen.context, before));
+    Require(SameSet(infoSeen.mask, GuestSignalSet{{(1u << 27) | (1u << 29), 0, 1u << 5, 0}}));
+    CheckInfo(30, 0x10007);
+
+    constexpr std::int64_t timerValue = 0x123456789abcdefLL;
+    const GuestSigaction timerInfo{infoCallback, 0x40, {}};
+    Require(sigaction_nid_postfix(31, &timerInfo, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(1, &user2, nullptr) == 0);
+    const GuestSigevent event{1, 31, timerValue, {}};
+    int timer = -1;
+    Require(ktimer_create_nid_postfix(4, &event, &timer) == 0);
+    const GuestItimerspec once{{0, 0}, {0, 10000000}};
+    Require(ktimer_settime_nid_postfix(timer, 0, &once, nullptr) == 0);
+    GuestSignalSet pending{};
+    for (int attempt = 0; attempt < 2000 && sigpending_nid_postfix(&pending) == 0 && (pending.bits[0] & user2.bits[0]) == 0; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require((pending.bits[0] & user2.bits[0]) != 0 && infoSeen.runs == 0);
+    Require(sigprocmask_nid_postfix(2, &user2, nullptr) == 0);
+    Require(infoSeen.runs == 1 && infoSeen.signal == 31 && ContextHasMask(infoSeen.context, before));
+    Require(infoSeen.info[0] == 31 && infoSeen.info[1] == 0 && infoSeen.info[2] == 0x10003 && infoSeen.info[3] == 0 && infoSeen.info[4] == 0);
+    std::int64_t value = 0;
+    std::memcpy(&value, &infoSeen.info[8], sizeof(value));
+    Require(value == timerValue && infoSeen.info[10] == timer && infoSeen.info[11] == 0);
+    infoSeen = {};
+    Require(ktimer_delete_nid_postfix(timer) == 0);
+
+    const GuestSigaction outer{reinterpret_cast<std::uintptr_t>(NestedSuspendCallback), 0, {{0, 1u << 7, 0, 0}}};
+    Require(sigaction_nid_postfix(30, &outer, nullptr) == 0);
+    Require(sigaction_nid_postfix(31, &userInfo, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(3, &user2, nullptr) == 0);
+    contextMaskAddition = GuestSignalSet{{1u << 23, 0, 0, 0}};
+    Require(raise_nid_postfix(31) == 0 && infoSeen.runs == 0);
+    Require(raise_nid_postfix(30) == 0);
+    Require(nested.runs == 2 && nested.runsAfterRaise == 1 && nested.result == -1 && nested.error == 4);
+    Require(ContextHasMask(infoSeen.context, GuestSignalSet{{(1u << 29) | (1u << 30), 1u << 7, 0, 0}}));
+    Require(SameSet(infoSeen.mask, GuestSignalSet{{(1u << 29) | (1u << 30), 1u << 7, 0, 0}}));
+    CheckInfo(31, 0x10007);
+    Require(SameSet(nested.mask, GuestSignalSet{{(1u << 29) | (1u << 30) | (1u << 23), 1u << 7, 0, 0}}));
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, GuestSignalSet{{(1u << 30) | (1u << 23), 0, 0, 0}}));
+    contextMaskAddition = {};
+
+    frameChange = 0;
+    Require(sigaction_nid_postfix(31, &deliveryFrame, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(3, &user2, nullptr) == 0);
+    Require(raise_nid_postfix(31) == 0 && infoSeen.runs == 0);
+    rejected = false;
+    try {
+        sigsuspend_nid_postfix(&none);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && ContextHasMask(infoSeen.context, user2));
+    CheckInfo(31, 0x10007);
+    Require(sigprocmask_nid_postfix(1, nullptr, &current) == 0 && SameSet(current, user2));
+
+    const GuestSigaction defaults{0, 0, {}};
+    for (const int guest : {6, 30, 31}) Require(sigaction_nid_postfix(guest, &defaults, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(3, &none, nullptr) == 0);
+}
 static void CheckSignalPointerFaults() {
     constexpr std::size_t page = 0x4000;
     void* memory = nullptr;
@@ -105,6 +373,10 @@ static void CheckSignalPointerFaults() {
     Require(fails(sigpending_nid_postfix(static_cast<GuestSignalSet*>(unreadable))));
     Require(fails(sigpending_nid_postfix(static_cast<GuestSignalSet*>(readOnly))));
     Require(fails(sigpending_nid_postfix(nullptr)));
+    Require(fails(sigsuspend_nid_postfix(static_cast<const GuestSignalSet*>(unreadable))));
+    Require(fails(sigsuspend_nid_postfix(nullptr)));
+    Require(fails(_sigsuspend_nid_postfix(static_cast<const GuestSignalSet*>(unreadable))));
+    Require(fails(_sigsuspend_nid_postfix(nullptr)));
 }
 
 int main() {
@@ -126,8 +398,9 @@ int main() {
     Require(pthread_kill_nid_postfix(scePthreadSelf(), 0) == 0 && received == 0);
     Require(pthread_kill_nid_postfix(scePthreadSelf(), 200) == 22);
     Require(pthread_kill_nid_postfix(scePthreadSelf(), -1) == 22);
-    Require(pthread_kill_nid_postfix(nullptr, 15) == 3);
-    Require(pthread_kill_nid_postfix(nullptr, 128) == 3);
+    Require(pthread_kill_nid_postfix(nullptr, 15) == 22);
+    Require(pthread_kill_nid_postfix(nullptr, 128) == 22);
+    Require(pthread_kill_nid_postfix(nullptr, 0) == 22);
     Require(pthread_kill_nid_postfix(nullptr, 129) == 22);
     Require(pthread_kill_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{0x10}), 15) == 3);
     Require(pthread_kill_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{0x10}), 0) == 3);
@@ -186,6 +459,39 @@ int main() {
     Require(pthread_sigmask_nid_postfix(1, &withKillAndStop, nullptr) == 0);
     Require(pthread_sigmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0x20);
     Require(pthread_sigmask_nid_postfix(3, &noSignals, nullptr) == 0);
+    {
+        const GuestSignalSet parentMask{{1u << 13, 0, 0, 0}};
+        Require(sigprocmask_nid_postfix(3, &parentMask, nullptr) == 0);
+        MaskProbe probe;
+        Pthread child = nullptr;
+        Require(scePthreadCreate(&child, nullptr, ChildChangesMask, &probe, nullptr) == 0);
+        Require(scePthreadJoin(child, nullptr) == 0);
+        Require(probe.inherited.bits[0] == 1u << 13 && probe.changed.bits[0] == 0x2);
+        Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 1u << 13);
+        Require(sigprocmask_nid_postfix(3, &noSignals, nullptr) == 0);
+    }
+    {
+        const GuestSignalSet user2{{1u << 30, 0, 0, 0}};
+        const auto old = signal_nid_postfix(31, Callback);
+        Require(old != invalid);
+        Require(sigprocmask_nid_postfix(1, &user2, nullptr) == 0);
+        received = 0;
+        Require(raise_nid_postfix(31) == 0 && received == 0);
+        MaskProbe probe;
+        Pthread child = nullptr;
+        Require(scePthreadCreate(&child, nullptr, ChildTakesPending, &probe, nullptr) == 0);
+        Require(scePthreadJoin(child, nullptr) == 0);
+        Require(probe.waited == 31 && received == 0);
+        Require(sigpending_nid_postfix(&previous) == 0 && previous.bits[0] == 0);
+        Require(raise_nid_postfix(31) == 0 && received == 0);
+        Require(scePthreadCreate(&child, nullptr, ChildUnblocks, &probe, nullptr) == 0);
+        Require(scePthreadJoin(child, nullptr) == 0);
+        Require(received == 31 && probe.afterUnblock.bits[0] == 0);
+        Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 1u << 30);
+        Require(sigprocmask_nid_postfix(3, &noSignals, nullptr) == 0);
+        Require(signal_nid_postfix(31, old) != invalid);
+        received = 0;
+    }
 
     const auto callback = reinterpret_cast<std::uintptr_t>(Callback);
     const auto infoCallback = reinterpret_cast<std::uintptr_t>(InfoCallback);
@@ -222,15 +528,8 @@ int main() {
         Require(sigaction_nid_postfix(recorded, &defaults, nullptr) == 0);
     }
     Require(sigaction_nid_postfix(6, &crash, nullptr) == 0);
-    bool rejected = false;
-    try {
-        raise_nid_postfix(6);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected);
     Require(sigaction_nid_postfix(6, &defaults, &current) == 0 && current.handler == infoCallback && current.flags == 0x50);
+    CheckSiginfoDelivery();
 
     *__error_nid_postfix() = 0;
     Require(sigaction_nid_postfix(0, nullptr, &current) == -1 && *__error_nid_postfix() == 22);
@@ -256,9 +555,8 @@ int main() {
     Require(sigprocmask_nid_postfix(2, &urgMask, nullptr) == 0);
 
     *__error_nid_postfix() = 0;
-    bool nullRejected = false;
-    try { sigsuspend_nid_postfix(nullptr); } catch (const std::invalid_argument&) { nullRejected = true; }
-    Require(nullRejected);
+    Require(sigsuspend_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(_sigsuspend_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(signal_nid_postfix(30, Callback) != invalid);
     const GuestSignalSet user{{1u << 29, 0, 0, 0}};
     const GuestSignalSet empty{{0, 0, 0, 0}};

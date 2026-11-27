@@ -87,8 +87,7 @@ int APS5_VABI sceCompositorGetDummyAddress() {
 }
 
 int APS5_VABI sceCompositorGetDummySize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 0x400;
 }
 
 int APS5_VABI sceCompositorGetRemainedCommandNum() {
@@ -394,23 +393,23 @@ int APS5_VABI sceCompsoitorGetRenderingTime() {
 }
 
 int APS5_VABI sceCompositorGetMemoryPoolAddress() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetMemoryPoolSize() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetNullCanvasHandle() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetSecondaryMemoryAddress() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetSecondaryMemorySize() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceCompositorGetTFRing() {
@@ -544,7 +543,7 @@ int APS5_VABI libSceCompositeUnknown_KpuS3CIcckw_nid_no_patch() {
 APS5_EXPORT("KpuS3CIcckw", libSceCompositeUnknown_KpuS3CIcckw_nid_no_patch);
 
 int APS5_VABI libSceCompositeUnknown_NMGq0MJ2iGo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("NMGq0MJ2iGo", libSceCompositeUnknown_NMGq0MJ2iGo_nid_no_patch);
 

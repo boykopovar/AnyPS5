@@ -6,6 +6,7 @@
 #include FT_ADVANCES_H
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,18 @@
 #include <limits>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace FreeType;
 
@@ -249,6 +262,130 @@ static void CheckPartialFailure() {
     fixture.CheckSlot();
 }
 
+static void CheckWideAdvances(std::vector<unsigned char> font, bool vertical) {
+    Fixture fixture(std::move(font));
+    fixture.SetSize(45000, 47000);
+    for (const std::int32_t flags : std::array<std::int32_t, 2>{FT_LOAD_DEFAULT, FT_LOAD_VERTICAL_LAYOUT}) {
+        if ((flags & FT_LOAD_VERTICAL_LAYOUT) && !vertical) continue;
+        std::array<std::int64_t, 2> expected{};
+        for (unsigned glyph = 0; glyph < expected.size(); ++glyph) {
+            Require(FT_Load_Glyph(fixture.native, glyph, flags | FT_LOAD_ADVANCE_ONLY) == 0);
+            const auto advance = (flags & FT_LOAD_VERTICAL_LAYOUT) ? fixture.native->glyph->advance.y : fixture.native->glyph->advance.x;
+            expected[glyph] = static_cast<std::int64_t>(advance) * 1024;
+            std::array<std::int64_t, 3> actual{Sentinel, Sentinel, Sentinel};
+            Require(FT_Get_Advance_nid_postfix(fixture.guest, glyph, flags, &actual[1]) == 0);
+            Require(actual.front() == Sentinel && actual.back() == Sentinel && actual[1] == expected[glyph]);
+            fixture.CheckSlot();
+        }
+        Require(expected[1] > std::numeric_limits<std::int32_t>::max() || expected[1] < std::numeric_limits<std::int32_t>::min());
+        std::array<std::int64_t, 4> actual{Sentinel, Sentinel, Sentinel, Sentinel};
+        Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, flags, &actual[1]) == 0);
+        Require(actual.front() == Sentinel && actual.back() == Sentinel);
+        Require(actual[1] == expected[0] && actual[2] == expected[1]);
+        fixture.CheckSlot();
+    }
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous{};
+        Require(VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<char*>(mapped);
+        Require(mprotect(base + size, size, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * 2);
+#endif
+    }
+
+    char* End() const { return base + size; }
+
+    void ReadOnly() const {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    char* base = nullptr;
+    std::size_t size = 0;
+};
+
+static void CheckGuestOutputGuards(Fixture& fixture) {
+    fixture.Load(1);
+    const auto slotBefore = *fixture.guest->glyph;
+    const std::array<std::int32_t, 2> modes{FT_LOAD_NO_SCALE | FT_ADVANCE_FLAG_FAST_ONLY, FT_LOAD_DEFAULT};
+    auto* unmapped = reinterpret_cast<std::int64_t*>(std::uintptr_t{0x10});
+    for (const std::int32_t flags : modes) {
+        errno = 71;
+        Require(FT_Get_Advance_nid_postfix(fixture.guest, 0, flags, unmapped) == FT_Err_Invalid_Argument && errno == 71);
+        errno = 71;
+        Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, flags, unmapped) == FT_Err_Invalid_Argument && errno == 71);
+    }
+    Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 0, FT_LOAD_DEFAULT, unmapped) == 0);
+
+    GuardedPage page;
+    const std::array<std::uint8_t, 4> partial{0x11, 0x22, 0x33, 0x44};
+    std::memcpy(page.End() - 4, partial.data(), partial.size());
+    errno = 71;
+    Require(FT_Get_Advance_nid_postfix(fixture.guest, 0, FT_LOAD_DEFAULT, reinterpret_cast<std::int64_t*>(page.End() - 4))
+            == FT_Err_Invalid_Argument && errno == 71);
+    Require(std::memcmp(page.End() - 4, partial.data(), partial.size()) == 0);
+
+    std::memcpy(page.End() - sizeof(std::int64_t), &Sentinel, sizeof(Sentinel));
+    for (const std::int32_t flags : modes) {
+        errno = 71;
+        Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, flags,
+                reinterpret_cast<std::int64_t*>(page.End() - sizeof(std::int64_t))) == FT_Err_Invalid_Argument && errno == 71);
+        std::int64_t preserved = 0;
+        std::memcpy(&preserved, page.End() - sizeof(std::int64_t), sizeof(preserved));
+        Require(preserved == Sentinel);
+    }
+
+    GuardedPage readOnly;
+    const std::array<std::int64_t, 2> expected{Sentinel, Sentinel};
+    std::memcpy(readOnly.End() - expected.size() * sizeof(std::int64_t), expected.data(), expected.size() * sizeof(std::int64_t));
+    readOnly.ReadOnly();
+    auto* const readOnlyPtr = reinterpret_cast<std::int64_t*>(readOnly.End() - expected.size() * sizeof(std::int64_t));
+    for (const std::int32_t flags : modes) {
+        errno = 71;
+        Require(FT_Get_Advance_nid_postfix(fixture.guest, 0, flags, readOnlyPtr) == FT_Err_Invalid_Argument && errno == 71);
+        errno = 71;
+        Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, flags, readOnlyPtr) == FT_Err_Invalid_Argument && errno == 71);
+    }
+    Require(std::memcmp(readOnlyPtr, expected.data(), expected.size() * sizeof(std::int64_t)) == 0);
+    Require(std::memcmp(&slotBefore, fixture.guest->glyph, sizeof(slotBefore)) == 0);
+
+    FT_Fixed nativeAdvance = 0;
+    Require(FT_Get_Advance(fixture.native, 0, FT_LOAD_DEFAULT, &nativeAdvance) == 0);
+    auto* const lastMapped = reinterpret_cast<std::int64_t*>(page.End() - sizeof(std::int64_t));
+    errno = 71;
+    Require(FT_Get_Advance_nid_postfix(fixture.guest, 0, FT_LOAD_DEFAULT, lastMapped) == 0 && errno == 71);
+    std::int64_t copied = 0;
+    std::memcpy(&copied, lastMapped, sizeof(copied));
+    Require(copied == Widened(nativeAdvance));
+    fixture.CheckSlot();
+}
+
 int main() {
     Fixture fixture(SquareGlyphFont('A', 913));
     for (const unsigned size : {7u, 37u, 113u}) {
@@ -280,6 +417,9 @@ int main() {
     Require(output == Sentinel);
     CheckFastPreservesGuestEdits(fixture);
     CheckAliasedOutput(fixture);
+    CheckGuestOutputGuards(fixture);
     CheckPartialFailure();
     CheckCff();
+    CheckWideAdvances(SquareGlyphFont('A', 913), true);
+    CheckWideAdvances(CffFont(), false);
 }

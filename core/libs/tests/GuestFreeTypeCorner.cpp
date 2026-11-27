@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,15 @@ template <typename TCall> bool Throws(TCall call) {
     try {
         call();
     } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename TCall> bool ThrowsInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
         return true;
     }
     return false;
@@ -104,6 +114,12 @@ void CheckMatrixMultiplyScaled() {
     Require(Throws([&] { FT_Matrix_Multiply_Scaled_nid_postfix(nullptr, &target, 1LL << 47); }) &&
             Throws([&] { FT_Matrix_Multiply_Scaled_nid_postfix(&identity, nullptr, -(1LL << 47) - 1); }) && SameMatrix(target, matrix),
         "FT_Matrix_Multiply_Scaled checks 0x10000 * scaling before the null test");
+    errno = 71;
+    Require(ThrowsInvalidArgument([&] { FT_Matrix_Multiply_Scaled_nid_postfix(&identity, reinterpret_cast<FreeType::GuestMatrix*>(0x10), 1); }) &&
+            errno == 71, "FT_Matrix_Multiply_Scaled rejects an inaccessible output without changing errno");
+    errno = 71;
+    Require(ThrowsInvalidArgument([&] { FT_Matrix_Multiply_Scaled_nid_postfix(reinterpret_cast<const FreeType::GuestMatrix*>(0x10), &target, 1); }) &&
+            errno == 71 && SameMatrix(target, matrix), "FT_Matrix_Multiply_Scaled rejects an inaccessible input without changing the result");
 }
 
 void CheckVectorTransformScaled() {
@@ -166,6 +182,96 @@ void CheckHighPow2() {
     Require(ft_highpow2_nid_postfix(0x80000001u) == 0x80000000u && ft_highpow2_nid_postfix(0xFFFFFFFFu) == 0x80000000u, "ft_highpow2 keeps bit 31");
 }
 
+void CheckSynthesizeVerticalMetrics() {
+    FreeType::GuestGlyphMetrics metrics{100, 200, 10, 50, 80, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&metrics, 0);
+    Require(metrics.width == 100 && metrics.height == 200 && metrics.horiBearingX == 10 && metrics.horiBearingY == 50 && metrics.horiAdvance == 80,
+        "ft_synthesize_vertical_metrics keeps the horizontal metrics");
+    Require(metrics.vertBearingX == -30 && metrics.vertBearingY == 15 && metrics.vertAdvance == 180,
+        "ft_synthesize_vertical_metrics synthesizes vertical metrics from a zero advance");
+    FreeType::GuestGlyphMetrics negative{0, 200, 0, -30, 0, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&negative, 0);
+    Require(negative.vertBearingX == 0 && negative.vertBearingY == 20 && negative.vertAdvance == 240,
+        "ft_synthesize_vertical_metrics keeps the height for a negative horiBearingY");
+    FreeType::GuestGlyphMetrics clamped{0, -100, 0, -30, 0, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&clamped, 0);
+    Require(clamped.vertBearingX == 0 && clamped.vertBearingY == -3 && clamped.vertAdvance == -36,
+        "ft_synthesize_vertical_metrics clamps the height to a negative horiBearingY");
+    FreeType::GuestGlyphMetrics sized{0, 200, 4, 0, 81, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&sized, 0);
+    Require(sized.vertBearingX == -36 && sized.vertBearingY == 20 && sized.vertAdvance == 240,
+        "ft_synthesize_vertical_metrics halves an odd horiAdvance toward zero with a zero horiBearingY");
+    FreeType::GuestGlyphMetrics explicitAdvance{100, 200, 10, 50, 80, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&explicitAdvance, 300);
+    Require(explicitAdvance.vertBearingX == -30 && explicitAdvance.vertBearingY == 75 && explicitAdvance.vertAdvance == 300,
+        "ft_synthesize_vertical_metrics keeps a non-zero advance");
+    ft_synthesize_vertical_metrics_nid_postfix(nullptr, 0);
+    ft_synthesize_vertical_metrics_nid_postfix(nullptr, 300);
+}
+
+void CheckServiceListLookup() {
+    int dataA = 1;
+    int dataB = 2;
+    const GuestServiceDesc descriptors[]{{"a", &dataA}, {"b", &dataB}, {nullptr, nullptr}};
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "a") == &dataA, "ft_service_list_lookup returns the first descriptor data");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "b") == &dataB, "ft_service_list_lookup returns the matching descriptor data");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "c") == nullptr, "ft_service_list_lookup returns null for a missing id");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "") == nullptr, "ft_service_list_lookup returns null for an empty id");
+    Require(ft_service_list_lookup_nid_postfix(nullptr, "b") == nullptr, "ft_service_list_lookup returns null for a null array");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, nullptr) == nullptr, "ft_service_list_lookup returns null for a null id");
+    Require(ft_service_list_lookup_nid_postfix(nullptr, nullptr) == nullptr, "ft_service_list_lookup returns null for null inputs");
+}
+
+struct CornerVector {
+    std::int64_t inX;
+    std::int64_t inY;
+    std::int64_t outX;
+    std::int64_t outY;
+    int expected;
+};
+
+void CheckCornerOrientationMeasured() {
+    const CornerVector vectors[] = {
+        {5, 0, 3, 7, 7},
+        {-5, 0, 3, 7, -7},
+        {5, 0, 3, -7, -7},
+        {-5, 0, 3, -7, 7},
+        {3, 5, 7, 3, -1},
+        {3, -5, 7, 3, 1},
+        {3, 5, -7, 3, 1},
+        {3, -5, -7, 3, -1},
+        {3, 5, 7, 0, 5},
+        {3, 5, -7, 0, -5},
+        {3, -5, 7, 0, -5},
+        {3, -5, -7, 0, 5},
+        {5, 3, 0, 7, -5},
+        {-5, 3, 0, 7, 5},
+        {5, 3, 0, -7, 5},
+        {-5, 3, 0, -7, -5},
+        {5, 0, 0, 5, 5},
+        {100, 0, 0, 100, 100},
+        {2147483647LL, 0, 0, 2147483647LL, 2147483647},
+        {1099511627776LL, 0, 0, 1099511627776LL, 0},
+        {-2147483647LL, 0, 0, 2147483647LL, -2147483647},
+        {2147483647LL, 0, 0, -2147483647LL, -2147483647},
+        {0, 5, 7, 3, -7},
+        {0, -5, 7, 3, 7},
+        {0, 5, -7, 3, 7},
+        {0, -5, -7, 3, -7},
+        {0, 5, 3, 7, -3},
+        {0, -5, 3, -7, 3},
+        {0, 100, 100, 100, -100},
+        {0, 2147483647LL, 5, 5, -5},
+        {0, 1099511627776LL, 5, 5, -5},
+        {0, 5, 7, 0, -7},
+        {0, 5, 0, 7, 0},
+    };
+    for (const CornerVector& vector : vectors) {
+        Require(ft_corner_orientation_nid_postfix(vector.inX, vector.inY, vector.outX, vector.outY) == vector.expected,
+            "ft_corner_orientation returns the value measured on a PS5");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -173,10 +279,7 @@ int main() {
     Require(ft_corner_orientation_nid_postfix(0, 1, 1, 0) == -1, "clockwise 90-degree turn is -1");
     Require(ft_corner_orientation_nid_postfix(1, 2, 2, 4) == 0, "collinear parallel vectors are 0");
     Require(ft_corner_orientation_nid_postfix(1, 0, -1, 0) == 0, "collinear opposite vectors are 0");
-    Require(ft_corner_orientation_nid_postfix(0, 0, 5, 5) == 0, "zero input vector is 0");
-    Require(ft_corner_orientation_nid_postfix(5, 5, 0, 0) == 0, "zero output vector is 0");
-    Require(ft_corner_orientation_nid_postfix(1000000000LL, 0, 0, 1000000000LL) == 1, "large counter-clockwise coordinates");
-    Require(ft_corner_orientation_nid_postfix(0, 1000000000LL, 1000000000LL, 0) == -1, "large clockwise coordinates");
+    CheckCornerOrientationMeasured();
 
     Require(ft_corner_is_flat_nid_postfix(100, 0, 100, 0) == 1, "parallel vectors are flat");
     Require(ft_corner_is_flat_nid_postfix(1000, 1, 1000, -1) == 1, "nearly parallel vectors are flat");
@@ -199,6 +302,8 @@ int main() {
     CheckSqrtFixed();
     CheckSqrt32();
     CheckHighPow2();
+    CheckSynthesizeVerticalMetrics();
+    CheckServiceListLookup();
 
     std::puts("Guest FreeType corner tests passed");
     return 0;

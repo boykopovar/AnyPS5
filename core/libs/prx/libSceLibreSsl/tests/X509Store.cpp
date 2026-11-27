@@ -1,7 +1,16 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +40,17 @@ void RequireThrows(TAction action, const char* message) {
         action();
     } catch (const std::exception&) {
         return;
+    }
+    Require(false, message);
+}
+
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
     }
     Require(false, message);
 }
@@ -76,10 +96,10 @@ void Flags() {
     store->param->flags = 0;
     Require(X509_STORE_set_flags_nid_postfix(store, 0x8000000000000000ull) == 1 && store->param->flags == 0x8000000000000000ull, "all 64 flag bits are kept");
     Require(store->param->inheritanceFlags == 0, "inheritance flags are left alone");
-    RequireThrows([] { X509_STORE_set_flags_nid_postfix(nullptr, 1); }, "null store");
+    RequireInvalidArgument([] { X509_STORE_set_flags_nid_postfix(nullptr, 1); }, "null store");
     auto* param = store->param;
     store->param = nullptr;
-    RequireThrows([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "store without verify parameters");
+    RequireInvalidArgument([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "store without verify parameters");
     store->param = param;
     X509_STORE_free_nid_postfix(store);
 }
@@ -122,7 +142,42 @@ void Unsupported() {
     store = X509_STORE_new_nid_postfix();
     static_cast<Stack*>(store->objects)->data = nullptr;
     static_cast<Stack*>(store->objects)->num = 1;
-    RequireThrows([&] { X509_STORE_free_nid_postfix(store); }, "null element array");
+    RequireInvalidArgument([&] { X509_STORE_free_nid_postfix(store); }, "null element array");
+}
+
+void LookupStack() {
+    auto* store = X509_STORE_new_nid_postfix();
+    auto* lookups = static_cast<Stack*>(store->lookupMethods);
+    auto* method = X509_LOOKUP_file_nid_postfix();
+    lookups->numAlloc = 0;
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "a stack without room to grow");
+    Require(lookups->num == 0, "a refused lookup leaves the stack empty");
+    lookups->numAlloc = 4;
+    lookups->num = -1;
+    RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "a negative count");
+    lookups->num = 0;
+    X509_STORE_free_nid_postfix(store);
+}
+
+void AddNullCrl() {
+    ERR_clear_error_nid_postfix();
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(store != nullptr, "allocate a CRL test store");
+    std::array<unsigned char, sizeof(LibreSslX509Store)> before{};
+    std::memcpy(before.data(), store, before.size());
+    LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+    LibreSslPutError_nid_no_patch(8, 0xfff, 102);
+    constexpr std::uint64_t firstError = 0x08fff065;
+    constexpr std::uint64_t lastError = 0x08fff066;
+    Require(X509_STORE_add_crl_nid_postfix(store, nullptr) == 0, "a null CRL returns zero");
+    Require(X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), nullptr) == 0, "a null CRL does not access the store");
+    Require(ERR_peek_error_nid_postfix() == firstError, "a null CRL preserves the oldest queued error");
+    Require(ERR_get_error_nid_postfix() == (std::uint64_t{8} << 24 | std::uint64_t{0xfff} << 12 | 101)
+        && ERR_get_error_nid_postfix() == lastError && ERR_get_error_nid_postfix() == 0, "a null CRL preserves the full error queue");
+    Require(std::memcmp(before.data(), store, before.size()) == 0, "a null CRL leaves the store unchanged");
+    X509_STORE_free_nid_postfix(store);
+
+    RequireThrows([] { X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), reinterpret_cast<void*>(1)); }, "a non-null CRL is unsupported before store access");
 }
 
 const char* Host(const LibreSslX509VerifyParam* param, int index) {
@@ -133,6 +188,117 @@ const char* Host(const LibreSslX509VerifyParam* param, int index) {
 int HostCount(const LibreSslX509VerifyParam* param) {
     const auto* hosts = static_cast<const Stack*>(param->id->hosts);
     return hosts ? hosts->num : -1;
+}
+
+template<typename TAction>
+void RequireRejected(TAction action, const char* message) {
+    errno = 71;
+    RequireInvalidArgument(action, message);
+    Require(errno == 71, message);
+}
+
+class FencedPages {
+public:
+    FencedPages() {
+#ifdef _WIN32
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "page allocation");
+        DWORD previous = 0;
+        Require(VirtualProtect(data + 4096, 4096, PAGE_NOACCESS, &previous) != 0, "fence protection");
+#else
+        void* mapped = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        Require(mapped != MAP_FAILED, "page allocation");
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + 4096, 4096, PROT_NONE) == 0, "fence protection");
+#endif
+    }
+    ~FencedPages() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, 8192);
+#endif
+    }
+    template<typename T>
+    T* ReadOnly(const T& value) {
+        std::memcpy(data, &value, sizeof(T));
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(data, 4096, PAGE_READONLY, &previous) != 0, "read-only protection");
+#else
+        Require(mprotect(data, 4096, PROT_READ) == 0, "read-only protection");
+#endif
+        return reinterpret_cast<T*>(data);
+    }
+    char** Tail(std::size_t count) { return reinterpret_cast<char**>(data + 4096) - count; }
+
+private:
+    unsigned char* data = nullptr;
+};
+
+void GuestPointers() {
+    auto* unmappedStore = reinterpret_cast<LibreSslX509Store*>(0x10);
+    auto* unmappedParam = reinterpret_cast<LibreSslX509VerifyParam*>(0x10);
+    auto* method = X509_LOOKUP_file_nid_postfix();
+    RequireRejected([&] { X509_STORE_set_flags_nid_postfix(unmappedStore, 1); }, "flags on an unmapped store");
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(unmappedStore, method); }, "lookup on an unmapped store");
+    RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(unmappedParam, "a", 0); }, "host on unmapped verify parameters");
+
+    auto* store = X509_STORE_new_nid_postfix();
+    auto* param = store->param;
+    store->param = unmappedParam;
+    RequireRejected([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "flags with unmapped verify parameters");
+    store->param = param;
+    {
+        FencedPages pages;
+        store->param = pages.ReadOnly(*param);
+        RequireRejected([&] { X509_STORE_set_flags_nid_postfix(store, 0x100); }, "flags on read-only verify parameters");
+        Require(store->param->flags == param->flags, "rejected flags leave the parameters unchanged");
+        store->param = param;
+    }
+
+    auto* lookups = static_cast<Stack*>(store->lookupMethods);
+    store->lookupMethods = reinterpret_cast<void*>(0x10);
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "an unmapped lookup stack");
+    store->lookupMethods = lookups;
+    char** const elements = lookups->data;
+    lookups->num = 1;
+    lookups->data = reinterpret_cast<char**>(0x10);
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "an unmapped lookup array");
+    lookups->data = elements;
+    elements[0] = reinterpret_cast<char*>(0x10);
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "an unmapped listed lookup");
+    LibreSslX509Lookup other {};
+    {
+        FencedPages pages;
+        char** tail = pages.Tail(2);
+        tail[0] = tail[1] = reinterpret_cast<char*>(&other);
+        lookups->data = tail;
+        for (int count : {3, 4096, 0x7fffffff}) {
+            lookups->num = count;
+            RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "a lookup count past the array");
+        }
+        lookups->num = 2;
+        other.method = method;
+        Require(X509_STORE_add_lookup_nid_postfix(store, method) == &other, "a lookup at the end of the array is found");
+    }
+    elements[0] = nullptr;
+    lookups->data = elements;
+    lookups->num = 0;
+
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "kept.example", 0) == 1, "a name before rejected identities");
+    auto* id = param->id;
+    param->id = reinterpret_cast<LibreSslX509VerifyParamId*>(0x10);
+    RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "an unmapped identity");
+    {
+        FencedPages pages;
+        param->id = pages.ReadOnly(*id);
+        RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "a read-only identity");
+        RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0); }, "clearing a read-only identity");
+        param->id = id;
+    }
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "kept.example") == 0, "rejected identities keep the list");
+    X509_STORE_free_nid_postfix(store);
 }
 
 void Hosts() {
@@ -154,11 +320,27 @@ void Hosts() {
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "c.d", 0) == 1, "a name after clearing");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 5) == 1 && param->id->hosts == nullptr, "a null name clears the list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0) == 1 && param->id->hosts == nullptr, "clearing an empty list");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "kept.example", 0) == 1, "a name before unreadable ones");
+    errno = 71;
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, unreadable, 0); }, "an unreadable terminated name");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, unreadable, 4); }, "an unreadable counted name");
+    Require(errno == 71, "an unreadable name keeps errno");
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "kept.example") == 0, "an unreadable name keeps the list");
+    static char longName[5001];
+    std::memset(longName, 'a', 5000);
+    longName[4999] = 'z';
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, longName, 0) == 1 && std::strcmp(Host(param, 0), longName) == 0, "a terminated name longer than a page");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, longName, 4500) == 1 && std::strlen(Host(param, 0)) == 4500 && std::strncmp(Host(param, 0), longName, 4500) == 0,
+        "a counted name longer than a page");
+    longName[4400] = '\0';
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, longName, 4500) == 0, "an embedded NUL past the first page is refused");
+    Require(std::strlen(Host(param, 0)) == 4500 && std::strncmp(Host(param, 0), longName, 4400) == 0, "a refused long name keeps the list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "last.example", 0) == 1, "a name that the store frees");
-    RequireThrows([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
+    RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
     auto* id = param->id;
     param->id = nullptr;
-    RequireThrows([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
     param->id = id;
     X509_STORE_free_nid_postfix(store);
 }
@@ -236,8 +418,11 @@ int main(int argc, char**) {
     ApplicationHeapRegister_nid_no_patch(api.data());
     NewStore();
     Flags();
+    GuestPointers();
     References();
     Identity();
     Unsupported();
     Hosts();
+    LookupStack();
+    AddNullCrl();
 }

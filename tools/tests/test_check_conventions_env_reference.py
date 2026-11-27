@@ -17,7 +17,7 @@ DOC_TEXT = "| `APS5_DOCUMENTED` | presence |\n| `APS5_GONE` | presence |\n"
 def repository(root, base, head, target=None):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
-                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
                        cwd=root, capture_output=True, check=True)
 
     def apply(files):
@@ -89,6 +89,27 @@ class EnvReferenceDiffTests(unittest.TestCase):
             with self.subTest(directory=directory):
                 self.assertEqual(findings_of(root, base, head, "target", directory), expected)
 
+    def test_a_unicode_line_separator_inside_a_line_does_not_split_git_output(self):
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        for separator in (" ", " ", "\x85", "\x0c", "\x0b"):
+            with self.subTest(separator=repr(separator)):
+                head = {SAMPLE: base[SAMPLE] + f'auto text = "a{separator}b"; auto value = std::getenv("APS5_NEW_READ");\n'}
+                root = self.create_repository(base, head)
+                self.assertEqual(findings_of(root, base, head), [("env-reference", SAMPLE, 2,
+                                                                  f"APS5_NEW_READ is read here but has no row in {DOC}")])
+                subject = f"fix(tools): keep{separator}going with more"
+                subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test", "-c", "user.email=test@example.com",
+                                "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", subject],
+                               cwd=root, capture_output=True, check=True)
+                previous = os.getcwd()
+                os.chdir(root)
+                try:
+                    check = Check("base", "HEAD")
+                    check.commits()
+                    self.assertEqual(check.findings, [])
+                finally:
+                    os.chdir(previous)
+
     def test_a_new_read_of_a_name_only_mentioned_in_a_description_is_reported(self):
         base = {DOC: "| `APS5_DOCUMENTED` | presence | replaces `APS5_NEW_READ` |\n", SAMPLE: "int unrelated;\n"}
         head = {SAMPLE: base[SAMPLE] + 'auto value = std::getenv("APS5_NEW_READ");\n'}
@@ -114,6 +135,13 @@ class EnvReferenceDiffTests(unittest.TestCase):
         self.assertEqual(self.run_case(base, head), [("env-reference", SAMPLE, 2,
                                                     f"APS5_NEW_READ is read here but has no row in {DOC}")])
 
+    def test_a_new_read_in_a_path_with_spaces_is_reported_at_its_exact_path(self):
+        spaced = "core/my dir/a b.cpp"
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        head = {spaced: 'auto value = std::getenv("APS5_NEW_READ");\n'}
+        self.assertEqual(self.run_case(base, head), [("env-reference", spaced, 1,
+                                                    f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
     def test_removing_a_compact_read_keeps_a_row_still_used_by_a_spaced_read(self):
         other = "core/libs/prx/libSceExample/Other.cpp"
         base = {
@@ -125,6 +153,18 @@ class EnvReferenceDiffTests(unittest.TestCase):
 
     def test_a_removed_row_is_reported_when_a_spaced_read_remains(self):
         base = {DOC: DOC_TEXT, SAMPLE: 'auto value = std::getenv \t("APS5_DOCUMENTED");\n'}
+        head = {DOC: "| `APS5_GONE` | presence |\n"}
+        self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
+                                                    "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
+
+    def test_a_new_mebibyte_read_is_reported_at_its_line(self):
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        head = {SAMPLE: base[SAMPLE] + 'auto bytes = MebibytesFromEnvironment("APS5_NEW_READ", 64);\n'}
+        self.assertEqual(self.run_case(base, head), [("env-reference", SAMPLE, 2,
+                                                    f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
+    def test_a_removed_row_is_reported_when_a_mebibyte_read_remains(self):
+        base = {DOC: DOC_TEXT, SAMPLE: 'auto bytes = MebibytesFromEnvironment("APS5_DOCUMENTED", 64);\n'}
         head = {DOC: "| `APS5_GONE` | presence |\n"}
         self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
                                                     "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
@@ -236,6 +276,31 @@ class EnvReferenceDiffTests(unittest.TestCase):
         head = {DOC: "| `APS5_GONE` | presence |\n"}
         self.assertEqual(self.run_case(base, head, target), [("env-reference", DOC, 0,
                                                               "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
+
+    def test_brace_scopes_names_nested_namespaces(self):
+        scopes = check_conventions.brace_scopes("namespace A { namespace B { int x = 1; } }\n")
+        keys = {key for _, _, key in scopes}
+        self.assertIn(("namespace", "::A"), keys)
+        self.assertIn(("namespace", "::A::B"), keys)
+        for start, end, _ in scopes:
+            self.assertLess(start, end)
+
+    def test_scope_chain_lists_enclosing_scopes_innermost_first(self):
+        scopes = check_conventions.brace_scopes("namespace A { namespace B { int x = 1; } }\n")
+        chain = check_conventions.scope_chain(scopes, 35)
+        self.assertEqual(chain[0], ("namespace", "::A::B"))
+        self.assertIn(("namespace", "::A"), chain)
+        self.assertEqual(check_conventions.scope_chain(scopes, 0), [("namespace", "")])
+
+    def test_constant_value_uses_a_definition_visible_from_the_position(self):
+        scopes = check_conventions.brace_scopes("namespace A { namespace B { int x = 1; } }\n")
+        outer = ("namespace", "::A")
+        self.assertEqual(check_conventions.constant_value(([("K", 5, 0, outer)], scopes), "K", 35), 5)
+        self.assertEqual(check_conventions.constant_value(([("K", 5, 0, ("namespace", "::Z"))], scopes), "K", 35), 0)
+        self.assertEqual(check_conventions.constant_value(([("K", 5, 0, outer)], scopes), "Missing", 35), 0)
+
+    def test_library_names_the_prx_library_folder(self):
+        self.assertEqual(check_conventions.library('core/libs/prx/libX/Export.cpp'), 'libX')
 
 
 if __name__ == "__main__":

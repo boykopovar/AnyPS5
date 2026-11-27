@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
@@ -53,11 +54,12 @@ void Driver::noteWrittenBuffers(std::uint64_t program, std::uint32_t queue, cons
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const ShaderRecompiler::RecompileResult& compiled, bool& bounded) {
-    bounded = compiled.bdaAbiVersion == 0 || std::any_of(compiled.bindings.begin(), compiled.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
+    bounded = true;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     constexpr std::uint64_t UnknownImageBytes = 64ull * 1024 * 1024;
     for (const auto& binding : compiled.bindings) {
-        if (binding.role == ShaderRecompiler::DescriptorRole::Gds || binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable) bounded = false;
+        if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && (compiled.bdaWrites || Graphics::ShaderStoresThroughAddresses(compiled.spirv))) bounded = false;
+        if (binding.role == ShaderRecompiler::DescriptorRole::Gds) ranges.emplace_back(Pm4::GdsAddress(), Pm4::GdsAddress() + Pm4::GdsBytes);
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
@@ -69,7 +71,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const S
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
             if (Graphics::IsNullTextureResource(words)) continue;
             const auto resource = Graphics::DecodeTextureResource(words);
-            const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
+            const auto surfaceBytes = Graphics::SurfaceGuestBytes(resource);
             ranges.emplace_back(resource.baseAddress, resource.baseAddress + (surfaceBytes != 0 ? surfaceBytes : UnknownImageBytes));
             if (resource.dccAddress != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownImageBytes));
         }
@@ -114,7 +116,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
                 if (Graphics::IsNullTextureResource(words)) continue;
                 const auto resource = Graphics::DecodeTextureResource(words);
                 if (resource.baseAddress == 0) continue;
-                const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
+                const auto surfaceBytes = Graphics::SurfaceGuestBytes(resource);
                 add(resource.baseAddress, surfaceBytes != 0 ? surfaceBytes : UnknownBytes);
                 add(resource.dccAddress, surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownBytes);
             }
@@ -165,6 +167,10 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
         ranges.emplace_back(begin, begin + bytes);
     };
     if (draw.indexed && draw.indexSize != 0 && draw.indexCount != 0) add(draw.indexAddress, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize);
+    if (draw.indirect) {
+        add(draw.indirect->arguments, std::max<std::uint64_t>(draw.indirect->RangeBytes(), draw.indirect->recordBytes));
+        if (draw.indirect->countIndirect) add(draw.indirect->countAddress, 4);
+    }
     if (stages.empty()) return ranges;
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;

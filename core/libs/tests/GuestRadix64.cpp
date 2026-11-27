@@ -3,12 +3,25 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <thread>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -27,6 +40,11 @@ static void CheckNullPointers() {
     Check(l64a_r_nid_postfix(1, nullptr, 10) == -1);
     Check(l64a_r_nid_postfix(3695, nullptr, 10) == -1);
     Check(l64a_r_nid_postfix(-1L, nullptr, 10) == -1);
+
+    errno = 71;
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0 && errno == 71);
+    Check(l64a_r_nid_postfix(3695, reinterpret_cast<char*>(0x10), 10) == -1 && errno == 71);
+    Check(l64a_r_nid_postfix(0, reinterpret_cast<char*>(0x10), 10) == -1 && errno == 71);
 }
 
 static void CheckEmptyStrings() {
@@ -98,6 +116,14 @@ static void CheckBoundaries() {
     Check(a64l_nid_postfix("zzzzz1") == INT64_C(-1));
     Check(a64l_nid_postfix(".....0") == INT64_C(-2147483648));
     Check(std::strcmp(l64a_nid_postfix(INT64_C(0x100000001)), "/") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(0x100000000)), "") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(0x7fffffff00000000)), "") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(-0x100000000)), "") == 0);
+    char highBuf[16]{};
+    Check(l64a_r_nid_postfix(INT64_C(0x100000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(0x100000001), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "/") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(0x7fffffff00000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(-0x100000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
     Check(a64l_nid_postfix("zz") == 4095);
     Check(std::strcmp(l64a_nid_postfix(4095), "zz") == 0);
 
@@ -187,37 +213,100 @@ static void CheckRoundTrip() {
 }
 
 static void CheckBufferCapacity() {
-    char buf[16]{};
+    constexpr char kSentinel = '~';
+    std::array<char, 16> buf;
+    auto resetBuf = [&] {
+        buf.fill(kSentinel);
+    };
 
-    Check(l64a_r_nid_postfix(0, buf, 0) == -1);
-    Check(l64a_r_nid_postfix(0, buf, -1) == -1);
-    Check(l64a_r_nid_postfix(0, buf, 1) == 0 && std::strcmp(buf, "") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(0, buf.data(), 0) == -1);
+    Check(buf[0] == kSentinel);
+    Check(l64a_r_nid_postfix(0, buf.data(), -1) == -1);
+    Check(buf[0] == kSentinel);
+    Check(l64a_r_nid_postfix(0, buf.data(), 1) == 0);
+    Check(buf[0] == '\0');
+    Check(buf[1] == kSentinel);
 
-    Check(l64a_r_nid_postfix(1, buf, 0) == -1);
-    Check(l64a_r_nid_postfix(1, buf, 1) == -1 && std::strcmp(buf, "") == 0);
-    Check(l64a_r_nid_postfix(1, buf, 2) == 0 && std::strcmp(buf, "/") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(1, buf.data(), 0) == -1);
+    Check(buf[0] == kSentinel);
+    Check(l64a_r_nid_postfix(1, buf.data(), 1) == -1);
+    Check(buf[0] == '/');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(1, buf.data(), 2) == 0);
+    Check(buf[0] == '/');
+    Check(buf[1] == '\0');
+    Check(buf[2] == kSentinel);
 
-    Check(l64a_r_nid_postfix(64, buf, 1) == -1 && std::strcmp(buf, "") == 0);
-    Check(l64a_r_nid_postfix(64, buf, 2) == -1 && std::strcmp(buf, ".") == 0);
-    Check(l64a_r_nid_postfix(64, buf, 3) == 0 && std::strcmp(buf, "./") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(64, buf.data(), 1) == -1);
+    Check(buf[0] == '.');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(64, buf.data(), 2) == -1);
+    Check(buf[0] == '.');
+    Check(buf[1] == '/');
+    Check(buf[2] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(64, buf.data(), 3) == 0);
+    Check(std::strcmp(buf.data(), "./") == 0);
+    Check(buf[3] == kSentinel);
 
-    Check(l64a_r_nid_postfix(2001, buf, 2) == -1 && std::strcmp(buf, "F") == 0);
-    Check(l64a_r_nid_postfix(2001, buf, 3) == 0 && std::strcmp(buf, "FT") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(2001, buf.data(), 1) == -1);
+    Check(buf[0] == 'F');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(2001, buf.data(), 2) == -1);
+    Check(buf[0] == 'F');
+    Check(buf[1] == 'T');
+    Check(buf[2] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(2001, buf.data(), 3) == 0);
+    Check(std::strcmp(buf.data(), "FT") == 0);
+    Check(buf[3] == kSentinel);
 
-    Check(l64a_r_nid_postfix(3695, buf, 2) == -1 && std::strcmp(buf, "j") == 0);
-    Check(l64a_r_nid_postfix(3695, buf, 3) == 0 && std::strcmp(buf, "jt") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(3695, buf.data(), 1) == -1);
+    Check(buf[0] == 'j');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(3695, buf.data(), 2) == -1);
+    Check(buf[0] == 'j');
+    Check(buf[1] == 't');
+    Check(buf[2] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(3695, buf.data(), 3) == 0);
+    Check(std::strcmp(buf.data(), "jt") == 0);
+    Check(buf[3] == kSentinel);
 
     for (int len = -2; len <= 0; ++len) {
-        Check(l64a_r_nid_postfix(-1L, buf, len) == -1);
+        resetBuf();
+        Check(l64a_r_nid_postfix(-1L, buf.data(), len) == -1);
+        Check(buf[0] == kSentinel);
     }
     for (int len = 1; len <= 6; ++len) {
-        Check(l64a_r_nid_postfix(-1L, buf, len) == -1);
-        Check(std::strlen(buf) == static_cast<std::size_t>(len - 1));
-        Check(std::strncmp(buf, "zzzzz1", len - 1) == 0);
+        resetBuf();
+        Check(l64a_r_nid_postfix(-1L, buf.data(), len) == -1);
+        Check(std::strncmp(buf.data(), "zzzzz1", static_cast<std::size_t>(len)) == 0);
+        Check(buf[static_cast<std::size_t>(len)] == kSentinel);
     }
-    Check(l64a_r_nid_postfix(-1L, buf, 7) == 0 && std::strcmp(buf, "zzzzz1") == 0);
-    Check(l64a_r_nid_postfix(-1L, buf, 8) == 0 && std::strcmp(buf, "zzzzz1") == 0);
-    Check(l64a_r_nid_postfix(-1L, buf, 16) == 0 && std::strcmp(buf, "zzzzz1") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(-1L, buf.data(), 7) == 0);
+    Check(std::strcmp(buf.data(), "zzzzz1") == 0);
+    Check(buf[7] == kSentinel);
+
+    resetBuf();
+    Check(l64a_r_nid_postfix(-1L, buf.data(), 8) == 0);
+    Check(std::strcmp(buf.data(), "zzzzz1") == 0);
+    Check(buf[7] == kSentinel);
+
+    resetBuf();
+    Check(l64a_r_nid_postfix(-1L, buf.data(), 16) == 0);
+    Check(std::strcmp(buf.data(), "zzzzz1") == 0);
+    Check(buf[7] == kSentinel);
 
     std::array<char, 16> canaries;
     canaries.fill('#');
@@ -225,6 +314,55 @@ static void CheckBufferCapacity() {
     Check(canaries[0] == '#');
     Check(std::strcmp(canaries.data() + 1, "zzzzz1") == 0);
     Check(canaries[8] == '#');
+}
+
+static void CheckFaultAtomicityAndWraparound() {
+#ifdef _WIN32
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const std::size_t pageSize = si.dwPageSize;
+    Check(pageSize > 0);
+    void* region = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Check(region != nullptr);
+    char* pageEnd = static_cast<char*>(region) + pageSize;
+    DWORD oldProtect = 0;
+    Check(VirtualProtect(pageEnd, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    const long rawPageSize = sysconf(_SC_PAGESIZE);
+    Check(rawPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(rawPageSize);
+    void* region = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Check(region != MAP_FAILED);
+    char* pageEnd = static_cast<char*>(region) + pageSize;
+    Check(mprotect(pageEnd, pageSize, PROT_NONE) == 0);
+#endif
+
+    pageEnd[-1] = '~';
+    Check(l64a_r_nid_postfix(2001, pageEnd - 1, 3) == -1);
+    Check(pageEnd[-1] == '~');
+
+    pageEnd[-1] = '~';
+    Check(l64a_r_nid_postfix(2001, pageEnd - 1, 2) == -1);
+    Check(pageEnd[-1] == '~');
+
+    pageEnd[-3] = '~';
+    pageEnd[-2] = '~';
+    pageEnd[-1] = '~';
+    Check(l64a_r_nid_postfix(2001, pageEnd - 3, 3) == 0);
+    Check(pageEnd[-3] == 'F' && pageEnd[-2] == 'T' && pageEnd[-1] == '\0');
+
+#ifdef _WIN32
+    Check(VirtualFree(region, 0, MEM_RELEASE) != 0);
+#else
+    Check(munmap(region, pageSize * 2) == 0);
+#endif
+
+    errno = 73;
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(UINTPTR_MAX)) == 0 && errno == 73);
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(UINTPTR_MAX - 1)) == 0 && errno == 73);
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(UINTPTR_MAX - 4)) == 0 && errno == 73);
+    Check(l64a_r_nid_postfix(2001, reinterpret_cast<char*>(UINTPTR_MAX), 3) == -1 && errno == 73);
+    Check(l64a_r_nid_postfix(2001, reinterpret_cast<char*>(UINTPTR_MAX - 1), 3) == -1 && errno == 73);
 }
 
 static void CheckConcurrency() {
@@ -261,6 +399,7 @@ int main() {
     CheckLengthCeiling();
     CheckRoundTrip();
     CheckBufferCapacity();
+    CheckFaultAtomicityAndWraparound();
     CheckConcurrency();
     return 0;
 }

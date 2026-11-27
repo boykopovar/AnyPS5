@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include <algorithm>
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
@@ -68,6 +69,20 @@ namespace ShaderRecompiler
             return state.spannedBallotParityVariable;
         }
 
+        void SpannedBallotSmallSubgroups(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
+            const auto lane = SpannedLane(state);
+            SpannedBarrier(state);
+            state.module.AddFunction(spv::OpAtomicStore, SpannedSlot(state, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 1u))), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 0u));
+            SpannedBarrier(state);
+            const auto bit = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), ConstantU32(state, 1u), EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u)));
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicOr, TypeU32(state), previous, SpannedSlot(state, EmitBinaryU32(state, spv::OpShiftRightLogical, lane, ConstantU32(state, 5u))), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), Select(state, TypeU32(state), predicate, bit, ConstantU32(state, 0u)));
+            SpannedBarrier(state);
+            const auto low = SpannedLoad(state, ConstantU32(state, 0u));
+            const auto high = SpannedLoad(state, ConstantU32(state, 1u));
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, low, high, ConstantU32(state, 0u), ConstantU32(state, 0u));
+        }
+
         void SpannedBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
             const auto lane = SpannedLane(state);
             const auto native = state.module.AllocateId();
@@ -112,7 +127,8 @@ namespace ShaderRecompiler
 
     void EmitSubgroupBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
         if (state.spannedWave) {
-            SpannedBallot(state, result, predicate);
+            if (state.spannedAnySubgroup) SpannedBallotSmallSubgroups(state, result, predicate);
+            else SpannedBallot(state, result, predicate);
             return;
         }
         EmitHostSubgroupBallot(state, result, predicate);
@@ -166,6 +182,12 @@ namespace ShaderRecompiler
     void EmitSubgroupShuffleInHalf(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane) {
         if (!state.spannedWave) {
             EmitSubgroupShuffle(state, type, result, value, EmitHostSubgroupLane(state, lane));
+            return;
+        }
+        const bool exchangeable = type == TypeBool(state) || type == TypeU32(state) || type == TypeF32(state);
+        if (state.spannedAnySubgroup || (state.spannedShuffleThroughMemory && exchangeable)) {
+            const auto half = EmitBinaryU32(state, spv::OpBitwiseAnd, SpannedLane(state), ConstantU32(state, 32u));
+            SpannedShuffle(state, type, result, value, EmitBinaryU32(state, spv::OpBitwiseOr, half, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u))));
             return;
         }
         state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, result, ConstantU32(state, spv::ScopeSubgroup), value, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u)));
@@ -307,6 +329,29 @@ namespace ShaderRecompiler
             return {target, ConstantBool(state, true)};
         }
         FailEmit("DPP control " + std::to_string(control) + " is not supported");
+    }
+
+    bool DppQuadRead(const SpirvEmitterState& state, std::uint32_t control) {
+        return control <= 0xffu && StageOf(state) == IrShaderStage::Pixel && !HostSubgroupSingleLane(state) && std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformQuad)) != state.supportedCapabilities.end();
+    }
+
+    std::uint32_t EmitDppQuadRead(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value, std::uint32_t control) {
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformQuad);
+        if (control == (control & 3u) * 0x55u) {
+            const auto broadcast = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformQuadBroadcast, type, broadcast, ConstantU32(state, spv::ScopeSubgroup), value, ConstantU32(state, control & 3u));
+            return broadcast;
+        }
+        const auto quadLane = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitSubgroupLocalInvocationId(state), ConstantU32(state, 3u));
+        const auto shift = EmitBinaryU32(state, spv::OpShiftLeftLogical, quadLane, ConstantU32(state, 1u));
+        const auto source = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, control), shift), ConstantU32(state, 3u));
+        std::uint32_t result = 0;
+        for (std::uint32_t lane = 0; lane < 4u; ++lane) {
+            const auto broadcast = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformQuadBroadcast, type, broadcast, ConstantU32(state, spv::ScopeSubgroup), value, ConstantU32(state, lane));
+            result = lane == 0u ? broadcast : Select(state, type, Binary(state, spv::OpIEqual, TypeBool(state), source, ConstantU32(state, lane)), broadcast, result);
+        }
+        return result;
     }
 
     std::uint32_t EmitBallotLaneActiveBool(SpirvEmitterState& state, std::uint32_t ballot, std::uint32_t lane) {

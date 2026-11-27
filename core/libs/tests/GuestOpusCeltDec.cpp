@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -71,6 +72,9 @@ void RequireTone(const std::int16_t* pcm, int samples, int channels, int rate) {
 int main() {
     constexpr std::uint32_t errorBase = 0x81400000u;
     Require(sceOpusCeltDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    errno = 71;
+    Require(sceOpusCeltDecInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 13));
+    Require(errno == 71);
     Require(sceOpusCeltDecDestroy(nullptr) == static_cast<int>(errorBase));
     std::uint32_t context = 0;
     Require(sceOpusCeltDecInitialize(&context) == 0);
@@ -141,6 +145,12 @@ int main() {
                     std::fprintf(stderr, "CELT PCM differs from libopus at %d Hz, %d channels, frame %d\n", rate, channels, frame);
                     std::abort();
                 }
+                std::array<std::int16_t, 1920> concealedExpected{};
+                Require(opus_decode(reference, nullptr, 0, concealedExpected.data(), samples, 0) == samples);
+                tone.fill(12345);
+                Require(sceOpusCeltDecDecode(toneState.data(), nullptr, 0, tone.data() + 1, samples * channels * 2 + 1) == samples * channels * 2);
+                Require(tone[0] == 12345 && tone[samples * channels + 1] == 12345);
+                Require(std::equal(concealedExpected.begin(), concealedExpected.begin() + samples * channels, tone.begin() + 1));
                 if (frame == 1 || frame == 2) RequireTone(tone.data() + 1, samples, channels, rate);
             }
             opus_decoder_destroy(reference);

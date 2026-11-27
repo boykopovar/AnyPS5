@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #ifndef _WIN32
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -217,22 +218,10 @@ struct Mapping {
 };
 
 std::vector<Mapping> mappings(std::uint64_t begin, std::uint64_t end) {
-    std::ifstream maps("/proc/self/maps");
-    Require(static_cast<bool>(maps), "cannot read /proc/self/maps for a heap mirror's pages");
     std::vector<Mapping> found;
-    std::string line;
-    while (std::getline(maps, line)) {
-        std::istringstream fields(line);
-        std::string span, permissions, offset, device;
-        unsigned long long inode = 0;
-        fields >> span >> permissions >> offset >> device >> inode;
-        const auto dash = span.find('-');
-        Require(dash != std::string::npos && permissions.size() == 4, "unexpected /proc/self/maps line: " + line);
-        const auto first = std::stoull(span.substr(0, dash), nullptr, 16);
-        const auto last = std::stoull(span.substr(dash + 1), nullptr, 16);
-        if (last <= begin || first >= end) continue;
-        found.push_back({std::max<std::uint64_t>(first, begin), std::min<std::uint64_t>(last, end), permissions[0] == 'r', inode == 0 && permissions[3] == 'p'});
-    }
+    HostMapping::Walk(begin, end, "heap mirror pages", [&](const HostMapping::Mapping& mapping) {
+        found.push_back({std::max(mapping.start, begin), std::min(mapping.end, end), mapping.readable, mapping.inode == 0 && !mapping.shared});
+    });
     return found;
 }
 
@@ -288,7 +277,14 @@ void populatedPages(std::vector<Candidate>& maybe, const Mapping& mapping) {
 std::vector<Candidate> possiblyNonzero(std::uint64_t begin, std::uint64_t end) {
     std::vector<Candidate> maybe;
 #ifdef _WIN32
-    maybe.push_back({begin, end, true});
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> zero;
+    GuestArena::GuestArenaKnownZero_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin), [](void* context, std::uintptr_t first, std::uintptr_t last) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(first, last); }, &zero);
+    auto cursor = begin;
+    for (const auto& [first, last] : zero) {
+        if (first > cursor) maybe.push_back({cursor, first, true});
+        cursor = std::max<std::uint64_t>(cursor, last);
+    }
+    if (cursor < end) maybe.push_back({cursor, end, true});
 #else
     for (const auto& mapping : mappings(begin, end)) {
         int file = -1;
@@ -314,7 +310,14 @@ std::vector<Candidate> possiblyNonzero(std::uint64_t begin, std::uint64_t end) {
 }
 
 bool GuestBytesZero(std::uint64_t begin, std::uint64_t end) {
+#ifdef _WIN32
+    for (const auto& candidate : possiblyNonzero(begin, end)) {
+        if (!allZero(candidate.begin, candidate.end)) return false;
+    }
+    return true;
+#else
     return allZero(begin, end);
+#endif
 }
 
 GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {
@@ -388,6 +391,7 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
         type = context.DeviceMemoryType(requirements.memoryTypeBits, SlabBytes, "a resident heap mirror slab");
         memory = residentMemory(context, type);
         slots.resize(static_cast<std::size_t>(size / BlockSize));
+        uploads.assign(slots.size(), 0);
         std::vector<bool> wanted(slots.size(), false);
         for (const auto& [first, last] : backed) {
             if (first >= last) continue;
@@ -514,6 +518,13 @@ void ResidentBuffer::Read(std::uint64_t guest, std::span<std::byte> out) const {
     }
 }
 
+std::uint64_t ResidentBuffer::UploadSerial(std::uint64_t begin, std::uint64_t end) const {
+    std::uint64_t serial = 0;
+    if (begin >= end) return serial;
+    for (auto index = blockIndex(begin); index <= blockIndex(end - 1); ++index) serial = std::max(serial, uploads[index]);
+    return serial;
+}
+
 void ResidentBuffer::Store(std::uint64_t guest, std::span<const std::byte> bytes) {
     std::size_t done = 0;
     while (done < bytes.size()) {
@@ -565,6 +576,7 @@ void ResidentBuffer::flush() {
             for (auto at = std::max(first, cursor); at < last;) {
                 const auto next = std::min(last, (at / BlockSize + 1) * BlockSize);
                 if (slots[blockIndex(at)].host != nullptr) {
+                    uploads[blockIndex(at)] = ++uploadCounter;
                     if (!regions.empty() && regions.back().dstOffset + regions.back().size == at - origin) regions.back().size += next - at;
                     else regions.push_back({total, at - origin, next - at});
                     total += next - at;

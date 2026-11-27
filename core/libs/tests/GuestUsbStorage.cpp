@@ -1,4 +1,5 @@
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
+#include <cerrno>
 #include "prx/libSceUsbStorage/include/HostVolumes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -91,6 +92,12 @@ std::size_t RecordedCount() {
 
 std::atomic<int> g_selfRemovalCalls{0};
 std::atomic<std::int32_t> g_selfRemovalResult{-1};
+std::atomic<int> g_reentrantResult{-1};
+char g_reentrantMount[UsbStorage::MountPointSize]{};
+
+void APS5_VABI RemapInside(const UsbStorageEvent*, void*) {
+    g_reentrantResult = sceUsbStorageRequestMap(0, "Movies", 0, 0, g_reentrantMount, nullptr);
+}
 
 void APS5_VABI RemoveSelf(const UsbStorageEvent*, void*) {
     ++g_selfRemovalCalls;
@@ -320,8 +327,19 @@ void TestNoDevice() {
     Require(info.volumeSize == 0x5a5a5a5a5a5a5a5aull && info.flags == 0x5a5a5a5a5a5a5a5aull, "device info was written");
     Require(sceUsbStorageGetDeviceInfo(0, nullptr) == UsbStorage::InvalidArgument, "get device info without an info buffer");
 
+    char mountPoint[UsbStorage::MountPointSize];
+    std::memset(mountPoint, 0x5a, sizeof(mountPoint));
+    Require(sceUsbStorageGetMountPointOfShellCore(static_cast<std::uint32_t>(UsbStorage::MaxDevices), mountPoint) == UsbStorage::DeviceNotFound,
+            "get the mount point of the first id past the last slot");
+    Require(sceUsbStorageGetMountPointOfShellCore(0xffffffffu, mountPoint) == UsbStorage::DeviceNotFound, "get the mount point of the highest device id");
+    Require(mountPoint[0] == static_cast<char>(0x5a), "the mount point of an absent device was written");
+    Require(sceUsbStorageGetMountPointOfShellCore(0xffffffffu, nullptr) == UsbStorage::InvalidArgument, "get the mount point without a buffer");
+
     std::uint8_t exists = 1;
     Require(sceUsbStorageIsExist(0, "/mnt/usb0", &exists) == true && exists == 0, "device 0 does not exist");
+    errno = 71;
+    Require(ThrowsWith([] { sceUsbStorageIsExist(0, "/mnt/usb0", reinterpret_cast<std::uint8_t*>(0x10)); }, "sceUsbStorageIsExist: an unwritable output is not implemented"), "an unmapped exists output");
+    Require(errno == 71, "the unmapped output preserves errno");
     exists = 1;
     Require(sceUsbStorageIsExist(1, nullptr, &exists) == true && exists == 0, "device 1 does not exist");
     exists = 1;
@@ -377,9 +395,6 @@ void TestGetdents() {
 }
 
 void TestThrowingExports() {
-    char mountPoint[8]{};
-    Require(ThrowsWith([&] { sceUsbStorageGetMountPointOfShellCore(0, mountPoint); }, "sceUsbStorageGetMountPointOfShellCore not implemented"),
-            "get the mount point of shell core without a device did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageClearFakeWriteProtection(); }, "sceUsbStorageClearFakeWriteProtection not implemented"),
             "clear fake write protection did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageSetFakeMapLockForDebug(); }, "sceUsbStorageSetFakeMapLockForDebug not implemented"),
@@ -396,6 +411,9 @@ void TestDeviceInfo(const FakeHost& host) {
 
     UsbStorageDeviceInfo info;
     std::memset(&info, 0x5a, sizeof(info));
+    errno = 71;
+    Require(sceUsbStorageGetDeviceInfo(0, reinterpret_cast<UsbStorageDeviceInfo*>(0x10)) == UsbStorage::InvalidArgument, "unwritable info buffer");
+    Require(errno == 71, "errno preserved");
     Require(sceUsbStorageGetDeviceInfo(0, &info) == 0, "get device info of the attached device");
     Require(info.vendorId == 0x0781 && info.productId == 0x5581 && info.bcdDevice == 0x0100, "the device info holds the USB ids and release");
     Require(std::string_view(info.vendor) == "SanDisk" && info.vendorLength == 7, "the device info holds the vendor");
@@ -428,13 +446,30 @@ void TestDeviceInfo(const FakeHost& host) {
     Require(std::filesystem::equivalent(resolved, host.firstMount / "song.txt", error), "the mount point resolves to the host volume");
 }
 
-void TestDeviceMaps() {
+void TestDeviceMaps(const FakeHost& host) {
     char mountPoint[UsbStorage::MountPointSize];
     std::uint64_t mountId = 0x5a5a5a5a5a5a5a5aull;
     Require(sceUsbStorageRequestMap(0, "/", 0, 0, mountPoint, &mountId) == 0, "map the root of the device");
     Require(std::string_view(mountPoint) == "/mnt/usb0" && mountId == 0, "the root is mapped at the mount point");
     Require(sceUsbStorageRequestMap(0, "Music/", 0, 0, mountPoint, nullptr) == 0, "map a directory of the device");
     Require(std::string_view(mountPoint) == "/mnt/usb0/Music", "the directory is mapped below the mount point");
+#ifdef _WIN32
+    Require(ThrowsWith([&] { sceUsbStorageRequestMap(0, "music", 0, 0, mountPoint, nullptr); },
+                       "sceUsbStorageRequestMap: mapping a mapped directory again is not implemented"),
+            "map the same directory with different case did not throw");
+    Require(ThrowsWith([&] { sceUsbStorageRequestMapWSB(0, "MUSIC", 0, 0, mountPoint, nullptr); },
+                       "sceUsbStorageRequestMapWSB: mapping a mapped directory again is not implemented"),
+            "map the same directory with different case through WSB did not throw");
+#endif
+    std::error_code linkError;
+    const auto alias = host.firstMount / "MusicAlias";
+    std::filesystem::create_directory_symlink(host.firstMount / "Music", alias, linkError);
+    if (!linkError) {
+        Require(ThrowsWith([&] { sceUsbStorageRequestMap(0, "MusicAlias", 0, 0, mountPoint, nullptr); },
+                           "sceUsbStorageRequestMap: mapping a mapped directory again is not implemented"),
+                "map a symbolic link to a mapped directory did not throw");
+        std::filesystem::remove(alias);
+    }
     Require(ThrowsWith([&] { sceUsbStorageRequestMap(0, "/Missing", 0, 0, mountPoint, nullptr); },
                        "sceUsbStorageRequestMap: mapping a directory the device does not hold is not implemented"),
             "map a missing directory did not throw");
@@ -464,6 +499,77 @@ void TestDeviceMaps() {
     Require(sceUsbStorageRequestMapWSB(0, nullptr, 0, 0, mountPoint, &status) == 0, "map the root through the WSB request");
     Require(std::string_view(mountPoint) == "/mnt/usb0" && status == 0, "the WSB request mapped the root at the mount point");
     Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0") == 0, "unmap the WSB root");
+
+    char* const unmappedText = reinterpret_cast<char*>(0x10);
+    errno = 71;
+    Require(sceUsbStorageGetMountPointOfShellCore(0, unmappedText) == UsbStorage::InvalidArgument, "unwritable shell-core mount point");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, unmappedText, nullptr) == UsbStorage::InvalidArgument, "unwritable map mount point");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, reinterpret_cast<std::uint64_t*>(0x10)) == UsbStorage::InvalidArgument,
+            "unwritable map id");
+    Require(sceUsbStorageRequestMapWSB(0, "Music", 0, 0, unmappedText, nullptr) == UsbStorage::InvalidArgument, "unwritable WSB mount path");
+    Require(sceUsbStorageRequestMapWSB(0, "Music", 0, 0, mountPoint, reinterpret_cast<std::int32_t*>(0x10)) == UsbStorage::InvalidArgument,
+            "unwritable WSB status");
+    Require(errno == 71, "errno preserved");
+    mountId = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, &mountId) == 0, "a failed map request left no map behind");
+    Require(std::string_view(mountPoint) == "/mnt/usb0/Music" && mountId == 0, "the directory is mapped after the failed requests");
+    Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0/Music") == 0, "unmap the directory after the failed requests");
+}
+
+void TestMapAvailability(const FakeHost& host) {
+    Inject(host, true, false);
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for map callbacks");
+    std::size_t seen = 0;
+    {
+        std::lock_guard lock(Events().mutex);
+        seen = Events().events.size();
+    }
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &Record, &g_mountTag) == 0, "register a map-available callback");
+    Require(sceUsbStorageRegisterCallbackForMapUnavailable(0, "/mnt/usb0/Music", &Record, &g_unmountTag) == 0, "register a map-unavailable callback");
+    Require(ThrowsWith([&] { sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &Record, &g_mountTag); },
+                       "sceUsbStorageRegisterCallbackForMapAvailable: registering a registered callback again is not implemented"),
+            "register a registered map-available callback again did not throw");
+    char mountPoint[UsbStorage::MountPointSize];
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, nullptr) == 0, "map the directory for the callbacks");
+    auto recorded = NextEvent(seen);
+    Require(recorded.event.event == 1 && recorded.event.device == 0 && recorded.userData == &g_mountTag, "a map raises the map-available callback");
+    Require(recorded.event.flags == UsbStorage::FatFlag, "the map-available event flags the volume");
+    Require(sceUsbStorageRequestUnmap(0, mountPoint) == 0, "unmap the directory for the callbacks");
+    recorded = NextEvent(seen + 1);
+    Require(recorded.event.event == 2 && recorded.event.device == 0 && recorded.userData == &g_unmountTag, "an unmap raises the map-unavailable callback");
+    Require(ThrowsWith([&] { sceUsbStorageUnregisterCallbackForMapAvailable(0, "Missing", &Record); },
+                       "sceUsbStorageUnregisterCallbackForMapAvailable not implemented"),
+            "unregister an unregistered map-available callback did not throw its marker");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Music", &Record) == 0, "unregister the map-available callback");
+    Require(sceUsbStorageUnregisterCallbackForMapUnavailable(0, "/mnt/usb0/Music", &Record) == 0, "unregister the map-unavailable callback");
+    Require(sceUsbStorageTerm() == 0, "terminate after the map callbacks");
+    Require(ThrowsWith([&] { sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &Record, nullptr); },
+                       "sceUsbStorageRegisterCallbackForMapAvailable: registering before sceUsbStorageInit is not implemented"),
+            "register a map-available callback after terminating did not throw");
+    std::lock_guard lock(Events().mutex);
+    Require(Events().events.size() == seen + 2, "the map callbacks raised no other event");
+}
+
+void TestMapCallbackIdentity(const FakeHost& host) {
+    Inject(host, true, false);
+    std::filesystem::create_directories(host.firstMount / "Movies");
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for the map callback identity");
+    const auto seen = RecordedCount();
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &Record, &g_mountTag) == 0, "register a relative map callback");
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "/mnt/usb0/Music", &Record, &g_unmountTag) == 0, "register a mount point map callback");
+    char mountPoint[UsbStorage::MountPointSize];
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, nullptr) == 0, "map the shared directory");
+    const auto first = NextEvent(seen);
+    const auto second = NextEvent(seen + 1);
+    Require(first.userData == &g_mountTag && second.userData == &g_unmountTag, "each map callback received its own argument");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Music", &Record) == 0, "unregister the relative map callback");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "/mnt/usb0/Music", &Record) == 0, "unregister the mount point map callback");
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &RemapInside, nullptr) == 0, "register a map callback that maps again");
+    Require(sceUsbStorageRequestUnmap(0, mountPoint) == 0, "unmap the shared directory before mapping it again");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, nullptr) == 0, "map the shared directory again");
+    Require(g_reentrantResult == 0, "a map callback could request a map");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Music", &RemapInside) == 0, "unregister the nested map callback");
+    Require(sceUsbStorageTerm() == 0, "terminate after the map callback identity");
 }
 
 void TestDeviceGetdents() {
@@ -496,6 +602,55 @@ void TestDeviceGetdents() {
     Require(ThrowsWith([&] { sceUsbStorageGetdentsClose(fd); }, "sceUsbStorageGetdentsClose not implemented"), "close a closed scan did not throw its marker");
 }
 
+std::uint64_t ReadEntries(std::int32_t fd, std::uint64_t size, std::set<std::string>& names, std::set<std::uint32_t>& fileNumbers) {
+    std::vector<std::uint8_t> buffer(size, 0x5a);
+    std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageGetdentsRead(fd, buffer.data(), buffer.size(), &bytesRead) == 0, "read a getdents scan in parts");
+    Require(bytesRead <= size, "a getdents read stays inside its buffer");
+    for (std::uint64_t offset = 0; offset < bytesRead;) {
+        std::uint32_t fileNumber = 0;
+        std::uint16_t length = 0;
+        std::memcpy(&fileNumber, buffer.data() + offset, sizeof(fileNumber));
+        std::memcpy(&length, buffer.data() + offset + 4, sizeof(length));
+        const std::uint8_t nameLength = buffer[offset + 7];
+        Require(length == ((8 + nameLength + 1 + 7) & ~7) && offset + length <= bytesRead, "a dirent record read in parts has the packed layout");
+        names.emplace(reinterpret_cast<const char*>(buffer.data() + offset + 8), nameLength);
+        fileNumbers.insert(fileNumber);
+        offset += length;
+    }
+    return bytesRead;
+}
+
+void TestDeviceGetdentsInParts() {
+    constexpr std::uint64_t MusicRecord = 16;
+    constexpr std::uint64_t SongRecord = 24;
+    std::int32_t first = -1;
+    std::int32_t second = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, &first, &bufferSize) == 0, "open a getdents scan to read in parts");
+    Require(sceUsbStorageGetdentsOpen(0, &second, &bufferSize) == 0 && second != first, "a second getdents scan gets its own descriptor");
+
+    std::set<std::string> names;
+    std::set<std::uint32_t> fileNumbers;
+    const std::uint64_t firstPart = ReadEntries(first, SongRecord, names, fileNumbers);
+    Require(names.size() == 1 && (firstPart == MusicRecord || firstPart == SongRecord), "a buffer with room for one record returns one record");
+    const std::uint64_t secondPart = ReadEntries(first, SongRecord, names, fileNumbers);
+    Require(names.size() == 2 && firstPart + secondPart == MusicRecord + SongRecord, "the next read resumes after the record already returned");
+    Require(names == std::set<std::string>{"Music", "song.txt"} && fileNumbers == std::set<std::uint32_t>{1, 2}, "the scan read in parts lists the root once");
+    Require(ReadEntries(first, SongRecord, names, fileNumbers) == 0, "the scan read in parts ends with zero bytes");
+
+    std::set<std::string> whole;
+    std::set<std::uint32_t> wholeNumbers;
+    Require(ReadEntries(second, MusicRecord + SongRecord, whole, wholeNumbers) == MusicRecord + SongRecord && whole == names,
+            "a buffer with exact room for every record returns them all from a cursor of its own");
+
+    Require(sceUsbStorageGetdentsClose(first) == 0, "close the scan read in parts");
+    std::uint8_t buffer[64];
+    std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageGetdentsRead(second, buffer, sizeof(buffer), &bytesRead) == 0 && bytesRead == 0, "closing one scan left the other open");
+    Require(sceUsbStorageGetdentsClose(second) == 0, "close the scan read whole");
+}
+
 void TestPassthroughOff(const FakeHost& host) {
     SetPassthrough(false);
     Inject(host, true, false);
@@ -526,8 +681,12 @@ void TestDevices(const FakeHost& host) {
     Inject(host, true, false);
     Require(sceUsbStorageInit(nullptr) == 0, "initialize with a device");
     TestDeviceInfo(host);
-    TestDeviceMaps();
+    TestDeviceMaps(host);
     TestDeviceGetdents();
+    TestDeviceGetdentsInParts();
+    std::int32_t open = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, &open, &bufferSize) == 0, "open a getdents scan before terminating");
     Require(sceUsbStorageTerm() == 0, "terminate with a device");
     std::uint32_t devices[UsbStorage::MaxDevices]{};
     std::int32_t count = -1;
@@ -535,6 +694,12 @@ void TestDevices(const FakeHost& host) {
     std::error_code error;
     Require(!std::filesystem::equivalent(ResolvePath_nid_no_patch("/mnt/usb0/song.txt"), host.firstMount / "song.txt", error),
             "terminate removed the mount point");
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize again after terminating with an open scan");
+    std::vector<std::uint8_t> buffer(0x8000, 0x5a);
+    std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageGetdentsRead(open, buffer.data(), buffer.size(), &bytesRead) == UsbStorage::NotSupported && bytesRead == 0 && buffer[0] == 0x5a,
+            "terminate closed the open getdents scan");
+    Require(sceUsbStorageTerm() == 0, "terminate after reading the closed scan");
 }
 
 void TestHotplug(const FakeHost& host) {
@@ -643,6 +808,42 @@ void TestUnregisterDuringDispatch(const FakeHost& host) {
     Require(sceUsbStorageTerm() == 0, "terminate after unregistrations during dispatch");
 }
 
+void TestUnmappedOutputs(const FakeHost& host) {
+    Inject(host, true, false);
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for unmapped output checks");
+    auto* const badDevices = reinterpret_cast<std::uint32_t*>(0x10);
+    auto* const badCount = reinterpret_cast<std::int32_t*>(0x10);
+    auto* const badFd = reinterpret_cast<std::int32_t*>(0x10);
+    auto* const badSize = reinterpret_cast<std::uint64_t*>(0x10);
+    auto* const badBuffer = reinterpret_cast<void*>(0x10);
+    auto* const badBytesRead = reinterpret_cast<std::uint64_t*>(0x10);
+    std::uint32_t devices[UsbStorage::MaxDevices]{};
+    std::int32_t count = -1;
+    errno = 71;
+    Require(sceUsbStorageGetDeviceList(badDevices, &count) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped devices buffer in sceUsbStorageGetDeviceList without clobbering errno");
+    Require(sceUsbStorageGetDeviceList(devices, badCount) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped count pointer in sceUsbStorageGetDeviceList without clobbering errno");
+    std::int32_t fd = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, badFd, &bufferSize) == UsbStorage::InvalidArgument,
+            "reject unmapped fd pointer in sceUsbStorageGetdentsOpen");
+    Require(sceUsbStorageGetdentsOpen(0, &fd, badSize) == UsbStorage::InvalidArgument,
+            "reject unmapped bufferSize pointer in sceUsbStorageGetdentsOpen");
+    Require(sceUsbStorageGetdentsOpen(0, &fd, &bufferSize) == 0, "open getdents scan for unmapped read checks");
+    std::uint64_t bytesRead = 0;
+    std::vector<std::uint8_t> buffer(bufferSize, 0);
+    errno = 71;
+    Require(sceUsbStorageGetdentsRead(fd, badBuffer, bufferSize, &bytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped buffer in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsRead(fd, buffer.data(), buffer.size(), badBytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped bytesRead in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsRead(-999, buffer.data(), buffer.size(), badBytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped bytesRead on missing fd in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsClose(fd) == 0, "close getdents scan after unmapped read checks");
+    Require(sceUsbStorageTerm() == 0, "terminate after unmapped output checks");
+}
+
 void TestSysfsScan(const FakeHost& host) {
     WriteMounts(host, FirstLine(host) + SecondLine(host) + MountLine("8_1", "/", host.root / "media" / "efi", "rw", "vfat") +
                           MountLine("8_49", "/", host.root / "media", "rw", "ext4") + MountLine("8_17", "/Music", host.root / "media" / "bound", "rw", "vfat"));
@@ -680,9 +881,12 @@ int main() {
     TestPassthroughOff(host);
     SetPassthrough(true);
     TestDevices(host);
+    TestUnmappedOutputs(host);
     TestHotplug(host);
     TestRootChange(host);
     TestUnregisterDuringDispatch(host);
+    TestMapAvailability(host);
+    TestMapCallbackIdentity(host);
     if (CreateSysfs(host)) {
         TestSysfsScan(host);
     } else {

@@ -131,13 +131,168 @@ void TestNullFrame() {
     RequireThrows<std::invalid_argument>([] { _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(nullptr); });
 }
 
+void TestUnmappedFrame() {
+    auto* const unmapped = reinterpret_cast<WebRtcAudioFrame*>(std::uintptr_t{0x10});
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(unmapped); });
+    const std::int16_t samples[2] = {1, 2};
+    RequireThrows<std::invalid_argument>([&] {
+        _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(unmapped, 0, samples, 1, 48000, 0, 0, 2);
+    });
+    auto frame = Filled();
+    const auto* const unreadable = reinterpret_cast<const std::int16_t*>(std::uintptr_t{0x10});
+    RequireThrows<std::invalid_argument>([&] {
+        _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(frame.get(), 0, unreadable, 1, 48000, 0, 0, 2);
+    });
+    Require(AllSamples(frame->data, 0x5A5A));
+}
+
+}
+
+void UpdateFrame(WebRtcAudioFrame* frame, std::uint32_t timestamp, const std::int16_t* data, std::size_t samplesPerChannel, std::int32_t sampleRateHz, std::int32_t speechType,
+    std::int32_t vadActivity, std::size_t numChannels) {
+    _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(frame, timestamp, data, samplesPerChannel, sampleRateHz, speechType, vadActivity,
+        numChannels);
+}
+
+void TestUpdateFrame() {
+    auto frame = Filled();
+    std::int16_t samples[960];
+    for (std::size_t i = 0; i < 960; ++i)
+        samples[i] = static_cast<std::int16_t>(i * 7 - 3000);
+    UpdateFrame(frame.get(), 0x12345678u, samples, 480, 48000, 0, 0, 2);
+    Require(frame->timestamp == 0x12345678u);
+    Require(frame->samplesPerChannel == 480);
+    Require(frame->sampleRateHz == 48000);
+    Require(frame->speechType == 0);
+    Require(frame->vadActivity == 0);
+    Require(frame->numChannels == 2);
+    Require(frame->channelLayout == WebRtcChannelLayoutStereo);
+    Require(!frame->muted);
+    Require(std::memcmp(frame->data, samples, sizeof(samples)) == 0);
+    Require(frame->data[960] == 0x5A5A);
+    Require(frame->elapsedTimeMs == 0x5A5A5A5A5A5A5A5A && frame->ntpTimeMs == 0x5A5A5A5A5A5A5A5A);
+
+    UpdateFrame(frame.get(), 1, nullptr, 160, 16000, 2, 1, 1);
+    Require(frame->muted);
+    Require(frame->samplesPerChannel == 160 && frame->numChannels == 1 && frame->channelLayout == WebRtcChannelLayoutMono);
+    Require(std::memcmp(frame->data, samples, sizeof(samples)) == 0);
+}
+
+void TestUpdateFrameLayouts() {
+    const std::int32_t layouts[] = {WebRtcChannelLayoutUnsupported, WebRtcChannelLayoutMono, WebRtcChannelLayoutStereo, WebRtcChannelLayoutSurround,
+        WebRtcChannelLayoutQuad, WebRtcChannelLayout5_0, WebRtcChannelLayout5_1, WebRtcChannelLayout6_1, WebRtcChannelLayout7_1};
+    auto frame = Filled();
+    for (std::size_t channels = 0; channels <= 8; ++channels) {
+        UpdateFrame(frame.get(), 0, nullptr, 10, 8000, 4, 2, channels);
+        Require(frame->channelLayout == layouts[channels]);
+    }
+}
+
+void TestUpdateFrameLimits() {
+    auto frame = Filled();
+    static std::int16_t samples[WebRtcAudioFrameMaxDataSizeSamples];
+    UpdateFrame(frame.get(), 0, samples, 960, 48000, 0, 0, 8);
+    Require(!frame->muted && frame->numChannels == 8);
+    RequireThrows<std::invalid_argument>([&] { UpdateFrame(frame.get(), 0, samples, 10, 48000, 0, 0, 9); });
+    Require(frame->numChannels == 8);
+    RequireThrows<std::invalid_argument>([&] { UpdateFrame(frame.get(), 0, samples, 961, 48000, 0, 0, 8); });
+    RequireThrows<std::invalid_argument>([&] { UpdateFrame(nullptr, 0, samples, 10, 48000, 0, 0, 1); });
+}
+
+void TestDataView() {
+    auto frame = Filled();
+    frame->muted = false;
+    frame->samplesPerChannel = 441;
+    frame->numChannels = 2;
+    WebRtcInterleavedView view = _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(frame.get());
+    Require(view.numChannels == 2 && view.samplesPerChannel == 441 && view.size == 882 && view.data == frame->data);
+
+    frame->muted = true;
+    view = _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(frame.get());
+    Require(view.data == _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(frame.get()) && view.data != frame->data && view.size == 882);
+    Require(AllSamples(view.data, 0));
+
+    frame->samplesPerChannel = 0;
+    view = _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(frame.get());
+    Require(view.data == nullptr && view.size == 0 && view.numChannels == 2 && view.samplesPerChannel == 0);
+    frame->muted = false;
+    frame->numChannels = 0;
+    frame->samplesPerChannel = 5;
+    view = _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(frame.get());
+    Require(view.data == nullptr && view.size == 0 && view.samplesPerChannel == 5);
+    RequireThrows<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(nullptr); });
+}
+
+void TestCopyFrom() {
+    auto source = Filled();
+    auto frame = Filled();
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(source.get());
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(frame.get());
+    WebRtcRtpPacketInfosData sourceInfos {};
+    WebRtcRtpPacketInfosData frameInfos {};
+    sourceInfos.refCount = 1;
+    frameInfos.refCount = 2;
+    source->packetInfos = &sourceInfos;
+    frame->packetInfos = &frameInfos;
+    source->timestamp = 7;
+    source->elapsedTimeMs = 8;
+    source->ntpTimeMs = 9;
+    source->samplesPerChannel = 3;
+    source->sampleRateHz = 16000;
+    source->numChannels = 2;
+    source->speechType = 1;
+    source->vadActivity = 0;
+    source->profileTimestampMs = 77;
+    source->channelLayout = 3;
+    source->absoluteCaptureTimestampMs.value = 1234;
+    source->absoluteCaptureTimestampMsEngaged = true;
+    source->muted = false;
+    for (int i = 0; i < 6; ++i) source->data[i] = static_cast<std::int16_t>(100 + i);
+
+    _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(frame.get(), source.get());
+    Require(frame->timestamp == 7 && frame->elapsedTimeMs == 8 && frame->ntpTimeMs == 9);
+    Require(frame->samplesPerChannel == 3 && frame->sampleRateHz == 16000 && frame->numChannels == 2);
+    Require(frame->speechType == 1 && frame->vadActivity == 0 && frame->channelLayout == 3);
+    Require(frame->profileTimestampMs == 0);
+    Require(frame->absoluteCaptureTimestampMsEngaged && frame->absoluteCaptureTimestampMs.value == 1234);
+    Require(!frame->muted);
+    Require(frame->packetInfos == &sourceInfos && sourceInfos.refCount == 2 && frameInfos.refCount == 1);
+    for (int i = 0; i < 6; ++i) Require(frame->data[i] == 100 + i);
+    for (std::size_t i = 6; i < WebRtcAudioFrameMaxDataSizeSamples; ++i) Require(frame->data[i] == 0);
+
+    source->muted = true;
+    source->packetInfos = nullptr;
+    frame->data[0] = 55;
+    _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(frame.get(), source.get());
+    Require(frame->muted && frame->data[0] == 55);
+    Require(frame->packetInfos == nullptr && sourceInfos.refCount == 1);
+    Require(AllSamples(_ZNK6webrtc10AudioFrame4dataEv_nid_postfix(frame.get()), 0));
+
+    _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(frame.get(), frame.get());
+    Require(frame->muted && frame->data[0] == 55);
+
+    source->muted = false;
+    source->numChannels = 8;
+    source->samplesPerChannel = 961;
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(frame.get(), source.get()); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(nullptr, source.get()); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(frame.get(), nullptr); });
 }
 
 int main() {
     TestConstructor();
     TestMutedData();
+    TestUnmappedFrame();
     TestMute();
     TestOperationsMute();
     TestNullFrame();
+    TestUpdateFrame();
+    TestUpdateFrameLayouts();
+    TestUpdateFrameLimits();
+    TestDataView();
+    TestCopyFrom();
     return 0;
 }

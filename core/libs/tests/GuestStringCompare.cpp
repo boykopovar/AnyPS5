@@ -2,6 +2,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
+#include <vector>
 
 namespace {
 
@@ -12,6 +14,28 @@ void Require(bool value) {
 }
 
 int main() {
+    for (std::size_t leftOffset = 0; leftOffset < 8; ++leftOffset) {
+        for (std::size_t rightOffset = 0; rightOffset < 8; ++rightOffset) {
+            for (const std::size_t length : {0, 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 255, 256, 257, 1024}) {
+                std::vector<unsigned char> left(length + leftOffset + 1, 0);
+                std::vector<unsigned char> right(length + rightOffset + 1, 0);
+                auto* a = left.data() + leftOffset;
+                auto* b = right.data() + rightOffset;
+                for (std::size_t index = 0; index < length; ++index) a[index] = b[index] = static_cast<unsigned char>(index * 73);
+                a[length] = 0xff;
+                Require(memcmp_nid_postfix(a, b, length) == 0);
+                for (std::size_t mismatch = 0; mismatch < length; ++mismatch) {
+                    const auto saved = b[mismatch];
+                    b[mismatch] = static_cast<unsigned char>(saved ^ 0x81);
+                    const int difference = static_cast<int>(a[mismatch]) - b[mismatch];
+                    Require(memcmp_nid_postfix(a, b, length) == difference);
+                    Require(memcmp_nid_postfix(b, a, length) == -difference);
+                    Require(memcmp_nid_postfix(a, b, mismatch) == 0);
+                    b[mismatch] = saved;
+                }
+            }
+        }
+    }
     Require(strcmp_nid_postfix("abc", "abc") == 0);
     Require(strcmp_nid_postfix("abc", "abd") == -1);
     Require(strcmp_nid_postfix("abd", "abc") == 1);
@@ -41,4 +65,16 @@ int main() {
     const unsigned char withNul[] = {0x00, 0x05};
     const unsigned char withNulLow[] = {0x00, 0x02};
     Require(memcmp_nid_postfix(withNul, withNulLow, 2) == 3);
+
+    Require(strcmp_nid_postfix("\x80\xff", "\x80\xff") == 0);
+    Require(strcmp_nid_postfix("a\0b", "a\0c") == 0);
+    Require(strncmp_nid_postfix("abc", "abd", std::numeric_limits<std::size_t>::max()) == -1);
+    Require(strncmp_nid_postfix("\xff", "\x01", 1) == 254);
+    Require(strncmp_nid_postfix("\x01", "\xff", 1) == -254);
+    Require(memcmp_nid_postfix("aaa", "zzz", 0) == 0);
+    Require(memcmp_nid_postfix("a\0b", "a\0c", 3) == -1);
+    const unsigned char maxByte[] = {0xff};
+    const unsigned char zeroByte[] = {0x00};
+    Require(memcmp_nid_postfix(maxByte, zeroByte, 1) == 255);
+    Require(memcmp_nid_postfix(zeroByte, maxByte, 1) == -255);
 }
