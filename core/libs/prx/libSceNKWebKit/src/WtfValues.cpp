@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libSceNKWebKit/src/WtfPersistenceChecksum.hpp"
 
 #include <algorithm>
 #include <array>
@@ -322,6 +323,10 @@ void VectorAppend(Vector<T>& vec, T&& item) {
 }
 
 }  // namespace
+
+void NKWebKit::WtfAbi::PersistenceChecksumAdd_nid_no_patch(SHA1& checksum, const void* data, std::size_t size) {
+    Sha1Add(&checksum, static_cast<const uint8_t*>(data), size);
+}
 
 extern "C" {
 
