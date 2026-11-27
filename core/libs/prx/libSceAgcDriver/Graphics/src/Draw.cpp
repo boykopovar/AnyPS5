@@ -1739,6 +1739,7 @@ namespace {
 // buffer copy with its highest index, the vertex buffer copies and their layout, the fragment
 // outputs and the pipeline stages.
 struct DrawInputs {
+    DrawResult result = DrawResult::Handled;
     // An empty auto draw: nothing to record.
     bool nothing = false;
     std::uint64_t indexBytes = 0;
@@ -2186,7 +2187,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
-        Require(!state.hasColorTarget || address + bytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
+        const bool aliasesTarget = state.hasColorTarget && address + bytes > state.color.MemoryAddress() && state.color.MemoryAddress() + state.color.bytes > address + firstByte;
+        if (aliasesTarget && args != nullptr && args->capturedRecords) {
+            // The full descriptor can overlap even when every record fetches a disjoint prefix.
+            inputs.result = DrawResult::NeedsIndividualRecords;
+            return inputs;
+        }
+        Require(!aliasesTarget, "vertex buffer aliases the render target");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
@@ -3492,7 +3499,6 @@ struct PreparedDraw {
     bool listed = false;
     bool recorded = false;
     bool lean = false;
-    bool individualRecords = false;
     bool multisampled = false;
     std::optional<State> masked;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
@@ -4169,6 +4175,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     const auto plan = planDraw(context, state, draw, shaders, nullptr, outcome, timer, prepared.contentKey);
     if (plan.nothing) return false;
     inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
+    if (inputs.result == DrawResult::NeedsIndividualRecords) return false;
     if (inputs.nothing) {
         if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
         return false;
@@ -4423,7 +4430,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             return (binding.proxied || binding.multisampled) &&
                    (!resources->SampledTextures().empty() || !resources->StorageImages().empty());
         })) {
-        prepared.individualRecords = true;
+        inputs.result = DrawResult::NeedsIndividualRecords;
         return false;
     }
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
@@ -5276,7 +5283,7 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
         throw;
     }
     keepHeldSpace(prepared);
-    return prepared.individualRecords ? DrawResult::NeedsIndividualRecords : DrawResult::Handled;
+    return prepared.inputs.result;
 }
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace) {

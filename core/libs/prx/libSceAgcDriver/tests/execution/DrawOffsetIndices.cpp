@@ -292,7 +292,10 @@ alignas(256) constexpr std::array<std::uint32_t, 5> PixelCode{0x7e0002f2u, 0x7e0
 
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+struct alignas(256) {
+    std::array<std::uint32_t, 64> vertices{};
+    std::array<std::byte, Width * Height * 4> pixels{};
+} targetMemory;
 alignas(256) std::array<std::uint32_t, 4 * Slots> Output{};
 alignas(256) std::array<std::uint32_t, 65538> VertexSlots{};
 alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
@@ -382,7 +385,7 @@ public:
     AgcDriver::Graphics::State State(bool rectList = false, bool restartStrip = false) const {
         AgcDriver::Graphics::State state{};
         state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-        state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+        state.color = {reinterpret_cast<std::uintptr_t>(targetMemory.pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, targetMemory.pixels.size(), 0xe4u};
         state.colors = {state.color};
         state.hasColorTarget = true;
         state.renderExtent = {Width, Height};
@@ -398,7 +401,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false) {
+    AgcDriver::Graphics::DrawResult Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -409,18 +412,20 @@ public:
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
+        AgcDriver::Graphics::DrawResult result;
         if (compactRestart) {
             auto context = device->graphicsContext();
             context.primitiveListRestart = false;
             auto state = State();
             state.primitiveRestart = true;
-            AgcDriver::Graphics::Draw(context, state, draw, shaders);
+            result = AgcDriver::Graphics::Draw(context, state, draw, shaders);
         } else {
             auto state = State(false, restartStrip);
             state.quadList = quadList;
-            device->Draw(state, draw, shaders);
+            result = device->Draw(state, draw, shaders);
         }
         device->WaitIdle();
+        return result;
     }
 
     void Place(std::uint32_t firstVertexFetch, std::span<const std::uint32_t> fetchedVertices, std::uint32_t firstInstanceFetch) {
@@ -540,7 +545,42 @@ std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRest
     return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "runtime-fetched VertexIndex was changed\n";
 }
 
+void CheckCapturedVertexTail(Fixture& fixture) {
+    using AgcDriver::Graphics::DrawResult;
+    using AgcDriver::Graphics::TakeVkDrawCounts;
+    using AgcDriver::Pm4::DrawArguments;
+    // Keep the embedded fetch and export its result, with no shader buffer writes.
+    alignas(256) static constexpr auto code = [] {
+        auto words = PostAddCode;
+        words[23] = words[24] = 0xbf800000u; // s_nop instead of buffer_store_dwordx4
+        words[28] = 0x1110100au; // export the fetched v10 as position.x
+        return words;
+    }();
+    auto vertex = fixture.Vertex(code, fixture.UserData(0, 0));
+    Require(!vertex.vertexAttributes.empty(), "expected a fixed vertex fetch");
+    const AgcDriver::Pm4::DrawParameters direct{0, Vertices, 0, 1, 0, false};
+    auto grouped = direct;
+    auto& args = grouped.indirect.emplace();
+    args.count = 2;
+    args.capturedRecords = std::make_shared<const std::vector<DrawArguments>>(2, DrawArguments{Vertices, 1, 0, 0, 0});
+    for (bool overlaps : {false, true}) {
+        vertex.vertexAttributes.front().resource.fields = SlotDescriptor(targetMemory.vertices.data(), static_cast<std::uint32_t>(targetMemory.vertices.size()) + overlaps);
+        TakeVkDrawCounts();
+        const auto result = fixture.Draw(vertex, grouped);
+        const auto emitted = TakeVkDrawCounts().direct;
+        if (overlaps) {
+            Require(result == DrawResult::NeedsIndividualRecords && emitted == 0, "an unused vertex tail overlapping the color target must fall back before either draw");
+            fixture.Draw(vertex, direct);
+            fixture.Draw(vertex, direct);
+            Require(TakeVkDrawCounts().direct == 2, "both records must accept the disjoint vertex prefix");
+        } else {
+            Require(result == DrawResult::Handled && emitted == 2, "a disjoint vertex descriptor must still group both records");
+        }
+    }
+}
+
 std::string Run(Fixture& fixture) {
+    CheckCapturedVertexTail(fixture);
     std::string failures = Analysis(fixture);
     const std::array<std::uint32_t, Vertices> autoIndices{0, 1, 2};
     const std::array<std::uint32_t, Vertices> bufferIndices{Indices[0], Indices[1], Indices[2]};
