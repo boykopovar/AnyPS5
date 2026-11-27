@@ -64,7 +64,7 @@ static Http2Handle* FindAnyHandle(int id) {
     return entry != g_handles.end() ? &entry->second : nullptr;
 }
 
-static void ReleaseOwnedHandles(int owner) {
+static void ReleaseOwnedHandles(int owner, bool terminated) {
     for (;;) {
         auto child = g_handles.end();
         for (auto entry = g_handles.begin(); entry != g_handles.end(); ++entry) {
@@ -72,9 +72,9 @@ static void ReleaseOwnedHandles(int owner) {
         }
         if (child == g_handles.end()) return;
         const int id = child->first;
-        ReleaseOwnedHandles(id);
+        ReleaseOwnedHandles(id, terminated);
         auto& handle = g_handles.at(id);
-        if (handle.transport) handle.transport->Stop();
+        if (handle.transport) handle.transport->Stop(terminated);
         {
             std::lock_guard lock(g_completionsMutex);
             g_completions.erase(id);
@@ -229,7 +229,7 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindHandle(req_id, Http2Kind::Request);
     if (!handle) return ERROR_INVALID_ID;
-    if (handle->transport) handle->transport->Stop();
+    if (handle->transport) handle->transport->Stop(false);
     {
         std::lock_guard completionsLock(g_completionsMutex);
         g_completions.erase(req_id);
@@ -241,12 +241,18 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
 int APS5_VABI sceHttp2DeleteTemplate(int tmpl_id) {
     std::lock_guard lock(g_handlesMutex);
     if (!FindHandle(tmpl_id, Http2Kind::Template)) return ERROR_INVALID_ID;
-    ReleaseOwnedHandles(tmpl_id);
+    ReleaseOwnedHandles(tmpl_id, false);
     g_handles.erase(tmpl_id);
     return 0;
 }
 
 int APS5_VABI sceHttp2GetAllResponseHeaders(int req_id, char** header, size_t* header_size) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        const auto* handle = FindHandle(req_id, Http2Kind::Request);
+        if (!handle) return ERROR_INVALID_ID;
+        if (!handle->transport) return ERROR_NOT_CONNECTED;
+    }
     const auto request = Transport(req_id, false);
     return request ? request->Headers(header, header_size) : ERROR_INVALID_ID;
 }
@@ -269,7 +275,12 @@ int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t
 
 int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
     const auto request = Transport(req_id, false);
-    return request ? request->Status(status_code) : ERROR_INVALID_ID;
+    if (!request) return ERROR_INVALID_ID;
+    if (!status_code) return request->Status(status_code);
+    int status = 0;
+    const int result = request->Status(&status);
+    if (result != 0) return result;
+    return Http2Guest::Store(status_code, status) ? 0 : ERROR_NULL_POINTER;
 }
 
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
@@ -340,7 +351,7 @@ int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func,
     return Update(id, __func__, [&](auto& settings) {
         settings.redirectCallback = cb_func;
         settings.redirectArgument = user_arg;
-    });
+    }, true);
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {
@@ -362,6 +373,10 @@ int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_arg) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(id, Http2Kind::CookieBox)) return ERROR_INVALID_ID;
+    }
     return Update(id, __func__, [&](auto& settings) {
         settings.sslCallback = cb_func;
         settings.sslArgument = user_arg;
@@ -372,6 +387,8 @@ int APS5_VABI sceHttp2SetStripGZIPHeadersEnabled(int id, int enable) {
     {
         std::lock_guard lock(g_handlesMutex);
         if (FindHandle(id, Http2Kind::Context)) return ERROR_INVALID_ID;
+        const auto* request = FindHandle(id, Http2Kind::Request);
+        if (request && request->transport) return 0;
     }
     return Update(id, __func__, [&](auto& settings) { settings.stripGzipHeaders = enable != 0; });
 }
@@ -406,7 +423,7 @@ int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
 int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
     std::lock_guard lock(g_handlesMutex);
     if (!FindHandle(lib_http2_ctx_id, Http2Kind::Context)) return ERROR_INVALID_ID;
-    ReleaseOwnedHandles(lib_http2_ctx_id);
+    ReleaseOwnedHandles(lib_http2_ctx_id, true);
     g_handles.erase(lib_http2_ctx_id);
     return 0;
 }

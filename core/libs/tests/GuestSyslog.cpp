@@ -176,6 +176,8 @@ int main(int argc, char** argv) {
     closelog_nid_postfix();
     releasedName.reset();
     syslog_nid_postfix(6, "after close and storage release");
+    syslog_nid_postfix(6, "embedded%ctail\n", 0);
+    syslog_nid_postfix(6, "after embedded nul");
     closelog_nid_postfix();
 #ifdef SYSLOG_RELOAD_TEST
     auto transientName = std::make_unique<char[]>(10);
@@ -254,7 +256,9 @@ int main(int argc, char** argv) {
         "[syslog:14] Explicit: explicit identity pointer\n"
         "[syslog:14] [" + pid + "]: empty explicit identity\n"
         "[syslog:14] released: before cached storage release\n"
-        "[syslog:14] replacement: after close and storage release\n";
+        "[syslog:14] replacement: after close and storage release\n"
+        "[syslog:14] replacement: embedded\n"
+        "[syslog:14] replacement: after embedded nul\n";
 #ifdef SYSLOG_RELOAD_TEST
     const std::string reload =
         "[syslog:14] transient: before kernel unload\n"

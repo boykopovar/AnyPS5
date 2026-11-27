@@ -73,6 +73,7 @@ public:
     void Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip = false);
     void SubmitFlip(const FlipInfo& info);
     void SuspendPoint();
+    void WaitDeviceIdle();
     std::uint32_t ReserveEopFlip(const FlipInfo& info);
     std::uint32_t ReserveEopFlipAt(const FlipInfo& info, std::uint32_t token);
     std::vector<std::uint32_t> PendingEopFlipTokens();
@@ -111,6 +112,7 @@ public:
     [[nodiscard]] static DeferredAbiUseCounts DeferredAbiUses();
     [[nodiscard]] std::vector<std::array<std::uint64_t, 2>> PreparedEntryHashes(const Shader* shader);
     [[nodiscard]] std::array<std::uint64_t, 4> PrebuiltLibraries();
+    [[nodiscard]] std::uint64_t SettledPipelineLibraryWork();
     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied = {});
@@ -129,10 +131,13 @@ public:
     DispatchCacheFootprint DispatchCacheSize();
     DispatchCacheFootprint DrawCacheSize();
     static std::uint64_t DispatchCacheBytes();
+    static std::size_t DrawCacheEntries();
+    static std::size_t DrawKeySightingKeys();
     static std::uint64_t DrawCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
     static void SetCaptureCheckHook(void (*hook)());
+    static void SetDispatchItemHook(void (*hook)(std::span<const Graphics::GuestMemorySnapshot>));
 
 private:
     class RecaptureScope {
@@ -153,9 +158,10 @@ private:
     std::uint32_t reserveEopFlip(const FlipInfo& info, std::uint32_t token);
     static bool& onWorkerThread();
     static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
+    static void copyRewindTail(Submission& tail, const std::uint32_t* guest, std::size_t words, std::span<const Submission::RewindReturn> returns);
     static constexpr std::size_t MaximumSegmentDepth = 64;
-    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth);
-    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords);
+    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t* origin = nullptr);
+    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords, const std::uint32_t* origin);
     static void readRegisterLists(Submission& submission);
     bool refreshIndirectSegment(Submission& submission, std::size_t index);
     void waitForFlipRoom(const Submission& submission);
@@ -215,7 +221,6 @@ private:
     static bool verifyDrawEntries();
     static bool registerKeyEnabled();
     static bool verifyDrawRecipe();
-    static std::size_t drawCacheEntries();
     static bool drawCacheIndirect();
     static bool drawCachePushWord();
     static bool verifyDrawPushWord();
@@ -267,7 +272,7 @@ private:
     static std::array<WriteRecord, 16384>& writeHistory();
     static AgcDriver::Mutex& writeHistoryMutex();
     static std::size_t& writeCursor();
-    static void dumpPackets(std::span<const std::uint32_t> commands, const std::uint32_t* guest = nullptr);
+    static void dumpPackets(std::span<const std::uint32_t> commands, std::uint32_t queue, const std::uint32_t* guest = nullptr);
     static void validate(const Submission& submission, const std::uint32_t* guest = nullptr, bool report = true);
     static bool matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
     static bool fillClearEnabled();
@@ -355,7 +360,7 @@ private:
     static bool pollReapAll();
     static bool pollTryEach();
     static bool traceLateLabels();
-    void waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory = false);
+    void waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory = false, std::span<const std::uint32_t> following = {});
     struct PendingWait {
         std::array<std::uint32_t, 8> words;
         std::size_t count;
@@ -410,6 +415,7 @@ private:
     static bool packetEpoch();
     static bool labelTryEachPacket();
     static std::chrono::microseconds labelFlushDeadline();
+    static std::chrono::microseconds labelFlushBusyDeadline();
     static bool labelFlushDue();
     static bool completionsPending();
     static bool reapEachPacket();
@@ -455,14 +461,29 @@ private:
         std::atomic<std::uint64_t> reference{0};
         std::atomic<std::uint64_t> mask{0};
         std::atomic<std::uint64_t> shape{0};
+        std::atomic<std::uint64_t> generation{0};
     };
+    struct AwaitedFields {
+        std::uint64_t address;
+        std::uint64_t reference;
+        std::uint64_t mask;
+        std::uint64_t shape;
+        std::uint64_t generation;
+    };
+    static std::optional<AwaitedFields> readAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
+    static bool awaitedUnchanged(const AwaitedSlot& slot, const AwaitedFields& fields);
+    static bool awaitedSatisfied(const AwaitedFields& fields);
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
     std::atomic<bool> tracksTails{false};
     std::mutex tailsMutex;
     std::vector<std::pair<std::uint32_t, const std::uint32_t*>> unreadTails;
     void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
+    static std::optional<AwaitedFields> blockedOn(const AwaitedSlot& slot, std::uint64_t awaited);
     static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
+    using HeldSlot = std::pair<const AwaitedSlot*, AwaitedFields>;
+    bool slotsHeldStill(std::span<const HeldSlot> held) const;
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
+    void noteRewindWaitFields(std::uint32_t queue);
     std::atomic<bool> captureHold{false};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
@@ -490,6 +511,7 @@ private:
     std::unordered_map<std::uint64_t, std::deque<std::uint64_t>> priorValueSets;
 
     std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawCache;
+    std::unordered_map<const ShaderRecompiler::RecompileResult*, std::size_t> drawCacheResultReferences;
     std::unordered_map<std::uint64_t, std::uint64_t> drawShapes;
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;

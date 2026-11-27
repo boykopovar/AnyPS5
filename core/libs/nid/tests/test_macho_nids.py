@@ -264,6 +264,14 @@ def check_refusals(patcher, directory):
     growing = [("_ab", 0, 0x100), ("_cd", 0, 0x108)]
     result, _ = patch(patcher, directory, "signed.dylib", build_dylib(growing, [], signed=True))
     assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    image = bytearray(build_dylib(growing, [], signed=True))
+    struct.pack_into("<I", image, 16, struct.unpack_from("<I", image, 16)[0] - 1)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "hidden-code-signature.dylib", original)
+    assert result.returncode != 0 and "load command count" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
+    check_linkedit_bounds(patcher, directory)
+    check_chained_fixups_bounds(patcher, directory)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))
     assert result.returncode != 0 and "bind opcodes are not supported" in result.stdout + result.stderr, (result.stdout, result.stderr)
     result, _ = patch(patcher, directory, "signed-short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)], signed=True))
@@ -285,6 +293,18 @@ def check_deep_trie(patcher, directory):
     result, _ = patch(patcher, directory, "deep-trie.dylib", image)
     assert result.returncode != 0 and "export trie nesting too deep" in result.stdout + result.stderr, (result.returncode, result.stdout, result.stderr)
 
+
+def check_short_chained_fixups_command(patcher, directory):
+    image = bytearray(build_dylib([], [("_sceKernelFoo", 1)]))
+    fixups = command_fields(image)[LC_DYLD_CHAINED_FIXUPS][0]
+    struct.pack_into("<I", image, fixups + 4, 8)
+    struct.pack_into("<I", image, 16, 4)
+    struct.pack_into("<I", image, 20, fixups + 8 - 32)
+    path = Path(directory) / "short-fixups-command.dylib"
+    path.write_bytes(image)
+    result = subprocess.run([str(patcher), "--exec", str(path)], capture_output=True, text=True, timeout=30)
+    assert result.returncode != 0 and "load command" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == image
 
 def check_short_imports(patcher, directory):
     imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]
@@ -309,12 +329,49 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
+        check_short_chained_fixups_command(patcher, directory)
         check_short_imports(patcher, directory)
         check_preserved(patcher, directory)
         check_export_list(patcher, directory)
         check_refusals(patcher, directory)
         check_deep_trie(patcher, directory)
     print("NID patcher Mach-O tests passed")
+
+
+def check_linkedit_bounds(patcher, directory):
+    image = bytearray(build_dylib([("_ab", 0, 0x100), ("_cd", 0, 0x108)], []))
+    linkedit = command_fields(image)[LC_SEGMENT_64][1]
+    struct.pack_into("<Q", image, linkedit + 40, (1 << 64) - PAGE)
+    struct.pack_into("<Q", image, linkedit + 48, len(image) + PAGE)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "overflow-linkedit.dylib", original)
+    assert result.returncode != 0 and "__LINKEDIT does not end the file" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
+
+
+def check_chained_fixups_bounds(patcher, directory):
+    image = bytearray(build_dylib([("_puts_nid_postfix", 0, 0x100)], []))
+    fixups = command_fields(image)[LC_DYLD_CHAINED_FIXUPS][0]
+    data_offset, data_size = struct.unpack_from("<II", image, fixups + 8)
+    assert data_size >= 28
+    struct.pack_into("<7I", image, data_offset, 0, 0, 0, 0, 0, 1, 0)
+    struct.pack_into("<I", image, fixups + 12, 16)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "short-fixups-data.dylib", original)
+    assert result.returncode != 0 and "chained fixups header out of bounds" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
+
+    image = bytearray(build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceKernelFoo", 1)]))
+    fixups = command_fields(image)[LC_DYLD_CHAINED_FIXUPS][0]
+    command_end = 32 + struct.unpack_from("<I", image, 20)[0]
+    command_count = struct.unpack_from("<I", image, 16)[0]
+    image[command_end:command_end + 16] = image[fixups:fixups + 16]
+    struct.pack_into("<I", image, 16, command_count + 1)
+    struct.pack_into("<I", image, 20, struct.unpack_from("<I", image, 20)[0] + 16)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "duplicate-fixups-commands.dylib", original)
+    assert result.returncode != 0 and "more than one chained fixups command" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
 
 
 if __name__ == "__main__":

@@ -186,6 +186,7 @@ bool IsJitSharedMemory(int descriptor) {
 }
 
 void DuplicateJitSharedMemory(int from, int to) {
+    if (from == to) return;
     std::lock_guard lock(g_jitLock);
     g_jitDescriptors.erase(to);
     const auto source = g_jitDescriptors.find(from);

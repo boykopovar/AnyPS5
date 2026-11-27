@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "Equeue.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -39,7 +40,7 @@ static UnreadFile UnreadFileBytes(int file) {
 }
 
 static bool RegularFile(int descriptor) {
-    if (File::IsHostStream(descriptor)) {
+    if (File::IsHostStream(descriptor) || IsKsemDescriptor_nid_no_patch(descriptor)) {
         return false;
     }
     FileStat status{};
@@ -121,7 +122,8 @@ void KernelEqueuePrivate::Close() {
 
 void KernelEqueuePrivate::TriggerExpiredTimers(uint64_t nowNs) {
     for (auto& ev : m_events) {
-        if (ev.enabled && ev.deadlineNs != 0 && ev.deadlineNs <= nowNs) {
+        const bool periodicTimer = ev.event.filter == EVFILT_TIMER && ev.intervalNs != 0;
+        if ((ev.enabled || periodicTimer) && ev.deadlineNs != 0 && ev.deadlineNs <= nowNs) {
             if (ev.event.filter == EVFILT_TIMER) {
                 const uint64_t count = ev.intervalNs == 0
                     ? (ev.triggered ? 0 : 1)
@@ -129,7 +131,7 @@ void KernelEqueuePrivate::TriggerExpiredTimers(uint64_t nowNs) {
                 ev.event.data += static_cast<intptr_t>(count);
                 ev.deadlineNs += count * ev.intervalNs;
             }
-            if (!ev.triggered) ++m_activations;
+            if (ev.enabled && !ev.triggered) ++m_activations;
             ev.triggered = true;
         }
     }
@@ -533,6 +535,7 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         }
         it->deadlineNs = event.deadlineNs;
         it->intervalNs = event.intervalNs;
+        it->lowWater = event.lowWater;
         it->event.udata = event.event.udata;
         for (auto& pending : it->pendingEvents) {
             pending.udata = event.event.udata;
@@ -970,21 +973,41 @@ static int AddDescriptorEvent(KernelEqueue eq, int fd, std::size_t size, void* u
     const bool isSocket = GuestSockets::IsOpen(fd);
     std::int64_t available = 0;
     bool eof = false;
-    const bool isPipe = !isSocket && filter == EVFILT_READ && !File::IsHostStream(fd) && GuestSockets::PipeReadState(fd, &available, &eof);
+    bool writable = false;
+    const bool isPipe = !isSocket && !File::IsHostStream(fd) && (filter == EVFILT_READ ? GuestSockets::PipeReadState(fd, &available, &eof) : GuestSockets::PipeWriteState(fd, &available, &eof, &writable));
     const bool isFile = !isSocket && !isPipe && RegularFile(fd);
     if (!isSocket && !isPipe && !isFile && DescriptorIsOpen_nid_no_patch(fd)) {
-        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: descriptor that is neither a socket, the read end of a pipe nor a regular file" : "sceKernelAddWriteEvent: descriptor that is neither a socket nor a regular file");
+        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: descriptor that is neither a socket, the read end of a pipe nor a regular file" : "sceKernelAddWriteEvent: descriptor that is neither a socket, the write end of a pipe nor a regular file");
     }
-    if (size > 1 && !isPipe) {
-        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: low watermark" : "sceKernelAddWriteEvent: low watermark");
+    if (size > 1 && isFile) {
+        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: low watermark on a regular file" : "sceKernelAddWriteEvent: low watermark on a regular file");
     }
     if (!isSocket && !isPipe && !isFile) {
         return SCE_KERNEL_ERROR_EBADF;
     }
+    if (isPipe && filter == EVFILT_WRITE && eof) {
+        const auto owner = EqueuePin_nid_postfix(eq);
+        if (!owner) {
+            return SCE_KERNEL_ERROR_EBADF;
+        }
+        if (!owner->HasEvent(static_cast<uintptr_t>(fd), EVFILT_WRITE)) {
+            return SCE_KERNEL_ERROR_EPIPE;
+        }
+    }
+    if (isSocket && size > 1 && GuestSockets::Type(fd) != 1) {
+        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: low watermark above 1 on a socket that is not a stream" : "sceKernelAddWriteEvent: low watermark above 1 on a socket that is not a stream");
+    }
+    if (isSocket && size > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: low watermark above INT64_MAX on a socket" : "sceKernelAddWriteEvent: low watermark above INT64_MAX on a socket");
+    }
     if (isFile) {
         return EqueueAddEvent_nid_postfix(eq, FileEvent(fd, filter, EV_ADD, udata));
     }
-    return EqueueAddEvent_nid_postfix(eq, EqueueDescriptorEvent(fd, filter, EV_ADD, udata));
+    auto event = EqueueDescriptorEvent(fd, filter, EV_ADD, udata);
+    if (isSocket) {
+        event.lowWater = size > 1 ? static_cast<std::int64_t>(size) : 0;
+    }
+    return EqueueAddEvent_nid_postfix(eq, event);
 }
 
 int APS5_VABI sceKernelAddReadEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {

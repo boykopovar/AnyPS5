@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cerrno>
 #include <climits>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <memory>
@@ -54,7 +55,12 @@ bool triggered() {
     if (error) throw std::runtime_error("Screenshot: cannot inspect trigger file: " + error.message());
     if (!std::filesystem::is_regular_file(status)) throw std::runtime_error("Screenshot: trigger must be a regular file");
     const bool consumed = std::filesystem::remove(trigger, error);
-    if (error) throw std::runtime_error("Screenshot: cannot consume trigger file: " + error.message());
+    static std::atomic<bool> reported{false};
+    if (error) {
+        if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] screenshot trigger cannot be consumed yet, trying again at the next frame: %s\n", error.message().c_str());
+        return false;
+    }
+    reported.store(false);
     return consumed;
 }
 

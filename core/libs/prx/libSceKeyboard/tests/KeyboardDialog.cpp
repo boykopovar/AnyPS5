@@ -20,10 +20,11 @@ void Require(bool value, const char* what) {
     std::abort();
 }
 
-SDL_Event Key(Uint32 type, SDL_Scancode scancode) {
+SDL_Event Key(Uint32 type, SDL_Scancode scancode, Uint8 repeat = 0) {
     SDL_Event event{};
     event.type = type;
     event.key.windowID = Window;
+    event.key.repeat = repeat;
     event.key.keysym.scancode = scancode;
     return event;
 }
@@ -71,6 +72,24 @@ int main() {
     Require(Read(data) == 0, "the key press itself reached the title");
     ModalDialogClose_nid_postfix();
     ModalDialogReset_nid_postfix();
+
+    input.HandleEvent(Key(SDL_KEYDOWN, SDL_SCANCODE_A), Window);
+    Require(Read(data) == 1 && data[0].length == 1 && data[0].key_code[0] == 0x04, "a key press did not reach the title before the repeat dialog test");
+    OpenDialog();
+    input.HandleEvent(Key(SDL_KEYDOWN, SDL_SCANCODE_A, 1), Window);
+    Require(Read(data) == 1 && data[0].length == 1 && data[0].key_code[0] == 0, "a repeated key event did not release held keys when the dialog opened");
+    input.HandleEvent(Key(SDL_KEYDOWN, SDL_SCANCODE_A, 1), Window);
+    input.HandleEvent(Key(SDL_KEYDOWN, SDL_SCANCODE_B), Window);
+    input.HandleEvent(Key(SDL_KEYUP, SDL_SCANCODE_A), Window);
+    Require(Read(data) == 0, "key events while the dialog remained open published input");
+    ModalDialogClose_nid_postfix();
+    ModalDialogReset_nid_postfix();
+    input.HandleEvent(Key(SDL_KEYDOWN, SDL_SCANCODE_A, 1), Window);
+    Require(Read(data) == 0, "a repeated key event published input after the dialog closed");
+    input.HandleEvent(Key(SDL_KEYDOWN, SDL_SCANCODE_A), Window);
+    Require(Read(data) == 1 && data[0].length == 1 && data[0].key_code[0] == 0x04, "normal key press did not resume after the dialog closed");
+    input.HandleEvent(Key(SDL_KEYUP, SDL_SCANCODE_A), Window);
+    Require(Read(data) == 1 && data[0].length == 1 && data[0].key_code[0] == 0, "normal key release did not resume after the dialog closed");
 
     ModalDialogSetPresenter_nid_postfix(false);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK, "close failed");

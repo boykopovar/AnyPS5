@@ -3,6 +3,8 @@
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/src/WtfVector.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -12,6 +14,37 @@ struct FloatPoint3D {
     float m_x;
     float m_y;
     float m_z;
+};
+
+struct AbsolutePositionConstraints {
+    FloatSize m_alignmentOffset;
+    FloatPoint m_layerPositionAtLastLayout;
+};
+
+struct FixedPositionViewportConstraints {
+    const void* m_vtable;
+    FloatSize m_alignmentOffset;
+    std::uint32_t m_anchorEdges;
+    FloatRect m_viewportRectAtLastLayout;
+    FloatPoint m_layerPositionAtLastLayout;
+};
+
+static_assert(sizeof(AbsolutePositionConstraints) == 16);
+static_assert(offsetof(AbsolutePositionConstraints, m_layerPositionAtLastLayout) == 8);
+static_assert(sizeof(FixedPositionViewportConstraints) == 48);
+static_assert(alignof(FixedPositionViewportConstraints) == 8);
+static_assert(offsetof(FixedPositionViewportConstraints, m_alignmentOffset) == 8);
+static_assert(offsetof(FixedPositionViewportConstraints, m_anchorEdges) == 16);
+static_assert(offsetof(FixedPositionViewportConstraints, m_viewportRectAtLastLayout) == 20);
+static_assert(offsetof(FixedPositionViewportConstraints, m_layerPositionAtLastLayout) == 36);
+
+enum class TouchAction : std::uint8_t {
+    Auto = 1 << 0,
+    None = 1 << 1,
+    Manipulation = 1 << 2,
+    PanX = 1 << 3,
+    PanY = 1 << 4,
+    PinchZoom = 1 << 5,
 };
 
 enum class CompositeOperator : std::uint8_t {
@@ -134,10 +167,67 @@ struct ScrollAlignment {
     Behavior m_rectPartial;
 };
 
+enum class ScrollElasticity : std::uint8_t { Automatic, None, Allowed };
+
+enum class ScrollbarMode : std::uint8_t { Auto, AlwaysOff, AlwaysOn };
+
+enum class NativeScrollbarVisibility : std::uint8_t { Visible, HiddenByStyle, ReplacedByCustomScrollbar };
+
+enum class OverscrollBehavior : std::uint8_t { Auto, Contain, None };
+
+struct ScrollableAreaParameters {
+    ScrollElasticity horizontalScrollElasticity{ScrollElasticity::None};
+    ScrollElasticity verticalScrollElasticity{ScrollElasticity::None};
+    ScrollbarMode horizontalScrollbarMode{ScrollbarMode::Auto};
+    ScrollbarMode verticalScrollbarMode{ScrollbarMode::Auto};
+    OverscrollBehavior horizontalOverscrollBehavior{OverscrollBehavior::Auto};
+    OverscrollBehavior verticalOverscrollBehavior{OverscrollBehavior::Auto};
+    bool allowsHorizontalScrolling{false};
+    bool allowsVerticalScrolling{false};
+    NativeScrollbarVisibility horizontalNativeScrollbarVisibility{NativeScrollbarVisibility::Visible};
+    NativeScrollbarVisibility verticalNativeScrollbarVisibility{NativeScrollbarVisibility::Visible};
+    bool useDarkAppearanceForScrollbars{false};
+};
+
+struct Position {
+    void* m_anchorNode{nullptr};
+    unsigned m_offset{0};
+    unsigned m_anchorTypeBits{0};
+};
+
+struct VisiblePosition {
+    Position m_deepPosition;
+    std::uint8_t m_affinity{0};
+};
+
+struct VisibleSelection {
+    Position m_anchor;
+    Position m_focus;
+    Position m_base;
+    Position m_extent;
+    Position m_start;
+    Position m_end;
+    std::uint8_t m_affinity{0};
+    std::uint8_t m_type{0};
+    bool m_anchorIsFirst : 1 {false};
+    bool m_isDirectional : 1 {false};
+};
+
 static_assert(sizeof(FloatPoint3D) == 12);
 static_assert(sizeof(ScrollAlignment) == 12);
 static_assert(sizeof(WindRule) == 1);
 static_assert(sizeof(ScrollType) == 1);
+static_assert(sizeof(ScrollableAreaParameters) == 11);
+static_assert(sizeof(Position) == 16);
+static_assert(offsetof(Position, m_offset) == 8);
+static_assert(offsetof(Position, m_anchorTypeBits) == 12);
+static_assert(sizeof(VisiblePosition) == 24);
+static_assert(offsetof(VisiblePosition, m_affinity) == 16);
+static_assert(offsetof(VisibleSelection, m_base) == 32);
+static_assert(offsetof(VisibleSelection, m_extent) == 48);
+static_assert(offsetof(VisibleSelection, m_start) == 64);
+static_assert(offsetof(VisibleSelection, m_end) == 80);
+static_assert(sizeof(VisibleSelection) == 104);
 
 }  // namespace WebCore
 
@@ -165,6 +255,11 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_20TransformationMatrixE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::TransformationMatrix& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntSize& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS0_9OptionSetINS_13ActivityState4FlagEEE(NKWebKit::WtfAbi::TextStream& stream, std::uint32_t flags);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE(NKWebKit::WtfAbi::TextStream& stream, WebCore::TouchAction touchAction);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& region);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_27AbsolutePositionConstraintsE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::AbsolutePositionConstraints& constraints);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_32FixedPositionViewportConstraintsE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FixedPositionViewportConstraints& constraints);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_8IntPointE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntPoint& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatSize& value);
@@ -176,4 +271,9 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_21Vi
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_26GraphicsLayerPaintingPhaseE(NKWebKit::WtfAbi::TextStream& stream, WebCore::GraphicsLayerPaintingPhase value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_25ScrollPositioningBehaviorE(NKWebKit::WtfAbi::TextStream& stream, WebCore::ScrollPositioningBehavior value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_13GraphicsLayer16CustomAppearanceE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::GraphicsLayer::CustomAppearance& value);
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS0_6VectorImLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(NKWebKit::WtfAbi::TextStream& stream, const NKWebKit::WtfAbi::Vector<std::uint64_t>& vector);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE(NKWebKit::WtfAbi::TextStream& stream, WebCore::ScrollableAreaParameters value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15VisiblePositionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::VisiblePosition& visiblePosition);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16VisibleSelectionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::VisibleSelection& selection);
 }
