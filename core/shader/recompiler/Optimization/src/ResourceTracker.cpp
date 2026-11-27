@@ -2890,6 +2890,8 @@ private:
         const IrValue* storeMask = inst.Argument(inst.ArgumentCount() - 1u)->Resolve();
         if (offsetValue->Resolve()->Opcode() == IrOpcode::ReadFirstLane && !ReadsUnderStoreMask(offsetValue, storeMask)) return missed(StoreTableMiss::NotAffine);
         if (!MatchAffineOffset(StoreOffsetValue(offsetValue, storeMask), key, stride, addend, false) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return missed(StoreTableMiss::NotAffine);
+        const auto combinedAddend = static_cast<std::uint64_t>(registerAddend) + addend;
+        if (combinedAddend > std::numeric_limits<std::uint32_t>::max()) return missed(StoreTableMiss::NotAffine);
         if (addend % sizeof(std::uint32_t) != 0u) return missed(StoreTableMiss::Unaligned);
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
@@ -2899,7 +2901,7 @@ private:
         table.address = address;
         table.offset = first + addend;
         table.stride = stride;
-        table.registerAddend = registerAddend + addend;
+        table.registerAddend = static_cast<std::uint32_t>(combinedAddend);
         table.maxKey = std::min(storeU32UpperBound(key), FirstLaneUpperBound(key, storeMask));
         std::vector<std::uint32_t> values;
         std::unordered_set<const IrValue*> visiting;

@@ -6422,8 +6422,10 @@ void verifyStoreTables() {
     require(selectStores.fallback == StoreTableFallback::None && selectStores.tables.size() == 1u && selectStores.tables[0].keyList == std::vector<std::uint32_t>{1u, 3u} && selectStores.tables[0].keys == 4u, "store table selected key: the dispatch did not keep the key list");
     {
         auto strippedSelect = *selectCompiled.result;
+        const auto bytesWithKeys = MetadataBytes(strippedSelect);
+        const auto keyBytes = strippedSelect.storeTables.tables[0].keyList.capacity() * sizeof(std::uint32_t);
         std::vector<std::uint32_t>().swap(strippedSelect.storeTables.tables[0].keyList);
-        require(MetadataBytes(*selectCompiled.result) == MetadataBytes(strippedSelect) + selectStores.tables[0].keyList.capacity() * sizeof(std::uint32_t), "store table selected key: result bytes omitted the key list");
+        require(keyBytes != 0u && bytesWithKeys == MetadataBytes(strippedSelect) + keyBytes, "store table selected key: result bytes omitted the key list");
     }
 
     root.fill(0u);
@@ -6449,6 +6451,31 @@ void verifyStoreTables() {
     const auto holderCompiled = CompileTable(request(holderCode));
     const auto& holderStores = holderCompiled.result->storeTables;
     require(holderStores.fallback == StoreTableFallback::None && holderStores.tables.size() == 1u && holderStores.tables[0].size == sizeof(holder) && holderStores.tables[0].keys == 4u, "store table holder buffer: the holder size did not bound the records");
+    {
+        IrResourcePlan shortHolderPlan;
+        shortHolderPlan.srtPlanComplete = true;
+        shortHolderPlan.resourceTrackingComplete = true;
+        shortHolderPlan.userDataCount = 0u;
+        shortHolderPlan.storesBounded = true;
+        IrValue zeroLow(IrOpcode::Void, IrType::U32, 0u);
+        IrValue zeroHigh(IrOpcode::Void, IrType::U32, 1u);
+        zeroLow.SetImmediateU32(holderV[0]);
+        zeroHigh.SetImmediateU32(holderV[1]);
+        DescriptorSource shortSource;
+        shortSource.dwordCount = 2u;
+        shortSource.dwords[0] = &zeroLow;
+        shortSource.dwords[1] = &zeroHigh;
+        shortHolderPlan.descriptorSources.push_back(shortSource);
+        StoreTable shortTable;
+        shortTable.source = 0u;
+        shortTable.stride = 16u;
+        shortTable.maxKey = 3u;
+        shortTable.pc = held.pc;
+        shortHolderPlan.storeTables.push_back(shortTable);
+        ResourceSnapshot shortSnapshot;
+        ResourceMaterializer{}.Materialize(shortHolderPlan, SrtRuntime{}, shortSnapshot);
+        require(shortSnapshot.storeTables.fallback == StoreTableFallback::NotBuffer && shortSnapshot.storeTables.tables.empty() && shortSnapshot.storeTables.missPc == held.pc, "store table holder width: a holder source narrower than 4 dwords did not fall back as NotBuffer");
+    }
 
     constexpr auto cutBytes = static_cast<std::uint32_t>(sizeof(holder)) - 8u;
     const auto cutHolderV = TableV(holder.data(), 0u, cutBytes);
@@ -6468,6 +6495,11 @@ void verifyStoreTables() {
     require(onlyTable(*addendPlan, "store table register addend").registerAddend == 48u, "store table register addend: the plan did not keep the addend that can wrap");
     const auto addendCompiled = holderFallback(addendCode, StoreTableFallback::OffsetWraps, "store table register addend");
     require(addendCompiled.result->storeTables.tables.empty() && addendCompiled.result->storeTables.missPc != 0u, "store table register addend: the fallback did not name its store");
+    const std::vector<std::uint32_t> combinedAddendCode{0xf4080100u, 0xfa000000u, 0x34040084u, 0x4a040490u, 0x7e180502u, 0xbf8cc07fu, 0x810da00cu, 0xf4280202u, 0x1a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
+    const auto combinedAddendPlan = GetResourcePlan(request(combinedAddendCode));
+    const auto& combinedAddendTable = onlyTable(*combinedAddendPlan, "store table combined addend");
+    require(combinedAddendTable.offset == 48u && combinedAddendTable.registerAddend == 48u, "store table combined addend: the plan did not combine the first-lane and scalar addends");
+    static_cast<void>(holderFallback(combinedAddendCode, StoreTableFallback::OffsetWraps, "store table combined addend"));
     const std::vector<std::uint32_t> scaleCode{0xf4080100u, 0xfa000000u, 0x7e180500u, 0xbf8cc07fu, 0x930db00cu, 0xf4280202u, 0x1a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
     static_cast<void>(holderFallback(scaleCode, StoreTableFallback::OffsetWraps, "store table scale"));
     const std::vector<std::uint32_t> immediateCode{0xf4080100u, 0xfa000000u, 0x7e180500u, 0xbf8cc07fu, 0x8f0d840cu, 0xf4280202u, 0x1a000030u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};

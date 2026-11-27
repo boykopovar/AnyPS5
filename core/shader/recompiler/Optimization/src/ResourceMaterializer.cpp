@@ -1971,7 +1971,8 @@ bool snapshotSource(const IrResourcePlan& plan, std::uint32_t source) {
 
 bool offsetMayWrap(const StoreTable& table, std::uint64_t keys) {
     if (!table.keyList.empty()) keys = std::min<std::uint64_t>(keys, static_cast<std::uint64_t>(table.keyList.back()) + 1u);
-    if (keys == 0u || (keys - 1u) * table.stride + table.registerAddend <= std::numeric_limits<std::uint32_t>::max()) return false;
+    const auto room = std::numeric_limits<std::uint32_t>::max() - table.registerAddend;
+    if (keys <= 1u || table.stride == 0u || keys - 1u <= room / table.stride) return false;
     return table.registerAddend != 0u || !std::has_single_bit(table.stride) || !table.keyList.empty();
 }
 
@@ -2024,6 +2025,7 @@ void materializeStoreTables(const IrResourcePlan& plan, const SrtRuntime& runtim
             if (heap.dwordCount != 2u) return fail(StoreTableFallback::Unevaluated, table);
             entry.base = static_cast<std::uint64_t>(heap.dwords[0]) | (static_cast<std::uint64_t>(heap.dwords[1]) << 32u);
         } else {
+            if (heap.dwordCount != 4u) return fail(StoreTableFallback::NotBuffer, table);
             const auto holder = decodeBufferDescriptor(heap);
             if (holder.Type() != 0u) return fail(StoreTableFallback::NotBuffer, table);
             entry.base = holder.Base48();
