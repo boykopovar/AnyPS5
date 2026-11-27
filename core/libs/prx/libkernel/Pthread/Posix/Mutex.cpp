@@ -79,8 +79,8 @@ int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
 }
 
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    PthreadMutexattr handle = nullptr;
     if (attr) {
-        PthreadMutexattr handle = nullptr;
         if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return PosixThread::GUEST_EFAULT;
         PthreadMutexattrPrivate attributes{};
         if (handle && !GuestCopyIn_nid_no_patch(&attributes, handle, sizeof(attributes))) return PosixThread::GUEST_EFAULT;
@@ -88,7 +88,11 @@ int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadM
     }
     if (mutex && !_slotUsable(mutex)) return PosixThread::GUEST_EFAULT;
     const int result = scePthreadMutexInit(mutex, attr, nullptr);
-    if (result == 0 && (!attr || !*attr)) (*mutex)->_type = MutexType::ErrorCheck;
+    if (result == 0 && !handle) {
+        PthreadMutex created = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&created, mutex, sizeof(created))) return PosixThread::GUEST_EFAULT;
+        created->_type = MutexType::ErrorCheck;
+    }
     return PosixThread::ToErrno(result);
 }
 
