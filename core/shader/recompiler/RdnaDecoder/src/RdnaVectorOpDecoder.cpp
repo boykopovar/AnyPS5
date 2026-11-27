@@ -2021,7 +2021,9 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
         case RdnaOpcode::VMinF32:
         case RdnaOpcode::VMaxF32:
         case RdnaOpcode::VMacF32:
+        case RdnaOpcode::VMacLegacyF32:
         case RdnaOpcode::VMadF32:
+        case RdnaOpcode::VMadLegacyF32:
         case RdnaOpcode::VFmaF32:
         case RdnaOpcode::VAddF16:
         case RdnaOpcode::VSubF16:
