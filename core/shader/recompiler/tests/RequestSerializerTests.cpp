@@ -808,7 +808,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 66u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
