@@ -37,6 +37,20 @@ void CheckDestroySw2WithCodec() {
     }
 }
 
+void CheckDestroySw2Unreadable() {
+    for (const int expectedErrno : {0, 7, 42}) {
+        for (void* unreadable : {reinterpret_cast<void*>(std::uintptr_t{0x10}), reinterpret_cast<void*>(~std::uintptr_t{0})}) {
+            errno = expectedErrno;
+            try {
+                Require(sceSdecDestroySw2(unreadable) == 0, "sceSdecDestroySw2 must return 0 on unreadable decoder");
+            } catch (...) {
+                Require(false, "sceSdecDestroySw2 must not throw on unreadable decoder");
+            }
+            Require(errno == expectedErrno, "sceSdecDestroySw2 must preserve errno on unreadable decoder");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -47,5 +61,6 @@ int main() {
         Require(errno == expectedErrno, "Destroy must not change errno");
     }
     CheckDestroySw2WithCodec();
+    CheckDestroySw2Unreadable();
     return 0;
 }

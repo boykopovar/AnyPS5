@@ -317,7 +317,7 @@ int APS5_VABI sceSdecDestroySw2(void* decoder) {
     std::array<std::uint64_t, 3> header{};
     const bool readable = GuestCopyIn_nid_no_patch(header.data(), decoder, sizeof(header));
     errno = savedErrno;
-    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (!readable) return 0;
     if (header[1] == 0 && header[2] == 0) return 0;
     header[1] = 0;
     header[2] = 0;
