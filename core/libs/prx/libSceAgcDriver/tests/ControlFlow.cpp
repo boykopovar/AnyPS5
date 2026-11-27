@@ -186,6 +186,20 @@ void verifyPredecessorRebuild() {
     }
 }
 
+void verifyEveryPathReachesBlock() {
+    const auto allPaths = makeGraph({{1u, 2u}, {3u}, {3u}, {4u}, {}});
+    require(allPaths.EveryPathReaches(3u), "all paths through a branch did not recognize their common barrier block");
+
+    const auto bypassesThroughCycle = makeGraph({{1u, 2u}, {3u}, {2u}, {4u}, {}});
+    require(!bypassesThroughCycle.EveryPathReaches(3u), "a path that can loop forever without the barrier was treated as reaching it");
+
+    const auto bypassesExit = makeGraph({{1u, 2u}, {3u}, {4u}, {4u}, {}});
+    require(!bypassesExit.EveryPathReaches(3u), "a path that exits without the barrier was treated as reaching it");
+
+    const auto afterBarrierCycle = makeGraph({{1u}, {2u}, {2u}});
+    require(afterBarrierCycle.EveryPathReaches(1u), "a cycle after the barrier incorrectly invalidated its arrival proof");
+}
+
 void verifyLoopMergeDoesNotEnterNestedSelection() {
     auto graph = makeGraph({{1, 5}, {2, 3}, {5}, {5, 4}, {1}, {}});
     Structurizer{}.Structurize(graph);
@@ -1493,6 +1507,7 @@ done:
     }
     try {
         verifyPredecessorRebuild();
+        verifyEveryPathReachesBlock();
         verifyNullSwappc();
         verifyScheduledJumpTable();
         VerifyUserDataTail();
