@@ -8,6 +8,7 @@
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/System/include/FaultSignals.hpp"
+#include "prx/libkernel/System/include/RaiseHold.hpp"
 #include "prx/libkernel/System/include/TimerSignals.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -63,6 +64,7 @@ static_assert(std::atomic<GuestHandler>::is_always_lock_free);
 struct ThreadSignals {
     std::atomic<std::uint32_t> blocked[4]{};
     std::atomic<std::uint64_t> holds[MaxSignal + 1]{};
+    std::atomic<int> raised{0};
 };
 ThreadSignals& CurrentSignals() {
     thread_local ThreadSignals* signals = nullptr;
@@ -908,6 +910,15 @@ extern "C" void TakeValueSignal_nid_no_patch(int guest, std::uint64_t ticket) {
     RemoveValueSignalLocked(guest, ticket);
 }
 
+bool HoldRaisedException(std::int64_t thread, int guest) {
+    ThreadSignals* target = SignalThread(thread);
+    if (target == nullptr || !SignalBlocked(*target, guest)) return false;
+    target->raised.store(guest);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (SignalBlocked(*target, guest)) return true;
+    return target->raised.exchange(0) == 0;
+}
+
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);
 namespace {
 constexpr std::size_t MinSignalStackSize = 2048;
@@ -953,6 +964,11 @@ int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previo
     const bool faulted = guestPrevious != nullptr && !GuestCopyOut_nid_no_patch(guestPrevious, previousSet, sizeof(*previousSet));
     std::atomic_thread_fence(std::memory_order_seq_cst);
     if (DeliverUnblockedPending() && caught != nullptr) *caught = true;
+    const int raised = self.raised.load();
+    if (raised != 0 && !SignalBlocked(self, raised) && self.raised.exchange(0) != 0) {
+        DeliverHeldException(raised);
+        if (caught != nullptr) *caught = true;
+    }
     if (faulted) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }

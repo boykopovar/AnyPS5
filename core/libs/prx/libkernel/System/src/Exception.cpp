@@ -8,6 +8,7 @@
 #include "prx/libc/include/HostFault.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/System/include/RaiseHold.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/System/include/FaultSignals.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
@@ -1462,6 +1463,16 @@ void InstallSiginfoFaultDelivery() {
 #endif
 }
 
+void DeliverHeldException(int signum) {
+ const auto handler = Handler(signum);
+ if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: the handler was removed before the signal was delivered");
+#ifdef _WIN32
+ RaiseOn(scePthreadSelf(), handler, signum);
+#else
+ RaiseOn(scePthreadSelf());
+#endif
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
@@ -1495,6 +1506,7 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (thread == nullptr || !GuestThreadIsLive(thread)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
+ if (HoldRaisedException(thread->tid, signum)) return 0;
 #ifdef _WIN32
  if (thread->suspended.load(std::memory_order_acquire)) {
   int pending = 0;
