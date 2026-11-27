@@ -7,6 +7,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 using namespace ShaderRecompiler;
 
@@ -32,6 +33,39 @@ void SetregImmKeepsItsLiteral() {
     Check(instruction.source0.value == 0x12345678u, "s_setreg_imm32_b32 lost its literal");
     const std::array<std::uint32_t, 2> movk{0xb0001234u, 0xbf810000u};
     Check(Decode(movk).wordCount == 1u, "s_movk_i32 took a literal word");
+}
+
+bool RefusedAs(std::span<const std::uint32_t> words, std::string_view encoding, long long opcode) {
+    try {
+        static_cast<void>(Decode(words));
+    } catch (const UnsupportedInstructionError& error) {
+        return error.encoding != nullptr && encoding == error.encoding && error.opcodeValue == opcode;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+void DppIsRefusedByName() {
+    const std::array<std::uint32_t, 2> move{0x7e1002fau, 0xff011109u};
+    Check(RefusedAs(move, "VOP1_DPP", 0x01), "DPP v_mov_b32 was not refused as VOP1_DPP");
+    const std::array<std::uint32_t, 2> nop{0x7e0000fau, 0xff011100u};
+    Check(RefusedAs(nop, "VOP1_DPP", 0x00), "DPP v_nop was not refused as VOP1_DPP");
+    const std::array<std::uint32_t, 2> add{0x060a0cfau, 0xff011107u};
+    Check(RefusedAs(add, "VOP2_DPP", 0x03), "DPP v_add_f32 was not refused as VOP2_DPP");
+    const std::array<std::uint32_t, 2> carry{0x4a1416fau, 0xff011107u};
+    Check(RefusedAs(carry, "VOP2_DPP", 0x25), "DPP v_add_i32, which AnyPS5 promotes to VOP3, was not refused as VOP2_DPP");
+    const std::array<std::uint32_t, 2> compare{0x7c0206fau, 0xff011102u};
+    Check(RefusedAs(compare, "VOPC_DPP", 0x01), "DPP v_cmp_lt_f32 was not refused as VOPC_DPP");
+    const std::array<std::uint32_t, 2> integerCompare{0x7d0206fau, 0xff011102u};
+    Check(RefusedAs(integerCompare, "VOPC_DPP", 0x81), "DPP v_cmp_lt_i32 was not refused as VOPC_DPP with its opcode");
+    const std::array<std::uint32_t, 1> firstWordOnly{0x7c0206fau};
+    Check(RefusedAs(firstWordOnly, "VOPC_DPP", 0x01), "a DPP instruction cut after its first word was not refused as VOPC_DPP");
+    const std::array<std::uint32_t, 1> madmkFirstWord{0x400a0cfau};
+    Check(RefusedAs(madmkFirstWord, "VOP2_DPP", 0x20), "DPP v_madmk_f32 cut before its constant was not refused as VOP2_DPP");
+    const std::array<std::uint32_t, 1> highVgpr{0x7e1003fau};
+    const auto fromV250 = Decode(highVgpr);
+    Check(fromV250.op == RdnaOpcode::VMovB32 && fromV250.source0.kind == RdnaOperandKind::VectorRegister && fromV250.source0.reg == 250u, "v_mov_b32 from v250 was refused or decoded wrongly");
 }
 
 bool Throws(std::span<const std::uint32_t> words) {
@@ -152,6 +186,37 @@ void Vop3FormsOfMappedVop2AndVopcDecode() {
     Check(Decode(cmpsTruF64).op == RdnaOpcode::VCmpTruF64, "VOP3 v_cmps_tru_f64 did not decode as v_cmp_tru_f64");
 }
 
+void Vop3OpcodeTakesBit16() {
+    const std::array<std::uint32_t, 3> add3{0xd2db0011u, 0x04104100u, 0xbf810000u};
+    const auto sum = Decode(add3);
+    Check(sum.op == RdnaOpcode::VAdd3U32, "VOP3 opcode 0x16d with bit 16 set did not decode as v_add3_u32 (0x36d)");
+    Check(sum.wordCount == 2u, "VOP3 v_add3_u32 is not two words");
+    Check(sum.destination.kind == RdnaOperandKind::VectorRegister && sum.destination.reg == 17u, "VOP3 v_add3_u32 lost its vector destination");
+    Check(sum.destination2.kind == RdnaOperandKind::Unknown, "VOP3 v_add3_u32 took bits 14:8 as a scalar destination");
+    Check(sum.source0.kind == RdnaOperandKind::VectorRegister && sum.source0.reg == 0u && sum.source1.kind == RdnaOperandKind::ScalarRegister && sum.source1.reg == 32u && sum.source2.kind == RdnaOperandKind::VectorRegister && sum.source2.reg == 4u, "VOP3 v_add3_u32 lost a source");
+    const std::array<std::uint32_t, 3> divScale{0xd2da0011u, 0x04104100u, 0xbf810000u};
+    const auto scale = Decode(divScale);
+    Check(scale.op == RdnaOpcode::VDivScaleF32, "VOP3 opcode 0x16d without bit 16 did not decode as v_div_scale_f32");
+    Check(scale.destination2.kind == RdnaOperandKind::ScalarRegister && scale.destination2.reg == 0u, "VOP3 v_div_scale_f32 lost its scalar destination");
+    for (const std::uint32_t opcode : {0x303u, 0x307u, 0x308u, 0x30du, 0x30eu, 0x314u, 0x346u, 0x347u, 0x351u, 0x354u, 0x357u, 0x35eu, 0x36du, 0x36fu, 0x371u, 0x372u}) {
+        const std::array<std::uint32_t, 3> gcn{(0x34u << 26u) | ((opcode & 0x1ffu) << 17u) | ((opcode >> 9u) << 16u) | 1u, 0x04104100u, 0xbf810000u};
+        const std::array<std::uint32_t, 3> rdna{(0x35u << 26u) | (opcode << 16u) | 1u, 0x04104100u, 0xbf810000u};
+        if (Decode(gcn).op != DecodeRdnaEncodedInstruction(0u, rdna, 0u).op) {
+            const auto what = "VOP3 opcode " + std::to_string(opcode) + " (bit 16 set) did not decode as the same RDNA opcode";
+            Check(false, what.c_str());
+        }
+    }
+    const std::array<std::uint32_t, 3> notRsq{(0x34u << 26u) | (0x1acu << 17u) | (1u << 16u) | 1u, 256u + 5u, 0xbf810000u};
+    Check(Throws(notRsq), "VOP3 opcode 0x3ac (v_rsq_clamp_f32's low bits with bit 16 set) was accepted");
+    for (const std::uint32_t select : {1u, 2u, 4u, 8u}) {
+        const std::array<std::uint32_t, 3> half{(0x34u << 26u) | ((0x303u & 0x1ffu) << 17u) | (1u << 16u) | (select << 12u) | 1u, 0x04104100u, 0xbf810000u};
+        Check(Throws(half), "VOP3 v_add_nc_u16 with an OP_SEL bit (15:12) set was accepted");
+    }
+    const std::array<std::uint32_t, 3> highScalar{0xd2da1011u, 0x04104100u, 0xbf810000u};
+    const auto highScale = Decode(highScalar);
+    Check(highScale.op == RdnaOpcode::VDivScaleF32 && highScale.destination2.kind == RdnaOperandKind::ScalarRegister && highScale.destination2.reg == 16u, "VOP3 v_div_scale_f32 writing s[16:17], which sets bit 12, stopped decoding");
+}
+
 void SdwaKeepsItsModifierWord() {
     const std::array<std::uint32_t, 3> compareToSgpr{0x7c0206f9u, 0x06018e02u, 0xbf810000u};
     const auto toSgpr = Decode(compareToSgpr);
@@ -192,12 +257,14 @@ void SdwaKeepsItsModifierWord() {
 int main() {
     try {
         SetregImmKeepsItsLiteral();
+        DppIsRefusedByName();
         MtbufKeepsItsFormat();
         RsqClampIsTagged();
         SopkComparesAndAdd();
         SmrdLiteralOffset();
         Vop3FormsOfMappedVop2AndVopcDecode();
         SdwaKeepsItsModifierWord();
+        Vop3OpcodeTakesBit16();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

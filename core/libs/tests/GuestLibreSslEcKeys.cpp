@@ -88,6 +88,38 @@ static constexpr unsigned char Secp224k1Signature[] = {
     0x97, 0xbb, 0x30, 0xd8, 0x83, 0xe3, 0x4a, 0x77, 0xc0, 0x6c, 0xf4, 0x85, 0x90, 0x73, 0x32,
 };
 
+struct CompressedCurve {
+    int nid;
+    const char* prime;
+    const char* compressed[3];
+    const char* uncompressed[3];
+    const char* flippedCompressed;
+    const char* flippedUncompressed;
+};
+
+static constexpr CompressedCurve CompressedCurves[] = {
+    {712,
+        "fffffffffffffffffffffffffffffffffffffffffffffffeffffe56d",
+        {"03a1455b334df099df30fc28a169a467e9e47075a90f7e650eb6b7a45c",
+         "0286c0deb56aeb9712390999a0232b9bf596b9639fa1ce8cf426749e60",
+         "03fa182dc268cc40ad9fc1976af6f1b667d9701679b3d03ec4f7a0dd28"},
+        {"04a1455b334df099df30fc28a169a467e9e47075a90f7e650eb6b7a45c7e089fed7fba344282cafbd6f7e319f7c0b0bd59e2ca4bdb556d61a5",
+         "0486c0deb56aeb9712390999a0232b9bf596b9639fa1ce8cf426749e608f598c954e1085555b474a79906b855c539ed633dbf4a9fa9f06b69a",
+         "04fa182dc268cc40ad9fc1976af6f1b667d9701679b3d03ec4f7a0dd28dde2c5f5ae938e863c6f383d2340638959a80a613ba39dd0c121661f"},
+        "02a1455b334df099df30fc28a169a467e9e47075a90f7e650eb6b7a45c",
+        "04a1455b334df099df30fc28a169a467e9e47075a90f7e650eb6b7a45c81f760128045cbbd7d350429081ce6083f4f42a61d35b423aa9283c8"},
+    {713,
+        "ffffffffffffffffffffffffffffffff000000000000000000000001",
+        {"02b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21",
+         "03706a46dc76dcb76798e60e6d89474788d16dc18032d268fd1a704fa6",
+         "03df1b1d66a551d0d31eff822558b9d2cc75c2180279fe0d08fd896d04"},
+        {"04b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34",
+         "04706a46dc76dcb76798e60e6d89474788d16dc18032d268fd1a704fa61c2b76a7bc25e7702a704fa986892849fca629487acf3709d2e4e8bb",
+         "04df1b1d66a551d0d31eff822558b9d2cc75c2180279fe0d08fd896d04a3f7f03cadd0be444c0aa56830130ddf77d317344e1af3591981a925"},
+        "03b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21",
+        "04b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d2142c89c774a08dc04b3dd201932bc8a5ea5f8b89bbb2a7e667aff81cd"},
+};
+
 static void Require(bool value, const char* what) {
     if (value) return;
     std::fprintf(stderr, "failed: %s\n", what);
@@ -107,6 +139,13 @@ static Bytes Concat(std::initializer_list<Bytes> parts) {
     Bytes out;
     for (const Bytes& part : parts) out.insert(out.end(), part.begin(), part.end());
     return out;
+}
+
+static Bytes Hex(const char* text) {
+    const auto nibble = [](char digit) { return static_cast<unsigned char>(digit <= '9' ? digit - '0' : digit - 'a' + 10); };
+    Bytes bytes;
+    for (; text[0] && text[1]; text += 2) bytes.push_back(static_cast<unsigned char>(nibble(text[0]) << 4 | nibble(text[1])));
+    return bytes;
 }
 
 static Bytes DerElement(unsigned char tag, const Bytes& content) {
@@ -456,7 +495,55 @@ static void CheckKeyChanges() {
     EC_GROUP_free_nid_postfix(group);
 }
 
+static void RequireRejected(const EcGroup* group, EcPoint* point, const Bytes& encoded, const Bytes& unchanged) {
+    Require(EC_POINT_oct2point_nid_postfix(group, point, encoded.data(), encoded.size(), nullptr) == 0, "an invalid compressed encoding");
+    Require(Encode(group, point, Uncompressed) == unchanged, "an invalid compressed encoding leaves the point");
+}
+
+static void CheckCompressedPoints() {
+    for (const CompressedCurve& curve : CompressedCurves) {
+        EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(curve.nid);
+        Require(group != nullptr, "EC_GROUP_new_by_curve_name for a compressed curve");
+        EcPoint* point = EC_POINT_new_nid_postfix(group);
+        Require(point != nullptr, "EC_POINT_new for a compressed curve");
+        const Bytes prime = Hex(curve.prime);
+        for (int index = 0; index < 3; ++index) {
+            const Bytes compressed = Hex(curve.compressed[index]);
+            const Bytes uncompressed = Hex(curve.uncompressed[index]);
+            Require(compressed.size() == prime.size() + 1, "compressed vector size");
+            Require(uncompressed.size() == 2 * prime.size() + 1, "uncompressed vector size");
+            Require(EC_POINT_oct2point_nid_postfix(group, point, compressed.data(), compressed.size(), nullptr) == 1, "decompressing a compressed point");
+            Require(Encode(group, point, Uncompressed) == uncompressed, "decompressed point coordinates");
+            Require(Encode(group, point, Compressed) == compressed, "compressed point round trip");
+            Require(EC_POINT_oct2point_nid_postfix(group, point, uncompressed.data(), uncompressed.size(), nullptr) == 1, "decoding an uncompressed point");
+            Require(Encode(group, point, Compressed) == compressed, "uncompressed point round trip");
+        }
+        const Bytes flippedCompressed = Hex(curve.flippedCompressed);
+        const Bytes flippedUncompressed = Hex(curve.flippedUncompressed);
+        Require(flippedCompressed.size() == prime.size() + 1, "flipped compressed vector size");
+        Require(flippedUncompressed.size() == 2 * prime.size() + 1, "flipped uncompressed vector size");
+        Require(EC_POINT_oct2point_nid_postfix(group, point, flippedCompressed.data(), flippedCompressed.size(), nullptr) == 1, "decompressing with the flipped parity bit");
+        Require(Encode(group, point, Uncompressed) == flippedUncompressed, "the flipped square root");
+        Require(Encode(group, point, Compressed) == flippedCompressed, "flipped parity round trip");
+
+        const Bytes compressed = Hex(curve.compressed[0]);
+        const Bytes unchanged = Encode(group, point, Uncompressed);
+        RequireRejected(group, point, Concat({{0x02}, prime}), unchanged);
+        RequireRejected(group, point, Concat({{0x02}, Bytes(prime.size(), 0)}), unchanged);
+        for (const unsigned char prefix : {0x00, 0x04, 0x05, 0x06, 0x07}) {
+            Bytes wrong = compressed;
+            wrong[0] = prefix;
+            RequireRejected(group, point, wrong, unchanged);
+        }
+        RequireRejected(group, point, Bytes(compressed.begin(), compressed.end() - 1), unchanged);
+        RequireRejected(group, point, Concat({compressed, {0x00}}), unchanged);
+        EC_POINT_free_nid_postfix(point);
+        EC_GROUP_free_nid_postfix(group);
+    }
+}
+
 int main() {
+    CheckCompressedPoints();
     CheckPointEncoding();
     CheckGeneratedKeys();
     CheckKnownSignatures();

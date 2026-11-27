@@ -37,6 +37,7 @@ constexpr std::int32_t IosFailBit = 0x2;
 constexpr std::int32_t IosOct = 0x20;
 constexpr std::int32_t IosHex = 0x40;
 constexpr std::int32_t IosBaseField = 0x70;
+constexpr std::int32_t IosBoolAlpha = 0x8000;
 constexpr std::size_t MaxIntDigits = 32;
 constexpr int MaxSigDigV1 = 36;
 constexpr int MaxSigDigV2 = 768;
@@ -150,7 +151,7 @@ bool InputEnded(InputIteratorState<TChar>& first, InputIteratorState<TChar>& las
     return (first.buffer == nullptr) == (last.buffer == nullptr);
 }
 
-const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id, GuestLocale::GlobalLocaleHold& hold) {
     std::atomic_ref<std::uint64_t> slot(id);
     if (slot.load() == 0) {
         _Locksyslock_nid_postfix();
@@ -161,8 +162,7 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    return index < global->facetCount ? global->facets[index] : nullptr;
+    return hold.Find(index);
 }
 
 template<typename TPunct>
@@ -191,7 +191,8 @@ PunctInfo<TChar> ReadPunctInfo(const GuestLocale::IosBase* stream);
 
 template<>
 PunctInfo<char> ReadPunctInfo<char>(const GuestLocale::IosBase* stream) {
-    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold);
     if (punct == nullptr) return {"", '.', '\0'};
     const auto& vtable = *reinterpret_cast<const GuestLocale::NumpunctVtable*>(punct->vtable);
     std::string grouping = TakePunctString(vtable.grouping, punct);
@@ -202,7 +203,8 @@ PunctInfo<char> ReadPunctInfo<char>(const GuestLocale::IosBase* stream) {
 
 template<>
 PunctInfo<std::uint16_t> ReadPunctInfo<std::uint16_t>(const GuestLocale::IosBase* stream) {
-    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix, hold);
     if (punct == nullptr) return {"", u'.', 0};
     const auto& vtable = *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(punct->vtable);
     std::string grouping = TakePunctString(vtable.grouping, punct);
@@ -216,7 +218,8 @@ void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], TC
 
 template<std::size_t TSize>
 void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], char (&atoms)[TSize]) {
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) {
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold)) {
         reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, src, src + TSize, atoms);
         return;
     }
@@ -225,7 +228,8 @@ void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], ch
 
 template<std::size_t TSize>
 void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], std::uint16_t (&atoms)[TSize]) {
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix)) {
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix, hold)) {
         using WideWidenRange = const char* (APS5_VABI*)(const GuestLocale::Facet*, const char*, const char*, std::uint16_t*);
         const auto& vtable = *reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable);
         WideWidenRange widenRange{};
@@ -720,8 +724,83 @@ GuestLocale::Facet* APS5_VABI ReleaseNumGetFacet(GuestLocale::Facet* self) {
     return std::atomic_ref<std::uint32_t>(self->references).fetch_sub(1) == 1 ? self : nullptr;
 }
 
-GuestLocale::InputIterator APS5_VABI UnimplementedCharNumGetBool(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, bool*) {
-    NotImplemented_nid_no_patch("_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERb_nid_postfix");
+GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, bool* value) {
+    ValidateNumGetArgs(stream, state, value);
+    auto inFirst = FromGuestIterator<char>(first);
+    auto inLast = FromGuestIterator<char>(last);
+
+    if ((stream->flags & IosBoolAlpha) == 0) {
+        char digits[MaxIntDigits];
+        const auto parsed = ParseIntField(digits, inFirst, inLast, stream);
+        if (parsed.base < 0) {
+            *value = false;
+            *state = IosFailBit;
+        } else {
+            char* end = nullptr;
+            int error = 0;
+            int& guestErrno = *__error_nid_postfix();
+            const int savedErrno = guestErrno;
+            const std::int64_t parsedValue = _Stolx_nid_postfix(digits, &end, parsed.base, &error);
+            guestErrno = savedErrno;
+
+            if (parsed.badGrouping || end == digits || error != 0) {
+                *value = true;
+                *state = IosFailBit;
+            } else {
+                *value = parsedValue != 0;
+                if (parsedValue < 0 || parsedValue > 1) *state = IosFailBit;
+            }
+        }
+    } else {
+        GuestLocale::GlobalLocaleHold hold;
+        const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold);
+        if (punct == nullptr) throw std::invalid_argument("num_get::do_get(bool): missing numpunct facet");
+
+        const auto& vtable = *reinterpret_cast<const GuestLocale::NumpunctVtable*>(punct->vtable);
+        const std::string falseName = TakePunctString(vtable.falsename, punct);
+        const std::string trueName = TakePunctString(vtable.truename, punct);
+
+        std::size_t falseOffset = 0;
+        std::size_t trueOffset = 0;
+        bool falsePossible = true;
+        bool truePossible = true;
+
+        while (!InputEnded(inFirst, inLast)) {
+            const char character = PeekChar(inFirst);
+            const bool falseMatches =
+                falsePossible &&
+                falseOffset < falseName.size() &&
+                falseName[falseOffset] == character;
+            const bool trueMatches =
+                truePossible &&
+                trueOffset < trueName.size() &&
+                trueName[trueOffset] == character;
+
+            if (!falseMatches && !trueMatches) break;
+
+            falsePossible = falseMatches;
+            truePossible = trueMatches;
+            if (falseMatches) ++falseOffset;
+            if (trueMatches) ++trueOffset;
+            AdvanceChar(inFirst);
+
+            const bool falseComplete = falsePossible && falseOffset == falseName.size();
+            const bool trueComplete = truePossible && trueOffset == trueName.size();
+            const bool falseContinues = falsePossible && falseOffset < falseName.size();
+            const bool trueContinues = truePossible && trueOffset < trueName.size();
+
+            if ((falseComplete || trueComplete) && !falseContinues && !trueContinues) break;
+        }
+
+        const bool falseMatch = falsePossible && falseOffset == falseName.size();
+        const bool trueMatch = truePossible && trueOffset == trueName.size();
+
+        *value = trueMatch && !falseMatch;
+        if (falseMatch == trueMatch) *state = IosFailBit;
+    }
+
+    if (InputEnded(inFirst, inLast)) *state |= IosEofBit;
+    return ToGuestIterator(inFirst);
 }
 
 GuestLocale::InputIterator APS5_VABI UnimplementedCharNumGetPointer(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, void**) {
@@ -730,7 +809,7 @@ GuestLocale::InputIterator APS5_VABI UnimplementedCharNumGetPointer(const GuestL
 
 const GuestLocale::NumGetVtable g_charNumGetVtable{
     {DestroyNumGetFacet, DeleteNumGetFacet, RetainNumGetFacet, ReleaseNumGetFacet},
-    UnimplementedCharNumGetBool,
+    CharNumGetBool,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERt_nid_postfix,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERj_nid_postfix,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERl_nid_postfix,
