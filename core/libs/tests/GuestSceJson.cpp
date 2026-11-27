@@ -1,10 +1,13 @@
 #include "prx/libSceJson/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <clocale>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -28,10 +31,14 @@ constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80848111);
 
 static long liveAllocations = 0;
 static int failAllocation = 0;
+static bool throwOnFailAllocation = false;
 
 static void* APS5_VABI TestAllocate(MemAllocator*, std::size_t size, void* userData) {
     Require(userData == &liveAllocations);
-    if (failAllocation != 0 && --failAllocation == 0) return nullptr;
+    if (failAllocation != 0 && --failAllocation == 0) {
+        if (throwOnFailAllocation) throw std::runtime_error("allocator failed");
+        return nullptr;
+    }
     ++liveAllocations;
     return std::malloc(size);
 }
@@ -270,6 +277,27 @@ static void Errors() {
     Require(Parse(value, "-30000000000000000000") == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&value) == TypeReal);
     Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == -30000000000000000000.0);
+    Require(Parse(value, "-.") == 0);
+    Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&value) == TypeReal);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 0.0);
+    Require(Parse(value, "1e400") == 0);
+    Require(std::isinf(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value)) && !std::signbit(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value)));
+    Require(Parse(value, "-1e400") == 0);
+    Require(std::isinf(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value)) && std::signbit(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value)));
+    Require(Parse(value, "1e-400") == 0);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 0.0 && !std::signbit(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value)));
+    Require(Parse(value, "-1e-400") == 0);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 0.0 && std::signbit(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value)));
+    const char* previousLocale = std::setlocale(LC_NUMERIC, nullptr);
+    const std::string savedLocale = previousLocale != nullptr ? previousLocale : "C";
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de-DE", "German_Germany.1252", "fr_FR.UTF-8"}) {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr && std::strcmp(std::localeconv()->decimal_point, ",") == 0) {
+            Require(Parse(value, "0.5") == 0 && *_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 0.5);
+            Require(Parse(value, "1.2.3") == 0 && *_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 1.2);
+            break;
+        }
+    }
+    std::setlocale(LC_NUMERIC, savedLocale.c_str());
     int remaining = 3;
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5__nid_no_patch(&value, FailingRead, &remaining) == -5);
     Require(Parse(value, "[1, [2, 3], 4]") == 0);
@@ -362,21 +390,25 @@ static void Files() {
 }
 
 static void FailedInitialize(InitParameter& parameter) {
-    for (int failAt = 1; failAt <= 6; ++failAt) {
-        Initializer initializer {};
-        _ZN3sce4Json11InitializerC1Ev_nid_no_patch(&initializer);
-        failAllocation = failAt;
-        bool threw = false;
-        try {
-            _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_no_patch(&initializer, &parameter);
-        } catch (...) {
-            threw = true;
+    for (const bool throwing : {false, true}) {
+        throwOnFailAllocation = throwing;
+        for (int failAt = 1; failAt <= 6; ++failAt) {
+            Initializer initializer {};
+            _ZN3sce4Json11InitializerC1Ev_nid_no_patch(&initializer);
+            failAllocation = failAt;
+            bool threw = false;
+            try {
+                _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_no_patch(&initializer, &parameter);
+            } catch (...) {
+                threw = true;
+            }
+            failAllocation = 0;
+            Require(threw && !initializer.initialized && liveAllocations == 0);
+            Require(_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr && _ZN3sce4Json5Value12s_nullstringE_nid_no_patch == nullptr);
+            Require(_ZN3sce4Json5Value11s_nullarrayE_nid_no_patch == nullptr && _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch == nullptr);
         }
-        failAllocation = 0;
-        Require(threw && !initializer.initialized && liveAllocations == 0);
-        Require(_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr && _ZN3sce4Json5Value12s_nullstringE_nid_no_patch == nullptr);
-        Require(_ZN3sce4Json5Value11s_nullarrayE_nid_no_patch == nullptr && _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch == nullptr);
     }
+    throwOnFailAllocation = false;
 }
 
 static void AllocationFailures() {

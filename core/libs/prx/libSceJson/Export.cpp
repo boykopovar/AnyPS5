@@ -1,11 +1,15 @@
 #include "prx/libSceJson/include/Api.hpp"
+#include <cerrno>
 #include <charconv>
+#include <clocale>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -1125,49 +1129,23 @@ bool ParseObject(Value& value, InputStream& stream, Value* parent) {
     }
 }
 
-bool Overflows(const char* begin, const char* end) {
-    const char* cursor = begin;
-    if (cursor != end && (*cursor == '-' || *cursor == '+')) ++cursor;
-    long long magnitude = 0;
-    bool significant = false;
-    bool fraction = false;
-    for (; cursor != end && ((*cursor >= '0' && *cursor <= '9') || *cursor == '.'); ++cursor) {
-        if (*cursor == '.') {
-            fraction = true;
-        } else if (!significant && *cursor == '0') {
-            if (fraction) --magnitude;
-        } else {
-            if (!significant) {
-                significant = true;
-                if (fraction) --magnitude;
-            }
-            if (!fraction) ++magnitude;
-        }
-    }
-    long long exponent = 0;
-    if (cursor != end && (*cursor == 'e' || *cursor == 'E')) {
-        ++cursor;
-        bool negative = false;
-        if (cursor != end && (*cursor == '-' || *cursor == '+')) negative = *cursor++ == '-';
-        for (; cursor != end && *cursor >= '0' && *cursor <= '9'; ++cursor) {
-            if (exponent < 1000000000) exponent = exponent * 10 + (*cursor - '0');
-        }
-        if (negative) exponent = -exponent;
-    }
-    return magnitude + exponent > 0;
-}
-
 double ParseReal(const String& text) {
     const char* begin = Data(text);
-    const char* end = begin + text.size;
+    const char* point = std::localeconv()->decimal_point;
+    const int savedErrno = errno;
     double result = 0.0;
-    const auto parsed = std::from_chars(begin, end, result);
-    if (parsed.ec == std::errc::invalid_argument) return 0.0;
-    if (parsed.ec == std::errc::result_out_of_range) {
-        const bool negative = begin != end && *begin == '-';
-        if (Overflows(begin, parsed.ptr)) return negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
-        return negative ? -0.0 : 0.0;
+    if (point != nullptr && point[0] != '\0' && (point[0] != '.' || point[1] != '\0')) {
+        std::string localized;
+        localized.reserve(text.size);
+        for (std::size_t index = 0; index < text.size; ++index) {
+            if (begin[index] == '.') localized.append(point);
+            else localized.push_back(begin[index]);
+        }
+        result = std::strtod(localized.c_str(), nullptr);
+    } else {
+        result = std::strtod(begin, nullptr);
     }
+    errno = savedErrno;
     return result;
 }
 

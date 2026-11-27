@@ -55,7 +55,7 @@
 ## add Unknown function info
 
 - [sce::Json::Value::toString and serialize real numbers](../../../core/libs/prx/libSceJson/Export.cpp) (libSceJson) - the console formats a real with `snprintf(buffer, 256, "%f")` and cuts `.000000`; here `std::to_chars` with fixed notation and 6 digits produces the same digits without the locale. A NaN is written `nan` without a sign and infinities as `inf` and `-inf`; the console's spelling of non-finite values is unverified.
-- [sce::Json::Parser::parseNumber](../../../core/libs/prx/libSceJson/Export.cpp) (libSceJson) - the console converts real numbers with `atof`; here `std::from_chars` is used, an overflow becomes a signed infinity and an underflow a signed zero. Whether the console's `atof` returns a denormal for an underflow is unverified.
+- [sce::Json::Parser::parseNumber](../../../core/libs/prx/libSceJson/Export.cpp) (libSceJson) - the console converts real numbers with `atof`; here `std::strtod` is used with the decimal point adapted when the host numeric locale differs from `.`, and `errno` is restored. Whether the console's `atof` differs on `errno` or underflow handling is unverified.
 
 ## add Functional
 
