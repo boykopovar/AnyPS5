@@ -307,7 +307,7 @@ UCollationResult APS5_VABI ucol_strcollUTF8_nid_postfix(const UCollator* coll, c
         left = CopyOperand(source, sourceLength, __func__);
         right = CopyOperand(target, targetLength, __func__);
     } catch (const std::bad_alloc&) {
-        WriteStatus(status, incoming, MemoryAllocation, __func__);
+        UpdateStatus(status, incoming, MemoryAllocation, __func__);
         return UCOL_EQUAL;
     }
     auto outgoing = incoming;
