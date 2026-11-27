@@ -401,7 +401,16 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
         });
         return;
     }
-    EmitIfCondition(state, EmitMemoryElementInBounds(state, access, last), [&] {
+    auto inBounds = EmitMemoryElementInBounds(state, access, last);
+    if (bits == 16u) {
+        const auto straddles = equal(state, EmitAndConstant(state, address, 3u), ConstantU32(state, 3u));
+        EmitIfCondition(state, straddles, [&] {
+            writeBuffer(context, instruction, address, value, 8u);
+            writeBuffer(context, instruction, EmitAddU32(state, address, ConstantU32(state, 1u)), Binary(state, spv::OpShiftRightLogical, u32, value, ConstantU32(state, 8u)), 8u);
+        });
+        inBounds = both(state, inBounds, Unary(state, spv::OpLogicalNot, TypeBool(state), straddles));
+    }
+    EmitIfCondition(state, inBounds, [&] {
         auto mask = ConstantU32(state, bits == 32u ? 0xffffffffu : (1u << bits) - 1u);
         auto masked = Binary(state, spv::OpBitwiseAnd, u32, value, mask);
         if (bits != 32u) {
