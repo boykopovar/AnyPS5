@@ -15,7 +15,7 @@ std::uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer* buf, std::uint8_t mode, s
     Agc::Command::CheckBits(cachePolicy2, 3, __func__);
     Agc::Command::CheckBits(sizeInDwords1, 0xfffffu, __func__);
     Agc::Command::CheckBits(sizeInDwords2, 0xfffffu, __func__);
-    const auto address = reinterpret_cast<std::uintptr_t>(compareAddress) & (compareFunction != 0 ? ~std::uintptr_t{7} : ~std::uintptr_t{0});
+    const auto address = reinterpret_cast<std::uintptr_t>(compareAddress) & ~std::uintptr_t{7};
     const auto first = reinterpret_cast<std::uintptr_t>(buffer1);
     const auto second = reinterpret_cast<std::uintptr_t>(buffer2);
     if (first != 0 || sizeInDwords1 != 0) Agc::Command::CheckAddress(first, 4, __func__);
