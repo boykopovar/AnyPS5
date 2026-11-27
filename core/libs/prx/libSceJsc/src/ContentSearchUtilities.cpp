@@ -148,8 +148,9 @@ extern "C" {
 SizeVector* APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(SizeVector* result, const String* text) {
     if (!result) throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings: null return storage");
     if (!text) throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings requires a string");
-    const SizeVector previous = ReadGuestValue(result, __func__);
+    RequireReadableGuestBytes(result, sizeof(SizeVector), __func__);
     RequireWritableGuestBytes(result, sizeof(SizeVector), __func__);
+    const SizeVector previous = ReadGuestValue(result, __func__);
 
     const StringImpl* const impl = ReadGuestValue(text, __func__).impl;
     std::vector<unsigned char> narrow;
