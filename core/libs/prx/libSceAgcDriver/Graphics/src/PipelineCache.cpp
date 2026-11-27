@@ -32,6 +32,15 @@ bool profiling() {
     return profile;
 }
 
+std::filesystem::path hostPath(const std::filesystem::path& path, std::error_code& error) {
+#ifdef _WIN32
+    return ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+#else
+    (void)error;
+    return path;
+#endif
+}
+
 std::mutex& pathMutex(const std::filesystem::path& path) {
     struct Registry {
         std::mutex mutex;
@@ -81,6 +90,7 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
     }
     Check(result, "vkCreatePipelineCache");
     try {
+        if (loadFromFile) seedFromSibling();
         if (!path.empty()) saver = Libc::StartHostThread([this] { run(); });
     } catch (...) {
         context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
@@ -106,18 +116,22 @@ std::span<const std::byte> PipelineCache::File::Payload() const {
 }
 
 PipelineCache::File PipelineCache::readFile() const {
+    return readFile(path);
+}
+
+PipelineCache::File PipelineCache::readFile(const std::filesystem::path& from) const {
     File file;
-    if (path.empty()) {
+    if (from.empty()) {
         file.state = FileState::Missing;
         return file;
     }
-    if (!ShaderRecompiler::ReadWholeFile(path, file.contents)) {
+    if (!ShaderRecompiler::ReadWholeFile(from, file.contents)) {
         std::error_code error;
 #ifdef _WIN32
-        const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+        const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(from, error);
         const bool exists = !error && std::filesystem::exists(native, error);
 #else
-        const bool exists = std::filesystem::exists(path, error);
+        const bool exists = std::filesystem::exists(from, error);
 #endif
         file.state = exists || error ? FileState::Unreadable : FileState::Missing;
         return file;
@@ -182,6 +196,72 @@ std::optional<PipelineCache::FileHeader> PipelineCache::readHeader() const {
 #endif
     if (header.magic != FileMagic || header.format != FileFormat) return std::nullopt;
     return header;
+}
+
+void PipelineCache::seedFromSibling() try {
+    if (path.empty() || std::getenv("APS5_NO_PIPELINE_CACHE_SEED") != nullptr) return;
+    std::error_code error;
+    auto marker = path;
+    marker += ".seeded";
+    const auto nativeMarker = hostPath(marker, error);
+    if (error || std::filesystem::exists(nativeMarker, error) || error) return;
+    const auto own = path.parent_path();
+    const auto root = own.parent_path();
+    const auto nativeRoot = hostPath(root, error);
+    if (error) return;
+    std::filesystem::path newest;
+    std::filesystem::file_time_type newestTime{};
+    for (std::filesystem::directory_iterator it(nativeRoot, error), end; !error && it != end; it.increment(error)) {
+        std::error_code entryError;
+        if (!it->is_directory(entryError) || it->path().filename() == own.filename()) continue;
+        const auto candidate = root / it->path().filename() / path.filename();
+        const auto nativeCandidate = hostPath(candidate, entryError);
+        if (entryError) continue;
+        const auto time = std::filesystem::last_write_time(nativeCandidate, entryError);
+        if (entryError) continue;
+        if (newest.empty() || time > newestTime) {
+            newest = candidate;
+            newestTime = time;
+        }
+    }
+    const auto mark = [&](const std::string& note) {
+        const auto text = note + "\n";
+        std::vector<std::byte> bytes(text.size());
+        std::memcpy(bytes.data(), text.data(), text.size());
+        ShaderRecompiler::WriteFileAtomically(marker, bytes);
+    };
+    if (newest.empty()) {
+        mark("none");
+        return;
+    }
+    auto file = readFile(newest);
+    if (file.state != FileState::Valid) {
+        std::fprintf(stderr, "[pipeline-cache] not seeding from %s: %s\n", newest.string().c_str(), file.state == FileState::Invalid ? file.invalidReason : "unreadable");
+        if (file.state == FileState::Invalid) mark("refused " + newest.parent_path().filename().string());
+        return;
+    }
+    const auto data = file.Payload();
+    VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    info.initialDataSize = data.size();
+    info.pInitialData = data.data();
+    VkPipelineCache sibling = VK_NULL_HANDLE;
+    if (context.Function<PFN_vkCreatePipelineCache>("vkCreatePipelineCache")(context.device, &info, nullptr, &sibling) != VK_SUCCESS) {
+        std::fprintf(stderr, "[pipeline-cache] not seeding from %s: the driver refused it\n", newest.string().c_str());
+        mark("refused " + newest.parent_path().filename().string());
+        return;
+    }
+    const auto result = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, cache, 1, &sibling);
+    context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, sibling, nullptr);
+    if (result != VK_SUCCESS) {
+        std::fprintf(stderr, "[pipeline-cache] not seeding from %s: merge failed (Vulkan result %d)\n", newest.string().c_str(), static_cast<int>(result));
+        return;
+    }
+    mark(newest.parent_path().filename().string());
+    std::fprintf(stderr, "[pipeline-cache] seeded %.1f KiB from %s into this recompiler's cache\n", static_cast<double>(data.size()) / 1024.0, newest.string().c_str());
+} catch (const std::bad_alloc&) {
+    throw;
+} catch (const std::exception& failure) {
+    std::fprintf(stderr, "[pipeline-cache] seeding skipped: %s\n", failure.what());
 }
 
 void PipelineCache::load(std::vector<std::byte>& initialData) {

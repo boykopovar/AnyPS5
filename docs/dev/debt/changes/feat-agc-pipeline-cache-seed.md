@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Pipeline cache seeding](../../../core/libs/prx/libSceAgcDriver/Graphics/src/PipelineCache.cpp) (libSceAgcDriver) - the first start of a shader cache folder merges the same-named pipeline cache file of the one other folder whose file was written last into the driver's cache, whatever recompiler version made it, and records that in `<file>.seeded`; no other folder is merged and a folder that already has the marker is not seeded again. Verified only on NVIDIA (RTX 3090, driver 621.40): another vendor's driver may refuse the file or not hit its entries. The merged file keeps every entry of the other folder, used or not, and the next folder inherits them in turn, so the file only grows until the folder holding an older copy is removed after 14 days unused; no entry is evicted. A file that fails validation, or one the driver refuses, leaves the marker and is not tried again. Closes when: another vendor's driver has run it, and a bound on the inherited size is decided.

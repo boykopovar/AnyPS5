@@ -17934,7 +17934,7 @@ void pipelineCacheHeaderTests(const Device& device) {
     PipelineCache cache(context, device.Properties());
     cache.SaveNow();
     std::vector<std::filesystem::path> files;
-    for (const auto& entry : std::filesystem::directory_iterator(versionDirectory)) files.push_back(entry.path());
+    for (const auto& entry : std::filesystem::directory_iterator(versionDirectory)) if (entry.path().extension() == ".bin") files.push_back(entry.path());
     Require(files.size() == 1 && files.front().filename().string().starts_with("vk-pipelines-"), "the long pipeline cache directory does not hold exactly one cache file");
     Require(files.front().native().size() > 260, "the pipeline cache header test did not exceed MAX_PATH");
     std::vector<std::byte> stored;
@@ -18060,7 +18060,7 @@ int pipelineCacheFileTests(const Device& device) {
         const auto versionDirectory = directory / version;
         Require(std::filesystem::is_directory(versionDirectory), "the current shader cache version has no directory");
         std::vector<std::filesystem::path> found;
-        for (const auto& entry : std::filesystem::directory_iterator(versionDirectory)) found.push_back(entry.path());
+        for (const auto& entry : std::filesystem::directory_iterator(versionDirectory)) if (entry.path().extension() == ".bin") found.push_back(entry.path());
         Require(found.size() == 1 && found.front().filename().string().starts_with("vk-pipelines-"), "the current shader cache version's directory does not hold exactly one pipeline cache file");
         return found.front();
     };
@@ -18102,6 +18102,37 @@ int pipelineCacheFileTests(const Device& device) {
     {
         PipelineCache reloaded(context, properties);
         Require(holds(reloaded.Handle(), 0) && holds(reloaded.Handle(), 1), "an unseeded cache dropped pipelines from the cache file when it saved");
+    }
+    {
+        char version[17];
+        std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+        const auto setSeeding = [](const char* value) {
+#ifdef _WIN32
+            _putenv_s("APS5_NO_PIPELINE_CACHE_SEED", value);
+#else
+            if (*value != '\0') setenv("APS5_NO_PIPELINE_CACHE_SEED", value, 1);
+            else unsetenv("APS5_NO_PIPELINE_CACHE_SEED");
+#endif
+        };
+        std::filesystem::remove_all(directory);
+        {
+            PipelineCache writer(context, properties);
+            build(writer.Handle(), 0);
+            build(writer.Handle(), 1);
+        }
+        std::filesystem::rename(directory / version, directory / "0000000000000001");
+        {
+            PipelineCache seeded(context, properties);
+            Require(holds(seeded.Handle(), 0) && holds(seeded.Handle(), 1), "a new shader cache version did not inherit the pipelines of the newest older one");
+        }
+        std::filesystem::remove_all(directory / version);
+        setSeeding("1");
+        {
+            PipelineCache optedOut(context, properties);
+            Require(!holds(optedOut.Handle(), 0), "the opt-out switch did not stop a new shader cache version from inheriting pipelines");
+        }
+        setSeeding("");
+        std::filesystem::remove_all(directory);
     }
     std::filesystem::remove_all(directory);
     {
