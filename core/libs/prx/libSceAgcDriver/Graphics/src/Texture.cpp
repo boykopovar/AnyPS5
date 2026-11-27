@@ -2716,6 +2716,11 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     }
     static const bool refreshOrdered = std::getenv("APS5_NO_REFRESH_GPU_ORDERED") == nullptr;
     const bool orderedEligible = refreshOrdered && !scoped && alias == nullptr && !handOverKeys.has_value() && descriptor.dccAddress == 0 && !layerPending.Any() && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
+    static const bool traceEligible = std::getenv("APS5_TRACE_FLUSH") != nullptr;
+    if (traceEligible && !orderedEligible) {
+        const char* why = !refreshOrdered ? "disabled" : scoped ? "scoped" : alias != nullptr ? "alias" : handOverKeys.has_value() ? "clear hand-over" : descriptor.dccAddress != 0 ? "dcc" : layerPending.Any() ? "own layers pending" : "no host import";
+        std::fprintf(stderr, "[refresh-eligible] %s\n", why);
+    }
     bool orderedSkipped = false;
     bool flushed = false;
     {
@@ -5560,6 +5565,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         return active.PendingLeaseSerial(first, static_cast<std::size_t>(last - first)) == 0;
     };
     const bool orderedSkip = GpuOrderedFlush() && orderedRecorder != nullptr && !Recorder::InCompletion() && !flush.empty() && std::all_of(flush.begin(), flush.end(), [orderedRecorder](const std::shared_ptr<StorageTexture>& texture) { return texture->context.device == orderedRecorder->Device() && HostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) != nullptr; }) && publishesNothing(*orderedRecorder);
+    if (trace) {
+        const char* why = orderedSkip ? "skipped" : !GpuOrderedFlush() ? "ordered flush off" : orderedRecorder == nullptr ? "no recorder" : Recorder::InCompletion() ? "in completion" : flush.empty() ? "nothing to flush" : !std::all_of(flush.begin(), flush.end(), [orderedRecorder](const std::shared_ptr<StorageTexture>& texture) { return texture->context.device == orderedRecorder->Device(); }) ? "other device" : !std::all_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return HostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) != nullptr; }) ? "no host import" : scope != PublishScope::None && !LiveShadowedRanges(address, bytes, scope).empty() ? "live shadowed ranges" : "pending lease writer";
+        std::fprintf(stderr, "[flush-skip] %s: %s\n", reason, why);
+    }
     if (orderedSkip) {
         GpuOrderedSkipped() = true;
         orderedFlushSkips.fetch_add(1, std::memory_order_relaxed);

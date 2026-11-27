@@ -2905,6 +2905,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
         state->scaler = std::make_unique<PresentationScaler>(graphicsContext(), VK_FORMAT_B8G8R8A8_UNORM, state->surfaceFormat);
         state->presentation = std::make_unique<PresentationPass>(graphicsContext(), state->presentSlots.size());
+        if (PresentationStretches_nid_postfix()) std::fprintf(stderr, "[present] ANYPS5_ASPECT=stretch: the display buffer fills the window, without keeping its aspect ratio\n");
         const auto upscale = SelectUpscaleMode(std::getenv("ANYPS5_UPSCALE"), std::getenv("ANYPS5_FSR_SHARPNESS"));
         if (upscale.fsr) {
             state->upscaler = std::make_unique<PresentationUpscaler>(graphicsContext(), state->presentSlots.size(), upscale.sharpness);
@@ -4564,7 +4565,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     const auto blendPlaneInto = [&](VkImage image, VkFormat format, VkExtent2D extent) {
         if (plane == nullptr) return;
         bindPlane();
-        state->planePass->RecordOverlay(commands, planeSlot, image, format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        state->planePass->RecordOverlay(commands, planeSlot, image, format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
     };
     if (!drawn && !upscaled) {
         pipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -4671,7 +4672,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (plane != nullptr) {
         bindPlane();
-        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, false);
         if (planeSource.resident != nullptr) {
             planeBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
             planeBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;

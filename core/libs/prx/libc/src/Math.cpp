@@ -2314,7 +2314,11 @@ static float LogfMsun(float x, bool fused);
 double APS5_VABI lgamma_r_nid_postfix(double x, int* signgamp) {
     if (signgamp == nullptr) throw std::invalid_argument("lgamma_r: null signgamp");
     const double whole = std::floor(x);
-    *signgamp = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    const int sign = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(signgamp, &sign, sizeof(sign));
+    errno = savedErrno;
+    if (!written) throw std::invalid_argument("lgamma_r: unwritable signgamp");
     const double result = LgammaMsun(x);
     if (std::isinf(result) && std::isfinite(x) && x <= 0 && std::floor(x) == x) errno = ERANGE;
     return result;

@@ -2012,6 +2012,7 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
         return true;
     }
     switch (opcode) {
+        case RdnaOpcode::VMullitF32:
         case RdnaOpcode::VAddF32:
         case RdnaOpcode::VSubF32:
         case RdnaOpcode::VSubrevF32:
@@ -2059,12 +2060,16 @@ bool isF32DivisionStepOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VDivFmasF32 || opcode == RdnaOpcode::VDivFixupF32;
 }
 
+bool isF64ToIntegerConversion(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VCvtI32F64 || opcode == RdnaOpcode::VCvtU32F64;
+}
+
 bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
     if (isNativeVop3F16TernaryOpcode(opcode)) {
         return true;
     }
-    return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || usesIntegerSaturateClamp(opcode) ||
-        isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
+    return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || isF64ToIntegerConversion(opcode) ||
+        usesIntegerSaturateClamp(opcode) || isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
 }
 
 bool readsVop2Accumulator(RdnaOpcode opcode) {
@@ -2152,7 +2157,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     const bool sourceModifiers = supportsNativeVop3SourceModifiers(opcode);
     const bool resultModifiers = supportsNativeVop3ResultModifiers(opcode);
     const bool clampModifier = supportsNativeVop3Clamp(opcode);
-    const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16;
+    const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16 || isF64ToIntegerConversion(opcode);
     if (sourceModifiers) {
         const bool unmeasuredAccumulatorModifiers = ((abs | neg) & 0x4u) != 0u && readsVop2Accumulator(opcode) && encodedOpcode != 0x12bu && encodedOpcode != 0x136u;
         if (opSel != 0u || (omod != 0u && !resultModifiers && !ignoresOutputModifiers) || (clamp != 0u && !clampModifier && !ignoresOutputModifiers) || unmeasuredAccumulatorModifiers) {
@@ -2332,7 +2337,13 @@ RdnaInstruction DecodeRdnaVop2(std::uint32_t programCounter, std::span<const std
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::VOP2;
     instruction.opcodeId = opcode;
-    instruction.op = lookupVectorOpcode(vop2Opcodes, opcode, "VOP2 opcode is not implemented");
+    const auto* entry = findVectorOpcodeEntry(vop2Opcodes, opcode);
+    if (entry == nullptr) {
+        char reason[160];
+        std::snprintf(reason, sizeof(reason), "VOP2 opcode is not implemented: opcode 0x%x at program counter 0x%08x raw word 0x%08x", opcode, programCounter, word);
+        throw std::invalid_argument(reason);
+    }
+    instruction.op = entry->opcode;
     SetRdnaRawWords(instruction, code, wordIndex, 1);
 
     if (src0 == 249u) {

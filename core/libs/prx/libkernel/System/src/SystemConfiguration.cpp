@@ -214,9 +214,9 @@ struct GuestKinfoProc {
     unsigned char reserved5[90];
     std::int32_t threadCount;
     std::int32_t threadId;
-    unsigned char reserved6[484];
+    unsigned char reserved6[492];
 };
-static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
+static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1096);
 static_assert(offsetof(GuestKinfoProc, threadName) == 394 && offsetof(GuestKinfoProc, moreThreadName) == 502 && offsetof(GuestKinfoProc, threadCount) == 596 && offsetof(GuestKinfoProc, threadId) == 600);
 
 GuestKinfoProc GuestProcessRecord() {

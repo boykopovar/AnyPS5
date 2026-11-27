@@ -110,6 +110,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_ASPECT` | string | `core/libs/prx/libSceAgcDriver/Execution/src/AspectFit.cpp` | keep | stretch fills the window with the presented image instead of keeping the title's aspect ratio with bars, scaling each axis separately; unset, empty or keep keeps the aspect ratio; any other value fails with an error that names the variable |
 | `ANYPS5_FPS_LIMIT` | string | `core/libs/prx/libSceAgcDriver/Execution/include/FrameLimit.hpp` | 0 | the most frames per second the window presents, from 0.5 to 1000000 with at most three decimals; 0, empty or unset is no limit, and any other value is refused |
 | `ANYPS5_FSR_SHARPNESS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0.2 | RCAS sharpness in stops under `ANYPS5_UPSCALE=fsr`, from 0.0 (sharpest) to 2.0 (weakest); a value outside that range or not a number is refused |
 | `ANYPS5_GPU` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | restricts physical device selection to device names containing this case-insensitive substring |
@@ -627,7 +628,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_DRAW_PROGRAMS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` |  | prints one line per recorded draw with the stage, role and code address of each program |
 | `APS5_TRACE_EVENTS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceTrace.cpp` |  | number of events a windowed trace keeps in its buffer, 1 through 4,194,304; the default is 262,144 |
 | `APS5_TRACE_FILL_COVER` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | prints the first fills that meet images without covering them |
-| `APS5_TRACE_FLUSH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | names what forces pending storage-image results into guest memory |
+| `APS5_TRACE_FLUSH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | names what forces pending storage-image results into guest memory, and why a flush or storage refresh was not ordered on the GPU |
 | `APS5_TRACE_FRAMES` | string | `core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp` |  | records `<count>` presents from present `<start>` (whole numbers, `start:count`) |
 | `APS5_TRACE_GPU` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/DisplayBuffer.cpp` |  | prints GPU wait, submission and scanout events, the execute lines, and waits longer than 200 ms (read in DisplayBuffer, PacketExecution, QueueWorker, Submission and WaitMemory) |
 | `APS5_TRACE_HOST_IMPORT` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | traces host-import mapping failures |

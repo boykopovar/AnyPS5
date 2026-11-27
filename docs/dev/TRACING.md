@@ -52,7 +52,7 @@ from the saved log.
 | `APS5_TRACE_DRAWS` | Draw inputs and per-draw timing phases. With `APS5_PROFILE_DRAW`, also prints the detailed draw lines. |
 | `APS5_TRACE_DRAW_PROGRAMS` | One line per draw listing selected shader stages, roles, code addresses and entry addresses. |
 | `APS5_TRACE_FILL_COVER` | Initial fill/image coverage mismatches and refused image-layer clears. |
-| `APS5_TRACE_FLUSH` | Storage images flushed to guest memory and ranges left for the CPU. |
+| `APS5_TRACE_FLUSH` | Storage images flushed to guest memory and ranges left for the CPU. Also `[flush-skip]`, whether each flush was ordered on the GPU or why not, and `[refresh-eligible]`, why a storage refresh could not be ordered. |
 | `APS5_TRACE_GPU` | Queue submissions, packet execution, waits and display-buffer scanouts. |
 | `APS5_TRACE_HOST_IMPORT` | Host-import mapping attempts, memory-map details, failures and retirement. |
 | `APS5_TRACE_IMAGE_TABLE` | Image-table resource materialization and descriptor selection. |
