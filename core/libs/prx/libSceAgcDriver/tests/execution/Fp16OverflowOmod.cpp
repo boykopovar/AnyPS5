@@ -43,8 +43,9 @@ constexpr const char* Names[Columns] = {
 };
 
 // v4, v5, v6 of lanes 0..15. Lanes 16..31 negate v4 and v6, which negates every result.
-// Rows 0-2 and 13-14 overflow only after the output modifier; rows 3-5, 8 and 9 overflow before it, where div:2 shows
-// whether the FP16_OVFL clamp comes first; row 6 has an infinite source and row 15 a NaN.
+// Rows 0-2 and 13-14 overflow only after the output modifier; in rows 3-5, 8 and 9 at least one instruction
+// overflows before it, where div:2 shows whether the FP16_OVFL clamp comes first; row 6 has an infinite source and
+// row 15 a NaN.
 constexpr std::uint32_t RowData[Rows][3] = {
     {0x78e2u, 0x3c00u, 0x0000u},
     {0x7800u, 0x3c00u, 0x0000u},
