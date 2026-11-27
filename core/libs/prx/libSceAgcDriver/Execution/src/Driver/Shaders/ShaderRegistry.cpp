@@ -1523,24 +1523,30 @@ ShaderRecompiler::PreparedShaderInvocation SplitTableCallPartInvocation(SplitTab
     source.shader.code = parts.programs[part].code;
     source.context.splitState = parts.programs[part].plan;
     source.context.linkedCallFallbacks = {};
-    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
-    {
-        std::lock_guard lock(parts.mutex);
-        source.context.convertedSamples = parts.samples[part].first;
-        source.context.layerRowSamples = parts.samples[part].second;
-        source.context.typedBufferLoads = parts.typedBufferLoads[part] != 0;
-        handle = parts.handles[part];
+    while (true) {
+        std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+        {
+            std::lock_guard lock(parts.mutex);
+            source.context.convertedSamples = parts.samples[part].first;
+            source.context.layerRowSamples = parts.samples[part].second;
+            source.context.typedBufferLoads = parts.typedBufferLoads[part] != 0;
+            handle = parts.handles[part];
+        }
+        if (handle == nullptr) {
+            auto prepared = PrepareShaderWithDiagnostics(source);
+            std::lock_guard lock(parts.mutex);
+            if (source.context.convertedSamples != parts.samples[part].first ||
+                source.context.layerRowSamples != parts.samples[part].second ||
+                source.context.typedBufferLoads != (parts.typedBufferLoads[part] != 0)) continue;
+            if (parts.handles[part] == nullptr) parts.handles[part] = std::move(prepared);
+            handle = parts.handles[part];
+        }
+        auto invocationRequest = source;
+        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+        auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle);
+        if (!invocation.has_value()) throw std::runtime_error("AGC driver: a split table call part does not match its prepared shader");
+        return std::move(*invocation);
     }
-    if (handle == nullptr) {
-        handle = PrepareShaderWithDiagnostics(source);
-        std::lock_guard lock(parts.mutex);
-        parts.handles[part] = handle;
-    }
-    auto invocationRequest = source;
-    invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle);
-    if (!invocation.has_value()) throw std::runtime_error("AGC driver: a split table call part does not match its prepared shader");
-    return std::move(*invocation);
 }
 
 constexpr std::size_t ParallelStackBytes = 64u << 20u;
@@ -1603,19 +1609,25 @@ SplitTableCallPart CompileSplitTableCallPart(ShaderMemory& memory, SplitTableCal
             return {capture, invocation.Materialize(*capture)};
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
             std::lock_guard lock(parts.mutex);
-            if (parts.samples[part].first) throw;
-            parts.samples[part].first = true;
-            parts.handles[part] = nullptr;
+            if (invocation.Request().context.convertedSamples) throw;
+            if (!parts.samples[part].first) {
+                parts.samples[part].first = true;
+                parts.handles[part] = nullptr;
+            }
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             std::lock_guard lock(parts.mutex);
-            if (parts.samples[part].second) throw;
-            parts.samples[part].second = true;
-            parts.handles[part] = nullptr;
+            if (invocation.Request().context.layerRowSamples) throw;
+            if (!parts.samples[part].second) {
+                parts.samples[part].second = true;
+                parts.handles[part] = nullptr;
+            }
         } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
             std::lock_guard lock(parts.mutex);
-            if (parts.typedBufferLoads[part] != 0) throw;
-            parts.typedBufferLoads[part] = 1;
-            parts.handles[part] = nullptr;
+            if (invocation.Request().context.typedBufferLoads) throw;
+            if (parts.typedBufferLoads[part] == 0) {
+                parts.typedBufferLoads[part] = 1;
+                parts.handles[part] = nullptr;
+            }
         }
     }
 }
