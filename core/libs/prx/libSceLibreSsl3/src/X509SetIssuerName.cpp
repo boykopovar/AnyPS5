@@ -1,11 +1,13 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/OcspResponse.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -13,6 +15,8 @@ void CopyGuestBytes(void* destination, const void* source, std::size_t length, c
     if (length == 0) return;
     if (!GuestCopyIn_nid_no_patch(destination, source, length)) NotImplemented_nid_no_patch(caller);
 }
+
+constexpr std::size_t ObjectNameLimit = 1 << 16;
 
 constexpr std::int32_t ObjectDynamic = 0x01;
 constexpr std::int32_t DynamicStrings = 0x04;
@@ -56,54 +60,60 @@ Asn1String* DuplicateString(const Asn1String* source) {
     return copy;
 }
 
+char* DuplicateText(const char* source ) {
+    std::string text;
+    if (CopyGuestString_nid_no_patch(source, ObjectNameLimit, text) != 0)
+        NotImplemented_nid_no_patch("X509_NAME_dup: unreadable object name");
+    auto* copy = static_cast<char*>(malloc_nid_postfix(text.size() + 1));
+    if (!copy) return nullptr;
+    std::memcpy(copy, text.c_str(), text.size() + 1);
+    return copy;
+}
+
 Asn1Object_nid_no_patch* DuplicateObject(const Asn1Object_nid_no_patch* source) {
     auto* copy = static_cast<Asn1Object_nid_no_patch*>(calloc_nid_postfix(1, sizeof(Asn1Object_nid_no_patch)));
     if (!copy) return nullptr;
-    *copy = *source;
+    Asn1Object_nid_no_patch fields{};
+    if (!GuestCopyIn_nid_no_patch(&fields, source, sizeof(fields)))
+        NotImplemented_nid_no_patch("X509_NAME_dup: unreadable object");
+    *copy = fields;
     copy->flags = ObjectDynamic;
     copy->data = nullptr;
     copy->length = 0;
-    if (source->flags & DynamicStrings) {
+    if (fields.length < 0) {
+        ASN1_OBJECT_free_nid_postfix(copy);
+        throw std::invalid_argument("X509_NAME_dup: negative object data length");
+    }
+    if (fields.flags & DynamicStrings) {
         copy->flags |= DynamicStrings;
         copy->shortName = nullptr;
         copy->longName = nullptr;
-        if (source->shortName) {
-            const std::size_t length = std::strlen(source->shortName) + 1;
-            auto* text = static_cast<char*>(malloc_nid_postfix(length));
-            if (!text) {
+        if (fields.shortName) {
+            copy->shortName = DuplicateText(fields.shortName);
+            if (!copy->shortName) {
                 ASN1_OBJECT_free_nid_postfix(copy);
                 return nullptr;
             }
-            std::memcpy(text, source->shortName, length);
-            copy->shortName = text;
         }
-        if (source->longName) {
-            const std::size_t length = std::strlen(source->longName) + 1;
-            auto* text = static_cast<char*>(malloc_nid_postfix(length));
-            if (!text) {
+        if (fields.longName) {
+            copy->longName = DuplicateText(fields.longName);
+            if (!copy->longName) {
                 ASN1_OBJECT_free_nid_postfix(copy);
                 return nullptr;
             }
-            std::memcpy(text, source->longName, length);
-            copy->longName = text;
         }
     }
-    if (source->data) {
-        if (source->length < 0) {
+    if (fields.length != 0) {
+        auto* data = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(fields.length)));
+        if (!data) {
             ASN1_OBJECT_free_nid_postfix(copy);
-            throw std::invalid_argument("X509_NAME_dup: negative object data length");
+            return nullptr;
         }
-        if (source->length != 0) {
-            auto* data = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(source->length)));
-            if (!data) {
-                ASN1_OBJECT_free_nid_postfix(copy);
-                return nullptr;
-            }
-            std::memcpy(data, source->data, static_cast<std::size_t>(source->length));
-            copy->data = data;
-            copy->length = source->length;
-        }
+        copy->data = data;
+        copy->length = fields.length;
         copy->flags |= DynamicData;
+        CopyGuestBytes(data, fields.data, static_cast<std::size_t>(fields.length),
+            "X509_NAME_dup: unreadable object data");
     }
     return copy;
 }
