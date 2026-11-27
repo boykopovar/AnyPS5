@@ -2543,11 +2543,8 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
     const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
     const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
-    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
     void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
-    const bool empty = body->elements == nullptr && body->capacity == 0;
-    if (empty && *selfContext == nullptr) *selfContext = sourceContext;
-    if (empty && body->libContext == nullptr) body->libContext = *selfContext;
+    if (body == static_cast<VectorBody*>(static_cast<void*>(self)) && body->elements == nullptr && body->capacity == 0 && body->libContext == nullptr) body->libContext = sourceContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 1)) {
         NotImplemented_nid_no_patch(function);
         return ParameterOutOfMemory;
@@ -2603,11 +2600,8 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
     const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
     const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
-    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
     void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
-    const bool empty = body->elements == nullptr && body->capacity == 0;
-    if (empty && *selfContext == nullptr) *selfContext = sourceContext;
-    if (empty && body->libContext == nullptr) body->libContext = *selfContext;
+    if (body == static_cast<VectorBody*>(static_cast<void*>(self)) && body->elements == nullptr && body->capacity == 0 && body->libContext == nullptr) body->libContext = sourceContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
         return ParameterOutOfMemory;
