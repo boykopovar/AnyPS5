@@ -1,6 +1,7 @@
 #include "prx/libScePngParser/include/WriteMetadata.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -228,6 +229,7 @@ extern "C" int APS5_VABI libScePngParserWriteMetadata_nid_no_patch(const void* p
     Temporary output;
     Workspace workspace;
     std::unique_ptr<void, decltype(allocator.release)> small(nullptr, allocator.release);
+    std::optional<GuestArena::HostWrite> scratchWrite;
     std::span<Byte> scratch;
     if (updating) {
         scratch = workspace.Map();
@@ -244,6 +246,8 @@ extern "C" int APS5_VABI libScePngParserWriteMetadata_nid_no_patch(const void* p
         small.reset(allocator.allocate(size));
         if (!small) throw std::bad_alloc();
         if (!GuestWritable_nid_no_patch(small.get(), size)) throw std::invalid_argument("PNG writer: invalid scratch allocation");
+        scratchWrite.emplace(small.get(), size);
+        if (!scratchWrite->Open()) throw std::invalid_argument("PNG writer: invalid scratch allocation");
         scratch = {static_cast<Byte*>(small.get()), size};
     }
     if (!CopyChunks(source, output.file, scratch, !title.empty(), !comment.empty())) return kInvalidFile;
