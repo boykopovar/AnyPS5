@@ -599,7 +599,7 @@ RelinkResult RelinkerPipeline::Relink() {
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
             if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC) {
-                const auto absoluteFunctionExtent = functionSymbolRoots ? 1 : std::max<std::uint64_t>(size, 1);
+                const auto absoluteFunctionExtent = std::max<std::uint64_t>(size, 1);
                 const bool absoluteFunctionMapped = section != SHN_ABS || std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& header) {
                     if (header.Type != PT_LOAD || (header.Flags & PF_X) == 0 || value < header.MappedAddress) return false;
                     const auto offset = value - header.MappedAddress;
