@@ -70,6 +70,7 @@ enum class Decoder {
     AuthorityKeyId,
     GeneralNames,
     AuthorityInfoAccess,
+    CrlDistPoints,
     Null,
 };
 
@@ -96,7 +97,7 @@ constexpr Method Methods[] = {
     {88, Decoder::Integer},
     {89, Decoder::Unsupported},
     {90, Decoder::AuthorityKeyId},
-    {103, Decoder::Unsupported},
+    {103, Decoder::CrlDistPoints},
     {126, Decoder::ExtendedKeyUsage},
     {140, Decoder::Integer},
     {141, Decoder::Enumerated},
@@ -117,7 +118,7 @@ constexpr Method Methods[] = {
     {748, Decoder::Integer},
     {770, Decoder::Unsupported},
     {771, Decoder::Unsupported},
-    {857, Decoder::Unsupported},
+    {857, Decoder::CrlDistPoints},
     {1018, Decoder::Unsupported},
     {1019, Decoder::Null},
     {1021, Decoder::Unsupported},
@@ -915,6 +916,397 @@ void* NewAuthorityInfoAccess(std::span<const unsigned char> value) {
     return info.release();
 }
 
+constexpr int MstringNotUniversal = 139;
+constexpr int MstringWrongTag = 140;
+constexpr int BmpStringWrongLength = 214;
+constexpr int UniversalStringWrongLength = 215;
+constexpr int BmpStringType = 30;
+constexpr int UniversalStringType = 28;
+
+struct DistPointName {
+    int type;
+    union {
+        LibreSslStack* fullname;
+        LibreSslStack* relativename;
+    } name;
+    LibreSslX509Name* dpname;
+};
+
+static_assert(sizeof(DistPointName) == 24 && offsetof(DistPointName, name) == 8 && offsetof(DistPointName, dpname) == 16);
+
+struct DistPoint {
+    DistPointName* distpoint;
+    Asn1String* reasons;
+    LibreSslStack* crlIssuer;
+    int dpReasons;
+};
+
+static_assert(sizeof(DistPoint) == 32 && offsetof(DistPoint, reasons) == 8 && offsetof(DistPoint, crlIssuer) == 16 &&
+    offsetof(DistPoint, dpReasons) == 24);
+
+void FreeNameEntry(LibreSslX509NameEntry* entry) {
+    if (!entry) return;
+    ASN1_OBJECT_free_nid_postfix(static_cast<Asn1Object_nid_no_patch*>(entry->object));
+    ASN1_OCTET_STRING_free_nid_postfix(static_cast<Asn1String*>(entry->value));
+    free_nid_postfix(entry);
+}
+
+void FreeRelativeName(LibreSslStack* entries) {
+    if (!entries) return;
+    for (int index = 0; index < entries->num; ++index)
+        FreeNameEntry(reinterpret_cast<LibreSslX509NameEntry*>(entries->data[index]));
+    sk_free_nid_postfix(entries);
+}
+
+void FreeDistPointName(DistPointName* dpn) {
+    if (!dpn) return;
+    if (dpn->type == 0) GENERAL_NAMES_free_nid_postfix(dpn->name.fullname);
+    else if (dpn->type == 1) FreeRelativeName(dpn->name.relativename);
+    free_nid_postfix(dpn);
+}
+
+void FreeDistPoint(DistPoint* point) {
+    if (!point) return;
+    FreeDistPointName(point->distpoint);
+    ASN1_OCTET_STRING_free_nid_postfix(point->reasons);
+    GENERAL_NAMES_free_nid_postfix(point->crlIssuer);
+    free_nid_postfix(point);
+}
+
+void FreeCrlDistPoints(LibreSslStack* points) {
+    if (!points) return;
+    for (int index = 0; index < points->num; ++index)
+        FreeDistPoint(reinterpret_cast<DistPoint*>(points->data[index]));
+    sk_free_nid_postfix(points);
+}
+
+bool IsPrintableNameTag(std::uint32_t tag) {
+    switch (tag) {
+    case 3:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    case 12:
+    case 13:
+    case 14:
+    case 15:
+    case 16:
+    case 18:
+    case 19:
+    case 20:
+    case 22:
+    case 28:
+    case 29:
+    case 30:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsMustBePrimitive(std::uint32_t tag) {
+    return tag == 9 || tag == 10 || tag == 13 || tag == 14;
+}
+
+Asn1String* ReadNameValue(std::span<const unsigned char>& input) {
+    const std::span<const unsigned char> element = input;
+    Header header;
+    if (!ReadIdentifier(input, header) || !ReadLength(input, header) || (header.indefinite && !header.constructed)) {
+        PutHeaderError(BadObjectHeader);
+        return nullptr;
+    }
+    if ((!header.indefinite && header.length > input.size()) ||
+        header.tag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        PutHeaderError(TooLong);
+        return nullptr;
+    }
+    if (header.tagClass != 0) {
+        PutError(MstringNotUniversal);
+        return nullptr;
+    }
+    if (!IsPrintableNameTag(header.tag)) {
+        PutError(MstringWrongTag);
+        return nullptr;
+    }
+    const std::size_t headerSize = static_cast<std::size_t>(input.data() - element.data());
+    if (header.tag == SequenceTag) {
+        if (!header.constructed) {
+            PutError(TypeNotConstructed);
+            return nullptr;
+        }
+        if (header.indefinite) NotImplemented_nid_no_patch("X509_NAME_ENTRY indefinite sequence");
+        Asn1String* value = NewString(static_cast<std::int32_t>(SequenceTag), element.first(headerSize + header.length));
+        if (!value) return nullptr;
+        input = input.subspan(header.length);
+        return value;
+    }
+    if (IsMustBePrimitive(header.tag) && header.constructed) {
+        PutError(TypeNotPrimitive);
+        return nullptr;
+    }
+    if (header.constructed) NotImplemented_nid_no_patch("X509_NAME_ENTRY constructed value");
+    const std::span<const unsigned char> content = input.first(header.length);
+    Asn1String* value = nullptr;
+    switch (header.tag) {
+    case BitStringTag:
+        value = NewBitString(content);
+        break;
+    case EnumeratedTag:
+        value = static_cast<Asn1String*>(NewEnumerated(content));
+        break;
+    case BmpStringType:
+        if (content.size() % 2 != 0) {
+            PutError(BmpStringWrongLength);
+            return nullptr;
+        }
+        value = NewString(BmpStringType, content);
+        break;
+    case UniversalStringType:
+        if (content.size() % 4 != 0) {
+            PutError(UniversalStringWrongLength);
+            return nullptr;
+        }
+        value = NewString(UniversalStringType, content);
+        break;
+    default:
+        value = NewString(static_cast<std::int32_t>(header.tag), content);
+        break;
+    }
+    if (!value) return nullptr;
+    input = input.subspan(header.length);
+    return value;
+}
+
+LibreSslX509NameEntry* NewNameEntry(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("X509_NAME_ENTRY indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<LibreSslX509NameEntry*>(calloc_nid_postfix(1, sizeof(LibreSslX509NameEntry)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslX509NameEntry, void (*)(LibreSslX509NameEntry*)> entry(allocated, FreeNameEntry);
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    entry->object = ReadObject(content);
+    if (!entry->object) return nullptr;
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    entry->value = ReadNameValue(content);
+    if (!entry->value) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return entry.release();
+}
+
+LibreSslStack* NewRelativeName(std::span<const unsigned char> content) {
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> entries(sk_new_nid_postfix(nullptr), FreeRelativeName);
+    if (!entries) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    while (!content.empty()) {
+        if (EndsDefiniteContent(content)) return nullptr;
+        LibreSslX509NameEntry* entry = NewNameEntry(content);
+        if (!entry) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (sk_push_nid_postfix(entries.get(), entry) == 0) {
+            FreeNameEntry(entry);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return entries.release();
+}
+
+DistPointName* NewDistPointName(std::span<const unsigned char>& input) {
+    auto* allocated = static_cast<DistPointName*>(calloc_nid_postfix(1, sizeof(DistPointName)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    allocated->type = -1;
+    std::unique_ptr<DistPointName, void (*)(DistPointName*)> dpn(allocated, FreeDistPointName);
+    Header header;
+    switch (CheckTag(input, 0, ContextClass, true, header)) {
+    case TagCheck::Failed:
+        PutNestedErrors(2);
+        return nullptr;
+    case TagCheck::Present:
+        if (header.indefinite) NotImplemented_nid_no_patch("DIST_POINT_NAME fullname indefinite length");
+        dpn->type = 0;
+        dpn->name.fullname = NewGeneralNames(input.first(header.length));
+        if (!dpn->name.fullname) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        input = input.subspan(header.length);
+        return dpn.release();
+    case TagCheck::Absent:
+        break;
+    }
+    switch (CheckTag(input, 1, ContextClass, true, header)) {
+    case TagCheck::Failed:
+        PutNestedErrors(2);
+        return nullptr;
+    case TagCheck::Present:
+        if (header.indefinite) NotImplemented_nid_no_patch("DIST_POINT_NAME relativename indefinite length");
+        dpn->type = 1;
+        dpn->name.relativename = NewRelativeName(input.first(header.length));
+        if (!dpn->name.relativename) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        input = input.subspan(header.length);
+        return dpn.release();
+    case TagCheck::Absent:
+        break;
+    }
+    PutError(NoMatchingChoiceType);
+    return nullptr;
+}
+
+bool ReadDistPointField(std::span<const unsigned char>& content, DistPointName*& distpoint) {
+    Header header;
+    switch (CheckTag(content, 0, ContextClass, true, header)) {
+    case TagCheck::Absent:
+        return true;
+    case TagCheck::Failed:
+        PutError(NestedAsn1Error);
+        return false;
+    case TagCheck::Present:
+        break;
+    }
+    if (!header.constructed) {
+        PutError(ExplicitTagNotConstructed);
+        return false;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("DIST_POINT distpoint indefinite length");
+    std::span<const unsigned char> inner = content.first(header.length);
+    content = content.subspan(header.length);
+    distpoint = NewDistPointName(inner);
+    if (!distpoint) {
+        PutNestedErrors(2);
+        return false;
+    }
+    if (!inner.empty()) {
+        PutError(SequenceLengthMismatch);
+        return false;
+    }
+    return true;
+}
+
+bool ReadReasons(std::span<const unsigned char>& content, Asn1String*& reasons) {
+    Header header;
+    switch (CheckTag(content, 1, ContextClass, true, header)) {
+    case TagCheck::Absent:
+        return true;
+    case TagCheck::Failed:
+        PutNestedErrors(2);
+        return false;
+    case TagCheck::Present:
+        break;
+    }
+    if (header.constructed) NotImplemented_nid_no_patch("DIST_POINT constructed reasons");
+    reasons = NewBitString(content.first(header.length));
+    if (!reasons) {
+        PutError(NestedAsn1Error);
+        return false;
+    }
+    content = content.subspan(header.length);
+    return true;
+}
+
+DistPoint* NewDistPoint(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("DIST_POINT indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<DistPoint*>(calloc_nid_postfix(1, sizeof(DistPoint)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<DistPoint, void (*)(DistPoint*)> point(allocated, FreeDistPoint);
+    if (!content.empty() && !ReadDistPointField(content, point->distpoint)) return nullptr;
+    if (!content.empty() && !ReadReasons(content, point->reasons)) return nullptr;
+    if (!content.empty()) {
+        if (EndsDefiniteContent(content)) return nullptr;
+        Header issuerHeader;
+        if (CheckTag(content, 2, ContextClass, false, issuerHeader) != TagCheck::Present) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (issuerHeader.indefinite) NotImplemented_nid_no_patch("DIST_POINT CRLissuer indefinite length");
+        point->crlIssuer = NewGeneralNames(content.first(issuerHeader.length));
+        if (!point->crlIssuer) return nullptr;
+        content = content.subspan(issuerHeader.length);
+    }
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return point.release();
+}
+
+void* NewCrlDistPoints(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, true, "CRL_DIST_POINTS indefinite length", body)) return nullptr;
+    LibreSslStack* allocated = sk_new_nid_postfix(nullptr);
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> points(allocated, FreeCrlDistPoints);
+    while (!body.empty()) {
+        if (EndsDefiniteContent(body)) return nullptr;
+        DistPoint* point = NewDistPoint(body);
+        if (!point) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (sk_push_nid_postfix(points.get(), point) == 0) {
+            FreeDistPoint(point);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return points.release();
+}
+
 struct UsagePeriodValue {
     Asn1String* notBefore;
     Asn1String* notAfter;
@@ -1013,6 +1405,8 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
         return NewGeneralNamesExtension(value);
     case Decoder::AuthorityInfoAccess:
         return NewAuthorityInfoAccess(value);
+    case Decoder::CrlDistPoints:
+        return NewCrlDistPoints(value);
     case Decoder::Null:
         return NewNull(value);
     case Decoder::Unsupported:
