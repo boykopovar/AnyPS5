@@ -5,6 +5,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -245,16 +247,53 @@ void TestOpenWithin() {
     auto release = std::make_shared<std::promise<void>>();
     auto closed = std::make_shared<std::promise<std::uint32_t>>();
     const auto start = std::chrono::steady_clock::now();
+    auto abandons = std::make_shared<std::atomic<int>>(0);
+    auto settled = std::make_shared<std::promise<int>>();
     const auto stalled = audioin::detail::openWithin(50ms,
         [gate = release->get_future().share()] { gate.wait(); return std::uint32_t{9}; },
-        [closed](std::uint32_t device) { closed->set_value(device); });
+        [closed](std::uint32_t device) { closed->set_value(device); },
+        [abandons] { abandons->fetch_add(1); },
+        [abandons, settled] { settled->set_value(abandons->load()); });
     const auto elapsed = std::chrono::steady_clock::now() - start;
     Require(stalled.device == 0 && stalled.timedOut);
     Require(elapsed >= 50ms && elapsed < 1000ms);
+    Require(abandons->load() == 1);
     auto closedDevice = closed->get_future();
+    auto settledAfter = settled->get_future();
     Require(closedDevice.wait_for(0ms) == std::future_status::timeout);
+    Require(settledAfter.wait_for(0ms) == std::future_status::timeout);
     release->set_value();
+    Require(settledAfter.wait_for(5s) == std::future_status::ready && settledAfter.get() == 1);
     Require(closedDevice.wait_for(5s) == std::future_status::ready && closedDevice.get() == 9);
+    const auto quick = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{5}; }, [](std::uint32_t) { std::abort(); },
+        [] { std::abort(); }, [] { std::abort(); });
+    Require(quick.device == 5 && !quick.timedOut);
+}
+
+// Goes through sceAudioInOpen with the SDL open held past the 3 s limit by ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS.
+void TestOpenStall() {
+    using namespace std::chrono_literals;
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_stall-" + std::to_string(std::random_device{}()) + ".raw");
+    std::ofstream(path, std::ios::binary).write(std::string(4096, 0).data(), 4096);
+    SetEnvironment("SDL_AUDIODRIVER", "disk");
+    SetEnvironment("SDL_DISKAUDIOFILEIN", path.string());
+    SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", "5000");
+    const auto start = std::chrono::steady_clock::now();
+    const int stalled = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    const auto waited = std::chrono::steady_clock::now() - start;
+    Require(stalled > 0);
+    Require(waited >= 2900ms && waited < 4500ms);
+    Require(sceAudioInGetSilentState(stalled) == 1);
+    const auto pendingStart = std::chrono::steady_clock::now();
+    const int pending = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    Require(std::chrono::steady_clock::now() - pendingStart < 1000ms);
+    Require(pending > 0 && pending != stalled && sceAudioInGetSilentState(pending) == 1);
+    SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", "");
+    std::this_thread::sleep_until(start + 6s);
+    const int retried = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    Require(retried > 0 && sceAudioInGetSilentState(retried) == 0);
+    Require(sceAudioInClose(retried) == 0 && sceAudioInClose(pending) == 0 && sceAudioInClose(stalled) == 0);
+    std::filesystem::remove(path);
 }
 
 void TestCapture() {
@@ -372,6 +411,7 @@ int main(int argc, char** argv) {
     Require(sceAudioInInit() == 0);
     if (std::strcmp(argv[1], "capture") == 0) TestCapture();
     else if (std::strcmp(argv[1], "open-within") == 0) TestOpenWithin();
+    else if (std::strcmp(argv[1], "open-stall") == 0) TestOpenStall();
     else if (std::strcmp(argv[1], "selection") == 0) {
         TestConfiguredDeviceUnavailable();
         TestCaptureDeviceSelection();

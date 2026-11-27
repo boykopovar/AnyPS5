@@ -13,11 +13,13 @@
 #include "SDL.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <stdexcept>
 #include "prx/libScePad/include/HostAudioInControl.hpp"
 #ifdef _WIN32
@@ -71,7 +73,8 @@ std::mutex g_mutex;
 std::mutex g_openMutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
-bool g_openStalled = false;
+// Set while an open that outlived OPEN_LIMIT has not returned from SDL; opens meanwhile skip SDL.
+std::atomic<bool> g_openStalled{false};
 std::int32_t g_mode = 0;
 constexpr std::chrono::milliseconds OPEN_LIMIT{3000};
 
@@ -111,16 +114,20 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
         if (!name) return 0;
         selectedName = name;
     }
-    if (g_openStalled) return 0;
+    if (g_openStalled.load(std::memory_order_acquire)) return 0;
     const auto opened = audioin::detail::openWithin(OPEN_LIMIT,
         [selectedName, named, desired]() mutable {
             SDL_AudioSpec obtained{};
+            if (const char* stall = std::getenv("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS"); stall != nullptr && *stall != 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(std::strtoul(stall, nullptr, 10)));
+            }
             const SDL_AudioDeviceID device = SDL_OpenAudioDevice(named ? selectedName.c_str() : nullptr, 1, &desired, &obtained, 0);
             if (device != 0) SDL_PauseAudioDevice(device, 0);
             return static_cast<std::uint32_t>(device);
         },
-        [](std::uint32_t device) { SDL_CloseAudioDevice(device); });
-    if (opened.timedOut) g_openStalled = true;
+        [](std::uint32_t device) { SDL_CloseAudioDevice(device); },
+        [] { g_openStalled.store(true, std::memory_order_release); },
+        [] { g_openStalled.store(false, std::memory_order_release); });
     return opened.device;
 }
 
