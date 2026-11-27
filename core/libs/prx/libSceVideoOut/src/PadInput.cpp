@@ -545,6 +545,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
             if (slots[slot].controller != nullptr && slots[slot].instanceId == event.cdevice.which) {
                 closeController(slot);
                 publish(window.FrameNumber(), slot);
+                for (int device = 0; device < SDL_NumJoysticks(); ++device) {
+                    openController(device);
+                }
                 break;
             }
         }
