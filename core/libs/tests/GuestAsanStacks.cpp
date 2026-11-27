@@ -1,6 +1,7 @@
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <csignal>
 #include <dlfcn.h>
@@ -8,11 +9,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <initializer_list>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
@@ -310,7 +313,7 @@ void Symbolize() {
                 "symbolize_pc rejects an unknown specifier");
 }
 
-std::string ReadFile(const std::string& path) {
+std::string ReadFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     std::stringstream contents;
     contents << file.rdbuf();
@@ -326,9 +329,11 @@ std::uint64_t Word(const std::string& bytes, std::size_t index) {
 std::string coverageDirectory;
 
 void Coverage() {
-    char directory[] = "/tmp/asan-coverage-XXXXXX";
-    Require(::mkdtemp(directory) != nullptr, "mkdtemp");
-    coverageDirectory = directory;
+    coverageDirectory = "/tmp/asan-coverage-" + std::to_string(::getpid());
+    const std::filesystem::path hostDirectory = ResolvePath_nid_no_patch(coverageDirectory.c_str());
+    std::error_code created;
+    std::filesystem::create_directories(hostDirectory, created);
+    Require(!created, "create the coverage directory");
     static std::string options;
     options = "coverage=1:coverage_dir=" + coverageDirectory;
     const auto outcome = Run(options.c_str(), [] {
@@ -350,7 +355,7 @@ void Coverage() {
     Expect(outcome, 0, {"SanitizerCoverage: " + coverageDirectory + "/" + ProgramName() + ".", ".sancov: 1 PCs written\n"}, "coverage dump");
     const std::size_t begin = outcome.output.find(coverageDirectory);
     const std::size_t end = outcome.output.find(':', begin);
-    const std::string bytes = ReadFile(outcome.output.substr(begin, end - begin));
+    const std::string bytes = ReadFile(ResolvePath_nid_no_patch(outcome.output.substr(begin, end - begin).c_str()));
     Require(bytes.size() == 16 && Word(bytes, 0) == 0xC0BFFFFFFFFFFF64ull, "sancov file holds the magic and one module offset");
     Dl_info module{};
     Require(::dladdr(reinterpret_cast<const void*>(&AsanStacksCovered), &module) != 0 && module.dli_fbase != nullptr, "dladdr");
@@ -385,6 +390,8 @@ void Coverage() {
     });
     Expect(onDeath, 1, {"ABORTING\n", ".sancov: 1 PCs written\n"}, "a fatal report dumps coverage");
     ExpectOrder(onDeath, {"ABORTING\n", "SanitizerCoverage: "}, "coverage is written after the report");
+    std::error_code removed;
+    std::filesystem::remove_all(hostDirectory, removed);
 }
 
 void ExpectClean(const Outcome& outcome, const char* what) {
