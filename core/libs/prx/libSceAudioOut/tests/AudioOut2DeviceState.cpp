@@ -100,8 +100,8 @@ void PortStateRejectsBadArguments(AudioOut2ContextHandle context) {
 void ContextSetAttributesChecksArguments(AudioOut2ContextHandle context) {
     const AudioOut2Attribute attribute{0, 0, nullptr, 0};
     Require(sceAudioOut2ContextSetAttributes(0, &attribute, 1) == errorInvalidHandle);
-    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == errorInvalidArgument);
-    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == 0);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == static_cast<int>(0x80268001));
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == static_cast<int>(0x80268001));
     Require(sceAudioOut2ContextSetAttributes(context, &attribute, 1) == 0);
 }
 
@@ -179,6 +179,7 @@ int main() {
     UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_device_state-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
+    SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     SpeakerInfoRequiresInitialization();
@@ -201,5 +202,7 @@ int main() {
 
     Require(sceAudioOut2ContextDestroy(context) == 0);
     std::filesystem::remove(path);
+    UnsetEnvironment("SDL_AUDIODRIVER");
+    UnsetEnvironment("SDL_DISKAUDIOFILE");
     return 0;
 }

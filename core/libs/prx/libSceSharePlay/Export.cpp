@@ -55,9 +55,7 @@ int APS5_VABI sceSharePlayProhibitController(std::uint8_t prohibited) {
 
 int APS5_VABI sceSharePlayCrashDaemon(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayGetCurrentConnectionInfo(SharePlayConnectionInfo* info) {
@@ -76,58 +74,42 @@ int APS5_VABI sceSharePlayGetCurrentConnectionInfo(SharePlayConnectionInfo* info
 
 int APS5_VABI sceSharePlayGetCurrentInfo(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayGetEvent(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayNotifyDialogOpen(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayNotifyForceCloseForCdlg(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayResumeScreenForCdlg(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayServerLock(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayServerUnLock(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlaySetMode(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlaySetProhibition(std::int32_t mode) {
@@ -139,43 +121,30 @@ int APS5_VABI sceSharePlaySetProhibition(std::int32_t mode) {
 
 int APS5_VABI sceSharePlaySetProhibitionModeWithAppId(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayStartStandby(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayStartStreaming(void) {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayStopStandby(void) {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayStopStreaming(void) {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlaySetShareScreenStatus() {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 }
@@ -184,29 +153,25 @@ extern "C" {
 
 int APS5_VABI libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch() {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return 1;
-    NotImplemented_nid_no_patch(__func__);
+    return 1;
 }
 APS5_EXPORT("6egMR0eB8RU", libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch);
 
 int APS5_VABI libSceSharePlayUnknown_891hmdoV7UQ_nid_no_patch() {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 APS5_EXPORT("891hmdoV7UQ", libSceSharePlayUnknown_891hmdoV7UQ_nid_no_patch);
 
 int APS5_VABI libSceSharePlayUnknown_LpPA6mprZ8Q_nid_no_patch() {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 APS5_EXPORT("LpPA6mprZ8Q", libSceSharePlayUnknown_LpPA6mprZ8Q_nid_no_patch);
 
 int APS5_VABI libSceSharePlayUnknown_wcI2co2I4Xc_nid_no_patch() {
     std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 APS5_EXPORT("wcI2co2I4Xc", libSceSharePlayUnknown_wcI2co2I4Xc_nid_no_patch);
 

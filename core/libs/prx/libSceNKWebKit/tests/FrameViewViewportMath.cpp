@@ -103,6 +103,10 @@ static void TestComputeUpdatedLayoutViewportRect() {
     WebCore::LayoutRect document = Rect(0, 0, L(1000), L(800));
     Require(Same(Updated(document, WebCore::LayoutViewportConstraint::Unconstrained), L(930), L(-30), L(320), L(500)));
     Require(Same(Updated(document, WebCore::LayoutViewportConstraint::ConstrainedToDocumentRect), L(680), 0, L(320), L(500)));
+    Require(Same(Updated(document, static_cast<WebCore::LayoutViewportConstraint>(0)), L(680), 0, L(320), L(500)));
+    for (const int raw : {1, 2, 255, 256, 65536, -1}) {
+        Require(Same(Updated(document, static_cast<WebCore::LayoutViewportConstraint>(raw)), L(930), L(-30), L(320), L(500)));
+    }
     WebCore::LayoutRect narrowDocument = Rect(0, 0, L(200), L(800));
     Require(Same(Updated(narrowDocument, WebCore::LayoutViewportConstraint::ConstrainedToDocumentRect), L(-120), 0, L(320), L(500)));
 }

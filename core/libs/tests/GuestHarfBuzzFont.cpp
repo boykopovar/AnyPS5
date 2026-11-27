@@ -1,4 +1,5 @@
 #include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <hb.h>
 
@@ -64,14 +65,16 @@ struct FontState {
 struct CallbackState {
     unsigned identity;
     unsigned destroyed = 0;
+    unsigned calls = 0;
 };
 
 static FontState& State(hb_font_t* font, void* fontData, void* callbackData, unsigned identity, unsigned index) {
     auto* state = static_cast<FontState*>(fontData);
-    const auto* callback = static_cast<CallbackState*>(callbackData);
+    auto* callback = static_cast<CallbackState*>(callbackData);
     Require(state && state->font == font && callback && callback->identity == identity);
     Require(state->destroyed == 0 && callback->destroyed == 0);
     ++state->calls[index];
+    ++callback->calls;
     return *state;
 }
 
@@ -193,6 +196,36 @@ static int APS5_VABI NominalB(hb_font_t* font, void* fontData, std::uint32_t uni
     State(font, fontData, callbackData, 20, 0);
     *glyph = unicode + 200;
     return unicode != 0x10FFFF;
+}
+
+static void CheckCallbackSlotReplacement(const Api& api) {
+    auto* functions = api.createFunctions();
+    Require(functions != nullptr);
+    FontState font{api.create(nullptr)};
+    Require(font.font != nullptr);
+    api.setFunctions(font.font, functions, &font, DestroyFont);
+
+    CallbackState cbA{10}, cbB{20};
+    api.nominal(functions, NominalA, &cbA, DestroyCallback);
+    Require(cbA.destroyed == 0 && cbB.destroyed == 0);
+
+    std::uint32_t glyph = 0;
+    Require(hb_font_get_nominal_glyph(font.font, 'A', &glyph) && glyph == 'A' + 100);
+    Require(cbA.calls == 1 && cbB.calls == 0);
+    Require(cbA.destroyed == 0 && cbB.destroyed == 0);
+
+    api.nominal(functions, NominalB, &cbB, DestroyCallback);
+    Require(cbA.destroyed == 1 && cbB.destroyed == 0);
+
+    glyph = 0;
+    Require(hb_font_get_nominal_glyph(font.font, 'B', &glyph) && glyph == 'B' + 200);
+    Require(cbA.calls == 1 && cbB.calls == 1);
+    Require(cbA.destroyed == 1 && cbB.destroyed == 0);
+
+    api.destroy(font.font);
+    Require(font.destroyed == 1 && cbB.destroyed == 0);
+    hb_font_funcs_destroy(functions);
+    Require(cbA.destroyed == 1 && cbB.destroyed == 1);
 }
 
 static void CheckFuncTableReplacement(const Api& api) {
@@ -401,7 +434,7 @@ int main(int argc, char** argv) {
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
     auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -429,6 +462,7 @@ int main(int argc, char** argv) {
     CheckIcuScripts(api);
     CheckCallbacks(api);
     CheckFuncTableReplacement(api);
+    CheckCallbackSlotReplacement(api);
     CheckLegacyAndReset(api);
     CheckNullLegacy(api);
     api.destroy(nullptr);

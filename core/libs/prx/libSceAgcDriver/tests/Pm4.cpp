@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <fcntl.h>
+#include <io.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
@@ -142,8 +145,8 @@ void testRegisters() {
         check(registers.at(0x10) == 43 && registers.at(0x11) == 42, "indirect register order or bank lost");
         pairs[0] = 0x12;
         pairs[4] = 0xffffffffu;
-        expectFailure([&] { execute(state, packet); }, "sentinel");
-        check(!registers.contains(0x12), "invalid indirect packet partially changed state");
+        execute(state, packet);
+        check(registers.at(0x12) == 41 && registers.at(0x11) == 42, "the 0xffffffff register sentinel entry was not skipped");
         std::array<std::uint32_t, 2> values{0x11223344, 0x55667788};
         execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x0a, 2}));
         check(registers.at(0x0a) == 0x11223344 && registers.at(0x0b) == 0x55667788, "consecutive indirect registers lost");
@@ -157,6 +160,8 @@ void testRegisters() {
     }
     execute(state, makePacket(0x69, {0x11, 50, 51}));
     check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "direct registers not sequential");
+    execute(state, makePacket(0x69, {0xffffffffu, 52, 53}));
+    check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "a direct register packet with the 0xffffffff sentinel wrote a register");
     execute(state, makePacket(0x7a, {0x10, 60}));
     check(state.userConfig.at(0x10) == 60, "uconfig index zero failed");
     execute(state, makePacket(0x7a, {0x20000243, 0x441}));
@@ -1107,7 +1112,35 @@ void testEventWrite() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1004, 0x2}), 0); }, "misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0, 0}), 0); }, "null or misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1000}), 0); }, "packet size");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x1000, 0x2}), 0); }, "event type 56");
+    const auto sampleControl = [](std::uint32_t blocks) { return (blocks << 11u) | (2u << 9u); };
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu), 0}), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffffu), 0}), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0u), 0}), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu), 0}), 0x20); }, "compute queue");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x038, sampleControl(0xffu), 0}), 0); }, "pixel pipe statistics control event index");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu)}), 0); }, "packet size");
+    for (const auto bits : {1u, 4u, 1u << 27u, 1u << 31u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu) | bits, 0}), 0); }, "PIXEL_PIPE_STAT_CONTROL reserved bits");
+    }
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu), 1}), 0); }, "PIXEL_PIPE_STAT_CONTROL reserved bits");
+    for (const auto counter : {1u, 3u, 4u, 7u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, sampleControl(0xffu) | (counter << 3u), 0}), 0); }, "occlusion count 0");
+    }
+    for (const auto stride : {0u, 1u, 3u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, (0xffu << 11u) | (stride << 9u), 0}), 0); }, "strides other than 128 bits");
+    }
+    AgcDriver::QueueState controlled;
+    check(controlled.sampleDumpBlocks == AgcDriver::AllSampleDumpBlocks, "a queue must dump every counter block before any PIXEL_PIPE_STAT_CONTROL");
+    execute(controlled, makePacket(0x46, {0x138, sampleControl(0xffu), 0}));
+    check(controlled.sampleDumpBlocks == 0xffu, "PIXEL_PIPE_STAT_CONTROL must select the counter blocks a dump writes");
+    execute(controlled, makePacket(0x46, {0x138, sampleControl(0x8001u), 0}));
+    check(controlled.sampleDumpBlocks == 0x8001u, "PIXEL_PIPE_STAT_CONTROL must replace the previous block selection");
+    execute(controlled, makePacket(0x12, {0}));
+    check(controlled.sampleDumpBlocks == 0x8001u, "CLEAR_STATE must keep the PIXEL_PIPE_STAT_CONTROL block selection");
+    execute(controlled, makePacket(0x10, {0, 0}, 0x68));
+    check(controlled.sampleDumpBlocks == 0x8001u, "a CONTEXT_STATE clear must keep the PIXEL_PIPE_STAT_CONTROL block selection");
+    execute(controlled, makePacket(0x10, {0}, 0x24));
+    check(controlled.sampleDumpBlocks == AgcDriver::AllSampleDumpBlocks, "a dispatch reset must restore every counter block");
     for (const auto bit : {0x40u, 0x80u, 0x800u, 0x80000000u}) {
         expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x410u | bit}), 0); }, "reserved bits");
     }
@@ -1231,6 +1264,27 @@ void testPredication() {
     check(AgcDriver::Pm4::PredicationPasses(state), "samples in the last block must run draw-visible packets");
     counters[3] &= ~ready;
     expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    std::fill(std::begin(counters), std::end(counters), 0u);
+    for (std::size_t db = 0; db < 8; ++db) counters[db * 2] = counters[db * 2 + 1] = ready | (40u + db);
+    execute(state, makePacket(0x46, {0x138, (0xffu << 11u) | (2u << 9u), 0}));
+    check(!AgcDriver::Pm4::PredicationPasses(state), "Z-pass predication must read only the counter blocks PIXEL_PIPE_STAT_CONTROL enables");
+    counters[15] += 5;
+    check(AgcDriver::Pm4::PredicationPasses(state), "samples in the last enabled block must run draw-visible packets");
+    counters[15] &= ~ready;
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    std::fill(std::begin(counters), std::end(counters), 0u);
+    counters[0] = counters[1] = counters[30] = counters[31] = ready | 60u;
+    execute(state, makePacket(0x46, {0x138, (0x8001u << 11u) | (2u << 9u), 0}));
+    check(!AgcDriver::Pm4::PredicationPasses(state), "Z-pass predication must skip the unwritten blocks between enabled ones");
+    counters[3] = ready | 9u;
+    check(!AgcDriver::Pm4::PredicationPasses(state), "samples in a disabled block must not count");
+    counters[31] += 7;
+    check(AgcDriver::Pm4::PredicationPasses(state), "samples in the highest enabled block must run draw-visible packets");
+    counters[30] &= ~ready;
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "never written");
+    execute(state, makePacket(0x46, {0x138, 2u << 9u, 0}));
+    expectFailure([&] { static_cast<void>(AgcDriver::Pm4::PredicationPasses(state)); }, "no counter block enabled");
+    execute(state, makePacket(0x46, {0x138, (AgcDriver::AllSampleDumpBlocks << 11u) | (2u << 9u), 0}));
     execute(state, setPredication(0, false, nullptr));
     expectFailure([&] { AgcDriver::Pm4::Validate(setPredication(2, true, &flag[0]), 0); }, "primitive-count predication");
     expectFailure([&] { AgcDriver::Pm4::Validate(setPredication(5, true, &flag[0]), 0); }, "invalid predication operation");
@@ -1885,6 +1939,15 @@ public:
         check(file != INVALID_HANDLE_VALUE, "cannot create the stderr capture file");
         previous = GetStdHandle(STD_ERROR_HANDLE);
         check(SetStdHandle(STD_ERROR_HANDLE, file) != 0, "cannot redirect stderr");
+        std::fflush(stderr);
+        savedDescriptor = _dup(_fileno(stderr));
+        HANDLE copy = nullptr;
+        check(savedDescriptor >= 0 && DuplicateHandle(GetCurrentProcess(), file, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS) != 0, "cannot redirect the C runtime's stderr");
+        const int descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(copy), _O_WRONLY | _O_BINARY);
+        check(descriptor >= 0, "cannot redirect the C runtime's stderr");
+        const bool redirected = _dup2(descriptor, _fileno(stderr)) == 0;
+        _close(descriptor);
+        check(redirected, "cannot redirect the C runtime's stderr");
 #else
         path = std::filesystem::temp_directory_path() / ("aps5-pm4-ring-" + std::to_string(::getpid()) + ".txt");
         file = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
@@ -1897,7 +1960,14 @@ public:
 
     ~CapturedStderr() {
 #ifdef _WIN32
-        SetStdHandle(STD_ERROR_HANDLE, previous);
+        std::fflush(stderr);
+        if (savedDescriptor >= 0) {
+            _dup2(savedDescriptor, _fileno(stderr));
+            _close(savedDescriptor);
+            SetStdHandle(STD_ERROR_HANDLE, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stderr))));
+        } else {
+            SetStdHandle(STD_ERROR_HANDLE, previous);
+        }
         CloseHandle(file);
 #else
         std::fflush(stderr);
@@ -1922,16 +1992,43 @@ public:
         return lines;
     }
 
+    std::string Text() const {
+        std::fflush(stderr);
+        std::ifstream input(path, std::ios::binary);
+        return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    }
+
 private:
     std::filesystem::path path;
 #ifdef _WIN32
     HANDLE file = INVALID_HANDLE_VALUE;
     HANDLE previous = nullptr;
+    int savedDescriptor = -1;
 #else
     int file = -1;
     int previous = -1;
 #endif
 };
+
+void testRejectionReportUsesTheSubmissionQueue() {
+    alignas(8) static std::uint32_t condition = 1, written = 0;
+    std::string report;
+    {
+        CapturedStderr capture;
+        auto words = joinPackets({conditional(condition, 5, 3u << 25u), writeWord(written, 1), makePacket(0x10, {0x68750000u}), makePacket(0x12, {0})});
+        expectFailure([&] { submitWords(words, 0x20); }, "typed user-data and legacy flip markers are not implemented");
+        AgcDriverWaitIdle_nid_postfix();
+        report = capture.Text();
+    }
+#ifdef _WIN32
+    check(GetStdHandle(STD_ERROR_HANDLE) == reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stderr))), "the stderr capture left the standard error handle apart from descriptor 2");
+#endif
+    const auto failure = [&](const char* what) { return std::string(what) + "; the report:\n" + report; };
+    check(report.find("dwords on queue 0x20 at guest") != std::string::npos, failure("the rejection report does not name the submission's queue").c_str());
+    check(report.find("COND_EXEC") != std::string::npos, failure("the rejection report does not list the COND_EXEC").c_str());
+    check(report.find("COND_EXEC reserved control fields") == std::string::npos, failure("the rejection report checked a compute queue's COND_EXEC as a graphics-queue packet").c_str());
+    check(report.find("graphics packet in compute queue") != std::string::npos, failure("the rejection report did not check a graphics packet on the compute queue").c_str());
+}
 
 std::vector<std::string> recordedWrites(const std::vector<std::string>& lines) {
     std::vector<std::string> writes;
@@ -2614,6 +2711,7 @@ void testOrderHoldWake() {
     static char reason[200];
     std::snprintf(reason, sizeof(reason), "a held submission started %.3f ms (median) after queue 0 began to wait on its label; it must start at once", latencies[rounds / 2]);
     std::printf("order-signal: median %.3f ms, largest %.3f ms\n", latencies[rounds / 2], latencies.back());
+    if (const char* skip = std::getenv("APS5_SKIP_TIMING_TESTS"); skip != nullptr && skip[0] != '\0' && skip[0] != '0') return;
     check(latencies[rounds / 2] < 0.1, reason);
 }
 
@@ -2704,6 +2802,38 @@ void testUnwrittenUserData() {
     check(AgcDriver::DriverDetail::readUserData(shader, 0x8d) == 0, "a user data register written as zero was not read");
     check(AgcDriver::DriverDetail::readUserData(shader, 0x95) == 0 && AgcDriver::DriverDetail::readUserData(shader, 0x241) == 0, "an unwritten user data register does not read zero");
     expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::readRegister(shader, 0x95)); }, "required shader register");
+}
+
+template <typename Label>
+void publishThroughWait(bool checked) {
+    alignas(8) static Label label = 0;
+    alignas(8) static std::array<std::uint64_t, 8> payload{};
+    std::atomic_ref<Label>(label).store(0, std::memory_order_relaxed);
+    payload.fill(0);
+    const auto wide = sizeof(Label) == 8;
+    const auto packet = wide ? makePacket(0x93, {0x13, low(&label), high(&label), 1u, 0u, 0xffffffffu, 0xffffffffu, 0}) : makePacket(0x3c, {0x13, low(&label), high(&label), 1u, 0xffffffffu, 0});
+    std::thread producer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        payload.fill(0x5a5a5a5a5a5a5a5aull);
+        std::atomic_ref<Label>(label).store(1, std::memory_order_release);
+    });
+    if (checked) {
+        AgcDriver::QueueState state;
+        execute(state, packet);
+    } else {
+        while (!AgcDriver::Pm4::WaitSatisfiedUnchecked(packet)) std::this_thread::yield();
+    }
+    const auto seen = payload;
+    producer.join();
+    const auto message = std::string(checked ? "WAIT_REG_MEM" : "the unchecked wait") + (wide ? " (64-bit)" : " (32-bit)") + " returned before the data published with its label";
+    check(std::all_of(seen.begin(), seen.end(), [](std::uint64_t word) { return word == 0x5a5a5a5a5a5a5a5aull; }), message.c_str());
+}
+
+void testWaitRegMemAcquiresPublishedData() {
+    publishThroughWait<std::uint32_t>(true);
+    publishThroughWait<std::uint64_t>(true);
+    publishThroughWait<std::uint32_t>(false);
+    publishThroughWait<std::uint64_t>(false);
 }
 
 void testWaitRegMemMasking() {
@@ -2984,11 +3114,13 @@ int main(int argc, char** argv) {
         testIndexAttributesReadAtExecution();
         testPredicatedSubmission();
         testConditionalSubmission();
+        testRejectionReportUsesTheSubmissionQueue();
         testSuspendPointWritesQueuedLabels();
         testMemSemaphore();
         testNopPadSubmission();
         testBranchSubmission();
         testWaitRegMemMasking();
+        testWaitRegMemAcquiresPublishedData();
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();
