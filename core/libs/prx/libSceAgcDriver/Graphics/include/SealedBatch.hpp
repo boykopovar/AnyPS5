@@ -70,6 +70,7 @@ public:
     void ReplayReleased() noexcept;
     void Charge(std::size_t bytes) noexcept;
     void Retired(std::size_t bytes) noexcept;
+    void Uncharge(std::size_t bytes) noexcept;
     std::size_t StreamCap() const noexcept { return limits.outstandingBytes / std::max<std::size_t>(limits.outstandingBatches, 1); }
     bool OverBytes() const noexcept { return bytes.load(std::memory_order_relaxed) >= limits.outstandingBytes; }
     std::size_t Encoding() const noexcept { return encoding.load(std::memory_order_relaxed); }

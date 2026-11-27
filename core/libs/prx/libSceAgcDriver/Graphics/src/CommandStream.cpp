@@ -111,6 +111,8 @@ VkCommandBuffer CommandStream::Demote(const char* command, VkStructureType chain
         materialized = target;
         demotion = Demotion{command, chained};
         chunks.clear();
+        if (budget != nullptr) budget->Uncharge(charged);
+        charged = 0;
         return target;
     } catch (...) {
         Poison(std::current_exception());

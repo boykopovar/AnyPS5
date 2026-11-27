@@ -447,6 +447,7 @@ void StreamByteCapDemotesTheBatch() {
         Require(stream.Materialized() != VK_NULL_HANDLE, "a stream at its byte cap did not demote");
         Require(std::string_view(stream.DemotedBy().command) == "stream byte cap" && stream.DemotedBy().chained == VK_STRUCTURE_TYPE_MAX_ENUM, "the cap demotion was not attributed to the cap");
         Require(materializer.begun == 1, "the cap demotion began " + std::to_string(materializer.begun) + " command buffers");
+        Require(stream.Charged() == 0 && budget.OutstandingBytes() == 0, "a demoted stream's freed chunks stayed charged: " + std::to_string(budget.OutstandingBytes()) + " bytes");
         const auto values = takeSeen();
         Require(values.size() == appended * (array.size() + 1) && values.front() == 0 && values[(appended - 1) * (array.size() + 1)] == appended - 1, "the cap demotion did not record every command in order, including the one past the cap");
         budget.Retired(stream.Charged());
@@ -457,11 +458,10 @@ void StreamByteCapDemotesTheBatch() {
         CommandStream stream(Real(), &budget, &materializer);
         takeSeen();
         for (std::size_t index = 0; index < before; ++index) append(stream, 7, array);
-        const auto chargedBefore = stream.Charged();
         std::vector<std::uint32_t> large(cap / sizeof(std::uint32_t));
         for (std::size_t index = 0; index < large.size(); ++index) large[index] = static_cast<std::uint32_t>(index);
         append(stream, 9, large);
-        Require(stream.Charged() == chargedBefore && stream.Charged() <= cap, "one command larger than the remaining cap was charged: " + std::to_string(stream.Charged()) + " bytes for a cap of " + std::to_string(cap));
+        Require(stream.Charged() == 0 && budget.OutstandingBytes() == 0, "one command larger than the remaining cap left " + std::to_string(budget.OutstandingBytes()) + " bytes charged for a cap of " + std::to_string(cap));
         Require(stream.Materialized() != VK_NULL_HANDLE && std::string_view(stream.DemotedBy().command) == "stream byte cap", "one command larger than the remaining cap did not demote");
         const auto values = takeSeen();
         Require(values.size() == before * (array.size() + 1) + 1 + large.size() && values[before * (array.size() + 1)] == 9 && values.back() == large.back(), "the command past the cap was not recorded after the prefix");

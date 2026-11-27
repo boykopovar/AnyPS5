@@ -97,6 +97,14 @@ void WorkBudget::Retired(std::size_t charge) noexcept {
     retired.notify_all();
 }
 
+void WorkBudget::Uncharge(std::size_t charge) noexcept {
+    {
+        std::lock_guard lock(mutex);
+        bytes.fetch_sub(charge, std::memory_order_relaxed);
+    }
+    retired.notify_all();
+}
+
 SealedBatch::SealedBatch(std::uint64_t serial, CommandStream& stream, const CommandFunctions& real, FailureLatch& latch, WorkBudget* budget) : serial(serial), stream(stream), real(real), latch(latch), budget(budget) {
     stream.Seal();
     charged = stream.Charged();
