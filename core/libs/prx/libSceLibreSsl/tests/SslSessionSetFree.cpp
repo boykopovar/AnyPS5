@@ -78,6 +78,18 @@ void Run() {
     SSL_free_nid_postfix(ssl);
     SSL_CTX_free_nid_postfix(ctx);
     Require(allocations == baseline, "the session storage is released");
+
+    ctx = SSL_CTX_new_nid_postfix(method);
+    Require(ctx != nullptr, "second context");
+    ssl = SSL_new_nid_postfix(ctx);
+    Require(ssl != nullptr, "second ssl");
+    session = NewSession();
+    Require(SSL_set_session_nid_postfix(ssl, session) == 1, "the session is adopted again");
+    SSL_free_nid_postfix(ssl);
+    Require(session->references == 1, "SSL_free releases the held reference");
+    SSL_SESSION_free_nid_postfix(session);
+    SSL_CTX_free_nid_postfix(ctx);
+    Require(allocations == baseline, "SSL_free releases the session it held");
 }
 
 }

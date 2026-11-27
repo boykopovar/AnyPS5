@@ -390,7 +390,7 @@ void DestroySsl(LibreSslSsl& ssl, bool methodReady, bool releaseExData) {
     if (ssl.rbio != ssl.wbio) LibreSslFreeBioChain_nid_no_patch(static_cast<LibreSsl::Bio*>(ssl.rbio));
     LibreSslFreeBioChain_nid_no_patch(static_cast<LibreSsl::Bio*>(ssl.wbio));
     FreeStackShell(static_cast<LibreSslStack*>(ssl.cipherList));
-    if (ssl.session) NotImplemented_nid_no_patch("SSL_free: SSL_SESSION");
+    SSL_SESSION_free_nid_postfix(static_cast<LibreSslSession*>(ssl.session));
     if (ssl.encReadCtx || ssl.readHash || internal.encWriteCtx || internal.writeHash || internal.aeadReadCtx || internal.aeadWriteCtx)
         NotImplemented_nid_no_patch("SSL_free: a live cipher or hash context");
     FreeCertificate(static_cast<Certificate*>(ssl.cert));
