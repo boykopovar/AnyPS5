@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
@@ -6,6 +7,13 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::BidiContext;
 using NKWebKit::WebCoreAbi::BidiContextRef;
@@ -220,6 +228,111 @@ static void TestInvalidArguments() {
     Require(reference.ptr == nullptr);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TFunction>
+static void RequireNotImplemented(TFunction&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    const unsigned ltrBefore = shared.ltr->refCount;
+    BidiContextRef reference{shared.rtl};
+
+    RequireNotImplemented([&] {
+        create(reinterpret_cast<BidiContextRef*>(pages.Guard()), 0, kLTR, false, kStyle, nullptr);
+    });
+    RequireNotImplemented([&] {
+        create(reinterpret_cast<BidiContextRef*>(pages.ReadOnly()), 0, kLTR, false, kStyle, shared.ltr);
+    });
+    Require(shared.ltr->refCount == ltrBefore);
+
+    RequireNotImplemented([&] {
+        create(&reference, 1, kRTL, false, kStyle, reinterpret_cast<BidiContext*>(pages.Guard()));
+    });
+    Require(reference.ptr == shared.rtl);
+
+    RequireNotImplemented([&] {
+        create(&reference, 1, kRTL, false, kStyle, reinterpret_cast<BidiContext*>(pages.ReadOnly()));
+    });
+    Require(reference.ptr == shared.rtl);
+
+    RequireNotImplemented([&] {
+        copyStack(reinterpret_cast<BidiContextRef*>(pages.Guard()), shared.ltr);
+    });
+    RequireNotImplemented([&] {
+        copyStack(reinterpret_cast<BidiContextRef*>(pages.ReadOnly()), shared.ltr);
+    });
+    Require(shared.ltr->refCount == ltrBefore);
+
+    RequireNotImplemented([&] {
+        copyStack(&reference, reinterpret_cast<BidiContext*>(pages.Guard()));
+    });
+    Require(reference.ptr == shared.rtl);
+
+    BidiContext brokenChild{1, Bits(2, kRTL, false, kStyle), reinterpret_cast<BidiContext*>(pages.Guard())};
+    RequireNotImplemented([&] {
+        copyStack(&reference, &brokenChild);
+    });
+    Require(reference.ptr == shared.rtl);
+
+    BidiContext cyclic{1, Bits(1, kRTL, false, kStyle), nullptr};
+    cyclic.parent = &cyclic;
+    RequireNotImplemented([&] {
+        copyStack(&reference, &cyclic);
+    });
+    Require(reference.ptr == shared.rtl);
+}
+
 int main() {
     TestTheSharedContexts();
     const unsigned counts[] = {shared.ltr->refCount, shared.ltrOverride->refCount, shared.rtl->refCount, shared.rtlOverride->refCount};
@@ -227,6 +340,7 @@ int main() {
     TestCopies();
     TestHandBuiltRoots();
     TestInvalidArguments();
+    TestGuestPointers();
     Require(shared.ltr->refCount == counts[0] && shared.ltrOverride->refCount == counts[1]);
     Require(shared.rtl->refCount == counts[2] && shared.rtlOverride->refCount == counts[3]);
     std::puts("libSceNKWebKit bidi context tests passed");
