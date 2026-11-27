@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [Span reads in two-lane modules on NVIDIA](../../../core/shader/recompiler/SpirvBackend/src/SpirvBdaRead.cpp) (shader recompiler) - measured on one GPU (RTX 3090, Linux, driver 615.78.08); the cause inside the driver is not known. There a wave64 compute module with two lanes per invocation that keeps `read_bda_span` a `DontInline` call gives lanes 32 to 63 values of lane L-32: after a `global_load_dwordx4`, `v_cmp_lt_u32` and `v_add_co_ci_u32` leave lane L-32's sum plus one in each upper lane with carry-in; RDNA2 (gfx1036), RADV and wave32 give the lane's own. On NVIDIA's proprietary driver `read_bda_span` gets `Inline` there (`APS5_NO_TWO_LANE_SPAN_READ_INLINE=1` keeps the call), which is only a request; `load_bda_span` and the other helpers stay `DontInline`. [`agc_driver_wave64_span_read_lanes`](../../../core/libs/prx/libSceAgcDriver/tests/execution/Wave64SpanReadLanes.cpp) checks the controls and the lanes. PPSA21564's eight such pipelines take 1.34 times as long to create.

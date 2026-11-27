@@ -404,6 +404,7 @@ struct SpirvTarget {
     bool spannedShuffleThroughMemory = false;
     bool spannedUnreachableStays = false;
     bool spannedUnreachableVerify = false;
+    bool twoLaneSpanReadInline = false;
 };
 
 struct BindingLayout {

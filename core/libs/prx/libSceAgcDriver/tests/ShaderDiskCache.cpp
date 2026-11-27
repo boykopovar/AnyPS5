@@ -943,6 +943,7 @@ void verifyKeySensitivity() {
     changes("spanned shuffles through workgroup memory", [](SampleRequest& sample) { sample.request.target.spannedShuffleThroughMemory = true; });
     changes("spanned waves kept past an OpUnreachable", [](SampleRequest& sample) { sample.request.target.spannedUnreachableStays = true; });
     changes("the check of spanned waves kept past an OpUnreachable", [](SampleRequest& sample) { sample.request.target.spannedUnreachableVerify = true; });
+    changes("inlined span reads in two-lane modules", [](SampleRequest& sample) { sample.request.target.twoLaneSpanReadInline = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });

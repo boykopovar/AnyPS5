@@ -322,6 +322,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
     state.spannedAnySubgroup = state.spannedWave && target.spannedAnySubgroup;
     state.spannedShuffleThroughMemory = state.spannedWave && target.spannedShuffleThroughMemory;
+    state.bdaSpanReadInline = state.laneCount == 2u && target.twoLaneSpanReadInline;
     if (state.spannedWave) {
         state.requirements.subgroupLocalInvocationId = true;
         state.requirements.subgroupBallot = true;

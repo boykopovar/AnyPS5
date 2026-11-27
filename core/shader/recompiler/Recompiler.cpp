@@ -920,6 +920,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
     targetOptions.spannedUnreachableStays = request.target.spannedUnreachableStays || request.target.spannedUnreachableVerify;
     targetOptions.spannedUnreachableVerify = request.target.spannedUnreachableVerify;
+    targetOptions.twoLaneSpanReadInline = request.target.twoLaneSpanReadInline;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
