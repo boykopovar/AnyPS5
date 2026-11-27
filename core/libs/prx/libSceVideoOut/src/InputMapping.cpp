@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/InputMapping.hpp"
+#include "DecimalParsing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -291,7 +292,7 @@ int parseDeadzonePercent(std::string_view value) {
 double parseMouseSensitivity(std::string_view value) {
     double parsed = 0.0;
     const auto end = value.data() + value.size();
-    const auto result = std::from_chars(value.data(), end, parsed);
+    const auto result = ParseDecimal_nid_no_patch(value.data(), end, parsed);
     if (result.ec != std::errc{} || result.ptr != end || !(parsed > 0.0) || parsed > Pad::MaxMouseSensitivity) {
         throw std::runtime_error("mouse sensitivity must be a number greater than 0 and at most 10");
     }
@@ -307,7 +308,7 @@ std::string formatNumber(double value) {
 double parseNumber(std::string_view value, std::string_view name, double minimum, double maximum) {
     double parsed = 0.0;
     const auto end = value.data() + value.size();
-    const auto result = std::from_chars(value.data(), end, parsed);
+    const auto result = ParseDecimal_nid_no_patch(value.data(), end, parsed);
     if (value.empty() || result.ec != std::errc{} || result.ptr != end || !std::isfinite(parsed) || parsed < minimum || parsed > maximum) {
         throw std::runtime_error(std::string(name) + " must be a number from " + formatNumber(minimum) + " to " + formatNumber(maximum));
     }

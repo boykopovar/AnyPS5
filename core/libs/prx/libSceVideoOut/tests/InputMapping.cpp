@@ -86,6 +86,12 @@ void settingsParse() {
     require(signedZero.settings.leftStickDeadzonePercent == 0 && signedZero.settings.rightStickDeadzonePercent == 0, "a signed zero deadzone reads as 0");
 }
 
+void settingsParseExponent() {
+    useConfig("MouseSensitivity = .25e1\nMouseSmoothingMs = 0e-400\n");
+    const auto settings = Pad::LoadInputMapping().settings;
+    require(settings.mouseSensitivity == 2.5 && settings.mouseSmoothingMs == 0.0, "a decimal exponent and a written zero are read");
+}
+
 void settingsReject() {
     require(rejects("LeftStickDeadzone = 91\n"), "a deadzone above 90 is rejected");
     require(rejects("LeftStickDeadzone = -1\n"), "a negative deadzone is rejected");
@@ -94,6 +100,13 @@ void settingsReject() {
     require(rejects("MouseSensitivity = 0\n"), "a zero mouse sensitivity is rejected");
     require(rejects("MouseSensitivity = 10.5\n"), "a mouse sensitivity above 10 is rejected");
     require(rejects("MouseSensitivity = fast\n"), "a non-numeric mouse sensitivity is rejected");
+    require(rejects("MouseSensitivity = +1\n"), "a mouse sensitivity with a plus sign is rejected");
+    require(rejects("MouseSensitivity = 0x1p0\n"), "a hexadecimal mouse sensitivity is rejected");
+    require(rejects("MouseSensitivity = 1,5\n"), "a mouse sensitivity with a decimal comma is rejected");
+    require(rejects("MouseSensitivity = 1e\n"), "a mouse sensitivity with an empty exponent is rejected");
+    require(rejects("MouseSensitivity = 1e400\n"), "a mouse sensitivity outside the double range is rejected");
+    require(rejects("MouseSmoothingMs = 1e-400\n"), "a setting that underflows to zero is rejected");
+    require(rejects("MouseSmoothingMs = inf\n"), "an infinite setting is rejected");
     require(rejects("MouseSensitivity = 1\nMouseSensitivity = 2\n"), "a setting given twice is rejected");
 }
 
@@ -753,6 +766,7 @@ int main() try {
     std::filesystem::create_directories(root);
     settingsDefault();
     settingsParse();
+    settingsParseExponent();
     settingsReject();
     wheelTilt();
     performanceOverlayBinding();
