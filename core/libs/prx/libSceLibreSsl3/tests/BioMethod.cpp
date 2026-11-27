@@ -171,10 +171,10 @@ void TestAsn1ValuesBounds() {
         Require(ASN1_STRING_set_nid_postfix(&pageEnd, reinterpret_cast<const void*>(std::uintptr_t{0x10}), -1) == 0);
         Require(errno == 71 && pageEnd.data == keptData && pageEnd.length == 4);
         Require(ASN1_STRING_set_nid_postfix(&pageEnd, "kept", -2) == 0);
-        Require(pageEnd.data == keptData && pageEnd.length == 4 && pageEnd.type == 4);
+        Require(pageEnd.data == nullptr && pageEnd.length == 0 && pageEnd.type == 4 && liveBlocks == 0);
+        Require(ASN1_STRING_set_nid_postfix(&pageEnd, "kept", 4) == 1);
         Require(ASN1_STRING_set_nid_postfix(&pageEnd, reinterpret_cast<const void*>(std::uintptr_t{0x10}), 3) == 0);
-        Require(pageEnd.data == keptData && pageEnd.length == 4 && pageEnd.type == 4);
-        free_nid_postfix(pageEnd.data);
+        Require(pageEnd.data == nullptr && pageEnd.length == 0 && pageEnd.type == 4 && liveBlocks == 0);
 
         unsigned char borrowedBuf[5] = {'b', 'o', 'r', 'r', 0};
         Asn1String borrowed{4, 12, borrowedBuf, 0x10 | 0x24};
