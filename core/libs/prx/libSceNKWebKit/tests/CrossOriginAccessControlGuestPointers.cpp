@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -168,6 +169,95 @@ int main() {
         static_cast<void>(_ZN7WebCore25validatePreflightResponseERKNS_15ResourceRequestERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE(
             request, response, StoredCredentialsPolicy::DoNotUse, reinterpret_cast<const SecurityOrigin*>(pages.Guard()), nullptr));
     }, kPreflightSymbol));
+
+    const auto makeString = [](const char* text) {
+        return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), static_cast<unsigned>(std::strlen(text)));
+    };
+    ResourceResponseStatusLayout okResponse{};
+    okResponse.httpStatusCode = 200;
+    _ZN7WebCore20ResourceResponseBase18setHTTPHeaderFieldENS_14HTTPHeaderNameERKN3WTF6StringE(&okResponse.head, NKWebKit::HttpAbi::HTTPHeaderName::AccessControlAllowOrigin, makeString("*"));
+    _ZN7WebCore20ResourceResponseBase18setHTTPHeaderFieldENS_14HTTPHeaderNameERKN3WTF6StringE(&okResponse.head, NKWebKit::HttpAbi::HTTPHeaderName::AccessControlAllowMethods, makeString("PUT"));
+    _ZN7WebCore20ResourceResponseBase18setHTTPHeaderFieldENS_14HTTPHeaderNameERKN3WTF6StringE(&okResponse.head, NKWebKit::HttpAbi::HTTPHeaderName::AccessControlAllowHeaders, makeString("X-Test"));
+    auto& responseHeaders = okResponse.head.httpHeaderFields;
+    SecurityOrigin validOrigin{};
+    auto* okResponsePtr = &okResponse.head;
+
+    const auto checkNestedPreflightFault = [&](LegacyResourceRequestBase& badReq) {
+        badReq.resourceRequestUpdated = false;
+        Require(ThrowsNotImplemented([&] {
+            static_cast<void>(_ZN7WebCore25validatePreflightResponseERKNS_15ResourceRequestERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE(
+                &badReq, okResponsePtr, StoredCredentialsPolicy::DoNotUse, &validOrigin, nullptr));
+        }, kPreflightSymbol));
+        Require(!badReq.resourceRequestUpdated);
+    };
+
+    const NKWebKit::WtfAbi::String validMethod = makeString("PUT");
+    const NKWebKit::WtfAbi::String validUrlText = makeString("https://api.example/resource");
+    NKWebKit::WtfAbi::StringImpl nullDataImpl{2, 4, nullptr, 4};
+    NKWebKit::WtfAbi::StringImpl guardDataImpl{2, 4, pages.Guard(), 4};
+
+    {
+        LegacyResourceRequestBase badMethodReq{};
+        badMethodReq.url.impl = validUrlText.impl;
+        badMethodReq.httpMethod.impl = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+        checkNestedPreflightFault(badMethodReq);
+        badMethodReq.httpMethod.impl = &nullDataImpl;
+        checkNestedPreflightFault(badMethodReq);
+        badMethodReq.httpMethod.impl = &guardDataImpl;
+        checkNestedPreflightFault(badMethodReq);
+        badMethodReq.httpMethod.impl = nullptr;
+    }
+    {
+        LegacyResourceRequestBase badUrlReq{};
+        badUrlReq.httpMethod.impl = validMethod.impl;
+        badUrlReq.url.impl = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+        checkNestedPreflightFault(badUrlReq);
+        badUrlReq.url.impl = &nullDataImpl;
+        checkNestedPreflightFault(badUrlReq);
+        badUrlReq.httpMethod.impl = nullptr;
+    }
+    {
+        LegacyResourceRequestBase badCommonBufReq{};
+        badCommonBufReq.httpMethod.impl = validMethod.impl;
+        badCommonBufReq.url.impl = validUrlText.impl;
+        auto& reqMap = *reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&badCommonBufReq.httpHeaderFields);
+        reqMap.common.buffer = reinterpret_cast<NKWebKit::HttpAbi::CommonHeader*>(pages.Guard());
+        reqMap.common.capacity = 1;
+        reqMap.common.size = 1;
+        checkNestedPreflightFault(badCommonBufReq);
+
+        NKWebKit::HttpAbi::CommonHeader badCommonEntry{NKWebKit::HttpAbi::HTTPHeaderName::Accept, NKWebKit::WtfAbi::String{}};
+        badCommonEntry.value.impl = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+        reqMap.common.buffer = &badCommonEntry;
+        checkNestedPreflightFault(badCommonBufReq);
+        badCommonEntry.value.impl = nullptr;
+
+        reqMap.common = {};
+        reqMap.uncommon.buffer = reinterpret_cast<NKWebKit::HttpAbi::UncommonHeader*>(pages.Guard());
+        reqMap.uncommon.capacity = 1;
+        reqMap.uncommon.size = 1;
+        checkNestedPreflightFault(badCommonBufReq);
+
+        NKWebKit::HttpAbi::UncommonHeader badUncommonEntry{};
+        badUncommonEntry.key.impl = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+        reqMap.uncommon.buffer = &badUncommonEntry;
+        checkNestedPreflightFault(badCommonBufReq);
+        badUncommonEntry.key.impl = validMethod.impl;
+        badUncommonEntry.value.impl = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+        checkNestedPreflightFault(badCommonBufReq);
+        badUncommonEntry.key.impl = nullptr;
+        badUncommonEntry.value.impl = nullptr;
+        badCommonBufReq.httpMethod.impl = nullptr;
+    }
+
+    if (responseHeaders.common.buffer) {
+        std::destroy_n(responseHeaders.common.buffer, responseHeaders.common.size);
+        _ZN3WTF8fastFreeEPv(responseHeaders.common.buffer);
+    }
+    if (responseHeaders.uncommon.buffer) {
+        std::destroy_n(responseHeaders.uncommon.buffer, responseHeaders.uncommon.size);
+        _ZN3WTF8fastFreeEPv(responseHeaders.uncommon.buffer);
+    }
 
     return 0;
 }

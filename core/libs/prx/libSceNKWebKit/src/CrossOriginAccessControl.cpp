@@ -72,13 +72,17 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include <cstring>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler;
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisablerVtable;
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisablerVtableStorage;
+using NKWebKit::HttpAbi::CommonHeader;
+using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
+using NKWebKit::HttpAbi::UncommonHeader;
 using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
 using NKWebKit::WebCoreAbi::ResourceResponseBase;
 using NKWebKit::WebCoreAbi::ResourceResponseStatusLayout;
@@ -88,10 +92,39 @@ using NKWebKit::WtfAbi::ExpectedVoidString;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringView;
+using NKWebKit::WtfAbi::URL;
+
+struct RawHeaderVector {
+    const void* buffer{nullptr};
+    std::uint32_t capacity{0};
+    std::uint32_t size{0};
+};
+
+struct RawHeaderMap {
+    RawHeaderVector common;
+    RawHeaderVector uncommon;
+};
+
+struct RawCommonHeader {
+    HTTPHeaderName key{};
+    const StringImpl* value{nullptr};
+};
+
+struct RawUncommonHeader {
+    const StringImpl* key{nullptr};
+    const StringImpl* value{nullptr};
+};
 
 static_assert(sizeof(bool) == 1);
 static_assert(std::is_trivially_copyable_v<CrossOriginAccessControlCheckDisablerVtable>);
 static_assert(std::is_trivially_copyable_v<StringImpl>);
+static_assert(std::is_trivially_copyable_v<URL>);
+static_assert(std::is_trivially_copyable_v<RawHeaderMap>);
+static_assert(sizeof(RawHeaderMap) == sizeof(HTTPHeaderMap));
+static_assert(std::is_trivially_copyable_v<RawCommonHeader>);
+static_assert(sizeof(RawCommonHeader) == sizeof(CommonHeader));
+static_assert(std::is_trivially_copyable_v<RawUncommonHeader>);
+static_assert(sizeof(RawUncommonHeader) == sizeof(UncommonHeader));
 
 constexpr std::size_t kDisablerInitializedBytes = offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled) + sizeof(bool);
 static_assert(kDisablerInitializedBytes == 9);
@@ -131,18 +164,70 @@ void ReadDisablerRaw(const CrossOriginAccessControlCheckDisabler* self, unsigned
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-void ValidateGuestStringImplReadable(const StringImpl* guestImpl, const char* function) {
-    if (!guestImpl) return;
+String CopyGuestString(const StringImpl* guestImpl, const char* function) {
+    if (!guestImpl) return {};
     StringImpl header{};
     if (!GuestCopyIn_nid_no_patch(&header, guestImpl, sizeof(header)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    if (!header.length) return;
-    if (!header.data) return;
+    if (!header.length) return {};
+    if (!header.data) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     const bool is8Bit = (header.hashAndFlags & kStringImplFlag8Bit) != 0;
     const std::size_t unitSize = is8Bit ? 1u : sizeof(char16_t);
     if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    RequireReadableGuestBytes(header.data, static_cast<std::size_t>(header.length) * unitSize, function);
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * unitSize;
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    void* characters = nullptr;
+    String copy(NKWebKit::WtfAbi::CreateUninitialized(header.length, is8Bit, characters));
+    if (!GuestCopyIn_nid_no_patch(characters, header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return copy;
+}
+
+template <typename T>
+std::vector<T> ReadGuestHeaderVector(const RawHeaderVector& header, const char* function) {
+    std::vector<T> elements;
+    if (!header.size) return elements;
+    if (!header.buffer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (header.size > std::numeric_limits<std::size_t>::max() / sizeof(T))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t totalBytes = static_cast<std::size_t>(header.size) * sizeof(T);
+    const auto baseAddress = reinterpret_cast<std::uintptr_t>(header.buffer);
+    if (totalBytes > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(header.buffer, totalBytes, function);
+    elements.resize(header.size);
+    if (!GuestCopyIn_nid_no_patch(elements.data(), header.buffer, totalBytes))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return elements;
+}
+
+struct HostHeaderMap {
+    std::vector<CommonHeader> commonEntries;
+    std::vector<UncommonHeader> uncommonEntries;
+    HTTPHeaderMap map{};
+
+    HostHeaderMap() = default;
+    HostHeaderMap(const HostHeaderMap&) = delete;
+    HostHeaderMap& operator=(const HostHeaderMap&) = delete;
+};
+
+void CopyGuestHeaderMap(const void* guestHeaderMap, HostHeaderMap& out, const char* function) {
+    RawHeaderMap raw{};
+    if (!GuestCopyIn_nid_no_patch(&raw, guestHeaderMap, sizeof(raw)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const auto rawCommon = ReadGuestHeaderVector<RawCommonHeader>(raw.common, function);
+    const auto rawUncommon = ReadGuestHeaderVector<RawUncommonHeader>(raw.uncommon, function);
+    out.commonEntries.reserve(rawCommon.size());
+    for (const auto& entry : rawCommon) {
+        out.commonEntries.push_back({entry.key, CopyGuestString(entry.value, function)});
+    }
+    out.uncommonEntries.reserve(rawUncommon.size());
+    for (const auto& entry : rawUncommon) {
+        out.uncommonEntries.push_back({CopyGuestString(entry.key, function), CopyGuestString(entry.value, function)});
+    }
+    out.map.common = {out.commonEntries.empty() ? nullptr : out.commonEntries.data(), static_cast<std::uint32_t>(out.commonEntries.size()), static_cast<std::uint32_t>(out.commonEntries.size())};
+    out.map.uncommon = {out.uncommonEntries.empty() ? nullptr : out.uncommonEntries.data(), static_cast<std::uint32_t>(out.uncommonEntries.size()), static_cast<std::uint32_t>(out.uncommonEntries.size())};
 }
 
 void SetResourceRequestUpdated(const LegacyResourceRequestBase* request, const char* function) {
@@ -329,16 +414,18 @@ ExpectedVoidString ValidatePreflightResponseImpl(const LegacyResourceRequestBase
     const StringImpl* methodImpl = nullptr;
     if (!GuestCopyIn_nid_no_patch(&methodImpl, reinterpret_cast<const unsigned char*>(request) + offsetof(LegacyResourceRequestBase, httpMethod), sizeof(methodImpl)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    ValidateGuestStringImplReadable(methodImpl, function);
-    const StringImpl* urlImpl = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&urlImpl, reinterpret_cast<const unsigned char*>(request) + offsetof(LegacyResourceRequestBase, url), sizeof(urlImpl)))
+    const String copiedMethod = CopyGuestString(methodImpl, function);
+    URL localUrl{};
+    if (!GuestCopyIn_nid_no_patch(&localUrl, reinterpret_cast<const unsigned char*>(request) + offsetof(LegacyResourceRequestBase, url), sizeof(localUrl)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    ValidateGuestStringImplReadable(urlImpl, function);
+    const String copiedUrlString = CopyGuestString(localUrl.impl, function);
+    localUrl.impl = copiedUrlString.impl;
+    HostHeaderMap localHeaders;
+    CopyGuestHeaderMap(reinterpret_cast<const unsigned char*>(request) + offsetof(LegacyResourceRequestBase, httpHeaderFields), localHeaders, function);
     SetResourceRequestUpdated(request, function);
-    auto errorDescription = NKWebKit::PreflightCache::ValidateMethodAndHeaders(
-        *result.item, request->httpMethod, reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap&>(request->httpHeaderFields));
+    auto errorDescription = NKWebKit::PreflightCache::ValidateMethodAndHeaders(*result.item, copiedMethod, localHeaders.map);
     const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
-    NKWebKit::PreflightCache::Append(origin, request->url, std::move(result.item));
+    NKWebKit::PreflightCache::Append(origin, localUrl, std::move(result.item));
     if (errorDescription) return ExpectedVoidString(std::move(*errorDescription));
     return ExpectedVoidString();
 }
