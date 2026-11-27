@@ -109,10 +109,28 @@ int main() {
 
         Frame noLsda(nullptr, 0x10);
         Frame cleanup(cleanupTable, 0x18);
+        Require(__gxx_personality_v0_nid_postfix(2, _UA_SEARCH_PHASE, 0, nullptr, nullptr) == _URC_FATAL_PHASE1_ERROR);
+        Require(__gxx_personality_v0_nid_postfix(1, 0, 0, nullptr, nullptr) == _URC_FATAL_PHASE2_ERROR);
+        Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_HANDLER_FRAME, 0, nullptr, nullptr) == _URC_FATAL_PHASE1_ERROR);
+        Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, nullptr, nullptr) == _URC_CONTINUE_UNWIND);
+        Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, nullptr, nullptr) == _URC_CONTINUE_UNWIND);
+        Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, NativeGnuExceptionClass, &cleanup.exception, nullptr) == _URC_CONTINUE_UNWIND);
         Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, NativeGnuExceptionClass, nullptr, &cleanup.context) == _URC_FATAL_PHASE1_ERROR);
         Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, NativeGnuExceptionClass, nullptr, &cleanup.context) == _URC_FATAL_PHASE2_ERROR);
         Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, NativeClangExceptionClass, nullptr, &cleanup.context) == _URC_FATAL_PHASE1_ERROR);
         Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, NativeClangExceptionClass, nullptr, &cleanup.context) == _URC_FATAL_PHASE2_ERROR);
+        Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, nullptr, &noLsda.context) == _URC_FATAL_PHASE1_ERROR);
+        Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, nullptr, &noLsda.context) == _URC_FATAL_PHASE2_ERROR);
+
+        Require(__gcc_personality_v0_nid_postfix(2, _UA_CLEANUP_PHASE, 0, nullptr, nullptr) == _URC_FATAL_PHASE1_ERROR);
+        Require(__gcc_personality_v0_nid_postfix(1, 0, 0, nullptr, nullptr) == _URC_FATAL_PHASE2_ERROR);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE | _UA_HANDLER_FRAME, 0, nullptr, nullptr) == _URC_FATAL_PHASE2_ERROR);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, nullptr, nullptr) == _URC_CONTINUE_UNWIND);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, nullptr, nullptr) == _URC_CONTINUE_UNWIND);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, &cleanup.exception, nullptr) == _URC_CONTINUE_UNWIND);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, nullptr, &cleanup.context) == _URC_FATAL_PHASE1_ERROR);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, nullptr, &cleanup.context) == _URC_FATAL_PHASE2_ERROR);
+        Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, nullptr, &noLsda.context) == _URC_FATAL_PHASE2_ERROR);
 
         Require(__gxx_personality_v0_nid_postfix(1, 0, 0, &noLsda.exception, &noLsda.context) == _URC_FATAL_PHASE2_ERROR);
         Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_CLEANUP_PHASE, 0, &noLsda.exception, &noLsda.context) == _URC_FATAL_PHASE1_ERROR);
