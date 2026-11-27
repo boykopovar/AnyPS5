@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -138,7 +139,9 @@ enum class ColorExportPacking : std::uint8_t {
     UintClamp8,
     UintClamp16,
     UintMask8,
-    UintMask16
+    UintMask16,
+    UintClamp10_10_10_2,
+    UintMask10_10_10_2
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -297,6 +300,8 @@ struct ShaderFloatMode {
     bool operator==(const ShaderFloatMode&) const = default;
 };
 
+inline constexpr std::uint32_t InterpolationFlushResult32 = 0x80u;
+inline constexpr std::uint32_t InterpolationFlushResult16 = 0x100u;
 inline constexpr std::uint32_t InterpolationQuiet = 1u;
 inline constexpr std::uint32_t InterpolationFlush32 = 2u;
 inline constexpr std::uint32_t InterpolationFlush16 = 4u;
@@ -372,6 +377,7 @@ struct SpirvTarget {
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
     bool tessellationEvaluationSubgroups = true;
+    bool pixelWave32Subgroups = false;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool spannedAnySubgroup = false;
@@ -395,13 +401,14 @@ struct SpirvTarget {
     bool float16NarrowNans = false;
     bool float16HostNans = false;
     bool meshInlineFunctions = false;
+    bool spannedShuffleThroughMemory = false;
 };
 
 struct BindingLayout {
-    std::uint32_t descriptorSet;
-    std::uint32_t firstBinding;
-    std::uint32_t pushConstantOffsetBytes;
-    std::uint32_t pushConstantSizeBytes;
+    std::uint32_t descriptorSet = 0u;
+    std::uint32_t firstBinding = 0u;
+    std::uint32_t pushConstantOffsetBytes = 0u;
+    std::uint32_t pushConstantSizeBytes = 0u;
 };
 
 enum class ProgramRole {
@@ -731,6 +738,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<ImageOverwrite> imageOverwrites;
 };
 
 struct ImageTableEntryPoison {
@@ -984,10 +992,12 @@ struct PipelineIdentity {
 
 struct ResultKeyMemo {
     mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    mutable std::atomic<const std::vector<std::uint32_t>*> raw{nullptr};
     ResultKeyMemo() = default;
     ResultKeyMemo(const ResultKeyMemo&) {}
     ResultKeyMemo& operator=(const ResultKeyMemo&) {
         words.store(nullptr, std::memory_order_relaxed);
+        raw.store(nullptr, std::memory_order_relaxed);
         return *this;
     }
 };
@@ -1017,6 +1027,8 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         return identity;
     }
 };
+
+[[nodiscard]] std::uint64_t MetadataBytes(const RecompileResult& result);
 
 [[nodiscard]] std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment);
 
@@ -1068,6 +1080,59 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
 [[nodiscard]] bool ExactF32Arithmetic();
+struct NanSpeculationConfig {
+    bool enabled = false;
+    std::uint32_t stageMask = 0x7u;
+    std::uint32_t minimumVectorInstructions = 8u;
+    std::uint32_t maximumVectorInstructions = 256u;
+    std::array<std::uint32_t, 9> stageMinimum{32u, 8u, 8u, 32u, 32u, 32u, 32u, 32u, 32u};
+    std::uint32_t minimumFastOps = 32u;
+    std::uint32_t minimumDensityPercent = 0u;
+};
+[[nodiscard]] const NanSpeculationConfig& NanSpeculation();
+[[nodiscard]] bool NanSpeculationSuppressed(std::uint64_t address);
+bool SuppressNanSpeculation(std::uint64_t address);
+void RestoreNanSpeculation(std::uint64_t address);
+void MarkNanSpeculationApplied(std::uint64_t address);
+[[nodiscard]] bool NanSpeculationApplied(std::uint64_t address);
+[[nodiscard]] std::uint32_t NanSpeculationFallbacks();
+constexpr std::uint32_t NanSpeculationStageCount = 8u;
+struct NanSpeculationStageStats {
+    std::uint32_t programs = 0;
+    std::uint32_t speculated = 0;
+    std::uint32_t declined = 0;
+    std::uint32_t fellBack = 0;
+};
+void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declined);
+void NoteNanSpeculationFallback(std::uint32_t stage);
+void InjectNanSpeculationFailures(std::uint32_t count, bool includingExact);
+
+class NanSpeculationRetryScope {
+public:
+    NanSpeculationRetryScope(std::uint64_t address, std::uint32_t stage) : address(address), stage(stage) {}
+    NanSpeculationRetryScope(const NanSpeculationRetryScope&) = delete;
+    NanSpeculationRetryScope& operator=(const NanSpeculationRetryScope&) = delete;
+    void Retried() { retried = true; }
+    void Succeeded() {
+        if (retried) NoteNanSpeculationFallback(stage);
+        retried = false;
+    }
+    void Abandoned() {
+        if (retried) RestoreNanSpeculation(address);
+        retried = false;
+    }
+
+private:
+    std::uint64_t address = 0;
+    std::uint32_t stage = 0;
+    bool retried = false;
+};
+[[nodiscard]] NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage);
+
+class NanSpeculationRetry : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct RectListShaders {
     RecompileResult control;

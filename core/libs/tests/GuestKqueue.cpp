@@ -341,7 +341,7 @@ static void TimerReadd() {
     Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteMseconds, 100000)) == 0);
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteMseconds | NoteUseconds, 5)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0x10, 5)); }));
-    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)); }));
+    Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)) == 0);
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, INTPTR_MAX)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd | EvClear, 0, 5)); }));
     Require(Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)) == 0);
@@ -1860,13 +1860,18 @@ static void TimerDisableEnableRearm() {
     Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 50000, &marker)) == 0);
     Require(Apply(kq, Change(1, EvfiltTimer, EvDisable, 0, 0, &marker)) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, 0, 0, &marker)) == 0);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, NoteUseconds, 50000, &marker)) == 0);
     Require(Wait(kq, events, 4) == 1);
     Require(events[0].ident == 1 && events[0].filter == EvfiltTimer && events[0].udata == &marker);
-    Require(events[0].data >= 2 && events[0].data <= 6);
+    Require(events[0].data >= 200);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, 0, 0, &marker)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
     Require(Wait(kq, events, 4) == 1);
-    Require(events[0].data >= 1 && events[0].data <= 2);
-    Require(Throws([kq] { Apply(kq, Change(1, EvfiltTimer, EvAdd | EvEnable)); }));
+    Require(events[0].data >= 200);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, 0, 50, &marker)) == 0);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd | EvEnable, 0, 0, &marker)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    Require(Wait(kq, events, 4) == 1 && events[0].data >= 200);
     Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
@@ -1879,7 +1884,7 @@ static void TimerToggleTakesNewPeriod() {
     Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 30000, &marker)) == 0);
     Require(Apply(kq, Change(1, EvfiltTimer, EvDisable, NoteUseconds, 250000, &other)) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
-    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, 0, 0, &other)) == 0);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, NoteUseconds, 250000, &other)) == 0);
     Require(Wait(kq, events, 4) == 1);
     Require(events[0].ident == 1 && events[0].udata == &other && events[0].data == 1);
     const auto first = std::chrono::steady_clock::now();
@@ -2012,6 +2017,11 @@ static void KqueueDescriptorOperations() {
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
     Require(read_nid_postfix(kq, &byte, 0) == 0);
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(_read_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(_write_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, nullptr, 0) == 0);
     KernelIovec one{&byte, 1};
     KernelIovec none{&byte, 0};
     RequireFailure(static_cast<int>(readv_nid_postfix(kq, &one, 1)), GuestEopnotsupp);
@@ -2022,6 +2032,9 @@ static void KqueueDescriptorOperations() {
     RequireFailure(fsync_nid_postfix(kq), GuestEinval);
     RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
     RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    RequireFailure(futimes_nid_postfix(kq, nullptr), GuestEinval);
+    const KernelTimeval times[2] = {{1, 0}, {2, 0}};
+    Require(sceKernelFutimes(kq, times) == SceEinval);
     Require(close_nid_postfix(kq) == 0);
 }
 

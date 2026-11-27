@@ -24,7 +24,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cerrno>
+#include <condition_variable>
 #include <exception>
+#include <mutex>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -171,6 +173,62 @@ void Driver::Shutdown() {
     rethrowFailure();
 }
 
+#ifdef APS5_PROFILE_GENERATE
+extern "C" void __gcov_dump(void);
+extern "C" void __gcov_reset(void);
+
+namespace {
+
+struct ProfileDumps {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::thread thread;
+    bool stopping = false;
+};
+
+ProfileDumps& profileDumps() {
+    static auto* const dumps = new ProfileDumps();
+    return *dumps;
+}
+
+void dumpProfile() {
+    __gcov_dump();
+    __gcov_reset();
+}
+
+void startProfileDumps() {
+    auto& dumps = profileDumps();
+    std::lock_guard lock(dumps.mutex);
+    if (dumps.stopping || dumps.thread.joinable()) return;
+    dumps.thread = std::thread([&dumps] {
+        std::unique_lock wait(dumps.mutex);
+        while (!dumps.wake.wait_for(wait, std::chrono::seconds(20), [&] { return dumps.stopping; })) dumpProfile();
+    });
+}
+
+void stopProfileDumps() {
+    auto& dumps = profileDumps();
+    {
+        std::lock_guard lock(dumps.mutex);
+        if (dumps.stopping) return;
+        dumps.stopping = true;
+    }
+    dumps.wake.notify_one();
+    if (dumps.thread.joinable()) dumps.thread.join();
+    dumpProfile();
+}
+
+}
+#else
+namespace {
+
+void startProfileDumps() {}
+
+void stopProfileDumps() {}
+
+}
+#endif
+
 void Driver::stop() {
     require(!onWorkerThread(), "worker cannot stop itself");
     std::lock_guard shutdownLock(shutdownMutex);
@@ -214,24 +272,12 @@ void Driver::stop() {
     FlushAsyncLogAtEnd_nid_no_patch();
     StopProfileOutput_nid_no_patch();
     CaptureTrace::Stop();
+    stopProfileDumps();
     stopped = true;
 }
 
-#ifdef APS5_PROFILE_GENERATE
-extern "C" void __gcov_dump(void);
-extern "C" void __gcov_reset(void);
-#endif
-
 Driver::Driver() {
-#ifdef APS5_PROFILE_GENERATE
-    std::thread([] {
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::seconds(20));
-            __gcov_dump();
-            __gcov_reset();
-        }
-    }).detach();
-#endif
+    startProfileDumps();
     InstallAsyncLog_nid_no_patch();
     static const bool driverMemory = (MapDriverMemory(), true);
     static_cast<void>(driverMemory);
@@ -289,6 +335,10 @@ void Driver::WaitIdle() {
         checkStopping();
     }
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
+void Driver::WaitDeviceIdle() {
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
 }
 
@@ -367,16 +417,15 @@ void Driver::ReleaseSettled() {
 std::vector<AwaitedWait> Driver::AwaitedWaits() {
     std::vector<AwaitedWait> result;
     for (const auto& slot : awaitedSlots) {
-        const auto address = slot.address.load(std::memory_order_acquire);
-        if (address == 0) continue;
+        const auto fields = readAwaited(slot, 0);
+        if (!fields) continue;
         AwaitedWait wait;
-        wait.address = address;
-        wait.reference = slot.reference.load(std::memory_order_relaxed);
-        wait.mask = slot.mask.load(std::memory_order_relaxed);
-        const auto shape = slot.shape.load(std::memory_order_relaxed);
-        wait.function = static_cast<std::uint32_t>(shape);
-        wait.bytes = static_cast<std::uint32_t>(shape >> 32u);
-        if (slot.address.load(std::memory_order_acquire) == address) result.push_back(wait);
+        wait.address = fields->address;
+        wait.reference = fields->reference;
+        wait.mask = fields->mask;
+        wait.function = static_cast<std::uint32_t>(fields->shape);
+        wait.bytes = static_cast<std::uint32_t>(fields->shape >> 32u);
+        if (awaitedUnchanged(slot, *fields)) result.push_back(wait);
     }
     return result;
 }
