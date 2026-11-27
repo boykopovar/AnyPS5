@@ -8,6 +8,10 @@ The web converter also relinks ELF modules directly inside `Media/Modules/` and 
 
 The online converter can save Linux output as an uncompressed folder in supported browsers. It does not overwrite an existing destination folder. If conversion fails or is cancelled, it aborts the active file and attempts to remove the newly created output folder. If the browser prevents cleanup, the error names the folder that may contain incomplete files.
 
+### Browser game patches
+
+When converting one app, use **Game patch (optional)** to select one UTF-8 TOML file of up to 1 MiB. The browser uses the same patch parser and byte checks as the command line. Use the original executable file name or the module path relative to the app directory as the patch target. A patch that cannot be applied stops the conversion before packaging the output. The patch stays on your device.
+
 ### Browser batch conversion
 
 Select or drop multiple app ZIP archives to convert them into one ZIP bundle. The converter inspects each app separately and puts its executable, libraries and `app0/` files in a numbered folder, so archives with the same filename remain separate. Batch output uses ZIP mode; saving to an uncompressed folder remains available for one Linux app at a time. The 256 MiB memory-download limit applies to the whole bundle, so use **Save ZIP to disk** for larger batches. If a batch is cancelled or any app fails, the converter aborts the incomplete bundle; any cleanup failure is reported instead of offering it as a completed result.
