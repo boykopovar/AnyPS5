@@ -9,6 +9,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -25,8 +26,10 @@ std::atomic<std::uint32_t> g_taskTokens{0};
 
 bool IsValidGuestWrite(void* pointer, std::size_t size) {
     if (pointer == nullptr) return false;
+    const std::size_t checkedSize = size != 0 ? size : 1;
     const int savedErrno = errno;
-    const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
+    const GuestArena::HostWrite guard(pointer, checkedSize);
+    const bool writable = guard.Open() && GuestWritable_nid_no_patch(pointer, checkedSize);
     errno = savedErrno;
     return writable;
 }
