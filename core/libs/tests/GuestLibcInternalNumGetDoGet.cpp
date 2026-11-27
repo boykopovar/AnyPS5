@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -26,6 +27,7 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+int* __error_nid_postfix();
 }
 
 namespace {
@@ -792,6 +794,96 @@ void CheckWideNumbers() {
     }
 }
 
+void CheckPointerDoGet() {
+    auto* const classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+    const auto charGet = Export<NumGetExport<void*>>("VKdXFE7ualw");
+    const auto wideGet = Export<NumGetExport<void*>>("BNZq-mRvDS8");
+
+    {
+        std::int32_t state = 4;
+        void* value = reinterpret_cast<void*>(1);
+        auto it = RunCharGet(charGet, "0x1234Z", DecFlag, classic, state, value);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x1234u && state == 4 && ViewOf<char>(it).value == 'Z',
+            "num_get::get(void*) parses hex regardless of the base field");
+    }
+    {
+        std::int32_t state = 0;
+        void* value = nullptr;
+        auto it = RunCharGet(charGet, "1234", DecFlag, classic, state, value);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x1234u && state == EofBit && ViewOf<char>(it).buffer == nullptr,
+            "num_get::get(void*) parses a bare hexadecimal field");
+    }
+    {
+        std::int32_t state = 4;
+        void* value = reinterpret_cast<void*>(1);
+        auto it = RunCharGet(charGet, "xyz", DecFlag, classic, state, value);
+        Require(value == nullptr && state == FailBit && ViewOf<char>(it).value == 'x',
+            "num_get::get(void*) leaves invalid input unread");
+    }
+    {
+        std::int32_t state = 0;
+        void* value = reinterpret_cast<void*>(1);
+        RunCharGet(charGet, "0x10000000000000000", DecFlag, classic, state, value);
+        Require(value == nullptr && state == (FailBit | EofBit),
+            "num_get::get(void*) rejects an overflowing pointer");
+    }
+    {
+        std::int32_t state = 0;
+        void* value = reinterpret_cast<void*>(1);
+        RunCharGet(charGet, "", DecFlag, classic, state, value);
+        Require(value == nullptr && state == (FailBit | EofBit),
+            "num_get::get(void*) rejects an empty field");
+    }
+    {
+        std::int32_t state = 0;
+        void* value = nullptr;
+        auto it = RunWideGet(wideGet, u"0x1234Z", DecFlag, classic, state, value);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x1234u && state == 0 && ViewOf<std::uint16_t>(it).value == u'Z',
+            "wide num_get::get(void*) parses and stops at trailing text");
+    }
+    {
+        CustomCharNumpunct punct{{{&g_customCharNumpunctVtable.facet, 1, 0}, "\3", '.', ',', "false", "true"}};
+        std::vector<GuestLocale::Facet*> facets(_ZNSt8numpunctIcE2idE_nid_postfix + 1);
+        facets[_ZNSt8numpunctIcE2idE_nid_postfix] = &punct.base.base;
+        GuestLocale::Implementation customLoc{{nullptr, 1, 0}, facets.data(), facets.size(), 0, false, "C"};
+        GuestLocale::Implementation* customPtr = &customLoc;
+        std::int32_t state = 0;
+        void* value = nullptr;
+        RunCharGet(charGet, "0x12,34", DecFlag, &customPtr, state, value);
+        Require(value == reinterpret_cast<void*>(0x1234) && state == (FailBit | EofBit),
+            "num_get::get(void*) sets failbit on bad grouping and keeps the converted pointer");
+    }
+    {
+        int& guestErrno = *__error_nid_postfix();
+        const int savedErrno = guestErrno;
+        guestErrno = 123;
+        std::int32_t state = 0;
+        void* value = nullptr;
+        RunCharGet(charGet, "0x10", DecFlag, classic, state, value);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x10u && state == EofBit && guestErrno == 123,
+            "num_get::get(void*) preserves errno on success");
+        guestErrno = savedErrno;
+    }
+    {
+        auto sb = MakeCharStreambuf("1", true);
+        AttachCharStreambuf(sb);
+        auto ios = MakeIos(DecFlag, classic);
+        GuestLocale::Facet dummy{};
+        std::int32_t state = 0;
+        void* value = nullptr;
+        auto throwsInvalid = [&](GuestLocale::IosBase* stream, std::int32_t* stateOut, void** valueOut) {
+            try {
+                charGet(&dummy, BeginIterator(&sb.base), EndIterator(), stream, stateOut, valueOut);
+            } catch (const std::invalid_argument&) {
+                return true;
+            }
+            return false;
+        };
+        Require(throwsInvalid(nullptr, &state, &value) && throwsInvalid(&ios, nullptr, &value) && throwsInvalid(&ios, &state, nullptr),
+            "num_get::get(void*) rejects null arguments");
+    }
+}
+
 void CheckGetcat() {
     auto* const classic = _ZSt21_sceLibcClassicLocale_nid_postfix;
     Require(_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(nullptr, nullptr) == 4, "_Getcat category with null args");
@@ -1435,6 +1527,7 @@ int main(int argc, char** argv) {
     CheckCharIntegers();
     CheckCharFloats();
     CheckWideNumbers();
+    CheckPointerDoGet();
     CheckGetcat();
     CheckAdditionalEdgeCases();
     std::puts("libc internal num_get do_get checks passed");

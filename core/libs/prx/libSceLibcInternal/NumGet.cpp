@@ -803,8 +803,39 @@ GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, G
     return ToGuestIterator(inFirst);
 }
 
-GuestLocale::InputIterator APS5_VABI UnimplementedCharNumGetPointer(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, void**) {
-    NotImplemented_nid_no_patch("_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERPv_nid_postfix");
+template<typename TChar>
+GuestLocale::InputIterator DoGetPointer(GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    ValidateNumGetArgs(stream, state, value);
+    auto inFirst = FromGuestIterator<TChar>(first);
+    auto inLast = FromGuestIterator<TChar>(last);
+    GuestLocale::IosBase pointerStream = *stream;
+    pointerStream.flags = (stream->flags & ~IosBaseField) | IosHex;
+    char ac[MaxIntDigits];
+    const auto parsed = ParseIntField(ac, inFirst, inLast, &pointerStream);
+    if (parsed.base < 0 || ac[0] == '\0') {
+        *state = IosFailBit;
+        *value = nullptr;
+    } else {
+        char* ep = nullptr;
+        int err = 0;
+        int& guestErrno = *__error_nid_postfix();
+        const int savedErrno = guestErrno;
+        const std::uint64_t parsedValue = _Stoullx_nid_postfix(ac, &ep, parsed.base, &err);
+        guestErrno = savedErrno;
+        if (ep == ac || err != 0) {
+            *state = IosFailBit;
+            *value = nullptr;
+        } else {
+            *value = reinterpret_cast<void*>(static_cast<std::uintptr_t>(parsedValue));
+            if (parsed.badGrouping) *state |= IosFailBit;
+        }
+    }
+    if (InputEnded(inFirst, inLast)) *state |= IosEofBit;
+    return ToGuestIterator(inFirst);
+}
+
+GuestLocale::InputIterator APS5_VABI CharNumGetPointer(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    return DoGetPointer<char>(first, last, stream, state, value);
 }
 
 const GuestLocale::NumGetVtable g_charNumGetVtable{
@@ -819,7 +850,7 @@ const GuestLocale::NumGetVtable g_charNumGetVtable{
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERf_nid_postfix,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERd_nid_postfix,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix,
-    UnimplementedCharNumGetPointer};
+    CharNumGetPointer};
 
 }
 
@@ -934,6 +965,16 @@ GuestLocale::InputIterator APS5_VABI sceLibcInternalWideNumGetPointer_nid_no_pat
     return NumGet(self).getPointer(self, first, last, stream, state, value);
 }
 APS5_EXPORT("zomvAQ5RFdA", sceLibcInternalWideNumGetPointer_nid_no_patch);
+
+GuestLocale::InputIterator APS5_VABI sceLibcInternalNumGetDoGetPointer_nid_no_patch(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    return DoGetPointer<char>(first, last, stream, state, value);
+}
+APS5_EXPORT("VKdXFE7ualw", sceLibcInternalNumGetDoGetPointer_nid_no_patch);
+
+GuestLocale::InputIterator APS5_VABI sceLibcInternalWideNumGetDoGetPointer_nid_no_patch(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    return DoGetPointer<std::uint16_t>(first, last, stream, state, value);
+}
+APS5_EXPORT("BNZq-mRvDS8", sceLibcInternalWideNumGetDoGetPointer_nid_no_patch);
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERd_nid_postfix(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, double* value) {
     return DoGetFloat<char>(first, last, stream, state, value, _Stodx_nid_postfix);
