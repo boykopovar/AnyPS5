@@ -27,6 +27,7 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
@@ -69,19 +70,31 @@ void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* func
 }
 
 void Ref(BidiContext* context, const char* function) {
-    const GuestArena::HostWrite guard(context, sizeof(BidiContext));
-    if (!guard.Open() || !GuestWritable_nid_no_patch(context, sizeof(BidiContext)))
+    unsigned count = 0;
+    auto* const field = reinterpret_cast<unsigned char*>(context) + offsetof(BidiContext, refCount);
+    if (!GuestCopyIn_nid_no_patch(&count, field, sizeof(count)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    std::atomic_ref<unsigned>(context->refCount).fetch_add(1);
+    ++count;
+    if (!GuestCopyOut_nid_no_patch(field, &count, sizeof(count)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-void DecrementRefCountNoThrow(BidiContext* context) noexcept {
+void RefShared(BidiContext* shared) {
+    std::atomic_ref<unsigned>(shared->refCount).fetch_add(1);
+}
+
+void DecrementRefCountNoThrow(BidiContext* context, bool isShared = false) noexcept {
     if (!context) return;
     try {
-        const GuestArena::HostWrite guard(context, sizeof(BidiContext));
-        if (guard.Open() && GuestWritable_nid_no_patch(context, sizeof(BidiContext))) {
+        if (isShared) {
             std::atomic_ref<unsigned>(context->refCount).fetch_sub(1);
+            return;
         }
+        unsigned count = 0;
+        auto* const field = reinterpret_cast<unsigned char*>(context) + offsetof(BidiContext, refCount);
+        if (!GuestCopyIn_nid_no_patch(&count, field, sizeof(count)) || !count) return;
+        --count;
+        static_cast<void>(GuestCopyOut_nid_no_patch(field, &count, sizeof(count)));
     } catch (...) {
     }
 }
@@ -117,7 +130,7 @@ struct CreatedContextGuard {
                 DecrementRefCountNoThrow(created.referencedParent);
                 _ZN3WTF8fastFreeEPv(created.ptr);
             } else if (created.ownsLocalRef) {
-                DecrementRefCountNoThrow(created.ptr);
+                DecrementRefCountNoThrow(created.ptr, true);
             }
         } catch (...) {
         }
@@ -131,8 +144,9 @@ struct CopiedStackGuard {
         const std::size_t previousCount = nodes.size();
         nodes.push_back(node);
         if (previousCount) {
-            DecrementRefCountNoThrow(nodes[previousCount - 1].ptr);
-            nodes[previousCount - 1].ownsLocalRef = false;
+            auto& previous = nodes[previousCount - 1];
+            DecrementRefCountNoThrow(previous.ptr, !previous.allocated);
+            previous.ownsLocalRef = false;
         }
     }
 
@@ -151,7 +165,7 @@ struct CopiedStackGuard {
                     DecrementRefCountNoThrow(it->referencedParent);
                     _ZN3WTF8fastFreeEPv(it->ptr);
                 } else if (it->ownsLocalRef) {
-                    DecrementRefCountNoThrow(it->ptr);
+                    DecrementRefCountNoThrow(it->ptr, true);
                 }
             } catch (...) {
             }
@@ -213,12 +227,12 @@ CreatedContext Create(unsigned char level, std::int32_t direction, bool override
         static BidiContext* const rtlOverrideContext = CreateUncached(1, kRightToLeft, true, kFromStyleOrDOM, nullptr, function);
         shared = rtlOverrideContext;
     }
-    Ref(shared, function);
+    RefShared(shared);
     return CreatedContext{shared, nullptr, false, true};
 }
 
 CreatedContext CopyAndRebaselineLevel(const BidiContext& context, BidiContext* parent, const char* function) {
-    int newLevel = parent ? static_cast<int>(Level(*parent)) : 0;
+    int newLevel = parent ? static_cast<int>(Level(ReadGuestValue(parent, function))) : 0;
     if (Direction(context) == kRightToLeft) newLevel = static_cast<unsigned char>((newLevel + 1) | 1);
     else if (parent) newLevel = static_cast<unsigned char>((newLevel + 2) & ~1);
     return Create(static_cast<unsigned char>(newLevel), Direction(context), Override(context), Source(context), parent, function);
