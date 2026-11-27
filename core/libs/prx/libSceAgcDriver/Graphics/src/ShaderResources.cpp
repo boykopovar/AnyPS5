@@ -525,6 +525,7 @@ struct TextureCounters {
     // ShaderResources::refreshOwnObjects).
     std::atomic<std::uint64_t> ownRefreshes{0};
     std::atomic<std::uint64_t> tablesReused{0};
+    std::atomic<std::uint64_t> tableEntryMemoHits{0};
     std::atomic<std::uint64_t> tablesReplayed{0};
     std::atomic<std::uint64_t> tablesResolved{0};
     std::atomic<std::uint64_t> tableWritesKept{0};
@@ -562,7 +563,7 @@ void reportTextureCounters() {
     auto last = counters.lastReport.load();
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
-    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu uploaded on the GPU from host imports, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; %llu one-layer 2D array entries bound to the 2D texture of their surface; untracked snapshots %llu kept by the write-watch hint, %llu compared; views kept through a pending alias: %llu lookups, %llu revalidations\n", count(counters.fromStorage), count(counters.cleared), count(counters.imported), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.arrayViewsShared), count(counters.untrackedKept), count(counters.untrackedCompared), count(counters.aliasViews), count(counters.aliasRefreshes));
+    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu uploaded on the GPU from host imports, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused (%llu found cached by the entry memo), %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; %llu one-layer 2D array entries bound to the 2D texture of their surface; untracked snapshots %llu kept by the write-watch hint, %llu compared; views kept through a pending alias: %llu lookups, %llu revalidations\n", count(counters.fromStorage), count(counters.cleared), count(counters.imported), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tableEntryMemoHits), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.arrayViewsShared), count(counters.untrackedKept), count(counters.untrackedCompared), count(counters.aliasViews), count(counters.aliasRefreshes));
 }
 
 // What the sampled-texture lookups on this thread proved their returned objects current against,
@@ -653,7 +654,10 @@ bool SampledFromStorageEligible(const Context& context, std::uint32_t format, st
 }
 
 bool SampledFromStorageEligible(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
-    return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes);
+    if (SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes)) return true;
+    static const bool disabled = std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") != nullptr;
+    if (disabled || !sampledFromStorageForTest.load(std::memory_order_relaxed) || IsBlockCompressed(resource.format) || !StorageFormatAvailable(context, resource.format)) return false;
+    return StorageSegmentsServe(context, resource, guestBytes);
 }
 
 bool ImportGpuWrittenSampledSurface(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
@@ -870,9 +874,10 @@ std::array<std::uint64_t, 4> untrackedKey(std::uint64_t address, std::size_t byt
 }
 
 std::span<const std::uint32_t> firstLayerWords(std::span<const std::uint32_t> words, std::optional<ShaderRecompiler::DescriptorImageShape> shape, std::array<std::uint32_t, 8>& narrowed, bool report) {
-    if (shape != ShaderRecompiler::DescriptorImageShape::Image2D || words.size() != narrowed.size() || IsNullSampledTextureResource(words)) return words;
+    if ((shape != ShaderRecompiler::DescriptorImageShape::Image2D && shape != ShaderRecompiler::DescriptorImageShape::Image1D) || words.size() != narrowed.size() || IsNullSampledTextureResource(words)) return words;
     try {
-        if (!FirstLayerDescriptor(words, narrowed)) return words;
+        const auto array = shape == ShaderRecompiler::DescriptorImageShape::Image1D ? TextureDimension::k1DArray : TextureDimension::k2DArray;
+        if (DecodeTextureResource(words).dimension != array || !FirstLayerDescriptor(words, narrowed)) return words;
     } catch (const std::runtime_error&) {
         return words;
     }
@@ -881,7 +886,8 @@ std::span<const std::uint32_t> firstLayerWords(std::span<const std::uint32_t> wo
         const auto count = narrowings.fetch_add(1) + 1;
         if (count <= 5 || (count & (count - 1)) == 0) {
             const auto resource = DecodeTextureResource(words);
-            std::fprintf(stderr, "[gpu] 2D read of the 2D array 0x%llx (%ux%u format %u, slices %u..%u) built from slice %u alone; %llu such reads\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, resource.baseArray, resource.depthOrLastArray, resource.baseArray, static_cast<unsigned long long>(count));
+            const char* dimension = resource.dimension == TextureDimension::k1DArray ? "1D" : "2D";
+            std::fprintf(stderr, "[gpu] %s read of the %s array 0x%llx (%ux%u format %u, slices %u..%u) built from slice %u alone; %llu such reads\n", dimension, dimension, static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, resource.baseArray, resource.depthOrLastArray, resource.baseArray, static_cast<unsigned long long>(count));
         }
     }
     return narrowed;
@@ -2405,6 +2411,8 @@ struct ReusedTable {
     std::vector<std::string> bound;
     bool replayable = false;
     std::vector<std::uint32_t> representatives;
+    std::vector<std::list<CachedTexture>::iterator> cachedEntries;
+    std::uint64_t cachedErasures = std::numeric_limits<std::uint64_t>::max();
 };
 
 constexpr std::size_t ReusedTableCount = 4;
@@ -2437,16 +2445,26 @@ bool TableCurrent(ReusedTable& table) {
     return GuestMemory::UnchangedSinceAll(table.queries);
 }
 
-bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<Texture>>& cached) {
+bool CachedTableTextures(ReusedTable& table, std::vector<std::shared_ptr<Texture>>& cached) {
     auto& cache = Textures();
     std::lock_guard lock(cache.mutex);
-    std::vector<std::list<CachedTexture>::iterator> entries;
-    entries.reserve(table.queries.size());
-    for (const auto& element : table.elements) {
-        if (element.rejected || element.live || element.substitute) continue;
-        const auto it = findTexture(cache, element.key);
-        if (it == cache.entries.end() || it->texture != element.texture.lock()) return false;
-        entries.push_back(it);
+    auto& entries = table.cachedEntries;
+    if (table.cachedErasures == cache.erasures && !RuntimeSwitches::Set(RuntimeSwitch::NoTableEntryMemo)) {
+        TextureCounts().tableEntryMemoHits.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        table.cachedErasures = std::numeric_limits<std::uint64_t>::max();
+        entries.clear();
+        entries.reserve(table.queries.size());
+        for (const auto& element : table.elements) {
+            if (element.rejected || element.live || element.substitute) continue;
+            const auto it = findTexture(cache, element.key);
+            if (it == cache.entries.end() || it->texture != element.texture.lock()) {
+                entries.clear();
+                return false;
+            }
+            entries.push_back(it);
+        }
+        table.cachedErasures = cache.erasures;
     }
     cached.reserve(entries.size());
     for (const auto it : entries) {
@@ -3198,11 +3216,15 @@ void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation(spaceReusable);
     reusable = false;
+    perUseTextures = false;
     importsReconcilable = false;
     spaceReuse = false;
     directRegions.clear();
     if (!spaceReusable && (htileClear.has_value() || guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled()))) return;
-    if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
+    static const bool noPerUseTemplates = std::getenv("APS5_NO_PER_USE_TEXTURE_TEMPLATES") != nullptr;
+    const bool perUse = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); });
+    if (perUse && (noPerUseTemplates || spaceReusable || !recordsEveryTexture())) return;
+    perUseTextures = perUse;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
     if (spaceReusable) {
         spaceReuse = true;
@@ -3516,7 +3538,7 @@ namespace {
 // of the reused ones, fast = every image proved current from stamps, full = the lookups were repeated.
 // Why the fast path left an object to the full walk (the "fast-fail by reason" counts).
 using FastFail = ShaderResources::FastFail;
-constexpr std::array<const char*, static_cast<std::size_t>(FastFail::Count)> FastFailNames{"no record", "collect", "pending image", "evicted image", "memory changed", "keys", "cleared view", "storage keys", "depth surface", "replaced texture", "audit"};
+constexpr std::array<const char*, static_cast<std::size_t>(FastFail::Count)> FastFailNames{"no record", "collect", "pending image", "evicted image", "memory changed", "keys", "cleared view", "storage keys", "depth surface", "replaced texture", "audit", "per-use texture"};
 using OwnRefreshFallback = ShaderResources::OwnRefreshFallback;
 constexpr std::array<const char*, static_cast<std::size_t>(OwnRefreshFallback::Count)> OwnRefreshFallbackNames{"disabled", "snapshot texture", "cleared view", "foreign view", "surface key", "not imported", "uncached", "re-run failed"};
 
@@ -3530,6 +3552,7 @@ struct RevalidateProfile {
     // Epoch gate: registry scans skipped because the pending serial was unchanged, and import
     // serial loops skipped because the table's identity was unchanged.
     std::atomic<std::uint64_t> serialSkips{0};
+    std::atomic<std::uint64_t> perUsePartial{0};
     std::atomic<std::uint64_t> importSkips{0};
     // Elements with DCC keys the fast path accepted through the images' key proofs.
     std::atomic<std::uint64_t> keysProven{0};
@@ -3636,6 +3659,11 @@ bool OwnImageRefreshEnabled() {
     return !disabled;
 }
 
+bool PerUsePartialWalk() {
+    static const bool enabled = std::getenv("APS5_NO_PER_USE_PARTIAL_WALK") == nullptr;
+    return enabled;
+}
+
 // APS5_VERIFY_PROOFS=1: after every own-object refresh the full walk runs beside the proof and the
 // process aborts when it would return another object or upload again (a different decision).
 bool VerifyProofs() {
@@ -3688,7 +3716,7 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
         for (const auto& surface : profile.refusedSurfaces) refusedBytes += surface.second;
         profile.refusedSurfaces.clear();
     }
-    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound; full walk ms by reason:%s; collect refusals: sampled %llu, storage %llu (uncommitted pages %llu, unwatched %llu, other %llu) over %llu surfaces, %.1f MiB\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)), walkMs.c_str(), static_cast<unsigned long long>(profile.refusedSampled.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedStorage.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUncommitted.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUnwatched.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedOther.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(refusedSurfaces), static_cast<double>(refusedBytes) / 1048576.0);
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound; full walk ms by reason:%s; collect refusals: sampled %llu, storage %llu (uncommitted pages %llu, unwatched %llu, other %llu) over %llu surfaces, %.1f MiB; per-use partial walks %llu\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)), walkMs.c_str(), static_cast<unsigned long long>(profile.refusedSampled.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedStorage.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUncommitted.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUnwatched.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedOther.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(refusedSurfaces), static_cast<double>(refusedBytes) / 1048576.0, static_cast<unsigned long long>(profile.perUsePartial.exchange(0, std::memory_order_relaxed)));
     if (!GuestMemory::WriteIndexEnabled()) return;
     const auto index = GuestMemory::WriteIndexCounted();
     GuestMemory::ResetWriteIndexCounts();
@@ -3775,6 +3803,10 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 bool ShaderResources::keepsTemplateRecords() const {
     static const bool always = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
     return always || !(usesBda || (usesFaultBuffer && LoopGuardEnabled()));
+}
+
+bool ShaderResources::recordsEveryTexture() const {
+    return validatedTextures.size() == textures.size() && std::all_of(validatedTextures.begin(), validatedTextures.end(), [](const ValidatedSurface& surface) { return surface.valid; });
 }
 
 // Turns the lookups' records into this object's per-texture validation records (see
@@ -3904,6 +3936,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         if (!surface.valid) return fail(FastFail::NoRecord);
         surface.committedProved = false;
         if (surface.depth) {
+            if (textures[i]->RefreshedPerUse() && PerUsePartialWalk()) continue;
             if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
         }
@@ -4264,7 +4297,7 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
     if (verified) checks.fetch_add(1, std::memory_order_relaxed);
     if (failed) failures.fetch_add(1, std::memory_order_relaxed);
     const auto count = (reused ? reuses : proofs).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
     if (!report) return;
     if (count % 262144u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed; storage refreshes reused %llu\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(proofs.load()), static_cast<unsigned long long>(checks.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
 }
@@ -4594,7 +4627,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         provedEpoch = 0;
         return false;
     }
-    if (EpochProofs()) {
+    if (EpochProofs() && !perUseTextures) {
         const auto epoch = GuestMemory::CollectEpoch();
         const auto proof = GuestMemory::ProofSerial();
         const auto pending = StorageTexture::PendingSerial();
@@ -4664,15 +4697,28 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // else by the same lookups as the build (which refresh or replace them as guest memory changed):
     // they must hand back the very objects the set's views belong to. The build appended them stage
     // by stage, binding by binding, so the walk repeats that order.
-    const auto fullWalk = [&] {
-        lastFullWalk = std::chrono::steady_clock::now();
-        walkImportGeneration = HostImportSetGeneration();
+    struct WalkMismatch {
+        const char* what = nullptr;
+        std::size_t index = 0;
+        bool storage = false;
+    } mismatch;
+    const auto fullWalk = [&](bool partial) {
+        if (!partial) {
+            lastFullWalk = std::chrono::steady_clock::now();
+            walkImportGeneration = HostImportSetGeneration();
+        }
         lookupLog().clear();
+        mismatch = {};
+        const auto miss = [&](const char* what, std::size_t index, bool storage = false) {
+            mismatch = {what, index, storage};
+            return false;
+        };
+        const auto skipped = [&](std::size_t index) { return partial && index < textures.size() && !textures[index]->RefreshedPerUse(); };
         BuildLookups lookups;
         std::size_t textureIndex = 0;
         std::size_t storageIndex = 0;
         for (const auto& shader : shaders) {
-            if (shader.program == nullptr) return false;
+            if (shader.program == nullptr) return miss("a stage without a program at texture", textureIndex);
             for (const auto& binding : shader.program->bindings) {
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages) continue;
                 if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage) {
@@ -4682,18 +4728,26 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         std::array<std::uint32_t, 8> narrowed{};
                         const auto words = firstLayerWords(raw, binding.imageShape, narrowed, false);
                         if (IsNullSampledTextureResource(words)) continue;
+                        if (skipped(textureIndex)) {
+                            ++textureIndex;
+                            continue;
+                        }
                         const auto resource = DecodeTextureResource(words);
                         const VkComponentMapping components = ViewComponents(resource);
                         const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
                         const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
-                        if (textureIndex >= textures.size() || cachedTexture(context, words, resource, components, 0, depthCompare, multisampleViewType, layerRowsBinding(binding.imageShape, resource, depthCompare)) != textures[textureIndex]) return false;
+                        if (textureIndex >= textures.size() || cachedTexture(context, words, resource, components, 0, depthCompare, multisampleViewType, layerRowsBinding(binding.imageShape, resource, depthCompare)) != textures[textureIndex]) return miss("sampled texture", textureIndex);
                         ++textureIndex;
                     }
                 } else if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
                     for (std::uint32_t element = 0; element < binding.count; ++element) {
                         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                         if (IsNullTextureResource(words)) continue;
-                        if (storageIndex >= storageTextures.size()) return false;
+                        if (storageIndex >= storageTextures.size()) return miss("storage image past the build's", storageIndex, true);
+                        if (partial) {
+                            ++storageIndex;
+                            continue;
+                        }
                         std::shared_ptr<StorageTexture> expected;
                         if (SameAsPreviousStorageElement(binding, element) && StorageDedupeEnabled()) expected = storageTextures[storageIndex - 1];
                         else {
@@ -4702,7 +4756,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                             const StorageTexture::OverwriteScope overwrite(claim ? &*claim : nullptr);
                             expected = cachedStorageTexture(context, words, decoded, storageMips[storageIndex], 0, storageWritten[storageIndex]);
                         }
-                        if (expected != storageTextures[storageIndex]) return false;
+                        if (expected != storageTextures[storageIndex]) return miss("storage image", storageIndex, true);
                         ++storageIndex;
                     }
                 }
@@ -4720,9 +4774,9 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         for (const auto& table : tableStages) {
             if (table.elementTextures.empty()) continue;
             const auto* images = tableImages(shaders, table.stage);
-            if (images == nullptr || images->count != table.elementTextures.size()) return false;
+            if (images == nullptr || images->count != table.elementTextures.size()) return miss("image table of another size at texture", textureIndex);
             std::vector<std::shared_ptr<Texture>> cached;
-            if (auto* reused = FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+            if (auto* reused = partial ? nullptr : FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
                 if (!reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return false;
                 logTableLookups(*reused, cached);
                 auto next = cached.begin();
@@ -4746,23 +4800,30 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                     same = index == textureIndex && textureIndex < textures.size() && textures[textureIndex] == texture;
                     ++textureIndex;
                 }
-                if (!same) return false;
+                if (!same) return miss("reused image table at texture", textureIndex);
                 TextureCounts().tablesReused.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
-            if (!table.representatives.empty() && table.representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return false;
+            if (!table.representatives.empty() && table.representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return miss("image table variants at texture", textureIndex);
             for (std::uint32_t element = 0; element < images->count; ++element) {
                 if (table.elementTextures[element] == std::numeric_limits<std::size_t>::max()) continue;
                 if (!table.representatives.empty() && table.representatives[element] != NoRepresentative) continue;
-                if (table.elementTextures[element] != textureIndex || !currentTableEntry(*images, element)) return false;
+                if (skipped(textureIndex)) {
+                    if (table.elementTextures[element] != textureIndex) return miss("image table element order at texture", textureIndex);
+                    ++textureIndex;
+                    continue;
+                }
+                if (table.elementTextures[element] != textureIndex || !currentTableEntry(*images, element)) return miss("image table texture", textureIndex);
                 ++textureIndex;
             }
         }
-        if (textureIndex != textures.size() || storageIndex != storageTextures.size()) return false;
+        if (textureIndex != textures.size()) return miss("texture count", textureIndex);
+        if (storageIndex != storageTextures.size()) return miss("storage image count", storageIndex, true);
         // The walk proved every object current again: the records move to what it proved, or one
         // spurious stamp (a label sharing a 64 KiB block with a surface's edge) would keep this
         // object on the full walk for good.
-        captureValidation(spaceReuse);
+        if (partial) lookupLog().clear();
+        else captureValidation(spaceReuse);
         return true;
     };
     struct OverlappingTag {};
@@ -4772,23 +4833,29 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     refreshed.clear();
     FastFail reason = FastFail::Count;
     bool accepted = false;
+    const bool perUseFast = perUseTextures && PerUsePartialWalk();
+    if (!noFast && perUseFast && !fullWalk(true)) {
+        if (report != nullptr) report->path = ProofPath::Full;
+        return finish(false, false);
+    }
     bool indexProved = false;
     std::uint64_t indexBaseline = 0;
-    if (GuestMemory::WriteIndexEnabled() && !noFast && EpochRevalidate()) {
+    if (!perUseTextures && GuestMemory::WriteIndexEnabled() && !noFast && EpochRevalidate()) {
         if (indexRevalidate(shaders, serialBefore) != IndexOutcome::Fallback) indexProved = true;
         else {
             if (writeSubscription == nullptr) subscribeIndex(shaders);
             if (writeSubscription != nullptr) indexBaseline = GuestMemory::SubscriptionGeneration(*writeSubscription);
         }
     }
-    bool fast = indexProved || (!noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted));
+    bool fast = indexProved || (!noFast && (!perUseTextures || perUseFast) && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted));
+    if (perUseTextures && !perUseFast) reason = FastFail::PerUse;
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
     // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
     // them) and the fast proof run again, which is then authoritative (it accepts what stays
     // pending over the refreshed surfaces, see fastRevalidate); a fallback, or a second failure,
     // takes the full walk as before.
     bool ownRefreshed = false;
-    if (!fast && !overlapping.empty()) {
+    if (!fast && !perUseTextures && !overlapping.empty()) {
         auto fallback = OwnRefreshFallback::Count;
         if (!OwnImageRefreshEnabled()) fallback = OwnRefreshFallback::Disabled;
         else {
@@ -4811,10 +4878,19 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         report->path = !fast ? ProofPath::Full : ownRefreshed ? ProofPath::OwnRefreshed : ProofPath::Fast;
         report->audited = !fast && reason == FastFail::Audit;
     }
+    if (fast && perUseTextures) {
+        if (VerifyProofs() && !fullWalk(false)) {
+            const char* kind = mismatch.storage ? "storage" : mismatch.index < textures.size() && textures[mismatch.index]->RefreshedPerUse() ? "refreshed per use" : "not refreshed per use";
+            std::fprintf(stderr, "[rescache] APS5_VERIFY_PROOFS: the per-use partial walk and the fast proof disagree with the full walk at %s %zu (%s) of %zu textures and %zu storage images\n", mismatch.what != nullptr ? mismatch.what : "an unnamed check", mismatch.index, kind, textures.size(), storageTextures.size());
+            std::fflush(stderr);
+            std::abort();
+        }
+        if (profile) Revalidations().perUsePartial.fetch_add(1, std::memory_order_relaxed);
+    }
     if (!fast) {
         countFullWalk(reason);
         const auto walkStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        const bool walked = fullWalk();
+        const bool walked = fullWalk(false);
         countFullWalkTime(reason, walkStart);
         if (!walked) {
             const auto failure = [&] {
@@ -4841,7 +4917,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 if (surface.source != nullptr) versions.emplace_back(surface.source, surface.source->Version());
             }
             for (const auto& image : storageTextures) versions.emplace_back(image.get(), image->Version());
-            const bool same = fullWalk();
+            const bool same = fullWalk(false);
             const auto moved = std::find_if(versions.begin(), versions.end(), [](const auto& entry) { return entry.first->Version() != entry.second; });
             if (!same || moved != versions.end()) {
                 std::fprintf(stderr, "[rescache] APS5_VERIFY_PROOFS: the T1 proof (%s) disagrees with the full walk (%s)\n", ownRefreshed ? "own-object refresh" : "accepted overlap", !same ? "another object" : "an upload");
@@ -6119,7 +6195,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers[element], shaderSamplers);
             RequireDisablesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
-            const bool firstLayer = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
+            const bool firstLayer = (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray))) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image1D && resource.dimension == TextureDimension::k1DArray);
             const bool depth1D = depthCompare && ((binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
             const bool firstSample = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DMsaa;
             const bool layerRows = layerRowsBinding(binding.imageShape, resource, depthCompare);
@@ -6574,7 +6650,7 @@ void ShaderResources::resolveImageTables() {
             const auto& resource = decoded.resource;
             const auto shape = binding.imageShapes.at(element);
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
-            decoded.firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
+            decoded.firstLayer = (shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray))) || (shape == ShaderRecompiler::DescriptorImageShape::Image1D && resource.dimension == TextureDimension::k1DArray);
             const bool depth1D = depthCompare && ((shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
             if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) {
                 decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
@@ -6897,7 +6973,7 @@ std::uint64_t SampledTexturesImported() {
 
 ImageTableReuseCounts ImageTableReuses() {
     const auto& counters = TextureCounts();
-    return {counters.tablesReused.load(std::memory_order_relaxed) + counters.tablesReplayed.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed), counters.tablesReplayed.load(std::memory_order_relaxed), counters.tableWritesKept.load(std::memory_order_relaxed), counters.tableWritesMade.load(std::memory_order_relaxed), counters.variantSurfaces.load(std::memory_order_relaxed), counters.variantSubstituted.load(std::memory_order_relaxed), counters.variantRejected.load(std::memory_order_relaxed), counters.arrayViewsShared.load(std::memory_order_relaxed)};
+    return {counters.tablesReused.load(std::memory_order_relaxed) + counters.tablesReplayed.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed), counters.tablesReplayed.load(std::memory_order_relaxed), counters.tableWritesKept.load(std::memory_order_relaxed), counters.tableWritesMade.load(std::memory_order_relaxed), counters.variantSurfaces.load(std::memory_order_relaxed), counters.variantSubstituted.load(std::memory_order_relaxed), counters.variantRejected.load(std::memory_order_relaxed), counters.arrayViewsShared.load(std::memory_order_relaxed), counters.tableEntryMemoHits.load(std::memory_order_relaxed)};
 }
 
 void ShaderResources::finishImageTables() {
@@ -6953,6 +7029,13 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         const bool gpuDirect = sampled ? SampledFromStorageEligible(context, format, address, guestBytes) : HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
         if (!gpuDirect) surfaces.push_back({address, guestBytes, false});
     };
+    const auto considerResource = [&](const GuestTextureResource& resource, std::uint64_t guestBytes, bool sampled) {
+        const bool gpuDirect = sampled ? SampledFromStorageEligible(context, resource, guestBytes) : HostImportCovers(context, resource.baseAddress, static_cast<std::size_t>(guestBytes)) || StorageSegmentsServe(context, resource, guestBytes);
+        if (!gpuDirect) surfaces.push_back({resource.baseAddress, guestBytes, false});
+    };
+    const auto considerImage = [&](const StorageTexture& image, std::uint64_t address, std::uint64_t guestBytes) {
+        if (!HostImportCovers(context, address, static_cast<std::size_t>(guestBytes)) && !StorageSegmentsServe(context, image)) surfaces.push_back({address, guestBytes, false});
+    };
     static const bool keyRanges = std::getenv("APS5_NO_DCC_PRESYNC") == nullptr;
     const auto considerKeys = [&](std::uint64_t dccAddress, std::uint64_t guestBytes) {
         const auto keyBytes = DccKeyBytes(guestBytes);
@@ -6970,7 +7053,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         for (const auto& range : describedRanges) {
             if (std::strcmp(range.kind, "texture") == 0 && textureIndex < textures.size()) {
                 const auto& texture = textures[textureIndex++];
-                if (texture->ViewsStorageImage()) consider(range.format, range.address, range.bytes, false);
+                if (texture->ViewsStorageImage()) considerImage(*texture->SharedStorageSource(), range.address, range.bytes);
                 else consider(range.format, range.address, range.bytes, true);
                 considerKeys(range.dccAddress, range.bytes);
             }
@@ -6978,7 +7061,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
             if (storageTextures[index] == nullptr || (index != 0 && storageTextures[index] == storageTextures[index - 1])) continue;
             const auto& image = *storageTextures[index];
-            consider(image.Descriptor().format, image.Descriptor().baseAddress, image.GuestBytes(), false);
+            considerImage(image, image.Descriptor().baseAddress, image.GuestBytes());
             considerKeys(image.Descriptor().dccAddress, image.GuestBytes());
         }
         return surfaces;
@@ -6986,7 +7069,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     if (!imageRecords.empty()) {
         for (const auto& record : imageRecords) {
             if (!record.decoded) continue;
-            consider(record.resource.format, record.resource.baseAddress, record.guestBytes, record.sampled);
+            considerResource(record.resource, record.guestBytes, record.sampled);
             considerKeys(record.resource.dccAddress, record.guestBytes);
         }
         return surfaces;
@@ -6997,7 +7080,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         if (IsNullTextureResource(words)) return;
         const auto resource = DecodeTextureResource(words);
         const auto guestBytes = SurfaceGuestBytes(resource);
-        consider(resource.format, resource.baseAddress, guestBytes, binding.kind == ShaderRecompiler::DescriptorKind::SampledImage);
+        considerResource(resource, guestBytes, binding.kind == ShaderRecompiler::DescriptorKind::SampledImage);
         considerKeys(resource.dccAddress, guestBytes);
     });
     for (const auto& binding : deferredCompute.program->bindings) {
@@ -7006,7 +7089,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
             try {
                 const auto resource = DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(element * 8u, 8u));
                 const auto guestBytes = SurfaceGuestBytes(resource);
-                consider(resource.format, resource.baseAddress, guestBytes, true);
+                considerResource(resource, guestBytes, true);
                 considerKeys(resource.dccAddress, guestBytes);
             } catch (const std::runtime_error&) {
             }
@@ -7560,6 +7643,10 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
+bool ShaderResources::StorePages() const {
+    return bda != nullptr && bda->StorePages();
+}
+
 void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
     // The ranges this use reads in place through their host imports (read-only and written elements
@@ -7590,6 +7677,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         guestMemory.DeferCopyBacks(recorder);
         guestMemory.RecordCopyBacks(recorder);
     }
+    if (bda) bda->RecordStorePageGather(recorder);
     // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
     // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
@@ -7627,6 +7715,8 @@ void ShaderResources::WriteBackBuffers() {
         } catch (const BdaUnalignedAccess&) {
             unaligned = std::current_exception();
         }
+        guestMemory.NoteAddressStores(bda->TakeWrittenPages());
+        guestMemory.NoteStorePages(bda->TakeStorePages());
     }
     if (!SkipWriteBack()) guestMemory.WriteBack();
     if (unaligned) std::rethrow_exception(unaligned);

@@ -3,12 +3,14 @@
 #include <atomic>
 #include <array>
 #include <cerrno>
+#include <condition_variable>
 #include <limits>
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <span>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -1070,13 +1072,96 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter14accountIdIsSetEv(
     return value;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
-    (void)value;
-    return InitializeParameter(self, context, text != nullptr);
+struct CloudParameterLayout {
+    std::size_t size;
+    std::span<const std::size_t> strings;
+};
+
+static constexpr std::size_t DownloadStrings[] = {0x00, 0x30, 0x58, 0x80};
+static constexpr std::size_t MultiSlotStrings[] = {0x00, 0x20, 0x40};
+static constexpr CloudParameterLayout DownloadLayout{0xb0, DownloadStrings};
+static constexpr CloudParameterLayout SlotStatusLayout{0x98, MultiSlotStrings};
+static constexpr CloudParameterLayout SlotDeleteLayout{0x88, MultiSlotStrings};
+
+static void DestroyCloudParameterData(void* data, const CloudParameterLayout& layout) {
+    for (auto offset : layout.strings) DestroyCommonString(CommonStringAt(data, offset));
+    std::free(data);
+}
+
+static int InitializeCloudParameter(void* self, const std::uint64_t* context, const CloudParameterLayout& layout,
+                                   std::span<const char* const> arguments) {
+    if (!context) return ParameterInvalidArgument;
+    if (!*context) return ParameterNotInitialized;
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (parameter->implementation) return ParameterAlreadyInitialized;
+    void* data = AllocateParameterImplementation(layout.size);
+    if (!data) return ParameterOutOfMemory;
+    auto* libContext = const_cast<std::uint64_t*>(context);
+    for (auto offset : layout.strings) ConstructCommonString(CommonStringAt(data, offset), libContext);
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+        const int status = AssignCommonString(CommonStringAt(data, layout.strings[i]), arguments[i]);
+        if (status != 0) {
+            DestroyCloudParameterData(data, layout);
+            return status;
+        }
+    }
+    std::memcpy(static_cast<std::uint8_t*>(data) + layout.size - sizeof(libContext), &libContext, sizeof(libContext));
+    parameter->implementation = data;
+    return 0;
+}
+
+static int TerminateCloudParameter(void* self, const CloudParameterLayout& layout) {
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (!parameter->implementation) return ParameterTerminatedUninitialized;
+    DestroyCloudParameterData(const_cast<void*>(parameter->implementation), layout);
+    parameter->implementation = nullptr;
+    return 0;
+}
+
+static std::uint8_t* CloudParameterData(void* self) {
+    return static_cast<std::uint8_t*>(const_cast<void*>(static_cast<ParameterObject*>(self)->implementation));
+}
+
+static int SetCloudString(void* self, const char* text, std::size_t offset, std::size_t flag = 0) {
+    auto* data = CloudParameterData(self);
+    if (!data) return ParameterNotInitialized;
+    const int status = AssignCommonString(CommonStringAt(data, offset), text);
+    if (status == 0 && flag) data[flag] = 1;
+    return status;
+}
+
+static void SetCloudInteger(void* self, std::uint32_t value, std::size_t offset, std::size_t flag = 0) {
+    auto* data = CloudParameterData(self);
+    if (!data) return;
+    std::memcpy(data + offset, &value, sizeof(value));
+    if (flag) data[flag] = 1;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10setifMatchEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x80, 0xa0);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData8setrangeEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x58, 0x78);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9setslotIdEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x20);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* accountId, int slotId) {
+    const char* arguments[] = {accountId};
+    const int result = InitializeCloudParameter(self, context, DownloadLayout, arguments);
+    if (result == 0) SetCloudInteger(self, slotId, 0x20);
+    return result;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, DownloadLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadDataC1Ev(void* self) {
@@ -1100,21 +1185,24 @@ struct LibContextState {
     std::uint32_t operations;
     bool terminated;
     bool released;
+    bool destroyed;
 };
 
 static constexpr std::uint64_t LibContextMagic = 0x4e50434c49424354ULL;
 static std::mutex g_libContextGuard;
+static std::condition_variable_any g_libContextDestroyed;
 static std::vector<LibContextState*> g_libContextStates;
+static std::vector<std::unique_ptr<LibContextState>> g_libContextOwned;
 
 static void ReleaseLibContextArena(LibContextState* state) {
     if (state == nullptr) return;
     void* mspace = state->mspace;
     void* mapping = state->mapping;
     const std::uint64_t mappingSize = state->mappingSize;
-    if (mspace != nullptr) {
-        sceLibcMspaceFree_nid_postfix(mspace, state);
-        sceLibcMspaceDestroy_nid_postfix(mspace);
-    }
+    state->mspace = nullptr;
+    state->mapping = nullptr;
+    state->mappingSize = 0;
+    if (mspace != nullptr) sceLibcMspaceDestroy_nid_postfix(mspace);
     if (mapping != nullptr && mappingSize != 0) {
         sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), static_cast<std::size_t>(mappingSize));
     }
@@ -1142,13 +1230,22 @@ static LibContextState* AcquireLibContext(void* libContext) {
     return AcquireLibContextLocked(libContext);
 }
 
+static LibContextState* AcquireWritableLibContext(void* libContext) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    LibContextState* state = FindLibContextLocked(libContext);
+    if (state == nullptr || state->terminated || state->destroyed) return nullptr;
+    ++state->operations;
+    return state;
+}
+
 static void ReleaseLibContext(LibContextState* state) {
-    bool release = false;
-    {
-        std::lock_guard<std::mutex> lock(g_libContextGuard);
-        release = --state->operations == 0 && state->released;
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    --state->operations;
+    if (state->operations == 0 && state->released && !state->destroyed) {
+        state->destroyed = true;
+        ReleaseLibContextArena(state);
+        g_libContextDestroyed.notify_all();
     }
-    if (release) ReleaseLibContextArena(state);
 }
 
 static void DetachLibContextLocked(LibContextState* state) {
@@ -1162,11 +1259,8 @@ static void DetachLibContextLocked(LibContextState* state) {
 
 static void* LibContextAllocate(void* libContext, const std::size_t size) {
     if (libContext == nullptr) return std::malloc(size);
-    LibContextState* state = AcquireLibContext(libContext);
-    if (state == nullptr || state->terminated) {
-        if (state != nullptr) ReleaseLibContext(state);
-        throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
-    }
+    LibContextState* state = AcquireWritableLibContext(libContext);
+    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
     void* block = sceLibcMspaceMalloc_nid_postfix(state->mspace, size);
     ReleaseLibContext(state);
     return block;
@@ -1174,11 +1268,8 @@ static void* LibContextAllocate(void* libContext, const std::size_t size) {
 
 static void* LibContextReallocate(void* libContext, void* object, const std::size_t size) {
     if (libContext == nullptr) return std::realloc(object, size);
-    LibContextState* state = AcquireLibContext(libContext);
-    if (state == nullptr || state->terminated) {
-        if (state != nullptr) ReleaseLibContext(state);
-        throw std::runtime_error("libSceNpCppWebApi reallocates through an uninitialized or terminated LibContext");
-    }
+    LibContextState* state = AcquireWritableLibContext(libContext);
+    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi reallocates through an uninitialized or terminated LibContext");
     void* block = sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size);
     ReleaseLibContext(state);
     return block;
@@ -1233,6 +1324,14 @@ void NpCppWebApiContextDeallocate(void* libContext, void* object) {
 void* NpCppWebApiContextMspace(void* libContext) {
     void* mspace = nullptr;
     return LibContextMspace(libContext, &mspace) ? mspace : nullptr;
+}
+
+void* NpCppWebApiContextReference(void* libContext) {
+    return AcquireLibContext(libContext);
+}
+
+void NpCppWebApiContextDereference(void* reference) {
+    if (reference != nullptr) ReleaseLibContext(static_cast<LibContextState*>(reference));
 }
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V129SetDataInfoRequestBodyFactory6createEPNS1_6Common10LibContextEPvmPNS5_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self) {
     (void)self;
@@ -1321,22 +1420,29 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSet
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x24, 0x28);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
-    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10setslotIdsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x20);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* slotIds, const char* accountId) {
+    const char* arguments[] = {slotIds, accountId};
+    return InitializeCloudParameter(self, context, SlotDeleteLayout, arguments);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x74, 0x78);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, SlotDeleteLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserC1Ev(void* self) {
@@ -1349,9 +1455,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDel
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x84, 0x88);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
@@ -1421,30 +1526,19 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(uint64_t* self) {
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(const void* params, uint64_t* context) {
     if (context == nullptr) return LibContextInvalidArgument;
-    LibContextState* previous = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_libContextGuard);
-        LibContextState* existing = FindLibContextLocked(context);
-        if (existing != nullptr && !existing->terminated) return LibContextAlreadyInitialized;
-    }
+    std::unique_lock<std::mutex> lock(g_libContextGuard);
+    LibContextState* existing = FindLibContextLocked(context);
+    if (existing != nullptr && !existing->terminated) return LibContextAlreadyInitialized;
     if (params == nullptr) return LibContextInvalidArgument;
-    {
-        std::lock_guard<std::mutex> lock(g_libContextGuard);
-        LibContextState* existing = FindLibContextLocked(context);
-        if (existing != nullptr) {
-            if (!existing->terminated) return LibContextAlreadyInitialized;
-            DetachLibContextLocked(existing);
-            existing->released = true;
-            previous = existing;
+    if (existing != nullptr) {
+        DetachLibContextLocked(existing);
+        existing->released = true;
+        if (existing->operations == 0) {
+            existing->destroyed = true;
+            ReleaseLibContextArena(existing);
+        } else {
+            g_libContextDestroyed.wait(lock, [existing] { return existing->destroyed; });
         }
-    }
-    if (previous != nullptr) {
-        bool release = false;
-        {
-            std::lock_guard<std::mutex> lock(g_libContextGuard);
-            release = previous->operations == 0;
-        }
-        if (release) ReleaseLibContextArena(previous);
     }
 
     std::uint64_t mode = 0;
@@ -1454,6 +1548,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10
     if (mode > 1) return LibContextUnsupported;
     if (arenaSize <= 0) return LibContextOutOfMemory;
 
+    auto owned = std::make_unique<LibContextState>();
     constexpr const char* Name = "SceNpCppCallbackWorker";
     void* mapping = nullptr;
     const int mapResult = sceKernelMapNamedFlexibleMemory(
@@ -1466,23 +1561,19 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10
         return LibContextOutOfMemory;
     }
 
-    auto* state = static_cast<LibContextState*>(sceLibcMspaceMalloc_nid_postfix(mspace, sizeof(LibContextState)));
-    if (state == nullptr) {
-        sceLibcMspaceDestroy_nid_postfix(mspace);
-        sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), static_cast<std::size_t>(arenaSize));
-        return LibContextOutOfMemory;
-    }
-
-    std::memset(state, 0, sizeof(*state));
+    LibContextState* state = owned.get();
     state->magic = LibContextMagic;
     state->mspace = mspace;
     state->mapping = mapping;
     state->mappingSize = static_cast<std::uint64_t>(arenaSize);
     state->context = context;
-
-    {
-        std::lock_guard<std::mutex> lock(g_libContextGuard);
+    try {
+        g_libContextOwned.push_back(std::move(owned));
         g_libContextStates.push_back(state);
+    } catch (...) {
+        state->destroyed = true;
+        ReleaseLibContextArena(state);
+        throw;
     }
     *context = reinterpret_cast<std::uint64_t>(state);
     return 0;
@@ -1522,6 +1613,7 @@ static_assert(sizeof(IntrusivePtr) == 0x18);
 
 
 static void APS5_VABI DestroyString(void* object);
+static void APS5_VABI DestroyVectorBody(void* object);
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
 }
@@ -1615,6 +1707,8 @@ static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceC
     if (ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_sub(1) != 1) return;
     if (self->deleter != nullptr) {
         self->deleter(self->object);
+    } else if (TaggedVectorObject(self->object)) {
+        DestroyVectorBody(self->object);
     } else {
         LibContextState* state = AcquireLibContext(self->libContext);
         if (state != nullptr) {
@@ -1850,15 +1944,22 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc(CommonString* self
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(CommonString* self, const CommonString* source) {
-    const bool hadContext = self->libContext != nullptr;
-    if (!hadContext) self->libContext = source->libContext;
+    void* const previousContext = self->libContext;
+    void* const allocationContext = previousContext != nullptr ? previousContext : source->libContext;
     if (source->bufferSize == 0) {
         ResetString(self);
+        self->libContext = allocationContext;
         return 0;
     }
-    const int result = AssignString(self, source->buffer != nullptr ? source->buffer : "");
-    if (!hadContext && result != 0) self->libContext = nullptr;
-    return result;
+    if (source->buffer == nullptr) return StringInvalidArgument;
+    char* buffer = static_cast<char*>(LibContextAllocate(allocationContext, source->bufferSize));
+    if (buffer == nullptr) return StringOutOfMemory;
+    std::memcpy(buffer, source->buffer, source->bufferSize);
+    LibContextDeallocate(previousContext, self->buffer);
+    self->buffer = buffer;
+    self->bufferSize = source->bufferSize;
+    self->libContext = allocationContext;
+    return 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String5clearEv(CommonString* self) {
@@ -1880,6 +1981,21 @@ bool APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqERKS3_(const CommonString* se
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(CommonString* self, void* libContext) {
+    if (self->buffer == nullptr || self->libContext == libContext) {
+        self->libContext = libContext;
+        return;
+    }
+    if (self->bufferSize == 0) {
+        LibContextDeallocate(self->libContext, self->buffer);
+        self->buffer = nullptr;
+        self->libContext = libContext;
+        return;
+    }
+    char* migrated = static_cast<char*>(LibContextAllocate(libContext, self->bufferSize));
+    if (migrated == nullptr) throw std::bad_alloc();
+    std::memcpy(migrated, self->buffer, self->bufferSize);
+    LibContextDeallocate(self->libContext, self->buffer);
+    self->buffer = migrated;
     self->libContext = libContext;
 }
 
@@ -1905,12 +2021,10 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(uint64_t* context) {
     if (context == nullptr) return LibContextNotInitialized;
-    {
-        std::lock_guard<std::mutex> lock(g_libContextGuard);
-        LibContextState* state = FindLibContextLocked(context);
-        if (state == nullptr || state->terminated) return LibContextNotInitialized;
-        state->terminated = true;
-    }
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    LibContextState* state = FindLibContextLocked(context);
+    if (state == nullptr || state->terminated) return LibContextNotInitialized;
+    state->terminated = true;
     *context = 0;
     return 0;
 }
@@ -2477,14 +2591,18 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
     const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
     const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
+    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
+    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+    const bool empty = body->elements == nullptr && body->capacity == 0;
+    if (empty && *selfContext == nullptr) *selfContext = sourceContext;
     if (body != static_cast<VectorBody*>(static_cast<void*>(self)) && self->libContext == nullptr) {
-        self->libContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
         try {
             RememberVectorHandle(self);
         } catch (const std::bad_alloc&) {
             return ParameterOutOfMemory;
         }
     }
+    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 1)) {
         NotImplemented_nid_no_patch(function);
         return ParameterOutOfMemory;
@@ -2540,14 +2658,18 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
     const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
     const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
+    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
+    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+    const bool empty = body->elements == nullptr && body->capacity == 0;
+    if (empty && *selfContext == nullptr) *selfContext = sourceContext;
     if (body != static_cast<VectorBody*>(static_cast<void*>(self)) && self->libContext == nullptr) {
-        self->libContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
         try {
             RememberVectorHandle(self);
         } catch (const std::bad_alloc&) {
             return ParameterOutOfMemory;
         }
     }
+    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
         return ParameterOutOfMemory;
@@ -3444,8 +3566,8 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V57Product9skusIsSetEv(const
     return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x1f8) != 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData11setobjectIdEPKc(void* self, const char* objectId) {
-    return SetParameterText(self, objectId);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData11setobjectIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x30, 0x50);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserC1Ev(void* self) {
@@ -3453,16 +3575,41 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGet
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
-    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10setslotIdsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x20);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setfieldsEPKc(void* self, const char* fields) {
-    return SetParameterText(self, fields);
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser11setsortModeENS5_8SortModeE(void* self, int value) {
+    SetCloudInteger(self, value, 0x7c, 0x80);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser7setsortENS5_4SortE(void* self, int value) {
+    SetCloudInteger(self, value, 0x74, 0x78);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser8setlimitEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x64, 0x68);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setoffsetEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x6c, 0x70);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* accountId, const char* slotIds) {
+    const char* arguments[] = {accountId, slotIds};
+    return InitializeCloudParameter(self, context, SlotStatusLayout, arguments);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setfieldsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x40, 0x60);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, SlotStatusLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserD1Ev(void* self) {
@@ -9993,4 +10140,48 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Us
     return HostIteratorNotEqual(self, other);
 }
 
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V15EntryEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
+    CopyIntrusivePtr(self, source, ReferenceCountOffset);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V15EntryEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEixEm(void* self, std::uint64_t index) {
+    return HostVectorElement(self, index, __func__);
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE11hasResponseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEE3getEv(const IntrusivePtr* self) {
+    return self->object;
 }

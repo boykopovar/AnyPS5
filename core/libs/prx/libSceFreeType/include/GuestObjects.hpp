@@ -89,6 +89,10 @@ struct GuestFace {
 
 void RegisterBitmap_nid_no_patch(GuestFace& face);
 extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
+extern "C" int FreeTypeNewCacheManager_nid_no_patch(GuestLibrary* library, std::uint32_t maxFaces, std::uint32_t maxSizes,
+                                                  std::uint64_t maxBytes, GuestFaceRequester requester, void* reqData, void** target, const char* function);
+bool RegisterCacheLibrary_nid_no_patch(GuestLibrary* library);
+bool DestroyCacheManagers_nid_no_patch(GuestLibrary* library);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);

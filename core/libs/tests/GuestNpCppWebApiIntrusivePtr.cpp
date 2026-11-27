@@ -3,6 +3,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -10,6 +12,7 @@
 #include <stdexcept>
 #include <cstdio>
 #include <source_location>
+#include <thread>
 
 using Deleter = void (APS5_VABI*)(void*);
 
@@ -759,6 +762,119 @@ static void TestObjectsOutlivingContext() {
     Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
 }
 
+static void TestReinitializationWaitsForOperations() {
+    alignas(8) unsigned char params[0x28];
+    std::memset(params, 0, sizeof(params));
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(params);
+    std::uint64_t context = 0;
+    _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(&context);
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0);
+    void* reference = NpCppWebApiContextReference(&context);
+    Require(reference != nullptr);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
+    std::atomic<bool> finished {false};
+    std::thread worker([&] {
+        finished.store(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!finished.load());
+    NpCppWebApiContextDereference(reference);
+    worker.join();
+    Require(finished.load());
+    Require(context != 0);
+    auto* block = static_cast<unsigned char*>(NpCppWebApiContextAllocate(&context, 16));
+    Require(block != nullptr);
+    NpCppWebApiContextDeallocate(&context, block);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
+}
+
+static void TestStringSetContextMigratesBuffer() {
+    NpCppWebApiTest::LibContext first;
+    NpCppWebApiTest::LibContext second;
+    const auto firstBaseline = MspaceStats(first);
+    const auto secondBaseline = MspaceStats(second);
+    auto* string = static_cast<CommonString*>(NpCppWebApiContextAllocate(first.value(), sizeof(CommonString)));
+    Require(string != nullptr);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(string, first.value());
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(string, "payload") == 0);
+    const auto firstPopulated = MspaceStats(first);
+    Require(firstPopulated.currentInuseSize > firstBaseline.currentInuseSize);
+    _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(string, second.value());
+    Require(string->libContext == second.value());
+    Require(std::strcmp(string->buffer, "payload") == 0);
+    Require(MspaceStats(first).currentInuseSize < firstPopulated.currentInuseSize);
+    Require(MspaceStats(second).currentInuseSize > secondBaseline.currentInuseSize);
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(string);
+    NpCppWebApiContextDeallocate(first.value(), string);
+    Require(MspaceStats(first).currentInuseSize == firstBaseline.currentInuseSize);
+    Require(MspaceStats(second).currentInuseSize == secondBaseline.currentInuseSize);
+}
+
+static void TestVectorReserveUsesContext() {
+    NpCppWebApiTest::LibContext context;
+    const auto baseline = MspaceStats(context);
+    IntrusivePtr vector {};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(&vector, context.value());
+    CommonString element {};
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(&element, context.value());
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(&element, "x") == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&vector, &element) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi(&vector, 8) == 0);
+    for (int index = 0; index < 10; ++index) {
+        Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&vector, &element) == 0);
+    }
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(&vector);
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(&element);
+    Require(MspaceStats(context).currentInuseSize == baseline.currentInuseSize);
+}
+
+static void TestVectorCopyFromKeepsHostStorage() {
+    NpCppWebApiTest::LibContext source;
+    IntrusivePtr target {};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(&target, nullptr);
+    CommonString host {};
+    _ZN3sce2Np9CppWebApi6Common6StringC1Ev(&host);
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(&host, "host") == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&target, &host) == 0);
+    IntrusivePtr from {};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(&from, source.value());
+    CommonString remote {};
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(&remote, source.value());
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(&remote, "remote") == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&from, &remote) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(&target, &from) == 0);
+    void* bodyContext = nullptr;
+    std::memcpy(&bodyContext, static_cast<unsigned char*>(target.object) + 0x08, sizeof(bodyContext));
+    Require(bodyContext == nullptr);
+    for (int index = 0; index < 10; ++index) {
+        Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&target, &host) == 0);
+    }
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(&target);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(&from);
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(&host);
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(&remote);
+}
+
+static void TestTaggedStringVectorRelease() {
+    NpCppWebApiTest::LibContext context;
+    const auto baseline = MspaceStats(context);
+    IntrusivePtr vector {};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(&vector, context.value());
+    CommonString element {};
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(&element, context.value());
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(&element, "tag") == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(&vector, &element) == 0);
+    void* taggedBody = vector.object;
+    IntrusivePtr wrapper {};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PNS2_10LibContextE(&wrapper, taggedBody, context.value());
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(&vector);
+    Require(wrapper.object == taggedBody);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&wrapper);
+    Require(wrapper.object == nullptr);
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(&element);
+    Require(MspaceStats(context).currentInuseSize == baseline.currentInuseSize);
+}
+
 static void TestUserProfileModelAndTransaction() {
     std::uint8_t profile[0xd0];
     std::memset(profile, 0xa5, sizeof(profile));
@@ -1257,6 +1373,11 @@ int main(int argc, char** argv) {
     TestDeleterlessStringVector();
     TestLibContextLifecycle();
     TestObjectsOutlivingContext();
+    TestReinitializationWaitsForOperations();
+    TestStringSetContextMigratesBuffer();
+    TestVectorReserveUsesContext();
+    TestVectorCopyFromKeepsHostStorage();
+    TestTaggedStringVectorRelease();
     TestUserProfilePublicProfileRequest();
     TestUserProfileBoolAndSize();
     TestResidualAccessors();
