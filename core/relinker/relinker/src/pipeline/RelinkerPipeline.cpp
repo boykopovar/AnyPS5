@@ -47,7 +47,7 @@ const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs)
 
 }
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, const bool functionSymbolRoots)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, const bool functionSymbolRoots, const bool lazyBinding)
     : elfReader(std::move(elfReader))
     , syscallScanner(std::move(syscallScanner))
     , callSiteResolver(std::move(callSiteResolver))
@@ -57,6 +57,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
     , unusedFilterLevel(unusedFilterLevel)
     , progress(progress)
     , functionSymbolRoots(functionSymbolRoots)
+    , lazyBinding(lazyBinding)
 {
     if (!this->elfReader || !this->syscallScanner || !this->callSiteResolver || !this->validationPolicy || !this->dynamicSectionBuilder || !this->unusedNidFilter) throw RelinkerException("Missing relinker pipeline dependency");
     if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
@@ -428,6 +429,19 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
+    struct LocalRelativeRelocation {
+        std::uint64_t Target;
+        std::int64_t Addend;
+    };
+    struct LocalAbsoluteRelocation {
+        std::uint64_t Target;
+        FileByteOffset FileOffset;
+        std::uint64_t Value;
+    };
+    std::vector<LocalRelativeRelocation> localRelativeRelocations;
+    std::vector<LocalAbsoluteRelocation> localAbsoluteRelocations;
+    std::uint32_t localPltRelocationCount = 0;
+
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -477,16 +491,72 @@ RelinkResult RelinkerPipeline::Relink() {
             const auto name = readCStr(nameOff);
             std::uint16_t section = 0;
             std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
-            if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) == STB_LOCAL && (raw[symOff + 5] & 3) != 0)
+            const auto binding = static_cast<std::uint8_t>(raw[symOff + 4] >> 4);
+            const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
+            const auto visibility = static_cast<std::uint8_t>(raw[symOff + 5] & 3);
+            if (section == SHN_UNDEF && binding == STB_LOCAL && visibility != STV_DEFAULT)
                 throw RelinkerException("Undefined local symbol has non-default visibility: " + name, symOff);
+            if (section != SHN_UNDEF && (binding < STB_GLOBAL || visibility == STV_INTERNAL || visibility == STV_HIDDEN)) {
+                if (binding > STB_WEAK || (raw[symOff + 5] & ~3) != 0)
+                    throw RelinkerException("Unsupported defined local, hidden or internal symbol attributes: " + name, symOff);
+                if (symbolType != STT_NOTYPE && symbolType != STT_OBJECT && symbolType != STT_FUNC && symbolType != STT_SECTION)
+                    throw RelinkerException("Unsupported defined local, hidden or internal symbol type: " + name, symOff);
+                if (section >= SHN_LORESERVE && section != SHN_ABS)
+                    throw RelinkerException("Unsupported defined symbol section: " + name, symOff);
+                if (relType != R_X86_64_64 && relType != R_X86_64_GLOB_DAT && relType != R_X86_64_JUMP_SLOT)
+                    throw RelinkerException("Unsupported relocation type for defined local, hidden or internal symbol: " + name, pos);
+                if (relType != R_X86_64_64 && rAddend != 0)
+                    throw RelinkerException("GLOB_DAT/JUMP_SLOT relocation has a nonzero addend", pos);
+                std::uint64_t value = 0;
+                std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+                std::uint64_t resolved = value;
+                if (rAddend >= 0) {
+                    const auto add = static_cast<std::uint64_t>(rAddend);
+                    if (add > std::numeric_limits<std::uint64_t>::max() - value)
+                        throw RelinkerException("Defined symbol relocation address overflow", pos);
+                    resolved = value + add;
+                } else {
+                    const auto sub = static_cast<std::uint64_t>(-(rAddend + 1)) + 1;
+                    if (sub > value)
+                        throw RelinkerException("Defined symbol relocation address underflow", pos);
+                    resolved = value - sub;
+                }
+                if (section == SHN_ABS) {
+                    if (rOffset > std::numeric_limits<std::uint64_t>::max() - 8)
+                        throw RelinkerException("Relocation target address overflow", pos);
+                    std::optional<FileByteOffset> targetFileOffset;
+                    for (const auto& ph : programHeaders) {
+                        if (ph.Type != PT_LOAD || (ph.Flags & PF_W) == 0) continue;
+                        if (rOffset < ph.MappedAddress || rOffset - ph.MappedAddress >= ph.FileSize) continue;
+                        if (ph.FileSize - (rOffset - ph.MappedAddress) < 8) continue;
+                        if (ph.Offset > raw.size() || ph.FileSize > raw.size() - ph.Offset) continue;
+                        targetFileOffset = ph.Offset + (rOffset - ph.MappedAddress);
+                        break;
+                    }
+                    if (!targetFileOffset)
+                        throw RelinkerException("Absolute defined symbol relocation target is not inside a writable file-backed PT_LOAD segment", pos);
+                    localAbsoluteRelocations.push_back({rOffset, *targetFileOffset, resolved});
+                } else {
+                    const std::uint32_t flags = symbolType == STT_FUNC ? PF_X : 0;
+                    const bool functionRoot = functionSymbolRoots && symbolType == STT_FUNC;
+                    const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
+                        const auto limit = functionRoot ? ph.FileSize : ph.MemorySize;
+                        return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress && value - ph.MappedAddress < limit;
+                    });
+                    if (!mapped)
+                        throw RelinkerException("Defined local, hidden or internal symbol is not inside a matching PT_LOAD segment: " + name, symOff);
+                    if (resolved > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                        throw RelinkerException("Defined symbol relocation address exceeds signed 64-bit range", pos);
+                    localRelativeRelocations.push_back({rOffset, static_cast<std::int64_t>(resolved)});
+                }
+                if (plt) ++localPltRelocationCount;
+                continue;
+            }
             if (name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
-            if (section != SHN_UNDEF && ((raw[symOff + 4] >> 4) < STB_GLOBAL || (raw[symOff + 5] & 3) == 1 || (raw[symOff + 5] & 3) == 2))
-                throw RelinkerException("Relocation names a defined symbol that is local, hidden or internal: " + name, symOff);
-            const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
-            const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
+            const bool weak = binding == STB_WEAK;
             const bool function = symbolType == STT_FUNC;
             nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
@@ -716,6 +786,22 @@ RelinkResult RelinkerPipeline::Relink() {
         patches = std::move(compacted.Patches);
         { std::ostringstream message; message << "PLT compaction: " << pltCount << " -> " << compacted.SlotCount << "\n"; progress.Message(message.str()); }
         pltCount = compacted.SlotCount;
+    } else if (localPltRelocationCount != 0) {
+        std::uint32_t remainingPltCount = 0;
+        for (const auto& ref : dynamicRefs)
+            if (ref.RelocationTypeValue == R_X86_64_JUMP_SLOT) ++remainingPltCount;
+        if (remainingPltCount == 0) {
+            pltCount = 0;
+        } else if (lazyBinding) {
+            throw RelinkerException("Cannot mix local, hidden or internal JUMP_SLOT relocations with imported JUMP_SLOT relocations under --lazy-binding");
+        } else {
+            std::uint32_t slotIndex = 0;
+            for (auto& ref : dynamicRefs) {
+                if (ref.RelocationTypeValue != R_X86_64_JUMP_SLOT) continue;
+                ref.RelocationTableOffset = dynJmpRelOffset + static_cast<std::uint64_t>(slotIndex++) * relaEntSize;
+            }
+            pltCount = remainingPltCount;
+        }
     }
     auto dynSection = dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
     for (const auto& ref : dynamicRefs) {
@@ -786,6 +872,29 @@ RelinkResult RelinkerPipeline::Relink() {
     extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
     for (const auto& [target, addend] : relrRelocations)
         appendRela(dynSection.RelaData, target, R_X86_64_RELATIVE, static_cast<std::int64_t>(addend));
+    for (const auto& relocation : localRelativeRelocations)
+        appendRela(dynSection.RelaData, relocation.Target, R_X86_64_RELATIVE, relocation.Addend);
+    if (!localAbsoluteRelocations.empty()) {
+        std::map<std::uint64_t, std::uint64_t> relocatedRanges;
+        for (const auto* table : {&dynSection.RelaData, &dynSection.RelaPltData}) {
+            for (std::size_t entry = 0; entry + 24 <= table->size(); entry += 24) {
+                std::uint64_t target = 0;
+                std::memcpy(&target, table->data() + entry, sizeof(target));
+                if (target <= std::numeric_limits<std::uint64_t>::max() - 8)
+                    relocatedRanges.emplace(target, target + 8);
+            }
+        }
+        for (const auto& relocation : localAbsoluteRelocations) {
+            const auto next = relocatedRanges.lower_bound(relocation.Target);
+            if ((next != relocatedRanges.end() && next->first < relocation.Target + 8)
+                || (next != relocatedRanges.begin() && std::prev(next)->second > relocation.Target))
+                throw RelinkerException("Overlapping relocation target for absolute defined symbol", relocation.Target);
+            relocatedRanges.emplace(relocation.Target, relocation.Target + 8);
+            std::vector<std::uint8_t> bytes(8);
+            std::memcpy(bytes.data(), &relocation.Value, sizeof(relocation.Value));
+            patches.push_back({relocation.FileOffset, std::move(bytes)});
+        }
+    }
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());

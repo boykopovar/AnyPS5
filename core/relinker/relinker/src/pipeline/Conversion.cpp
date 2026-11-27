@@ -101,7 +101,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         std::make_shared<Relinker::ValidationPolicy>(),
         std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
         options.UnusedFilterLevel == 2 ? Relinker::MakeStrictUnusedNidFilter(inputProgress) : Relinker::MakeUnusedNidFilter(),
-        options.UnusedFilterLevel, inputProgress, options.FunctionSymbolRoots
+        options.UnusedFilterLevel, inputProgress, options.FunctionSymbolRoots, options.LazyBinding
     );
 
     { std::ostringstream message; message << "System: " << (windows ? "Windows" : macos ? "macOS" : "Linux") << "; unused-filter=" << options.UnusedFilterLevel << "\n"; inputProgress.Message(message.str()); }

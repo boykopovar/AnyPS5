@@ -1133,6 +1133,9 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_null_symbol_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME local_defined_relocations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_local_defined_relocations.py $<TARGET_FILE:relinker>)
+        set_tests_properties(local_defined_relocations PROPERTIES TIMEOUT 20)
         foreach(symbolInput IN ITEMS executable guest)
             foreach(symbolRelocation IN ITEMS 1 6 7)
                 add_test(NAME restricted_undefined_symbols_${symbolInput}_${symbolRelocation} COMMAND ${Python3_EXECUTABLE}
