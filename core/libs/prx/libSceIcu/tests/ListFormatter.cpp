@@ -382,6 +382,11 @@ void Run() {
         Require(status <= 0 && outLen > 0);
         ulistfmt_formatStringsToResult_nid_postfix(formatter, items, lengths, 2, result, &status);
         Require(status <= 0);
+        const char16_t* nullZeroItems[2] = {nullptr, two.data()};
+        const std::int32_t nullZeroLengths[2] = {0, 1};
+        const std::int32_t emptyFirstLen =
+            ulistfmt_format_nid_postfix(formatter, nullZeroItems, nullZeroLengths, 2, out.data(), 32, &status);
+        Require(status <= 0 && emptyFirstLen > 0);
         ulistfmt_close_nid_postfix(formatter);
     } else {
         Require(status == 2);

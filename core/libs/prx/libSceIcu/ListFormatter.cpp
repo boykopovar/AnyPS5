@@ -91,6 +91,7 @@ std::string ReadGuestCString(const char* source, const char* caller) {
 }
 
 std::u16string ReadGuestU16String(const char16_t* source, std::int32_t length, const char* caller) {
+    if (!source && length == 0) return {};
     std::u16string text;
     if (length >= 0) {
         text.resize(static_cast<std::size_t>(length));
