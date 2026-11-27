@@ -164,7 +164,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
             const auto count = Pm4::PacketWords(header);
             if (limit + count > commands.size()) break;
             const auto opcode = (header >> 8u) & 0xffu;
-            if (header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x22 || opcode == 0x3f || opcode == 0x3c || opcode == 0x93) break;
+            if (header == FlipPacketHeader || submission.flips.contains(limit) || header == RenderingWaitPacketHeader || opcode == 0x22 || opcode == 0x3f || opcode == 0x3c || opcode == 0x93) break;
             if (opcode == 0x15 || opcode == 0x16) hasFurtherDispatch = true;
             limit += count;
         }
