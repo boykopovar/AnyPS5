@@ -20,6 +20,10 @@ struct GuestOption {
     int value;
 };
 
+struct GuestEui64 {
+    std::uint8_t octet[8];
+};
+
 struct GuestDirectoryEntry;
 struct GuestLocaleFacade;
 
@@ -88,6 +92,8 @@ std::uint32_t APS5_VABI __inet_lnaof_nid_postfix(std::uint32_t address);
 std::uint32_t APS5_VABI inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
+int APS5_VABI eui64_aton_nid_postfix(const char* text, GuestEui64* id);
+int APS5_VABI eui64_ntoa_nid_postfix(const GuestEui64* id, char* text, std::size_t length);
 std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
