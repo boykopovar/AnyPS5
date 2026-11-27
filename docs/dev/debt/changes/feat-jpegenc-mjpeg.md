@@ -1,0 +1,8 @@
+# libSceJpegEnc
+
+## remove [sceJpegEncEncode]
+
+## add Functional
+
+- [sceJpegEncEncode restart intervals and size](../../../core/libs/prx/libSceJpegEnc/Export.cpp): the host and console produce different byte counts for the same input. The measured restart interval of 0 disables restart markers, -1 selects one MCU row, and 1 through 65535 specify an MCU count. Other values return the invalid-parameter error. A successful call returns the JPEG byte count, as measured on a PS4 Pro (10.71) and in a [PS5 payload process (11.60)](https://github.com/boykopovar/AnyPS5/pull/20168). The payload's 8x8 RGBA color bars at 4:2:0 produced 694/656/634 bytes for compression ratios 0/128/255 and 700 for restart interval 1 or -1. The corresponding host sizes are 685/657/640 and 691. The PS4 produced 633 bytes for an 8x8 RGBA image at 4:2:0 where the host produced 650. A title process was not measured.
+- [sceJpegEncEncode Motion JPEG](../../../core/libs/prx/libSceJpegEnc/Export.cpp): PS5 mode-1 framing and minimum output capacity are unmeasured. Mode 1 writes an AVI1 APP0 in place of JFIF and omits the Huffman table segments. In 21 paired runs of the PS4 reference module (SHA-256 9493cf97f5ea25cbf8ce00051274f14cbbddcbe4d28be1d4b4e4854bf4b4500d, encode entry 0x190), the remaining markers and scan bytes were identical within each pair. The probe ran the module on a host with native x86-64 calls and libc stand-ins. It covered RGBA, BGRA, YUYV, grayscale, all valid sampling modes, and restart intervals 0, -1 and 5. The host encoder uses libjpeg-turbo's default Huffman tables and quantization path.

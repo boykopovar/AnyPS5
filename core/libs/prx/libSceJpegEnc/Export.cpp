@@ -233,6 +233,41 @@ std::optional<std::vector<std::uint8_t>> encodePixels(const JpegEncEncodeParam& 
                                  sampling, restartBlocks, restartRows);
 }
 
+void writeMjpegHeaders(std::vector<std::uint8_t>& jpeg) {
+    constexpr std::uint8_t jfifHeader[] = {0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F', 0};
+    constexpr std::uint8_t avi1Payload[14] = {'A', 'V', 'I', '1'};
+    constexpr std::size_t app0PayloadOffset = 6;
+    constexpr std::size_t app0End = app0PayloadOffset + sizeof(avi1Payload);
+    constexpr std::uint8_t defineHuffmanTable = 0xC4;
+    constexpr std::uint8_t startOfScan = 0xDA;
+    if (jpeg.size() < app0End || std::memcmp(jpeg.data(), jfifHeader, sizeof(jfifHeader)) != 0) {
+        throw std::runtime_error("sceJpegEncEncode: missing JFIF header in JPEG encoder output");
+    }
+    std::memcpy(jpeg.data() + app0PayloadOffset, avi1Payload, sizeof(avi1Payload));
+
+    std::size_t output = app0End;
+    for (std::size_t input = app0End; jpeg.size() - input >= 4 && jpeg[input] == 0xFF;) {
+        const auto marker = jpeg[input + 1];
+        const std::size_t length = (static_cast<std::size_t>(jpeg[input + 2]) << 8) | jpeg[input + 3];
+        if (length < 2 || length > jpeg.size() - input - 2) break;
+        if (marker == startOfScan) {
+            const auto scanSize = jpeg.size() - input;
+            if (output != input) {
+                std::memmove(jpeg.data() + output, jpeg.data() + input, scanSize);
+                jpeg.resize(output + scanSize);
+            }
+            return;
+        }
+        const auto segmentSize = 2 + length;
+        if (marker != defineHuffmanTable) {
+            if (output != input) std::memmove(jpeg.data() + output, jpeg.data() + input, segmentSize);
+            output += segmentSize;
+        }
+        input += segmentSize;
+    }
+    throw std::runtime_error("sceJpegEncEncode: invalid marker sequence in JPEG encoder output");
+}
+
 }  // namespace
 
 extern "C" {
@@ -279,11 +314,10 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
     JpegEncEncodeParam localParam{};
     const std::int32_t result = validateEncodeParam(param, &localParam);
     if (result != 0) return result;
-    if (localParam.encode_mode == ENCODE_MODE_MJPEG) throw std::runtime_error("sceJpegEncEncode: MJPEG encode mode is not implemented");
-
-    const auto encoded = encodePixels(localParam);
+    auto encoded = encodePixels(localParam);
     if (!encoded) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
-    const auto& jpeg = *encoded;
+    auto& jpeg = *encoded;
+    if (localParam.encode_mode == ENCODE_MODE_MJPEG) writeMjpegHeaders(jpeg);
     if (jpeg.size() > localParam.jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
     if (!canCopyOut(localParam.jpeg, jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;

@@ -4,11 +4,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -83,14 +83,18 @@ static std::vector<std::uint8_t> DecodeOutput(const JpegEncOutputInfo& info, std
     return decoded->pixels;
 }
 
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
+static std::size_t HuffmanTableBytes(const std::uint8_t* data, std::size_t size) {
+    std::size_t total = 0;
+    for (std::size_t offset = 2; offset + 4 <= size;) {
+        Require(data[offset] == 0xFF);
+        const auto marker = data[offset + 1];
+        if (marker == 0xDA) return total;
+        const std::size_t length = (static_cast<std::size_t>(data[offset + 2]) << 8) | data[offset + 3];
+        Require(length >= 2 && length <= size - offset - 2);
+        if (marker == 0xC4) total += 2 + length;
+        offset += 2 + length;
     }
-    return false;
+    std::abort();
 }
 
 static JpegEncEncodeParam ValidEncodeParam() {
@@ -375,7 +379,6 @@ int main() {
     Require(sceJpegEncEncode(handle, &tooSmall, &info) == invalidSize);
 
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_width = 0; }) == invalidParam);
-    Require(ThrowsRuntimeError([&] { encodeWith([](JpegEncEncodeParam& p) { p.encode_mode = 1; }); }));
     Require(encodeWith([](JpegEncEncodeParam& p) { p.restart_interval = -2; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.restart_interval = INT32_MIN; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.encode_mode = 1; p.restart_interval = -2; }) == invalidParam);
@@ -387,7 +390,7 @@ int main() {
     static unsigned char wideGray[wideWidth * wideHeight];
     for (std::size_t i = 0; i < sizeof(wideGray); ++i) wideGray[i] = static_cast<unsigned char>((i * 53) ^ (i / 48));
     static unsigned char restarted[8192];
-    auto encodeWide = [&](std::uint8_t sampling, std::int32_t restart, bool grayscale) {
+    auto encodeWide = [&](std::uint8_t sampling, std::int32_t restart, bool grayscale, std::uint16_t mode = 0) {
         JpegEncEncodeParam p = ValidEncodeParam();
         p.image = grayscale ? wideGray : wide;
         p.image_size = grayscale ? sizeof(wideGray) : sizeof(wide);
@@ -400,10 +403,11 @@ int main() {
         p.jpeg = restarted;
         p.jpeg_size = sizeof(restarted);
         p.restart_interval = restart;
+        p.encode_mode = mode;
         JpegEncOutputInfo out{};
         Require(sceJpegEncEncode(handle, &p, &out) == static_cast<std::int32_t>(out.size));
         Require(IsJpeg(restarted, out.size) && out.height == wideHeight);
-        const auto decoded = Decoder::Jpeg::Decode({restarted, out.size});
+        const auto decoded = Decoder::Jpeg::DecodeScaled({restarted, out.size}, 1);
         Require(decoded.has_value() && decoded->width == wideWidth && decoded->height == wideHeight);
         return std::pair{ReadRestart(restarted, out.size), decoded->pixels};
     };
@@ -430,6 +434,46 @@ int main() {
     const auto blocksGray = encodeWide(0, 0xFFFF, true);
     Require(blocksGray.first == std::pair{0xFFFF, 0});
     Require(blocksGray.second == plainGray.second);
+    Require(encodeWide(2, 2, false, 1) == blocks420);
+    Require(encodeWide(1, -1, false, 1) == rows422);
+    Require(encodeWide(0, -1, true, 1) == rowsGray);
+
+    constexpr std::array<std::uint8_t, 20> aviHeader{
+        0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'A', 'V', 'I', '1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    for (auto p : {rgba, bgra, yuv, y8}) {
+        JpegEncOutputInfo still{};
+        Require(sceJpegEncEncode(handle, &p, &still) == static_cast<std::int32_t>(still.size));
+        Require(IsJpeg(jpeg, still.size));
+        const auto tableBytes = HuffmanTableBytes(jpeg, still.size);
+        Require(tableBytes > 0 && still.size > aviHeader.size() + tableBytes);
+        const auto stillImage = Decoder::Jpeg::DecodeScaled({jpeg, still.size}, 1);
+        Require(stillImage.has_value());
+
+        std::vector<std::uint8_t> motion(still.size, 0xA5);
+        p.jpeg = motion.data();
+        p.jpeg_size = static_cast<std::uint32_t>(still.size - tableBytes);
+        p.encode_mode = 1;
+        JpegEncOutputInfo frame{};
+        errno = 71;
+        Require(sceJpegEncEncode(handle, &p, &frame) == static_cast<std::int32_t>(p.jpeg_size) && errno == 71);
+        Require(frame.size == p.jpeg_size && frame.height == still.height);
+        Require(IsJpeg(motion.data(), frame.size));
+        Require(std::equal(aviHeader.begin(), aviHeader.end(), motion.begin()));
+        Require(HuffmanTableBytes(motion.data(), frame.size) == 0);
+        Require(std::all_of(motion.begin() + frame.size, motion.end(), [](auto value) { return value == 0xA5; }));
+        const auto frameImage = Decoder::Jpeg::DecodeScaled({motion.data(), frame.size}, 1);
+        Require(frameImage.has_value());
+        Require(frameImage->height == stillImage->height && frameImage->width == stillImage->width);
+        Require(frameImage->channels == stillImage->channels && frameImage->pixels == stillImage->pixels);
+
+        --p.jpeg_size;
+        frame = {123, 456};
+        std::fill(motion.begin(), motion.end(), 0xA5);
+        Require(sceJpegEncEncode(handle, &p, &frame) == invalidSize);
+        Require(frame.size == 123 && frame.height == 456);
+        Require(std::all_of(motion.begin(), motion.end(), [](auto value) { return value == 0xA5; }));
+    }
 
     Require(sceJpegEncDelete(handle) == 0);
 
@@ -506,13 +550,12 @@ int main() {
     const std::int32_t encodedSize = sceJpegEncEncode(guardHandle, &atomicParam, &validInfo);
     Require(errno == 71 && encodedSize > 0 && validInfo.size == static_cast<std::uint32_t>(encodedSize) && IsJpeg(sentinelJpeg.data(), validInfo.size));
 
+    atomicParam.encode_mode = 1;
+    std::fill(sentinelJpeg.begin(), sentinelJpeg.end(), 0xA5);
     errno = 71;
-    Require(ThrowsRuntimeError([&] {
-        JpegEncEncodeParam mjpeg = atomicParam;
-        mjpeg.encode_mode = 1;
-        return sceJpegEncEncode(guardHandle, &mjpeg, &validInfo);
-    }));
-    Require(errno == 71);
+    Require(sceJpegEncEncode(guardHandle, &atomicParam, reinterpret_cast<JpegEncOutputInfo*>(0x10)) == invalidAddr && errno == 71);
+    Require(std::all_of(sentinelJpeg.begin(), sentinelJpeg.end(), [](unsigned char b) { return b == 0xA5; }));
+    Require(sceJpegEncEncode(guardHandle, &atomicParam, nullptr) > 0 && errno == 71);
 
     errno = 71;
     Require(sceJpegEncDelete(guardHandle) == 0 && errno == 71);
