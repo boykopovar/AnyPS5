@@ -93,6 +93,7 @@ void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char
 template<typename TFunction>
 TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
     if (!out) throw std::invalid_argument("null WTF::PrintStream");
+    RequireReadableGuestBytes(out, sizeof(void*), function);
     void* const* vtablePtr = nullptr;
     if (!GuestCopyIn_nid_no_patch(&vtablePtr, out, sizeof(vtablePtr)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
@@ -101,8 +102,10 @@ TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
     const auto baseAddress = reinterpret_cast<std::uintptr_t>(vtablePtr);
     if (byteOffset > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const void* slotAddress = reinterpret_cast<const void*>(baseAddress + byteOffset);
+    RequireReadableGuestBytes(slotAddress, sizeof(void*), function);
     void* slotValue = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&slotValue, reinterpret_cast<const void*>(baseAddress + byteOffset), sizeof(slotValue)))
+    if (!GuestCopyIn_nid_no_patch(&slotValue, slotAddress, sizeof(slotValue)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (!slotValue) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return reinterpret_cast<TFunction>(slotValue);
@@ -110,6 +113,7 @@ TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
 
 String CopyGuestString(const StringImpl* guestImpl, const char* function) {
     if (!guestImpl) return {};
+    RequireReadableGuestBytes(guestImpl, sizeof(StringImpl), function);
     StringImpl header{};
     if (!GuestCopyIn_nid_no_patch(&header, guestImpl, sizeof(header)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
@@ -155,6 +159,15 @@ void PrintCopiedUTF8(PrintStream* out, VprintfFunction vprintfFn, const String& 
     PrintCString(out, vprintfFn, utf8.buffer ? reinterpret_cast<const char*>(utf8.buffer + 1) : "");
 }
 
+struct PrintStreamScope {
+    PrintStream* out{nullptr};
+    EndFunction endFn{nullptr};
+
+    ~PrintStreamScope() {
+        if (endFn) endFn(out);
+    }
+};
+
 }  // namespace
 
 extern "C" {
@@ -171,6 +184,7 @@ void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(Print
 
 void APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE(const URL* self, PrintStream* out) {
     if (!self) throw std::invalid_argument("null WTF::URL");
+    RequireReadableGuestBytes(self, sizeof(URL), __func__);
     URL local{};
     if (!GuestCopyIn_nid_no_patch(&local, self, sizeof(local)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
@@ -178,9 +192,9 @@ void APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE(const URL* self, PrintStream
     const auto endFn = ReadSlot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd, __func__);
     const String copied = CopyGuestString(local.impl, __func__);
     PrintStream* stream = beginFn(out);
+    const PrintStreamScope scope{out, endFn};
     const auto innerVprintfFn = ReadSlot<VprintfFunction>(stream, NKWebKit::WtfDumpAbi::PrintStreamVprintf, __func__);
     PrintCopiedUTF8(stream, innerVprintfFn, copied);
-    endFn(out);
 }
 
 }

@@ -275,6 +275,7 @@ void TestGuestPointers() {
     Require(ThrowsNotImplemented([&] {
         _ZNK3WTF3URL4dumpERNS_11PrintStreamE(&validUrl, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(&badInnerStream));
     }, kUrlSymbol));
+    Require(streams.log == "<YY>");
 }
 
 }
