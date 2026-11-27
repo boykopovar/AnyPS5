@@ -11,6 +11,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -561,6 +562,26 @@ void testToggleRequests() {
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F12, false), now).screenshot, "releasing F12 asks for nothing");
 }
 
+void testMouseModeShortcut() {
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    check(std::string_view(keyboardMouse.MouseModeShortcut(false)) == "F7", "the default hint names F7");
+    auto custom = defaults();
+    std::erase_if(custom.bindings, [](const Pad::InputBinding& binding) { return binding.control == Pad::InputControl::ToggleMouse; });
+    custom.bindings.push_back({SDL_SCANCODE_UNKNOWN, Pad::MouseButton::Middle, Pad::InputControl::ToggleMouse});
+    keyboardMouse.Replace(custom);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(false)) == "Middle click", "a mouse-only binding names the button");
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)).empty(), "a guest mouse hides the unavailable mouse binding");
+    keyboardMouse.SetMouseMode(true);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)) == "Middle click", "the mouse binding can turn off active capture");
+    custom.bindings.push_back({SDL_SCANCODE_F4, Pad::MouseButton::None, Pad::InputControl::ToggleMouse});
+    keyboardMouse.Replace(custom);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)) == "F4", "a reloaded keyboard binding supplies the hint");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F4, true), Pad::KeyboardMouse::Clock::now()).toggleMouse, "the hint names the actual toggle key");
+    custom.bindings.back().key = SDL_SCANCODE_KP_MULTIPLY;
+    keyboardMouse.Replace(custom);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)) == "Keypad multiply", "a key outside the overlay font uses a readable label");
+}
+
 void testShowPadStatus() {
     const auto now = Pad::KeyboardMouse::Clock::now();
     Pad::KeyboardMouse keyboardMouse(defaults());
@@ -902,6 +923,7 @@ int main() {
             {"toggle actions", testToggleActions},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
+            {"mouse mode shortcut", testMouseModeShortcut},
             {"show pad status", testShowPadStatus},
             {"volume up request", testVolumeUpRequest},
             {"volume down request", testVolumeDownRequest},

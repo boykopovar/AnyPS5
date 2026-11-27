@@ -1503,8 +1503,31 @@ std::uint32_t ImageSampleIndex(SpirvValueEmitContext& ctx, const ImageEmitAccess
     return AddressU32(ctx, access, addressInfo.coordinateComponents);
 }
 
+std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> StoreQuantizeWordValues(SpirvEmitterState& state, std::uint32_t resource) {
+    const auto u32 = TypeU32(state);
+    std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> words{};
+    if (!state.registrationModules) {
+        const auto first = PipelineSpecialization::StoreQuantizeBase + resource * PipelineSpecialization::StoreQuantizeWords;
+        for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = state.module.SpecializationConstant(u32, first + index, 0u);
+        return words;
+    }
+    words.fill(ConstantU32(state, 0u));
+    const auto& image = state.program.Info().images.at(resource);
+    if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) return words;
+    const auto code = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u), ConstantU32(state, 20u)), 0x1ffu);
+    const auto unquantized = StoreQuantizeValues(0u);
+    for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = ConstantU32(state, unquantized[index]);
+    for (std::uint32_t value = 0; value <= 0x1ffu; ++value) {
+        const auto values = StoreQuantizeValues(value);
+        if (values[0] == 0u) continue;
+        const auto match = Binary(state, spv::OpIEqual, TypeBool(state), code, ConstantU32(state, value));
+        for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = Select(state, u32, match, ConstantU32(state, values[index]), words[index]);
+    }
+    return words;
+}
+
 std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t texel) {
-    const auto first = PipelineSpecialization::StoreQuantizeBase + resource * PipelineSpecialization::StoreQuantizeWords;
+    const auto words = StoreQuantizeWordValues(state, resource);
     const auto f32 = TypeF32(state);
     const auto vec4 = TypeF32Vector(state, 4u);
     const auto bvec4 = state.module.Type(spv::OpTypeVector, TypeBool(state), 4u);
@@ -1513,7 +1536,7 @@ std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resourc
         state.module.AddFunction(spv::OpCompositeConstruct, type, result, scalar, scalar, scalar, scalar);
         return result;
     };
-    const auto word = [&](std::uint32_t index) { return state.module.SpecializationConstant(TypeU32(state), first + index, 0u); };
+    const auto word = [&](std::uint32_t index) { return words.at(index); };
     const auto enabled = Binary(state, spv::OpINotEqual, TypeBool(state), word(0u), ConstantU32(state, 0u));
     const auto scale = splat(vec4, Unary(state, spv::OpBitcast, f32, word(1u)));
     const auto reciprocal = splat(vec4, Unary(state, spv::OpBitcast, f32, word(2u)));
@@ -1581,7 +1604,7 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? LodU32(ctx, access) : 0u;
         const auto coord = CoordU32(ctx, access);
         auto texel = access.mem.imagePacked ? PackedStoreTexel(ctx, access, ctx.Arg(access.inst, 2)) : StoreTexel(ctx, access, ctx.Arg(access.inst, 2), uintImage);
-        if (!uintImage && !access.mem.imagePacked && !access.image.atomic && access.image.table == NoTable && !state.registrationModules && access.image.conversionFormat == IrBufferFormat::Invalid) texel = QuantizeStoreTexel(state, access.mem.resource, texel);
+        if (!uintImage && !access.mem.imagePacked && !access.image.atomic && access.image.table == NoTable && access.image.conversionFormat == IrBufferFormat::Invalid) texel = QuantizeStoreTexel(state, access.mem.resource, texel);
         EmitStorageImageWrite(state, access.mem.resource, mipLod, coord, texel, ImageSampleIndex(ctx, access));
     });
 }
@@ -1731,7 +1754,8 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 
 SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto& dimensionInfo = RdnaImageDimensionInfoFor(access.image.dimension);
-    const auto layout = Layout(access.mem);
+    auto layout = Layout(access.mem);
+    if (access.image.cube) layout.offset = NoImageComponent;
     const bool dref = HasFlag(access.mem, RdnaImageSampleFlagCompare);
     if (dref && access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");

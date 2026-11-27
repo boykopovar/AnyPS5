@@ -68,17 +68,24 @@ void Reduce(std::uint64_t* u, int at, const std::uint64_t* v, int n) {
 
 extern "C" {
 
-std::uint64_t APS5_VABI _ZNSt8__sce_v27_MP_GetEPy_nid_postfix(std::uint64_t* u) { return (u[1] << 32) + u[0]; }
+std::uint64_t APS5_VABI _ZNSt8__sce_v27_MP_GetEPy_nid_postfix(std::uint64_t* u) {
+    std::uint64_t words[2] {};
+    if (!GuestCopyIn_nid_no_patch(words, u, sizeof(words))) return 0;
+    return (words[1] << 32) + words[0];
+}
 
 void APS5_VABI _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(std::uint64_t* u, std::uint64_t value) {
-    std::uint64_t sum = (value & Mask) + u[0];
-    u[0] = sum & Mask;
-    sum = (sum >> 32) + (value >> 32) + u[1];
-    u[1] = sum & Mask;
+    std::uint64_t words[Words] {};
+    if (!GuestCopyIn_nid_no_patch(words, u, sizeof(words))) return;
+    std::uint64_t sum = (value & Mask) + words[0];
+    words[0] = sum & Mask;
+    sum = (sum >> 32) + (value >> 32) + words[1];
+    words[1] = sum & Mask;
     for (int index = 2; index < Words && (sum >> 32) != 0; ++index) {
-        sum = (sum >> 32) + u[index];
-        u[index] = sum & Mask;
+        sum = (sum >> 32) + words[index];
+        words[index] = sum & Mask;
     }
+    GuestCopyOut_nid_no_patch(u, words, sizeof(words));
 }
 
 void APS5_VABI _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(std::uint64_t* w, std::uint64_t left, std::uint64_t right) {
@@ -86,41 +93,44 @@ void APS5_VABI _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(std::uint64_t* w, std::ui
     const std::uint64_t leftHigh = left >> 32;
     const std::uint64_t rightLow = right & Mask;
     const std::uint64_t rightHigh = right >> 32;
-    w[0] = 0;
-    w[1] = 0;
-    w[4] = 0;
+    std::uint64_t words[Words] {};
     std::uint64_t carry = 0;
     if (rightLow != 0) {
         const std::uint64_t low = leftLow * rightLow;
         const std::uint64_t middle = leftHigh * rightLow + (low >> 32);
-        w[0] = low & Mask;
-        w[1] = middle & Mask;
+        words[0] = low & Mask;
+        words[1] = middle & Mask;
         carry = middle >> 32;
     }
-    w[2] = carry;
+    words[2] = carry;
     if (rightHigh == 0) {
-        w[3] = 0;
+        words[3] = 0;
+        GuestCopyOut_nid_no_patch(w, words, sizeof(words));
         return;
     }
-    const std::uint64_t middle = w[1] + leftLow * rightHigh;
-    w[1] = middle & Mask;
+    const std::uint64_t middle = words[1] + leftLow * rightHigh;
+    words[1] = middle & Mask;
     const std::uint64_t high = carry + leftHigh * rightHigh + (middle >> 32);
-    w[2] = high & Mask;
-    w[3] = high >> 32;
+    words[2] = high & Mask;
+    words[3] = high >> 32;
+    GuestCopyOut_nid_no_patch(w, words, sizeof(words));
 }
 
 void APS5_VABI _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(std::uint64_t* u, std::uint64_t value) {
+    std::uint64_t words[Words] {};
+    if (!GuestCopyIn_nid_no_patch(words, u, sizeof(words))) return;
     std::uint64_t v[2] {value & Mask, value >> 32};
     const int n = Length(v, 2);
     if (n == 0) return;
-    const int length = Length(u, Words);
+    const int length = Length(words, Words);
     const std::uint64_t factor = Base / (v[n - 1] + 1);
     if (factor != 1) {
-        Scale(u, Words, factor);
+        Scale(words, Words, factor);
         Scale(v, n, factor);
     }
-    for (int at = length - n; at >= 0; --at) Reduce(u, at, v, n);
-    if (factor != 1) Unscale(u, factor);
+    for (int at = length - n; at >= 0; --at) Reduce(words, at, v, n);
+    if (factor != 1) Unscale(words, factor);
+    GuestCopyOut_nid_no_patch(u, words, sizeof(words));
 }
 
 }
