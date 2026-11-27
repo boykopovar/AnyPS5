@@ -348,9 +348,17 @@ void TestStreamExports() {
     AssertThrows([&] { sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle); });
 
     Require(sceNgs2StreamDestroy(0, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(0x100, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(0, reinterpret_cast<void*>(0x10)) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(system, nullptr) == InvalidStreamHandle);
+    const auto reverbRack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Require(sceNgs2StreamDestroy(reverbRack, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2RackDestroy(reverbRack, nullptr) == SCE_NGS2_OK);
     Require(sceNgs2StreamRunCommands(0, nullptr, 0) == InvalidStreamHandle);
-    Require(sceNgs2StreamRunCommands(0x100, reinterpret_cast<const void*>(0x10), 1) == InvalidStreamCommands);
+    Require(sceNgs2StreamRunCommands(0x100, nullptr, 0) == InvalidStreamHandle);
+    Require(sceNgs2StreamRunCommands(0x100, reinterpret_cast<const void*>(0x10), 1) == InvalidStreamHandle);
     Require(sceNgs2StreamQueryInfo(0, 0xf24001, nullptr, 0) == InvalidStreamHandle);
+    Require(sceNgs2StreamQueryInfo(0x100, 0x99999999, nullptr, 0) == InvalidStreamHandle);
 
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }

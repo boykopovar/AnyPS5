@@ -323,9 +323,6 @@ bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size
 }
 
 static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
-    if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error("NativePositioned: nbytes exceeds platform limit");
-    }
     if (write) {
         if (File::HasFixedSizeWrites(descriptor)) {
             if (!File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, offset)) return -1;
@@ -348,48 +345,63 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         errno = ESPIPE;
         return -1;
     }
-    const auto at = write && File::Appends(descriptor) ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset);
-    OVERLAPPED overlapped{};
-    overlapped.Offset = static_cast<DWORD>(at);
-    overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
-    DWORD done = 0;
-    const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped)
-                          : ::ReadFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped);
-    const DWORD error = ok ? ERROR_SUCCESS : ::GetLastError();
+    const bool appends = write && File::Appends(descriptor);
+    std::size_t done = 0;
+    DWORD error = ERROR_SUCCESS;
+    do {
+        const auto part = File::TransferPartBytes(nbytes, done);
+        const auto at = appends ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset) + done;
+        OVERLAPPED overlapped{};
+        overlapped.Offset = static_cast<DWORD>(at);
+        overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
+        DWORD moved = 0;
+        auto* const data = static_cast<char*>(buf) + done;
+        if (!(write ? ::WriteFile(handle, data, static_cast<DWORD>(part), &moved, &overlapped)
+                    : ::ReadFile(handle, data, static_cast<DWORD>(part), &moved, &overlapped))) {
+            error = ::GetLastError();
+            break;
+        }
+        done += moved;
+        if (moved < part) break;
+    } while (done < nbytes);
     if (!::SetFilePointerEx(handle, position, nullptr, FILE_BEGIN)) {
         throw std::runtime_error("NativePositioned: cannot restore the file offset");
     }
-    if (!ok) {
+    if (error != ERROR_SUCCESS && done == 0) {
         if (!write && error == ERROR_HANDLE_EOF) return 0;
         errno = error == ERROR_ACCESS_DENIED ? EBADF : EIO;
         return -1;
     }
-    return done;
+    return static_cast<std::int64_t>(done);
 }
 std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
     const auto positioned = File::LockPositionedTransfer(descriptor);
     return NativePositionedTransfer(descriptor, buf, nbytes, offset, write);
 }
 std::int64_t File::WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes) {
-    if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error("WriteAtEnd: nbytes exceeds platform limit");
-    }
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
     if (handle == INVALID_HANDLE_VALUE) {
         errno = EBADF;
         return -1;
     }
     if (::GetFileType(handle) != FILE_TYPE_DISK) return -2;
-    OVERLAPPED end{};
-    end.Offset = 0xFFFFFFFF;
-    end.OffsetHigh = 0xFFFFFFFF;
-    DWORD done = 0;
-    if (!::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &end)) {
-        const DWORD error = ::GetLastError();
-        errno = error == ERROR_ACCESS_DENIED ? EBADF : error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL ? ENOSPC : EIO;
-        return -1;
-    }
-    return done;
+    std::size_t done = 0;
+    do {
+        const auto part = File::TransferPartBytes(nbytes, done);
+        OVERLAPPED end{};
+        end.Offset = 0xFFFFFFFF;
+        end.OffsetHigh = 0xFFFFFFFF;
+        DWORD moved = 0;
+        if (!::WriteFile(handle, static_cast<const char*>(buf) + done, static_cast<DWORD>(part), &moved, &end)) {
+            if (done != 0) break;
+            const DWORD error = ::GetLastError();
+            errno = error == ERROR_ACCESS_DENIED ? EBADF : error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL ? ENOSPC : EIO;
+            return -1;
+        }
+        done += moved;
+        if (moved < part) break;
+    } while (done < nbytes);
+    return static_cast<std::int64_t>(done);
 }
 static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t nbytes, bool write) {
     if (nbytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {

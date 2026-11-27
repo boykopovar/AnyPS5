@@ -371,6 +371,11 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
 
 IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct, bool multiplication) {
     if (!ExactF32Arithmetic()) return result;
+    if (nanFast) {
+        noteNan(ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {result}), *result, NanCheckWord);
+        return result;
+    }
+    ++program.Metadata().nanSpeculationRepairedOps;
     const auto isNan = [&](IrValue& value) -> IrValue& { return ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {&value}); };
     IrValue* candidate = nullptr;
     const bool normalFactor = multiplication && std::any_of(sources.begin(), sources.end(), [](const IrValue* source) {
@@ -403,6 +408,11 @@ IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> source
 
 IrValue* TranslationContext::propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result) {
     if (!ExactF32Arithmetic()) return result;
+    if (nanFast) {
+        noteNan(ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {result}), *result, NanCheckWord);
+        return result;
+    }
+    ++program.Metadata().nanSpeculationRepairedOps;
     const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
     IrValue* nan = &ir.Constant(0xffc00000u);
     for (auto source = sources.end(); source != sources.begin();) {
@@ -429,6 +439,23 @@ IrValue& TranslationContext::invalidOperationF32(std::initializer_list<IrValue*>
         noNan = &ir.LogicalAnd(*noNan, ir.LogicalNot(nan));
     }
     return ir.LogicalOr(invalidProduct, *noNan);
+}
+
+void TranslationContext::noteNan(IrValue& condition, IrValue& value, std::uint8_t lanes) {
+    ++program.Metadata().nanSpeculationFastOps;
+    IrValue& active = ir.LogicalAnd(ir.GetExec(), condition);
+    nanSeen = nanSeen == nullptr ? &active : &ir.LogicalOr(*nanSeen, active);
+    program.Metadata().nanSpeculationChecks.push_back({&condition, &value, lanes, nanRegion, program.Metadata().execWrites});
+}
+
+IrU1 TranslationContext::anyHalfNan(IrU32 word) {
+    IrValue& carried = ir.IAdd(ir.BitwiseAnd(word.Value(), ir.Constant(0x7fff7fffu)), ir.Constant(0x03ff03ffu));
+    return IrU1(ir.INotEqual(ir.BitwiseAnd(carried, ir.Constant(0x80008000u)), ir.Constant(0u)));
+}
+
+IrValue& TranslationContext::WaveAny(IrValue& flag) {
+    const auto mask = ballotMask(IrU1(flag));
+    return ir.INotEqual(ir.BitwiseOr(mask[0].Value(), mask[1].Value()), ir.Constant(0u));
 }
 
 IrU32 TranslationContext::quietNan16(IrU32 bits) {
@@ -696,6 +723,7 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
                 if (shared) written = IrU32(ir.Emit(IrOpcode::DppUpdateU32, IrType::U32, {&ir.Constant(1u), &ir.Constant(0u), &ir.GetExec()}, flags));
             } else {
                 value = IrU32(ir.Select(ir.GetExec(), value.Value(), old));
+                if (nanFast) program.Metadata().nanSpeculationLaneWrites.push_back(&value.Value());
                 if (shared) written = IrU32(ir.Select(ir.GetExec(), ir.Constant(1u), ir.Constant(0u)));
             }
             if (shared) value = shareVectorWrite(operand, value, written, readByInstruction);

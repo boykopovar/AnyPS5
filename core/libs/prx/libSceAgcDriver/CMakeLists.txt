@@ -213,6 +213,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcBc1DecodeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/Bc1Decode.comp)
+set(agcBc1DecodeShaderSpv ${agcTextureDetileGeneratedDir}/Bc1Decode.spv)
+set(agcBc1DecodeShaderHeader ${agcTextureDetileGeneratedDir}/Bc1Decode_spv.h)
+add_custom_command(
+        OUTPUT "${agcBc1DecodeShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcBc1DecodeShaderSpv}" "${agcBc1DecodeShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcBc1DecodeShaderSpv} -DOUTPUT=${agcBc1DecodeShaderHeader}
+        -DSYMBOL=BC1_DECODE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcBc1DecodeShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcDispatchArgumentsShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/DispatchArguments.comp)
 set(agcDispatchArgumentsShaderSpv ${agcTextureDetileGeneratedDir}/DispatchArguments.spv)
 set(agcDispatchArgumentsShaderHeader ${agcTextureDetileGeneratedDir}/DispatchArguments_spv.h)
@@ -458,6 +471,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReportVulkan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderDeviceProfile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/NanSpeculationCounters.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
@@ -540,6 +554,7 @@ set(agcDriverSources
         ${agcPresentationShaderHeaders}
         ${agcDepthTransferShaderHeaders}
         ${agcStagingCopyBackBoundShaderHeaders}
+        ${agcBc1DecodeShaderHeader}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp

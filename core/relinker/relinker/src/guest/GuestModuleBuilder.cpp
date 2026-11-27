@@ -199,6 +199,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         images.push_back(std::move(image));
     }
+    for (const auto& image : images)
+        if (image.IgnoredGlobDatAddends != 0)
+            progress.Message("Note: " + Io::Utf8Path(image.SourcePath) + ": GLOB_DAT addends ignored per the x86-64 psABI: " + std::to_string(image.IgnoredGlobDatAddends));
     std::map<std::string, std::size_t> guestNames;
     std::map<std::string, std::size_t> windowsGuestFiles;
     for (std::size_t index = 0; index < images.size(); ++index) {
@@ -559,6 +562,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             try {
                 syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges, &routedStubs);
             } catch (const Domain::RelinkerException& error) {
+                if (!error.HasFailureOffset) throw;
                 const auto cause = DescribeReplacedPltStubReaching(replacedStubs, code, header.MappedAddress, error.FailureOffset);
                 if (cause.empty()) throw;
                 Domain::RelinkerException explained(error.what() + cause, error.FailureOffset);

@@ -304,11 +304,22 @@ void APS5_VABI FT_Vector_Transform_Scaled_nid_postfix(FreeType::GuestVector* vec
     if (!vector || !matrix) {
         return;
     }
+    FreeType::GuestVector guestVector{};
+    FreeType::GuestMatrix guestMatrix{};
+    const int readErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestVector, vector, sizeof(guestVector)) &&
+                        GuestCopyIn_nid_no_patch(&guestMatrix, matrix, sizeof(guestMatrix));
+    errno = readErrno;
+    if (!copied) {
+        return;
+    }
     const FreeType::GuestVector transformed{
-        ScaledSum(vector->x, matrix->xx, vector->y, matrix->xy, divisor, __func__),
-        ScaledSum(vector->x, matrix->yx, vector->y, matrix->yy, divisor, __func__),
+        ScaledSum(guestVector.x, guestMatrix.xx, guestVector.y, guestMatrix.xy, divisor, __func__),
+        ScaledSum(guestVector.x, guestMatrix.yx, guestVector.y, guestMatrix.yy, divisor, __func__),
     };
-    *vector = transformed;
+    const int writeErrno = errno;
+    GuestCopyOut_nid_no_patch(vector, &transformed, sizeof(transformed));
+    errno = writeErrno;
 }
 
 [[noreturn]] void APS5_VABI ft_validator_error_nid_postfix(void* validator, std::int32_t error) {
@@ -342,20 +353,30 @@ void APS5_VABI ft_synthesize_vertical_metrics_nid_postfix(FreeType::GuestGlyphMe
     if (!metrics) {
         return;
     }
-    std::int64_t height = metrics->height;
-    if (metrics->horiBearingY < 0) {
-        if (height < metrics->horiBearingY) {
-            height = metrics->horiBearingY;
+    FreeType::GuestGlyphMetrics guestMetrics{};
+    const int readErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestMetrics, metrics, sizeof(guestMetrics));
+    errno = readErrno;
+    if (!copied) {
+        return;
+    }
+    std::int64_t height = guestMetrics.height;
+    if (guestMetrics.horiBearingY < 0) {
+        if (height < guestMetrics.horiBearingY) {
+            height = guestMetrics.horiBearingY;
         }
-    } else if (metrics->horiBearingY > 0) {
-        height -= metrics->horiBearingY;
+    } else if (guestMetrics.horiBearingY > 0) {
+        height -= guestMetrics.horiBearingY;
     }
     if (!advance) {
         advance = height * 12 / 10;
     }
-    metrics->vertBearingX = metrics->horiBearingX - metrics->horiAdvance / 2;
-    metrics->vertBearingY = (advance - height) / 2;
-    metrics->vertAdvance = advance;
+    guestMetrics.vertBearingX = guestMetrics.horiBearingX - guestMetrics.horiAdvance / 2;
+    guestMetrics.vertBearingY = (advance - height) / 2;
+    guestMetrics.vertAdvance = advance;
+    const int writeErrno = errno;
+    GuestCopyOut_nid_no_patch(metrics, &guestMetrics, sizeof(guestMetrics));
+    errno = writeErrno;
 }
 
 void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descriptors, const char* service_id) {
