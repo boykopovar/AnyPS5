@@ -1251,6 +1251,151 @@ void TestSetFdFollowsTheNewSocket() {
         close_nid_postfix(peer);
     });
 }
+
+void TestSslBioLoopback() {
+    constexpr int SetSsl = 109;
+    constexpr int Pending = 10;
+    constexpr int Flush = 11;
+    constexpr int WritePending = 13;
+    constexpr int DoStateMachine = 101;
+    constexpr int WantRead = BioFlagRead | BioFlagShouldRetry;
+    Gate gate;
+    Scenario scenario;
+    scenario.server = [&](Tls& tls, int) {
+        std::vector<std::uint8_t> received(5);
+        ReadExact(tls, received.data(), received.size());
+        Require(std::memcmp(received.data(), "hello", received.size()) == 0);
+        WriteAll(tls, "world!", 6);
+        gate.Wait();
+    };
+    Serve(scenario, [&](int fd) {
+        MakeNonBlocking(fd);
+        LibreSslCtx* context = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+        Require(context != nullptr);
+        LibreSslSsl* ssl = SSL_new_nid_postfix(context);
+        Require(ssl != nullptr && SSL_set_fd_nid_postfix(ssl, fd) == 1);
+        char name[sizeof(Host)];
+        std::memcpy(name, Host, sizeof(Host));
+        Require(SSL_ctrl_nid_postfix(ssl, CtrlSetTlsExtHostName, 0, name) == 1);
+        std::memset(name, 0, sizeof(name));
+        SSL_set_connect_state_nid_postfix(ssl);
+        LibreSsl::Bio* sslBio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+        Require(sslBio != nullptr);
+        Require(BIO_ctrl_nid_postfix(sslBio, SetSsl, 1, ssl) == 1 && sslBio->next == ssl->rbio && sslBio->shutdown == 1);
+
+        Require(BIO_ctrl_nid_postfix(sslBio, DoStateMachine, 0, nullptr) == -1);
+        Require(sslBio->flags == WantRead && sslBio->retryReason == 0);
+        int result = -1;
+        for (int round = 0; round < WaitRounds && result == -1; ++round) {
+            Settle();
+            result = static_cast<int>(BIO_ctrl_nid_postfix(sslBio, DoStateMachine, 0, nullptr));
+            if (result == -1) Require(sslBio->flags == WantRead);
+        }
+        Require(result == 1 && sslBio->flags == 0 && sslBio->retryReason == 0);
+        Require(BIO_ctrl_nid_postfix(sslBio, DoStateMachine, 0, nullptr) == 1 && sslBio->flags == 0);
+
+        Require(BIO_write_nid_postfix(sslBio, "hello", 5) == 5);
+        char reply[16]{};
+        int count = -1;
+        for (int round = 0; round < WaitRounds && count < 0; ++round) {
+            count = BIO_f_ssl_nid_postfix()->read(sslBio, reply, 2);
+            if (count < 0) {
+                Require(sslBio->flags == WantRead && sslBio->retryReason == 0);
+                Settle();
+            }
+        }
+        Require(count == 2 && std::memcmp(reply, "wo", 2) == 0);
+        Require(sslBio->flags == 0 && sslBio->retryReason == 0);
+        Require(BIO_ctrl_nid_postfix(sslBio, Pending, 0, nullptr) == 4);
+        std::memset(reply, 0, sizeof(reply));
+        Require(BIO_f_ssl_nid_postfix()->read(sslBio, reply, static_cast<int>(sizeof(reply))) == 4);
+        Require(std::memcmp(reply, "rld!", 4) == 0);
+        Require(sslBio->flags == 0 && sslBio->retryReason == 0);
+        Require(BIO_f_ssl_nid_postfix()->read(sslBio, reply, static_cast<int>(sizeof(reply))) == -1);
+        Require(sslBio->flags == WantRead && sslBio->retryReason == 0);
+        Require(BIO_ctrl_nid_postfix(sslBio, Pending, 0, nullptr) == 0);
+        Require(BIO_ctrl_nid_postfix(sslBio, WritePending, 0, nullptr) == 0);
+        Require(BIO_ctrl_nid_postfix(sslBio, Flush, 0, nullptr) == 1 && sslBio->flags == WantRead);
+        LibreSsl::Bio* socketBio = static_cast<LibreSsl::Bio*>(ssl->rbio);
+        Require(BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0 && BIO_ctrl_nid_postfix(socketBio, 9, 1, nullptr) == 1);
+        Require(BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(socketBio, 9, 0, nullptr) == 1);
+        Require(BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0);
+        Require(BIO_ctrl_nid_postfix(socketBio, 12, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(socketBio, WritePending, 0, nullptr) == 0);
+        Require(BIO_free_nid_postfix(sslBio) == 1);
+        Require(socketBio->references == 1 && BIO_free_nid_postfix(socketBio) == 1);
+        SSL_CTX_free_nid_postfix(context);
+        gate.Open();
+    });
+}
+
+void TestSslBioWantWrite() {
+    constexpr int SetSsl = 109;
+    constexpr int DoStateMachine = 101;
+    constexpr int WantWrite = BioFlagWrite | BioFlagShouldRetry;
+    const auto chunk = Pattern(65536, 17);
+    Gate gate;
+    std::atomic<std::uint64_t> received{0};
+    std::size_t sentTotal = 0;
+    Scenario scenario;
+    scenario.server = [&](Tls& tls, int) {
+        gate.Wait();
+        DrainUntilClose(tls, received);
+        bool complete = false;
+        Require(Retry([&] { return tls.Shutdown(complete); }) == EngineResult::Done);
+    };
+    Serve(scenario, [&](int fd) {
+        MakeNonBlocking(fd);
+        LibreSslCtx* context = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+        Require(context != nullptr);
+        LibreSslSsl* ssl = SSL_new_nid_postfix(context);
+        Require(ssl != nullptr && SSL_set_fd_nid_postfix(ssl, fd) == 1);
+        char name[sizeof(Host)];
+        std::memcpy(name, Host, sizeof(Host));
+        Require(SSL_ctrl_nid_postfix(ssl, CtrlSetTlsExtHostName, 0, name) == 1);
+        std::memset(name, 0, sizeof(name));
+        SSL_set_connect_state_nid_postfix(ssl);
+        LibreSsl::Bio* sslBio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+        Require(sslBio != nullptr && BIO_ctrl_nid_postfix(sslBio, SetSsl, 1, ssl) == 1);
+
+        int handshake = -1;
+        for (int round = 0; round < WaitRounds && handshake != 1; ++round) {
+            handshake = static_cast<int>(BIO_ctrl_nid_postfix(sslBio, DoStateMachine, 0, nullptr));
+            if (handshake != 1) Settle();
+        }
+        Require(handshake == 1);
+
+        int written = 0;
+        for (int round = 0; round < 4096; ++round) {
+            written = BIO_write_nid_postfix(sslBio, chunk.data(), static_cast<int>(chunk.size()));
+            if (written > 0) {
+                Require(written == static_cast<int>(chunk.size()) && sslBio->flags == 0 && sslBio->retryReason == 0);
+                sentTotal += chunk.size();
+                continue;
+            }
+            Require(written == -1 && sslBio->flags == WantWrite && sslBio->retryReason == 0);
+            break;
+        }
+        Require(written == -1);
+        gate.Open();
+        int retried = -1;
+        for (int round = 0; round < WaitRounds && retried < 0; ++round) {
+            retried = BIO_write_nid_postfix(sslBio, chunk.data(), static_cast<int>(chunk.size()));
+            if (retried < 0) {
+                Require(sslBio->flags == WantWrite && sslBio->retryReason == 0);
+                Settle();
+            }
+        }
+        Require(retried == static_cast<int>(chunk.size()) && sslBio->flags == 0 && sslBio->retryReason == 0);
+        sentTotal += chunk.size();
+
+        LibreSsl::Bio* socketBio = static_cast<LibreSsl::Bio*>(ssl->rbio);
+        for (int round = 0; round < WaitRounds && SSL_shutdown_nid_postfix(ssl) != 1; ++round) Settle();
+        Require(BIO_free_nid_postfix(sslBio) == 1);
+        Require(socketBio->references == 1 && BIO_free_nid_postfix(socketBio) == 1);
+        SSL_CTX_free_nid_postfix(context);
+    });
+    Require(received == sentTotal);
+}
 }
 
 int main(int argc, char** argv) {
@@ -1279,6 +1424,8 @@ int main(int argc, char** argv) {
         Run(TestNonBlockingHandshakeAndRead);
         Run(TestWantWriteRetryRules);
         Run(TestPartialWriteMode);
+        Run(TestSslBioLoopback);
+        Run(TestSslBioWantWrite);
     }
     if (shutdown) {
         Run(TestPeerCloseNotify);

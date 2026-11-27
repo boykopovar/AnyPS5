@@ -1,6 +1,70 @@
+// Adapted from the LibreSSL 2.5.4 release tarball (libressl-2.5.4.tar.gz, sha256 107a5b522fbb8318d4c3be668075e5e607296f0a9255d71674caa94571336efa),
+// the version identified in docs/dev/debt/libSceLibreSsl.md, which corresponds to the openbsd
+// mirror commit 2e2c612066aa993717528a0249c15c51128d61cb. Source file used:
+//   ssl/bio_ssl.c - ssl_read, ssl_write, ssl_ctrl, ssl_free
+// The original copyright and licence notice of that file follows unchanged.
+/* $OpenBSD: bio_ssl.c,v 1.27 2017/02/07 02:08:38 beck Exp $ */
+/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+ * All rights reserved.
+ *
+ * This package is an SSL implementation written
+ * by Eric Young (eay@cryptsoft.com).
+ * The implementation was written so as to conform with Netscapes SSL.
+ *
+ * This library is free for commercial and non-commercial use as long as
+ * the following conditions are aheared to.  The following conditions
+ * apply to all code found in this distribution, be it the RC4, RSA,
+ * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
+ * included with this distribution is covered by the same copyright terms
+ * except that the holder is Tim Hudson (tjh@cryptsoft.com).
+ *
+ * Copyright remains Eric Young's, and as such any Copyright notices in
+ * the code are not to be removed.
+ * If this package is used in a product, Eric Young should be given attribution
+ * as the author of the parts of the library used.
+ * This can be in the form of a textual message at program startup or
+ * in documentation (online or textual) provided with the package.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *    "This product includes cryptographic software written by
+ *     Eric Young (eay@cryptsoft.com)"
+ *    The word 'cryptographic' can be left out if the rouines from the library
+ *    being used are not cryptographic related :-).
+ * 4. If you include any Windows specific code (or a derivative thereof) from
+ *    the apps directory (application code) you must include an acknowledgement:
+ *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * The licence and distribution terms for any publically available version or
+ * derivative of this code cannot be changed.  i.e. this code cannot simply be
+ * copied and put under another distribution licence
+ * [including the GNU Public Licence.]
+ */
+
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
@@ -39,6 +103,13 @@ constexpr int SslBioGetClose = 8;
 constexpr int SslBioSetClose = 9;
 constexpr int SslBioInfo = 3;
 constexpr int SslBioSetCallback = 14;
+constexpr int CtrlPending = 10;
+constexpr int CtrlFlush = 11;
+constexpr int CtrlWritePending = 13;
+constexpr int SslBioDoStateMachine = 101;
+constexpr int RetryX509Lookup = 0x01;
+constexpr int RetryConnect = 0x02;
+constexpr int RetryAccept = 0x03;
 
 struct BioSslData {
     void* ssl;
@@ -115,14 +186,62 @@ BioSslData& sslData(Bio* bio) {
     return *static_cast<BioSslData*>(bio->data);
 }
 
-int APS5_VABI readSsl(Bio*, char* destination, int) {
-    if (!destination) return 0;
-    NotImplemented_nid_no_patch(__func__);
+void requireNoRenegotiation(const BioSslData& state, int result, const char* function) {
+    if (result > 0 && (state.renegotiateCount || state.renegotiateTimeout)) NotImplemented_nid_no_patch(function);
 }
 
-int APS5_VABI writeSsl(Bio*, const char* source, int) {
+Bio& nextBio(Bio& bio) {
+    if (!bio.next) throw std::invalid_argument("SSL BIO: missing read BIO");
+    return *bio.next;
+}
+
+int applySslRetryFlags(Bio* bio, const BioSslData& state, LibreSslSsl* ssl, int result, bool handleAccept, const char* function) {
+    int retryReason = 0;
+    switch (SSL_get_error_nid_postfix(ssl, result)) {
+    case SslLayout::SslErrorNone:
+        requireNoRenegotiation(state, result, function);
+        break;
+    case SslLayout::SslErrorWantRead:
+        bio->flags |= SslLayout::BioFlagRead | SslLayout::BioFlagShouldRetry;
+        break;
+    case SslLayout::SslErrorWantWrite:
+        bio->flags |= SslLayout::BioFlagWrite | SslLayout::BioFlagShouldRetry;
+        break;
+    case SslLayout::SslErrorWantX509Lookup:
+        bio->flags |= SslLayout::BioFlagIoSpecial | SslLayout::BioFlagShouldRetry;
+        retryReason = RetryX509Lookup;
+        break;
+    case SslLayout::SslErrorWantAccept:
+        if (handleAccept) {
+            bio->flags |= SslLayout::BioFlagIoSpecial | SslLayout::BioFlagShouldRetry;
+            retryReason = RetryAccept;
+        }
+        break;
+    case SslLayout::SslErrorWantConnect:
+        bio->flags |= SslLayout::BioFlagIoSpecial | SslLayout::BioFlagShouldRetry;
+        retryReason = RetryConnect;
+        break;
+    default:
+        break;
+    }
+    bio->retryReason = retryReason;
+    return result;
+}
+
+int APS5_VABI readSsl(Bio* bio, char* destination, int size) {
+    if (!destination) return 0;
+    auto& state = sslData(bio);
+    bio->flags &= ~RetryFlags;
+    auto* ssl = static_cast<LibreSslSsl*>(state.ssl);
+    return applySslRetryFlags(bio, state, ssl, SSL_read_nid_postfix(ssl, destination, size), true, __func__);
+}
+
+int APS5_VABI writeSsl(Bio* bio, const char* source, int size) {
     if (!source) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = sslData(bio);
+    bio->flags &= ~RetryFlags;
+    auto* ssl = static_cast<LibreSslSsl*>(state.ssl);
+    return applySslRetryFlags(bio, state, ssl, SSL_write_nid_postfix(ssl, source, size), false, __func__);
 }
 
 int APS5_VABI putsSsl(Bio* bio, const char* source) {
@@ -135,14 +254,37 @@ int APS5_VABI putsSsl(Bio* bio, const char* source) {
 std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, void* pointer) {
     auto& state = sslData(bio);
     if (!state.ssl && command != SslBioSetSsl) return 0;
+    auto* ssl = static_cast<LibreSslSsl*>(state.ssl);
     switch (command) {
     case SslBioSetSsl:
-        if (state.ssl || pointer) NotImplemented_nid_no_patch(__func__);
+        if (state.ssl || bio->next) NotImplemented_nid_no_patch(__func__);
         bio->shutdown = static_cast<int>(argument);
-        state.ssl = nullptr;
-        throw std::invalid_argument("SSL BIO control: null SSL");
+        if (!pointer) throw std::invalid_argument("SSL BIO control: null SSL");
+        ssl = static_cast<LibreSslSsl*>(pointer);
+        state.ssl = ssl;
+        bio->initialized = 1;
+        if (auto* readBio = static_cast<Bio*>(SSL_get_rbio_nid_postfix(ssl))) {
+            bio->next = readBio;
+            std::atomic_ref(readBio->references).fetch_add(1);
+        }
+        return 1;
     case SslBioInfo:
         return 0;
+    case CtrlPending: {
+        const int pending = SSL_pending_nid_postfix(ssl);
+        if (pending) return pending;
+        return static_cast<int>(BIO_ctrl_nid_postfix(static_cast<Bio*>(ssl->rbio), CtrlPending, 0, nullptr));
+    }
+    case CtrlWritePending:
+        return BIO_ctrl_nid_postfix(static_cast<Bio*>(ssl->wbio), command, argument, pointer);
+    case CtrlFlush: {
+        bio->flags &= ~RetryFlags;
+        const std::int64_t result = BIO_ctrl_nid_postfix(static_cast<Bio*>(ssl->wbio), command, argument, pointer);
+        const Bio& next = nextBio(*bio);
+        bio->flags |= next.flags & RetryFlags;
+        bio->retryReason = next.retryReason;
+        return result;
+    }
     case SslBioGetSsl:
         if (!pointer) return 0;
         if (!GuestCopyOut_nid_no_patch(pointer, &state.ssl, sizeof(state.ssl))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
@@ -154,6 +296,26 @@ std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, 
         return 1;
     case SslBioGetRenegotiates:
         return state.renegotiates;
+    case SslBioDoStateMachine: {
+        bio->flags &= ~RetryFlags;
+        bio->retryReason = 0;
+        const int result = LibreSslDoHandshake_nid_no_patch(ssl);
+        switch (SSL_get_error_nid_postfix(ssl, result)) {
+        case SslLayout::SslErrorWantRead:
+            bio->flags |= SslLayout::BioFlagRead | SslLayout::BioFlagShouldRetry;
+            break;
+        case SslLayout::SslErrorWantWrite:
+            bio->flags |= SslLayout::BioFlagWrite | SslLayout::BioFlagShouldRetry;
+            break;
+        case SslLayout::SslErrorWantConnect:
+            bio->flags |= SslLayout::BioFlagIoSpecial | SslLayout::BioFlagShouldRetry;
+            bio->retryReason = nextBio(*bio).retryReason;
+            break;
+        default:
+            break;
+        }
+        return result;
+    }
     default:
         NotImplemented_nid_no_patch(__func__);
     }
@@ -171,7 +333,11 @@ int APS5_VABI createSsl(Bio* bio) {
 int APS5_VABI destroySsl(Bio* bio) {
     if (!bio) return 0;
     auto& state = sslData(bio);
-    if (state.ssl) NotImplemented_nid_no_patch(__func__);
+    if (state.ssl) {
+        auto* ssl = static_cast<LibreSslSsl*>(state.ssl);
+        SSL_shutdown_nid_postfix(ssl);
+        if (bio->shutdown && bio->initialized) SSL_free_nid_postfix(ssl);
+    }
     if (bio->shutdown) {
         bio->initialized = 0;
         bio->flags = 0;

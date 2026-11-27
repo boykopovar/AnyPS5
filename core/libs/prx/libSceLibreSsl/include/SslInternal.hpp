@@ -28,6 +28,7 @@ inline constexpr int ReasonServerNameInvalid = 319;
 inline constexpr int ReasonServerNameTypeInvalid = 320;
 inline constexpr int ReasonVerificationSetupProblems = 269;
 inline constexpr int ReasonSslHandshakeFailure = 229;
+inline constexpr int ReasonConnectionTypeNotSet = 144;
 inline constexpr int ReasonNoSharedCipher = 193;
 
 inline constexpr int StateOk = 0x03;
@@ -124,6 +125,7 @@ inline constexpr std::size_t Ssl3InternalPointer = 136;
 inline constexpr std::size_t Ssl3AlertDispatch = 120;
 inline constexpr std::size_t Ssl3InternalSize = 1040;
 inline constexpr std::size_t Ssl3InternalWarnAlert = 324;
+inline constexpr std::size_t Ssl3InternalRenegotiate = 332;
 
 template <typename TValue>
 TValue Read(const void* base, std::size_t offset) {
@@ -168,6 +170,7 @@ int APS5_VABI LibreSslPeek_nid_no_patch(LibreSslSsl* ssl, void* buffer, int leng
 int APS5_VABI LibreSslWrite_nid_no_patch(LibreSslSsl* ssl, const void* buffer, int length);
 int APS5_VABI LibreSslShutdown_nid_no_patch(LibreSslSsl* ssl);
 int APS5_VABI LibreSslPending_nid_no_patch(const LibreSslSsl* ssl);
+int APS5_VABI LibreSslDoHandshake_nid_no_patch(LibreSslSsl* ssl);
 
 }
 
