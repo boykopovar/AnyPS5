@@ -1612,7 +1612,7 @@ UEnumeration* APS5_VABI ucnv_openStandardNames_nid_postfix(const char*, const ch
 int APS5_VABI _ZN6icu_6810UnicodeSet13complementAllERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_iyqq4SUxrZs_nid_no_patch();
 int APS5_VABI ures_getStringByIndex_nid_postfix();
-int APS5_VABI ucnv_getStandard_nid_postfix();
+const char* APS5_VABI ucnv_getStandard_nid_postfix(std::uint16_t, std::int32_t*);
 int APS5_VABI _ZN6icu_6810UnicodeSetC1ERKS0_a_nid_postfix();
 int APS5_VABI _ZNK6icu_6810CharString13getDirSepCharEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_j5KwqH5Oo60_nid_no_patch();
