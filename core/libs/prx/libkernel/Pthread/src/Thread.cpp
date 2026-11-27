@@ -1093,6 +1093,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     pthread_sigmask(SIG_SETMASK, &hostMask, nullptr);
 #else
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
+    UnblockGuestThreadPark();
 #endif
 #endif
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
@@ -1695,6 +1696,9 @@ Pthread APS5_VABI scePthreadSelf() {
         adoptedThread->hostThread = pthread_self();
         SetStackFromHost(adoptedThread.get());
         CurrentGuestState().current = adoptedThread.get();
+#ifdef __linux__
+        UnblockGuestThreadPark();
+#endif
         adoptedThread->started.store(true, std::memory_order_seq_cst);
     }
 #endif

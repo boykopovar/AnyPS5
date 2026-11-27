@@ -169,6 +169,17 @@ public:
     SuspendSafeWait& operator=(const SuspendSafeWait&) = delete;
 };
 
+class SuspendSafeWaitHidden {
+public:
+    SuspendSafeWaitHidden();
+    ~SuspendSafeWaitHidden();
+    SuspendSafeWaitHidden(const SuspendSafeWaitHidden&) = delete;
+    SuspendSafeWaitHidden& operator=(const SuspendSafeWaitHidden&) = delete;
+
+private:
+    int depth;
+};
+
 class SingleWaiterCondition {
 public:
     SingleWaiterCondition();

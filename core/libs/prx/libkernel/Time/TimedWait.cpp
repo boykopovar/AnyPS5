@@ -582,6 +582,12 @@ SuspendSafeWait::~SuspendSafeWait() {
     suspendSafeDepth.fetch_sub(1);
 }
 
+SuspendSafeWaitHidden::SuspendSafeWaitHidden() : depth(suspendSafeDepth.exchange(0)) {}
+
+SuspendSafeWaitHidden::~SuspendSafeWaitHidden() {
+    suspendSafeDepth.store(depth);
+}
+
 #ifdef __APPLE__
 SingleWaiterCondition::SingleWaiterCondition() : semaphore(dispatch_semaphore_create(0)) {
     if (semaphore == nullptr) throw std::runtime_error("TimedWait: cannot create a wait semaphore");

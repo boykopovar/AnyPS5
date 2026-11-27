@@ -1167,7 +1167,10 @@ void Deliver(int signum, siginfo_t*, void* context) {
     auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
     GuestUcontext ucontext{};
     FromHost(host, ucontext.mcontext);
-    CallHandler(handler, RaisedSignal, ucontext);
+    {
+        const TimedWait::SuspendSafeWaitHidden hidden;
+        CallHandler(handler, RaisedSignal, ucontext);
+    }
     ToHost(ucontext.mcontext, host);
 }
 
@@ -1494,11 +1497,11 @@ int CollectGuestRanges(dl_phdr_info* info, std::size_t, void* data) {
 
 void RefreshGuestRanges() {
     RangeSearch search;
-    dl_iterate_phdr(CollectGuestRanges, &search);
     auto& ranges = Ranges();
+    std::lock_guard lock(ranges.refresh);
+    dl_iterate_phdr(CollectGuestRanges, &search);
     if (search.found.size() > GuestRangeCapacity)
         throw std::length_error("pthread_suspend_np: more than 256 executable guest segments are loaded");
-    std::lock_guard lock(ranges.refresh);
     const std::size_t count = search.found.size();
     ranges.version.fetch_add(1, std::memory_order_acq_rel);
     for (std::size_t index = 0; index < count; ++index) {
@@ -1543,6 +1546,13 @@ void InstallParkSignal() {
     static_cast<void>(installed);
 }
 
+}
+
+void UnblockGuestThreadPark() {
+    sigset_t park;
+    sigemptyset(&park);
+    sigaddset(&park, ParkSignal);
+    pthread_sigmask(SIG_UNBLOCK, &park, nullptr);
 }
 #endif
 

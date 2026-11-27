@@ -237,6 +237,7 @@ int SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask
 extern "C" std::size_t GetDefaultStackSize_nid_no_patch();
 extern "C" bool SetDefaultStackSize_nid_no_patch(std::size_t size);
 #if defined(__linux__)
+void UnblockGuestThreadPark();
 extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*));
 #endif
 

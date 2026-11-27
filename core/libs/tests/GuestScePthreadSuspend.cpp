@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
+#ifdef __linux__
+#include <signal.h>
+#endif
 
 static constexpr int SCE_OK = 0;
 static constexpr int ROUNDS = 20;
@@ -169,6 +172,25 @@ static void ConcurrentSuspendsResumeOnce() {
     Finish(spin, workers[0]);
 }
 
+#ifdef __linux__
+static void SuspendStopsThreadOfParkSignalBlockingCreator() {
+    sigset_t park;
+    sigset_t previous;
+    sigemptyset(&park);
+    sigaddset(&park, SIGUSR2);
+    Require(pthread_sigmask(SIG_BLOCK, &park, &previous) == 0, "blocking SIGUSR2 in the creating thread failed");
+    std::array<Worker, 1> workers;
+    const Pthread spin = Start(Spin, workers[0], "spin");
+    Require(pthread_sigmask(SIG_SETMASK, &previous, nullptr) == 0, "restoring the creating thread's signal mask failed");
+    WaitForProgress(workers[0], 0, "the spinner never started");
+    Require(scePthreadSuspend(spin) == SCE_OK, "scePthreadSuspend did not return SCE_OK");
+    const auto stopped = RequireStopped(workers, "a thread created with SIGUSR2 blocked kept running after scePthreadSuspend");
+    Require(scePthreadResume(spin) == SCE_OK, "scePthreadResume failed");
+    RequireRunning(workers, stopped, "a thread created with SIGUSR2 blocked did not continue after scePthreadResume");
+    Finish(spin, workers[0]);
+}
+#endif
+
 static void SuspendErrorsThrow() {
     Worker recorded;
     const Pthread joined = Start(Record, recorded, "joined");
@@ -226,6 +248,9 @@ int main() {
     SuspendStopsOneThread();
     SuspendRightAfterResumeStops();
     ConcurrentSuspendsResumeOnce();
+#ifdef __linux__
+    SuspendStopsThreadOfParkSignalBlockingCreator();
+#endif
     SuspendErrorsThrow();
     SuspendAllStopsEveryOtherThread();
     SingleStopsEveryOtherThread();
