@@ -111,6 +111,7 @@ constexpr std::size_t EpochExitOffset = 0x880000;
 constexpr std::size_t EpochSurfaceOffset = 0x8a0000;
 constexpr std::size_t EpochUnrelatedOffset = 0x8c0000;
 constexpr std::size_t EpochRetiredOffset = 0x8d0000;
+constexpr std::size_t EpochPerUseOffset = 0x900000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -681,6 +682,43 @@ void EpochExitRetiredSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& bl
     resources.reset();
 }
 
+void EpochExitPerUseCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto* base = block.At(EpochPerUseOffset);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
+    FillSlice(base + 2u * SliceBytes, SliceBytes, Bits(0.75f), 4u);
+    const auto program = CompileLoad(device, base, shape, 0, output);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "per-use epoch exit: epoch proofs are off");
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(address, 3u * SliceBytes));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    const auto& sampled = resources->SampledTextures();
+    const bool perUse = std::any_of(sampled.begin(), sampled.end(), [](const auto& texture) { return texture != nullptr && texture->RefreshedPerUse(); });
+    Require(resources->Reusable() && perUse, "per-use epoch exit: the array sampling build is not a reusable build over a texture remade per use, so the case tests nothing");
+    Require(resources->Revalidate(shader), "per-use epoch exit: the sampling build did not prove current");
+    const auto inputs = [] { return std::array<std::uint64_t, 6>{AgcDriver::GuestMemory::CollectEpoch(), AgcDriver::GuestMemory::ProofSerial(), AgcDriver::Graphics::StorageTexture::PendingSerial(), ShaderResources::TextureReleases(), AgcDriver::GuestMemory::UnwatchSerial(), AgcDriver::Graphics::DepthSurfacesSerial()}; };
+    const auto before = inputs();
+    const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool proved = resources->Revalidate(shader);
+    const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore;
+    const bool kept = inputs() == before;
+    const bool stale = AgcDriver::Graphics::DepthPlanesStaleOver(address, 3u * SliceBytes);
+    std::printf("per-use epoch exit: epoch proofs on, exit inputs %s, planes %s: an unchanged build over a texture remade per use %s the exit (resource proofs reused %llu) and %s\n", kept ? "kept" : "moved", stale ? "stale" : "stored", exited ? "took" : "did not take", static_cast<unsigned long long>(AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() - reusesBefore), proved ? "proved current" : "refused");
+    Require(kept && !stale, "per-use epoch exit: the second proof saw a moved exit input or a stale plane, so the case tests nothing");
+    Require(proved, "per-use epoch exit: the unchanged sampling build did not prove current");
+    Require(!exited, "per-use epoch exit: a build over a texture remade per use took the epoch exit, which does not remake it");
+    resources.reset();
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(DrawnDepth), "per-use epoch exit: the drawn slice sampled after the proofs");
+}
+
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     auto* one = block.At(OneSliceOffset);
     DrawDepth(device, reinterpret_cast<std::uintptr_t>(one), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
@@ -939,6 +977,12 @@ int main(int argc, char** argv) {
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit-retired") {
             EpochExitRetiredSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
             std::puts("retired depth surface epoch exit tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-per-use") {
+            EpochExitSurfaceCase(*device, block, epochOutput);
+            EpochExitPerUseCase(*device, block, epochOutput);
+            std::puts("per-use epoch exit tests passed");
             return 0;
         }
         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
