@@ -1,8 +1,10 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -202,6 +204,33 @@ int main() {
     Require(sceCameraGetDeviceIDWithoutOpen() == ErrorNotConnected, "the device id without open must report NOT_CONNECTED");
     Require(sceCameraGetCalibData() == ErrorNotConnected, "calibration data must report NOT_CONNECTED before opening");
     Require(sceCameraIsConfigChangeDone() == 0, "a finished configuration change is reported before opening");
+    Require(sceCameraIsConnectedForSystem(0) == ErrorParam, "a zero handle must not be reported as connected");
+    Require(sceCameraIsConnectedForSystem(-1) == ErrorParam, "a negative handle must not be reported as connected");
+    Require(sceCameraIsConnectedForSystem(1) == 0 && sceCameraIsConnectedForSystem(5) == 0, "any positive handle is reported before opening");
+    Require(sceCameraGetCalibDataForEve(0) == ErrorParam && sceCameraGetCalibDataForEve(4) == ErrorParam, "an unsupported eve id must be rejected");
+    Require(sceCameraGetCalibDataForEve(2) == ErrorNotConnected && sceCameraGetCalibDataForEve(3) == ErrorNotConnected, "a supported eve id must report NOT_CONNECTED");
+    Require(sceCameraGetCalibDataFromDeviceForEve(0) == ErrorParam, "an unsupported device eve id must be rejected");
+    Require(sceCameraGetCalibDataFromDeviceForEve(2) == ErrorNotInit && sceCameraGetCalibDataFromDeviceForEve(3) == ErrorNotInit, "a supported device eve id must report NOT_INIT");
+    Require(sceCameraGetVrCaptureInfo() == ErrorParam, "vr capture info must be refused before opening");
+    {
+        alignas(std::uint32_t) std::array<std::uint8_t, 64> mode{};
+        for (auto& byte : mode) byte = 0x5A;
+        Require(sceCameraGetConnectedDeviceAndDriverMode(nullptr) == ErrorParam, "a null device mode must be rejected");
+        std::uint32_t wrongVersion = 12u;
+        std::memcpy(mode.data(), &wrongVersion, sizeof(wrongVersion));
+        Require(sceCameraGetConnectedDeviceAndDriverMode(mode.data()) == ErrorParam, "a wrong struct version must be rejected");
+        for (std::size_t i = 4; i < mode.size(); ++i) Require(mode[i] == 0x5A, "a rejected device mode must not be written");
+        std::uint32_t version = 16u;
+        std::memcpy(mode.data(), &version, sizeof(version));
+        Require(sceCameraGetConnectedDeviceAndDriverMode(mode.data()) == 0, "the connected device mode answers before opening");
+        const std::uint32_t expected[4] = {16u, 0u, 0u, 2u};
+        for (std::size_t i = 0; i < 4; ++i) {
+            std::uint32_t field = 0;
+            std::memcpy(&field, mode.data() + 4 * i, sizeof(field));
+            Require(field == expected[i], "the device mode fields must match the console");
+        }
+        for (std::size_t i = 16; i < mode.size(); ++i) Require(mode[i] == 0x5A, "the device mode write must stay within sixteen bytes");
+    }
     CheckClosed();
     CheckOpen();
     RequireNotImplemented([] { sceCameraGetDeviceID(); }, "sceCameraGetDeviceID");
