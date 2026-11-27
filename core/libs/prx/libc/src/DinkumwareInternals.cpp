@@ -24,6 +24,22 @@ constexpr int InvalidArgument = 22;
 constexpr int DomainError = 33;
 constexpr int RangeError = 34;
 
+template<typename TValue>
+TValue ReadExpValue(const TValue* source, const char* caller) {
+    if (source == nullptr) throw std::invalid_argument(std::string(caller) + ": null value");
+    TValue value{};
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value)))
+        throw std::invalid_argument(std::string(caller) + ": unreadable value");
+    return value;
+}
+
+template<typename TValue>
+short WriteExpValue(TValue* destination, const TValue& value, short kind, const char* caller) {
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value)))
+        throw std::invalid_argument(std::string(caller) + ": unwritable value");
+    return kind;
+}
+
 using LibcDetail::LogPolynomial;
 
 bool Hexadecimal(const char* text) {
@@ -502,12 +518,11 @@ std::uint64_t APS5_VABI _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(const char*
 }
 
 short APS5_VABI _Exp_nid_postfix(double* value, double y, std::int64_t offset) {
-    if (value == nullptr) throw std::invalid_argument("_Exp: null value");
+    const double x = ReadExpValue(value, "_Exp");
     offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     std::fexcept_t entryFlags;
     std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
     const int entryErrno = errno;
-    const double x = *value;
     constexpr double HugeExp = 1842.0;
     constexpr double Eps = std::numeric_limits<double>::epsilon();
     constexpr double InverseLn2 = 1.4426950408889634073599246810018921;
@@ -522,56 +537,42 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, std::int64_t offset) {
     const short yKind = ClassifyValue(y);
     if (xKind == NotANumber) return NotANumber;
     if (yKind == NotANumber) return NotANumber;
+    double output = x;
     if (xKind == Infinite) {
         if (x > 0.0) {
             if (yKind == Zero) {
-                *value = std::numeric_limits<double>::quiet_NaN();
+                output = std::numeric_limits<double>::quiet_NaN();
                 RaiseLibcError(FE_INVALID);
-                return NotANumber;
+                return WriteExpValue(value, output, NotANumber, "_Exp");
             }
-            if (yKind == Infinite) {
-                *value = y;
-            } else {
-                *value = std::copysign(std::numeric_limits<double>::infinity(), y);
-            }
-            return Infinite;
+            output = yKind == Infinite ? y : std::copysign(std::numeric_limits<double>::infinity(), y);
+            return WriteExpValue(value, output, Infinite, "_Exp");
         }
         if (yKind == Infinite) {
-            *value = std::numeric_limits<double>::quiet_NaN();
+            output = std::numeric_limits<double>::quiet_NaN();
             RaiseLibcError(FE_INVALID);
-            return NotANumber;
+            return WriteExpValue(value, output, NotANumber, "_Exp");
         }
-        *value = std::copysign(0.0, y);
-        return Zero;
+        output = std::copysign(0.0, y);
+        return WriteExpValue(value, output, Zero, "_Exp");
     }
-    if (yKind == Zero) {
-        *value = y;
-        return Zero;
-    }
-    if (yKind == Infinite) {
-        *value = y;
-        return Infinite;
-    }
+    if (yKind == Zero) return WriteExpValue(value, y, Zero, "_Exp");
+    if (yKind == Infinite) return WriteExpValue(value, y, Infinite, "_Exp");
     if (xKind == Zero) {
-        if (offset == 0) {
-            *value = y;
-            return Finite;
-        }
-        const short result = ScaleProduct(*value, 1.0, y, offset);
-        return ScaledResult(result, *value, entryFlags, entryErrno);
+        if (offset == 0) return WriteExpValue(value, y, Finite, "_Exp");
+        const short result = ScaleProduct(output, 1.0, y, offset);
+        const short kind = ScaledResult(result, output, entryFlags, entryErrno);
+        return WriteExpValue(value, output, kind, "_Exp");
     }
-    if (offset == 0 && x == 1.0 && y == 1.0) {
-        *value = E;
-        return Finite;
-    }
+    if (offset == 0 && x == 1.0 && y == 1.0) return WriteExpValue(value, E, Finite, "_Exp");
     if (x < -HugeExp) {
-        *value = std::copysign(0.0, y);
-        return Zero;
+        output = std::copysign(0.0, y);
+        return WriteExpValue(value, output, Zero, "_Exp");
     }
     if (x > HugeExp) {
-        *value = std::copysign(std::numeric_limits<double>::infinity(), y);
+        output = std::copysign(std::numeric_limits<double>::infinity(), y);
         RaiseLibcError(FE_OVERFLOW);
-        return Infinite;
+        return WriteExpValue(value, output, Infinite, "_Exp");
     }
     double g = x * InverseLn2;
     long exponent = static_cast<long>(g + (g < 0.0 ? -0.5 : 0.5));
@@ -586,17 +587,17 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, std::int64_t offset) {
         g *= (P0 * z + P1) * z + 0.5;
         factor = (w + g + 1.0) / (w - g + 1.0);
     }
-    const short result = ScaleProduct(*value, factor, y, exponent + offset);
-    return ScaledResult(result, *value, entryFlags, entryErrno);
+    const short result = ScaleProduct(output, factor, y, exponent + offset);
+    const short kind = ScaledResult(result, output, entryFlags, entryErrno);
+    return WriteExpValue(value, output, kind, "_Exp");
 }
 
 short APS5_VABI _FExp_nid_postfix(float* value, float y, std::int64_t offset) {
-    if (value == nullptr) throw std::invalid_argument("_FExp: null value");
+    const float x = ReadExpValue(value, "_FExp");
     offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     std::fexcept_t entryFlags;
     std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
     const int entryErrno = errno;
-    const float x = *value;
     constexpr float HugeExp = 229.0f;
     constexpr float Eps = std::numeric_limits<float>::epsilon();
     constexpr float InverseLn2 = 1.4426950216f;
@@ -610,56 +611,42 @@ short APS5_VABI _FExp_nid_postfix(float* value, float y, std::int64_t offset) {
     const short yKind = ClassifyValue(y);
     if (xKind == NotANumber) return NotANumber;
     if (yKind == NotANumber) return NotANumber;
+    float output = x;
     if (xKind == Infinite) {
         if (x > 0.0f) {
             if (yKind == Zero) {
-                *value = std::numeric_limits<float>::quiet_NaN();
+                output = std::numeric_limits<float>::quiet_NaN();
                 RaiseLibcError(FE_INVALID);
-                return NotANumber;
+                return WriteExpValue(value, output, NotANumber, "_FExp");
             }
-            if (yKind == Infinite) {
-                *value = y;
-            } else {
-                *value = std::copysign(std::numeric_limits<float>::infinity(), y);
-            }
-            return Infinite;
+            output = yKind == Infinite ? y : std::copysign(std::numeric_limits<float>::infinity(), y);
+            return WriteExpValue(value, output, Infinite, "_FExp");
         }
         if (yKind == Infinite) {
-            *value = std::numeric_limits<float>::quiet_NaN();
+            output = std::numeric_limits<float>::quiet_NaN();
             RaiseLibcError(FE_INVALID);
-            return NotANumber;
+            return WriteExpValue(value, output, NotANumber, "_FExp");
         }
-        *value = std::copysign(0.0f, y);
-        return Zero;
+        output = std::copysign(0.0f, y);
+        return WriteExpValue(value, output, Zero, "_FExp");
     }
-    if (yKind == Zero) {
-        *value = y;
-        return Zero;
-    }
-    if (yKind == Infinite) {
-        *value = y;
-        return Infinite;
-    }
+    if (yKind == Zero) return WriteExpValue(value, y, Zero, "_FExp");
+    if (yKind == Infinite) return WriteExpValue(value, y, Infinite, "_FExp");
     if (xKind == Zero) {
-        if (offset == 0) {
-            *value = y;
-            return Finite;
-        }
-        const short result = ScaleProduct(*value, 1.0f, y, offset);
-        return ScaledResult(result, *value, entryFlags, entryErrno);
+        if (offset == 0) return WriteExpValue(value, y, Finite, "_FExp");
+        const short result = ScaleProduct(output, 1.0f, y, offset);
+        const short kind = ScaledResult(result, output, entryFlags, entryErrno);
+        return WriteExpValue(value, output, kind, "_FExp");
     }
-    if (offset == 0 && x == 1.0f && y == 1.0f) {
-        *value = E;
-        return Finite;
-    }
+    if (offset == 0 && x == 1.0f && y == 1.0f) return WriteExpValue(value, E, Finite, "_FExp");
     if (x < -HugeExp) {
-        *value = std::copysign(0.0f, y);
-        return Zero;
+        output = std::copysign(0.0f, y);
+        return WriteExpValue(value, output, Zero, "_FExp");
     }
     if (x > HugeExp) {
-        *value = std::copysign(std::numeric_limits<float>::infinity(), y);
+        output = std::copysign(std::numeric_limits<float>::infinity(), y);
         RaiseLibcError(FE_OVERFLOW);
-        return Infinite;
+        return WriteExpValue(value, output, Infinite, "_FExp");
     }
     float g = x * InverseLn2;
     long exponent = static_cast<long>(g + (g < 0.0f ? -0.5f : 0.5f));
@@ -674,8 +661,9 @@ short APS5_VABI _FExp_nid_postfix(float* value, float y, std::int64_t offset) {
         g *= P1 * z + P0;
         factor = (w + g + 1.0f) / (w - g + 1.0f);
     }
-    const short result = ScaleProduct(*value, factor, y, exponent + offset);
-    return ScaledResult(result, *value, entryFlags, entryErrno);
+    const short result = ScaleProduct(output, factor, y, exponent + offset);
+    const short kind = ScaledResult(result, output, entryFlags, entryErrno);
+    return WriteExpValue(value, output, kind, "_FExp");
 }
 
 double APS5_VABI _Sin_nid_postfix(double x, unsigned int quadrant) {

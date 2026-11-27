@@ -163,6 +163,86 @@ std::uint32_t InsertResult(std::uint32_t bits, std::uint32_t destination, std::u
     return (field << offset) | (unused == 2u ? Garbage & ~(mask << offset) : 0u);
 }
 
+constexpr std::uint32_t InexactResults = 6u * 3u;
+constexpr std::array<std::uint32_t, 16> InexactWords{
+    0x01000001u, 0x01000003u, 0x01000005u, 0x7fffffffu, 0x7fffff80u, 0x7fffffbfu, 0x7fffffc0u, 0x80000001u,
+    0x80000081u, 0xff7f8081u, 0x12345678u, 0x9abcdef1u, 0xfedcba99u, 0xdeadbeefu, 0x89abcdefu, 0x00ffffffu,
+};
+alignas(256) std::array<std::uint32_t, Threads> InexactInput{};
+alignas(256) std::array<std::uint32_t, Threads * InexactResults> InexactOutput{};
+
+std::uint32_t RoundedFloatBits(std::uint32_t value, bool signedInteger, std::uint32_t roundMode) {
+    const bool negative = signedInteger && (value & 0x80000000u);
+    const auto magnitude = negative ? 0u - value : value;
+    if (magnitude == 0u) return 0u;
+    auto exponent = static_cast<std::uint32_t>(std::bit_width(magnitude) - 1u);
+    auto kept = exponent <= 23u ? magnitude << (23u - exponent) : magnitude >> (exponent - 23u);
+    if (exponent > 23u) {
+        const auto shift = exponent - 23u;
+        const auto rest = magnitude & ((1u << shift) - 1u);
+        const auto half = 1u << (shift - 1u);
+        const bool up = rest != 0u && (roundMode == 0u ? rest > half || (rest == half && (kept & 1u) != 0u) : roundMode == 1u ? !negative : roundMode == 2u && negative);
+        if (up && ++kept == (1u << 24u)) {
+            kept >>= 1u;
+            ++exponent;
+        }
+    }
+    return (negative ? 0x80000000u : 0u) | ((exponent + 127u) << 23u) | (kept & 0x7fffffu);
+}
+
+void RunInexactConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::uint32_t waveSize, std::uint32_t roundMode) {
+    Require(RoundedFloatBits(0x01000001u, false, 0u) == 0x4b800000u && RoundedFloatBits(0x01000003u, false, 0u) == 0x4b800002u &&
+        RoundedFloatBits(0x01000001u, false, 1u) == 0x4b800001u && RoundedFloatBits(0x80000001u, true, 2u) == 0xcf000000u &&
+        RoundedFloatBits(0x80000001u, true, 3u) == 0xceffffffu && RoundedFloatBits(0x7fffffffu, true, 3u) == 0x4effffffu,
+        "inexact integer-to-f32 model anchors");
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) InexactInput[lane] = InexactWords[lane % InexactWords.size()];
+    InexactOutput.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{0x160200ffu, 1u, 0x160400ffu, InexactResults, 0xe0302000u, 0x80000401u, 0xbf8c3f70u};
+    std::uint32_t index = 0u;
+    for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+        for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+            words.insert(words.end(), {
+                0x7e0a02ffu, Garbage,
+                0x7e0a00f9u | ((signedInteger ? 5u : 6u) << 9u), 4u | (destination << 8u) | (unused << 11u) | (6u << 16u),
+                0xe0702000u | (index * 4u), 0x80010502u,
+            });
+        }
+    }
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    const auto input = BufferDescriptor(InexactInput.data(), static_cast<std::uint32_t>(InexactInput.size()));
+    const auto output = BufferDescriptor(InexactOutput.data(), static_cast<std::uint32_t>(InexactOutput.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u | roundMode, true, false, false};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    index = 0u;
+    for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+        for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+            for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+                const auto expected = InsertResult(RoundedFloatBits(InexactInput[lane], signedInteger, roundMode), destination, unused);
+                const auto actual = InexactOutput[lane * InexactResults + index];
+                Require(actual == expected, "sdwa inexact integer-to-f32: lane " + std::to_string(lane) + (signedInteger ? " i32" : " u32") +
+                    " wave" + std::to_string(waveSize) + " round mode " + std::to_string(roundMode) + " source " + Hex(InexactInput[lane]) +
+                    " destination " + std::to_string(destination) + " unused " + std::to_string(unused) + " is " + Hex(actual) +
+                    ", expected " + Hex(expected));
+            }
+        }
+    }
+    std::printf("sdwa inexact integer-to-f32 %s wave%u round mode %u: %u combinations passed\n", signedInteger ? "i32" : "u32", waveSize, roundMode, InexactResults);
+}
+
 void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::uint32_t waveSize) {
     Require(ExactFloatBits(74565u, false) == 0x4791a280u && ExactFloatBits(1193046u, false) == 0x4991a2b0u,
         "integer-to-f32 model anchors");
@@ -560,6 +640,9 @@ int main(int argc, char** argv) {
         FillInput();
         Run(*device);
         Check();
+        for (const bool signedInteger : {false, true}) {
+            for (std::uint32_t roundMode = 0u; roundMode < 4u; ++roundMode) RunInexactConversions(*device, signedInteger, waveSize, roundMode);
+        }
         std::puts("sdwa destination tests passed");
         return 0;
     } catch (const std::exception& error) {

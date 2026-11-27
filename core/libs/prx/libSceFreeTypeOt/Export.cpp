@@ -390,4 +390,17 @@ void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descr
     return nullptr;
 }
 
+void APS5_VABI ft_validator_init_nid_postfix(void* validator, const std::uint8_t* base,
+                                           const std::uint8_t* limit, std::int32_t level) {
+    struct Fields {
+        const std::uint8_t* base;
+        const std::uint8_t* limit;
+        std::int32_t level;
+        std::int32_t error;
+    };
+    static_assert(sizeof(Fields) == 24 && offsetof(Fields, level) == 16 && offsetof(Fields, error) == 20);
+    const Fields fields{base, limit, level, 0};
+    if (!GuestCopyOut_nid_no_patch(validator, &fields, sizeof(fields))) NotImplemented_nid_no_patch(__func__);
+}
+
 }

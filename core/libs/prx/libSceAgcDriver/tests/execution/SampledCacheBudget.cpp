@@ -1895,6 +1895,7 @@ void recoveryTests(Context context, const std::string& mode) {
         } else {
             Require(Texture::CanRepackCopyFrom(*source, sourceResource), "the storage surface cannot serve a repacked copy");
         }
+        const auto sampledBefore = TextureCacheUsage().sampledBytes;
         recovery.pressure = true;
         auto made = CachedSampledTexture(context, sourceWords);
         recovery.pressure = false;
@@ -1902,6 +1903,10 @@ void recoveryTests(Context context, const std::string& mode) {
         Require(released.expired(), "sampled copy allocation recovery did not release its own oldest unused texture");
         Require(source->Dirty() && StorageImageCached(context, source.get()), "sampled copy allocation recovery changed or evicted an image with pending results");
         Require(!held->Released() && held.use_count() == 2, "sampled copy allocation recovery removed a texture still held by its caller");
+        const auto copyBytes = made->AllocationBytes();
+        const auto sampledAfter = TextureCacheUsage().sampledBytes;
+        Require(copyBytes != 0 && sampledAfter == sampledBefore - allocated + copyBytes,
+                "sampled copy allocation is missing from the cache budget: " + std::to_string(copyBytes) + " copy bytes, " + std::to_string(sampledAfter) + " accounted bytes");
         const auto refreshed = Sampled(context, block.Surface(1));
         Require(refreshed != nullptr && (refreshed == held || refreshed->ViewsStorageImage()), "sampled copy cache refresh did not serve the surface");
         Require(recovery.released == allocated, "sampled copy allocation recovery counted memory still held by its caller");

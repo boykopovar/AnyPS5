@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -29,6 +30,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <iostream>
@@ -108,11 +110,15 @@ constexpr std::size_t StencilUnormDepthOffset = 0x7c0000;
 constexpr std::size_t StencilUnormOffset = 0x7e0000;
 constexpr std::size_t StencilCubeDepthOffset = 0x800000;
 constexpr std::size_t StencilCubeOffset = 0x820000;
-constexpr std::size_t EpochExitOffset = 0x880000;
-constexpr std::size_t EpochSurfaceOffset = 0x8a0000;
-constexpr std::size_t EpochUnrelatedOffset = 0x8c0000;
-constexpr std::size_t EpochRetiredOffset = 0x8d0000;
-constexpr std::size_t EpochPerUseOffset = 0x900000;
+constexpr std::size_t ParallelAtlasOffset = 0x840000;
+constexpr std::size_t ParallelStencilOffset = 0x860000;
+constexpr std::size_t ParallelStencilPlaneOffset = 0x880000;
+constexpr std::size_t ParallelD16Offset = 0x8a0000;
+constexpr std::size_t EpochExitOffset = 0x8c0000;
+constexpr std::size_t EpochSurfaceOffset = 0x8e0000;
+constexpr std::size_t EpochUnrelatedOffset = 0x900000;
+constexpr std::size_t EpochRetiredOffset = 0x910000;
+constexpr std::size_t EpochPerUseOffset = 0x940000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -218,7 +224,7 @@ std::uint32_t Bits(float value) {
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
 alignas(256) constexpr std::array<std::uint32_t, 4> NullPixelCode{0x7e0002f2u, 0xf8001890u, 0x00000000u, 0xbf810000u};
 
-void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, std::uint64_t stencilAddress = 0, std::optional<std::uint8_t> stencilValue = std::nullopt, bool color = true, bool write = true) {
+void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, std::uint64_t stencilAddress = 0, std::optional<std::uint8_t> stencilValue = std::nullopt, bool depthOnly = false, bool waitIdle = true, bool write = true) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
@@ -241,10 +247,10 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     pixelInfo.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixelInfo.posX = true;
     pixelInfo.posY = true;
-    pixelInfo.targetOutputMode[0] = color ? 9u : 0u;
+    pixelInfo.targetOutputMode[0] = depthOnly ? 0u : 9u;
     pixelInfo.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(4, 0u);
-    const auto pixelCode = color ? std::span<const std::uint32_t>(PixelCode) : std::span<const std::uint32_t>(NullPixelCode);
+    const auto pixelCode = !depthOnly ? std::span<const std::uint32_t>(PixelCode) : std::span<const std::uint32_t>(NullPixelCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragmentRequest{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
@@ -260,9 +266,13 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     }};
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, AgcDriver::Graphics::ColorTargetLayout(extent.width, extent.height, AgcDriver::Graphics::ColorTileMode::Linear).Bytes(), 0xe4u};
-    state.colors = {state.color};
-    state.hasColorTarget = true;
+    if (!depthOnly) {
+        state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, AgcDriver::Graphics::ColorTargetLayout(extent.width, extent.height, AgcDriver::Graphics::ColorTileMode::Linear).Bytes(), 0xe4u};
+        state.colors = {state.color};
+        state.hasColorTarget = true;
+    } else {
+        state.hasColorTarget = false;
+    }
     state.depth = AgcDriver::Graphics::DepthTarget{address, stencilAddress, extent, format, 1.0f, 0};
     state.depth->depthSwizzle = swizzle;
     state.depthTest = true;
@@ -281,16 +291,11 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
-    state.blends = {state.blend};
+    state.blends = depthOnly ? std::vector<VkPipelineColorBlendAttachmentState>{} : std::vector<VkPipelineColorBlendAttachmentState>{state.blend};
     state.blendConstants = {};
-    if (!color) {
-        state.colors.clear();
-        state.blends.clear();
-        state.hasColorTarget = false;
-    }
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(vertices.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
-    device.WaitIdle();
+    if (waitIdle) device.WaitIdle();
 }
 
 ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
@@ -549,7 +554,7 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
     const bool noFastRevalidate = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto unrelated = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block.At(EpochUnrelatedOffset)));
-    DrawDepth(device, unrelated, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
+    DrawDepth(device, unrelated, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, true);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     AgcDriver::GuestMemory::MarkProofThread();
     Require(ShaderResources::EpochProofs(), "depth plane epoch exit: epoch proofs are off");
@@ -571,7 +576,7 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     std::printf("depth plane epoch exit: with a stale plane outside the buffer (%s), an unchanged buffer build %s the exit\n", unrelatedStale ? "still stale" : "stored", unrelatedExit ? "took" : "did not take");
     Require(unrelatedStale, "depth plane epoch exit: proving the buffer build stored a plane outside the buffer");
     Require(unrelatedExit != noFastRevalidate, "depth plane epoch exit: an unchanged buffer build did not take the epoch exit while only a plane outside the buffer was stale, or took it with APS5_NO_FAST_REVALIDATE set");
-    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, true);
     const bool stale = AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes);
     Require(stale, "depth plane epoch exit: the draw over the buffer did not leave the buffer's plane stale");
     const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
@@ -584,7 +589,7 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     const auto storedBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
     Require(AgcDriver::Graphics::DepthPlanesStale() && resources->Revalidate(shader) && (AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != storedBefore) != noFastRevalidate, "depth plane epoch exit: the stored buffer build did not take the exit while only a plane outside the buffer was stale, or took it with APS5_NO_FAST_REVALIDATE set");
     const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
-    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, 0.5f, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, 0.5f, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, true);
     const bool kept = AgcDriver::Graphics::DepthSurfacesSerial() == surfacesBefore;
     Require(kept, "depth plane epoch exit: the second draw over the buffer replaced its depth surface");
     Require(AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes), "depth plane epoch exit: the second draw over the buffer did not leave the buffer's plane stale");
@@ -623,7 +628,7 @@ void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, st
     Require(resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "depth surface epoch exit: an unchanged sampling build did not take the epoch exit");
     const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
     const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
-    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false, false);
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, true, true, false);
     const bool created = AgcDriver::Graphics::DepthSurfacesSerial() != surfacesBefore;
     const bool broke = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
     const bool stale = AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes);
@@ -648,7 +653,7 @@ void EpochExitRetiredSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& bl
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
     FillSlice(base, SliceBytes, Bits(0.75f), 4u);
-    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false, false);
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, true, true, false);
     const auto program = CompileLoad(device, base, shape, 0, output);
     const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -982,6 +987,32 @@ void RefusalCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
 }
 }
 
+void ParallelAtlasCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    const char* parallelAtlasSwitch = std::getenv("APS5_PARALLEL_ATLAS");
+    const bool parallel = parallelAtlasSwitch != nullptr && parallelAtlasSwitch[0] != '\0' && parallelAtlasSwitch[0] != '0' && std::getenv("APS5_PROFILE_GPU_DRAWS") == nullptr && std::getenv("APS5_GPU_CHECKPOINTS") == nullptr && AgcDriver::VulkanDeviceTestAccess::ContextOf(device).graphicsPipelineLibrary;
+    const auto recorded = AgcDriver::Graphics::RecordingPool::RecordedBuffers();
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    auto* atlas = block.At(ParallelAtlasOffset);
+    for (int draw = 0; draw < 3; ++draw) DrawDepth(device, reinterpret_cast<std::uintptr_t>(atlas), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, 0, 0, std::nullopt, true, false);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(atlas), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, 0, 0, std::nullopt, true, true);
+    Load(device, atlas, shape, 0, output);
+    Expect(output, Bits(DrawnDepth), "parallel atlas depth");
+    auto* stenciled = block.At(ParallelStencilOffset);
+    const auto stencil = reinterpret_cast<std::uintptr_t>(block.At(ParallelStencilPlaneOffset));
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(stenciled), {128, 128}, VK_FORMAT_D32_SFLOAT_S8_UINT, DrawnDepth, 0, stencil, std::nullopt, true, false);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(stenciled), {128, 128}, VK_FORMAT_D32_SFLOAT_S8_UINT, DrawnDepth, 0, stencil, std::nullopt, true, true);
+    Load(device, stenciled, shape, 0, output);
+    Expect(output, Bits(DrawnDepth), "parallel atlas D32S8 depth");
+    auto* d16 = block.At(ParallelD16Offset);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(d16), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth, 0, 0, std::nullopt, true, false);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(d16), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth, 0, 0, std::nullopt, true, true);
+    Load(device, d16, {Format16Uint, 256, 128, Type2D, 0, Swizzle64KbS}, 0, output);
+    Expect(output, DrawnD16Bits, "parallel atlas D16 depth");
+    const auto pooled = AgcDriver::Graphics::RecordingPool::RecordedBuffers() - recorded;
+    std::cout << "parallel atlas: " << pooled << " of 8 depth-only draws recorded on the recording pool\n";
+    Require(pooled == (parallel ? 8u : 0u), std::to_string(pooled) + " of the case's 8 depth-only draws were recorded on the recording pool, expected " + (parallel ? "all" : "none"));
+}
+
 int main(int argc, char** argv) {
     try {
         const bool evicting = argc > 1 && std::string(argv[1]) == "--evicting";
@@ -1069,6 +1100,7 @@ int main(int argc, char** argv) {
             Require(kept >= 1 && kept < 8, std::to_string(kept) + " depth plane copies were kept with a 1 MiB budget, expected at least the newest and fewer than the 8 an unbounded cache keeps");
             FrameCopiesCase(*device, block, output);
         }
+        ParallelAtlasCase(*device, block, output);
         std::puts("depth plane sampling tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -22,4 +22,6 @@ const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx);
 [[noreturn]] void APS5_VABI ft_validator_error_nid_postfix(void* validator, std::int32_t error);
 void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline);
 void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
+void APS5_VABI ft_validator_init_nid_postfix(void* validator, const std::uint8_t* base,
+                                           const std::uint8_t* limit, std::int32_t level);
 }
