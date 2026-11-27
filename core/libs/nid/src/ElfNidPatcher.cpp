@@ -284,6 +284,8 @@ std::vector<std::size_t> DynamicEntryOffsets(const std::vector<std::uint8_t>& el
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const auto shdr = Read<Elf64_Shdr>(elf, static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr));
         if (shdr.sh_type != kShtDynamic) continue;
+        if (shdr.sh_entsize != sizeof(Elf64_Dyn))
+            throw std::runtime_error("invalid ELF dynamic section layout");
         auto entries = readEntries(shdr.sh_offset, shdr.sh_size, "dynamic section");
         offsets.insert(offsets.end(), entries.begin(), entries.end());
     }
@@ -526,11 +528,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
-        if (shdr.sh_type == kShtDynamic) {
-            if (shdr.sh_entsize != sizeof(Elf64_Dyn) || shdr.sh_size % sizeof(Elf64_Dyn))
-                throw std::runtime_error("invalid ELF dynamic section layout");
-            hasDynamic = true;
-        }
+        if (shdr.sh_type == kShtDynamic) hasDynamic = true;
         if (shdr.sh_type == kShtDynsym) {
             if (shdr.sh_entsize != sizeof(Elf64_Sym) || shdr.sh_size % sizeof(Elf64_Sym) || shdr.sh_link >= ehdr.e_shnum)
                 throw std::runtime_error("invalid ELF dynsym layout");
@@ -644,6 +642,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     };
 
     std::vector<SymbolNameUse> uses;
+    std::vector<std::size_t> versymOffsetsToReset;
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint16_t>> patchedExports;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
@@ -670,7 +669,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             if (options.executable || isUnversioned) {
                 newValue = importMap.at(symName);
                 if (options.executable && newValue != symName && versymOffset != 0u)
-                    Write(elf, versymOffset + i * sizeof(std::uint16_t), std::uint16_t{1});
+                    versymOffsetsToReset.push_back(versymOffset + i * sizeof(std::uint16_t));
             }
         }
 
@@ -754,6 +753,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (!hasPhdr) segments.insert(segments.begin(), Elf64_Phdr{6, 4, 0, 0, 0, 0, 0, 8});
         const auto fileOffset = align(elf.size());
         const auto address = align(virtualEnd);
+        const auto newDynStrSize = static_cast<std::uint64_t>(newDynStr.size());
+        const auto inputSize = static_cast<std::uint64_t>(elf.size());
+        if (newDynStrSize > UINT64_MAX - inputSize)
+            throw std::runtime_error("ELF string segment overflow");
+        const auto maximumAlignmentPadding = std::max<std::uint64_t>(0x100000u, inputSize + newDynStrSize);
         const auto tableSize = (segments.size() + 1u) * sizeof(Elf64_Phdr);
         if (tableSize > UINT64_MAX - fileOffset)
             throw std::runtime_error("ELF program header table overflow");
@@ -817,10 +821,17 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
                     throw std::runtime_error("ELF SCE dynamic data offset overflow");
                 return value + delta;
             };
+            if (sceDynlib.p_align > 1u) {
+                const auto mask = sceDynlib.p_align - 1u;
+                if ((sceDynlib.p_align & mask) != 0u ||
+                    (sceDynlib.p_offset & mask) != (sceDynlib.p_vaddr & mask))
+                    throw std::runtime_error("invalid PT_SCE_DYNLIBDATA alignment");
+            }
             sceDynlibOffset = alignToSegment(minimumDataOffset, sceDynlib.p_align, sceDynlib.p_vaddr);
+            if (sceDynlibOffset - minimumDataOffset > maximumAlignmentPadding)
+                throw std::runtime_error("PT_SCE_DYNLIBDATA alignment padding exceeds safety limit");
         }
 
-        const auto newDynStrSize = static_cast<std::uint64_t>(newDynStr.size());
         const auto dataPrefixSize = sceDynlibOffset - fileOffset;
         if (sceDynlibSize > UINT64_MAX - dataPrefixSize ||
             newDynStrSize > UINT64_MAX - dataPrefixSize - sceDynlibSize)
@@ -886,6 +897,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     if (newDynStr.size() > dynStrSize) {
         throw std::runtime_error("rebuilt .dynstr exceeds original section size; relinking with a larger section is required");
     }
+    for (const auto offset : versymOffsetsToReset) Write(elf, offset, std::uint16_t{1});
     newDynStr.resize(dynStrSize, 0u);
 
     std::vector<std::string> newSymbolNames(symCount);

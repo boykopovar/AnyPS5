@@ -364,6 +364,30 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
         self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
 
+    def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_layout_is_malformed(self):
+        original = bytearray(executable("sce"))
+        struct.pack_into("<Q", original, SHOFF + 4 * 64 + 32, 17)
+        original = bytes(original)
+        result, after = patch(original)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(after, original)
+        dynamic = next(header for header in program_headers(after) if header[0] == 2)
+        self.assertGreaterEqual(dynamic[2], len(original))
+        stale_dynamic_section = symbols.sections(after)[4]
+        self.assertEqual(stale_dynamic_section[4], DYNAMIC_OFFSET)
+        self.assertEqual(stale_dynamic_section[5], 17)
+
+    def test_sce_dynlib_alignment_padding_is_bounded(self):
+        original = bytearray(executable("sce"))
+        sce_dynlib_header = 0x40 + 2 * 56
+        struct.pack_into("<Q", original, sce_dynlib_header + 16, 0x800200)
+        struct.pack_into("<Q", original, sce_dynlib_header + 48, 8 * 1024 * 1024)
+        original = bytes(original)
+        result, after = patch(original)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b"alignment padding exceeds", result.stderr)
+        self.assertEqual(after, original)
+
     def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_out_of_bounds(self):
         original = bytearray(executable("sce"))
         struct.pack_into("<Q", original, SHOFF + 4 * 64 + 24, len(original) + 1)
