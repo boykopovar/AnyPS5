@@ -36,6 +36,27 @@ class ErrorReportTests(unittest.TestCase):
         error = subprocess.CalledProcessError(1, ["gh", "api"], output="", stderr="")
         self.assertEqual(pr_overlap.describe_failure(error), "pr_overlap: gh api failed with exit code 1: no error output")
 
+    def test_git_disables_automatic_maintenance(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                with patch.dict(pr_overlap._REPO_ROOTS, {Path.cwd(): root}, clear=True), \
+                        patch.object(pr_overlap.subprocess, "run", side_effect=run):
+                    pr_overlap.git("status", "--short")
+            finally:
+                os.chdir(old)
+        self.assertEqual(calls, [[
+            "git", "-c", "core.quotePath=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "status", "--short"
+        ]])
+
     def test_invalid_pagination_reports_a_concise_error(self):
         with patch.object(pr_overlap, "open_prs", side_effect=ValueError("gh api returned an invalid next page link")):
             with self.assertRaises(SystemExit) as raised:
@@ -84,6 +105,20 @@ class ErrorReportTests(unittest.TestCase):
                 os.chdir(old)
             self.assertIn("cannot resolve path '../loop'", str(raised.exception))
             self.assertRegex(str(raised.exception), r"Too many levels of symbolic links|Symlink loop|WinError 1921")
+
+    def test_output_path_that_is_a_file_reports_an_error_without_traceback(self):
+        with TemporaryDirectory() as directory:
+            out = Path(directory) / "reports"
+            out.write_text("not a directory", encoding="utf-8")
+            with patch.object(pr_overlap, "open_prs", return_value={}), \
+                    patch.object(pr_overlap, "base_commit", return_value="0" * 40), \
+                    patch.object(pr_overlap, "fetch_heads"), \
+                    patch.object(pr_overlap, "scan_all"), \
+                    patch.object(pr_overlap, "base_exports", return_value={}), \
+                    patch.object(pr_overlap, "main_export_findings", return_value={}):
+                with self.assertRaises(SystemExit) as raised:
+                    pr_overlap.main(["--repo", "owner/project", "--out", str(out)])
+        self.assertTrue(str(raised.exception.code).startswith("pr_overlap: "), raised.exception.code)
 
     def test_main_reconfigures_streams(self):
         class Stream:
@@ -172,6 +207,24 @@ class ErrorReportTests(unittest.TestCase):
                    'did not properly respond after a period of time, or established connection failed because '
                    'connected host has failed to respond.')
         failed = subprocess.CompletedProcess([], 1, stdout="partial", stderr=message)
+        success = subprocess.CompletedProcess([], 0, stdout='[{"number": 17}]\n', stderr="")
+        with patch.object(pr_overlap.subprocess, "run", side_effect=[failed, success]) as run_mock, \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            self.assertEqual(pr_overlap.gh("api", "repos/owner/project/pulls", delay=0.01), '[{"number": 17}]\n')
+        self.assertEqual(run_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(0.01)
+        with patch.object(pr_overlap.subprocess, "run", return_value=failed) as run_mock, \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                pr_overlap.gh("api", "repos/owner/project/pulls", attempts=3, delay=0.01)
+        self.assertEqual(run_mock.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [0.01, 0.02])
+        self.assertEqual(raised.exception.stderr, message)
+
+    def test_gh_retries_io_timeouts(self):
+        message = ('Get "https://api.github.com/repos/owner/project/pulls?state=open&base=main&per_page=100&page=6": '
+                   'dial tcp 192.0.2.1:443: i/o timeout')
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr=message)
         success = subprocess.CompletedProcess([], 0, stdout='[{"number": 17}]\n', stderr="")
         with patch.object(pr_overlap.subprocess, "run", side_effect=[failed, success]) as run_mock, \
                 patch.object(pr_overlap.time, "sleep") as sleep_mock:
