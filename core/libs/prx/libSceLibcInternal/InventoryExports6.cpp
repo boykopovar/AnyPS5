@@ -385,9 +385,8 @@ int APS5_VABI sceLibcInternalUnknown6_117_13xzrgS8N4o_nid_no_patch() {
 }
 APS5_EXPORT("13xzrgS8N4o", sceLibcInternalUnknown6_117_13xzrgS8N4o_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
 }
 APS5_EXPORT("xFva4yxsVW8", sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch);
 
@@ -409,9 +408,8 @@ void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0E
     _ZdlPv_nid_postfix(self);
 }
 
-int APS5_VABI _ZNSt8numpunctIcED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt8numpunctIcED0Ev_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctDelete_nid_no_patch(self);
 }
 
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC1Em_nid_postfix() {
