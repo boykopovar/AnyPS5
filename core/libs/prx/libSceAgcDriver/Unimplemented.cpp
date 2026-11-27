@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -153,13 +154,21 @@ int APS5_VABI sceAgcDriverGetCoredumpMode(uint32_t* mode) {
     return 0;
 }
 
+static void ClearToolMemoryRange(void* range) {
+    if (range == nullptr) return;
+    constexpr std::array<std::byte, TOOL_MEMORY_RANGE_SIZE> cleared{};
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(range, cleared.data(), cleared.size());
+    errno = savedErrno;
+}
+
 int APS5_VABI sceAgcDriverAllocateToolMemoryForGpuReset(uint64_t, uint64_t, uint64_t, void* range) {
-    if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
+    ClearToolMemoryRange(range);
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* range) {
-    if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
+    ClearToolMemoryRange(range);
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
