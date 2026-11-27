@@ -244,6 +244,7 @@ void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
 void EmitSplitStateGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t saved, std::uint32_t current, std::uint32_t reg);
 void EmitControlNop(SpirvValueEmitContext& context);
 void EmitWaitcnt(SpirvValueEmitContext& context);
+void EmitGuestFence(SpirvValueEmitContext& context);
 void EmitSendmsg(SpirvValueEmitContext& context);
 void EmitTtraceData(SpirvValueEmitContext& context);
 void EmitInstPrefetch(SpirvValueEmitContext& context);

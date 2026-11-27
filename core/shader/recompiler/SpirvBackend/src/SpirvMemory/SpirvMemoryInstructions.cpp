@@ -241,13 +241,13 @@ bool SameAddressValue(const IrValue* left, const IrValue* right, std::uint32_t d
     return true;
 }
 
-bool WritesMemory(IrOpcode opcode) {
+bool WritesMemory(const SpirvEmitterState& state, IrOpcode opcode) {
     const auto buffer = BufferAccessOf(opcode);
     const auto shared = SharedAccessOf(opcode);
     const auto address = AddressOpcodeInfoOf(opcode).access;
     const auto image = ImageOpcodeInfoOf(opcode).access;
     return buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || (shared != SharedAccess::None && shared != SharedAccess::Read) || address == AddressAccess::Write || address == AddressAccess::Atomic ||
-        image == ImageAccess::Write || image == ImageAccess::Atomic || opcode == IrOpcode::Barrier || opcode == IrOpcode::StoreVectorWindow || opcode == IrOpcode::StoreSplitState;
+        image == ImageAccess::Write || image == ImageAccess::Atomic || opcode == IrOpcode::Barrier || (state.coherentBufferAtomics && (opcode == IrOpcode::GuestAcquire || opcode == IrOpcode::GuestRelease)) || opcode == IrOpcode::StoreVectorWindow || opcode == IrOpcode::StoreSplitState;
 }
 
 std::vector<std::pair<const IrValue*, std::uint32_t>> AdjacentBdaLoads(const SpirvEmitterState& state, const IrValue& inst, const MemoryInfo& mem) {
@@ -261,7 +261,7 @@ std::vector<std::pair<const IrValue*, std::uint32_t>> AdjacentBdaLoads(const Spi
     for (++next; next != instructions.end(); ++next) {
         const IrValue* other = *next;
         if (other->Opcode() != inst.Opcode()) {
-            if (WritesMemory(other->Opcode())) break;
+            if (WritesMemory(state, other->Opcode())) break;
             continue;
         }
         const auto& otherMemory = state.program.Resources().memoryInfo.at(other->Flags<MemoryFlags>().index);

@@ -3234,6 +3234,16 @@ int main() {
         return !LayerReplaySafe(b.program);
     });
 
+    passed &= run("layer replay permits s_waitcnt, s_waitcnt_vscnt, buffer_gl0_inv and buffer_gl1_inv", [] {
+        for (const auto opcode : {IrOpcode::Waitcnt, IrOpcode::GuestRelease, IrOpcode::GuestAcquire}) {
+            Builder b;
+            b.program.Resources().stage = IrShaderStage::Mesh;
+            b.emit(opcode, IrType::Void, {});
+            if (!LayerReplaySafe(b.program)) return false;
+        }
+        return true;
+    });
+
     passed &= run("layer replay rejects guest buffer stores and shader clocks", [] {
         Builder written;
         auto& buffer = written.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {});

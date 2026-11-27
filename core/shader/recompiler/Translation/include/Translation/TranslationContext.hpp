@@ -50,6 +50,7 @@ public:
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void SetFloat64(bool enabled) { float64 = enabled; }
+    void SetCoherentBufferAtomics(bool enabled) { coherentBufferAtomics = enabled; }
     void SetSharedVectorRegisters(std::uint32_t base, std::uint32_t count) { sharedVectorBase = base; sharedVectorCount = count; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void SetVectorWindowActive(bool active) { ir.SetVectorWindowActive(active); }
@@ -446,6 +447,7 @@ private:
     bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
     bool float64 = false;
+    bool coherentBufferAtomics = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
     std::uint32_t sharedVectorBase = 0;

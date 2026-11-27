@@ -545,6 +545,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("SelectU32", U32, U1, U32, U32),
     makeMeta("ImageBvhIntersectRay", U32x4, U32x4, ImageAddress, U1),
     makeMeta("NanPropagateF32", F32, F32, U32, U1, F32, F32, F32),
+    makeMeta("GuestRelease", Void),
+    makeMeta("GuestAcquire", Void),
 }};
 
 const OpcodeMeta& metaOf(IrOpcode opcode) {
@@ -942,6 +944,8 @@ static constexpr bool computeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::MeshAllocate:
         case IrOpcode::Barrier:
         case IrOpcode::Waitcnt:
+        case IrOpcode::GuestRelease:
+        case IrOpcode::GuestAcquire:
         case IrOpcode::Sendmsg:
         case IrOpcode::TtraceData:
         case IrOpcode::InstPrefetch:
