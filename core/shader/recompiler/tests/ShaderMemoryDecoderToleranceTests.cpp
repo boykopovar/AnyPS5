@@ -467,33 +467,50 @@ std::vector<std::uint32_t> EmitCompute(const RdnaInstruction& inst) {
     return SpirvEmitter().Emit(program, inputs, bindings, target);
 }
 
+bool ContainsOpcode(const std::vector<std::uint32_t>& spirv, std::uint32_t opcode) {
+    for (const auto word : spirv) {
+        if ((word & 0xffffu) == opcode) return true;
+    }
+    return false;
+}
+
 void TestGfx1013FormsEmit() {
     const auto smem = [](std::uint32_t opcode, std::uint32_t sdst, std::uint32_t sbase) {
         return (0x3Du << 26u) | (opcode << 18u) | (sdst << 6u) | sbase;
     };
-    const std::array<std::pair<const char*, std::array<std::uint32_t, 2>>, 11> cases{{
-        {"S_ATOMIC_ADD", {smem(0x82u, 3u, 1u), 0x10u}},
-        {"S_ATOMIC_CMPSWAP", {smem(0x81u, 3u, 1u), 0x10u}},
-        {"S_ATOMIC_ADD_X2", {smem(0xa2u, 4u, 1u), 0x10u}},
-        {"S_STORE_DWORD", {smem(0x10u, 3u, 1u), 0x10u}},
-        {"S_STORE_DWORDX4", {smem(0x12u, 4u, 1u), 0x10u}},
-        {"S_BUFFER_STORE_DWORD", {smem(0x18u, 2u, 1u), 0x10u}},
-        {"S_BUFFER_STORE_DWORDX2", {smem(0x19u, 2u, 1u), 0x10u}},
-        {"S_BUFFER_ATOMIC_ADD", {smem(0x42u, 2u, 1u), 0x10u}},
-        {"S_BUFFER_ATOMIC_ADD_X2", {smem(0x62u, 4u, 1u), 0x10u}},
-        {"S_BUFFER_ATOMIC_CMPSWAP_X2", {smem(0x61u, 4u, 1u), 0x10u}},
-        {"S_BUFFER_ATOMIC_ADD with GLC", {smem(0x42u, 2u, 1u) | (1u << 16u), 0x10u}},
+    struct EmitCase {
+        const char* name;
+        std::array<std::uint32_t, 2> words;
+        std::uint32_t opcode;
+        std::uint32_t alternative;
+    };
+    const std::array<EmitCase, 11> cases{{
+        {"S_ATOMIC_ADD", {smem(0x82u, 3u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
+        {"S_ATOMIC_CMPSWAP", {smem(0x81u, 3u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 0u},
+        {"S_ATOMIC_ADD_X2", {smem(0xa2u, 4u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
+        {"S_STORE_DWORD", {smem(0x10u, 3u, 1u), 0x10u}, spv::OpStore, 0u},
+        {"S_STORE_DWORDX4", {smem(0x12u, 4u, 1u), 0x10u}, spv::OpStore, 0u},
+        {"S_BUFFER_STORE_DWORD", {smem(0x18u, 2u, 1u), 0x10u}, spv::OpStore, 0u},
+        {"S_BUFFER_STORE_DWORDX2", {smem(0x19u, 2u, 1u), 0x10u}, spv::OpStore, 0u},
+        {"S_BUFFER_ATOMIC_ADD", {smem(0x42u, 2u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
+        {"S_BUFFER_ATOMIC_ADD_X2", {smem(0x62u, 4u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
+        {"S_BUFFER_ATOMIC_CMPSWAP_X2", {smem(0x61u, 4u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 0u},
+        {"S_BUFFER_ATOMIC_ADD with GLC", {smem(0x42u, 2u, 1u) | (1u << 16u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
     }};
-    for (const auto& [name, words] : cases) {
-        const RdnaInstruction inst = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+    for (const auto& test : cases) {
+        const RdnaInstruction inst = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(test.words), 0u);
         try {
             const auto spirv = EmitCompute(inst);
             if (spirv.empty()) {
-                std::fprintf(stderr, "EmitCompute produced no words for %s\n", name);
+                std::fprintf(stderr, "EmitCompute produced no words for %s\n", test.name);
+                std::abort();
+            }
+            if (!ContainsOpcode(spirv, test.opcode) && (test.alternative == 0u || !ContainsOpcode(spirv, test.alternative))) {
+                std::fprintf(stderr, "%s emitted no expected instruction\n", test.name);
                 std::abort();
             }
         } catch (const std::exception& error) {
-            std::fprintf(stderr, "EmitCompute threw for %s: %s\n", name, error.what());
+            std::fprintf(stderr, "EmitCompute threw for %s: %s\n", test.name, error.what());
             std::abort();
         }
     }
