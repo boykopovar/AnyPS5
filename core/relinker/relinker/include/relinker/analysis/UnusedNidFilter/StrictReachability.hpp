@@ -4,6 +4,7 @@
 #include <relinker/domain/Types.hpp>
 #include <map>
 #include <set>
+#include <span>
 
 namespace Relinker::UnusedNidFilter {
 
@@ -40,6 +41,8 @@ struct StrictReachabilityResult {
 StrictReachabilityResult AnalyzeStrictReachability(const StrictReachabilityInput& input);
 
 std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDataRegion>& data, VirtualAddress base, VirtualAddress textVaddr, std::size_t textSize);
+
+std::vector<VirtualAddress> ReadRelativeTableTargets(std::span<const std::uint8_t> text, VirtualAddress base, VirtualAddress textVaddr);
 
 }
 

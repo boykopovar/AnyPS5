@@ -2,11 +2,14 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -24,6 +27,7 @@ const auto ConstructBase = &_ZN3JSC4Yarr17RegularExpressionC2ERKN3WTF6StringENS0
 const auto Match = &_ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi;
 const auto SearchRev = &_ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE;
 const auto IsValid = &_ZNK3JSC4Yarr17RegularExpression7isValidEv;
+const auto ReplaceIn = &_ZN3JSC4Yarr7replaceERN3WTF6StringERKNS0_17RegularExpressionERKS2_;
 const auto Release = &JscRegularExpressionRelease_nid_no_patch;
 
 std::set<void*> live;
@@ -39,6 +43,10 @@ void APS5_VABI TestFree(void* pointer) {
     if (live.erase(pointer) != 1) std::abort();
     std::free(pointer);
 }
+
+void* AllocatorAllocate(std::size_t size) { return TestAllocate(size); }
+
+void AllocatorDeallocate(void* pointer) { TestFree(pointer); }
 
 void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) {
     void* pointer = TestAllocate(count * size);
@@ -78,6 +86,41 @@ std::u16string Widen(const std::string& text) {
     std::u16string wide;
     for (const unsigned char unit : text) wide.push_back(unit);
     return wide;
+}
+
+StringImpl* NewText(const std::string& text) {
+    constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
+    void* storage = TestAllocate(std::max<std::size_t>(sizeof(StringImpl), charactersOffset + text.size()));
+    auto* characters = static_cast<std::uint8_t*>(storage) + charactersOffset;
+    auto* impl = new (storage) StringImpl{2, static_cast<unsigned>(text.size()), characters, Jsc::WtfAbi::StringImplFlag8Bit};
+    std::memcpy(characters, text.data(), text.size());
+    return impl;
+}
+
+StringImpl* NewText(const std::u16string& text) {
+    constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
+    void* storage = TestAllocate(std::max<std::size_t>(sizeof(StringImpl), charactersOffset + text.size() * 2));
+    auto* characters = static_cast<std::uint8_t*>(storage) + charactersOffset;
+    auto* impl = new (storage) StringImpl{2, static_cast<unsigned>(text.size()), characters, 0};
+    std::memcpy(characters, text.data(), text.size() * 2);
+    return impl;
+}
+
+void FreeText(StringImpl* impl) {
+    TestFree(const_cast<void*>(static_cast<const void*>(impl)));
+}
+
+std::u16string ReadText(const StringReference& reference) {
+    const StringImpl* impl = reference.impl;
+    std::u16string text;
+    if (!impl) return text;
+    Require(impl->data || !impl->length);
+    for (unsigned index = 0; index < impl->length; ++index) {
+        text.push_back((impl->hashAndFlags & Jsc::WtfAbi::StringImplFlag8Bit) != 0
+            ? static_cast<char16_t>(static_cast<const std::uint8_t*>(impl->data)[index])
+            : static_cast<const char16_t*>(impl->data)[index]);
+    }
+    return text;
 }
 
 struct Expression {
@@ -355,6 +398,207 @@ void TestReferencesAndGuards() {
     Require(Throws<std::invalid_argument>([&] { Match(&valid.value, &brokenReference, 0, nullptr); }));
 }
 
+void TestReplace() {
+    const Jsc::WtfAbi::PersistenceAllocator allocator{&AllocatorAllocate, &AllocatorDeallocate};
+    RegisterPersistenceAllocator_nid_no_patch(&allocator);
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("abcabc"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("X"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(text.impl != original && original->refCount == 0 && live.count(original) == 1);
+        Require(text.impl->refCount == 2 && text.impl->length == 6);
+        Require((text.impl->hashAndFlags & Jsc::WtfAbi::StringImplFlag8Bit) != 0);
+        Require(ReadText(text) == u"XbcXbc");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("z");
+        StringReference text{NewText(std::string("abc"))};
+        StringImpl* const original = text.impl;
+        const std::size_t allocations = live.size();
+        const Text replacement(std::string("X"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(text.impl == original && live.size() == allocations && original->refCount == 2);
+        FreeText(original);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("$&x\\n"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"$&x\\n");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a*");
+        StringReference text{NewText(std::string("ba"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("-"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"-ba");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a*");
+        StringReference text{NewText(std::string("aa"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("-"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"-");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a*");
+        StringReference text{NewText(std::string("ba"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string(""));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(text.impl == original && original->refCount == 2 && ReadText(text) == u"ba");
+        FreeText(original);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("aa"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"aa");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("^a");
+        StringReference text{NewText(std::string("aa"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string(""));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("\\ba");
+        StringReference text{NewText(std::string("aa"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("-"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"--");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("(?:b|^a)", 0, 1, 0);
+        StringReference text{NewText(std::string("ba"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("\n"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"\n\n");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("abcabc"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string(""));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"bcbc");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string(""));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(text.impl->length == 0 && text.impl->refCount == 2 && ReadText(text).empty());
+        Require((text.impl->hashAndFlags & Jsc::WtfAbi::StringImplFlag8Bit) != 0);
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::u16string(u"\u00e9"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require((text.impl->hashAndFlags & Jsc::WtfAbi::StringImplFlag8Bit) == 0);
+        Require(ReadText(text) == u"\u00e9");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::u16string(u"a\u00e9"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("Z"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require((text.impl->hashAndFlags & Jsc::WtfAbi::StringImplFlag8Bit) == 0);
+        Require(ReadText(text) == u"Z\u00e9");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("a");
+        const Text replacement(std::string("X"));
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        Require(Throws<std::invalid_argument>([&] { ReplaceIn(nullptr, &expression.value, &replacement.reference); }));
+        Require(Throws<std::invalid_argument>([&] { ReplaceIn(&text, nullptr, &replacement.reference); }));
+        RegularExpression none{};
+        Require(Throws<std::invalid_argument>([&] { ReplaceIn(&text, &none, &replacement.reference); }));
+        Require(Throws<std::invalid_argument>([&] { ReplaceIn(&text, &expression.value, nullptr); }));
+        Require(text.impl == original && original->refCount == 2);
+        FreeText(original);
+        StringReference empty{};
+        ReplaceIn(&empty, &expression.value, &replacement.reference);
+        Require(empty.impl == nullptr);
+    }
+    {
+        Expression expression("(");
+        Require(!IsValid(&expression.value));
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("X"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(text.impl == original && original->refCount == 2);
+        FreeText(original);
+    }
+    {
+        Expression expression("a");
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        original->refCount = 4;
+        const Text replacement(std::string("XY"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(text.impl != original && original->refCount == 2 && live.count(original) == 1);
+        Require(ReadText(text) == u"XY");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        RegisterPersistenceAllocator_nid_no_patch(nullptr);
+        Expression expression("a");
+        StringReference text{NewText(std::string("a"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("X"));
+        Require(Throws<std::runtime_error>([&] { ReplaceIn(&text, &expression.value, &replacement.reference); }));
+        Require(text.impl == original && original->refCount == 2 && live.size() == 2);
+        FreeText(original);
+        RegisterPersistenceAllocator_nid_no_patch(&allocator);
+    }
+    RegisterPersistenceAllocator_nid_no_patch(nullptr);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -371,6 +615,7 @@ int main() {
     TestInvalidPatterns();
     TestLimits();
     TestReferencesAndGuards();
+    TestReplace();
     Require(live.empty());
     return 0;
 }

@@ -748,7 +748,14 @@ void testTitleReadsMouse() {
     check((keyboardMouse.Compose(PadInputState{}).buttons & down) != 0, "wheel down in mouse mode did not press Down while the title reads the mouse");
     check(keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, true), now).toggleMouse, "a middle click in mouse mode did not ask to leave mouse mode while the title reads the mouse");
     keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, false), now);
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    keyboardMouse.SetMouseMode(false);
+    const auto handedOff = keyboardMouse.Compose(PadInputState{});
+    check((handedOff.buttons & square) == 0, "returning mouse control to the title left a pad button held");
+    check((handedOff.buttons & wheelDirections) == 0, "returning mouse control to the title left a wheel pulse active");
+    check(handedOff.sticks[1] == 0, "returning mouse control to the title released the held keyboard stick binding");
     keyboardMouse.SetTitleReadsMouse(false);
+    keyboardMouse.SetMouseMode(true);
     keyboardMouse.HandleEvent(PadSimulation::WheelEvent(1), now);
     check((keyboardMouse.Compose(PadInputState{}).buttons & up) != 0, "wheel bindings did not resume after the title stopped reading the mouse");
     for (int step = 1; step <= 40; ++step) {

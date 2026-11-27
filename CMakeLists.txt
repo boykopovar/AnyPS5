@@ -699,6 +699,9 @@ if(BUILD_TESTING)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
         set_tests_properties(configure_seed_paths PROPERTIES TIMEOUT 20)
+        add_test(NAME configure_seed_check_name_round_trips COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedCheckNameRoundTripTests)
+        set_tests_properties(configure_seed_check_name_round_trips PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
         set_tests_properties(configure_seed_round_trips PROPERTIES TIMEOUT 30)
