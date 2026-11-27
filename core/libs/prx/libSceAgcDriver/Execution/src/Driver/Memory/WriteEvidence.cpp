@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -244,6 +246,11 @@ ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std:
     std::uint64_t ValidateCounters::*reason = nullptr;
     PendingView pending;
     pending.Load();
+    if (known.size() == bytes && queued == DrawPipeline::QueuedWrite::None && pending.Overlaps(address, bytes) && !Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::NoCaptureKnownLabels) && !Graphics::AnyShadowedOverlaps(address, bytes)) {
+        const auto own = Graphics::Recorder::LookupOwnLabelBytes(address, known, GuestMemory::GpuLockThreadTag());
+        if (own == Graphics::Recorder::OwnLabelLookup::Served) return knownValueVerify() ? Policy::VerifyKnownValue : Policy::KnownValue;
+        if (own == Graphics::Recorder::OwnLabelLookup::Refused) return Policy::Sync;
+    }
     const auto policy = Get().classifyPendingWrite(address, bytes, reason, pending, known);
     return queued == DrawPipeline::QueuedWrite::Stored && policy == Policy::None ? Policy::KnownValue : policy;
 }

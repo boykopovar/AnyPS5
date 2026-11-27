@@ -1089,14 +1089,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     // would reap nested in the reap in progress, landing later batches' write-backs before the
     // rest of this one's, and this queue's queued label follows every batch of its own in flight
     // anyway, so the write-back landing first is the order the hardware gives.
-    if (QueuedLabelsOnThread::Get() && QueuedLabelOverlaps(address, bytes)) {
-        if (completionDepth() != 0 && HookCompletionGuard()) {
-            queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
-        } else if (auto* record = queuedLabelRecorder.load(std::memory_order_acquire); record != nullptr) {
-            queuedLabelHookRecords.fetch_add(1, std::memory_order_relaxed);
-            record();
-        }
-    }
+    static_cast<void>(Recorder::RecordQueuedLabelsOver(address, bytes));
     if (HookClearAccess() && HookSnapshotEnabled() && !HookFlushCpuBlocks() && ClearAccess(address, bytes) && !(GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::HostWrite && AnyPublishInProgress())) {
         ClearAccesses::Set(ClearAccesses::Get() + 1);
         return;
@@ -1761,6 +1754,8 @@ void Recorder::Activate() {
         labelTableOwner = this;
     }
     GuestMemory::SetFlushHook(&FlushForAccess);
+    GuestMemory::SetQueuedWriteRecorder(&Recorder::RecordQueuedLabelsOver);
+    GuestMemory::SetQueuedWriteSubmitter(&Recorder::SubmitActiveBatch);
 }
 
 std::optional<Recorder::LabelHit> Recorder::LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) {
@@ -1781,6 +1776,61 @@ bool Recorder::wideLabelInLocked(std::uint64_t address, std::size_t bytes) const
         if (it->second.end > address) return true;
     }
     return false;
+}
+
+bool Recorder::RecordQueuedLabelsOver(std::uint64_t address, std::size_t bytes) {
+    if (!QueuedLabelsOnThread::Get() || !QueuedLabelOverlaps(address, bytes)) return false;
+    if (completionDepth() != 0 && HookCompletionGuard()) {
+        queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    auto* record = queuedLabelRecorder.load(std::memory_order_acquire);
+    if (record == nullptr) return false;
+    queuedLabelHookRecords.fetch_add(1, std::memory_order_relaxed);
+    record();
+    return true;
+}
+
+void Recorder::SubmitActiveBatch() {
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    if (auto* recorder = Active(); recorder != nullptr) recorder->Submit();
+}
+
+Recorder::OwnLabelLookup Recorder::LookupOwnLabelBytes(std::uint64_t address, std::span<std::byte> bytes, std::uint32_t queue) {
+    if (bytes.empty() || bytes.size() % 4 != 0 || address % 4 != 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes.size()) return OwnLabelLookup::NotLabels;
+    const auto end = address + bytes.size();
+    std::vector<std::byte> composed(bytes.size());
+    std::uint64_t generation = std::numeric_limits<std::uint64_t>::max();
+    {
+        std::lock_guard tableLock(labelTableMutex);
+        if (labelTableOwner == nullptr) return OwnLabelLookup::NotLabels;
+        const auto& owner = *labelTableOwner;
+        if (const auto queued = owner.queuedLabels.lower_bound(address); queued != owner.queuedLabels.end() && queued->first < end) return OwnLabelLookup::Refused;
+        for (auto it = owner.wideLabels.lower_bound(address >= owner.wideLabelBytes ? address - owner.wideLabelBytes + 1 : 0); it != owner.wideLabels.end() && it->first < end; ++it) {
+            if (it->second.end > address) return OwnLabelLookup::NotLabels;
+        }
+        bool refused = false;
+        for (std::uint64_t at = address; at < end; at += 4) {
+            const auto found = owner.labels.find(at);
+            if (found == owner.labels.end()) return OwnLabelLookup::NotLabels;
+            const auto& entry = found->second;
+            if (entry.batch == nullptr || entry.queue != queue) return OwnLabelLookup::NotLabels;
+            if (entry.batch->submitStarted.load(std::memory_order_acquire) || entry.overwritten || entry.behindCompletion || entry.overPending || entry.generation == 0) refused = true;
+            std::memcpy(composed.data() + (at - address), &entry.value, 4);
+            generation = std::min(generation, entry.generation);
+        }
+        if (refused) return OwnLabelLookup::Refused;
+    }
+    GuestMemory::CollectWrites(address, bytes.size());
+    if (!GuestMemory::UnchangedSince(address, bytes.size(), generation)) return OwnLabelLookup::Refused;
+    std::copy(composed.begin(), composed.end(), bytes.begin());
+    return OwnLabelLookup::Served;
+}
+
+std::uint64_t Recorder::HookSyncCount() {
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    return syncCounts[1] + syncCounts[2];
 }
 
 bool Recorder::LookupStoredBytes(std::uint64_t address, std::span<std::byte> bytes) {
@@ -4690,7 +4740,12 @@ void Recorder::noteLabelOn(Batch& batch, std::uint64_t address, std::span<const 
         std::uint32_t value = 0;
         std::memcpy(&value, bytes.data() + offset, 4);
         const auto dword = address + offset;
-        labels.insert_or_assign(dword, LabelEntry{value, queue, stamp, &batch, 0, false, behindCompletion});
+        bool overPending = false;
+        if (PendingWriteOverlaps(dword, 4)) {
+            const auto previous = labels.find(dword);
+            overPending = previous == labels.end() || previous->second.batch == nullptr || previous->second.overwritten || previous->second.overPending;
+        }
+        labels.insert_or_assign(dword, LabelEntry{value, queue, stamp, &batch, 0, false, behindCompletion, overPending});
         batch.labelDwords.push_back(dword);
         LabelGroupDwords().emplace_back(dword, stamp);
     }

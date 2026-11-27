@@ -178,6 +178,7 @@ private:
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;
     PendingWriteQuery pendingSpan = nullptr;
+    bool queuedWritesRecorded = false;
     bool spanQuery = false;
     std::size_t descriptorSpanBytes = 0;
     std::uint64_t rawInvalidations = 0;

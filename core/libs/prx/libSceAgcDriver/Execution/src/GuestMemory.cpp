@@ -3966,11 +3966,30 @@ unsigned long long CodeOffset(const void* address) {
 namespace {
 std::atomic<void (*)(std::uint64_t, std::size_t)> flushHook{nullptr};
 std::atomic<void (*)(std::uint64_t, std::size_t)> readGuard{nullptr};
+std::atomic<bool (*)(std::uint64_t, std::size_t)> queuedWriteRecorder{nullptr};
+std::atomic<void (*)()> queuedWriteSubmitter{nullptr};
 
 void PrepareHostRead(std::uintptr_t address, std::size_t bytes) {
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, bytes);
     FlushGpuWrites(address, bytes);
 }
+}
+
+void SetQueuedWriteRecorder(bool (*recorder)(std::uint64_t, std::size_t)) {
+    queuedWriteRecorder.store(recorder, std::memory_order_release);
+}
+
+bool RecordQueuedWrites(std::uint64_t address, std::size_t bytes) {
+    const auto recorder = queuedWriteRecorder.load(std::memory_order_acquire);
+    return recorder != nullptr && recorder(address, bytes);
+}
+
+void SetQueuedWriteSubmitter(void (*submitter)()) {
+    queuedWriteSubmitter.store(submitter, std::memory_order_release);
+}
+
+void SubmitQueuedWrites() {
+    if (const auto submitter = queuedWriteSubmitter.load(std::memory_order_acquire)) submitter();
 }
 
 void SetFlushHook(void (*hook)(std::uint64_t, std::size_t)) {
