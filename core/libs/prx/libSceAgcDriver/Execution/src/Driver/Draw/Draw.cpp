@@ -696,7 +696,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (matched[i] != nullptr) stageCaptures[i].registeredViews = matched[i]->registeredViews;
         if (matched[i] == nullptr || (matched[i]->shaderDataPatches.empty() && matched[i]->descriptorPatches.empty())) continue;
         applyShaderDataPatches(*matched[i]);
-        if (stageData[i].compiled != nullptr) stageData[i].compiled = patchDataWords(*matched[i], stageData[i].words);
+        if (stageData[i].compiled != nullptr) stageData[i].compiled = matched[i]->bufferWordBuffers.empty() ? patchDataWords(*matched[i], stageData[i].words) : matched[i]->compiled;
     }
     const auto relocatedDecode = decode;
     if (!userPatches.empty()) {
