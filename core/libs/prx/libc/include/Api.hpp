@@ -589,6 +589,8 @@ char* APS5_VABI getwd_nid_postfix(char* buffer);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
 int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length);
+int APS5_VABI radixsort_nid_postfix(const unsigned char** a, int n, const unsigned char* tab, std::uint32_t endch);
+int APS5_VABI sradixsort_nid_postfix(const unsigned char** a, int n, const unsigned char* tab, std::uint32_t endch);
 char* APS5_VABI devname_nid_postfix(std::uint32_t device, std::uint16_t type);
 char* APS5_VABI devname_r_nid_postfix(std::uint32_t device, std::uint16_t type, char* buffer, int length);
 std::int64_t APS5_VABI __ashldi3_nid_postfix(std::int64_t value, int shift);
