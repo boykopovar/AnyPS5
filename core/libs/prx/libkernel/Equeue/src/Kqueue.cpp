@@ -837,32 +837,34 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
         return PosixFailure(GUEST_EFAULT);
     }
     int errors = 0;
-    for (int i = 0; i < nchanges; ++i) {
-        KernelEvent change{};
-        if (!GuestCopyIn_nid_no_patch(&change, changelist + i, sizeof(change))) {
+    KernelEvent changes[KQ_NEVENTS];
+    for (int copied = 0; copied < nchanges;) {
+        const int batch = std::min(nchanges - copied, KQ_NEVENTS);
+        if (!GuestCopyIn_nid_no_patch(changes, changelist + copied, static_cast<std::size_t>(batch) * sizeof(KernelEvent))) {
             return PosixFailure(GUEST_EFAULT);
         }
-        if (change.filter == 0) {
-            continue;
-        }
-        change.flags = static_cast<std::uint16_t>(change.flags & ~EV_SYSFLAGS);
-        const int error = Register(queue, descriptor, change);
-        if (error == 0 && (change.flags & EV_RECEIPT) == 0) {
-            continue;
-        }
-        if (nevents == 0) {
-            return error == 0 ? 0 : PosixFailure(error);
-        }
-        change.flags = EV_ERROR;
-        change.data = error;
-        if (eventlist != nullptr) {
-            if (!GuestCopyOut_nid_no_patch(eventlist, &change, sizeof(change))) {
-                return PosixFailure(GUEST_EFAULT);
+        copied += batch;
+        for (int i = 0; i < batch; ++i) {
+            KernelEvent& change = changes[i];
+            if (change.filter == 0) {
+                continue;
             }
-            ++eventlist;
+            change.flags = static_cast<std::uint16_t>(change.flags & ~EV_SYSFLAGS);
+            const int error = Register(queue, descriptor, change);
+            if (error == 0 && (change.flags & EV_RECEIPT) == 0) {
+                continue;
+            }
+            if (nevents == 0) {
+                return error == 0 ? 0 : PosixFailure(error);
+            }
+            change.flags = EV_ERROR;
+            change.data = error;
+            if (GuestCopyOut_nid_no_patch(eventlist, &change, sizeof(change))) {
+                ++eventlist;
+            }
+            --nevents;
+            ++errors;
         }
-        --nevents;
-        ++errors;
     }
     if (errors != 0) {
         return errors;

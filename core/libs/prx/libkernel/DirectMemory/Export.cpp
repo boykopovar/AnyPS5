@@ -9,6 +9,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
@@ -740,6 +741,13 @@ int APS5_VABI sceKernelBatchMap(KernelBatchMapEntry* entries, int num_entries, i
 
 int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out, int flags) {
  if (!entries || num_entries < 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (num_entries_out != nullptr) {
+  const int savedErrno = errno;
+  const GuestArena::HostWrite write(num_entries_out, sizeof(*num_entries_out));
+  const bool writable = write.Open() && GuestWritable_nid_no_patch(num_entries_out, sizeof(*num_entries_out));
+  errno = savedErrno;
+  if (!writable) return SCE_KERNEL_ERROR_EFAULT;
+ }
  constexpr int OpMapDirect = 0;
  constexpr int OpUnmap = 1;
  constexpr int OpProtect = 2;

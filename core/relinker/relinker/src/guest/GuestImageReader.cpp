@@ -194,6 +194,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 if (symbolCount > std::numeric_limits<std::uint32_t>::max()) fail("Invalid GNU hash chain");
                 if (chain & 1) break;
             }
+        } else {
+            const auto symbolOffset = table(6, 0x61000039, symbolCount * 24);
+            symbolCount = ElfReader(bytes).ReadDynamicSymbolCount(symbolOffset, firstSymbol);
         }
         symSize = symbolCount * 24;
     } else fail("Missing dynamic symbol count");

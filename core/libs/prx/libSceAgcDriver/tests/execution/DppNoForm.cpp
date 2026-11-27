@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -31,12 +32,6 @@ constexpr std::array<NoFormOpcode, 23> NoFormOpcodes{{
     {true, 0x21u, "v_madak_f32"}, {true, 0x2cu, "v_fmamk_f32"}, {true, 0x2du, "v_fmaak_f32"},
     {true, 0x37u, "v_fmamk_f16"}, {true, 0x38u, "v_fmaak_f16"},
 }};
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 auto Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     std::vector<std::uint32_t> userData(8, 0u);

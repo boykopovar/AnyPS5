@@ -10490,6 +10490,8 @@ void verifyInt64AtomicCapabilities() {
     const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80010003u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80010003u, 0xe1685000u, 0x80010203u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80010003u, 0xe1645000u, 0x80010203u, 0xbf810000u};
+    const std::vector<std::uint32_t> globalSwap{0xdd418000u, 0x14080a03u, 0xbf810000u};
+    const std::vector<std::uint32_t> globalSwapBufferInc{0xdd418000u, 0x14080a03u, 0xe1705000u, 0x80012803u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
         const std::array<std::uint32_t, 6> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
@@ -10557,6 +10559,14 @@ void verifyInt64AtomicCapabilities() {
     const auto asksForLockTable = [](const RecompileResult& result) {
         return std::ranges::count_if(result.specialization, [](const PipelineSpecializationConstant& constant) { return PipelineSpecialization::IsAtomicLockTable(constant.id); }) == PipelineSpecialization::AtomicLockTableWords;
     };
+    for (const auto* code : {&globalSwap, &globalSwapBufferInc}) {
+        const auto lockedGlobal = compile(*code, spv::CapabilityShader);
+        require(!declares(lockedGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
+        require(asksForLockTable(lockedGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
+        const auto nativeGlobal = compile(*code, spv::CapabilityInt64Atomics);
+        require(declares(nativeGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 does not declare Int64Atomics");
+        require(!asksForLockTable(nativeGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled with shaderBufferInt64Atomics asks for the atomic lock table");
+    }
     const auto lockedBuffer = compile(bufferAtomic, spv::CapabilityShader);
     require(!declares(lockedBuffer.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
     require(asksForLockTable(lockedBuffer), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
@@ -13209,6 +13219,7 @@ void verifyMultisamplePlaneReadMode() {
     ImageResource image{};
     image.resourceClass = ImageResourceClass::Sampled;
     image.dimension = RdnaImageDimension::Dim2D;
+    image.dimensionQueryOnly = false;
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].dimension == RdnaImageDimension::Dim2D && !modes[selected].cube && modes[selected].numericClass == IrTextureNumericClass::Float, "a 2D read of a 2D MSAA T# (PPSA18216's) did not select a 2D runtime mode");
@@ -13238,6 +13249,32 @@ void verifyMultisamplePlaneReadMode() {
     other.resourceClass = ImageResourceClass::Storage;
     other.written = true;
     refused(other, "a 2D storage access to a 2D MSAA T# was accepted");
+}
+
+void verifyMsaaDimensionQueryModes() {
+    using namespace ShaderRecompiler;
+    const auto msaaDescriptor = [](std::uint32_t log2Fragments) {
+        return DescriptorValue{{0x0002754du, 0xc1600000u, 0x0001c001u, 0xe0000facu | (log2Fragments << 16u) | (log2Fragments != 0u ? 9u << 20u : 0u), 0u, log2Fragments << 4u, 0u, 0u}, 8u};
+    };
+    ImageResource query{};
+    query.resourceClass = ImageResourceClass::Sampled;
+    query.dimension = RdnaImageDimension::Dim2D;
+    query.dimensionQueryOnly = true;
+    query.cubeFaceCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(query);
+    for (const std::uint32_t log2Fragments : {1u, 2u, 3u}) {
+        const auto selected = ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(log2Fragments), modes);
+        require(modes[selected].dimension == RdnaImageDimension::Dim2DMsaa && !modes[selected].cube, "a dimension query of a 2, 4 or 8-fragment 2D MSAA T# under DIM 2D did not select a multisampled 2D runtime mode");
+    }
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(4u), modes)); }, "image descriptor is invalid", "a dimension query of a 16-fragment 2D MSAA T# was accepted");
+    require(modes[ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(0u), modes)].dimension == RdnaImageDimension::Dim2D, "a dimension query of a one-fragment 2D MSAA T# under DIM 2D did not select the 2D runtime mode");
+    auto read = query;
+    read.dimensionQueryOnly = false;
+    read.read = true;
+    read.cubeFaceCompatible = true;
+    const auto readModes = ResourceMaterializer::RuntimeImageModes(read);
+    require(readModes[ResourceMaterializer::RuntimeImageMode(read, msaaDescriptor(2u), readModes)].dimension == RdnaImageDimension::Dim2D, "a 2D read of a 2D MSAA T# no longer selects the 2D runtime mode");
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(read, msaaDescriptor(4u), readModes)); }, "image descriptor is invalid", "a 2D read of a 16-fragment 2D MSAA T# was accepted");
 }
 
 void verifyOneFragmentMultisampleRead() {
@@ -14003,6 +14040,7 @@ int main(int argc, char** argv) {
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
         verifyMultisamplePlaneReadMode();
+        verifyMsaaDimensionQueryModes();
         verifyOneFragmentMultisampleRead();
         verifyVolumeBiasTableRejection();
         verifySamplerTableDeduplication();

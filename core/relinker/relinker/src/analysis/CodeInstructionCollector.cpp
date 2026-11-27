@@ -3,6 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -458,6 +459,9 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }
+        } else {
+            const auto symbolOffset = table(6, 0x61000039, symbolCount * 24);
+            symbolCount = ElfReader(bytes).ReadDynamicSymbolCount(symbolOffset, firstSymbol);
         }
     }
     std::uint64_t symbols = 0;

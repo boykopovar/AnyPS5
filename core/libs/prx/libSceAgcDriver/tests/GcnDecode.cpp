@@ -252,6 +252,20 @@ void SdwaKeepsItsModifierWord() {
     Check(ThrowsMentioning(promoted, "VOP2_SDWA"), "SDWA v_add_i32, which AnyPS5 promotes to VOP3, was not refused as such");
 }
 
+void MovFedOpcodeDecode() {
+    constexpr std::uint32_t src0 = 256u;
+
+    const auto vop1 = [](std::uint32_t op) {
+        return (0x3fu << 25u) | (1u << 17u) | (op << 9u) | src0;
+    };
+    const auto vop3_1 = [](std::uint32_t op) {
+        return std::array<std::uint32_t, 2>{(0x34u << 26u) | (op << 17u) | 1u, src0};
+    };
+
+    Check(Decode(std::array<std::uint32_t, 1>{vop1(0x09u)}).op == RdnaOpcode::VMovB32, "VOP1 v_mov_fed_b32 did not decode as VMovB32");
+    Check(Decode(vop3_1(0x189u)).op == RdnaOpcode::VMovB32, "VOP3 v_mov_fed_b32 did not decode as VMovB32");
+}
+
 }
 
 int main() {
@@ -265,6 +279,7 @@ int main() {
         Vop3FormsOfMappedVop2AndVopcDecode();
         SdwaKeepsItsModifierWord();
         Vop3OpcodeTakesBit16();
+        MovFedOpcodeDecode();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
