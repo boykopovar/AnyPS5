@@ -109,8 +109,13 @@ bool WriteRingBufFields(NpRingBuf* self, const NpRingBuf& ringBuf) {
     constexpr std::size_t offset = offsetof(NpRingBuf, buf);
     const auto address = reinterpret_cast<std::uintptr_t>(self);
     if (self == nullptr || address > UINTPTR_MAX - offset) return false;
-    return CopyOutGuest(reinterpret_cast<void*>(address + offset),
-        reinterpret_cast<const std::uint8_t*>(&ringBuf) + offset, sizeof(ringBuf) - offset);
+    auto* const destination = reinterpret_cast<void*>(address + offset);
+    const std::size_t bytes = sizeof(ringBuf) - offset;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    if (!writable) return false;
+    return CopyOutGuest(destination, reinterpret_cast<const std::uint8_t*>(&ringBuf) + offset, bytes);
 }
 
 } // namespace
@@ -119,8 +124,14 @@ extern "C" {
 
 void APS5_VABI _ZN3sce2np7RingBufC1Ev(NpRingBuf* self) {
     if (self == nullptr) return;
-    self->vtable = &RingBufVtable[2];
-    ClearFields(*self);
+    NpRingBuf local{};
+    local.vtable = &RingBufVtable[2];
+    ClearFields(local);
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(self, sizeof(local));
+    errno = savedErrno;
+    if (!writable) return;
+    (void)CopyOutGuest(self, &local, sizeof(local));
 }
 
 void APS5_VABI _ZN3sce2np7RingBufC2Ev(NpRingBuf* self) {
