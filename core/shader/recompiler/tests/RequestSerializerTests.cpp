@@ -202,7 +202,7 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 14u && bytes[4] == 63u);
+    Require(bytes.size() > 14u && bytes[4] == 64u);
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
@@ -226,7 +226,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -784,7 +784,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -900,7 +900,9 @@ int VerifyVersion56Compatibility() {
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
         auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 63u && version62.back() == (spanned ? 1u : 0u));
+        Require(std::ranges::none_of(request.context.pixel->targetMerges, [](const auto& merge) { return merge.mask != 0u; }));
+        Require(version62[4] == 64u && version62.back() == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
         version62[4] = 62u;
         Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
         auto version57 = version62;
@@ -1178,6 +1180,42 @@ int VerifyVersion56Compatibility() {
     return 0;
 }
 
+void VerifyTargetMergeBlendConstants() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    ShaderRecompiler::RecompileRequest request{};
+    request.context.pixel = ShaderRecompiler::ShaderPixelStageInfo{};
+    const auto withoutMerges = serializer.Serialize(request);
+    ShaderRecompiler::TargetMerge unwritten{};
+    unwritten.blendConstants = {1u, 2u, 3u, 4u};
+    request.context.pixel->targetMerges = {unwritten};
+    const auto unwrittenEncoded = serializer.Serialize(request);
+    Require(unwrittenEncoded == withoutMerges);
+    const auto unwrittenReplay = serializer.Deserialize(unwrittenEncoded);
+    Require(unwrittenReplay.request.context.pixel.has_value() && unwrittenReplay.request.context.pixel->targetMerges.empty());
+    ShaderRecompiler::TargetMerge first{};
+    first.mask = 0x0fu;
+    first.blendConstants = {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u};
+    ShaderRecompiler::TargetMerge second{};
+    second.target = 1u;
+    second.mask = 0xf0u;
+    second.blendConstants = {5u, 6u, 7u, 8u};
+    request.context.pixel->targetMerges = {first, second};
+    const auto encoded = serializer.Serialize(request);
+    const auto replay = serializer.Deserialize(encoded);
+    Require(replay.request.context.pixel.has_value() && replay.request.context.pixel->targetMerges.size() == 2u);
+    Require(replay.request.context.pixel->targetMerges[0].blendConstants == first.blendConstants && replay.request.context.pixel->targetMerges[1].blendConstants == second.blendConstants);
+    Require(serializer.Serialize(replay.request) == encoded);
+    auto truncated = DecodeBase64(encoded);
+    truncated.resize(truncated.size() - 4u);
+    bool rejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(truncated)));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 void VerifySingleSampleVersion63() {
     const ShaderRecompiler::RequestSerializer serializer;
     ShaderRecompiler::RecompileRequest request{};
@@ -1194,7 +1232,7 @@ void VerifySingleSampleVersion63() {
         request.context.pixel->ditheredAlphaSamples = 1u;
         request.context.pixel->singleSampleDither = mode;
         const auto bytes = DecodeBase64(serializer.Serialize(request));
-        Require(bytes[4] == 63u);
+        Require(bytes[4] == 64u);
         const auto replay = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay.request.context.pixel->singleSampleDither == mode && replay.request.context.pixel->ditheredAlphaSamples == 1u);
         Require(replay.request.target.maxImageArrayLayers == 4097u && replay.request.target.fixedPushSlots && replay.request.target.spannedAnySubgroup);
@@ -1235,7 +1273,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 5u}, std::pair{65u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
@@ -1252,5 +1290,6 @@ void VerifySingleSampleVersion63() {
 int main() {
     VerifySingleSampleVersion63();
     VerifyTargetOptions();
+    VerifyTargetMergeBlendConstants();
     return VerifyVersion56Compatibility();
 }
