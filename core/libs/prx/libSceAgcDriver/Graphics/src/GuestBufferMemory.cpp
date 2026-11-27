@@ -8134,7 +8134,8 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     VkAccessFlags covered = 0;
     bool inRun = false;
     std::vector<Recorder::RunAccess> runAccesses;
-    const auto runKey = Recorder::DispatchOverlapEnabled() && recorder->RunOpen() ? Recorder::PeekUnorderedDispatch() : 0u;
+    const bool canShareStaging = passStaging && !addressable && RuntimeSwitches::Set(RuntimeSwitch::PassStaging);
+    const auto runKey = !canShareStaging && Recorder::DispatchOverlapEnabled() && recorder->RunOpen() ? Recorder::PeekUnorderedDispatch() : 0u;
     if (runKey != 0) RunAccesses(runAccesses);
     const auto commands = runKey != 0 ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered) : recorder->Commands(&covered);
     const auto timing = recorder->BeginGpuTiming(StagingCopyInKey);
@@ -8144,7 +8145,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         recorder->NoteAccess(Recorder::CommandClass::StagingIn, Recorder::Access{reads, {}, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
     constexpr auto& leading = StagedBufferCopyBarrier;
-    if (!inRun && !Recorder::ElideCovered(Recorder::CommandClass::StagingIn, leading, covered)) {
+    if (!inRun && (canShareStaging || !Recorder::ElideCovered(Recorder::CommandClass::StagingIn, leading, covered))) {
         RecordMemoryBarrier(context, commands, leading.srcStage, leading.dstStage, leading.srcAccess, leading.dstAccess);
         Recorder::CountBarriers(Recorder::CommandClass::StagingIn);
     }
