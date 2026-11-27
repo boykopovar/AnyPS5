@@ -40,6 +40,15 @@ alignas(256) constexpr std::array<std::uint32_t, 36> Code{
     0x80001201, 0xe070103c, 0x80001301, 0xbf810000,
 };
 
+constexpr std::array<std::uint32_t, 36> WithLoadWord(std::uint32_t word) {
+    auto code = Code;
+    code[16] = word;
+    return code;
+}
+
+alignas(256) constexpr auto ArrayLoadCode = WithLoadWord(0xf0001f28u);
+alignas(256) constexpr auto CubeLoadCode = WithLoadWord(0xf0001f18u);
+
 alignas(256) constexpr std::array<std::uint32_t, 16> ExplicitLodCode{
     0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
     0x80000501, 0xbf8c3f70, 0xf0900f10, 0x00610c02, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xbf810000,
@@ -78,15 +87,15 @@ std::uint8_t SliceMarker(std::uint32_t z) {
     return static_cast<std::uint8_t>(z * 100u + 7u);
 }
 
-std::array<std::uint32_t, 8> PlaneDescriptor() {
+std::array<std::uint32_t, 8> PlaneDescriptor(std::uint32_t levels = 1u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Plane.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (((Size - 1u) & 3u) << 30u),
         ((Size - 1u) >> 2u) | ((Size - 1u) << 14u),
-        0xfacu | (Type2D << 28u),
+        0xfacu | ((levels - 1u) << 16u) | (Type2D << 28u),
         0u,
-        0u,
+        (levels - 1u) << 4u,
         0u,
         0u,
     };
@@ -106,7 +115,11 @@ std::array<std::uint32_t, 8> VolumeDescriptor() {
     };
 }
 
-void FillTexture(std::span<std::uint8_t> storage, const std::array<std::uint32_t, 8>& descriptor, std::uint32_t slices) {
+std::uint8_t LevelMarker(std::uint32_t level) {
+    return static_cast<std::uint8_t>(200u + level);
+}
+
+void FillTexture(std::span<std::uint8_t> storage, const std::array<std::uint32_t, 8>& descriptor, std::uint32_t slices, std::uint32_t levels = 1u) {
     const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(descriptor));
     Require(geometry.guestBytes <= storage.size(), "image volume address on a plane: the texture does not fit the texel storage");
     const auto& mip = geometry.mips.at(0);
@@ -116,6 +129,18 @@ void FillTexture(std::span<std::uint8_t> storage, const std::array<std::uint32_t
             for (std::uint32_t x = 0; x < Size; ++x) {
                 auto* texel = &storage[geometry.GuestLayerOffset(z) + mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u];
                 texel[0] = SliceMarker(z);
+                texel[1] = static_cast<std::uint8_t>(x);
+                texel[2] = static_cast<std::uint8_t>(y);
+                texel[3] = 255u;
+            }
+        }
+    }
+    for (std::uint32_t level = 1; level < levels; ++level) {
+        const auto& upper = geometry.mips.at(level);
+        for (std::uint32_t y = 0; y < upper.height; ++y) {
+            for (std::uint32_t x = 0; x < upper.width; ++x) {
+                auto* texel = &storage[upper.tiledOffset + static_cast<std::uint64_t>(y) * upper.pitchBytes + x * 4u];
+                texel[0] = LevelMarker(level);
                 texel[1] = static_cast<std::uint8_t>(x);
                 texel[2] = static_cast<std::uint8_t>(y);
                 texel[3] = 255u;
@@ -161,13 +186,13 @@ void Expect(std::uint32_t tid, std::uint32_t result, const std::array<std::uint3
     }
 }
 
-void CheckPlane() {
+void CheckPlane(const std::string& load = "image_load 3d") {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto lane = LaneOf(tid);
         const std::array<std::uint32_t, 4> texel{SliceMarker(0), lane.x, lane.y, 255u};
         const auto z = PlaneZ[tid % PlaneZ.size()];
         Expect(tid, SampleResult, texel, "image_sample_lz 3d on a 2D texture with r " + std::to_string(PlaneR[tid % PlaneR.size()]));
-        Expect(tid, LoadResult, z == 0u ? texel : std::array<std::uint32_t, 4>{}, "image_load 3d on a 2D texture with z " + std::to_string(static_cast<std::int32_t>(z)));
+        Expect(tid, LoadResult, z == 0u ? texel : std::array<std::uint32_t, 4>{}, load + " on a 2D texture with z " + std::to_string(static_cast<std::int32_t>(z)));
     }
 }
 
@@ -180,14 +205,20 @@ void CheckVolume() {
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device) {
-    std::string refusal;
-    try {
-        Run(device, ExplicitLodCode, PlaneDescriptor());
-    } catch (const std::exception& error) {
-        refusal = error.what();
+void CheckExplicitLod(AgcDriver::VulkanDevice& device) {
+    FillTexture(Plane, PlaneDescriptor(2u), 1u, 2u);
+    for (const std::uint32_t level : {0u, 1u}) {
+        FillInput(false);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            Buffer[tid * Words + 3u] = Bits(static_cast<float>(level));
+        }
+        Run(device, ExplicitLodCode, PlaneDescriptor(2u));
+        const auto expected = level == 0u ? SliceMarker(0) : LevelMarker(level);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            const auto marker = std::lround(std::bit_cast<float>(Buffer[tid * Words + SampleResult]) * 255.0f);
+            Require(marker == expected, "image_sample_l 3d on a two-level 2D texture with r " + std::to_string(PlaneR[tid % PlaneR.size()]) + " and LOD " + std::to_string(level) + ": thread " + std::to_string(tid) + " read marker " + std::to_string(marker) + ", expected " + std::to_string(expected));
+        }
     }
-    Require(refusal.find("incompatible with the static runtime image interface") != std::string::npos, "image_sample_l 3d on a 2D texture was not refused: " + refusal);
 }
 
 }
@@ -200,11 +231,15 @@ int main() {
         FillInput(false);
         Run(*device, Code, PlaneDescriptor());
         CheckPlane();
+        Run(*device, ArrayLoadCode, PlaneDescriptor());
+        CheckPlane("image_load 2d array");
+        Run(*device, CubeLoadCode, PlaneDescriptor());
+        CheckPlane("image_load cube");
         FillTexture(Volume, VolumeDescriptor(), Depth);
         FillInput(true);
         Run(*device, Code, VolumeDescriptor());
         CheckVolume();
-        RequireRefused(*device);
+        CheckExplicitLod(*device);
         std::puts("image volume address on plane tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -356,6 +356,21 @@ class LossEvidence(CaptureFixture):
                 self.assertEqual(result["completeness"], expected)
                 self.assertTrue(result["warnings"])
 
+    def test_loss_counts_agree_for_threads_with_the_same_name(self):
+        self.trace["traceEvents"].append({"name": "thread_name", "ph": "M", "ts": 0, "pid": 42, "tid": 2,
+                                          "args": {"name": "presenter"}})
+        for tid, lost in ((1, 2), (2, 3)):
+            self.trace["traceEvents"].append({"name": "trace buffer full", "ph": "i", "ts": 10000,
+                                              "pid": 42, "tid": tid, "args": {"events_lost": lost}})
+        self.write_trace(self.trace)
+        self.summary["trace_dropped"] = True
+        for name, count, expected in (("presenter", 5, "complete"), ("presenter", 2, "invalid"),
+                                      ("worker", 5, "invalid"), ("presenter", 0, "invalid")):
+            with self.subTest(name=name, count=count):
+                self.summary["trace_dropped_threads"] = {name: {"events_lost": count, "totals_full": False}}
+                self.write_summary(self.summary)
+                self.assertEqual(self.capture_fixture()["state"], expected)
+
 
 if __name__ == "__main__":
     unittest.main()

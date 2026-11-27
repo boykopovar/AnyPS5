@@ -137,6 +137,7 @@ public:
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
     static void SetCaptureCheckHook(void (*hook)());
+    static void SetDispatchItemHook(void (*hook)(std::span<const Graphics::GuestMemorySnapshot>));
 
 private:
     class RecaptureScope {
@@ -413,6 +414,7 @@ private:
     static bool packetEpoch();
     static bool labelTryEachPacket();
     static std::chrono::microseconds labelFlushDeadline();
+    static std::chrono::microseconds labelFlushBusyDeadline();
     static bool labelFlushDue();
     static bool completionsPending();
     static bool reapEachPacket();
@@ -508,6 +510,7 @@ private:
     std::unordered_map<std::uint64_t, std::deque<std::uint64_t>> priorValueSets;
 
     std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawCache;
+    std::unordered_map<const ShaderRecompiler::RecompileResult*, std::size_t> drawCacheResultReferences;
     std::unordered_map<std::uint64_t, std::uint64_t> drawShapes;
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;
