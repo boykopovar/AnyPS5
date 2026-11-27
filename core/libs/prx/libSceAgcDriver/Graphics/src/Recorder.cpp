@@ -3746,6 +3746,16 @@ void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     open->keptBytes += bytes;
 }
 
+bool Recorder::KeepWithOutstanding(const std::shared_ptr<void>& object) noexcept {
+    try {
+        if (open != nullptr) open->kept.push_back(object);
+        if (!inFlight.empty()) inFlight.back()->kept.push_back(object);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void Recorder::KeepThroughHold(std::shared_ptr<void> object) {
     GuestMemory::AssertGpuLockHeld("Recorder::KeepThroughHold");
     if (const auto hold = GuestMemory::GpuHoldSerial(); hold != holdKeptSerial) {

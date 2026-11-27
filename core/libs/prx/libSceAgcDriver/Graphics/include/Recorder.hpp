@@ -218,6 +218,7 @@ public:
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
+    bool KeepWithOutstanding(const std::shared_ptr<void>& object) noexcept;
     void KeepThroughHold(std::shared_ptr<void> object);
     void ReserveRetention(std::size_t additional);
     template<typename T>
