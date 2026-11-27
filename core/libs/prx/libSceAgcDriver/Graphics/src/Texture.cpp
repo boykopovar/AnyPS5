@@ -1743,77 +1743,88 @@ bool Float16TransfersKeepBits(const Context& context, VkFormat format, bool colo
     const auto key = std::pair{std::pair{context.device, format}, colorAttachment};
     std::lock_guard lock(mutex);
     if (const auto found = known.find(key); found != known.end()) return found->second;
-    constexpr std::uint32_t width = 128u;
-    constexpr std::uint32_t height = 128u;
-    const auto bytes = static_cast<std::size_t>(width) * height * components * sizeof(std::uint16_t);
-    Buffer upload(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    constexpr std::array<std::uint16_t, 8> patterns{0x7d01u, 0xfd0au, 0x7e55u, 0xfeabu, 0x7c01u, 0xfc01u, 0x7fffu, 0xffffu};
-    for (std::size_t at = 0; at < bytes; at += sizeof(std::uint16_t)) {
-        const auto value = patterns[(at / sizeof(std::uint16_t)) % patterns.size()];
-        std::memcpy(upload.Bytes().data() + at, &value, sizeof(value));
-    }
-    VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    struct Release {
-        const Context& context;
-        VkImage& image;
-        VkDeviceMemory& memory;
-        ~Release() {
-            if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-            if (memory) MemoryAccounting::Free(context, memory);
+
+    try {
+        constexpr std::uint32_t width = 128u;
+        constexpr std::uint32_t height = 128u;
+        const auto bytes = static_cast<std::size_t>(width) * height * components * sizeof(std::uint16_t);
+        Buffer upload(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        constexpr std::array<std::uint16_t, 8> patterns{0x7d01u, 0xfd0au, 0x7e55u, 0xfeabu, 0x7c01u, 0xfc01u, 0x7fffu, 0xffffu};
+        for (std::size_t at = 0; at < bytes; at += sizeof(std::uint16_t)) {
+            const auto value = patterns[(at / sizeof(std::uint16_t)) % patterns.size()];
+            std::memcpy(upload.Bytes().data() + at, &value, sizeof(value));
         }
-    } release{context, image, memory};
-    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
-    info.imageType = VK_IMAGE_TYPE_2D;
-    info.format = format;
-    info.extent = {width, height, 1u};
-    info.mipLevels = 1u;
-    info.arrayLayers = 1u;
-    info.samples = VK_SAMPLE_COUNT_1_BIT;
-    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    if (colorAttachment) info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage fp16 storage transfer probe");
-    VkMemoryRequirements requirements{};
-    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation.allocationSize = requirements.size;
-    allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(MemoryAccounting::Allocate(context, allocation, "fp16 storage transfer probe", &memory), "vkAllocateMemory fp16 storage transfer probe");
-    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory fp16 storage transfer probe");
-    CommandBatch batch(context);
-    const auto commands = batch.Handle();
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
-    VkImageMemoryBarrier toDestination{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    toDestination.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    toDestination.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    toDestination.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    toDestination.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toDestination.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toDestination.image = image;
-    toDestination.subresourceRange = range;
-    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDestination);
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
-    region.imageExtent = {width, height, 1u};
-    context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, upload.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1u, &region);
-    VkImageMemoryBarrier toSource = toDestination;
-    toSource.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    toSource.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    toSource.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
-    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.Handle(), 1u, &region);
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-    batch.SubmitAndWait();
-    const bool keeps = std::memcmp(upload.Bytes().data(), readback.Bytes().data(), bytes) == 0;
-    known.emplace(key, keeps);
-    return keeps;
+
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        struct Release {
+            const Context& context;
+            VkImage& image;
+            VkDeviceMemory& memory;
+            ~Release() {
+                if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+                if (memory) MemoryAccounting::Free(context, memory);
+            }
+        } release{context, image, memory};
+
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = format;
+        info.extent = {width, height, 1u};
+        info.mipLevels = 1u;
+        info.arrayLayers = 1u;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (colorAttachment) info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage fp16 storage transfer probe");
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(MemoryAccounting::Allocate(context, allocation, "fp16 storage transfer probe", &memory), "vkAllocateMemory fp16 storage transfer probe");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory fp16 storage transfer probe");
+
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+        VkImageMemoryBarrier toDestination{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toDestination.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toDestination.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toDestination.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toDestination.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDestination.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDestination.image = image;
+        toDestination.subresourceRange = range;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDestination);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+        region.imageExtent = {width, height, 1u};
+        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, upload.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1u, &region);
+        VkImageMemoryBarrier toSource = toDestination;
+        toSource.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        toSource.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toSource.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.Handle(), 1u, &region);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+
+        const bool keeps = std::memcmp(upload.Bytes().data(), readback.Bytes().data(), bytes) == 0;
+        known.emplace(key, keeps);
+        return keeps;
+    } catch (const std::exception& error) {
+        AGC_LOG_DEFERRED(stdout, "FP16 storage transfer probe failed for format=%d attachment=%d: %s; using UINT backing", static_cast<int>(format), colorAttachment ? 1 : 0, error.what());
+        known.emplace(key, false);
+        return false;
+    }
 }
 
 VkFormat StorageImageFormatFor(const Context& context, VkFormat storageFormat, bool colorAttachment) {
