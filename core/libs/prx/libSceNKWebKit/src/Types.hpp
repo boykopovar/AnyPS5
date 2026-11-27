@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -491,6 +493,52 @@ public:
     std::u16string lang;
     NotificationDirection dir = NotificationDirection::Auto;
     std::uint64_t notificationID = GenerateNotificationIdentifier();
+};
+
+using NotificationProviderAddManager = void (APS5_VABI*)(const void* manager, const void* clientInfo);
+using NotificationProviderRemoveManager = void (APS5_VABI*)(const void* manager, const void* clientInfo);
+
+struct NotificationProviderBase {
+    int version = 0;
+    const void* clientInfo = nullptr;
+};
+
+struct NotificationProviderV0 {
+    NotificationProviderBase base;
+    const void* show = nullptr;
+    const void* cancel = nullptr;
+    const void* didDestroyNotification = nullptr;
+    NotificationProviderAddManager addNotificationManager = nullptr;
+    NotificationProviderRemoveManager removeNotificationManager = nullptr;
+    const void* notificationPermissions = nullptr;
+    const void* clearNotifications = nullptr;
+};
+
+class NotificationManager final : public ObjectOf<ObjectType::NotificationManager> {
+public:
+    ~NotificationManager() override {
+        teardown();
+    }
+
+    void teardown() {
+        if (provider && providerV0 && providerV0->removeNotificationManager) {
+            auto removeFn = providerV0->removeNotificationManager;
+            const void* clientInfo = providerV0->base.clientInfo;
+            provider = nullptr;
+            providerV0.reset();
+            removeFn(this, clientInfo);
+        } else {
+            provider = nullptr;
+            providerV0.reset();
+        }
+    }
+
+    const void* provider = nullptr;
+    std::optional<NotificationProviderV0> providerV0;
+    std::unordered_set<std::uint64_t> shownNotifications;
+    std::unordered_set<std::uint64_t> clickedNotifications;
+    std::unordered_set<std::uint64_t> closedNotifications;
+    std::vector<std::string> removedNotificationPolicies;
 };
 
 class Frame final : public ObjectOf<ObjectType::Frame> {

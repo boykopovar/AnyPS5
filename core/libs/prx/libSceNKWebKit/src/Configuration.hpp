@@ -167,6 +167,11 @@ class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
 public:
     ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
     explicit ProcessPool(Retained<ProcessPoolConfiguration> config) : configuration(std::move(config)) {}
+    ~ProcessPool() override {
+        if (notificationManager) {
+            notificationManager->teardown();
+        }
+    }
 
     Retained<ProcessPoolConfiguration> configuration;
     bool usesSingleWebProcess = false;
@@ -199,6 +204,7 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t terminatedNetworkProcessesCount = 0;
 mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    mutable Retained<NotificationManager> notificationManager;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
