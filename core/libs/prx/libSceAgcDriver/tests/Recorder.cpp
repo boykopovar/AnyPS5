@@ -2523,7 +2523,15 @@ void deferredBatchTests(const Device& device) {
         }
         return false;
     };
-    {
+    std::string unwindFailures;
+    const auto unwindAttempt = [&](const std::function<void()>& run) {
+        try {
+            run();
+        } catch (const std::exception& error) {
+            unwindFailures += std::string(error.what()) + "; ";
+        }
+    };
+    unwindAttempt([&] {
         RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, true);
         Recorder recorder(context, false, true, context.queueFamily);
         const auto commands = recorder.Commands();
@@ -2536,7 +2544,7 @@ void deferredBatchTests(const Device& device) {
         recorder.Submit();
         recorder.Sync();
         Require(recorder.StreamCounts().direct == 1 && recorder.StreamCounts().poisoned == 1 && recorder.StreamCounts().replayed == 1, "the batch after a poisoned direct one was not replayed: " + recorder.StreamReport());
-    }
+    });
     passedDeviceProc = context.deviceProc;
     passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
     passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
@@ -2558,7 +2566,7 @@ void deferredBatchTests(const Device& device) {
         Require(recorder.StreamCounts().demoted == 1 && recorder.StreamCounts().replayed == 0, "the demoted batch was replayed: " + recorder.StreamReport());
         Require(demotions.size() == 1 && demotions[0].first == "vkCmdPipelineBarrier/" + std::to_string(VK_STRUCTURE_TYPE_MEMORY_BARRIER) && demotions[0].second == 1, "the demotion was not counted by command: " + recorder.StreamReport());
     }
-    {
+    unwindAttempt([&] {
         Context failing = context;
         failing.deviceProc = replayFailingDeviceProc;
         Recorder recorder(failing, false, true, context.queueFamily);
@@ -2572,7 +2580,8 @@ void deferredBatchTests(const Device& device) {
         recorder.Submit();
         recorder.Sync();
         Require(recorder.StreamCounts().replayed == 1 && recorder.StreamCounts().poisoned == 1, "the batch after a poisoned demoted one was not replayed: " + recorder.StreamReport());
-    }
+    });
+    Require(unwindFailures.empty(), "a batch a draw unwound through was not refused: " + unwindFailures);
     {
         Context failing = context;
         passedDeviceProc = context.deviceProc;
@@ -8021,7 +8030,7 @@ void drawInputMirrorTests(const Device& device) {
     Require(remade != nullptr && remade != lostMirror && !remade->Mapped() && use(2 * held, held), "a mirror was not made again after its batch was discarded");
     Require(drawInputHolds(context, cache, remade, first, held), "a draw input mirror made after a discarded batch does not hold the bytes of its snapshot");
     cache.Sync();
-    const auto failedRegistration = [&](Recorder& batch, const Context& through, bool deferred, bool demoted, const char* mode) {
+    const auto failedRegistration = [&](Recorder& batch, const Context& through, bool deferred, bool demoted, const char* mode) -> std::weak_ptr<Buffer> {
         const auto commands = batch.Commands();
         if (demoted) demoteThrough(through, commands);
         Require(batch.Deferred() == deferred, std::string("the ") + mode + " batch did not open in its mode");
@@ -8055,26 +8064,35 @@ void drawInputMirrorTests(const Device& device) {
         Require(retried != nullptr && retried != next && !retried->Mapped() && counted(2 * held, held), std::string("a mirror was not made again after its discard registration failed in a ") + mode + " batch");
         Require(drawInputHolds(through, batch, retried, first, held), std::string("the mirror made after a failed discard registration does not hold the bytes of its snapshot in a ") + mode + " batch");
         batch.Sync();
+        return hostWatch;
+    };
+    std::string mirrorFailures;
+    const auto inMode = [&](const char* mode, const Context& through, bool deferred, bool demoted) {
+        std::weak_ptr<Buffer> hostWatch;
+        try {
+            {
+                Recorder batch(through, false, deferred || demoted, context.queueFamily);
+                hostWatch = failedRegistration(batch, through, deferred, demoted, mode);
+            }
+            Require(hostWatch.expired(), std::string("the host snapshot of a ") + mode + " batch outlived its recorder");
+        } catch (const std::exception& error) {
+            Recorder::FailNextDiscardRegistrationsForTest(0);
+            mirrorFailures += std::string(error.what()) + "; ";
+        }
     };
     const char* recordInline = std::getenv("APS5_RECORD_INLINE");
     const bool inlineRecording = recordInline != nullptr && std::strcmp(recordInline, "0") != 0;
-    if (!inlineRecording) {
-        Recorder batch(context, false, true, context.queueFamily);
-        failedRegistration(batch, context, true, false, "deferred");
-    }
-    {
-        Recorder batch(context);
-        failedRegistration(batch, context, false, false, "direct");
-    }
+    if (!inlineRecording) inMode("deferred", context, true, false);
+    inMode("direct", context, false, false);
     if (!inlineRecording) {
         passedDeviceProc = context.deviceProc;
         passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
         passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
         auto failing = context;
         failing.deviceProc = replayFailingDeviceProc;
-        Recorder batch(failing, false, true, context.queueFamily);
-        failedRegistration(batch, failing, false, true, "demoted");
+        inMode("demoted", failing, false, true);
     }
+    Require(mirrorFailures.empty(), "a failed discard registration left a mirror copy without its operands: " + mirrorFailures);
     auto tight = context;
     tight.memoryProperties2 = tightMemoryBudget;
     Recorder narrow(tight);
