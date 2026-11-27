@@ -161,6 +161,40 @@ int main() {
     Require(ThrowsNotImplemented([&] { _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&overlongShared, valid); }));
     Require(overlongShared.length == 8 && sharedShortBuffer.refCount == 4);
 
+    unsigned char writableBuf[64]{};
+    StringImpl validCapHeader{2, 64, writableBuf, 4};
+    StringBuilder nullDestBuilder = NewBuilder();
+    nullDestBuilder.buffer = &validCapHeader;
+    nullDestBuilder.characters8 = nullptr;
+    Require(ThrowsNotImplemented([&] { _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&nullDestBuilder, valid); }));
+    Require(nullDestBuilder.length == 0);
+
+    StringImpl mismatched16Header{2, 64, writableBuf, 0};
+    StringBuilder mismatchedWidthBuilder = NewBuilder();
+    mismatchedWidthBuilder.buffer = &mismatched16Header;
+    mismatchedWidthBuilder.characters8 = writableBuf;
+    mismatchedWidthBuilder.is8Bit = true;
+    Require(ThrowsNotImplemented([&] { _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&mismatchedWidthBuilder, valid); }));
+    Require(mismatchedWidthBuilder.length == 0);
+
+    struct FakeSubstringImpl {
+        StringImpl header;
+        StringImpl* owner;
+    };
+    FakeSubstringImpl badSubstring{{2, 4, writableBuf, 4u | 2u}, reinterpret_cast<StringImpl*>(pages.Guard())};
+    StringBuilder badSubstringBuilder = NewBuilder();
+    badSubstringBuilder.buffer = &badSubstring.header;
+    badSubstringBuilder.characters8 = writableBuf;
+    badSubstringBuilder.length = 2;
+    Require(ThrowsNotImplemented([&] { _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&badSubstringBuilder, valid); }));
+    Require(badSubstringBuilder.length == 2 && badSubstring.header.refCount == 2);
+
+    StringBuilder nonCrashingOverflow = NewBuilder();
+    nonCrashingOverflow.shouldCrashOnOverflow = false;
+    nonCrashingOverflow.length = 0x7FFFFFFE;
+    _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&nonCrashingOverflow, valid);
+    Require(nonCrashingOverflow.overflowed && nonCrashingOverflow.length == 0x7FFFFFFE);
+
     _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&builder, valid);
     Require(builder.is8Bit && builder.length == 5 && builder.buffer != nullptr);
     Require(std::memcmp(builder.characters8, "\"abc\"", 5) == 0);

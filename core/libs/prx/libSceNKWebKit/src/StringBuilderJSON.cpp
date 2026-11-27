@@ -40,7 +40,7 @@ static_assert(sizeof(bool) == 1);
 constexpr unsigned MaxLength = 0x7FFFFFFF;
 constexpr unsigned kStringImplFlag8Bit = 4u;
 constexpr unsigned kStringImplBufferOwnershipMask = 3u;
-constexpr unsigned kStringImplBufferSubstring = 1u;
+constexpr unsigned kStringImplBufferSubstring = 2u;
 constexpr std::size_t kSubstringHeaderBytes = 24u + sizeof(StringImpl*);
 
 void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
@@ -66,18 +66,46 @@ StringImpl ReadGuestStringImpl(const StringImpl* pointer, const char* function) 
     return header;
 }
 
-void ValidateReleasableString(StringImpl* impl, const char* function, unsigned depth = 0) {
+struct PlannedReleaseState {
+    StringImpl* impl;
+    unsigned refCount;
+    unsigned hashAndFlags;
+};
+
+void ValidatePlannedRelease(StringImpl* impl, std::vector<PlannedReleaseState>& states, const char* function, unsigned depth = 0) {
     if (!impl) return;
     if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    const StringImpl header = ReadGuestStringImpl(impl, function);
-    RequireWritableGuestBytes(impl, sizeof(StringImpl), function);
-    if ((header.refCount & ~1u) == 2u && (header.hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
+    PlannedReleaseState* state = nullptr;
+    for (auto& entry : states) {
+        if (entry.impl == impl) {
+            state = &entry;
+            break;
+        }
+    }
+    if (!state) {
+        const StringImpl header = ReadGuestStringImpl(impl, function);
+        RequireWritableGuestBytes(impl, sizeof(StringImpl), function);
+        states.push_back({impl, header.refCount, header.hashAndFlags});
+        state = &states.back();
+    }
+    if (state->refCount != 2u) {
+        state->refCount -= 2u;
+        return;
+    }
+    state->refCount = 0u;
+    if ((state->hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
         RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
         StringImpl* owner = nullptr;
         if (!GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(impl) + 24, sizeof(owner)))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-        if (owner) ValidateReleasableString(owner, function, depth + 1u);
+        if (owner) ValidatePlannedRelease(owner, states, function, depth + 1u);
     }
+}
+
+void ValidateReleasableStrings(StringImpl* first, StringImpl* second, const char* function) {
+    std::vector<PlannedReleaseState> states;
+    if (first) ValidatePlannedRelease(first, states, function);
+    if (second) ValidatePlannedRelease(second, states, function);
 }
 
 void UnpackStringBuilder(const unsigned char* raw, StringBuilder& builder) {
@@ -195,17 +223,18 @@ unsigned RoundUpToPowerOfTwo(unsigned value) {
 extern "C" {
 
 void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(StringBuilder* self, const String& string) {
+    const char* const functionName = __func__;
     if (!self) throw std::invalid_argument("null WTF::StringBuilder");
-    RequireReadableGuestBytes(self, sizeof(StringBuilder), __func__);
-    RequireWritableGuestBytes(self, sizeof(StringBuilder), __func__);
+    RequireReadableGuestBytes(self, sizeof(StringBuilder), functionName);
+    RequireWritableGuestBytes(self, sizeof(StringBuilder), functionName);
 
     unsigned char rawBuilder[sizeof(StringBuilder)]{};
     if (!GuestCopyIn_nid_no_patch(rawBuilder, self, sizeof(rawBuilder)))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
 
     const StringImpl* guestImpl = nullptr;
     if (!GuestCopyIn_nid_no_patch(&guestImpl, &string, sizeof(guestImpl)))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
 
     BorrowedStringBuilder local(rawBuilder);
     auto& builder = local.value;
@@ -216,16 +245,16 @@ void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(Stri
     const void* guestStringData = nullptr;
     std::size_t guestStringBytes = 0;
     if (guestImpl) {
-        const StringImpl implHeader = ReadGuestStringImpl(guestImpl, __func__);
+        const StringImpl implHeader = ReadGuestStringImpl(guestImpl, functionName);
         stringLength = implHeader.length;
         stringIs8Bit = (implHeader.hashAndFlags & kStringImplFlag8Bit) != 0;
         if (stringLength) {
             if (!implHeader.data) throw std::invalid_argument("null WTF character buffer");
             const std::size_t unitSize = stringIs8Bit ? 1u : sizeof(char16_t);
             if (stringLength > std::numeric_limits<std::size_t>::max() / unitSize)
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+                NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
             guestStringBytes = static_cast<std::size_t>(stringLength) * unitSize;
-            RequireReadableGuestBytes(implHeader.data, guestStringBytes, __func__);
+            RequireReadableGuestBytes(implHeader.data, guestStringBytes, functionName);
             guestStringData = implHeader.data;
         }
     }
@@ -235,7 +264,7 @@ void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(Stri
     const auto failOverflow = [&]() {
         const unsigned char overflowByte = 1;
         if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(StringBuilder, overflowed), &overflowByte, sizeof(overflowByte)))
-            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
         if (builder.shouldCrashOnOverflow) throw std::length_error("WTF::StringBuilder overflowed");
     };
     if (maximumCapacityRequired > 0xFFFFFFFFULL) {
@@ -255,11 +284,11 @@ void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(Stri
         if (stringIs8Bit) {
             copiedInput8.resize(stringLength);
             if (!GuestCopyIn_nid_no_patch(copiedInput8.data(), guestStringData, guestStringBytes))
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+                NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
         } else {
             copiedInput16.resize(stringLength);
             if (!GuestCopyIn_nid_no_patch(copiedInput16.data(), guestStringData, guestStringBytes))
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+                NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
         }
     }
 
@@ -286,73 +315,89 @@ void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(Stri
         formattedUnits = static_cast<std::size_t>(output - formatted16.data());
     }
 
+    const auto publishBuilder = [&]() {
+        unsigned char updatedRaw[sizeof(StringBuilder)]{};
+        std::memcpy(updatedRaw, rawBuilder, sizeof(updatedRaw));
+        PackStringBuilder(builder, updatedRaw);
+        if (!GuestCopyOut_nid_no_patch(self, updatedRaw, sizeof(updatedRaw)))
+            NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+    };
+
+    const auto writeFormattedIntoBuffer = [&](const StringImpl& targetBufferHeader, bool updateLengthOnly) {
+        const bool targetIs8Bit = (targetBufferHeader.hashAndFlags & kStringImplFlag8Bit) != 0;
+        if (targetIs8Bit != builder.is8Bit || targetIs8Bit != finalIs8Bit)
+            NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+        if (currentLength > targetBufferHeader.length || formattedUnits > targetBufferHeader.length - currentLength)
+            NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+        const std::size_t elemSize = finalIs8Bit ? 1u : sizeof(char16_t);
+        void* rawChars = finalIs8Bit ? static_cast<void*>(builder.characters8) : static_cast<void*>(builder.characters16);
+        const std::uintptr_t baseAddress = reinterpret_cast<std::uintptr_t>(rawChars);
+        const std::size_t byteOffset = static_cast<std::size_t>(currentLength) * elemSize;
+        const std::size_t writeBytes = formattedUnits * elemSize;
+        if (!baseAddress || byteOffset > std::numeric_limits<std::uintptr_t>::max() - baseAddress
+            || writeBytes > std::numeric_limits<std::uintptr_t>::max() - (baseAddress + byteOffset))
+            NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+        void* destination = reinterpret_cast<void*>(baseAddress + byteOffset);
+        RequireWritableGuestBytes(destination, writeBytes, functionName);
+        const void* source = finalIs8Bit ? static_cast<const void*>(formatted8.data()) : static_cast<const void*>(formatted16.data());
+        if (!GuestCopyOut_nid_no_patch(destination, source, writeBytes))
+            NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+        builder.length = static_cast<std::int32_t>(currentLength + formattedUnits);
+        if (updateLengthOnly) {
+            if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(StringBuilder, length), &builder.length, sizeof(builder.length)))
+                NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+        } else {
+            publishBuilder();
+        }
+    };
+
     if (upConvert) {
-        if (currentLength && builder.characters8) RequireReadableGuestBytes(builder.characters8, currentLength, __func__);
-        if (builder.buffer) ValidateReleasableString(builder.buffer, __func__);
-        if (builder.string.impl) ValidateReleasableString(builder.string.impl, __func__);
+        if (currentLength && builder.characters8) RequireReadableGuestBytes(builder.characters8, currentLength, functionName);
+        ValidateReleasableStrings(builder.buffer, builder.string.impl, functionName);
         NKWebKit::WtfAbi::AllocateBufferUpConvert(builder, builder.characters8, allocationSize);
     } else if (builder.buffer) {
-        const StringImpl bufferHeader = ReadGuestStringImpl(builder.buffer, __func__);
+        const StringImpl bufferHeader = ReadGuestStringImpl(builder.buffer, functionName);
         if (allocationSize > bufferHeader.length) {
-            ValidateReleasableString(builder.buffer, __func__);
+            ValidateReleasableStrings(builder.buffer, builder.string.impl, functionName);
             const bool bufferIs8Bit = (bufferHeader.hashAndFlags & kStringImplFlag8Bit) != 0;
             const std::size_t bufferUnitSize = bufferIs8Bit ? 1u : sizeof(char16_t);
             const std::size_t copyUnits = std::max<std::size_t>(bufferHeader.length, currentLength);
             if (copyUnits) {
                 if (copyUnits > std::numeric_limits<std::size_t>::max() / bufferUnitSize)
-                    NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-                RequireReadableGuestBytes(bufferHeader.data, copyUnits * bufferUnitSize, __func__);
+                    NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+                RequireReadableGuestBytes(bufferHeader.data, copyUnits * bufferUnitSize, functionName);
             }
-            if (builder.string.impl) ValidateReleasableString(builder.string.impl, __func__);
             NKWebKit::WtfAbi::ReserveCapacity(builder, allocationSize);
         } else {
-            const std::size_t elemSize = finalIs8Bit ? 1u : sizeof(char16_t);
-            const std::uintptr_t baseAddress = reinterpret_cast<std::uintptr_t>(builder.characters8);
-            const std::size_t byteOffset = static_cast<std::size_t>(currentLength) * elemSize;
-            const std::size_t writeBytes = formattedUnits * elemSize;
-            if (!baseAddress || byteOffset > std::numeric_limits<std::uintptr_t>::max() - baseAddress
-                || writeBytes > std::numeric_limits<std::uintptr_t>::max() - (baseAddress + byteOffset))
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-            void* destination = reinterpret_cast<void*>(baseAddress + byteOffset);
-            RequireWritableGuestBytes(destination, writeBytes, __func__);
-            const void* source = finalIs8Bit ? static_cast<const void*>(formatted8.data()) : static_cast<const void*>(formatted16.data());
-            if (!GuestCopyOut_nid_no_patch(destination, source, writeBytes))
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-            const std::int32_t newLength = static_cast<std::int32_t>(currentLength + formattedUnits);
-            if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(StringBuilder, length), &newLength, sizeof(newLength)))
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            writeFormattedIntoBuffer(bufferHeader, true);
             return;
         }
     } else if (allocationSize > currentLength) {
         if (currentLength) {
-            if (!builder.string.impl) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-            const StringImpl existingHeader = ReadGuestStringImpl(builder.string.impl, __func__);
-            ValidateReleasableString(builder.string.impl, __func__);
+            if (!builder.string.impl) NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+            const StringImpl existingHeader = ReadGuestStringImpl(builder.string.impl, functionName);
+            ValidateReleasableStrings(builder.string.impl, nullptr, functionName);
             const bool existingIs8Bit = (existingHeader.hashAndFlags & kStringImplFlag8Bit) != 0;
             const std::size_t existingUnitSize = existingIs8Bit ? 1u : sizeof(char16_t);
             if (currentLength > std::numeric_limits<std::size_t>::max() / existingUnitSize)
-                NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-            RequireReadableGuestBytes(existingHeader.data, static_cast<std::size_t>(currentLength) * existingUnitSize, __func__);
+                NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+            RequireReadableGuestBytes(existingHeader.data, static_cast<std::size_t>(currentLength) * existingUnitSize, functionName);
         } else if (builder.string.impl) {
-            ValidateReleasableString(builder.string.impl, __func__);
+            ValidateReleasableStrings(builder.string.impl, nullptr, functionName);
         }
         NKWebKit::WtfAbi::ReserveCapacity(builder, allocationSize);
+    } else {
+        NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
     }
 
-    if (!builder.overflowed) {
-        if (builder.is8Bit) {
-            std::memcpy(builder.characters8 + currentLength, formatted8.data(), formattedUnits);
-        } else {
-            std::memcpy(builder.characters16 + currentLength, formatted16.data(), formattedUnits * sizeof(char16_t));
-        }
-        builder.length = static_cast<std::int32_t>(currentLength + formattedUnits);
+    if (builder.overflowed) {
+        publishBuilder();
+        return;
     }
 
-    unsigned char updatedRaw[sizeof(StringBuilder)]{};
-    std::memcpy(updatedRaw, rawBuilder, sizeof(updatedRaw));
-    PackStringBuilder(builder, updatedRaw);
-    if (!GuestCopyOut_nid_no_patch(self, updatedRaw, sizeof(updatedRaw)))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!builder.buffer) NotImplementedAt_nid_no_patch(functionName, __FILE__, __LINE__);
+    const StringImpl allocatedBufferHeader = ReadGuestStringImpl(builder.buffer, functionName);
+    writeFormattedIntoBuffer(allocatedBufferHeader, false);
 }
 
 }
