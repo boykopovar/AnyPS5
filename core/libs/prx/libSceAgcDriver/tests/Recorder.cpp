@@ -62,6 +62,7 @@
 #include "BdaAbi.hpp"
 #include "ShaderCacheSourceVersion.hpp"
 #include "WatchedBlock.hpp"
+#include "ShaderDiskCache.hpp"
 #include <SDL_loadso.h>
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -2734,6 +2735,27 @@ bool deferredSettleTests(const Device& device) {
         Require(pairImport != nullptr && !pairImport->unwatched && Watched(pairAddress, pairBytes), "(d) a 128 KiB import did not settle at the import");
         unregisterRange(pair);
         HostImportFor(context, pairAddress, pairBytes);
+    }
+    {
+        constexpr std::size_t pairBytes = 2 * unit;
+        void* pair = AllocateWatched(pairBytes, unit);
+        struct ReleasePair {
+            void* pair;
+            ~ReleasePair() { ReleaseWatched(pair, pairBytes); }
+        } releasePair{pair};
+        const auto pairAddress = reinterpret_cast<std::uint64_t>(pair);
+        auto queueless = context;
+        queueless.settleQueue = VK_NULL_HANDLE;
+        queueless.settleQueueMutex = nullptr;
+        const auto settledBefore = HostImportsSettled();
+        const auto submittedBefore = HostImportSettles().submitted;
+        registerRange(pair, pairBytes);
+        const auto* pairImport = HostImportFor(queueless, pairAddress, pairBytes);
+        Require(pairImport != nullptr && pairImport->unwatched && !Watched(pairAddress, pairBytes), "(d) a 128 KiB import through a context with no settle queue was not left compared");
+        HostImportFor(queueless, pairAddress, pairBytes);
+        Require(HostImportsSettled() == settledBefore && HostImportSettles().submitted == submittedBefore, "(d) an import through a context with no settle queue was settled");
+        unregisterRange(pair);
+        HostImportFor(queueless, pairAddress, pairBytes);
     }
     const auto address = reinterpret_cast<std::uint64_t>(small);
     std::memset(small, 0x11, unit);
@@ -10600,6 +10622,11 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
             std::cout << "host import of the write-back padding block refused: write-back padding not tested\n";
             return;
         }
+        const bool importWatched = [&] {
+            if (!watched) return false;
+            std::lock_guard gpu(GpuMutex());
+            return WatchedAfterSettle(base, address, surfaceBytes);
+        }();
         TextureDetiler detiler(base);
         auto context = base;
         context.detiler = &detiler;
@@ -10624,15 +10651,15 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 device.WaitQueue();
                 recorder.Sync();
                 const auto slabRetiled = StorageTexture::SlabRetiles() - slabRetilesBefore;
-                if (test.direct && watched && UnitShadowEnabled() && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
+                if (test.direct && importWatched && UnitShadowEnabled() && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
                 const auto paddingSeeded = StorageTexture::PaddingSeedCopies() - paddingSeedsBefore;
-                if (test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && paddingSeeded != 0) failures += what + ": the write-back copied " + std::to_string(paddingSeeded) + " pieces of row padding from the import through its scratch\n";
+                if (test.tileMode == TextureTileMode::kLinear && importWatched && paddingSeeded != 0) failures += what + ": the write-back copied " + std::to_string(paddingSeeded) + " pieces of row padding from the import through its scratch\n";
                 const auto importRetiled = StorageTexture::LinearImportRetiles() - importRetilesBefore;
                 static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
                 const auto* surfaceImport = watched ? HostImportFor(context, address, surfaceBytes) : nullptr;
                 const bool deviceLocalImport = surfaceImport != nullptr && HostImportDeviceLocal(context, *surfaceImport);
                 static const bool hostRetile = std::getenv("APS5_LINEAR_IMPORT_RETILE_HOST") != nullptr;
-                const bool expectImportRetile = importRetile && (deviceLocalImport || hostRetile) && test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes);
+                const bool expectImportRetile = importRetile && (deviceLocalImport || hostRetile) && test.tileMode == TextureTileMode::kLinear && importWatched;
                 if (expectImportRetile && importRetiled == 0) failures += what + ": the linear write-back went through its scratch instead of retiling into the import\n";
                 if (!importRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into the import with APS5_NO_LINEAR_IMPORT_RETILE set\n";
                 if (watched && !deviceLocalImport && !hostRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into an import outside a device-local heap\n";
@@ -11052,6 +11079,13 @@ void writeBackBlockTests(const Device& device, Recorder& recorder) {
         }
         ClearHostImports(base.device);
         recorder.Sync();
+        recorder.FlushDeferredReleases();
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> released{{{address, address + surfaceBytes}}};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (StorageTexture::AnyLiveOverlaps(released)) {
+            Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": the image is still in the live registry when its memory is released");
+            std::this_thread::yield();
+        }
 #ifdef _WIN32
         VirtualFree(reserved, 0, MEM_RELEASE);
 #else
@@ -17355,7 +17389,7 @@ void pipelineCacheHeaderTests(const Device& device) {
     } removeDirectory{cleanupRoot};
     auto directory = root;
     char version[17];
-    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::SourceVersion()));
     while ((directory / version).native().size() < 220) {
         const auto length = (directory / version).native().size();
         const auto remaining = 245 > length ? 245 - length : 1;

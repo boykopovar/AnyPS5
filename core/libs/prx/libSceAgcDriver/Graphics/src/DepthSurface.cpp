@@ -5232,15 +5232,18 @@ std::vector<LayeredSlice> layeredSlices(const Context& context, const LayeredDep
 }
 
 std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, DepthSurface& surface, const GuestTextureResource& resource, std::uint32_t mip) {
-    const auto& target = surface.target;
+    auto target = surface.target;
+    target.address = resource.baseAddress;
     const auto layers = resource.depthOrLastArray + 1u;
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto bytesPerTexel = d16 ? 2u : 4u;
     surface.RequireStorable(resource);
     Require(!DescribeSurface(resource).levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
-    auto& entry = layeredStorages()[{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray}];
-    if (entry == nullptr) entry = std::make_unique<LayeredDepthStorage>(context, resource, target, bytesPerTexel, resource.baseArray, layers);
-    else static_cast<void>(entry->storage->Refresh());
+    const std::tuple key{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray};
+    auto found = layeredStorages().find(key);
+    if (found == layeredStorages().end()) found = layeredStorages().emplace(key, std::make_unique<LayeredDepthStorage>(context, resource, target, bytesPerTexel, resource.baseArray, layers)).first;
+    else static_cast<void>(found->second->storage->Refresh());
+    auto& entry = found->second;
     const auto slices = layeredSlices(context, *entry);
     for (const auto& slice : slices) slice.surface->ApplyFastClear();
     entry->Copy(slices, true);
@@ -5268,7 +5271,7 @@ std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std:
     const bool stencil = surface.target.stencilAddress != 0 && surface.target.stencilAddress == resource.baseAddress;
     if (stencil || resource.dimension != TextureDimension::k2DArray || (resource.baseArray == 0 && resource.depthOrLastArray == 0)) return surface.Storage(words, resource, mip);
     if (!surface.StorageViewMatches(words, resource)) return nullptr;
-    return layeredDepthStorage(context, surface, resource, mip);
+    return layeredDepthStorage(context, surface, ViewedArrayWindow(resource, true), mip);
 }
 
 DepthCopySourceScope::DepthCopySourceScope(bool active) : previous(depthCopySourceActive) {

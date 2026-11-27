@@ -2802,7 +2802,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
         ++tracker.generation;
         tracker.noteCpuStore(begin, end, tracker.generation);
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
-            tracker.driverPieces.erase(block);
+            if (const auto found = tracker.driverPieces.find(block); found != tracker.driverPieces.end()) found->second.dropped = std::max<std::uint64_t>(found->second.dropped, tracker.generation);
             tracker.stamp(block, tracker.generation, StampKind::Cpu);
             tracker.rewatchStamps[block] = tracker.stampOf(block);
             tracker.anyRewatchStamp.store(true, std::memory_order_release);
@@ -4141,35 +4141,43 @@ void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes)
     compareMappedHook = hook;
 }
 
-#ifdef __linux__
-std::optional<Compare> compareWithoutQuery(std::uintptr_t address, std::span<const std::byte> bytes) {
-    static const bool enabled = std::getenv("APS5_NO_COPY_COMPARE") == nullptr;
-    if (!enabled || HostMapping::QueryFd() >= 0 || compareMappedHookArmed()) return std::nullopt;
-    auto& pages = Pages();
-    pages.initialize();
-    for (const PageSpan* span : {&pages.arena, &pages.image}) {
-        if (span->size != 0 && address < span->base + span->size && address + bytes.size() > span->base) return std::nullopt;
-    }
-    struct Slot {};
-    auto& scratch = ThreadScratch<std::array<std::byte, 16384>, Slot>();
-    const int savedErrno = errno;
-    for (std::size_t offset = 0; offset < bytes.size();) {
-        const auto count = std::min(scratch.size(), bytes.size() - offset);
-        const bool copied = GuestCopyInUnsynced_nid_no_patch(scratch.data(), reinterpret_cast<const void*>(address + offset), count);
-        errno = savedErrno;
-        if (!copied) return std::nullopt;
-        if (std::memcmp(scratch.data(), bytes.data() + offset, count) != 0) return Compare::Differs;
-        offset += count;
-    }
-    return Compare::Equal;
-}
-#endif
-
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return Compare::Equal;
     if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
-#ifdef __linux__
-    if (const auto compared = compareWithoutQuery(static_cast<std::uintptr_t>(address), bytes)) return *compared;
+#ifdef _WIN32
+    std::uintptr_t arenaBase = 0;
+    std::size_t arenaBytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
+    if (address >= arenaBase && bytes.size() <= arenaBytes && address - arenaBase <= arenaBytes - bytes.size() && !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(address), bytes.size())) {
+        if (compareMappedHookArmed()) compareMappedHook(address, bytes.size());
+        bool same = false;
+        if (!GuestArena::GuestArenaCompareOwned_nid_no_patch(address, bytes.data(), bytes.size(), &same)) return Compare::Unmapped;
+        return same ? Compare::Equal : Compare::Differs;
+    }
+#elif defined(__linux__) || defined(__APPLE__)
+    if (compareMappedHookArmed()) compareMappedHook(address, bytes.size());
+    constexpr std::size_t ChunkBytes = 64 * PageBytes;
+    struct CompareMappedChunk {};
+    auto& chunk = HostThreadLocal<std::vector<std::byte>, CompareMappedChunk>();
+    if (chunk.size() < std::min(ChunkBytes, bytes.size())) chunk.resize(std::min(ChunkBytes, bytes.size()));
+    const int savedErrno = errno;
+    const auto compareRun = [&](std::size_t from, std::size_t count) {
+        if (!GuestCopyInUnsynced_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address + from), count)) return Compare::Unmapped;
+        return std::memcmp(chunk.data(), bytes.data() + from, count) != 0 ? Compare::Differs : Compare::Equal;
+    };
+    auto compared = Compare::Equal;
+    for (std::size_t done = 0; done < bytes.size() && compared == Compare::Equal; done += ChunkBytes) {
+        const auto end = done + std::min(ChunkBytes, bytes.size() - done);
+        compared = compareRun(done, end - done);
+        if (compared != Compare::Unmapped) continue;
+        compared = Compare::Equal;
+        for (std::size_t at = done, next = 0; at < end && compared == Compare::Equal; at = next) {
+            next = std::min(end, at + PageBytes - (address + at) % PageBytes);
+            compared = compareRun(at, next - at);
+        }
+    }
+    errno = savedErrno;
+    return compared;
 #endif
     auto outcome = Compare::Equal;
     // Each run's page state is consulted right before its bytes are compared.
