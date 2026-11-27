@@ -361,8 +361,13 @@ std::optional<GuestSignalSet> RunHandler(int guest, GuestHandler handler, int fl
     }
     UserUcontext context{};
     InfoReturn returned = InfoReturn::Unchanged;
-    if ((flags & SaSiginfo) != 0) returned = RunInfoHandler(guest, handler, entry, interrupted, context);
-    else handler(guest);
+    {
+#ifndef _WIN32
+        const TimedWait::SuspendSafeWaitHidden hidden;
+#endif
+        if ((flags & SaSiginfo) != 0) returned = RunInfoHandler(guest, handler, entry, interrupted, context);
+        else handler(guest);
+    }
     std::uint32_t replaced[4]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;

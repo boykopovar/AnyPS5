@@ -311,18 +311,19 @@ int APS5_VABI pthread_set_user_context_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_single_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+    pthread_suspend_all_np_nid_postfix();
     return 0;
 }
 
-int APS5_VABI pthread_suspend_all_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI pthread_suspend_all_np_nid_postfix(void) {
+    SuspendAllGuestThreads_nid_no_patch();
+    scePthreadTestcancel();
 }
 
-int APS5_VABI pthread_suspend_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI pthread_suspend_np_nid_postfix(Pthread thread) {
+    constexpr int GuestEinval = 22;
+    if (!thread) return GuestEinval;
+    return SuspendGuestThread_nid_no_patch(thread);
 }
 
 int APS5_VABI pthread_suspend_user_context_np_nid_postfix(void) {
@@ -1806,18 +1807,16 @@ int APS5_VABI scePthreadSetconcurrency(int level) {
 }
 
 int APS5_VABI scePthreadSingle(void) {
-    NotImplemented_nid_no_patch(__func__);
+    return SceResult(pthread_single_np_nid_postfix());
+}
+
+int APS5_VABI scePthreadSuspend(Pthread thread) {
+    if (pthread_suspend_np_nid_postfix(thread) != 0) NotImplemented_nid_no_patch("scePthreadSuspend: the error of a null, finished or calling thread");
     return 0;
 }
 
-int APS5_VABI scePthreadSuspend(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadSuspendAll(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePthreadSuspendAll(void) {
+    pthread_suspend_all_np_nid_postfix();
 }
 
 int APS5_VABI scePthreadTimedjoin(Pthread thread, void** value, KernelUseconds usec) {

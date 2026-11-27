@@ -159,6 +159,30 @@ private:
 using SingleWaiterCondition = Condition;
 #else
 bool DeferDelivery(int signum);
+bool InSuspendSafeWait();
+
+class SuspendSafeWait {
+public:
+    SuspendSafeWait();
+    ~SuspendSafeWait();
+    SuspendSafeWait(const SuspendSafeWait&) = delete;
+    SuspendSafeWait& operator=(const SuspendSafeWait&) = delete;
+
+private:
+    int depth;
+};
+
+class SuspendSafeWaitHidden {
+public:
+    SuspendSafeWaitHidden();
+    ~SuspendSafeWaitHidden();
+    SuspendSafeWaitHidden(const SuspendSafeWaitHidden&) = delete;
+    SuspendSafeWaitHidden& operator=(const SuspendSafeWaitHidden&) = delete;
+    void Abandon();
+
+private:
+    int depth;
+};
 
 class SingleWaiterCondition {
 public:

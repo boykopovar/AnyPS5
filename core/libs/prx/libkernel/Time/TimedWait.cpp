@@ -529,16 +529,23 @@ namespace {
 
 constinit thread_local std::atomic<int> deferralDepth{0};
 constinit thread_local std::atomic<int> deferredSignal{0};
+constinit thread_local std::atomic<int> suspendSafeDepth{0};
 
 class DeliveryAllowance {
 public:
-    DeliveryAllowance() : depth(deferralDepth.exchange(0)) { DeliverDeferred(); }
-    ~DeliveryAllowance() { deferralDepth.store(depth); }
+    DeliveryAllowance() : depth(deferralDepth.exchange(0)), safeDepth(suspendSafeDepth.fetch_add(1)) {
+        DeliverDeferred();
+    }
+    ~DeliveryAllowance() {
+        suspendSafeDepth.store(safeDepth);
+        deferralDepth.store(depth);
+    }
     DeliveryAllowance(const DeliveryAllowance&) = delete;
     DeliveryAllowance& operator=(const DeliveryAllowance&) = delete;
 
 private:
     int depth;
+    int safeDepth;
 };
 
 }
@@ -561,6 +568,26 @@ bool DeferDelivery(int signum) {
     if (deferralDepth.load() == 0) return false;
     deferredSignal.store(signum);
     return true;
+}
+
+bool InSuspendSafeWait() {
+    return suspendSafeDepth.load() != 0;
+}
+
+SuspendSafeWait::SuspendSafeWait() : depth(suspendSafeDepth.fetch_add(1)) {}
+
+SuspendSafeWait::~SuspendSafeWait() {
+    suspendSafeDepth.store(depth);
+}
+
+SuspendSafeWaitHidden::SuspendSafeWaitHidden() : depth(suspendSafeDepth.exchange(0)) {}
+
+SuspendSafeWaitHidden::~SuspendSafeWaitHidden() {
+    suspendSafeDepth.store(depth);
+}
+
+void SuspendSafeWaitHidden::Abandon() {
+    depth = 0;
 }
 
 #ifdef __APPLE__
