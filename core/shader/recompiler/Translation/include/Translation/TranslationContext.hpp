@@ -173,6 +173,7 @@ private:
     bool sLoad(const RdnaInstruction& inst, bool raw);
     bool sStore(const RdnaInstruction& inst, bool raw);
     bool sAtomic(const RdnaInstruction& inst, bool raw, IrOpcode opcode);
+    bool sScratch(const RdnaInstruction& inst, bool store);
     bool sScratchLoad(const RdnaInstruction& inst);
     bool sScratchStore(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);

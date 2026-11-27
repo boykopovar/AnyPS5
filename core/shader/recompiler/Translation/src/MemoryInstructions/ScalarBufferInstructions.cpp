@@ -148,13 +148,41 @@ bool TranslationContext::sAtomic(const RdnaInstruction& inst, bool raw, IrOpcode
     return true;
 }
 
-bool TranslationContext::sScratchStore(const RdnaInstruction& /*inst*/) {
-    throw std::runtime_error("s_scratch_store not yet implemented: wave-uniform or swizzled scratch layout required");
+bool TranslationContext::sScratch(const RdnaInstruction& inst, bool store) {
+    const std::uint32_t components = inst.dataDwordCount == 0u ? 1u : inst.dataDwordCount;
+    const IrU32 lane(ir.Emit(IrOpcode::LaneId, IrOpcodeType(IrOpcode::LaneId), {}));
+    const IrU32 laneBytes(ir.IMul(lane.Value(), ir.Constant(program.Info().scratchDwords * 4u)));
+    IrU32 offset(ir.ISub(readU32(inst.source1).Value(), laneBytes.Value()));
+    IrValue* resource = &ir.Emit(IrOpcode::GetScratchResource, IrOpcodeType(IrOpcode::GetScratchResource), {});
+    IrValue& uniform = ir.ConstantBool(true);
+    for (std::uint32_t component = 0u; component < components; ++component) {
+        if (component != 0u) offset = IrU32(ir.IAdd(offset.Value(), ir.Constant(4u)));
+        MemoryInfo memory{};
+        memory.kind = ResourceKind::Scratch;
+        memory.offset = inst.memoryOffset;
+        memory.dataDwords = 1u;
+        memory.componentCount = 1u;
+        const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);
+        if (store) {
+            const IrU32 data = readU32(offsetOperand(inst.destination, component));
+            (void)ir.Emit(IrOpcode::StoreAddressU32, IrOpcodeType(IrOpcode::StoreAddressU32), {resource, &offset.Value(), &ir.Constant(0u), &data.Value(), &uniform}, flags);
+            continue;
+        }
+        IrValue& loaded = ir.Emit(IrOpcode::LoadAddressU32, IrOpcodeType(IrOpcode::LoadAddressU32), {resource, &offset.Value(), &ir.Constant(0u), &uniform}, flags);
+        IrValue& value = ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&loaded, &uniform});
+        writeOperand(scalarDestinationOperand(inst.destination, component), &value);
+    }
+    return true;
 }
 
-bool TranslationContext::sScratchLoad(const RdnaInstruction& /*inst*/) {
-    throw std::runtime_error("s_scratch_load not yet implemented: wave-uniform or swizzled scratch layout required");
+bool TranslationContext::sScratchStore(const RdnaInstruction& inst) {
+    return sScratch(inst, true);
 }
+
+bool TranslationContext::sScratchLoad(const RdnaInstruction& inst) {
+    return sScratch(inst, false);
+}
+
 
 void TranslationContext::TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table) {
     if (table.values.empty()) throw std::runtime_error("empty shader code table");
