@@ -15,10 +15,26 @@ static_assert(sizeof(WebBrowserDialogCookieParam) == 280);
 static_assert(offsetof(WebBrowserDialogCookieParam, address) == 8);
 static_assert(offsetof(WebBrowserDialogCookieParam, cookie) == 16);
 static_assert(sizeof(WebBrowserDialogResetCookieParam) == 264);
+static_assert(sizeof(WebBrowserDialogNavigateParam) == 0x140);
+static_assert(offsetof(WebBrowserDialogNavigateParam, size) == 0x30);
+static_assert(offsetof(WebBrowserDialogNavigateParam, url) == 0x38);
+static_assert(offsetof(WebBrowserDialogNavigateParam, reserved) == 0x40);
+static_assert(sizeof(WebBrowserDialogZoomParam) == 0x140);
+static_assert(offsetof(WebBrowserDialogZoomParam, zoom) == 0x38);
+static_assert(offsetof(WebBrowserDialogZoomParam, type) == 0x3c);
+static_assert(offsetof(WebBrowserDialogZoomParam, width) == 0x40);
+static_assert(offsetof(WebBrowserDialogZoomParam, height) == 0x44);
+static_assert(offsetof(WebBrowserDialogZoomParam, reserved) == 0x48);
+static_assert(sizeof(WebBrowserDialogEvent) == 0x1130);
+static_assert(offsetof(WebBrowserDialogEvent, data) == 0xc);
+static_assert(offsetof(WebBrowserDialogEvent, firstString) == 0x30);
+static_assert(offsetof(WebBrowserDialogEvent, secondString) == 0x830);
+static_assert(offsetof(WebBrowserDialogEvent, reserved) == 0x1030);
 
 namespace {
 std::atomic<int> g_status{0};
 std::atomic<bool> g_open{false};
+std::atomic<bool> g_requestPending{false};
 
 bool CopyIn(void* dst, const void* src, std::size_t size) {
     const int savedErrno = errno;
@@ -34,7 +50,8 @@ bool CopyOut(void* dst, const void* src, std::size_t size) {
     return copied;
 }
 
-bool ReservedClear(const std::uint8_t (&reserved)[256]) {
+template <std::size_t N>
+bool ReservedClear(const std::uint8_t (&reserved)[N]) {
     for (const auto byte : reserved)
         if (byte != 0) return false;
     return true;
@@ -50,6 +67,37 @@ bool LengthWithin(const char* text, std::size_t limit) {
         ++length;
     }
     return length != 0 && length < limit;
+}
+
+int OpenDialog(const void* param) {
+    const int status = g_status.load();
+    if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    std::uint8_t probe = 0;
+    if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
+    g_requestPending = false;
+    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    g_open = true;
+    PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);
+    return 0;
+}
+
+bool DialogOpen() {
+    return g_status.load() != COMMON_DIALOG_STATUS_NONE && g_open.load();
+}
+
+int QueueRequest() {
+    if (!DialogOpen()) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    bool expected = false;
+    if (!g_requestPending.compare_exchange_strong(expected, true)) return COMMON_DIALOG_ERROR_INVALID_STATE;
+    return 0;
+}
+
+bool ZoomValid(const WebBrowserDialogZoomParam& param) {
+    if (param.type > 2) return false;
+    if (param.type == 2) return param.width - 1u < 1920u && param.height - 1u < 1080u;
+    return !(param.zoom <= 0.0f) && !(param.zoom > 3.0f);
 }
 }
 
@@ -110,16 +158,7 @@ int APS5_VABI sceWebBrowserDialogGetStatus(void) {
 }
 
 int APS5_VABI sceWebBrowserDialogOpen(const void* param) {
-    const int status = g_status.load();
-    if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
-    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    std::uint8_t probe = 0;
-    if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
-    g_status = COMMON_DIALOG_STATUS_FINISHED;
-    g_open = true;
-    PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);
-    return 0;
+    return OpenDialog(param);
 }
 
 int APS5_VABI sceWebBrowserDialogUpdateStatus(void) {
@@ -165,6 +204,7 @@ int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, 
     std::uint8_t probe = 0;
     if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
+    g_requestPending = false;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     g_open = true;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);
@@ -181,30 +221,46 @@ int APS5_VABI sceWebBrowserDialogResetCookie(const WebBrowserDialogResetCookiePa
     return 0;
 }
 
-int APS5_VABI sceWebBrowserDialogGetEvent() {
-    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceWebBrowserDialogGetEvent(WebBrowserDialogEvent* event) {
+    if (event == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (!DialogOpen()) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    std::uint64_t size = 0;
+    std::uint8_t reserved[sizeof(event->reserved)]{};
+    if (!CopyIn(&size, &event->size, sizeof(size)) || !CopyIn(reserved, event->reserved, sizeof(reserved))) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (size != sizeof(WebBrowserDialogEvent) || !ReservedClear(reserved)) return COMMON_DIALOG_ERROR_PARAMETER;
+    static constexpr char empty[sizeof(event->firstString)]{};
+    if (!CopyOut(event->data, empty, sizeof(event->data)) || !CopyOut(event->firstString, empty, sizeof(event->firstString)) ||
+        !CopyOut(event->secondString, empty, sizeof(event->secondString)))
+        return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
-int APS5_VABI sceWebBrowserDialogNavigate() {
-    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceWebBrowserDialogNavigate(const WebBrowserDialogNavigateParam* param) {
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    WebBrowserDialogNavigateParam local{};
+    if (!CopyIn(&local, param, sizeof(local))) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param)) || local.size != sizeof(local) ||
+        !LengthWithin(local.url, 0x800) || !ReservedClear(local.reserved))
+        return COMMON_DIALOG_ERROR_PARAMETER;
+    return QueueRequest();
 }
 
-int APS5_VABI sceWebBrowserDialogSetZoom() {
-    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceWebBrowserDialogSetZoom(const WebBrowserDialogZoomParam* param) {
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    WebBrowserDialogZoomParam local{};
+    if (!CopyIn(&local, param, sizeof(local))) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param)) || local.size != sizeof(local) ||
+        !ZoomValid(local) || !ReservedClear(local.reserved))
+        return COMMON_DIALOG_ERROR_PARAMETER;
+    return QueueRequest();
 }
 
 }
 
 extern "C" {
 
-int APS5_VABI libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch(const void* param) {
+    return OpenDialog(param);
 }
 APS5_EXPORT("8r4EJ3FiX4w", libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch);
 

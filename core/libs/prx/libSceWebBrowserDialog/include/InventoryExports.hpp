@@ -4,6 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch();
+int APS5_VABI libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch(const void* param);
 
 }
