@@ -2,14 +2,17 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <numbers>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
@@ -297,9 +300,13 @@ static void SetMatrixLevels(Ngs2Voice& voice, std::uint32_t matrixId, const floa
     if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_RACK_CHANNELS * NGS2_MAX_RACK_CHANNELS || levels == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    std::vector<float> localLevels(numLevels);
+    if (!ReadGuestBytes(localLevels.data(), levels, localLevels.size() * sizeof(float))) {
+        throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_OUT_ADDRESS};
+    }
     auto& matrix = voice.matrices[matrixId];
     matrix.resize(numLevels);
-    for (std::uint32_t i = 0; i < numLevels; i++) matrix[i] = std::clamp(levels[i], -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
+    for (std::uint32_t i = 0; i < numLevels; i++) matrix[i] = std::clamp(localLevels[i], -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
 }
 
 static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t matrixId) {
@@ -544,7 +551,10 @@ static bool SetupPending(const Ngs2Voice& voice) {
 
 static Ngs2MatrixControl CaptureMatrixControl(const Ngs2Voice& voice, std::uint32_t index, const float* levels, std::uint32_t count) {
     if (index >= voice.matrices.size() || count == 0 || count > NGS2_MAX_RACK_CHANNELS * NGS2_MAX_RACK_CHANNELS || levels == nullptr) APS5_INVALID_ARG_EX;
-    Ngs2MatrixControl result{index, {levels, levels + count}};
+    Ngs2MatrixControl result{index, std::vector<float>(count)};
+    if (!ReadGuestBytes(result.levels.data(), levels, result.levels.size() * sizeof(float))) {
+        throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_OUT_ADDRESS};
+    }
     for (auto& level : result.levels) level = std::clamp(level, -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
     return result;
 }
@@ -1280,22 +1290,30 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
     auto& voice = *found;
     if (voice.rack->system == nullptr && !voice.pendingControls.empty()) voice.ApplyPendingControls();
     try {
-        if (commands == nullptr && num_commands != 0) APS5_INVALID_ARG_EX;
+        if (num_commands == 0) return SCE_NGS2_OK;
+        if (commands == nullptr) APS5_INVALID_ARG_EX;
+        if (num_commands > std::numeric_limits<std::size_t>::max() / sizeof(Ngs2VoiceCommand)) {
+            return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+        }
+        std::vector<Ngs2VoiceCommand> localCommands(num_commands);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(localCommands.data(), commands, localCommands.size() * sizeof(Ngs2VoiceCommand));
+        errno = savedErrno;
+        if (!copied) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         const auto isVolume = [](const Ngs2VoiceCommand& command) { return (command.id & 0xffffff) == COMMAND_PORT_VOLUME; };
         const auto badPort = [&](const Ngs2VoiceCommand& command) { return isVolume(command) && (command.id >> 24) >= voice.ports.size(); };
-        if (voice.ports.size() == DEFAULT_MAX_PORTS && std::any_of(commands, commands + num_commands, badPort) && std::all_of(commands, commands + num_commands, isVolume)) return SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX;
+        if (voice.ports.size() == DEFAULT_MAX_PORTS && std::any_of(localCommands.begin(), localCommands.end(), badPort) && std::all_of(localCommands.begin(), localCommands.end(), isVolume)) return SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX;
         if (DeferringControls(voice)) {
             if (num_commands > voice.pendingControls.max_size() - voice.pendingControls.size()) throw std::length_error("NGS2: too many buffered voice commands");
             std::vector<Ngs2PendingControl> captured;
             captured.reserve(num_commands);
-            for (std::size_t i = 0; i < num_commands; ++i) captured.push_back(CaptureCommandControl(voice, commands[i]));
+            for (const auto& command : localCommands) captured.push_back(CaptureCommandControl(voice, command));
             voice.pendingControls.reserve(voice.pendingControls.size() + captured.size());
             static_assert(std::is_nothrow_move_constructible_v<Ngs2PendingControl>);
             for (auto& control : captured) EnqueueControl(voice, std::move(control));
             return SCE_NGS2_OK;
         }
-        for (std::size_t i = 0; i < num_commands; i++) {
-            const auto& command = commands[i];
+        for (const auto& command : localCommands) {
             const std::uint32_t index = command.id >> 24;
             const std::uint32_t id = command.id & 0xffffff;
             if (id == COMMAND_EVENT) {
