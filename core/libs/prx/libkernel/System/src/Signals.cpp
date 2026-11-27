@@ -1218,7 +1218,9 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
     }
     std::optional<GuestSignalSet> contextMask;
     try {
-        WaitForDeliverableSignal(&interrupted, &contextMask);
+        const int raised = self.raised.load();
+        if (raised != 0 && !SignalBlocked(self, raised) && self.raised.exchange(0) != 0) DeliverHeldException(raised);
+        else WaitForDeliverableSignal(&interrupted, &contextMask);
     } catch (...) {
         std::lock_guard lock(registration);
         for (int word = 0; word < 4; ++word) self.blocked[word].store(previous.bits[word]);

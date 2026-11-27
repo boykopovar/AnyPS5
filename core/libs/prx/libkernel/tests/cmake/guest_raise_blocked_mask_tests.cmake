@@ -1,0 +1,8 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_raise_blocked_mask_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseBlockedMask.cpp)
+    target_include_directories(guest_raise_blocked_mask_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_raise_blocked_mask_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_raise_blocked_mask_tests)
+    add_test(NAME guest_raise_blocked_mask COMMAND guest_raise_blocked_mask_tests)
+    set_tests_properties(guest_raise_blocked_mask PROPERTIES TIMEOUT 30)
+endif()

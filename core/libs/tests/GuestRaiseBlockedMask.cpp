@@ -52,6 +52,14 @@ static void* APS5_VABI Worker(void*) {
     Require(deliveries.load() == 2, "two raises held by one blocked thread were not delivered once");
     step.store(5);
     while (step.load() != 6) worked.fetch_add(1);
+    Require(pthread_sigmask_nid_postfix(SigBlock, &Usr1Set, nullptr) == 0, "blocking SIGUSR1 before sigsuspend failed");
+    step.store(7);
+    WaitStep(8);
+    Require(deliveries.load() == 3, "a raise reached a thread that blocks the signal before sigsuspend");
+    const GuestSignalSet none{{0, 0, 0, 0}};
+    Require(sigsuspend_nid_postfix(&none) == -1, "sigsuspend did not return -1");
+    Require(deliveries.load() == 4, "sigsuspend did not deliver the held raise");
+    Require(deliveredOn.load() == scePthreadSelf(), "the raise held before sigsuspend ran on another thread");
     return nullptr;
 }
 
@@ -78,6 +86,9 @@ int main() {
     while (deliveries.load() != 3) Require(std::chrono::steady_clock::now() < deadline, "a raise at a thread that unblocked the signal was not delivered within 3 s");
     Require(deliveredOn.load() == worker, "the raise at the unblocked thread ran on another thread");
     step.store(6);
+    WaitStep(7);
+    Require(sceKernelRaiseException(worker, SigUsr1) == 0, "raising at a thread that blocks the signal before sigsuspend failed");
+    step.store(8);
     Require(scePthreadJoin(worker, nullptr) == 0, "joining the worker failed");
     Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0, "removing the handler failed");
     std::printf("%d raises delivered\n", deliveries.load());
