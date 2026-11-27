@@ -6,8 +6,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 
 ## Before a run
 
-- Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
-- `tools/check_main_sync.py --fetch` in the worktree reports whether the branch is in step with upstream `main`, so a result isn't taken on an old base by mistake.
+- Build `main` or the PR head in a clean worktree. With `BUILD_TESTING=OFF`, build the `libs` target explicitly. With `BUILD_TESTING=ON`, the default build includes it. If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
+- In the worktree, run `python3 tools/check_main_sync.py --fetch` on Linux or `py -3 tools/check_main_sync.py --fetch` on Windows. The command reports whether the branch is in step with upstream `main`.
   Add `--strict` to reject a branch that is behind the base even when the test merge is clean.
   A conflict or a strict-mode rejection exits with status 1. Use `--json` to inspect the counts in scripts.
 - Convert the title from plain ELF files (`tools/unwrap_self.py` unwraps a dump's `eboot.bin` and `.prx`):
@@ -65,13 +65,21 @@ cmd /c '.\app.exe > run.log 2>&1'
 
   Report these lines. Set either variable only for a comparison, and say so.
 
+## Verify captured frames
+
+A compositor or window capture can lag behind the title's rendered frames. An unchanged capture alone does not establish a hang, and an advancing present counter does not establish that the captured scene is current. Record the capture method and request/file times; compare visible animation or a scene transition before treating an image as evidence of progress or a stall.
+
+For a native frame, use the [screenshot key](../user/USAGE.md#screenshots) or set `APS5_SCREENSHOT_TRIGGER` before launch and create a regular file at that path to request the next presented frame. The process consumes the file; recreate it for another request and use a separate path per process. `ANYPS5_SCREENSHOTS` selects the PNG directory. The trigger works with `APS5_NO_PAD_INPUT=1`, so a capture need not change the input or focus the window. A native PNG records the game's display buffer, not physical monitor scan-out.
+
+Keep screenshot requests outside a timed comparison window: readback and PNG encoding add work. If a window capture and a native frame disagree, retain both with their times and report the uncertainty rather than using either alone to diagnose a freeze.
+
 ## What to read
 
 | Check | Where | Meaning |
 |---|---|---|
 | Exit code | shell | Linux: 124 time cap, 134 uncaught exception, 139 segfault, 137 killed. Windows: the exception code, `0xc0000005` access violation, `0xc0000409` uncaught exception or `abort()` (the log ends with `FATAL: abort() (SIGABRT) on thread N`) (PowerShell shows it signed, -1073740791) |
 | Last lines | `run.log` or `anyps5.log` | `terminate called`, `what()`, `presentation failed`, `ASSERT`, `FATAL:` crash report |
-| Frames | `[present] N presents over 10 s` | Steady N above 0 means frames are moving |
+| Presents | `[present] N presents over 10 s` | A positive count records presents; verify visible animation or a scene transition before claiming gameplay progress |
 | Memory | `[texture] N storage images (X MiB)` | Growth before a `vkAllocateMemory ... -2` error |
 | Queue waits | `[packets] ... WAIT_REG_MEM_64 ...` | A queue spending the window waiting on the GPU |
 | Milestones | `Level has started: <name>` | How far the title got |
@@ -110,6 +118,8 @@ cmd /c '.\app.exe > run.log 2>&1'
 ## Saves
 
 Save data is kept under the runtime's `_sd/` folder, and save-data memory under `_sd_mem/`. Copy them into a new runtime to continue from the same point.
+
+Make the copy after all processes of the source run have exited. Keep the source save files unchanged and use a separate writable copy for each runtime. Confirm in-game that the copied save loads and reaches the intended scene before starting a comparison.
 
 ## Reporting a result
 

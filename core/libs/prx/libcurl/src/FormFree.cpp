@@ -23,6 +23,10 @@
 
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/include/InventoryExports.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <cerrno>
+#include <stdexcept>
 
 extern "C" {
 extern curl_free_callback Curl_cfree;
@@ -30,14 +34,18 @@ extern curl_free_callback Curl_cfree;
 
 void APS5_VABI curl_formfree_nid_postfix(struct guest_curl_httppost* form) {
     while (form) {
-        auto* next = form->next;
-        curl_formfree_nid_postfix(form->more);
-        if (!(form->flags & CURL_HTTPPOST_PTRNAME)) Curl_cfree(form->name);
-        if (!(form->flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)))
-            Curl_cfree(form->contents);
-        Curl_cfree(form->contenttype);
-        Curl_cfree(form->showfilename);
+        guest_curl_httppost node{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&node, form, sizeof(node));
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument("Invalid curl_httppost pointer");
+        curl_formfree_nid_postfix(node.more);
+        if (!(node.flags & CURL_HTTPPOST_PTRNAME)) Curl_cfree(node.name);
+        if (!(node.flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)))
+            Curl_cfree(node.contents);
+        Curl_cfree(node.contenttype);
+        Curl_cfree(node.showfilename);
         Curl_cfree(form);
-        form = next;
+        form = node.next;
     }
 }

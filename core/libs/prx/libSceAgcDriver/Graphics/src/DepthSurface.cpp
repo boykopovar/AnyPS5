@@ -439,6 +439,7 @@ DepthSamplingState prepareUniformPlaneSampling(const Context& context, const Dep
         StorageTexture::FlushPending(range.address, range.bytes);
         GuestMemory::FlushGpuWrites(range.address, range.bytes);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) || !GuestMemory::Watched(range.address, range.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
+        GuestMemory::MaterializeKnownZero(range.address, range.bytes);
         range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
         if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     }
@@ -549,6 +550,7 @@ DepthSamplingState prepareDepthPlaneSampling(const Context& context, const Depth
     StorageTexture::FlushPending(plane.address, plane.bytes);
     GuestMemory::FlushGpuWrites(plane.address, plane.bytes);
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(plane.address), plane.bytes) || !GuestMemory::Watched(plane.address, plane.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
+    GuestMemory::MaterializeKnownZero(plane.address, plane.bytes);
     plane.generation = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
     if (plane.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     if (state.aliasDepth) state.initialDepth = *state.aliasDepth;
@@ -984,6 +986,11 @@ public:
             if (target.samples == 1 && sampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            if (target.samples != 1) {
+                VkImageFormatProperties attachment{};
+                const auto result = context.imageFormatProperties(context.physical, hostFormat, info.imageType, info.tiling, info.usage, info.flags, &attachment);
+                Require(result == VK_SUCCESS && (attachment.sampleCounts & info.samples) != 0u, "depth/stencil format " + std::to_string(hostFormat) + " cannot hold " + std::to_string(target.samples) + " samples on this device");
+            }
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage depth");
             VkMemoryRequirements requirements{};
             context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
