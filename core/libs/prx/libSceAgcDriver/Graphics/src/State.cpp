@@ -2506,9 +2506,13 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         case 9u: color.tileMode = ColorTileMode::GcnDisplay1D; break;
         case 10u: color.tileMode = ColorTileMode::GcnDisplay2D; break;
         case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
+        case 11u: color.tileMode = ColorTileMode::GcnDisplayPrt; break;
+        case 12u: color.tileMode = ColorTileMode::GcnDisplay2DPrt; break;
+        case 16u: color.tileMode = ColorTileMode::GcnThinPrt; break;
+        case 17u: color.tileMode = ColorTileMode::GcnThin2DPrt; break;
         default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
     }
-    const bool macroTiled = color.tileMode == ColorTileMode::GcnDisplay2D || color.tileMode == ColorTileMode::GcnThin2D;
+    const bool macroTiled = IsGcnMacroTiled(ColorTextureTileMode(color.tileMode));
     Require(slice == 0 || !macroTiled || color.samples == 1u, "GCN multisampled color views of a later slice of a 2D-tiled array are not implemented");
     if (macroTiled) color.pipeBankXor = GcnLayerBankXor(GcnTiling(ColorTextureTileMode(color.tileMode), color.elementBytes), slice);
     color.mipCount = 1;

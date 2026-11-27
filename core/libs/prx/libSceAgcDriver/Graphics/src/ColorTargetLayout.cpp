@@ -165,7 +165,11 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
         case ColorTileMode::GcnThin1D:
         case ColorTileMode::GcnDisplay1D:
         case ColorTileMode::GcnDisplay2D:
-        case ColorTileMode::GcnThin2D: {
+        case ColorTileMode::GcnThin2D:
+        case ColorTileMode::GcnDisplayPrt:
+        case ColorTileMode::GcnDisplay2DPrt:
+        case ColorTileMode::GcnThinPrt:
+        case ColorTileMode::GcnThin2DPrt: {
             const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytesPerElement);
             require((pipeBankXor & ~(geometry.bankMask << geometry.bankShift)) == 0, "AGC graphics: a PS4 color bank XOR applies only to the bank bits of a 2D-tiled mode");
             blockWidth = geometry.blockWidth;

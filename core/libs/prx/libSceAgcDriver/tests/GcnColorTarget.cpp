@@ -19,6 +19,7 @@
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -237,6 +238,37 @@ void LaterSlicesDecode() {
     Check(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
 }
 
+void PrtTargetsDecode() {
+    using AgcDriver::Graphics::ColorTileMode;
+    static std::byte* const prtMemory = LowMemory(SliceMemoryBytes);
+    const auto base = AddressOf(prtMemory);
+    if (prtMemory == nullptr || base + SliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate PRT test memory below 1 TiB");
+        return;
+    }
+    constexpr std::uint32_t PrtSide = 128u;
+    constexpr std::size_t PrtSliceBytes = std::size_t{PrtSide} * PrtSide * 4u;
+    const auto decode = [base](std::uint32_t tileIndex, std::uint32_t height, std::uint32_t slice) {
+        AgcDriver::Registers cx;
+        cx[0x318] = static_cast<std::uint32_t>(base >> 8u);
+        cx[0x319] = PrtSide / 8u - 1u;
+        cx[0x31a] = PrtSide * height / 64u - 1u;
+        cx[0x31b] = slice | (slice << 13u);
+        cx[0x31c] = (Format8888 << 2u) | BlendClamp;
+        cx[0x31d] = tileIndex;
+        return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    };
+    constexpr std::array<std::pair<std::uint32_t, ColorTileMode>, 4> modes{{{11u, ColorTileMode::GcnDisplayPrt}, {12u, ColorTileMode::GcnDisplay2DPrt}, {16u, ColorTileMode::GcnThinPrt}, {17u, ColorTileMode::GcnThin2DPrt}}};
+    for (const auto& [index, mode] : modes) {
+        const auto first = decode(index, PrtSide, 0u);
+        Check(first.tileMode == mode && first.address == base && first.bytes == PrtSliceBytes, ("GB_TILE_MODE " + std::to_string(index) + " did not decode as its PRT color tile mode over one 128x128 macro tile").c_str());
+        const auto second = decode(index, PrtSide, 1u);
+        Check(second.address == base + PrtSliceBytes && second.pipeBankXor == 0u, ("slice 1 of a GB_TILE_MODE " + std::to_string(index) + " array is not one macro tile past the base without a bank XOR").c_str());
+        Check(Failure([&] { decode(index, PrtSide / 2u, 0u); }).find("not padded the way its tile mode pads them") != std::string::npos, ("a GB_TILE_MODE " + std::to_string(index) + " target half a PRT macro tile tall was accepted").c_str());
+    }
+    Check(Failure([&] { decode(15u, PrtSide, 0u); }).find("tile mode index 15 is not implemented") != std::string::npos, "a GB_TILE_MODE 15 color target was accepted");
+}
+
 void PaddedTargetsAreCovered() {
     Check(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
     const auto padded = FmaskDecompress(Height - 4u);
@@ -261,11 +293,12 @@ int main() {
         MultisampledSlicesDecode();
         PaddedTargetsAreCovered();
         LaterSlicesDecode();
+        PrtTargetsDecode();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
     if (failures != 0) return 1;
-    std::puts("GCN multisampled color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
+    std::puts("GCN multisampled color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, a metadata pass over the visible rows of a padded target is covered, and PRT targets decode in GB_TILE_MODE 11, 12, 16 and 17");
     return 0;
 }
