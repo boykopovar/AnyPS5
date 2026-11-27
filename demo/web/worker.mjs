@@ -92,6 +92,7 @@ async function convertInput(item, index, native, libraries, data, destination, d
     const itemReport = reportFor(item, index);
     if (inputs.length > 1) await current.inspect(itemReport);
     const input = await current.conversionInput(data.target, data.toIntel, itemReport);
+    if (data.patch !== undefined) input.patch = data.patch;
     const converted = native.Convert(input, itemReport);
     if (!converted.ok) throw new Error(converted.error);
     const { revision, release: { tag } } = libraries;
@@ -149,6 +150,15 @@ self.onmessage = async ({ data }) => {
       if (data.target === "windows" && data.mode === "disk") throw new Error(translate(locale, "windowsFolderUnavailable"));
       if (!inputs.length || summaries.length !== inputs.length) throw new Error(translate(locale, "inspectBeforeConvert"));
       if (inputs.length > 1 && data.mode === "disk") throw new Error(translate(locale, "batchRequiresZip"));
+      if (data.patchFile !== undefined) {
+        if (inputs.length !== 1) throw new Error(translate(locale, "patchRequiresSingleApp"));
+        if (data.patchFile.size > 1024 * 1024) throw new Error(translate(locale, "patchTooLarge"));
+        try {
+          data.patch = new TextDecoder("utf-8", { fatal: true }).decode(await data.patchFile.arrayBuffer());
+        } catch {
+          throw new Error(translate(locale, "patchReadError"));
+        }
+      }
       for (const summary of summaries) {
         const selectedBytes = data.target === "windows" ? summary.windowsSelectedBytes : summary.selectedBytes;
         if (data.target === "windows" && summary.windowsIconTooLarge) throw new Error(translate(locale, "iconTooLargeHint"));

@@ -1,14 +1,18 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <numbers>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
@@ -296,9 +300,13 @@ static void SetMatrixLevels(Ngs2Voice& voice, std::uint32_t matrixId, const floa
     if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_RACK_CHANNELS * NGS2_MAX_RACK_CHANNELS || levels == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    std::vector<float> localLevels(numLevels);
+    if (!ReadGuestBytes(localLevels.data(), levels, localLevels.size() * sizeof(float))) {
+        throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_OUT_ADDRESS};
+    }
     auto& matrix = voice.matrices[matrixId];
     matrix.resize(numLevels);
-    for (std::uint32_t i = 0; i < numLevels; i++) matrix[i] = std::clamp(levels[i], -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
+    for (std::uint32_t i = 0; i < numLevels; i++) matrix[i] = std::clamp(localLevels[i], -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
 }
 
 static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t matrixId) {
@@ -543,7 +551,10 @@ static bool SetupPending(const Ngs2Voice& voice) {
 
 static Ngs2MatrixControl CaptureMatrixControl(const Ngs2Voice& voice, std::uint32_t index, const float* levels, std::uint32_t count) {
     if (index >= voice.matrices.size() || count == 0 || count > NGS2_MAX_RACK_CHANNELS * NGS2_MAX_RACK_CHANNELS || levels == nullptr) APS5_INVALID_ARG_EX;
-    Ngs2MatrixControl result{index, {levels, levels + count}};
+    Ngs2MatrixControl result{index, std::vector<float>(count)};
+    if (!ReadGuestBytes(result.levels.data(), levels, result.levels.size() * sizeof(float))) {
+        throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_OUT_ADDRESS};
+    }
     for (auto& level : result.levels) level = std::clamp(level, -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
     return result;
 }
@@ -756,6 +767,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         voice.userFx[index].controlParam = result.param;
         voice.userFx[index].configured = true;
         return result;
+    }
+    if (Ngs2IsMasteringModuleParam(voice, param.id)) {
+        Ngs2CheckMasteringModuleParam(param);
+        return CopyParam(param);
     }
     throw std::runtime_error("NGS2: this buffered voice parameter is not implemented");
 }
@@ -1169,6 +1184,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP) {
                 RejectPs4Channels(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
+                if (std::any_of(voice.customChannelMixer.begin(), voice.customChannelMixer.end(), [](const auto& mixer) { return mixer.configured; })) throw std::runtime_error("NGS2: a mastering setup after a channel mixer is not implemented");
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 return;
             }
@@ -1226,6 +1242,10 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
                 const auto index = param->id & 0x1fu;
                 if (index >= modules.size() || modules[index] != ((param->id >> 8) & 0xffu)) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
             }
+            if (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
+                const int result = Ngs2CheckMasteringParamId(*voice.rack, param->id);
+                if (result != SCE_NGS2_OK) return result;
+            }
             if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
                 const auto index = param->id & 0x1fu;
                 if (index >= voice.customPitchShift.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
@@ -1270,22 +1290,30 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
     auto& voice = *found;
     if (voice.rack->system == nullptr && !voice.pendingControls.empty()) voice.ApplyPendingControls();
     try {
-        if (commands == nullptr && num_commands != 0) APS5_INVALID_ARG_EX;
+        if (num_commands == 0) return SCE_NGS2_OK;
+        if (commands == nullptr) APS5_INVALID_ARG_EX;
+        if (num_commands > std::numeric_limits<std::size_t>::max() / sizeof(Ngs2VoiceCommand)) {
+            return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+        }
+        std::vector<Ngs2VoiceCommand> localCommands(num_commands);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(localCommands.data(), commands, localCommands.size() * sizeof(Ngs2VoiceCommand));
+        errno = savedErrno;
+        if (!copied) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         const auto isVolume = [](const Ngs2VoiceCommand& command) { return (command.id & 0xffffff) == COMMAND_PORT_VOLUME; };
         const auto badPort = [&](const Ngs2VoiceCommand& command) { return isVolume(command) && (command.id >> 24) >= voice.ports.size(); };
-        if (voice.ports.size() == DEFAULT_MAX_PORTS && std::any_of(commands, commands + num_commands, badPort) && std::all_of(commands, commands + num_commands, isVolume)) return SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX;
+        if (voice.ports.size() == DEFAULT_MAX_PORTS && std::any_of(localCommands.begin(), localCommands.end(), badPort) && std::all_of(localCommands.begin(), localCommands.end(), isVolume)) return SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX;
         if (DeferringControls(voice)) {
             if (num_commands > voice.pendingControls.max_size() - voice.pendingControls.size()) throw std::length_error("NGS2: too many buffered voice commands");
             std::vector<Ngs2PendingControl> captured;
             captured.reserve(num_commands);
-            for (std::size_t i = 0; i < num_commands; ++i) captured.push_back(CaptureCommandControl(voice, commands[i]));
+            for (const auto& command : localCommands) captured.push_back(CaptureCommandControl(voice, command));
             voice.pendingControls.reserve(voice.pendingControls.size() + captured.size());
             static_assert(std::is_nothrow_move_constructible_v<Ngs2PendingControl>);
             for (auto& control : captured) EnqueueControl(voice, std::move(control));
             return SCE_NGS2_OK;
         }
-        for (std::size_t i = 0; i < num_commands; i++) {
-            const auto& command = commands[i];
+        for (const auto& command : localCommands) {
             const std::uint32_t index = command.id >> 24;
             const std::uint32_t id = command.id & 0xffffff;
             if (id == COMMAND_EVENT) {
@@ -1376,10 +1404,20 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: {
-            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            Ngs2VoiceState mastering{};
-            mastering.state_flags = voice.stateFlags;
-            if (!WriteGuest(state, mastering)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+            const bool meter = Ngs2HasCustomModule(*voice.rack, SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER);
+            if (state_size != sizeof(Ngs2VoiceState) && !(meter && state_size >= SCE_NGS2_CUSTOM_PEAK_METER_VOICE_STATE_SIZE)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            if (state_size > sizeof(Ngs2VoiceState) && voice.peakMeterMode != 0) throw std::runtime_error("NGS2: the peak meter module state of mode " + std::to_string(voice.peakMeterMode) + " is not implemented");
+            Ngs2VoiceState common{};
+            common.state_flags = voice.stateFlags;
+            if (!WriteGuest(state, common)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+            static constexpr std::array<std::uint8_t, 4096> zeros{};
+            auto* tail = reinterpret_cast<std::uint8_t*>(state) + sizeof(common);
+            for (std::size_t left = state_size - sizeof(common); left != 0;) {
+                const auto chunk = std::min(left, zeros.size());
+                if (!WriteGuestBytes(tail, zeros.data(), chunk)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+                tail += chunk;
+                left -= chunk;
+            }
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice state of rack " + Ngs2Hex(voice.rack->rackId) + " is not implemented");

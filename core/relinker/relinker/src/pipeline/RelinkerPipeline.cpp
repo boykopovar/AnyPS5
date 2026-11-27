@@ -428,6 +428,7 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
+    std::uint64_t ignoredGlobDatAddends = 0;
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -488,12 +489,21 @@ RelinkResult RelinkerPipeline::Relink() {
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
+            if (relType == R_X86_64_JUMP_SLOT && rAddend != 0)
+                throw RelinkerException("JUMP_SLOT relocation has a nonzero addend", pos);
+            if (relType == R_X86_64_GLOB_DAT && rAddend != 0)
+                ++ignoredGlobDatAddends;
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, relType == R_X86_64_GLOB_DAT ? 0 : rAddend, weak, function, symbolType});
         }
     };
 
     extractRela(dynRelaOffset, dynRelaSize, false);
     extractRela(dynJmpRelOffset, dynJmpRelSize, true);
+    if (ignoredGlobDatAddends != 0) {
+        std::ostringstream message;
+        message << "GLOB_DAT addends ignored per the x86-64 psABI: " << ignoredGlobDatAddends << "\n";
+        progress.Message(message.str());
+    }
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
@@ -541,6 +551,7 @@ RelinkResult RelinkerPipeline::Relink() {
         try {
             syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index], &segmentRoutedStubs);
         } catch (const RelinkerException& error) {
+            if (!error.HasFailureOffset) throw;
             const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
             if (cause.empty()) throw;
             RelinkerException explained(error.what() + cause, error.FailureOffset);

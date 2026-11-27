@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -294,6 +295,36 @@ void TestRequestPlayerSessionSetters() {
     }
 }
 
+void TestIntrusivePtrProbing() {
+    using Access = void* (APS5_VABI*)(const IntrusivePtr*);
+    const Access accessors[] = {
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEptEv,
+    };
+    int target = 0;
+    const IntrusivePtr filled{&target, nullptr, reinterpret_cast<void*>(0x2)};
+    const IntrusivePtr empty{};
+    const auto* unmapped = reinterpret_cast<const IntrusivePtr*>(static_cast<std::uintptr_t>(0x10));
+    for (const auto access : accessors) {
+        errno = EINVAL;
+        Require(access(&filled) == &target);
+        Require(errno == EINVAL);
+
+        errno = EINVAL;
+        Require(access(&empty) == nullptr);
+        Require(errno == EINVAL);
+
+        errno = EINVAL;
+        Require(access(nullptr) == nullptr);
+        Require(errno == EINVAL);
+
+        errno = EINVAL;
+        Require(access(unmapped) == nullptr);
+        Require(errno == EINVAL);
+    }
+}
+
 }
 
 int main() {
@@ -302,6 +333,7 @@ int main() {
     TestActivityModelAccessors();
     TestGetUsersCopiesTheVectorHandle();
     TestUserActivitiesVectorGlue();
+    TestIntrusivePtrProbing();
     TestResonanceTransactions();
     TestRequestPlayerSessionSetters();
     return 0;

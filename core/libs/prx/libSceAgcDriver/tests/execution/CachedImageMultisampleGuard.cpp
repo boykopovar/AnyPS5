@@ -136,9 +136,10 @@ void CheckCachedImage(AgcDriver::VulkanDevice& device, bool sampled, bool draw) 
         return draw ? resources->Revalidate(stages, report) : resources->Revalidate(shader, report);
     };
     ShaderResources::ProofReport proof;
+    const bool watchedBeforeProof = AgcDriver::GuestMemory::Watched(address, Side * Side * 4u);
     Require(revalidate(&proof), "the unchanged image resources failed their initial proof");
     if (std::getenv("APS5_NO_FAST_REVALIDATE") == nullptr) {
-        if (AgcDriver::GuestMemory::Watched(address, Side * Side * 4u)) Require(proof.path == ShaderResources::ProofPath::Fast, "the fixture did not exercise the fast image proof");
+        if (watchedBeforeProof && AgcDriver::GuestMemory::Watched(address, Side * Side * 4u)) Require(proof.path == ShaderResources::ProofPath::Fast, "the fixture did not exercise the fast image proof");
         else std::puts("image memory is compared, not watched: fast image proof not tested; checking the image guards through the full proof");
     }
     ColorTarget target{};

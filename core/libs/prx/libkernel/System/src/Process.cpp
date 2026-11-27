@@ -1453,10 +1453,8 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
         *__error_nid_postfix() = guestAccess;
         return -1;
     }
-    if (which != guestPriorityProcess) {
-        throw std::runtime_error(std::string("setpriority: setting the nice value of ") +
-                                 (which == guestPriorityGroup ? "PRIO_PGRP" : "PRIO_USER") + " to " + std::to_string(niceval) +
-                                 " is not verified on the console");
+    if (which == guestPriorityUser) {
+        throw std::runtime_error("setpriority: setting the nice value of PRIO_USER to " + std::to_string(niceval) + " is not verified on the console");
     }
     return 0;
 }
@@ -1465,7 +1463,8 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
-    std::int64_t tableSize = limit.rlim_cur;
+    constexpr std::int64_t ConsoleMaxFilesPerProc = 12555;
+    std::int64_t tableSize = std::min(limit.rlim_cur, ConsoleMaxFilesPerProc);
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
