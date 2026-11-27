@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -114,9 +115,10 @@ void Expand(Walk& walk, const std::string& prefix, std::size_t index);
 
 void Finish(Walk& walk, const std::string& path) {
     if (path.empty()) return;
+    FileStat entry{};
+    if (lstat_nid_postfix(path.c_str(), &entry) != 0) return;
     FileStat status{};
-    if (stat_nid_postfix(path.c_str(), &status) != 0) return;
-    const bool directory = IsDirectory(status);
+    const bool directory = stat_nid_postfix(path.c_str(), &status) == 0 && IsDirectory(status);
     if (walk.dirOnly && !directory) return;
     if (walk.mark && directory) {
         walk.matches.push_back(path.back() == '/' ? path : path + "/");
@@ -177,12 +179,21 @@ int Publish(GuestGlob& guest, void* pglob, const std::vector<std::string>& match
         text[match.size()] = '\0';
         texts.push_back(text);
     }
+    constexpr std::size_t MaximumSlots = std::numeric_limits<std::size_t>::max() / sizeof(char*);
     const std::size_t oldCount = append ? guest.pathc : 0;
+    if (oldCount > MaximumSlots || matches.size() > MaximumSlots - oldCount) {
+        release();
+        return GlobNospace;
+    }
     char** previous = append ? guest.pathv : nullptr;
     const std::size_t newCount = oldCount + matches.size();
     const bool replace = !matches.empty() || (previous == nullptr && offs != 0);
     char** array = previous;
     if (replace) {
+        if (offs > MaximumSlots - 1 || newCount > MaximumSlots - 1 - offs) {
+            release();
+            return GlobNospace;
+        }
         const std::size_t slots = offs + newCount + 1;
         char** storage = static_cast<char**>(malloc_nid_postfix(slots * sizeof(char*)));
         if (storage == nullptr) {
