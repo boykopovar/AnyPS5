@@ -20,6 +20,9 @@ namespace {
 
 using Bytes = std::vector<unsigned char>;
 
+constexpr int MallocFailure = 65;
+constexpr int AuxError = 100;
+
 std::unordered_map<void*, std::size_t> allocations;
 int allocationsUntilFailure = -1;
 
@@ -80,12 +83,12 @@ void* APS5_VABI Callocate_nid_no_patch(std::size_t count, std::size_t size) {
 }
 
 void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
+    if (!pointer) return Allocate_nid_no_patch(size);
     if (allocationsUntilFailure == 0) {
         allocationsUntilFailure = -1;
         return nullptr;
     }
     if (allocationsUntilFailure > 0) --allocationsUntilFailure;
-    if (!pointer) return Allocate_nid_no_patch(size);
     Require(allocations.erase(pointer) == 1);
     void* result = std::realloc(pointer, size == 0 ? 1 : size);
     Require(result != nullptr);
@@ -702,7 +705,11 @@ void TestCertificateIssuerEntries() {
     const LibreSslX509Name* crlIssuer = crl->crl->issuer;
     const LibreSslX509Name* otherIssuer = other->crl->issuer;
     Require(RevokedEntryAt(crl, 1)->extensions != nullptr && RevokedEntryAt(crl, 1)->extensions->num == 1);
-    for (int index = 0; index < 4; ++index) Require(RevokedEntryAt(crl, index)->issuer == nullptr);
+    Require(crl->issuers != nullptr && crl->issuers->num == 1);
+    Require(crl->issuers->data[0] == reinterpret_cast<const char*>(RevokedEntryAt(crl, 1)->issuer));
+    Require(RevokedEntryAt(crl, 0)->issuer == nullptr);
+    Require(RevokedEntryAt(crl, 1)->issuer != nullptr && RevokedEntryAt(crl, 1)->issuer->num == 1);
+    for (const int index : {2, 3}) Require(RevokedEntryAt(crl, index)->issuer == RevokedEntryAt(crl, 1)->issuer);
     Require(RevokedEntryAt(crl, 3)->reason == 8);
 
     LibreSsl3Revoked* found = nullptr;
@@ -713,13 +720,17 @@ void TestCertificateIssuerEntries() {
     Require(LookupSerial(crl, 0x05, nullptr, nullptr) == 0);
     Require(LookupSerial(crl, 0x05, otherIssuer, nullptr) == 0);
 
-    for (const int low : {0x02, 0x03, 0x04}) {
-        for (const LibreSslX509Name* issuer : {otherIssuer, crlIssuer, static_cast<const LibreSslX509Name*>(nullptr)}) {
-            found = nullptr;
-            RequireNotImplemented([&] { LookupSerial(crl, low, issuer, &found); });
-            Require(found == nullptr);
-        }
-    }
+    found = nullptr;
+    Require(LookupSerial(crl, 0x02, otherIssuer, &found) == 1);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(crl, 1)));
+    Require(LookupSerial(crl, 0x02, crlIssuer, nullptr) == 0);
+    Require(LookupSerial(crl, 0x02, nullptr, nullptr) == 0);
+    Require(LookupSerial(crl, 0x03, otherIssuer, nullptr) == 1);
+    Require(LookupSerial(crl, 0x03, crlIssuer, nullptr) == 0);
+    Require(LookupSerial(crl, 0x03, nullptr, nullptr) == 0);
+    Require(LookupSerial(crl, 0x04, otherIssuer, nullptr) == 2);
+    Require(LookupSerial(crl, 0x04, crlIssuer, nullptr) == 0);
+    Require(LookupSerial(crl, 0x04, nullptr, nullptr) == 0);
 
     LibreSsl3X509Crl* second = Parse(BuildCrl(Join({
         TbsHead(),
@@ -728,7 +739,8 @@ void TestCertificateIssuerEntries() {
     })));
     Require(second != nullptr);
     Require(RevokedEntryAt(second, 0)->extensions->num == 2 && RevokedEntryAt(second, 0)->reason == 1);
-    RequireNotImplemented([&] { LookupSerial(second, 0x01, otherIssuer, nullptr); });
+    Require(LookupSerial(second, 0x01, otherIssuer, nullptr) == 1);
+    Require(LookupSerial(second, 0x01, crlIssuer, nullptr) == 0);
     Require(LookupSerial(second, 0x02, otherIssuer, nullptr) == 0);
 
     LibreSsl3X509Crl* direct = Parse(BuildCrl(Join({
@@ -748,6 +760,707 @@ void TestCertificateIssuerEntries() {
     FreeCrlValue(second);
     FreeCrlValue(other);
     FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+constexpr const char FiveNamesCrlHex[] =
+    "3082012c3081df020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+    "3030305a3081af308198020101170d3234303130323030303030305a3081833081800603551d1d0101ff04763074a415"
+    "30133111300f06035504030c084f74686572204341a41530133111300f06035504030c085468697264204341a4163014"
+    "3112301006035504030c09466f75727468204341a41530133111300f06035504030c084f74686572204341a415301331"
+    "11300f06035504030c0854686972642043413012020102170d3234303130323030303030305a300506032b6570034100"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
+constexpr const char IndirectCrlHex[] =
+    "3082014b3081fe020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+    "3030305a3081ce3012020101170d3234303130323030303030305a3039020102170d3234303130323030303030305a30"
+    "2530230603551d1d0101ff04193017a41530133111300f06035504030c084f746865722043413020020103170d323430"
+    "3130323030303030305a300c300a0603551d1504030a01083039020104170d3234303130323030303030305a30253023"
+    "0603551d1d0101ff04193017a41530133111300f06035504030c0854686972642043413020020105170d323430313032"
+    "3030303030305a300c300a0603551d1504030a0101300506032b6570034100565a96eb6b3da972631048c7755bda412a"
+    "60a195473320813afd51e28f96a3936a6565ef3de5fa91901a48ef619ba931b45ee9124ab13bc868b5a0c3cc2e4f06";
+
+constexpr const char DirectCrlHex[] =
+    "3081bf3073020101300506032b657030123110300e06035504030c0754657374204341170d3234303130313030303030"
+    "305a30443020020101170d3234303130323030303030305a300c300a0603551d1504030a01013020020102170d323430"
+    "3130323030303030305a300c300a0603551d1504030a0108300506032b65700341006864c5547b18fbc565f805823fff"
+    "98eb55a40fc36d42b5155ac5e6f946752034aa91c20abd1c72158cb63908d3a99de0a76f1ecc024ab0e27119ba49ea9c"
+    "df07";
+
+constexpr const char EmptyNamesCrlHex[] =
+    "3081b33067020101300506032b657030123110300e06035504030c0754657374204341170d3234303130313030303030"
+    "305a30383022020101170d3234303130323030303030305a300e300c0603551d1d0101ff040230003012020102170d32"
+    "34303130323030303030305a300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
+constexpr const char TrailingNamesCrlHex[] =
+    "3081cd308180020101300506032b657030123110300e06035504030c0754657374204341170d32343031303130303030"
+    "30305a3051303b020101170d3234303130323030303030305a302730250603551d1d0101ff041b3017a4153013311130"
+    "0f06035504030c084f7468657220434105003012020102170d3234303130323030303030305a300506032b6570034100"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
+constexpr const char TwoNamesCrlHex[] =
+    "3082011e3081d1020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+    "3030305a3081a13050020101170d3234303130323030303030305a303c303a0603551d1d0101ff0430302ea415301331"
+    "11300f06035504030c084f74686572204341a41530133111300f06035504030c0854686972642043413012020102170d"
+    "3234303130323030303030305a3039020103170d3234303130323030303030305a302530230603551d1d0101ff041930"
+    "17a41530133111300f06035504030c085468697264204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a";
+
+constexpr const char SameSerialCrlHex[] =
+    "3082013a3081ed020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+    "3030305a3081bd3045020101170d3234303130323030303030305a303130230603551d1d0101ff04193017a415301331"
+    "11300f06035504030c084f74686572204341300a0603551d1504030a01083039020102170d3234303130323030303030"
+    "305a302530230603551d1d0101ff04193017a41530133111300f06035504030c0854686972642043413039020101170d"
+    "3234303130323030303030305a302530230603551d1d0101ff04193017a41530133111300f06035504030c0854686972"
+    "64204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
+constexpr const char FourIssuersCrlHex[] =
+    "3082016b3082011d020101300506032b657030123110300e06035504030c0754657374204341170d3234303130313030"
+    "303030305a3081ed3039020101170d3234303130323030303030305a302530230603551d1d0101ff04193017a4153013"
+    "3111300f06035504030c084f746865722043413039020102170d3234303130323030303030305a302530230603551d1d"
+    "0101ff04193017a41530133111300f06035504030c085468697264204341303a020103170d3234303130323030303030"
+    "305a302630240603551d1d0101ff041a3018a41630143112301006035504030c09466f75727468204341303902010417"
+    "0d3234303130323030303030305a302530230603551d1d0101ff04193017a41530133111300f06035504030c08466966"
+    "7468204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
+LibreSsl3X509Crl* NamedCrl(const char* commonName) {
+    LibreSsl3X509Crl* crl = Parse(CrlWithIssuer(IssuerName(commonName)));
+    Require(crl != nullptr);
+    return crl;
+}
+
+int LookupSerialBytes(LibreSsl3X509Crl* crl, const Bytes& serial, const LibreSslX509Name* issuer, LibreSsl3Revoked** found) {
+    Bytes content = serial;
+    Asn1String value{};
+    value.length = static_cast<int>(content.size());
+    value.type = 2;
+    value.data = content.data();
+    LibreSsl3CertificateInfo info{};
+    LibreSsl3Certificate certificate{};
+    SetCertificate(certificate, info, &value, issuer);
+    return X509_CRL_get0_by_cert_nid_postfix(crl, found, &certificate);
+}
+
+struct Expected {
+    unsigned char serial;
+    const LibreSslX509Name* issuer;
+    int result;
+    int index;
+};
+
+void RequireExpected(LibreSsl3X509Crl* crl, const Expected& expected) {
+    LibreSsl3Revoked* found = nullptr;
+    Require(LookupSerialBytes(crl, Bytes{expected.serial}, expected.issuer, &found) == expected.result);
+    if (expected.index < 0) {
+        Require(found == nullptr);
+    } else {
+        Require(found == RevokedEntryAt(crl, expected.index));
+    }
+}
+
+void TestOracleIndirectCrl() {
+    LibreSsl3X509Crl* indirectCrl = Parse(Hex(IndirectCrlHex));
+    Require(indirectCrl != nullptr);
+    Require(indirectCrl->flags == 0);
+    Require(indirectCrl->issuers != nullptr && indirectCrl->issuers->num == 2);
+    LibreSsl3X509Crl* other = NamedCrl("Other CA");
+    LibreSsl3X509Crl* third = NamedCrl("Third CA");
+    LibreSsl3X509Crl* fourth = NamedCrl("Fourth CA");
+    const LibreSslX509Name* test = indirectCrl->crl->issuer;
+    const LibreSslX509Name* otherName = other->crl->issuer;
+    const LibreSslX509Name* thirdName = third->crl->issuer;
+    const LibreSslX509Name* fourthName = fourth->crl->issuer;
+    const Expected indirectExpected[] = {
+        {0x01, nullptr, 1, 0}, {0x01, test, 1, 0}, {0x01, otherName, 0, -1}, {0x01, thirdName, 0, -1}, {0x01, fourthName, 0, -1},
+        {0x02, nullptr, 0, -1}, {0x02, test, 0, -1}, {0x02, otherName, 1, 1}, {0x02, thirdName, 0, -1}, {0x02, fourthName, 0, -1},
+        {0x03, nullptr, 0, -1}, {0x03, test, 0, -1}, {0x03, otherName, 2, 2}, {0x03, thirdName, 0, -1}, {0x03, fourthName, 0, -1},
+        {0x04, nullptr, 0, -1}, {0x04, test, 0, -1}, {0x04, otherName, 0, -1}, {0x04, thirdName, 1, 3}, {0x04, fourthName, 0, -1},
+        {0x05, nullptr, 0, -1}, {0x05, test, 0, -1}, {0x05, otherName, 0, -1}, {0x05, thirdName, 1, 4}, {0x05, fourthName, 0, -1},
+        {0x06, nullptr, 0, -1}, {0x06, test, 0, -1}, {0x06, otherName, 0, -1}, {0x06, thirdName, 0, -1}, {0x06, fourthName, 0, -1},
+    };
+    for (const Expected& row : indirectExpected) RequireExpected(indirectCrl, row);
+    Require(RevokedEntryAt(indirectCrl, 0)->issuer == nullptr && RevokedEntryAt(indirectCrl, 0)->reason == -1);
+    Require(RevokedEntryAt(indirectCrl, 1)->issuer != nullptr && RevokedEntryAt(indirectCrl, 1)->issuer->num == 1 &&
+            RevokedEntryAt(indirectCrl, 1)->reason == -1);
+    Require(RevokedEntryAt(indirectCrl, 2)->issuer == RevokedEntryAt(indirectCrl, 1)->issuer &&
+            RevokedEntryAt(indirectCrl, 2)->reason == 8);
+    Require(RevokedEntryAt(indirectCrl, 3)->issuer != RevokedEntryAt(indirectCrl, 1)->issuer &&
+            RevokedEntryAt(indirectCrl, 3)->issuer != nullptr && RevokedEntryAt(indirectCrl, 3)->issuer->num == 1 &&
+            RevokedEntryAt(indirectCrl, 3)->reason == -1);
+    Require(RevokedEntryAt(indirectCrl, 4)->issuer == RevokedEntryAt(indirectCrl, 3)->issuer &&
+            RevokedEntryAt(indirectCrl, 4)->reason == 1);
+    Require(indirectCrl->issuers->data[0] == reinterpret_cast<const char*>(RevokedEntryAt(indirectCrl, 1)->issuer));
+    Require(indirectCrl->issuers->data[1] == reinterpret_cast<const char*>(RevokedEntryAt(indirectCrl, 3)->issuer));
+    FreeCrlValue(fourth);
+    FreeCrlValue(third);
+    FreeCrlValue(other);
+    FreeCrlValue(indirectCrl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+void TestOracleDirectCrl() {
+    LibreSsl3X509Crl* directCrl = Parse(Hex(DirectCrlHex));
+    Require(directCrl != nullptr);
+    Require(directCrl->flags == 0);
+    Require(directCrl->issuers == nullptr);
+    Require(RevokedEntryAt(directCrl, 0)->issuer == nullptr && RevokedEntryAt(directCrl, 0)->reason == 1);
+    Require(RevokedEntryAt(directCrl, 1)->issuer == nullptr && RevokedEntryAt(directCrl, 1)->reason == 8);
+    LibreSsl3X509Crl* other = NamedCrl("Other CA");
+    const LibreSslX509Name* test = directCrl->crl->issuer;
+    const LibreSslX509Name* otherName = other->crl->issuer;
+    const Expected directExpected[] = {
+        {0x01, nullptr, 1, 0}, {0x01, test, 1, 0}, {0x01, otherName, 0, -1},
+        {0x02, nullptr, 2, 1}, {0x02, test, 2, 1}, {0x02, otherName, 0, -1},
+        {0x03, nullptr, 0, -1}, {0x03, test, 0, -1}, {0x03, otherName, 0, -1},
+    };
+    for (const Expected& row : directExpected) RequireExpected(directCrl, row);
+
+    LibreSsl3X509Crl* fallbackCrl = Parse(Hex(
+        "3081b53069020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+        "3030305a303a3038020101170d3234303130323030303030305a302430220603551d1d0101ff04183016a41430"
+        "123110300e06035504030c0754657374204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a"));
+    Require(fallbackCrl != nullptr);
+    Require(fallbackCrl->flags == 0);
+    Require(fallbackCrl->issuers != nullptr && fallbackCrl->issuers->num == 1);
+    Require(RevokedEntryAt(fallbackCrl, 0)->issuer != nullptr && RevokedEntryAt(fallbackCrl, 0)->issuer->num == 1);
+    RequireExpected(fallbackCrl, {0x01, nullptr, 1, 0});
+    RequireExpected(fallbackCrl, {0x01, fallbackCrl->crl->issuer, 1, 0});
+    RequireExpected(fallbackCrl, {0x01, otherName, 0, -1});
+    FreeCrlValue(fallbackCrl);
+
+    FreeCrlValue(other);
+    FreeCrlValue(directCrl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+void TestOracleCertificateIssuerForms() {
+    LibreSsl3X509Crl* emptyNames = Parse(Hex(EmptyNamesCrlHex));
+    LibreSsl3X509Crl* trailingNames = Parse(Hex(TrailingNamesCrlHex));
+    LibreSsl3X509Crl* twoNames = Parse(Hex(TwoNamesCrlHex));
+    LibreSsl3X509Crl* sameSerial = Parse(Hex(SameSerialCrlHex));
+    Require(emptyNames != nullptr && trailingNames != nullptr && twoNames != nullptr && sameSerial != nullptr);
+    Require(emptyNames->flags == 0);
+    Require(emptyNames->issuers != nullptr && emptyNames->issuers->num == 1);
+    Require(RevokedEntryAt(emptyNames, 0)->issuer != nullptr && RevokedEntryAt(emptyNames, 0)->issuer->num == 0 &&
+            RevokedEntryAt(emptyNames, 0)->reason == -1);
+    Require(RevokedEntryAt(emptyNames, 1)->issuer != nullptr && RevokedEntryAt(emptyNames, 1)->issuer->num == 0 &&
+            RevokedEntryAt(emptyNames, 1)->reason == -1);
+    Require(trailingNames->flags == 0);
+    Require(RevokedEntryAt(trailingNames, 0)->issuer != nullptr && RevokedEntryAt(trailingNames, 0)->issuer->num == 1 &&
+            RevokedEntryAt(trailingNames, 0)->reason == -1);
+    Require(RevokedEntryAt(trailingNames, 1)->issuer != nullptr && RevokedEntryAt(trailingNames, 1)->issuer->num == 1 &&
+            RevokedEntryAt(trailingNames, 1)->reason == -1);
+    Require(twoNames->flags == 0);
+    Require(twoNames->issuers != nullptr && twoNames->issuers->num == 2);
+    Require(RevokedEntryAt(twoNames, 0)->issuer != nullptr && RevokedEntryAt(twoNames, 0)->issuer->num == 2 &&
+            RevokedEntryAt(twoNames, 0)->reason == -1);
+    Require(RevokedEntryAt(twoNames, 1)->issuer != nullptr && RevokedEntryAt(twoNames, 1)->issuer->num == 2 &&
+            RevokedEntryAt(twoNames, 1)->reason == -1);
+    Require(RevokedEntryAt(twoNames, 2)->issuer != nullptr && RevokedEntryAt(twoNames, 2)->issuer->num == 1 &&
+            RevokedEntryAt(twoNames, 2)->reason == -1);
+    Require(sameSerial->flags == 0);
+    Require(sameSerial->issuers != nullptr && sameSerial->issuers->num == 3);
+    Require(RevokedEntryAt(sameSerial, 0)->issuer != nullptr && RevokedEntryAt(sameSerial, 0)->issuer->num == 1 &&
+            RevokedEntryAt(sameSerial, 0)->reason == 8);
+    Require(RevokedEntryAt(sameSerial, 1)->issuer != nullptr && RevokedEntryAt(sameSerial, 1)->issuer->num == 1 &&
+            RevokedEntryAt(sameSerial, 1)->reason == -1);
+    Require(RevokedEntryAt(sameSerial, 2)->issuer != nullptr && RevokedEntryAt(sameSerial, 2)->issuer->num == 1 &&
+            RevokedEntryAt(sameSerial, 2)->reason == -1);
+    LibreSsl3X509Crl* other = NamedCrl("Other CA");
+    LibreSsl3X509Crl* third = NamedCrl("Third CA");
+    const LibreSslX509Name* otherName = other->crl->issuer;
+    const LibreSslX509Name* thirdName = third->crl->issuer;
+
+    const Expected emptyRows[] = {
+        {0x01, nullptr, 0, -1}, {0x01, emptyNames->crl->issuer, 0, -1}, {0x01, otherName, 0, -1},
+        {0x02, nullptr, 0, -1}, {0x02, otherName, 0, -1},
+    };
+    for (const Expected& row : emptyRows) RequireExpected(emptyNames, row);
+
+    const Expected trailingRows[] = {
+        {0x01, otherName, 1, 0}, {0x01, thirdName, 0, -1}, {0x01, trailingNames->crl->issuer, 0, -1},
+        {0x01, nullptr, 0, -1}, {0x02, otherName, 1, 1}, {0x02, trailingNames->crl->issuer, 0, -1},
+    };
+    for (const Expected& row : trailingRows) RequireExpected(trailingNames, row);
+
+    const Expected twoNamesRows[] = {
+        {0x01, otherName, 1, 0}, {0x01, thirdName, 1, 0}, {0x01, twoNames->crl->issuer, 0, -1},
+        {0x02, otherName, 1, 1}, {0x02, thirdName, 1, 1},
+        {0x03, thirdName, 1, 2}, {0x03, otherName, 0, -1},
+    };
+    for (const Expected& row : twoNamesRows) RequireExpected(twoNames, row);
+
+    const Expected sameSerialRows[] = {
+        {0x01, otherName, 2, 0}, {0x01, thirdName, 1, 2}, {0x01, sameSerial->crl->issuer, 0, -1},
+        {0x01, nullptr, 0, -1}, {0x02, thirdName, 1, 1}, {0x02, otherName, 0, -1},
+    };
+    for (const Expected& row : sameSerialRows) RequireExpected(sameSerial, row);
+
+    LibreSsl3X509Crl* noncritical = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntryWithExtensions(Bytes{0x01}, Extension({0x55, 0x1d, 0x1d}, false, Sequence({Tlv(0xa4, IssuerName("Other CA"))}))),
+            RevokedEntry(Bytes{0x02}),
+        })),
+    })));
+    Require(noncritical != nullptr);
+    Require(noncritical->flags == 0);
+    Require(RevokedEntryAt(noncritical, 0)->issuer != nullptr && RevokedEntryAt(noncritical, 0)->issuer->num == 1);
+    Require(RevokedEntryAt(noncritical, 1)->issuer == RevokedEntryAt(noncritical, 0)->issuer);
+    RequireExpected(noncritical, {0x01, otherName, 1, 0});
+    RequireExpected(noncritical, {0x01, noncritical->crl->issuer, 0, -1});
+    RequireExpected(noncritical, {0x02, otherName, 1, 1});
+    FreeCrlValue(noncritical);
+
+    for (const char* validHex : {
+             "3081b8306c020101300506032b657030123110300e06035504030c0754657374204341170d3234303130313030"
+             "303030305a303d303b020101170d3234303130323030303030305a302730250603551d1d0101ff041b3080a4"
+             "1530133111300f06035504030c084f746865722043410000300506032b65700341005a5a5a5a5a5a5a5a5a5a"
+             "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+             "5a5a5a5a5a5a5a5a5a5a",
+             "3081b8306c020101300506032b657030123110300e06035504030c0754657374204341170d3234303130313030"
+             "303030305a303d303b020101170d3234303130323030303030305a302730250603551d1d0101ff041b3019a4"
+             "8030133111300f06035504030c084f746865722043410000300506032b65700341005a5a5a5a5a5a5a5a5a5a"
+             "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+             "5a5a5a5a5a5a5a5a5a5a",
+             "3081b6306a020101300506032b657030123110300e06035504030c0754657374204341170d3234303130313030"
+             "303030305a303b3039020101170d3234303130323030303030305a302530230603551d1d0101ff04191017a4"
+             "1530133111300f06035504030c084f74686572204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a"
+             "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+             "5a5a5a5a5a5a5a5a"}) {
+        LibreSsl3X509Crl* berCrl = Parse(Hex(validHex));
+        Require(berCrl != nullptr);
+        Require(berCrl->flags == 0);
+        Require(berCrl->issuers != nullptr && berCrl->issuers->num == 1);
+        Require(RevokedEntryAt(berCrl, 0)->issuer != nullptr && RevokedEntryAt(berCrl, 0)->issuer->num == 1 &&
+                RevokedEntryAt(berCrl, 0)->reason == -1);
+        RequireExpected(berCrl, {0x01, otherName, 1, 0});
+        RequireExpected(berCrl, {0x01, berCrl->crl->issuer, 0, -1});
+        FreeCrlValue(berCrl);
+    }
+
+    LibreSsl3X509Crl* primitiveEmpty = Parse(Hex(
+        "30819f3053020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+        "3030305a30243022020101170d3234303130323030303030305a300e300c0603551d1d0101ff04021000300506"
+        "032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(primitiveEmpty != nullptr);
+    Require(primitiveEmpty->flags == 0);
+    Require(primitiveEmpty->issuers != nullptr && primitiveEmpty->issuers->num == 1);
+    Require(RevokedEntryAt(primitiveEmpty, 0)->issuer != nullptr && RevokedEntryAt(primitiveEmpty, 0)->issuer->num == 0 &&
+            RevokedEntryAt(primitiveEmpty, 0)->reason == -1);
+    RequireExpected(primitiveEmpty, {0x01, otherName, 0, -1});
+    RequireExpected(primitiveEmpty, {0x01, primitiveEmpty->crl->issuer, 0, -1});
+    FreeCrlValue(primitiveEmpty);
+
+    FreeCrlValue(third);
+    FreeCrlValue(other);
+    FreeCrlValue(sameSerial);
+    FreeCrlValue(twoNames);
+    FreeCrlValue(trailingNames);
+    FreeCrlValue(emptyNames);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+Bytes SingleEntryCrl(const Bytes& entry) {
+    return BuildCrl(Join({TbsHead(), Tlv(0x30, entry)}));
+}
+
+void TestCertificateIssuerUnsupportedForms() {
+    const Bytes dnsnameDer = SingleEntryCrl(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+        Extension({0x55, 0x1d, 0x1d}, true, Sequence({Tlv(0x82, Ascii("example.test"))}))));
+    RequireNotImplemented([&] { Parse(dnsnameDer); });
+    Require(allocations.empty());
+    DrainErrors();
+
+    const Bytes secondEntryDnsname = BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntryWithExtensions(Bytes{0x01}, CertificateIssuerExtension("Other CA")),
+            RevokedEntryWithExtensions(Bytes{0x02}, Extension({0x55, 0x1d, 0x1d}, true, Sequence({Tlv(0x82, Ascii("example.test"))}))),
+        })),
+    }));
+    RequireNotImplemented([&] { Parse(secondEntryDnsname); });
+    Require(allocations.empty());
+    DrainErrors();
+
+    LibreSsl3X509Crl* other = NamedCrl("Other CA");
+    LibreSsl3X509Crl* third = NamedCrl("Third CA");
+    const LibreSslX509Name* otherName = other->crl->issuer;
+    const LibreSslX509Name* thirdName = third->crl->issuer;
+
+    LibreSsl3X509Crl* primitiveDirname = Parse(Hex(
+        "3081b6306a020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+        "3030305a303b3039020101170d3234303130323030303030305a302530230603551d1d0101ff04193017841530"
+        "133111300f06035504030c084f74686572204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a"));
+    Require(primitiveDirname != nullptr);
+    Require(primitiveDirname->flags == 0x80);
+    Require(primitiveDirname->issuers == nullptr);
+    Require(RevokedEntryAt(primitiveDirname, 0)->issuer == nullptr);
+    Require(RevokedEntryAt(primitiveDirname, 0)->reason == 0);
+    RequireQueue({120, 58, 58});
+    const Expected primitiveDirnameRows[] = {
+        {0x01, otherName, 0, -1}, {0x01, thirdName, 0, -1},
+        {0x01, primitiveDirname->crl->issuer, 1, 0}, {0x01, nullptr, 1, 0},
+    };
+    for (const Expected& row : primitiveDirnameRows) RequireExpected(primitiveDirname, row);
+    FreeCrlValue(primitiveDirname);
+
+    LibreSsl3X509Crl* dirnameTrailing = Parse(Hex(
+        "3081cd308180020101300506032b657030123110300e06035504030c0754657374204341170d32343031303130"
+        "30303030305a3051303b020101170d3234303130323030303030305a302730250603551d1d0101ff041b3019a4"
+        "1730133111300f06035504030c084f7468657220434105003012020102170d3234303130323030303030305a30"
+        "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(dirnameTrailing != nullptr);
+    Require(dirnameTrailing->flags == 0x80);
+    Require(RevokedEntryAt(dirnameTrailing, 0)->issuer == nullptr &&
+            RevokedEntryAt(dirnameTrailing, 0)->reason == 0);
+    Require(RevokedEntryAt(dirnameTrailing, 1)->issuer == nullptr &&
+            RevokedEntryAt(dirnameTrailing, 1)->reason == 0);
+    RequireQueue({148, 58, 58});
+    const Expected dirnameTrailingRows[] = {
+        {0x01, otherName, 0, -1}, {0x01, dirnameTrailing->crl->issuer, 1, 0}, {0x01, nullptr, 1, 0},
+        {0x02, otherName, 0, -1}, {0x02, dirnameTrailing->crl->issuer, 1, 1}, {0x02, nullptr, 1, 1},
+    };
+    for (const Expected& row : dirnameTrailingRows) RequireExpected(dirnameTrailing, row);
+    FreeCrlValue(dirnameTrailing);
+
+    LibreSsl3X509Crl* twoIssuerExts = Parse(Hex(
+        "3081f03081a3020101300506032b657030123110300e06035504030c0754657374204341170d32343031303130"
+        "30303030305a3074305e020101170d3234303130323030303030305a304a30230603551d1d0101ff04193017a4"
+        "1530133111300f06035504030c084f7468657220434130230603551d1d0101ff04193017a41530133111300f06"
+        "035504030c0854686972642043413012020102170d3234303130323030303030305a300506032b65700341005a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(twoIssuerExts != nullptr);
+    Require(twoIssuerExts->flags == 0x80);
+    Require(RevokedEntryAt(twoIssuerExts, 0)->issuer == nullptr &&
+            RevokedEntryAt(twoIssuerExts, 0)->reason == 0);
+    Require(RevokedEntryAt(twoIssuerExts, 1)->issuer == nullptr &&
+            RevokedEntryAt(twoIssuerExts, 1)->reason == 0);
+    RequireQueue({});
+    const Expected twoIssuerExtsRows[] = {
+        {0x01, otherName, 0, -1}, {0x01, thirdName, 0, -1},
+        {0x01, twoIssuerExts->crl->issuer, 1, 0}, {0x01, nullptr, 1, 0},
+        {0x02, otherName, 0, -1}, {0x02, twoIssuerExts->crl->issuer, 1, 1}, {0x02, nullptr, 1, 1},
+    };
+    for (const Expected& row : twoIssuerExtsRows) RequireExpected(twoIssuerExts, row);
+    FreeCrlValue(twoIssuerExts);
+
+    LibreSsl3X509Crl* badIssuerTag = Parse(SingleEntryCrl(RevokedEntryWithExtensions(Bytes{0x01},
+        Extension({0x55, 0x1d, 0x1d}, true, Bytes{0x05, 0x00}))));
+    Require(badIssuerTag != nullptr);
+    Require(badIssuerTag->flags == 0x80);
+    Require(RevokedEntryAt(badIssuerTag, 0)->issuer == nullptr);
+    Require(RevokedEntryAt(badIssuerTag, 0)->reason == 0);
+    RequireQueue({168, 58});
+    RequireExpected(badIssuerTag, {0x01, badIssuerTag->crl->issuer, 1, 0});
+    FreeCrlValue(badIssuerTag);
+
+    LibreSsl3X509Crl* badChoice = Parse(SingleEntryCrl(RevokedEntryWithExtensions(Bytes{0x01},
+        Extension({0x55, 0x1d, 0x1d}, true, Sequence({Tlv(0x89, Ascii("x"))})))));
+    Require(badChoice != nullptr);
+    Require(badChoice->flags == 0x80);
+    Require(RevokedEntryAt(badChoice, 0)->issuer == nullptr && RevokedEntryAt(badChoice, 0)->reason == 0);
+    RequireQueue({143, 58});
+    RequireExpected(badChoice, {0x01, badChoice->crl->issuer, 1, 0});
+    FreeCrlValue(badChoice);
+
+    struct MalformedCase {
+        const char* hex;
+        std::initializer_list<int> errors;
+    };
+    for (const MalformedCase& malformed : {
+             MalformedCase{"3081b6306a020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a303b3039020101170d3234303130323030303030305a302530230603551d1d0101ff04193080a41530"
+                           "133111300f06035504030c084f74686572204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a",
+                 {137}},
+             MalformedCase{"3081b6306a020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a303b3039020101170d3234303130323030303030305a302530230603551d1d0101ff04193017a48030"
+                           "133111300f06035504030c084f74686572204341300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a",
+                 {137, 58, 58}},
+             MalformedCase{"3081a13055020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30263024020101170d3234303130323030303030305a3010300e0603551d1d0101ff04043002000030"
+                           "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {159}},
+             MalformedCase{"30819d3051020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30223020020101170d3234303130323030303030305a300c300a0603551d1d0101ff0400300506032b"
+                           "65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {102, 58}},
+             MalformedCase{"30819e3052020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30233021020101170d3234303130323030303030305a300d300b0603551d1d0101ff04013030050603"
+                           "2b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {102, 58}},
+             MalformedCase{"3081a13055020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30263024020101170d3234303130323030303030305a3010300e0603551d1d0101ff04043002890530"
+                           "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {143, 58}},
+             MalformedCase{"3081a13055020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30263024020101170d3234303130323030303030305a3010300e0603551d1d0101ff04043002a40530"
+                           "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {155, 58, 58, 58}},
+             MalformedCase{"3081a13055020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30263024020101170d3234303130323030303030305a3010300e0603551d1d0101ff04043002820530"
+                           "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {155, 58, 58, 58, 58}},
+             MalformedCase{"3081a13055020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30263024020101170d3234303130323030303030305a3010300e0603551d1d0101ff04043002240030"
+                           "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {143, 58}},
+             MalformedCase{"3081a33057020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30283026020101170d3234303130323030303030305a301230100603551d1d0101ff04063004a40205"
+                           "00300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {168, 58, 58, 58, 58, 58}},
+             MalformedCase{"3081a13055020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30263024020101170d3234303130323030303030305a3010300e0603551d1d0101ff04043002a40030"
+                           "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {102, 58, 58, 58, 58, 58}},
+             MalformedCase{"3081af3063020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30343032020101170d3234303130323030303030305a301e301c0603551d1d0101ff04123010a40e30"
+                           "0c310a300806035504030c01ff300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {134, 58, 58, 58, 58, 58}},
+             MalformedCase{"3081a03054020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30253023020101170d3234303130323030303030305a300f300d0603551d1d0101ff040330019f3005"
+                           "06032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {102, 58, 58, 58, 58}},
+             MalformedCase{"3081a33057020101300506032b657030123110300e06035504030c0754657374204341170d323430313031303030"
+                           "3030305a30283026020101170d3234303130323030303030305a301230100603551d1d0101ff04063004a40200"
+                           "00300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                           "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                 {168, 58, 58, 58, 58, 58}}}) {
+        LibreSsl3X509Crl* crl = Parse(Hex(malformed.hex));
+        Require(crl != nullptr);
+        Require(crl->flags == 0x80);
+        Require(crl->issuers == nullptr);
+        Require(RevokedEntryAt(crl, 0)->issuer == nullptr && RevokedEntryAt(crl, 0)->reason == 0);
+        RequireQueue(malformed.errors);
+        RequireExpected(crl, {0x01, otherName, 0, -1});
+        RequireExpected(crl, {0x01, crl->crl->issuer, 1, 0});
+        FreeCrlValue(crl);
+    }
+
+    FreeCrlValue(third);
+    FreeCrlValue(other);
+    Require(allocations.empty());
+}
+
+void TestCertificateIssuerInvalidMiddle() {
+    LibreSsl3X509Crl* other = NamedCrl("Other CA");
+    LibreSsl3X509Crl* third = NamedCrl("Third CA");
+    LibreSsl3X509Crl* fourth = NamedCrl("Fourth CA");
+    const LibreSslX509Name* otherName = other->crl->issuer;
+    const LibreSslX509Name* thirdName = third->crl->issuer;
+    const LibreSslX509Name* fourthName = fourth->crl->issuer;
+
+    LibreSsl3X509Crl* criticalUnknown = Parse(Hex(
+        "3081de308191020101300506032b657030123110300e06035504030c0754657374204341170d32343031303130"
+        "30303030305a3062304c020101170d3234303130323030303030305a303830230603551d1d0101ff04193017a4"
+        "1530133111300f06035504030c084f74686572204341301106062b06010401010101ff04040402616230120201"
+        "02170d3234303130323030303030305a300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(criticalUnknown != nullptr);
+    Require(criticalUnknown->flags == 0x200);
+    Require(RevokedEntryAt(criticalUnknown, 0)->issuer != nullptr &&
+            RevokedEntryAt(criticalUnknown, 0)->issuer->num == 1 &&
+            RevokedEntryAt(criticalUnknown, 0)->reason == -1);
+    Require(RevokedEntryAt(criticalUnknown, 1)->issuer != nullptr &&
+            RevokedEntryAt(criticalUnknown, 1)->issuer->num == 1 &&
+            RevokedEntryAt(criticalUnknown, 1)->reason == -1);
+    RequireQueue({});
+    RequireExpected(criticalUnknown, {0x01, otherName, 1, 0});
+    RequireExpected(criticalUnknown, {0x02, otherName, 1, 1});
+    FreeCrlValue(criticalUnknown);
+
+    LibreSsl3X509Crl* noncriticalUnknown = Parse(Hex(
+        "3081db30818e020101300506032b657030123110300e06035504030c0754657374204341170d32343031303130"
+        "30303030305a305f3049020101170d3234303130323030303030305a303530230603551d1d0101ff04193017a4"
+        "1530133111300f06035504030c084f74686572204341300e06062b06010401010404040261623012020102170d"
+        "3234303130323030303030305a300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(noncriticalUnknown != nullptr);
+    Require(noncriticalUnknown->flags == 0);
+    Require(RevokedEntryAt(noncriticalUnknown, 0)->issuer != nullptr &&
+            RevokedEntryAt(noncriticalUnknown, 0)->issuer->num == 1 &&
+            RevokedEntryAt(noncriticalUnknown, 0)->reason == -1);
+    Require(RevokedEntryAt(noncriticalUnknown, 1)->issuer != nullptr &&
+            RevokedEntryAt(noncriticalUnknown, 1)->issuer->num == 1 &&
+            RevokedEntryAt(noncriticalUnknown, 1)->reason == -1);
+    RequireQueue({});
+    RequireExpected(noncriticalUnknown, {0x01, otherName, 1, 0});
+    RequireExpected(noncriticalUnknown, {0x02, otherName, 1, 1});
+    FreeCrlValue(noncriticalUnknown);
+
+    LibreSsl3X509Crl* invalidMiddleIssuer = Parse(Hex(
+        "3082012f3081e2020101300506032b657030123110300e06035504030c0754657374204341170d323430313031"
+        "3030303030305a3081b23045020101170d3234303130323030303030305a303130230603551d1d0101ff041930"
+        "17a41530133111300f06035504030c084f74686572204341300a0603551d1504030a01013022020102170d3234"
+        "303130323030303030305a300e300c0603551d1d0101ff040205003045020103170d3234303130323030303030"
+        "305a303130230603551d1d0101ff04193017a41530133111300f06035504030c085468697264204341300a0603"
+        "551d1504030a0108300506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(invalidMiddleIssuer != nullptr);
+    Require(invalidMiddleIssuer->flags == 0x80);
+    Require(invalidMiddleIssuer->issuers != nullptr && invalidMiddleIssuer->issuers->num == 1);
+    Require(RevokedEntryAt(invalidMiddleIssuer, 0)->issuer != nullptr &&
+            RevokedEntryAt(invalidMiddleIssuer, 0)->issuer->num == 1 &&
+            RevokedEntryAt(invalidMiddleIssuer, 0)->reason == 1);
+    Require(RevokedEntryAt(invalidMiddleIssuer, 1)->issuer == nullptr &&
+            RevokedEntryAt(invalidMiddleIssuer, 1)->reason == 0);
+    Require(RevokedEntryAt(invalidMiddleIssuer, 2)->issuer == nullptr &&
+            RevokedEntryAt(invalidMiddleIssuer, 2)->reason == 0);
+    RequireQueue({168, 58});
+    for (const Expected& row : std::initializer_list<Expected>{
+             {0x01, otherName, 1, 0}, {0x01, invalidMiddleIssuer->crl->issuer, 0, -1},
+             {0x02, otherName, 0, -1}, {0x02, invalidMiddleIssuer->crl->issuer, 1, 1}, {0x02, nullptr, 1, 1},
+             {0x03, thirdName, 0, -1}, {0x03, invalidMiddleIssuer->crl->issuer, 1, 2}, {0x03, nullptr, 1, 2}}) {
+        RequireExpected(invalidMiddleIssuer, row);
+    }
+    FreeCrlValue(invalidMiddleIssuer);
+
+    LibreSsl3X509Crl* invalidMiddleReason = Parse(Hex(
+        "3082015330820105020101300506032b657030123110300e06035504030c0754657374204341170d3234303130"
+        "313030303030305a3081d53045020101170d3234303130323030303030305a303130230603551d1d0101ff0419"
+        "3017a41530133111300f06035504030c084f74686572204341300a0603551d1504030a01013044020102170d32"
+        "34303130323030303030305a303030230603551d1d0101ff04193017a41530133111300f06035504030c085468"
+        "69726420434130090603551d15040205003046020103170d3234303130323030303030305a303230240603551d"
+        "1d0101ff041a3018a41630143112301006035504030c09466f75727468204341300a0603551d1504030a010830"
+        "0506032b65700341005a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"));
+    Require(invalidMiddleReason != nullptr);
+    Require(invalidMiddleReason->flags == 0x80);
+    Require(invalidMiddleReason->issuers != nullptr && invalidMiddleReason->issuers->num == 2);
+    Require(RevokedEntryAt(invalidMiddleReason, 0)->issuer != nullptr &&
+            RevokedEntryAt(invalidMiddleReason, 0)->issuer->num == 1 &&
+            RevokedEntryAt(invalidMiddleReason, 0)->reason == 1);
+    Require(RevokedEntryAt(invalidMiddleReason, 1)->issuer != nullptr &&
+            RevokedEntryAt(invalidMiddleReason, 1)->issuer->num == 1 &&
+            RevokedEntryAt(invalidMiddleReason, 1)->reason == 0);
+    Require(RevokedEntryAt(invalidMiddleReason, 2)->issuer == nullptr &&
+            RevokedEntryAt(invalidMiddleReason, 2)->reason == 0);
+    RequireQueue({168, 58});
+    for (const Expected& row : std::initializer_list<Expected>{
+             {0x01, otherName, 1, 0}, {0x02, otherName, 0, -1}, {0x02, thirdName, 1, 1},
+             {0x03, fourthName, 0, -1}, {0x03, invalidMiddleReason->crl->issuer, 1, 2}, {0x03, nullptr, 1, 2}}) {
+        RequireExpected(invalidMiddleReason, row);
+    }
+    FreeCrlValue(invalidMiddleReason);
+
+    FreeCrlValue(fourth);
+    FreeCrlValue(third);
+    FreeCrlValue(other);
+    Require(allocations.empty());
+}
+
+void RequireAuxiliaryAllocationFailures(const Bytes& der, bool allowSilentReasonMalloc, bool expectAuxError) {
+    bool invalid = false;
+    bool sawMallocFailure = false;
+    int auxErrors = 0;
+    bool completed = false;
+    for (int budget = 0; budget < 500; ++budget) {
+        const unsigned char* input = der.data();
+        allocationsUntilFailure = budget;
+        LibreSsl3X509Crl* crl = d2i_X509_CRL_nid_postfix(nullptr, &input, static_cast<std::int64_t>(der.size()));
+        const bool failed = allocationsUntilFailure < 0;
+        allocationsUntilFailure = -1;
+        if (crl) {
+            if (failed) {
+                Require(crl->flags == 0x80);
+                const std::uint64_t first = ERR_get_error_nid_postfix();
+                if (first == Error(MallocFailure)) {
+                    sawMallocFailure = true;
+                } else {
+                    Require(allowSilentReasonMalloc && first == 0);
+                }
+                DrainErrors();
+                invalid = true;
+            } else {
+                Require(crl->flags == 0);
+                RequireQueue({});
+                completed = true;
+                FreeCrlValue(crl);
+                Require(allocations.empty());
+                break;
+            }
+            FreeCrlValue(crl);
+            Require(allocations.empty());
+            continue;
+        }
+        Require(failed);
+        Require(allocations.empty());
+        const std::uint64_t first = ERR_get_error_nid_postfix();
+        if (first == Error(AuxError)) {
+            RequireQueue({});
+            ++auxErrors;
+        } else {
+            DrainErrors();
+        }
+    }
+    Require(completed);
+    Require(invalid);
+    Require(sawMallocFailure);
+    Require(expectAuxError ? auxErrors >= 1 : auxErrors == 0);
+    Require(allocations.empty());
+}
+
+void TestCertificateIssuerAllocationFailures() {
+    RequireAuxiliaryAllocationFailures(Hex(IndirectCrlHex), true, true);
+    RequireAuxiliaryAllocationFailures(Hex(FiveNamesCrlHex), false, true);
+    RequireAuxiliaryAllocationFailures(Hex(DirectCrlHex), true, false);
+    RequireAuxiliaryAllocationFailures(Hex(FourIssuersCrlHex), false, true);
+}
+
+void TestFiveNamesOneEntry() {
+    LibreSsl3X509Crl* fiveNamesCrl = Parse(Hex(FiveNamesCrlHex));
+    Require(fiveNamesCrl != nullptr);
+    Require(fiveNamesCrl->flags == 0);
+    Require(fiveNamesCrl->issuers != nullptr && fiveNamesCrl->issuers->num == 1);
+    Require(RevokedEntryAt(fiveNamesCrl, 0)->issuer != nullptr &&
+            RevokedEntryAt(fiveNamesCrl, 0)->issuer->num == 5 &&
+            RevokedEntryAt(fiveNamesCrl, 0)->reason == -1);
+    Require(RevokedEntryAt(fiveNamesCrl, 1)->issuer != nullptr &&
+            RevokedEntryAt(fiveNamesCrl, 1)->issuer->num == 5 &&
+            RevokedEntryAt(fiveNamesCrl, 1)->reason == -1);
+    LibreSsl3X509Crl* other = NamedCrl("Other CA");
+    LibreSsl3X509Crl* fourth = NamedCrl("Fourth CA");
+    const Expected fiveNamesExpected[] = {
+        {0x01, other->crl->issuer, 1, 0}, {0x01, fourth->crl->issuer, 1, 0}, {0x01, fiveNamesCrl->crl->issuer, 0, -1},
+        {0x01, nullptr, 0, -1}, {0x02, other->crl->issuer, 1, 1}, {0x02, fourth->crl->issuer, 1, 1},
+        {0x02, fiveNamesCrl->crl->issuer, 0, -1},
+    };
+    for (const Expected& row : fiveNamesExpected) RequireExpected(fiveNamesCrl, row);
+    FreeCrlValue(fourth);
+    FreeCrlValue(other);
+    FreeCrlValue(fiveNamesCrl);
     RequireQueue({});
     Require(allocations.empty());
 }
@@ -1601,6 +2314,13 @@ int main() {
     TestGet0ByCert();
     TestRemoveFromCrl();
     TestCertificateIssuerEntries();
+    TestOracleIndirectCrl();
+    TestOracleDirectCrl();
+    TestOracleCertificateIssuerForms();
+    TestCertificateIssuerUnsupportedForms();
+    TestCertificateIssuerInvalidMiddle();
+    TestFiveNamesOneEntry();
+    TestCertificateIssuerAllocationFailures();
     TestTrailingData();
     TestMalformed();
     TestTimes();
