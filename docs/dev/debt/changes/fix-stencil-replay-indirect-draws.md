@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Indirect stencil reference export replay](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) (libSceAgcDriver) - an indirect draw (DRAW_INDIRECT, DRAW_INDEX_INDIRECT and their multi forms) that replays stencil reference exports always reads its records and record count on the CPU (`IndirectDrawPath::StencilReplay`), after the flush hook waits for the GPU work that writes them, so it has the limits of the CPU record path listed under GPU-side indirect draw records and CPU reads behind an address-based build. The records are replayed in record order. With one proved reference each record is one draw; otherwise each is split into instances and triangles with one draw per pass: 256 per triangle per instance for an export the prover cannot bound, at most 10 when it replays one stencil bit per pass. A record whose instance or vertex range passes 2^32 throws, as for direct draws. Expanding the records on the GPU, which would avoid the wait, is not implemented.

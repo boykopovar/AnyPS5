@@ -325,6 +325,7 @@ public:
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;
+    bool DescriptorRangesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.DescriptorRangesOverlap(address, bytes); }
     // The recorder's hazard tracker inputs (Recorder::NoteAccess): the written elements' guest
     // ranges, the regions read in place, and the storage images with whether each is written.
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& GpuWrites() const { return guestMemory.Writes(); }

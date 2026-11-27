@@ -9221,6 +9221,12 @@ bool GuestBufferMemory::InPlaceReadsOverlap(std::uint64_t address, std::size_t b
     return std::any_of(regions.begin(), regions.end(), [&](const auto& region) { return overlaps(region, inPlaceEnd(region)); });
 }
 
+bool GuestBufferMemory::DescriptorRangesOverlap(std::uint64_t address, std::size_t bytes) const {
+    const auto end = address + bytes;
+    const auto overlaps = [&](const auto& range) { return address < range.second && range.first < end; };
+    return std::any_of(reads.begin(), reads.end(), overlaps) || std::any_of(writes.begin(), writes.end(), overlaps);
+}
+
 void GuestBufferMemory::DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& result) const {
     result.clear();
     if (!uploaded || committed) return;

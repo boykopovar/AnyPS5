@@ -748,7 +748,7 @@ constexpr std::array<const char*, PhaseCount> DrawPhaseNames{"validate", "vertex
 enum SyncReason : std::size_t { SyncNone, SyncNotResident, SyncNoRecorder, SyncDisabled, SyncCopiedWrites, SyncLease, SyncCount };
 constexpr std::array<const char*, SyncCount> SyncReasonNames{"none", "non-resident target", "no recorder", "disabled", "copied writes", "lease"};
 constexpr std::size_t IndirectPathCount = static_cast<std::size_t>(IndirectDrawPath::Count);
-constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "records settled"};
+constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "records settled", "stencil replay"};
 
 // What became of one draw, for the totals.
 struct DrawOutcome {
@@ -2489,6 +2489,24 @@ struct IndirectRecord {
     double readMs = 0;
 };
 
+struct ResolvedIndirectRecord {
+    std::uint32_t count = 0;
+    std::uint32_t instances = 0;
+    std::uint32_t first = 0;
+    std::uint32_t vertexOffset = 0;
+    std::uint32_t firstInstance = 0;
+};
+
+std::optional<ResolvedIndirectRecord> ResolveIndirectRecord(const Pm4::DrawParameters& draw, const DrawInputs& inputs, const Pm4::DrawParameters::IndirectDraw& args, const Pm4::DrawArguments& record) {
+    using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
+    if (record.count == 0 || record.instances == 0) return std::nullopt;
+    const auto firstInstance = args.instanceRule == Rule::InPlace ? record.firstInstance : args.instanceConstant;
+    if (!draw.indexed) return ResolvedIndirectRecord{record.count, record.instances, args.vertexRule == Rule::InPlace ? record.firstVertexOrIndex : args.vertexConstant, 0u, firstInstance};
+    const auto boundCount = inputs.indexCount.value_or(draw.indexCount);
+    if (record.firstVertexOrIndex >= boundCount) return std::nullopt;
+    return ResolvedIndirectRecord{std::min(record.count, boundCount - record.firstVertexOrIndex), record.instances, record.firstVertexOrIndex, args.vertexRule == Rule::InPlace ? record.vertexOffset : args.vertexConstant, firstInstance};
+}
+
 void CompactIndirectListRestart(const Context& context, const Pm4::DrawParameters& draw, DrawInputs& inputs, std::vector<Pm4::DrawArguments>& records) {
     const auto bound = inputs.indexCount.value_or(draw.indexCount);
     const auto raw = inputs.indices->Bytes();
@@ -2587,23 +2605,16 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     } else {
         // The CPU-read records with the driver's rules: an InPlace dimension takes the record's
         // value, a Constant one (the CP writes nowhere) the constant.
-        using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
         for (const auto& record : indirect->records) {
-            if (record.count == 0 || record.instances == 0) continue;
-            const auto firstInstance = args->instanceRule == Rule::InPlace ? record.firstInstance : args->instanceConstant;
+            const auto resolved = ResolveIndirectRecord(draw, inputs, *args, record);
+            if (!resolved) continue;
+            emitted = true;
             if (draw.indexed) {
-                // The CP clamps the index range to INDEX_BUFFER_SIZE (the bound copy).
-                const auto boundCount = inputs.indexCount.value_or(draw.indexCount);
-                if (record.firstVertexOrIndex >= boundCount) continue;
-                const auto vertexOffset = args->vertexRule == Rule::InPlace ? record.vertexOffset : args->vertexConstant;
-                emitted = true;
                 CountVkDraw(VkDrawKind::Indexed);
-                context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, std::min(record.count, boundCount - record.firstVertexOrIndex), record.instances, record.firstVertexOrIndex, static_cast<std::int32_t>(vertexOffset), firstInstance);
+                context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, resolved->count, resolved->instances, resolved->first, static_cast<std::int32_t>(resolved->vertexOffset), resolved->firstInstance);
             } else {
-                const auto firstVertex = args->vertexRule == Rule::InPlace ? record.firstVertexOrIndex : args->vertexConstant;
-                emitted = true;
                 CountVkDraw(VkDrawKind::Direct);
-                context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, record.count, record.instances, firstVertex, firstInstance);
+                context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, resolved->count, resolved->instances, resolved->first, resolved->firstInstance);
             }
         }
     }
@@ -2906,7 +2917,7 @@ std::vector<StencilReplayPass> StencilReplayPasses(const State& state, const Pip
     return passes;
 }
 
-void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const State* masked, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
+void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const State* masked, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     const auto commands = recording.Commands();
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
@@ -2938,22 +2949,41 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
             recordDrawCommands(context, commands, selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex);
         }
     };
+    std::vector<std::pair<Pm4::DrawParameters, std::optional<std::uint32_t>>> spans;
+    if (indirect == nullptr) spans.emplace_back(draw, std::nullopt);
+    else {
+        Require(indirect->path == IndirectDrawPath::StencilReplay, "stencil replay of an indirect draw requires its records read on the CPU");
+        for (const auto& record : indirect->records) {
+            const auto resolved = ResolveIndirectRecord(draw, inputs, *indirect->args, record);
+            if (!resolved) continue;
+            auto span = draw;
+            span.indirect.reset();
+            span.indexCount = resolved->count;
+            span.instanceCount = resolved->instances;
+            span.firstVertex = draw.indexed ? resolved->vertexOffset : resolved->first;
+            span.firstInstance = resolved->firstInstance;
+            spans.emplace_back(std::move(span), draw.indexed ? std::optional<std::uint32_t>(resolved->first) : std::nullopt);
+        }
+    }
     if (passes.size() == 1u) {
-        run(draw, std::nullopt, false);
+        for (const auto& [span, firstIndex] : spans) run(span, firstIndex, false);
         return;
     }
-    const auto indexCount = draw.indexed ? inputs.indexCount.value_or(draw.indexCount) : draw.indexCount;
     const bool strip = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    const std::uint32_t triangles = strip ? (indexCount >= 3u ? indexCount - 2u : 0u) : indexCount / 3u;
-    for (std::uint32_t instance = 0; instance < draw.instanceCount; ++instance) {
-        for (std::uint32_t triangle = 0; triangle < triangles; ++triangle) {
-            const std::uint32_t first = strip ? triangle : triangle * 3u;
-            auto piece = draw;
-            piece.instanceCount = 1u;
-            piece.firstInstance = draw.firstInstance + instance;
-            piece.indexCount = 3u;
-            if (!draw.indexed) piece.firstVertex += first;
-            run(piece, draw.indexed ? first : 0u, strip && (triangle & 1u) != 0u);
+    for (const auto& [span, firstIndex] : spans) {
+        const auto indexCount = span.indexed && !firstIndex ? inputs.indexCount.value_or(span.indexCount) : span.indexCount;
+        const auto baseIndex = firstIndex.value_or(0u);
+        const std::uint32_t triangles = strip ? (indexCount >= 3u ? indexCount - 2u : 0u) : indexCount / 3u;
+        for (std::uint32_t instance = 0; instance < span.instanceCount; ++instance) {
+            for (std::uint32_t triangle = 0; triangle < triangles; ++triangle) {
+                const std::uint32_t first = strip ? triangle : triangle * 3u;
+                auto piece = span;
+                piece.instanceCount = 1u;
+                piece.firstInstance = span.firstInstance + instance;
+                piece.indexCount = 3u;
+                if (!span.indexed) piece.firstVertex += first;
+                run(piece, span.indexed ? baseIndex + first : 0u, strip && (triangle & 1u) != 0u);
+            }
         }
     }
     if (bitwise) pipeline.SetStencilReplayMasks(recording, state, masked, true, 0xffu);
@@ -3309,7 +3339,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, record.masked, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
+        recordStencilReplay(context, recording, state, record.masked, draw, inputs, record.indirect, record.stencilReplay, shaders, resources, pushBytes, pushStages);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
@@ -4115,7 +4145,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
     }
     if (!stencilReferences.empty()) {
-        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || StencilReplayStrip(context, state, shaders)), "stencil replay supports direct triangle lists, and triangle strips whose triangles share one face state and have no flat parameters, without restart, mesh or tessellation");
+        Require(!state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || StencilReplayStrip(context, state, shaders)), "stencil replay supports triangle lists, and triangle strips whose triangles share one face state and have no flat parameters, without restart, mesh or tessellation");
         Require(!state.depthBiasPerFace && !ShadersWriteMemory(shaders), "stencil replay refuses face splits and shader memory writes");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe && (shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Fragment); }), "stencil replay refuses stages with side effects, clocks, subgroup dependencies or primitive ID inputs");
         if (stencilReferences.size() == 256u) {
@@ -4394,7 +4424,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (stop == 1) return false;
         if (stop == 2) throw std::runtime_error("injected failure after the draw's resources were resolved");
     }
-    if (state.depth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     auto& resources = resolved.resources;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         auto& binding = targets[index];
@@ -4414,12 +4443,16 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require(!imageRead && !resources->ReadsImage(target.resident.get()) && !resources->ReadsOverlap(target.color.MemoryAddress(), static_cast<std::size_t>(target.color.bytes)) && !inputOverlaps(target.color.MemoryAddress(), target.color.bytes), "stencil replay refuses attachment feedback reads");
         }
         if (state.depth) {
-            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u * std::max(state.depth->samples, 1u);
-            Require(!resources->ReadsOverlap(state.depth->address, bytes) && !resources->ReadsOverlap(state.depth->stencilAddress, bytes) && !inputOverlaps(state.depth->address, bytes) && !inputOverlaps(state.depth->stencilAddress, bytes), "stencil replay refuses depth or stencil feedback reads");
+            const auto& depth = *state.depth;
+            const bool d16 = depth.format == VK_FORMAT_D16_UNORM || depth.format == VK_FORMAT_D16_UNORM_S8_UINT;
+            const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return depth.samples <= 1u ? DepthSliceBytes(depth.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(depth.extent, bytesPerTexel, depth.samples); };
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> planes{{{depth.address, planeBytes(d16 ? 2u : 4u)}, {depth.stencilAddress, planeBytes(1u)}}};
             const auto boundPlane = [&](std::uint64_t address, std::uint64_t length) {
-                const auto overlaps = [&](std::uint64_t plane) { return plane != 0u && address < plane + bytes && plane < address + length; };
-                return overlaps(state.depth->address) || overlaps(state.depth->stencilAddress);
+                return std::ranges::any_of(planes, [&](const auto& plane) { return plane.first != 0u && address < plane.first + plane.second && plane.first < address + length; });
             };
+            const auto planeRead = [&](const auto& plane) { return plane.first != 0u && (resources->DescriptorRangesOverlap(plane.first, static_cast<std::size_t>(plane.second)) || inputOverlaps(plane.first, plane.second)); };
+            const auto movedRead = [&](const ShaderResources::MovedBuffer& entry) { return entry.address != 0u && boundPlane(entry.address, entry.size); };
+            Require(!std::ranges::any_of(planes, planeRead) && !std::ranges::any_of(resolved.moved, movedRead), "stencil replay refuses depth or stencil feedback reads");
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
@@ -4475,7 +4508,8 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             return false;
         }
         Require(rangeBytes <= std::numeric_limits<std::size_t>::max(), "indirect draw record range overflow");
-        if (!gpuIndirectDraws) indirect.path = IndirectDrawPath::Disabled;
+        if (!stencilReferences.empty()) indirect.path = IndirectDrawPath::StencilReplay;
+        else if (!gpuIndirectDraws) indirect.path = IndirectDrawPath::Disabled;
         else if (inputs.listRestartPrimitive != 0) indirect.path = IndirectDrawPath::FeatureGap;
         else indirect.path = decide(args->arguments, static_cast<std::size_t>(rangeBytes), indirect.argumentImport);
         if (indirect.path == IndirectDrawPath::Gpu && args->countIndirect) {
@@ -4493,14 +4527,21 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(*args, record));
             if (profile) indirect.readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count();
             if (inputs.listRestartPrimitive != 0) CompactIndirectListRestart(context, draw, inputs, records);
+            if (!stencilReferences.empty()) {
+                for (const auto& record : records) {
+                    const auto resolved = ResolveIndirectRecord(draw, inputs, *args, record);
+                    Require(!resolved || (static_cast<std::uint64_t>(resolved->firstInstance) + resolved->instances <= 0x100000000ull && (draw.indexed || static_cast<std::uint64_t>(resolved->first) + resolved->count <= 0x100000000ull)), "stencil replay draw indices overflow");
+                }
+            }
             indirect.records = records;
-            if (std::none_of(records.begin(), records.end(), [](const Pm4::DrawArguments& record) { return record.count != 0 && record.instances != 0; })) {
+            if (std::none_of(records.begin(), records.end(), [&](const Pm4::DrawArguments& record) { return ResolveIndirectRecord(draw, inputs, *args, record).has_value(); })) {
                 CountIndirectDraw(indirect.path, indirect.readMs);
                 report(" indirect draw with empty records");
                 return false;
             }
         }
     }
+    if (state.depth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     // A draw whose only completion work is a BDA fault check (the rect-list stages carry a fault
     // buffer, so every rect-list draw needed one) is recorded too, with the check as a completion
     // action like a dispatch's write-back: its own batch would first wait for everything recorded
@@ -4889,7 +4930,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, masked.has_value() ? &*masked : nullptr, draw, inputs, stencilReplay, shaders, *resources);
+        recordStencilReplay(context, recording, state, masked.has_value() ? &*masked : nullptr, draw, inputs, args != nullptr ? &indirect : nullptr, stencilReplay, shaders, *resources);
         if (recorded) for (const auto& [reference, selectedPipeline] : stencilReplay) recorder->Keep(selectedPipeline);
     }
     if (pipeline->SplitsFaces()) {
