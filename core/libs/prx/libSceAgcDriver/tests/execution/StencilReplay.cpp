@@ -133,6 +133,7 @@ ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
 }
 
 bool LastReplayStored = false;
+bool CachedShaders = false;
 std::uint32_t ExpectedBinds = 1u;
 std::uint64_t LastDraws = 0;
 
@@ -153,7 +154,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
         target,
         {0, 0, 0, 64}
     };
-    vertex.useCache = false;
+    vertex.useCache = CachedShaders;
     auto vertexResult = ShaderRecompiler::Recompile(vertex);
     if (alterVertex) alterVertex(vertexResult);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
@@ -169,7 +170,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
         target,
         pixelLayout
     };
-    fragment.useCache = false;
+    fragment.useCache = CachedShaders;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     if (!pixelResult.stencilReferences.empty()) {
         Require(pixelResult.stencilReferenceDword * sizeof(std::uint32_t) + sizeof(std::uint32_t) == pixelResult.pushConstants.size(), "dynamic reference is not reserved after the stage payload");
@@ -771,13 +772,14 @@ int main() {
             std::printf("stencil replay four-sample checks skipped: %s\n", multisampleSkip.c_str());
         }
         {
-            constexpr std::size_t HeapBytes = 65536;
-            constexpr std::size_t StencilOffset = 0x2000;
-            constexpr std::size_t ValueOffset = 0x8000;
+            constexpr std::size_t PlaneBytes = 65536;
+            constexpr std::size_t HeapBytes = 3 * PlaneBytes;
+            constexpr std::size_t StencilOffset = PlaneBytes;
+            constexpr std::size_t ValueOffset = 2 * PlaneBytes;
 #ifdef _WIN32
             auto* heap = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, HeapBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-            auto* heap = static_cast<std::uint8_t*>(std::aligned_alloc(HeapBytes, HeapBytes));
+            auto* heap = static_cast<std::uint8_t*>(std::aligned_alloc(PlaneBytes, HeapBytes));
 #endif
             Require(heap != nullptr, "cannot allocate the guest heap holding the depth target");
             std::memset(heap, 0, HeapBytes);
@@ -831,33 +833,60 @@ int main() {
                 state.depthCompare = VK_COMPARE_OP_EQUAL;
             }, {}, exportedDepth);
             Check(even, "an address-reading fullscreen export writes its exported depth on kept columns");
-            for (const std::size_t plane : {std::size_t{0}, StencilOffset}) {
-                const auto planeBuffer = BufferDescriptor(heap + plane, 4u, Width);
-                for (const bool addressReads : {false, true}) {
-                    constexpr std::array<std::uint32_t, 10> declared{
-                        0x7e060f00u, 0xe0302000u, 0x80000603u, 0xbf8c3f70u,
-                        0x7e0e02f2u, 0xf8000082u, 6u << 8u,
-                        0xf800180fu, 0x07070707u, 0xbf810000u
-                    };
-                    constexpr std::array<std::uint32_t, 14> declaredAndAddressed{
-                        0x7e080280u, 0xdc308000u, 0x05040004u,
-                        0x7e060f00u, 0xe0302000u, 0x80000603u, 0xbf8c3f70u,
-                        0x4a0c0d05u,
-                        0x7e0e02f2u, 0xf8000082u, 6u << 8u,
-                        0xf800180fu, 0x07070707u, 0xbf810000u
-                    };
-                    std::vector<std::uint32_t> data(planeBuffer.begin(), planeBuffer.end());
-                    if (addressReads) data.insert(data.end(), valuePointer.begin(), valuePointer.end());
-                    bool planeRefused = false;
-                    try {
-                        if (addressReads) Draw(*device, declaredAndAddressed, exported, replace(), 3u, 1u, false, heapDepth, {}, Vertices, VertexCode, data);
-                        else Draw(*device, declared, exported, replace(), 3u, 1u, false, heapDepth, {}, Vertices, VertexCode, data);
-                    } catch (const std::exception& error) {
-                        planeRefused = std::string_view(error.what()).find("depth or stencil feedback reads") != std::string_view::npos;
-                        if (!planeRefused) throw;
-                    }
-                    Require(planeRefused, plane == 0u ? (addressReads ? "an address-reading export with a buffer over its own depth plane was not refused" : "an export with a buffer over its own depth plane was not refused") : (addressReads ? "an address-reading export with a buffer over its own stencil plane was not refused" : "an export with a buffer over its own stencil plane was not refused"));
+            constexpr std::array<std::uint32_t, 10> declared{
+                0x7e060f00u, 0xe0302000u, 0x80000603u, 0xbf8c3f70u,
+                0x7e0e02f2u, 0xf8000082u, 6u << 8u,
+                0xf800180fu, 0x07070707u, 0xbf810000u
+            };
+            constexpr std::array<std::uint32_t, 14> declaredAndAddressed{
+                0x7e080280u, 0xdc308000u, 0x05040004u,
+                0x7e060f00u, 0xe0302000u, 0x80000603u, 0xbf8c3f70u,
+                0x4a0c0d05u,
+                0x7e0e02f2u, 0xf8000082u, 6u << 8u,
+                0xf800180fu, 0x07070707u, 0xbf810000u
+            };
+            auto* const heapVertices = reinterpret_cast<std::array<float, 4>*>(heap + ValueOffset + 0x1000u);
+            std::memcpy(heapVertices, Vertices.data(), sizeof(Vertices));
+            const std::span<const std::array<float, 4>> vertices(heapVertices, Vertices.size());
+            const auto feedbackRefused = [&](const void* memory, bool addressReads, const std::function<void(AgcDriver::Graphics::State&)>& alter) {
+                const auto buffer = BufferDescriptor(memory, 4u, Width);
+                std::vector<std::uint32_t> data(buffer.begin(), buffer.end());
+                if (addressReads) data.insert(data.end(), valuePointer.begin(), valuePointer.end());
+                try {
+                    if (addressReads) Draw(*device, declaredAndAddressed, exported, replace(), 3u, 1u, false, alter, {}, vertices, VertexCode, data);
+                    else Draw(*device, declared, exported, replace(), 3u, 1u, false, alter, {}, vertices, VertexCode, data);
+                } catch (const std::exception& error) {
+                    if (std::string_view(error.what()).find("depth or stencil feedback reads") == std::string_view::npos) throw;
+                    return true;
                 }
+                return false;
+            };
+            for (const std::size_t plane : {std::size_t{0}, StencilOffset}) {
+                for (const std::size_t offset : {std::size_t{0}, std::size_t{0x2000}}) {
+                    for (const bool addressReads : {false, true}) {
+                        Require(!feedbackRefused(heap + ValueOffset + 0x100u, addressReads, heapDepth), addressReads ? "an address-reading export with a buffer outside its depth and stencil planes was refused" : "an export with a buffer outside its depth and stencil planes was refused");
+                        const auto what = std::string(addressReads ? "an address-reading export" : "an export") + " with a buffer " + (offset == 0u ? "at the base of" : "past the first texels of") + " its own " + (plane == 0u ? "depth" : "stencil") + " plane was not refused";
+                        Require(feedbackRefused(heap + plane + offset, addressReads, heapDepth), what);
+                    }
+                }
+            }
+            const auto recordedHeapDepth = [&](AgcDriver::Graphics::State& state) {
+                heapDepth(state);
+                state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+                state.colors = {state.color};
+            };
+            CachedShaders = true;
+            for (const std::size_t plane : {std::size_t{0}, StencilOffset}) {
+                Require(!feedbackRefused(heap + ValueOffset + 0x100u, false, recordedHeapDepth), "an export with a cached build over a buffer outside its depth and stencil planes was refused");
+                Require(feedbackRefused(heap + plane + 0x2000u, false, recordedHeapDepth), plane == 0u ? "an export whose cached build moved its read-only buffer onto its own depth plane was not refused" : "an export whose cached build moved its read-only buffer onto its own stencil plane was not refused");
+            }
+            CachedShaders = false;
+            if ((limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts & limits.framebufferStencilSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0u) {
+                std::puts("stencil replay four-sample feedback checks skipped: the device has no four-sample colour, depth and stencil targets");
+            } else {
+                Require(!feedbackRefused(heap + ValueOffset + 0x100u, false, multisampled(true)), "a four-sample export with a buffer outside its depth and stencil planes was refused");
+                Require(feedbackRefused(MultisampleDepthMemory.data() + 0x8000u, false, multisampled(true)), "a four-sample export with a buffer past the first texels of its own depth plane was not refused");
+                Require(feedbackRefused(MultisampleStencilMemory.data() + 0x8000u, false, multisampled(true)), "a four-sample export with a buffer past the first texels of its own stencil plane was not refused");
             }
         }
         if ((limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts & limits.framebufferStencilSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0u) {

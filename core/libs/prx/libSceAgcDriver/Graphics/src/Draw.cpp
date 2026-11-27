@@ -4443,12 +4443,16 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require(!imageRead && !resources->ReadsImage(target.resident.get()) && !resources->ReadsOverlap(target.color.MemoryAddress(), static_cast<std::size_t>(target.color.bytes)) && !inputOverlaps(target.color.MemoryAddress(), target.color.bytes), "stencil replay refuses attachment feedback reads");
         }
         if (state.depth) {
-            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u * std::max(state.depth->samples, 1u);
-            Require(!resources->DescriptorRangesOverlap(state.depth->address, bytes) && !resources->DescriptorRangesOverlap(state.depth->stencilAddress, bytes) && !inputOverlaps(state.depth->address, bytes) && !inputOverlaps(state.depth->stencilAddress, bytes), "stencil replay refuses depth or stencil feedback reads");
+            const auto& depth = *state.depth;
+            const bool d16 = depth.format == VK_FORMAT_D16_UNORM || depth.format == VK_FORMAT_D16_UNORM_S8_UINT;
+            const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return depth.samples <= 1u ? DepthSliceBytes(depth.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(depth.extent, bytesPerTexel, depth.samples); };
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> planes{{{depth.address, planeBytes(d16 ? 2u : 4u)}, {depth.stencilAddress, planeBytes(1u)}}};
             const auto boundPlane = [&](std::uint64_t address, std::uint64_t length) {
-                const auto overlaps = [&](std::uint64_t plane) { return plane != 0u && address < plane + bytes && plane < address + length; };
-                return overlaps(state.depth->address) || overlaps(state.depth->stencilAddress);
+                return std::ranges::any_of(planes, [&](const auto& plane) { return plane.first != 0u && address < plane.first + plane.second && plane.first < address + length; });
             };
+            const auto planeRead = [&](const auto& plane) { return plane.first != 0u && (resources->DescriptorRangesOverlap(plane.first, static_cast<std::size_t>(plane.second)) || inputOverlaps(plane.first, plane.second)); };
+            const auto movedRead = [&](const ShaderResources::MovedBuffer& entry) { return entry.address != 0u && boundPlane(entry.address, entry.size); };
+            Require(!std::ranges::any_of(planes, planeRead) && !std::ranges::any_of(resolved.moved, movedRead), "stencil replay refuses depth or stencil feedback reads");
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
