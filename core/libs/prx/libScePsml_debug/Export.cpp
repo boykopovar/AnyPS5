@@ -90,6 +90,20 @@ void RequireMfsr(bool condition, const char* function, const char* what) {
  if (!condition) throw std::runtime_error(std::string(function) + ": " + what);
 }
 
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+ errno = savedErrno;
+ return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+ errno = savedErrno;
+ return copied;
+}
+
 void RequireBlocks(const MfsrBlock* blocks, std::uint64_t blockCount, std::uint64_t requiredCount, const char* function) {
  RequireMfsr(blockCount >= requiredCount, function, "fewer memory blocks than the requirement");
  RequireMfsr(blocks != nullptr, function, "null memory block list");
@@ -119,18 +133,17 @@ bool FindMfsrObject(void* handle, MfsrObject* out) {
  return true;
 }
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
- const int savedErrno = errno;
- const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
- errno = savedErrno;
- return copied;
-}
-
-bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t bytes) {
- const int savedErrno = errno;
- const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
- errno = savedErrno;
- return copied;
+void ReleaseMfsrObject(void* handle, MfsrObjectKind kind, const char* function) {
+ std::lock_guard lock(g_mfsrMutex);
+ const auto found = g_mfsrObjects.find(handle);
+ RequireMfsr(found != g_mfsrObjects.end() && found->second->kind == kind, function, "handle was not created by this library");
+ if (kind == MfsrObjectKind::SharedResources) {
+  for (const auto& [key, object] : g_mfsrObjects) {
+   RequireMfsr(object->sharedResources != handle, function, "shared resources still used by a context");
+  }
+ }
+ delete found->second;
+ g_mfsrObjects.erase(found);
 }
 
 std::pair<std::uint32_t, std::uint32_t> MfsrInputDimensions(const MfsrContextParam& param, const char* function) {
@@ -163,19 +176,6 @@ std::int32_t CreateContextFromParam(void** context, const MfsrContextParam* para
   RequireMfsr(false, function, "unwritable context handle");
  }
  return 0;
-}
-
-void ReleaseMfsrObject(void* handle, MfsrObjectKind kind, const char* function) {
- std::lock_guard lock(g_mfsrMutex);
- const auto found = g_mfsrObjects.find(handle);
- RequireMfsr(found != g_mfsrObjects.end() && found->second->kind == kind, function, "handle was not created by this library");
- if (kind == MfsrObjectKind::SharedResources) {
-  for (const auto& [key, object] : g_mfsrObjects) {
-   RequireMfsr(object->sharedResources != handle, function, "shared resources still used by a context");
-  }
- }
- delete found->second;
- g_mfsrObjects.erase(found);
 }
 
 }
