@@ -28,6 +28,8 @@ constexpr Case Cases[]{
     {VK_DRIVER_ID_AMD_PROPRIETARY, 0x744d, "AMD Radeon RX 7900 XT", false},
     {VK_DRIVER_ID_AMD_PROPRIETARY, 0x747e, "AMD Radeon RX 7800 XT", true},
     {VK_DRIVER_ID_AMD_PROPRIETARY, 0x747f, "AMD Radeon RX 7800 XT", false},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, 0x7480, "AMD Radeon RX 7600 XT", true},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, 0x7481, "AMD Radeon RX 7600 XT", false},
     {VK_DRIVER_ID_AMD_PROPRIETARY, 0x1586, "AMD Radeon(TM) 8060S Graphics", true},
     {VK_DRIVER_ID_AMD_PROPRIETARY, 0x1587, "AMD Radeon(TM) 8060S Graphics", false},
     {VK_DRIVER_ID_AMD_PROPRIETARY, 0, "AMD Radeon RX 6750 XT (RADV NAVI22)", false},

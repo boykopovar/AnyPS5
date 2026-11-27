@@ -1,5 +1,6 @@
 #include "Pm4Analysis.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/LabelStores.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <limits>
@@ -541,7 +542,19 @@ void printPackets(std::FILE* output, const std::vector<DecodedPacket>& packets, 
     }
 }
 
+class PacketForms {
+public:
+    explicit PacketForms(bool gcn) : previous(ShaderRecompiler::GcnGuestShaders()) { ShaderRecompiler::SetGcnGuestShaders(gcn); }
+    ~PacketForms() { ShaderRecompiler::SetGcnGuestShaders(previous); }
+    PacketForms(const PacketForms&) = delete;
+    PacketForms& operator=(const PacketForms&) = delete;
+
+private:
+    bool previous;
+};
+
 std::vector<DecodedPacket> decodePackets(const CapturedSubmission& submission, bool text) {
+    const PacketForms forms(submission.gcn);
     const std::span<const std::uint32_t> commands = submission.commands;
     require(commands.size() == submission.dwords, "the commands do not hold the dword count of the index");
     std::vector<DecodedPacket> packets;

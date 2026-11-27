@@ -321,9 +321,8 @@ static std::vector<float> PortGains(const Ngs2Voice& voice, const Ngs2Voice& sou
     return gains;
 }
 
-static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t sourceBuffer, const std::vector<float>& gains, std::uint32_t grain) {
+static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t sourceBuffer, const std::vector<float>& gains, std::vector<float>& destSamples, std::uint32_t grain) {
     const auto& sourceSamples = source.Samples(sourceBuffer);
-    auto& destSamples = voice.Samples(port.destInput);
     if (sourceSamples.size() != static_cast<std::size_t>(grain) * source.channels ||
         destSamples.size() != static_cast<std::size_t>(grain) * voice.InputChannels()) {
         throw std::runtime_error("NGS2: channel layout changes during input rendering are not implemented");
@@ -349,6 +348,11 @@ static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& p
 }
 
 static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, std::uint32_t grain, std::uint32_t systemRate) {
+    auto& key = voice.compressor.keySamples;
+    const bool useKey = !PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER &&
+        voice.rack->maxInputs >= 2 && (voice.compressor.param.flags & 0x9u) == 0x8u;
+    if (useKey) key.assign(voice.samples.size(), 0.0f);
+    else key.clear();
     for (auto* source : voices) {
         for (std::size_t p = 0; p < source->ports.size(); p++) {
             auto& port = source->ports[p];
@@ -371,11 +375,12 @@ static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, s
             std::uint32_t outputs = 0;
             auto gains = PortGains(voice, *source, port, outputs);
             if (port.mixed && (port.mixedOutputs != outputs || port.mixedSources != source->channels)) port.mixed = false;
-            const bool unmixedInput = destInput != 0 && voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER;
-            if (source->hasSamples && !source->KilledForRender() && !unmixedInput) {
+            const bool secondaryInput = destInput != 0 && voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER;
+            if (source->hasSamples && !source->KilledForRender() && (!secondaryInput || (useKey && destInput == 1))) {
                 const auto sourceBuffer = source->rack->customPortBuffers.empty() ? 0u : source->rack->customPortBuffers[p];
-                MixPort(voice, *source, port, sourceBuffer, gains, grain);
-                voice.hasSamples = true;
+                auto& samples = secondaryInput ? key : voice.Samples(destInput);
+                MixPort(voice, *source, port, sourceBuffer, gains, samples, grain);
+                if (!secondaryInput) voice.hasSamples = true;
             }
             port.mixedGains = std::move(gains);
             port.mixedOutputs = outputs;
@@ -393,10 +398,7 @@ static float CompressorCoefficient(float seconds, std::uint32_t sampleRate) {
 static bool CompressorKnee(float knee) {
     if (knee == 0.0f) return false;
     if (!PS4_LIBRARY) return true;
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, processParameters + 0x10, sizeof(sdkVersion));
-    return sdkVersion >= 0x1700000;
+    return ApplicationCompiledSdkVersion() >= 0x1700000;
 }
 
 static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
@@ -410,6 +412,7 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
     }
     if (voice.userFxHandler != nullptr) throw std::runtime_error("NGS2: a submixer compressor on a voice with a UserFx handler is not implemented");
     const auto channels = std::min<std::uint32_t>(voice.channels, NGS2_MAX_CHANNELS);
+    const auto& detector = compressor.keySamples.empty() ? voice.samples : compressor.keySamples;
     const float attack = CompressorCoefficient(param.attack_time, sampleRate);
     const float release = CompressorCoefficient(param.release_time, sampleRate);
     const bool knee = CompressorKnee(param.knee);
@@ -417,7 +420,7 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
     for (std::uint32_t start = 0; start < grain; start += 32) {
         const auto count = std::min<std::uint32_t>(32, grain - start);
         for (std::uint32_t channel = 0; channel < channels; channel++) {
-            const float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain + start;
+            const float* samples = detector.data() + static_cast<std::size_t>(channel) * grain + start;
             float value = 0.0f;
             if ((param.flags & 2u) != 0) {
                 for (std::uint32_t i = 0; i < count; i++) value += samples[i] * samples[i];

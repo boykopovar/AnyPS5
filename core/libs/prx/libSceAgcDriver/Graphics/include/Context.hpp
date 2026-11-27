@@ -233,6 +233,7 @@ struct Context {
     bool integratedGpu = false;
     bool hostPointerImport = true;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -275,6 +276,7 @@ struct Context {
     bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
+    bool pixelWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
     VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
@@ -299,6 +301,7 @@ struct Context {
     bool individuallyFreeDescriptorSets = false;
     bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
+    bool orderedInterlockEpilogs = false;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
@@ -320,6 +323,7 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool staticSampleMaskStopsShading = true;
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
@@ -336,6 +340,7 @@ struct Context {
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     std::uint32_t scaledSampledFormats = 0;
+    std::uint32_t optionalSampledFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;

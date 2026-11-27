@@ -41,41 +41,62 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
+namespace {
+
+bool CommitAndReturn(WebRtcRtcpCommonHeader* header, const WebRtcRtcpCommonHeader& hostHeader, bool result) {
+    if (!GuestPtr<WebRtcRtcpCommonHeader>(header).CopyOut(hostHeader))
+        throw std::invalid_argument("CommonHeader::Parse requires a writable header");
+    return result;
+}
+
+}
+
 extern "C" {
 
 bool APS5_VABI _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(WebRtcRtcpCommonHeader* header, const std::uint8_t* buffer, std::size_t size) {
-    if (!header)
+    if (!header || !GuestWritable_nid_no_patch(header, sizeof(*header)))
+        throw std::invalid_argument("CommonHeader::Parse requires a writable header");
+    WebRtcRtcpCommonHeader hostHeader{};
+    if (!GuestPtr<WebRtcRtcpCommonHeader>(header).CopyIn(hostHeader))
         throw std::invalid_argument("CommonHeader::Parse requires a header");
     if (size < WebRtcRtcpCommonHeaderSize)
         return false;
     if (!buffer)
         throw std::invalid_argument("CommonHeader::Parse requires a buffer");
-    if ((buffer[0] >> 6) != 2)
+    std::array<std::uint8_t, WebRtcRtcpCommonHeaderSize> bytes{};
+    if (!GuestBytes(buffer).CopyIn(bytes.data(), bytes.size()))
+        throw std::invalid_argument("CommonHeader::Parse requires a readable buffer");
+    if ((bytes[0] >> 6) != 2)
         return false;
-    bool hasPadding = (buffer[0] & 0x20) != 0;
-    header->countOrFormat = buffer[0] & 0x1F;
-    header->packetType = buffer[1];
-    header->payloadSize = ((static_cast<std::uint32_t>(buffer[2]) << 8) | buffer[3]) * 4u;
-    header->payload = buffer + WebRtcRtcpCommonHeaderSize;
-    header->paddingSize = 0;
-    if (size < WebRtcRtcpCommonHeaderSize + header->payloadSize)
-        return false;
+    bool hasPadding = (bytes[0] & 0x20) != 0;
+    hostHeader.countOrFormat = bytes[0] & 0x1F;
+    hostHeader.packetType = bytes[1];
+    hostHeader.payloadSize = ((static_cast<std::uint32_t>(bytes[2]) << 8) | bytes[3]) * 4u;
+    hostHeader.payload = buffer + WebRtcRtcpCommonHeaderSize;
+    hostHeader.paddingSize = 0;
+    if (size < WebRtcRtcpCommonHeaderSize + hostHeader.payloadSize)
+        return CommitAndReturn(header, hostHeader, false);
     if (hasPadding) {
-        if (header->payloadSize == 0)
-            return false;
-        header->paddingSize = header->payload[header->payloadSize - 1];
-        if (header->paddingSize == 0)
-            return false;
-        if (header->paddingSize > header->payloadSize)
-            return false;
-        header->payloadSize -= header->paddingSize;
+        if (hostHeader.payloadSize == 0)
+            return CommitAndReturn(header, hostHeader, false);
+        std::uint8_t padding = 0;
+        if (!GuestBytes(hostHeader.payload + hostHeader.payloadSize - 1).CopyIn(&padding, sizeof(padding)))
+            throw std::invalid_argument("CommonHeader::Parse requires readable padding");
+        hostHeader.paddingSize = padding;
+        if (hostHeader.paddingSize == 0)
+            return CommitAndReturn(header, hostHeader, false);
+        if (hostHeader.paddingSize > hostHeader.payloadSize)
+            return CommitAndReturn(header, hostHeader, false);
+        hostHeader.payloadSize -= hostHeader.paddingSize;
     }
-    return true;
+    return CommitAndReturn(header, hostHeader, true);
 }
 
 }

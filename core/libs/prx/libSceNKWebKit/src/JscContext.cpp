@@ -157,13 +157,37 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
 
 std::string JsStringToUtf8(const GuestJSString* str) {
     if (!str || str->nullString) return {};
-    const std::size_t maxLen = JSStringGetMaximumUTF8CStringSize_nid_postfix(str);
-    if (maxLen == 0) return {};
-    std::string buffer(maxLen, '\0');
-    const std::size_t written = JSStringGetUTF8CString_nid_postfix(str, buffer.data(), buffer.size());
-    if (written == 0) return {};
-    buffer.resize(written - 1);
-    return buffer;
+    const std::size_t count = str->characters.size() - 1;
+    std::string utf8;
+    utf8.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        std::uint32_t codepoint = str->characters[index];
+        if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
+            if (index + 1 == count) break;
+            const std::uint32_t low = str->characters[index + 1];
+            if (low < 0xDC00 || low > 0xDFFF) break;
+            codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+            ++index;
+        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+            break;
+        }
+        if (codepoint < 0x80) {
+            utf8.push_back(static_cast<char>(codepoint));
+        } else if (codepoint < 0x800) {
+            utf8.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint < 0x10000) {
+            utf8.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else {
+            utf8.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+    }
+    return utf8;
 }
 
 GuestJSString* Utf8ToJsString(const std::string& utf8) {
@@ -569,8 +593,7 @@ void OpaqueJSContextGroup::UpdateStackLimit() {
     constexpr std::size_t maxPerThreadStackUsage = 5 * 1024 * 1024;
     constexpr std::size_t softReservedZoneSize = 128 * 1024;
     JS_UpdateStackTop(rt);
-    const char marker = 0;
-    const auto start = reinterpret_cast<std::uintptr_t>(&marker);
+    const auto start = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     std::uintptr_t bound = 0;
     try {
         bound = reinterpret_cast<std::uintptr_t>(_ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv().m_bound);
@@ -602,6 +625,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
+    InstallDateConstructor(group, qctx);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
@@ -619,6 +643,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
+    DefineConsoleObject(this, rawGlobal);
     JS_SetClassProto(qctx, group->callbackObjectClassId, JS_DupValue(qctx, objProto));
     JS_SetClassProto(qctx, group->callbackCallableClassId, objProto);
     globalObject = group->ToHandle(this, rawGlobal);

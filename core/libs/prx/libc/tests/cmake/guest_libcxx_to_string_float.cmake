@@ -1,0 +1,10 @@
+add_test_executable(guest_libcxx_to_string_float_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxToStringFloat.cpp)
+target_include_directories(guest_libcxx_to_string_float_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libcxx_to_string_float_tests PRIVATE libc)
+configure_windows_unwind(guest_libcxx_to_string_float_tests)
+add_test(NAME guest_libcxx_to_string_float COMMAND guest_libcxx_to_string_float_tests)
+set_tests_properties(guest_libcxx_to_string_float PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_libcxx_to_string_float PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

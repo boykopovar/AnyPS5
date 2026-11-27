@@ -3,10 +3,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <source_location>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -45,6 +48,12 @@ void BothUnits(std::string_view text, unsigned clusters, unsigned units) {
     Require(CodeUnits(wide, clusters) == units);
 }
 
+void Wide(std::u16string_view text, unsigned clusters, unsigned units) {
+    const StringView string {text.data(), static_cast<unsigned>(text.size()), false};
+    Require(Clusters(string) == clusters);
+    Require(CodeUnits(string, clusters) == units);
+}
+
 template<typename Function> bool Throws(Function function, std::string_view message) {
     try {
         function();
@@ -52,6 +61,46 @@ template<typename Function> bool Throws(Function function, std::string_view mess
         return std::string_view(error.what()).find(message) != std::string_view::npos;
     }
     return false;
+}
+
+void CheckUnicodeBreaks() {
+    std::ifstream data(ANYPS5_GRAPHEME_BREAK_TEST);
+    Require(data.is_open());
+    unsigned cases = 0;
+    unsigned lineNumber = 0;
+    for (std::string line; std::getline(data, line);) {
+        ++lineNumber;
+        std::istringstream fields(line.substr(0, line.find('#')));
+        std::u16string text;
+        std::vector<unsigned> boundaries;
+        for (std::string token; fields >> token;) {
+            if (token == "\xc3\xb7") {
+                boundaries.push_back(static_cast<unsigned>(text.size()));
+            } else if (token != "\xc3\x97") {
+                unsigned long scalar = std::stoul(token, nullptr, 16);
+                if (scalar >= 0x10000) {
+                    scalar -= 0x10000;
+                    text.push_back(static_cast<char16_t>(0xd800 + (scalar >> 10)));
+                    scalar = 0xdc00 + (scalar & 0x3ff);
+                }
+                text.push_back(static_cast<char16_t>(scalar));
+            }
+        }
+        if (boundaries.empty()) continue;
+        ++cases;
+        const StringView view{text.data(), static_cast<unsigned>(text.size()), false};
+        if (Clusters(view) != boundaries.size() - 1) {
+            throw std::runtime_error("GraphemeBreakTest cluster count at line " + std::to_string(lineNumber));
+        }
+        for (unsigned i = 0; i < boundaries.size(); ++i) {
+            const unsigned units = CodeUnits(view, i);
+            if (units != boundaries[i]) {
+                throw std::runtime_error("GraphemeBreakTest line " + std::to_string(lineNumber) + ", boundary " +
+                    std::to_string(i) + ": expected " + std::to_string(boundaries[i]) + ", got " + std::to_string(units));
+            }
+        }
+    }
+    Require(!data.bad() && cases != 0);
 }
 
 void Run() {
@@ -94,18 +143,32 @@ void Run() {
 
     const std::u16string combining = u"é";
     const StringView combiningView {combining.data(), static_cast<unsigned>(combining.size()), false};
-    Require(Throws([&] { Clusters(combiningView); }, "not implemented"));
-    Require(Throws([&] { CodeUnits(combiningView, 1); }, "not implemented"));
+    Require(Clusters(combiningView) == 1);
+    Require(CodeUnits(combiningView, 1) == 2);
     Require(CodeUnits(combiningView, 2) == 2);
 
     const std::u16string surrogate = u"a\U0001F600";
     const StringView surrogateView {surrogate.data(), static_cast<unsigned>(surrogate.size()), false};
-    Require(Throws([&] { Clusters(surrogateView); }, "not implemented"));
+    Require(Clusters(surrogateView) == 2);
+    Require(CodeUnits(surrogateView, 1) == 1);
+
+    Wide(u"\u1100\u1161\u11a8", 1, 3);
+    Wide(u"\u0600a", 1, 2);
+    Wide(u"\u0915\u093e", 1, 2);
+    Wide(u"\u0915\u094d\u0937", 1, 3);
+    Wide(u"\U0001f469\u200d\U0001f469", 1, 5);
+
+    const std::u16string regional = u"\U0001f1fa\U0001f1f8\U0001f1e8";
+    const StringView regionalView {regional.data(), static_cast<unsigned>(regional.size()), false};
+    Require(Clusters(regionalView) == 2);
+    Require(CodeUnits(regionalView, 1) == 4);
+    Require(CodeUnits(regionalView, 2) == 6);
 }
 
 }
 
 int main() {
     Run();
+    CheckUnicodeBreaks();
     return 0;
 }
