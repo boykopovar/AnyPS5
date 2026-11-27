@@ -709,6 +709,7 @@ void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands
 
 std::string DepthAnchorRefusal(const Context& context, const State& state) {
     Require(state.depth.has_value() && state.depthAnchorSamples > 1u && state.depthAnchorSamples < state.samples, "a depth target expanded for a color-writing draw has no fewer stored samples than the rasterizer");
+    if (const auto grid = HostSampleLocationsFor(context, state).grid; grid.width != 1u || grid.height != 1u) return "its sample locations differ between the pixels of the 2x2 grid, and the expanded copy is written at one pixel's locations";
     if (!context.sampleRateShading) return "the device lacks sampleRateShading";
     const auto host = HostDepthFormat(context, state.depth->format);
     const auto stored = state.depthAnchorSamples;
