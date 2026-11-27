@@ -1,10 +1,19 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #include "../src/WtfTextAbi.hpp"
 
@@ -752,6 +761,119 @@ void TestVtableSlots() {
     D0(deepSelf);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename Function>
+void RequireNotImplemented(Function&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    auto* guardOp = reinterpret_cast<WebCore::TranslateTransformOperation*>(pages.Guard());
+    auto* roOp = reinterpret_cast<WebCore::TranslateTransformOperation*>(pages.ReadOnly());
+    const auto* guardLength = reinterpret_cast<const Length*>(pages.Guard());
+    const auto* guardBox = reinterpret_cast<const WebCore::FloatSize*>(pages.Guard());
+    auto* guardMatrix = reinterpret_cast<WebCore::TransformationMatrix*>(pages.Guard());
+    auto* roMatrix = reinterpret_cast<WebCore::TransformationMatrix*>(pages.ReadOnly());
+    auto* guardStream = reinterpret_cast<TextStream*>(pages.Guard());
+    auto* roStream = reinterpret_cast<TextStream*>(pages.ReadOnly());
+
+    const Length ten{10, LengthType::Fixed};
+    const Length twenty{20, LengthType::Fixed};
+    const WebCore::FloatSize box{100.0f, 50.0f};
+    WebCore::TransformationMatrix matrix;
+    TextStream stream = NewStream();
+
+    auto created = CreateFixed(ten, twenty, Length{5, LengthType::Fixed}, OpType::Translate3D);
+    auto* valid = static_cast<WebCore::TranslateTransformOperation*>(created.m_ptr);
+
+    RequireNotImplemented([&] { CreateXY(*guardLength, twenty, OpType::Translate); });
+    RequireNotImplemented([&] { CreateXY(ten, *guardLength, OpType::Translate); });
+    RequireNotImplemented([&] { CreateFixed(ten, twenty, *guardLength, OpType::Translate3D); });
+    RequireNotImplemented([&] { Construct(guardOp, ten, twenty, ten, OpType::Translate); });
+    RequireNotImplemented([&] { Construct(roOp, ten, twenty, ten, OpType::Translate); });
+    RequireNotImplemented([&] { Construct(valid, *guardLength, twenty, ten, OpType::Translate); });
+    RequireNotImplemented([&] { D1(guardOp); });
+    RequireNotImplemented([&] { D2(guardOp); });
+    RequireNotImplemented([&] { IsIdentity(guardOp); });
+    RequireNotImplemented([&] { IsRepresentableIn2D(guardOp); });
+    RequireNotImplemented([&] { GetX(guardOp); });
+    RequireNotImplemented([&] { GetY(guardOp); });
+    RequireNotImplemented([&] { GetZ(guardOp); });
+    RequireNotImplemented([&] { GetXSize(guardOp, box); });
+    RequireNotImplemented([&] { GetXSize(valid, *guardBox); });
+    RequireNotImplemented([&] { GetYSize(guardOp, box); });
+    RequireNotImplemented([&] { GetYSize(valid, *guardBox); });
+    RequireNotImplemented([&] { GetZSize(guardOp, box); });
+    RequireNotImplemented([&] { CloneOp(guardOp); });
+    RequireNotImplemented([&] { EqualOp(guardOp, *valid); });
+    RequireNotImplemented([&] { EqualOp(valid, *guardOp); });
+    RequireNotImplemented([&] { ApplyOp(guardOp, matrix, box); });
+    RequireNotImplemented([&] { ApplyOp(valid, *guardMatrix, box); });
+    RequireNotImplemented([&] { ApplyOp(valid, *roMatrix, box); });
+    RequireNotImplemented([&] { ApplyOp(valid, matrix, *guardBox); });
+    RequireNotImplemented([&] { DumpOp(guardOp, stream); });
+    RequireNotImplemented([&] { DumpOp(valid, *guardStream); });
+    RequireNotImplemented([&] { DumpOp(valid, *roStream); });
+    RequireNotImplemented([&] { BlendOp(guardOp, valid, 0.5, false); });
+    RequireNotImplemented([&] { BlendOp(valid, guardOp, 0.5, false); });
+
+    WebCore::TransformOperation foreign{};
+    foreign.m_type = OpType::Scale;
+    RequireNotImplemented([&] { BlendOp(roOp, &foreign, 0.5, false); });
+
+    D0(valid);
+}
+
 }  // namespace
 
 int main() {
@@ -769,5 +891,6 @@ int main() {
     TestCalculatedMembers();
     TestNullThis();
     TestVtableSlots();
+    TestGuestPointers();
     return 0;
 }
