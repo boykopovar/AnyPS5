@@ -106,6 +106,29 @@ class CheckCompileModeTests(unittest.TestCase):
                 self.assertIn("diagnostic destination witness", result.stderr)
                 self.assertEqual(report.read_bytes(), b"existing report")
 
+    def test_clang_serialized_diagnostics_do_not_overwrite_a_report(self):
+        compiler, = self.compilers(("clang",))
+        for option in ("-serialize-diagnostics", "--serialize-diagnostics"):
+            for field in ("arguments", "command"):
+                for text, expected in (("int value;\n", 0), ("int diagnostic_destination_error = ;\n", 1)):
+                    with self.subTest(option=option, field=field, text=text), tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory).resolve()
+                        build = root / "build"
+                        build.mkdir()
+                        source = root / "unit.c"
+                        source.write_text(text, encoding="utf-8")
+                        report = build / "unit.dia"
+                        report.write_bytes(b"existing serialized diagnostics\n")
+                        arguments = [compiler, option, str(report), "-c", str(source), "-o", "unit.o"]
+
+                        result = self.run_tool(root, build, source, arguments, field)
+
+                        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                        if expected:
+                            self.assertIn("diagnostic_destination_error", result.stderr)
+                        else:
+                            self.assertIn("1 translation units compile", result.stdout)
+
     def check_query_named_include_operands(self, names):
         def configure(root, build, source):
             for name in names:
