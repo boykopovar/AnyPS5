@@ -876,6 +876,7 @@ public:
         collect();
         derive();
         if (passthrough) requirePassthroughLimits();
+        if (passthrough) requirePassthroughReadsBeforeWrites();
         orderControlOutputReads();
         for (const auto& access : accesses) rewrite(access);
         if (passthrough) copyInputControlPoints();
@@ -1536,6 +1537,23 @@ private:
                 default:
                     break;
                 }
+            }
+        }
+    }
+
+    void requirePassthroughReadsBeforeWrites() const {
+        const auto edges = takenEdges();
+        for (const auto& write : accesses) {
+            if (!write.write || (write.kind != TessellationAttribute::ControlOutput && write.kind != TessellationAttribute::PatchOutput)) continue;
+            const auto after = reachedFrom(edges, edges.at(write.block), nullptr);
+            for (const auto& read : accesses) {
+                if (read.write || read.kind != TessellationAttribute::ControlInput) continue;
+                bool follows = after.contains(read.block);
+                if (read.block == write.block) {
+                    const auto& instructions = write.block->Instructions();
+                    follows = follows || std::find(std::find(instructions.begin(), instructions.end(), write.inst), instructions.end(), read.inst) != instructions.end();
+                }
+                if (follows) Fail("a pass-through hull shader on chip reads LDS after it may have written it there, and its reads are served from the input control points", read.pc);
             }
         }
     }
