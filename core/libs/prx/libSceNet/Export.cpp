@@ -3584,7 +3584,11 @@ int APS5_VABI sceNetResolverConnect(NetResolverConnection* connection, const cha
 int APS5_VABI sceNetResolverConnectDestroy(NetResolverConnection* connection) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
     if (connection == nullptr) return fail(NET_EINVAL);
-    if ((reinterpret_cast<const std::uint8_t*>(connection)[NET_RESOLVER_CONNECTION_FLAGS] & 1) == 0) return fail(NET_EBADF);
+    std::uint8_t flags = 0;
+    if (!GuestCopyIn_nid_no_patch(&flags, reinterpret_cast<const std::uint8_t*>(connection) + NET_RESOLVER_CONNECTION_FLAGS, sizeof(flags))) {
+        return fail(NET_EFAULT);
+    }
+    if ((flags & 1) == 0) return fail(NET_EBADF);
     NotImplemented_nid_no_patch(__func__);
 }
 
