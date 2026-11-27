@@ -5181,14 +5181,10 @@ int APS5_VABI _ZNK7WebCore9CookieJar13getRawCookiesERKNS_8DocumentERKN3WTF3URLER
 int APS5_VABI _ZNK7WebCore9CookieJar14cookiesEnabledERKNS_8DocumentE();
 int APS5_VABI _ZNK7WebCore9CookieJar29cookieRequestHeaderFieldValueERNS_8DocumentERKN3WTF3URLE();
 int APS5_VABI _ZNK7WebCore9CookieJar7cookiesERNS_8DocumentERKN3WTF3URLE();
-int APS5_VABI _ZNK7WebCore9FrameTree10childCountEv();
 int APS5_VABI _ZNK7WebCore9FrameTree11scopedChildEj();
 int APS5_VABI _ZNK7WebCore9FrameTree12traverseNextENS_7CanWrapEPNS_7DidWrapE();
-int APS5_VABI _ZNK7WebCore9FrameTree12traverseNextEPKNS_5FrameE();
-int APS5_VABI _ZNK7WebCore9FrameTree14isDescendantOfEPKNS_5FrameE();
 int APS5_VABI _ZNK7WebCore9FrameTree16traversePreviousENS_7CanWrapEPNS_7DidWrapE();
 int APS5_VABI _ZNK7WebCore9FrameTree20traverseNextRenderedEPKNS_5FrameE();
-int APS5_VABI _ZNK7WebCore9FrameTree3topEv();
 int APS5_VABI _ZNK7WebCore9FrameTree6parentEv();
 int APS5_VABI _ZNK7WebCore9MediaList4itemEj();
 int APS5_VABI _ZNK7WebCore9RenderBox11borderRadiiEv();
