@@ -874,7 +874,7 @@ struct DrawProfile {
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
-constexpr std::array<const char*, static_cast<std::size_t>(AddressDrawReuse::Count)> AddressDrawReuseNames{"reused", "built", "not read-only", "not space-only", "snapshot outside the space (copied)", "partial overlap", "snapshot changed", "moved GuestBuffers element", "patched data word", "space or epoch change", "in use", "revalidation"};
+constexpr std::array<const char*, static_cast<std::size_t>(AddressDrawReuse::Count)> AddressDrawReuseNames{"reused", "built", "not read-only", "not space-only", "snapshot outside the space (copied)", "partial overlap", "snapshot changed", "moved GuestBuffers element", "space or epoch change", "in use", "revalidation"};
 
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse::Count)>& addressDrawReuses() {
     static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse::Count)> counts{};
@@ -2438,8 +2438,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             if (counted && spaceHeld && !valid) reuse = AddressDrawReuse::Revalidation;
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            bool patched = false;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
@@ -2451,7 +2450,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 if (counted) reuse = AddressDrawReuse::Reused;
             } else if (valid || inUse) {
                 if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
-                if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
+                if (valid && counted) reuse = AddressDrawReuse::MovedBuffer;
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());

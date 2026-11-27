@@ -9181,6 +9181,35 @@ void misalignedShaderDataTests() {
     Require(mock.live == 0, "misaligned shader data resources leaked Vulkan objects");
 }
 
+void misalignedShaderDataMoveTests() {
+    const bool recorded = std::getenv("APS5_NO_TEMPLATE_DATA_REFRESH") == nullptr;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.limits.minStorageBufferOffsetAlignment = 16;
+    alignas(64) std::array<std::uint32_t, 8> guest{1, 2, 3, 4, 5, 6, 7, 8};
+    {
+        ShaderRecompiler::RecompileResult compute;
+        compute.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guest.data(), 32), vsharp(guest.data() + 1, 8))));
+        compute.bindings.push_back(makeBinding(Role::ShaderData, 1, 1, ShaderDataWords({0x11, 0x22})));
+        compute.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
+        compute.memoryOffsetDword = ShaderRecompiler::RuntimeAbi::BufferOffsetsDword;
+        auto live = compute;
+        live.bindings[1].guestDescriptor = ShaderDataWords({0x33, 0x22});
+        const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
+        const AgcDriver::Graphics::CompiledShader liveShader{ShaderRecompiler::ShaderStage::Compute, &live, 0};
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::Graphics::Recorder recorder(context);
+        AgcDriver::Graphics::ShaderResources resources(context, shader);
+        Require(recorded == (resources.DataWordsHash() == AgcDriver::Graphics::ShaderResources::DataWordsHash(shader)), "the template kept or dropped its data words against APS5_NO_TEMPLATE_DATA_REFRESH");
+        const auto same = resources.MovedReadOnlyBuffers(std::span(&shader, 1), recorder, nullptr);
+        Require(same.has_value() && same->empty(), "a template whose data buffer holds a misaligned view's offset was refused, or moved, for the words it was built from");
+        const auto moved = resources.MovedReadOnlyBuffers(std::span(&liveShader, 1), recorder, nullptr);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == 0 && std::ranges::equal(moved->front().words, live.bindings[1].guestDescriptor), "a template whose data buffer holds a misaligned view's offset did not take the draw's new data words");
+        recorder.Sync();
+    }
+    Require(mock.live == 0, "misaligned shader data moves leaked Vulkan objects");
+}
+
 void imageTableTemplateRefreshTests() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     mock = MockVulkan{};
@@ -15801,6 +15830,10 @@ int main(int argc, char** argv) {
             faultOnlyTemplateRecordTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--misaligned-shader-data-moves") {
+            misalignedShaderDataMoveTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-cache") {
             descriptorCacheTests();
             return 0;
@@ -16302,6 +16335,7 @@ int main(int argc, char** argv) {
         samplerTableDeviceLimitTests();
         tableUpdateAfterBindTests();
         misalignedShaderDataTests();
+        misalignedShaderDataMoveTests();
         imageTableTemplateRefreshTests();
         debugBranchTests();
         hostImportBudgetTests();

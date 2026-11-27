@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -5867,6 +5868,25 @@ void ShaderResources::writeDataWords(VkCommandBuffer commands, std::size_t alloc
     context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, buffer.Handle(), 0, size, patched.data());
 }
 
+bool ShaderResources::dataBufferHolds(std::size_t allocation, std::span<const std::uint32_t> words) const {
+    const auto& item = allocations[allocation];
+    const auto held = item.buffer->Bytes();
+    const auto fresh = std::as_bytes(words);
+    Require(held.size() >= item.size && fresh.size() == item.size, "data buffer compared with words of another size");
+    InlineList<std::uint32_t, 8> patched;
+    for (const auto& patch : dataPatches) {
+        if (patch.allocation == allocation && patch.byte < item.size) patched.EmplaceBack(patch.byte);
+    }
+    auto bytes = patched.Span();
+    std::sort(bytes.begin(), bytes.end());
+    std::size_t at = 0;
+    for (const auto byte : bytes) {
+        if (byte > at && std::memcmp(held.data() + at, fresh.data() + at, byte - at) != 0) return false;
+        at = std::max<std::size_t>(at, static_cast<std::size_t>(byte) + 1);
+    }
+    return std::memcmp(held.data() + at, fresh.data() + at, item.size - at) == 0;
+}
+
 void ShaderResources::PrecollectSurfaces() const {
     for (const auto& range : describedRanges) GuestMemory::CollectWrites(range.address, static_cast<std::size_t>(range.bytes));
 }
@@ -7113,7 +7133,7 @@ ShaderResources::DrawBindings::~DrawBindings() {
     release(fragmentLayout, fragmentAllocation);
 }
 
-std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData) const {
+std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const {
     std::vector<MovedBuffer> moved;
     std::size_t movedBytes = 0;
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || (usesBda && !spaceReuse)) return moved;
@@ -7126,13 +7146,8 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto index = kept->allocations.front();
                 const auto& item = allocations[index];
                 if (item.guest || item.buffer == nullptr || item.size != binding.guestDescriptor.size() * sizeof(std::uint32_t)) return std::nullopt;
-                const bool patched = std::any_of(dataPatches.begin(), dataPatches.end(), [&](const DataPatch& patch) { return patch.allocation == index; });
-                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && std::memcmp(item.buffer->Bytes().data(), binding.guestDescriptor.data(), item.size) == 0;
+                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : dataBufferHolds(index, binding.guestDescriptor);
                 if (same) continue;
-                if (item.dataWords.empty() && patched) {
-                    if (patchedData != nullptr) *patchedData = true;
-                    return std::nullopt;
-                }
                 if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back({index, 0, item.size, binding.guestDescriptor});
                 continue;

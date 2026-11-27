@@ -196,7 +196,7 @@ struct FragmentOutputLookups {
     std::uint64_t validated = 0;
 };
 FragmentOutputLookups ThreadFragmentOutputLookups();
-enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
+enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, SpaceChanged, InUse, Revalidation, Count };
 using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
 AddressDrawReuseCounts AddressDrawReuseCounters();
 const char* AddressDrawReuseName(AddressDrawReuse outcome);
