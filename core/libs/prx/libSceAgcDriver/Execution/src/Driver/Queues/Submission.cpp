@@ -791,16 +791,12 @@ void Driver::executeRewindTail(const Submission& stalled) {
     validate(tail, stalled.rewindTail);
     readRegisterLists(tail);
     const auto scan = ReferencedPrograms(tail.commands, tail.registerLists);
-    if (!scan.complete) {
-        AwaitRegistrationPreparation();
-    } else {
-        std::shared_ptr<const ShaderRegistry> registry;
-        {
-            std::lock_guard lock(mutex);
-            registry = shaders;
-        }
-        if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
+    std::shared_ptr<const ShaderRegistry> registry;
+    {
+        std::lock_guard lock(mutex);
+        registry = shaders;
     }
+    if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(tail));
     if (APS5_ENABLE_TIMING_LOG) tail.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(tail);
