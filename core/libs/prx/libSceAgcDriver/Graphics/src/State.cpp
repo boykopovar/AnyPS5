@@ -763,6 +763,10 @@ bool sampleCoverageSupported(const QueueState& queue, std::uint32_t samples, boo
     return (inputs & PixelSampleCoverageInput) == 0u || (!perSampleShading && (inputs & PixelSampleRateInputs) == 0u);
 }
 
+void requireSampleCoverage(const QueueState& queue, const State& result) {
+    Require(sampleCoverageSupported(queue, result.samples, result.perSampleShading), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
+}
+
 bool coveredCentroidSupported(const QueueState& queue) {
     const auto config = find(queue.context, 0x2f8);
     if (config == queue.context.end() || (config->second & CoveredCentroidIsCenter) == 0 || PixelProgramSkipped(queue)) return true;
@@ -1854,7 +1858,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     zero(cx, 0x293, ScanControlMask, "primitive discard or out-of-order rasterization");
     result.perSampleShading = result.samples > 1 && (read(cx, 0x293) & PixelShaderIteratesSamples) != 0;
-    Require(sampleCoverageSupported(queue, result.samples, result.perSampleShading), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
+    requireSampleCoverage(queue, result);
     if (depthKeepsSampleZero && result.samples > 1) {
         Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
         rasterizeSampleZero(result);
@@ -1863,6 +1867,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(!result.alphaToCoverage, "a single-sample scan into a multisampled depth target with alpha-to-coverage is unsupported");
         if (auto reason = singleSampleScanRejection(queue, "depth"); !reason.empty()) throw std::runtime_error(reason);
         result.samples = result.depth->samples;
+        requireSampleCoverage(queue, result);
         result.customSampleLocations = true;
         result.sampleLocations.fill(0);
     }
@@ -1947,6 +1952,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             if (auto reason = (read(cx, 0x292) & 1u) != 0 ? singleSampleScanRejection(queue, "color") : std::string(); !reason.empty()) throw std::runtime_error(reason);
             Require(result.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT || (read(cx, 0x1b3) & 0x44u) == 0, "conservative rasterization with centroid interpolation of a draw raised to a multisampled target is unsupported");
             result.samples = color.samples;
+            requireSampleCoverage(queue, result);
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }

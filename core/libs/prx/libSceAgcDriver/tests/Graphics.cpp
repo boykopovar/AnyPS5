@@ -5439,6 +5439,18 @@ void multisampledDepthTests() {
     queue.context[0x203] |= 0x100u;
     expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled color target with a sample-mask export");
     queue = msaaColorOnly();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+    Require(DecodeState(queue).samples == 4, "a single-sample scan with MSAA_ENABLE into a 4x color target refused a coverage input without sample-rate inputs");
+    for (const auto msaaEnable : {1u, 0u}) {
+        queue = msaaColorOnly();
+        queue.context[0x292] = 2u | msaaEnable;
+        queue.context[0x1b3] = queue.context[0x1b4] = 3u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+        expectFailure([&] { DecodeState(queue); }, "SAMPLE_COVERAGE in a multisampled pixel shader");
+    }
+    queue = singleSampleScan();
+    queue.context[0x1b3] = queue.context[0x1b4] = 3u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+    expectFailure([&] { DecodeState(queue); }, "SAMPLE_COVERAGE in a multisampled pixel shader");
+    queue = msaaColorOnly();
     queue.context[0x2dc] = 0x0000aa01u;
     expectFailure([&] { DecodeState(queue); }, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     queue = singleSampleScan();
