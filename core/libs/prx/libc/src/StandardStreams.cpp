@@ -261,7 +261,8 @@ std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int 
     std::size_t capacity = 0;
     if (!GuestCopyIn_nid_no_patch(&buffer, lineptr, sizeof(buffer)) || !GuestCopyIn_nid_no_patch(&capacity, n, sizeof(capacity))) { errno = 14; return -1; }
     if (capacity == 0) buffer = nullptr;
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     flockfile_nid_postfix(stream);
 
     struct Unlock {

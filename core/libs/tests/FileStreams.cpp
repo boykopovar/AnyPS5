@@ -1955,6 +1955,27 @@ static void CheckWideStateAfterAliasReopen(const std::string& base) {
     Require(std::remove(path.c_str()) == 0, "Removing the wide reopen replacement");
 }
 
+static void CheckPushbackStateAfterAliasReopen() {
+#ifdef _WIN32
+    const std::filesystem::path device("NUL");
+#else
+    const std::filesystem::path device("/dev/null");
+#endif
+    FileStream stream(std::tmpfile());
+    FileStream alias(stream.GetHandle());
+    Require(fputs_nid_postfix("AB", &stream) >= 0, "Seeding the alias pushback file");
+    rewind_nid_postfix(&alias);
+    Require(alias.IsRegularFile(), "The alias of a temporary file must be a regular file");
+    Require(fgetc_nid_postfix(&alias) == 'A', "Reading through the alias");
+    Require(ungetc_nid_postfix('Q', &alias) == 'Q' && alias.PushbackLive() && alias.PushedBackBytes() == "Q", "Recording a pushed-back byte on the alias");
+    Require(stream.Reopen(device, "rb"), "Reopening the source onto the null device");
+    Require(!stream.IsRegularFile(), "The reopened source must not be a regular file");
+    Require(!alias.IsRegularFile(), "Reopen must reset the alias's regular-file cache");
+    Require(!alias.PushbackLive() && alias.PushedBackBytes().empty(), "Reopen must discard the alias's recorded pushback");
+    Require(!stream.PushbackLive() && stream.PushedBackBytes().empty(), "Reopen must leave the source without recorded pushback");
+    Require(fclose_nid_postfix(&stream) == 0 && !alias.IsOpen(), "Closing the reopened source must detach its alias");
+}
+
 static void CheckZeroSizedTransfers(const std::string& base) {
     const std::string path = base + ".zero";
     auto* stream = fopen_nid_postfix(path.c_str(), "w+b");
@@ -2131,6 +2152,7 @@ int main(int argc, char** argv) {
     CheckZeroSizedTransfers(argv[1]);
     CheckZeroSizedTransfersOnNullStream();
     CheckWideStateAfterAliasReopen(argv[1]);
+    CheckPushbackStateAfterAliasReopen();
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckUnbufferedStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);

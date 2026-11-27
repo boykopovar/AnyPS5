@@ -949,6 +949,7 @@ void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std:
 
 void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source) {
     std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
+    source->ClearPushback();
     for (FileStream* cur = FileStreamRegistryHead_nid_no_patch(); cur != nullptr; cur = cur->_nextStream_nid_no_patch) {
         if (cur == source || cur->_retired_nid_no_patch || cur->_gate_nid_no_patch != source->_gate_nid_no_patch) continue;
         cur->StoreHandleAtomic_nid_no_patch(source->RawHandle_nid_no_patch());
@@ -959,6 +960,8 @@ void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source) {
         cur->directory = source->directory;
         cur->lowSurrogate = source->lowSurrogate;
         cur->pushedBack = source->pushedBack;
+        cur->ClearPushback();
+        cur->seekableCache = source->seekableCache;
     }
 }
 
