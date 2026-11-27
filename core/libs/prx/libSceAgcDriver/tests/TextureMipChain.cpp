@@ -1,5 +1,6 @@
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -800,6 +801,49 @@ void TestStorageExtraMipClears(const Context& context, TextureDetiler& detiler) 
     }
 }
 
+void TestStorageMirrorMipBounds(const Context& context, TextureDetiler& detiler) {
+    auto descriptor = storageSurface(512u, 256u, 12u);
+    GuestSurface memory(static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes));
+    descriptor.baseAddress = memory.Address();
+    clearRecords();
+    const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto texture = StorageTexture::Create(context, detiler, descriptor, 0u);
+    recorder.Sync();
+    auto mirror = std::make_shared<Buffer>(context, static_cast<std::size_t>(texture->GuestBytes()), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const StorageTexture::MirrorTarget target{mirror->Handle(), descriptor.baseAddress, 1u, 0u, mirror};
+    const std::array ranges{std::pair{descriptor.baseAddress, descriptor.baseAddress + texture->GuestBytes()}};
+    const auto copied = texture->PublishIntoMirror(target, ranges, ranges[0].first, ranges[0].second);
+    Require(copied == texture->GuestBytes(), "an extra-mip mirror publication lost part of its requested range");
+    recorder.Sync();
+    for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+        const auto image = texture->Image(level);
+        Require(std::any_of(mock.readbacks.begin(), mock.readbacks.end(), [&](const auto& copy) { return copy.first == image && copy.second.mipLevel == texture->ImageMipLevel(level); }), "mirror publication did not read a guest mip from its backing image");
+        checkInsideImage(image, mock.images.at(image), "extra-mip mirror publication");
+    }
+}
+
+void TestMinLodPastPhysicalChain() {
+    std::uint32_t checked = 0;
+    for (const auto tile : {TextureTileMode::kLinear, TextureTileMode::kStandard64KB, TextureTileMode::kR64KBX, TextureTileMode::kD64KBX}) {
+        for (const auto extent : {std::pair{1u, 1u}, std::pair{4u, 2u}, std::pair{28u, 1u}, std::pair{32u, 32u}, std::pair{512u, 256u}, std::pair{2048u, 1024u}}) {
+            for (const auto format : {FormatR8G8B8A8Unorm, 20u, 169u}) {
+                const auto physical = FullMipChainLevels(extent.first, extent.second, 1u);
+                auto descriptor = storageSurface(extent.first, extent.second, std::min(physical + 3u, 16u));
+                descriptor.tileMode = tile;
+                descriptor.format = format;
+                for (auto clamp = physical; clamp < descriptor.mipCount; ++clamp) {
+                    descriptor.minLod = clamp * 256u;
+                    Require(!MinLodResidentLevels(descriptor).has_value(), "MIN_LOD kept a resident-only snapshot past its physical chain: tile=" + std::to_string(static_cast<std::uint32_t>(tile)) + " extent=" + std::to_string(extent.first) + "x" + std::to_string(extent.second) + " format=" + std::to_string(format) + " physical=" + std::to_string(physical) + " guest=" + std::to_string(descriptor.mipCount) + " clamp=" + std::to_string(clamp));
+                    ++checked;
+                }
+            }
+        }
+    }
+    std::printf("MIN_LOD physical-chain residency checks: %u\n", checked);
+}
+
 void TestStorageFullChainIsUnchanged(const Context& context, TextureDetiler& detiler) {
     auto descriptor = storageSurface(64, 32, 7);
     GuestSurface memory(static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes));
@@ -982,8 +1026,10 @@ void RunTextureMipChainTests() {
         TestStorageLevelsPastTheFullChain(context, detiler, 1u);
         TestStorageLevelsPastTheFullChain(context, detiler, 3u);
         TestStorageFullChainIsUnchanged(context, detiler);
+        TestMinLodPastPhysicalChain();
         TestStoragePartialMipClears(context, detiler);
         TestStorageExtraMipClears(context, detiler);
+        TestStorageMirrorMipBounds(context, detiler);
         TestShaderLevelsPastTheView(context, detiler);
         TestSrgbLevelsPastTheFullChain(context);
     }

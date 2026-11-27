@@ -1,5 +1,5 @@
 if(BUILD_TESTING)
-    foreach(extraMipDrawMode IN ITEMS recorded immediate readback clearmip)
+    foreach(extraMipDrawMode IN ITEMS recorded immediate readback clearmip mirror)
         add_test(NAME agc_driver_extra_mip_${extraMipDrawMode} COMMAND agc_driver_extra_mip_color_target_tests --${extraMipDrawMode})
         set_tests_properties(agc_driver_extra_mip_${extraMipDrawMode} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

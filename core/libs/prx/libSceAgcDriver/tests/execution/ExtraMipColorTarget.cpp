@@ -340,6 +340,49 @@ void CheckPartialMipClears(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void CheckMirrorPublication(AgcDriver::VulkanDevice& device) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const auto tile : {TextureTileMode::kLinear, TextureTileMode::kD64KBX}) {
+        GuestTextureResource descriptor{};
+        descriptor.width = tile == TextureTileMode::kLinear ? 4u : 512u;
+        descriptor.height = tile == TextureTileMode::kLinear ? 2u : 256u;
+        descriptor.mipCount = tile == TextureTileMode::kLinear ? 5u : 12u;
+        descriptor.lastLevel = descriptor.mipCount - 1u;
+        descriptor.format = 20u;
+        descriptor.tileMode = tile;
+        descriptor.dimension = TextureDimension::k2D;
+        const auto geometry = DescribeSurface(descriptor);
+        GuestBlock block(static_cast<std::size_t>(geometry.guestBytes));
+        descriptor.baseAddress = reinterpret_cast<std::uintptr_t>(block.Surface());
+        auto expected = std::vector<std::byte>(block.registered, block.registered + block.bytes);
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(context);
+        recorder.Activate();
+        auto texture = StorageTexture::Create(context, *context.detiler, descriptor, 0u);
+        recorder.Sync();
+        for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+            const std::uint32_t value = 0x71352000u + level;
+            ClearAttachment(context, texture->AttachmentView(StorageFormatForGuest(context, descriptor.format), level, 0u, 1u, 0u), StorageFormatForGuest(context, descriptor.format), {value, 0u, 0u, 0u});
+            const auto offset = 65536u + TexelOffset(descriptor, geometry, tile == TextureTileMode::kLinear ? ColorTileMode::Linear : ColorTileMode::D64KBX, level, 0u);
+            std::memcpy(expected.data() + offset, &value, sizeof(value));
+        }
+        texture->MarkDirty();
+        auto mirror = std::make_shared<Buffer>(context, block.bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        std::copy_n(block.registered, block.bytes, mirror->Bytes().begin());
+        const StorageTexture::MirrorTarget target{mirror->Handle(), reinterpret_cast<std::uintptr_t>(block.registered), 1u, 0u, mirror};
+        const std::array ranges{std::pair{descriptor.baseAddress, descriptor.baseAddress + geometry.guestBytes}};
+        Require(texture->PublishIntoMirror(target, ranges, ranges[0].first, ranges[0].second) == geometry.guestBytes, "mirror publication omitted requested bytes");
+        RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Sync();
+        mirror->Invalidate();
+        Require(std::equal(expected.begin(), expected.end(), mirror->Bytes().begin()), "extra-mip mirror publication changed a texel, padding or guard byte");
+        texture->WriteBack();
+        recorder.Sync();
+        texture.reset();
+        std::printf("extra-mip mirror publication passed: %ux%u guest=%u physical=%u\n", descriptor.width, descriptor.height, descriptor.mipCount, geometry.imageLevels);
+    }
+}
+
 struct ReadbackCopy {
     VkImage image;
     VkBufferImageCopy region;
@@ -439,11 +482,12 @@ void CheckReadback(AgcDriver::VulkanDevice& device) {
 int main(int argc, char** argv) {
     try {
         const std::string mode = argc == 2 ? argv[1] : "";
-        Require(argc == 1 || mode == "--recorded" || mode == "--immediate" || mode == "--readback" || mode == "--clearmip", "unknown extra-mip fixture mode");
+        Require(argc == 1 || mode == "--recorded" || mode == "--immediate" || mode == "--readback" || mode == "--clearmip" || mode == "--mirror", "unknown extra-mip fixture mode");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (mode == "--readback") { CheckReadback(*device); return 0; }
         if (mode == "--clearmip") { CheckPartialMipClears(*device); return 0; }
+        if (mode == "--mirror") { CheckMirrorPublication(*device); return 0; }
         if (mode == "--recorded" || mode == "--immediate") {
             CheckDraw(*device, mode == "--recorded", 1u);
             CheckDraw(*device, mode == "--recorded", 3u);
