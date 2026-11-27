@@ -210,7 +210,7 @@ void CheckGuestMemory(const std::vector<std::uint8_t>& png, const std::vector<st
     source.offset = 0;
     const std::vector<std::uint8_t> truncated(png.begin(), png.begin() + 10);
     source.png = &truncated;
-    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, guestInfo) == static_cast<std::int32_t>(0x80690010));
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, guestInfo) == static_cast<std::int32_t>(0x80690012));
     Require(std::all_of(bytes, bytes + sizeof(info), [](auto byte) { return byte == 0xA5; }));
 
     output.Protect(false);
@@ -392,6 +392,7 @@ void CheckReusedWorkMemory(const std::vector<std::uint8_t>& png, const std::vect
 
 void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const std::vector<std::uint8_t>& expectedRgbImage) {
     constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
     const std::vector<std::uint8_t> palette(std::begin(PALETTE_TRNS), std::end(PALETTE_TRNS));
     const auto parseWith = [](std::uint32_t maxWidth, const std::vector<std::uint8_t>& input, std::size_t chunkSize, PngDecImageInfo& info, Source& source) {
         TestDecoder decoder(maxWidth);
@@ -409,19 +410,19 @@ void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const 
     std::vector<std::uint8_t> oversizedChunk(palette.begin(), palette.begin() + 33);
     oversizedChunk.insert(oversizedChunk.end(), {0x80, 0x00, 0x00, 0x00, 't', 'E', 'X', 't'});
     oversizedChunk.insert(oversizedChunk.end(), 4096, 0);
-    Require(parseWith(2, oversizedChunk, 64, info, source) == invalidData);
+    Require(parseWith(2, oversizedChunk, 64, info, source) == decodeError);
     Require(source.calls <= 2 && source.offset <= 128);
 
     std::vector<std::uint8_t> invalidType(palette.begin(), palette.begin() + 33);
     invalidType.insert(invalidType.end(), {0x00, 0x00, 0x00, 0x01, 'a', 'B', '1', 'd'});
     invalidType.insert(invalidType.end(), 4096, 0);
-    Require(parseWith(2, invalidType, 64, info, source) == invalidData);
+    Require(parseWith(2, invalidType, 64, info, source) == decodeError);
     Require(source.calls <= 2 && source.offset <= 128);
 
     std::vector<std::uint8_t> badHeaderCrc = palette;
     badHeaderCrc[32] ^= 1u;
     badHeaderCrc.insert(badHeaderCrc.end(), 4096, 0);
-    Require(parseWith(2, badHeaderCrc, 8, info, source) == invalidData);
+    Require(parseWith(2, badHeaderCrc, 8, info, source) == decodeError);
     Require(source.offset <= 64);
 
     std::vector<std::uint8_t> zeroWidthHeader(palette.begin(), palette.begin() + 8);
@@ -452,7 +453,7 @@ void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const 
     std::vector<std::uint8_t> badPaletteCrc = palette;
     badPaletteCrc[56] ^= 1u;
     badPaletteCrc.insert(badPaletteCrc.end(), 4096, 0);
-    Require(parseWith(2, badPaletteCrc, 7, info, source) == invalidData);
+    Require(parseWith(2, badPaletteCrc, 7, info, source) == decodeError);
     Require(source.offset <= 128);
 
     std::vector<std::uint8_t> duplicatePalette(palette.begin(), palette.begin() + 57);
@@ -462,8 +463,21 @@ void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const 
     std::vector<std::uint8_t> endBeforeIdat(palette.begin(), palette.begin() + 33);
     AppendTestChunk(endBeforeIdat, "IEND", {});
     endBeforeIdat.insert(endBeforeIdat.end(), 4096, 0);
-    Require(parseWith(2, endBeforeIdat, 7, info, source) == invalidData);
+    Require(parseWith(2, endBeforeIdat, 7, info, source) == decodeError);
     Require(source.offset <= 128);
+
+    std::vector<std::uint8_t> unknownCritical(palette.begin(), palette.begin() + 33);
+    const std::vector<std::uint8_t> criticalPayload = {1, 2, 3, 4};
+    AppendTestChunk(unknownCritical, "CRIT", criticalPayload);
+    unknownCritical.insert(unknownCritical.end(), 4096, 0);
+    Require(parseWith(2, unknownCritical, 7, info, source) == decodeError);
+    Require(source.offset <= 128);
+
+    const std::vector<std::uint8_t> truncatedPalette(palette.begin(), palette.begin() + 45);
+    Require(parseWith(2, truncatedPalette, 7, info, source) == decodeError);
+
+    const std::vector<std::uint8_t> shortSignature = {0x89, 0x50, 0x4E, 0x47};
+    Require(parseWith(2, shortSignature, 7, info, source) == invalidData);
 
     std::vector<std::uint8_t> badTrnsCrc = palette;
     badTrnsCrc[72] ^= 1u;
@@ -596,7 +610,7 @@ int main() {
         param.input = &ReadChunk;
         param.input_argument = &source;
         param.operation = 0x10;
-        Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == static_cast<std::int32_t>(0x80690010));
+        Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == static_cast<std::int32_t>(0x80690012));
     }
 
     {

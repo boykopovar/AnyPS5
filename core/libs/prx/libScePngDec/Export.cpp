@@ -635,7 +635,7 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
         while (!headerAvailable((*use).data) && (*use).status == 0) pull(*use, PARSE_BLOCK_SIZE);
         if ((*use).status < 0) return (*use).status;
         const ChunkScan scan = scanChunks((*use).data);
-        if (scan.headerResult != 0) return SCE_PNG_DEC_ERROR_INVALID_DATA;
+        if (scan.headerResult != 0) return scan.headerResult;
         const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(scan.png);
         if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
         PngDecImageInfo localInfo{};
