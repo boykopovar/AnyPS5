@@ -99,8 +99,8 @@ std::u16string ReadGuestU16String(const char16_t* source, std::int32_t length, c
 void WriteGuestU16Output(char16_t* destination, std::int32_t capacity, const std::vector<char16_t>& source,
                          std::int32_t length, std::int32_t outgoing, std::int32_t* status, const char* caller) {
     if (capacity > 0 && length >= 0 && outgoing != Icu::IllegalArgument) {
-        const std::size_t count = (std::min)(static_cast<std::size_t>(capacity),
-                                             static_cast<std::size_t>(length) + (length < capacity ? 1u : 0u));
+        const std::size_t requested = static_cast<std::size_t>(length) + (length < capacity ? 1u : 0u);
+        const std::size_t count = (std::min)(source.size(), (std::min)(static_cast<std::size_t>(capacity), requested));
         if (count > 0) {
             const int savedErrno = errno;
             const bool ok = GuestCopyOut_nid_no_patch(destination, source.data(), count * sizeof(char16_t));
@@ -223,7 +223,10 @@ UEnumeration* APS5_VABI ucal_getKeywordValuesForLocale_nid_postfix(const char* k
     std::string hostLocale;
     const char* keyPtr = key ? (hostKey = ReadGuestCString(key, __func__), hostKey.c_str()) : nullptr;
     const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
-    return Icu::CalendarBackend::GetKeywordValuesForLocale(keyPtr, localePtr, commonlyUsed, status);
+    auto local = incoming;
+    UEnumeration* result = Icu::CalendarBackend::GetKeywordValuesForLocale(keyPtr, localePtr, commonlyUsed, &local);
+    WriteStatus(status, incoming, local, __func__);
+    return result;
 }
 
 std::int32_t APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix(const void* calendar, std::int32_t displayNameType,
