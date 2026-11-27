@@ -1077,6 +1077,59 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
 [[nodiscard]] bool ExactF32Arithmetic();
+struct NanSpeculationConfig {
+    bool enabled = false;
+    std::uint32_t stageMask = 0x7u;
+    std::uint32_t minimumVectorInstructions = 8u;
+    std::uint32_t maximumVectorInstructions = 256u;
+    std::array<std::uint32_t, 9> stageMinimum{32u, 8u, 8u, 32u, 32u, 32u, 32u, 32u, 32u};
+    std::uint32_t minimumFastOps = 32u;
+    std::uint32_t minimumDensityPercent = 0u;
+};
+[[nodiscard]] const NanSpeculationConfig& NanSpeculation();
+[[nodiscard]] bool NanSpeculationSuppressed(std::uint64_t address);
+bool SuppressNanSpeculation(std::uint64_t address);
+void RestoreNanSpeculation(std::uint64_t address);
+void MarkNanSpeculationApplied(std::uint64_t address);
+[[nodiscard]] bool NanSpeculationApplied(std::uint64_t address);
+[[nodiscard]] std::uint32_t NanSpeculationFallbacks();
+constexpr std::uint32_t NanSpeculationStageCount = 8u;
+struct NanSpeculationStageStats {
+    std::uint32_t programs = 0;
+    std::uint32_t speculated = 0;
+    std::uint32_t declined = 0;
+    std::uint32_t fellBack = 0;
+};
+void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declined);
+void NoteNanSpeculationFallback(std::uint32_t stage);
+void InjectNanSpeculationFailures(std::uint32_t count, bool includingExact);
+
+class NanSpeculationRetryScope {
+public:
+    NanSpeculationRetryScope(std::uint64_t address, std::uint32_t stage) : address(address), stage(stage) {}
+    NanSpeculationRetryScope(const NanSpeculationRetryScope&) = delete;
+    NanSpeculationRetryScope& operator=(const NanSpeculationRetryScope&) = delete;
+    void Retried() { retried = true; }
+    void Succeeded() {
+        if (retried) NoteNanSpeculationFallback(stage);
+        retried = false;
+    }
+    void Abandoned() {
+        if (retried) RestoreNanSpeculation(address);
+        retried = false;
+    }
+
+private:
+    std::uint64_t address = 0;
+    std::uint32_t stage = 0;
+    bool retried = false;
+};
+[[nodiscard]] NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage);
+
+class NanSpeculationRetry : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct RectListShaders {
     RecompileResult control;

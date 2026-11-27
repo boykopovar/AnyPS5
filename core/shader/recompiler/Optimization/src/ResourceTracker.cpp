@@ -1973,7 +1973,7 @@ private:
             const auto [entry, inserted] = web.resolved.try_emplace(value, value);
             if (inserted) {
                 IrValue* invariant = ResolveInvariantPhi(m_program.Resources(), value);
-                entry->second = invariant == nullptr ? value : invariant->Resolve();
+                entry->second = invariant == nullptr || !AvailableAt(invariant, value->Parent()) ? value : invariant->Resolve();
             }
             value = entry->second;
         }
@@ -2000,7 +2000,15 @@ private:
                 laneOrder = index;
             }
         }
-        if (phi == tuple.end() && lane != nullptr) {
+        std::size_t phiOrder = 0;
+        for (const IrValue* value : tuple) {
+            if (!value->IsPhi()) {
+                continue;
+            }
+            const auto found = web.order.find(value->Parent());
+            phiOrder = std::max(phiOrder, found == web.order.end() ? 0u : found->second);
+        }
+        if (lane != nullptr && (phi == tuple.end() || laneOrder > phiOrder)) {
             return LaneSelector(tuple, *lane, web, position);
         }
         if (phi == tuple.end()) {
@@ -2083,6 +2091,15 @@ private:
         return &selector;
     }
 
+    static bool EarlierPhi(const IrValue& value, const IrBlock* block, const DescriptorWeb& web) {
+        if (!value.IsPhi()) {
+            return false;
+        }
+        const auto phiBlock = web.order.find(value.Parent());
+        const auto laneBlock = web.order.find(block);
+        return phiBlock != web.order.end() && laneBlock != web.order.end() && phiBlock->second < laneBlock->second;
+    }
+
     IrValue* LaneSelector(const std::vector<IrValue*>& tuple, IrValue& first, DescriptorWeb& web, IrValue& position) {
         IrBlock* block = first.Parent();
         const auto op = first.Opcode();
@@ -2102,7 +2119,7 @@ private:
                 if (select) {
                     right.push_back(value->Argument(2u));
                 }
-            } else if (value->HasImmediate() || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane)) {
+            } else if (value->HasImmediate() || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane) || EarlierPhi(*value, block, web)) {
                 left.push_back(value);
                 if (select) {
                     right.push_back(value);

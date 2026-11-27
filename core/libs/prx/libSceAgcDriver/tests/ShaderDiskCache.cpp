@@ -3075,6 +3075,31 @@ void verifyDefaultDirectory(const char* self) {
 
 }
 
+void verifyNanSpeculationKey() {
+    NanSpeculationConfig base;
+    base.enabled = true;
+    const auto version = [](const NanSpeculationConfig& config) { return ShaderDiskCache::SourceVersionFor(config, true); };
+    NanSpeculationConfig computeMinimum = base;
+    computeMinimum.stageMinimum[0] = 128u;
+    NanSpeculationConfig vertexMinimum = base;
+    vertexMinimum.stageMinimum[1] = 64u;
+    require(version(computeMinimum) != version(vertexMinimum), "a compute minimum of 128 and a vertex minimum of 64 share a cache version");
+    require(version(computeMinimum) != version(base) && version(vertexMinimum) != version(base), "a stage minimum does not change the cache version");
+    NanSpeculationConfig density = base;
+    density.minimumFastOps = 4u;
+    NanSpeculationConfig fastOps = base;
+    fastOps.minimumDensityPercent = 4u;
+    require(version(density) != version(fastOps), "a minimum fast-op count and a minimum density share a cache version");
+    NanSpeculationConfig narrow = base;
+    narrow.maximumVectorInstructions = 128u;
+    NanSpeculationConfig floor = base;
+    floor.minimumVectorInstructions = 128u;
+    floor.stageMinimum.fill(128u);
+    require(version(narrow) != version(floor), "a lower and an upper region bound share a cache version");
+    NanSpeculationConfig off;
+    require(ShaderDiskCache::SourceVersionFor(off, true) != version(base), "enabling speculation does not change the cache version");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--housekeeping-safety") {
@@ -3130,6 +3155,7 @@ int main(int argc, char** argv) {
         verifyDefaultDirectory(argv[0]);
         setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
         setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
+        verifyNanSpeculationKey();
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
         verifyElementFlags();
