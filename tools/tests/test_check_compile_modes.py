@@ -10,6 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tools/check_compile.py"
+sys.path.insert(0, str(ROOT / "tools"))
+import check_compile
 
 
 class CheckCompileModeTests(unittest.TestCase):
@@ -265,6 +267,21 @@ class CheckCompileModeTests(unittest.TestCase):
     def test_explicit_cpp_language_is_preserved(self):
         self.check_modes((("-E", "-x", "c++"),))
 
+    def test_source_keeps_its_language_before_a_later_reset(self):
+        for compiler in self.compilers():
+            for field in ("arguments", "command"):
+                with self.subTest(compiler=compiler, field=field), tempfile.TemporaryDirectory() as name:
+                    root = Path(name).resolve()
+                    build = root / "build"
+                    build.mkdir()
+                    source = root / "unit.c"
+                    source.write_text("template <typename T> struct Wrapper { T value; };\n", encoding="utf-8")
+                    arguments = [compiler, "-x", "c++", "-c", "../unit.c", "-x", "none", "-o", "unit.o"]
+                    control = subprocess.run(arguments, cwd=build, capture_output=True, text=True, check=False)
+                    self.assertEqual(control.returncode, 0, control.stderr)
+                    result = self.run_tool(root, build, source, arguments, field)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_clang_end_of_options_preserves_mode_named_inputs(self):
         compiler = shutil.which("clang")
         if compiler is None:
@@ -388,22 +405,41 @@ class CheckCompileModeTests(unittest.TestCase):
                     self.assertIn(option, result.stderr)
 
     def test_unknown_operand_counts_are_rejected_before_mode_rewriting(self):
-        compiler = shutil.which("clang")
-        if compiler is None:
-            self.skipTest("needs Clang")
-        for field in ("arguments", "command"):
-            with self.subTest(field=field), tempfile.TemporaryDirectory(prefix="syntax arity ") as name:
-                root = Path(name).resolve()
-                build = root / "build"
-                build.mkdir()
-                source = root / "unit.c"
-                source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
-                arguments = [compiler, "-fdebug-compilation-dir", "-E", "-c", str(source), "-o", str(build / "unit.o")]
-                control = subprocess.run(arguments, cwd=build, capture_output=True, text=True, check=False)
-                self.assertEqual(control.returncode, 0, control.stderr)
-                result = self.run_tool(root, build, source, arguments, field)
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn("unknown operand count", result.stderr)
+        source = Path("unit.c").resolve()
+        with self.assertRaisesRegex(ValueError, "unknown operand count"):
+            check_compile.syntax_arguments(["clang", "-funknown-compilation-dir", "-E", "-c", str(source)], Path.cwd(), source)
+
+    def test_known_one_value_options_accept_mode_named_values(self):
+        source = Path("unit.c").resolve()
+        self.assertEqual(check_compile.syntax_arguments(
+            ["clang", "-fdebug-compilation-dir", "-E", "-c", str(source)], Path.cwd(), source),
+            ["clang", "-fsyntax-only", "-fdebug-compilation-dir", "-E", str(source)])
+
+    def test_safe_forwarded_options_are_preserved(self):
+        source = Path("unit.c").resolve()
+        cases = (
+            (["clang", "-Xclang", "-fno-spell-checking", "-c", str(source)],
+             ["clang", "-fsyntax-only", "-Xclang", "-fno-spell-checking", str(source)]),
+            (["clang", "-Xclang=-fno-spell-checking", "-c", str(source)],
+             ["clang", "-fsyntax-only", "-Xclang=-fno-spell-checking", str(source)]),
+            (["clang", "-Xpreprocessor", "-DFROM_FORWARD=1", "-c", str(source)],
+             ["clang", "-fsyntax-only", "-Xpreprocessor", "-DFROM_FORWARD=1", str(source)]),
+            (["clang", "-Xpreprocessor", "-Iinclude", "-c", str(source)],
+             ["clang", "-fsyntax-only", "-Xpreprocessor", "-Iinclude", str(source)]),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                self.assertEqual(check_compile.syntax_arguments(arguments, Path.cwd(), source), expected)
+
+    def test_unsafe_forwarded_options_are_rejected(self):
+        source = Path("unit.c").resolve()
+        for arguments in (["clang", "-Xclang", "-E"], ["clang", "-Xclang=-emit-obj"],
+                          ["clang", "-Xpreprocessor", "-M"], ["clang", "-Xclang"],
+                          ["clang", "-Xclang", "-I"], ["clang", "-Xclang", "-include"],
+                          ["clang", "-Xclang", "-D"], ["clang", "-Xclang", "-W"],
+                          ["clang", "-Xpreprocessor", "-isystem"]):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
 
     def test_nested_response_modes_preserve_mode_named_include_directories(self):

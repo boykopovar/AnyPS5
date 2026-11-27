@@ -8,7 +8,7 @@ from test_symbol_versions import build_image, symbols, patch, SHOFF, DYNSTR_OFFS
 VERNEED = 0x580
 
 
-def image(*, auxiliary=16, count=1, size=32, version=1, auxnext=0, nextrecord=0):
+def image(*, auxiliary=16, count=1, size=32, version=1, auxnext=0, nextrecord=0, link=2):
     data = build_image(symbols(False), False)
     strings = sections(data)[2]
     filename = strings[5]
@@ -16,7 +16,7 @@ def image(*, auxiliary=16, count=1, size=32, version=1, auxnext=0, nextrecord=0)
     data[DYNSTR_OFFSET + filename:DYNSTR_OFFSET + filename + len(names)] = names
     struct.pack_into("<Q", data, SHOFF + 2 * 64 + 32, filename + len(names))
     struct.pack_into("<H", data, 0x3c, 5)
-    struct.pack_into("<IIQQQQIIQQ", data, SHOFF + 4 * 64, 0, 0x6ffffffe, 2, 0, VERNEED, size, 2, 1, 8, 0)
+    struct.pack_into("<IIQQQQIIQQ", data, SHOFF + 4 * 64, 0, 0x6ffffffe, 2, 0, VERNEED, size, link, 1, 8, 0)
     struct.pack_into("<HHIII", data, VERNEED, version, count, filename, auxiliary, nextrecord)
     struct.pack_into("<IHHII", data, VERNEED + auxiliary, 0, 0, 2, filename + len(b"libfixture.so\0"), auxnext)
     return data
@@ -32,6 +32,9 @@ class VersionRequirementsTests(unittest.TestCase):
 
     def test_unsupported_structure_version_is_rejected(self):
         self.reject(image(version=2))
+
+    def test_version_requirements_must_link_to_dynstr(self):
+        self.reject(image(link=1))
 
     def test_invalid_forward_links_and_section_ranges_are_rejected(self):
         for fields in ({"auxnext": 16}, {"nextrecord": 64}, {"size": 15},

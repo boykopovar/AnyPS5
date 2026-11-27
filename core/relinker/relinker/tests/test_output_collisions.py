@@ -207,6 +207,18 @@ def main():
         metadata_checked = metadata_inputs(relinker, work)
         filesystem_aliases(relinker, work)
         directory_outputs(relinker, work)
+        for windows, dry_run in itertools.product((False, True), repeat=2):
+            case = work / f"directory-collision-{windows}-{dry_run}"
+            command, _, _ = prepare(case, windows)
+            destination = case / "destination"
+            destination.mkdir()
+            before = tree_snapshot(case)
+            result = subprocess.run([str(relinker), *(["--dry-run"] if dry_run else []),
+                                     *command[:-1], str(destination / "app0")], cwd=case,
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
+            assert result.returncode == 2 and "Output paths collide" in result.stderr, (
+                windows, dry_run, result.returncode, result.stdout, result.stderr)
+            assert tree_snapshot(case) == before, (windows, dry_run)
         for windows, existing in itertools.product((False, True), repeat=2):
             case = work / f"needed-secondary-{windows}-{existing}"
             case.mkdir()

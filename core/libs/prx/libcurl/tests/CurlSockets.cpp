@@ -3,6 +3,7 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketBorrow.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
@@ -10,10 +11,12 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #ifdef _WIN32
 #include <ws2tcpip.h>
+#include <afunix.h>
 #else
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/un.h>
 #endif
 #include <algorithm>
 #include <atomic>
@@ -24,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <set>
@@ -570,6 +574,60 @@ static void BorrowedUnixReadiness() {
 }
 #endif
 
+static void UnixSocketGuestPath() {
+    const auto before = Descriptors();
+    const std::string guestPath = "/anyps5-curl-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000000) + ".sock";
+    const auto hostPath = ResolvePath_nid_no_patch(guestPath.c_str()).string();
+    sockaddr_un address{};
+    Require(hostPath.size() < sizeof(address.sun_path));
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, hostPath.c_str(), hostPath.size() + 1);
+    const auto listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    Require(listener != CURL_SOCKET_BAD);
+    Require(::bind(listener, reinterpret_cast<const sockaddr*>(&address), static_cast<int>(sizeof(address))) == 0);
+    Require(::listen(listener, 1) == 0);
+    std::string request;
+    std::thread worker([&] {
+        const auto peer = ::accept(listener, nullptr, nullptr);
+        if (peer == CURL_SOCKET_BAD) return;
+        char bytes[512];
+        while (request.find("\r\n\r\n") == std::string::npos) {
+            const auto received = ::recv(peer, bytes, sizeof(bytes), 0);
+            if (received <= 0) break;
+            request.append(bytes, static_cast<std::size_t>(received));
+        }
+        const auto response = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(Body.size()) + "\r\nConnection: close\r\n\r\n" + Body;
+        std::size_t sent = 0;
+        while (sent < response.size()) {
+#ifdef _WIN32
+            const auto count = ::send(peer, response.data() + sent, static_cast<int>(response.size() - sent), 0);
+#else
+            const auto count = ::send(peer, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
+#endif
+            if (count <= 0) break;
+            sent += static_cast<std::size_t>(count);
+        }
+        NativeClose(peer);
+    });
+    State state;
+    auto* easy = Easy("http://localhost/unix-socket", state, false);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_UNIX_SOCKET_PATH, guestPath.c_str()) == CURLE_OK);
+    const auto result = static_cast<CURLcode>(curl_easy_perform_nid_postfix(easy));
+    curl_easy_cleanup_nid_postfix(easy);
+#ifdef _WIN32
+    ::shutdown(listener, SD_BOTH);
+#else
+    ::shutdown(listener, SHUT_RDWR);
+#endif
+    NativeClose(listener);
+    worker.join();
+    std::filesystem::remove(hostPath);
+    Require(result == CURLE_OK);
+    Require(request.starts_with("GET /unix-socket HTTP/1.1\r\n"));
+    Require(state.output == Body);
+    Require(Descriptors() == before);
+}
+
 static void MultiWakeupPoll() {
     const auto before = Descriptors();
     Require(curl_multi_wakeup_nid_postfix(nullptr) == CURLM_BAD_HANDLE);
@@ -745,5 +803,6 @@ int main() {
     ErrorsAndExtraDescriptors();
     MultiWakeupPoll();
     ReceivePauseReplay();
+    UnixSocketGuestPath();
     curl_global_cleanup_nid_postfix();
 }

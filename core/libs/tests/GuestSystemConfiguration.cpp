@@ -315,12 +315,12 @@ static void CheckProcessSysctl() {
     const int callerPid = getpid_nid_postfix();
     const int mibPid[] = {1, 14, 1, callerPid};
     std::size_t length = 0;
-    Require(sysctl_nid_postfix(mibPid, 4, nullptr, &length, nullptr, 0) == 0 && length == 1088);
+    Require(sysctl_nid_postfix(mibPid, 4, nullptr, &length, nullptr, 0) == 0 && length == 1096);
 
     unsigned char buffer[1100];
     std::memset(buffer, 0xaa, sizeof(buffer));
     length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibPid, 4, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    Require(sysctl_nid_postfix(mibPid, 4, buffer, &length, nullptr, 0) == 0 && length == 1096);
     std::int32_t structSize = 0;
     std::int32_t pid = 0;
     std::int32_t parentPid = 0;
@@ -329,10 +329,18 @@ static void CheckProcessSysctl() {
     std::memcpy(&pid, buffer + 72, sizeof(pid));
     std::memcpy(&parentPid, buffer + 76, sizeof(parentPid));
     std::memcpy(&flag, buffer + 368, sizeof(flag));
-    Require(structSize == 1088 && pid == callerPid && parentPid == getppid_nid_postfix());
+    Require(structSize == 1096 && pid == callerPid && parentPid == getppid_nid_postfix());
     Require((flag & 0x800) == 0);
     Require(std::strcmp(reinterpret_cast<const char*>(buffer + 447), "eboot.bin") == 0);
-    Require(buffer[4] == 0 && buffer[80] == 0 && buffer[1087] == 0 && buffer[1088] == 0xaa);
+    Require(buffer[4] == 0 && buffer[80] == 0 && buffer[1095] == 0 && buffer[1096] == 0xaa);
+
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    length = 1088;
+    Require(sysctl_nid_postfix(mibPid, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
+    Require(length == 1088 && buffer[1087] == 0 && buffer[1088] == 0xaa);
+    std::memcpy(&structSize, buffer, sizeof(structSize));
+    std::memcpy(&pid, buffer + 72, sizeof(pid));
+    Require(structSize == 1096 && pid == callerPid);
 
     const int mibForeign[] = {1, 14, 1, callerPid == 1 ? 2 : 1};
     Require(sysctl_nid_postfix(mibForeign, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
@@ -343,9 +351,9 @@ static void CheckProcessSysctl() {
     const int mibThread[] = {1, 14, 1, scePthreadGetthreadid()};
     std::memset(buffer, 0xaa, sizeof(buffer));
     length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibThread, 4, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    Require(sysctl_nid_postfix(mibThread, 4, buffer, &length, nullptr, 0) == 0 && length == 1096);
     std::memcpy(&pid, buffer + 72, sizeof(pid));
-    Require(pid == callerPid && buffer[1088] == 0xaa);
+    Require(pid == callerPid && buffer[1096] == 0xaa);
 
     const int mibTooShort[] = {1, 14, 1};
     Require(sysctl_nid_postfix(mibTooShort, 3, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
@@ -371,21 +379,21 @@ static void* APS5_VABI ThreadRecordWorkerEntry(void* argument) {
 }
 static std::vector<unsigned char> ReadThreadRecords(const int* mib) {
     std::size_t length = 0;
-    Require(sysctl_nid_postfix(mib, 4, nullptr, &length, nullptr, 0) == 0 && length > 0 && length % 1088 == 0);
-    std::vector<unsigned char> buffer(length + 4 * 1088, 0xaa);
+    Require(sysctl_nid_postfix(mib, 4, nullptr, &length, nullptr, 0) == 0 && length > 0 && length % 1096 == 0);
+    std::vector<unsigned char> buffer(length + 4 * 1096, 0xaa);
     length = buffer.size();
-    Require(sysctl_nid_postfix(mib, 4, buffer.data(), &length, nullptr, 0) == 0 && length > 0 && length % 1088 == 0);
+    Require(sysctl_nid_postfix(mib, 4, buffer.data(), &length, nullptr, 0) == 0 && length > 0 && length % 1096 == 0);
     Require(buffer[length] == 0xaa);
     buffer.resize(length);
     return buffer;
 }
 static std::int32_t RecordInt(const std::vector<unsigned char>& records, std::size_t record, std::size_t offset) {
     std::int32_t value = 0;
-    std::memcpy(&value, records.data() + record * 1088 + offset, sizeof(value));
+    std::memcpy(&value, records.data() + record * 1096 + offset, sizeof(value));
     return value;
 }
 static bool ListsThread(const std::vector<unsigned char>& records, int tid) {
-    for (std::size_t record = 0; record < records.size() / 1088; ++record) {
+    for (std::size_t record = 0; record < records.size() / 1096; ++record) {
         if (RecordInt(records, record, 600) == tid) return true;
     }
     return false;
@@ -402,13 +410,13 @@ static void CheckProcessThreadsSysctl() {
     const int workerTid = worker.tid.load(std::memory_order_acquire);
 
     const auto records = ReadThreadRecords(mib);
-    const std::size_t count = records.size() / 1088;
+    const std::size_t count = records.size() / 1096;
     Require(count >= 2);
     bool sawSelf = false;
     bool sawWorker = false;
     for (std::size_t record = 0; record < count; ++record) {
-        const unsigned char* bytes = records.data() + record * 1088;
-        Require(RecordInt(records, record, 0) == 1088);
+        const unsigned char* bytes = records.data() + record * 1096;
+        Require(RecordInt(records, record, 0) == 1096);
         Require(RecordInt(records, record, 72) == callerPid && RecordInt(records, record, 76) == getppid_nid_postfix());
         Require(RecordInt(records, record, 596) == static_cast<std::int32_t>(count));
         Require(std::strcmp(reinterpret_cast<const char*>(bytes + 447), "eboot.bin") == 0);
@@ -454,7 +462,7 @@ static void CheckProcessListSysctl() {
     const int callerPid = getpid_nid_postfix();
     const int mib[] = {1, 14, 8};
     std::size_t length = 0;
-    Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == 0 && length == 6 * 1088);
+    Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == 0 && length == 6 * 1096);
     const std::size_t size = length;
     *__error_nid_postfix() = 13;
     length = 0;
@@ -463,25 +471,25 @@ static void CheckProcessListSysctl() {
     unsigned char buffer[1100];
     std::memset(buffer, 0xaa, sizeof(buffer));
     length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mib, 3, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    Require(sysctl_nid_postfix(mib, 3, buffer, &length, nullptr, 0) == 0 && length == 1096);
     unsigned char named[1100];
     std::memset(named, 0xaa, sizeof(named));
     length = sizeof(named);
-    Require(sysctlbyname_nid_postfix("kern.proc.proc", named, &length, nullptr, 0) == 0 && length == 1088 && *__error_nid_postfix() == 13);
+    Require(sysctlbyname_nid_postfix("kern.proc.proc", named, &length, nullptr, 0) == 0 && length == 1096 && *__error_nid_postfix() == 13);
     Require(std::memcmp(named, buffer, sizeof(buffer)) == 0);
     std::int32_t structSize = 0;
     std::int32_t pid = 0;
     std::memcpy(&structSize, buffer, sizeof(structSize));
     std::memcpy(&pid, buffer + 72, sizeof(pid));
-    Require(structSize == 1088 && pid == callerPid);
+    Require(structSize == 1096 && pid == callerPid);
     Require(std::strcmp(reinterpret_cast<const char*>(buffer + 447), "eboot.bin") == 0);
-    Require(buffer[1088] == 0xaa);
+    Require(buffer[1096] == 0xaa);
 
     const int mibWithPid[] = {1, 14, 8, 0};
     length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibWithPid, 4, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    Require(sysctl_nid_postfix(mibWithPid, 4, buffer, &length, nullptr, 0) == 0 && length == 1096);
     length = 0;
-    Require(sysctl_nid_postfix(mibWithPid, 4, nullptr, &length, nullptr, 0) == 0 && length == 6 * 1088);
+    Require(sysctl_nid_postfix(mibWithPid, 4, nullptr, &length, nullptr, 0) == 0 && length == 6 * 1096);
 
     const int mibTooLong[] = {1, 14, 8, 0, 0};
     Require(sysctl_nid_postfix(mibTooLong, 5, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
@@ -1056,11 +1064,8 @@ static void CheckEnvSysctl() {
     *__error_nid_postfix() = 13;
     std::size_t length = 7;
     Require(sysctl_nid_postfix(mib, 4, nullptr, &length, nullptr, 0) == 0 && length == 0);
-    unsigned char buffer[16];
-    std::memset(buffer, 0xaa, sizeof(buffer));
-    length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mib, 4, buffer, &length, nullptr, 0) == 0 && length == 0 && buffer[0] == 0xaa);
     Require(*__error_nid_postfix() == 13);
+    unsigned char buffer[16]{};
     length = sizeof(buffer);
     Require(sysctl_nid_postfix(mib, 4, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
     const int thread[] = {1, 14, 35, scePthreadGetthreadid()};
@@ -1070,6 +1075,15 @@ static void CheckEnvSysctl() {
     Require(sysctl_nid_postfix(foreign, 4, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
     const int current[] = {1, 14, 35, -1};
     Require(sysctl_nid_postfix(current, 4, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
+    for (const int* read : {mib, thread, foreign, current}) {
+        for (const std::size_t capacity : {sizeof(buffer), std::size_t{1}}) {
+            std::memset(buffer, 0xaa, sizeof(buffer));
+            length = capacity;
+            *__error_nid_postfix() = 13;
+            Require(sysctl_nid_postfix(read, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+            Require(length == capacity && Untouched(buffer, sizeof(buffer)));
+        }
+    }
     Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
     const int tooLong[] = {1, 14, 35, self, 0};
     Require(sysctl_nid_postfix(tooLong, 5, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);

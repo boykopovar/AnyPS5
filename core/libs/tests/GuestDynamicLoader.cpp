@@ -199,6 +199,11 @@ int main(int argc, char** argv) {
     other.join();
     Require(dlerror_nid_postfix() != nullptr);
     Require(dlerror_nid_postfix() == nullptr);
+    Require(dlsym_nid_postfix(module, reinterpret_cast<const char*>(0x10)) == nullptr);
+    const char* unreadable = dlerror_nid_postfix();
+    Require(unreadable != nullptr && std::strstr(unreadable, "unreadable") != nullptr);
+    Require(dlsym_nid_postfix(module, "") == nullptr);
+    Require(dlerror_nid_postfix() != nullptr);
     void* second = dlopen_nid_postfix(argv[1], 1);
     Require(second && second != module);
     Require(dlclose_nid_postfix(module) == 0);
@@ -256,6 +261,11 @@ int main(int argc, char** argv) {
         auto* const unwritable = reinterpret_cast<int*>(0x10);
         errno = 71;
         Require(sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, unwritable) == static_cast<int>(0x8002000eu) && errno == 71);
+        dlerror_nid_postfix();
+        Require(sceKernelLoadStartModule(reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10)), 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x8002000eu));
+        std::array<char, 1024> unterminated;
+        unterminated.fill('a');
+        Require(sceKernelLoadStartModule(unterminated.data(), 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x8002000eu));
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, unwritable) == static_cast<int>(0x8002000eu) && errno == 71);
         add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
         Require(add && add(30, 12) == 42);

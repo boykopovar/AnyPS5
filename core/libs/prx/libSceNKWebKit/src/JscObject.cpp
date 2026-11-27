@@ -254,7 +254,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             }
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                                desc->flags = JS_PROP_WRITABLE | JS_PROP_ENUMERABLE;
+                                desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
                                 desc->value = JS_DupValue(qctx, val->qval);
                                 desc->getter = JS_UNDEFINED;
                                 desc->setter = JS_UNDEFINED;
@@ -277,7 +277,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                 if (val && val->alive) {
                     if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                     if (desc) {
-                        desc->flags = JS_PROP_WRITABLE | JS_PROP_ENUMERABLE;
+                        desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
                         desc->value = JS_DupValue(qctx, val->qval);
                         desc->getter = JS_UNDEFINED;
                         desc->setter = JS_UNDEFINED;
@@ -300,7 +300,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                                 if (desc) {
-                                    desc->flags = ToQuickJsPropFlags(sv->attributes);
+                                    desc->flags = JS_PROP_CONFIGURABLE | (ToQuickJsPropFlags(sv->attributes) & JS_PROP_ENUMERABLE);
                                     desc->value = JS_DupValue(qctx, val->qval);
                                     desc->getter = JS_UNDEFINED;
                                     desc->setter = JS_UNDEFINED;
@@ -536,6 +536,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
                 JS_FreeValue(qctx, protoDesc.setter);
                 JS_FreeValue(qctx, protoDesc.value);
                 JS_FreeValue(qctx, curProto);
+                curProto = JS_UNDEFINED;
                 if (!writable) return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::ReadOnly);
                 break;
             }
@@ -721,17 +722,21 @@ void CallbackClassFinalizer(JSRuntime* rt, JSValueConst val) {
     if (!data->isGlobalInterceptor) {
         RunClassFinalize(data);
     }
-    if (!JS_IsUndefined(data->propStore)) {
-        JS_FreeValueRT(rt, data->propStore);
-        data->propStore = JS_UNDEFINED;
-    }
-    for (auto& [k, slot] : data->privateProperties) {
-        if (!JS_IsUndefined(slot.strongVal)) {
-            JS_FreeValueRT(rt, slot.strongVal);
-            slot.strongVal = JS_UNDEFINED;
+    CallbackObjectData* owned[2] = {data, data->isGlobalInterceptor ? group->FindCallbackData(handle) : nullptr};
+    for (CallbackObjectData* holder : owned) {
+        if (!holder) continue;
+        if (!JS_IsUndefined(holder->propStore)) {
+            JS_FreeValueRT(rt, holder->propStore);
+            holder->propStore = JS_UNDEFINED;
         }
+        for (auto& [k, slot] : holder->privateProperties) {
+            if (!JS_IsUndefined(slot.strongVal)) {
+                JS_FreeValueRT(rt, slot.strongVal);
+                slot.strongVal = JS_UNDEFINED;
+            }
+        }
+        holder->privateProperties.clear();
     }
-    data->privateProperties.clear();
     group->callbackDataByPtr.erase(ptr);
     if (!data->isGlobalInterceptor) {
         group->NotifyObjectFinalized(ptr, handle);

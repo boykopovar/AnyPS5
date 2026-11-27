@@ -18,6 +18,7 @@ PERF = re.compile(r"perf(\(|!?:)")
 PERF_SCOPE = re.compile(r"perf\(([^)]*)\)")
 UNCAPTURED_SCOPES = {"build", "ci", "tools"}
 FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
+BLOCK_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)")
 MARKER = "<!-- pr-labels-perf -->"
 UNBLOCKS_LABEL = "unblocks title"
 PERF_LABEL = "perf"
@@ -52,8 +53,25 @@ def strip_comments(body):
     return re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
 
 
+def strip_fenced_blocks(body):
+    outside = []
+    fence = ""
+    for line in body.split("\n"):
+        marker = BLOCK_FENCE.match(line)
+        if fence:
+            if marker and marker[1].startswith(fence) and not marker[2].strip(" \t"):
+                fence = ""
+            outside.append("")
+        elif marker and (marker[1].startswith("~") or "`" not in marker[2]):
+            fence = marker[1]
+            outside.append("")
+        else:
+            outside.append(line)
+    return "\n".join(outside)
+
+
 def title_ids(body):
-    body = strip_comments(body)
+    body = strip_fenced_blocks(strip_comments(body))
     checklist = CHECKLIST_UNBLOCKS.search(body)
     match = checklist if checklist and checklist.group(1).strip() else UNBLOCKS.search(body)
     return set(TITLE_ID.findall(match.group(1))) if match and not NONE.match(match.group(1)) else set()

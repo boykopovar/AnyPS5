@@ -115,6 +115,7 @@ void requireUniformSampleSelection(SampleSelection shape) {
     image.numericClass = IrTextureNumericClass::Float;
     image.dimension = memory.imageDimension;
     image.read = true;
+    image.dimensionQueryOnly = false;
     image.depthCompare = true;
     image.emulatedCompare = EmulatedCompare::Unsupported;
     image.fmaskCompatible = false;

@@ -1,9 +1,11 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -347,11 +349,11 @@ void CheckErrorBranches() {
     Require(liveAllocations == before, "error branches leak zero allocations");
 }
 
-void* LoadShared(const char* path) {
+void* LoadShared(const std::filesystem::path& path) {
 #ifdef _WIN32
-    return LoadLibraryA(path);
+    return LoadLibraryW(path.c_str());
 #else
-    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
 }
 
@@ -377,7 +379,7 @@ struct SharedLibraryGuard {
     ~SharedLibraryGuard() { CloseShared(handle); }
 };
 
-void CheckLibraryDispatch(const char* libraryPath, bool patchedNids) {
+void CheckLibraryDispatch(const std::filesystem::path& libraryPath, bool patchedNids) {
     const long before = liveAllocations;
     SharedLibraryGuard library{LoadShared(libraryPath)};
     Require(library.handle != nullptr, "libSceLibcInternal loads via dlopen/LoadLibrary");
@@ -464,6 +466,22 @@ void CheckLStrcoll() {
     Reject([&] { (void)_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, beta + 2, beta, nullptr); }, "_LStrcoll<char> rejects inverted second range");
 }
 
+void CheckStrcollx() {
+    static_assert(std::is_same_v<decltype(&_Strcollx_nid_postfix),
+                                int (APS5_VABI*)(const char*, const char*, LibcCollationState*)>);
+    const unsigned char highByte[] = {0x80, 0};
+    Require(_Strcollx_nid_postfix("", "", nullptr) == 0, "_Strcollx empty strings are equal");
+    Require(_Strcollx_nid_postfix("alpha", "alpha", nullptr) == 0, "_Strcollx equal strings return zero");
+    Require(_Strcollx_nid_postfix("alpha", "beta", nullptr) == -1, "_Strcollx orders alpha before beta");
+    Require(_Strcollx_nid_postfix("beta", "alpha", nullptr) == 1, "_Strcollx orders beta after alpha");
+    Require(_Strcollx_nid_postfix("al", "alpha", nullptr) == -1, "_Strcollx orders a prefix first");
+    Require(_Strcollx_nid_postfix(reinterpret_cast<const char*>(highByte), "a", nullptr) == 1, "_Strcollx compares bytes unsigned");
+    Require(_Strcollx_nid_postfix("alpha", "alpha", _Getpcostate_nid_postfix()) == 0, "_Strcollx accepts the narrow collation state");
+    Require(_Strcollx_nid_postfix("a\0z", "a", nullptr) == 0, "_Strcollx stops at the first nul");
+    Reject([] { (void)_Strcollx_nid_postfix(nullptr, "a", nullptr); }, "_Strcollx rejects null s1");
+    Reject([] { (void)_Strcollx_nid_postfix("a", nullptr, nullptr); }, "_Strcollx rejects null s2");
+}
+
 void CheckLStrxfrm() {
     static_assert(std::is_same_v<decltype(&libSceLibcInternalInventory_252_nid_no_patch),
                                  std::size_t (APS5_VABI*)(char*, char*, const char*, const char*, const void*)>);
@@ -534,8 +552,9 @@ int main(int argc, char** argv) {
     CheckConstructorsAndLifetime();
     CheckErrorBranches();
     CheckLStrcoll();
+    CheckStrcollx();
     CheckLStrxfrm();
-    if (argc >= 2) CheckLibraryDispatch(argv[1], argc >= 3 && std::strcmp(argv[2], "patched") == 0);
+    if (argc >= 2) CheckLibraryDispatch(ArgumentPath(argv, 1), argc >= 3 && std::strcmp(argv[2], "patched") == 0);
 
     std::puts("libc internal collate<char> member and constructor checks passed");
     return 0;

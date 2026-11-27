@@ -6,12 +6,25 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <tuple>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using namespace FreeType;
 
@@ -175,11 +188,83 @@ static void CheckInvalidOutlinePreservesOutputs(GuestLibrary& library, FT_Librar
     Require(guestParams.clipBox.xMin == clip.xMin && guestParams.clipBox.yMin == clip.yMin && guestParams.clipBox.xMax == clip.xMax && guestParams.clipBox.yMax == clip.yMax);
 }
 
+template <typename TValue>
+static TValue* ReadOnlyCopy(const TValue& value) {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, sizeof(value), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    std::memcpy(page, &value, sizeof(value));
+    DWORD previous = 0;
+    Require(VirtualProtect(page, sizeof(value), PAGE_READONLY, &previous) != 0);
+#else
+    void* page = mmap(nullptr, sizeof(value), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    std::memcpy(page, &value, sizeof(value));
+    Require(mprotect(page, sizeof(value), PROT_READ) == 0);
+#endif
+    return static_cast<TValue*>(page);
+}
+
+static void CheckUnusableGuestPointers(GuestLibrary& library, FT_Library native) {
+    Shape square = Square();
+    std::vector<GuestVector> points;
+    for (const FT_Vector& point : square.points) points.push_back({point.x, point.y});
+    GuestOutline outline{1, 4, points.data(), square.tags.data(), square.contours.data(), 0};
+    FT_Outline nativeOutline{1, 4, square.points.data(), square.tags.data(), square.contours.data(), 0};
+    const FT_Error noOutline = FT_Outline_Render(native, nullptr, nullptr);
+    const FT_Error noParams = FT_Outline_Render(native, &nativeOutline, nullptr);
+    Require(noOutline != 0 && noParams != 0);
+
+    errno = 71;
+    Require(FT_Outline_Render_nid_postfix(&library, reinterpret_cast<GuestOutline*>(0x10), nullptr) == noOutline);
+    Require(errno == 71);
+    GuestOutline unmappedPoints = outline;
+    unmappedPoints.points = reinterpret_cast<GuestVector*>(0x10);
+    errno = 71;
+    Require(FT_Outline_Render_nid_postfix(&library, &unmappedPoints, nullptr) == noOutline);
+    Require(errno == 71);
+    GuestOutline unmappedContours = outline;
+    unmappedContours.contours = reinterpret_cast<std::uint16_t*>(0x10);
+    errno = 71;
+    Require(FT_Outline_Render_nid_postfix(&library, &unmappedContours, nullptr) == noOutline);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(FT_Outline_Render_nid_postfix(&library, &outline, reinterpret_cast<GuestRasterParams*>(0x10)) == noParams);
+    Require(errno == 71);
+
+    std::vector<Span> spans;
+    GuestRasterParams direct{};
+    direct.flags = FT_RASTER_FLAG_AA | FT_RASTER_FLAG_DIRECT;
+    direct.graySpans = reinterpret_cast<void*>(&Collect);
+    direct.user = &spans;
+    GuestRasterParams* readOnly = ReadOnlyCopy(direct);
+    errno = 71;
+    Require(FT_Outline_Render_nid_postfix(&library, &outline, readOnly) == FT_Err_Invalid_Argument);
+    Require(errno == 71 && readOnly->source == nullptr && spans.empty());
+    const FT_Error noLibrary = FT_Outline_Render(nullptr, &nativeOutline, nullptr);
+    Require(noLibrary == FT_Err_Invalid_Library_Handle);
+    GuestLibrary emptyLibrary{};
+    for (GuestLibrary* unusable : {reinterpret_cast<GuestLibrary*>(0x10), reinterpret_cast<GuestLibrary*>(reinterpret_cast<std::uintptr_t>(&library) + 1), &emptyLibrary}) {
+        errno = 71;
+        Require(FT_Outline_Render_nid_postfix(unusable, &outline, readOnly) == noLibrary);
+        Require(errno == 71 && readOnly->source == nullptr && spans.empty());
+    }
+
+    GuestRasterParams unmappedTarget{};
+    unmappedTarget.flags = FT_RASTER_FLAG_AA;
+    unmappedTarget.target = reinterpret_cast<const GuestBitmap*>(0x10);
+    errno = 71;
+    Require(FT_Outline_Render_nid_postfix(&library, &outline, &unmappedTarget) == FT_Err_Invalid_Argument);
+    Require(errno == 71 && unmappedTarget.source == nullptr);
+}
+
 int main() {
     GuestLibrary library{};
     FT_Library native = nullptr;
     Require(FT_Init_FreeType(&library.host) == 0 && FT_Init_FreeType(&native) == 0);
     CheckInvalidOutlinePreservesOutputs(library, native);
+    CheckUnusableGuestPointers(library, native);
     for (const auto& make : {+[] { return Square(); }, +[] { return Triangle(); }, +[] { return Curve(); }}) {
         for (const unsigned char mode : {static_cast<unsigned char>(FT_PIXEL_MODE_GRAY), static_cast<unsigned char>(FT_PIXEL_MODE_MONO)}) CompareBitmap(library, native, make(), mode);
         for (const unsigned char mode : {static_cast<unsigned char>(FT_PIXEL_MODE_GRAY), static_cast<unsigned char>(FT_PIXEL_MODE_MONO)}) CompareNegativePitchBitmap(library, native, make(), mode);

@@ -56,5 +56,12 @@ int main() {
     const std::array<std::string, 2> gnmBoth{"libSceGnmDriver_padebug.prx", "libSceGnmDriver.prx"};
     if (Domain::ImportModule("nid#A#B", gnm, padebug) != padebug[0]) return 93;
     if (Domain::ImportModule("nid#A#B", gnm, gnmBoth) != gnmBoth[1]) return 94;
+    if (Domain::NeededLibraryName("libSceSsl2.prx") != "libSceSsl.prx") return 95;
+    if (Domain::NeededLibraryName("libSceSsl2.sprx") != "libSceSsl.prx") return 96;
+    const std::map<std::uint64_t, std::string> ssl{{1, "libSceSsl"}};
+    const std::array<std::string, 1> ssl2{"libSceSsl2.prx"};
+    const std::array<std::string, 2> sslBoth{"libSceSsl2.prx", "libSceSsl.prx"};
+    if (Domain::ImportModule("nid#A#B", ssl, ssl2) != ssl2[0]) return 97;
+    if (Domain::ImportModule("nid#A#B", ssl, sslBoth) != sslBoth[1]) return 98;
     std::cout << "module mapping checks passed\n";
 }

@@ -18,3 +18,9 @@ NKWebKit::WtfAbi::URL APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv(const NKWe
 NKWebKit::WtfAbi::URL APS5_VABI _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE(NKWebKit::WtfAbi::StringView path);
 
 }
+
+namespace NKWebKit::WtfAbi {
+
+void SetUrlPassword(URL* self, StringView password);
+
+} // namespace NKWebKit::WtfAbi

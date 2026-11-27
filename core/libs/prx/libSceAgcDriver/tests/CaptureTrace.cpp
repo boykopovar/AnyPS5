@@ -124,7 +124,7 @@ void StopDrains() {
 }
 
 #ifdef _WIN32
-void DllShutdown(const char* modulePath) {
+void DllShutdown(const char* modulePath, bool processExit = false) {
     const char* configured = RequiredPathVariable();
     HMODULE module = LoadLibraryA(modulePath);
     Check(module != nullptr, "the capture trace DLL could not be loaded");
@@ -134,6 +134,11 @@ void DllShutdown(const char* modulePath) {
     record();
     stop();
     stop();
+    if (processExit) {
+        const auto prepare = reinterpret_cast<bool (*)()>(GetProcAddress(module, "CaptureTracePrepareProcessExit"));
+        Check(prepare != nullptr && prepare(), "the capture trace DLL could not prepare its process-exit receipt");
+        ExitProcess(0);
+    }
     Check(FreeLibrary(module) != 0, "the stopped capture trace DLL could not be unloaded");
     std::istringstream lines(ReadFile(configured));
     std::string line;
@@ -503,6 +508,7 @@ int main(int argc, char** argv) {
         else if (mode == "stop-drains") StopDrains();
 #ifdef _WIN32
         else if (mode == "dll-shutdown" && argc == 3) DllShutdown(argv[2]);
+        else if (mode == "dll-process-exit" && argc == 3) DllShutdown(argv[2], true);
 #endif
         else if (mode == "default-writes") DefaultWrites();
         else if (mode == "open-failure") OpenFailure();

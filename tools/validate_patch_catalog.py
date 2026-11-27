@@ -33,10 +33,7 @@ def validate(directory, json_output=False):
                 raise ValueError("entry must be an object")
             for field in ("titleId", "contentVersion"):
                 suggest_patches.single_line(entry.get(field), field)
-            patch, targets, metadata = suggest_patches.validate_entry(directory, entry)
-            patch_data = tomllib.loads(patch.read_text(encoding="utf-8-sig"))
-            if type(patch_data.get("format")) is not int or patch_data["format"] != 1:
-                raise ValueError("patch file must have format 1")
+            _, targets, metadata = suggest_patches.validate_entry(directory, entry)
             for name in targets:
                 suggest_patches.relative_path(name)
             identifier = metadata.get("id")

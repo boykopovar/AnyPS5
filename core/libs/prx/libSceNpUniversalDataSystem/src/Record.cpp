@@ -127,9 +127,7 @@ int APS5_VABI sceNpUniversalDataSystemIntInitialize(const NpUniversalDataSystemI
     if (g_initialized.load()) return kAlreadyInitialized;
     if (param == nullptr) return kInvalidArgument;
     NpUniversalDataSystemIntInitParam copy{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy));
-    errno = savedErrno;
     if (!copied) return kInvalidArgument;
     if (copy.size != sizeof(NpUniversalDataSystemIntInitParam)) return kInvalidParamSize;
     if (copy.memory == nullptr) return kInvalidArgument;
@@ -171,9 +169,7 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray(void** record) {
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(record, &created, sizeof(created));
-    errno = savedErrno;
     if (!copied) {
         g_arrays.Release(static_cast<NpUniversalDataSystemEventPropertyArray*>(created));
         return kInvalidArgument;
@@ -191,9 +187,7 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject(void** record) {
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(record, &created, sizeof(created));
-    errno = savedErrno;
     if (!copied) {
         g_objects.Release(static_cast<NpUniversalDataSystemEventPropertyObject*>(created));
         return kInvalidArgument;
@@ -214,9 +208,7 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordData(const char* recordType
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(record, &data, sizeof(data));
-    errno = savedErrno;
     if (!copied) {
         g_objects.Release(data);
         return kInvalidArgument;
@@ -256,9 +248,7 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordDataEstimateSize(const void* reco
     } else {
         return kNullRecord;
     }
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(size, &estimated, sizeof(estimated));
-    errno = savedErrno;
     return written ? 0 : kInvalidArgument;
 }
 
@@ -357,9 +347,7 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetObject(void* record, cons
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(source->Clone());
     if (valuePtr != nullptr) {
         auto* pointer = child.get();
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
-        errno = savedErrno;
         if (!copied) return kInvalidArgument;
     }
     array->Add(std::move(child));
@@ -377,9 +365,7 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetArray(void* record, const
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(source->Clone());
     if (valuePtr != nullptr) {
         auto* pointer = child.get();
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
-        errno = savedErrno;
         if (!copied) return kInvalidArgument;
     }
     array->Add(std::move(child));
@@ -491,9 +477,7 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetObject(void* record, con
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(source->Clone());
     if (valuePtr != nullptr) {
         auto* pointer = child.get();
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
-        errno = savedErrno;
         if (!copied) return kInvalidArgument;
     }
     object->Set(key, std::move(child));
@@ -512,9 +496,7 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetArray(void* record, cons
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(source->Clone());
     if (valuePtr != nullptr) {
         auto* pointer = child.get();
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &pointer, sizeof(pointer));
-        errno = savedErrno;
         if (!copied) return kInvalidArgument;
     }
     object->Set(key, std::move(child));

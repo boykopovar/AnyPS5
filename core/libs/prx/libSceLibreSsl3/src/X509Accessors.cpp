@@ -18,9 +18,7 @@ const LibreSsl3CertificateInfo* CertificateInfo(const LibreSsl3Certificate* cert
 template <typename Object, typename Field>
 Field CopyFieldIn(const Object* object, Field Object::*field, const char* function) {
     Field value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, &(object->*field), sizeof(value));
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return value;
 }
