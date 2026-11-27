@@ -336,6 +336,7 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.DeviceReads(out); }
     bool ReadsImage(const StorageTexture* image) const;
+    bool ReadsImageRange(std::uint64_t address, std::size_t bytes) const;
     bool HasCachedStorageImages() const;
     bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }

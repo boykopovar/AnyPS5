@@ -1780,6 +1780,16 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t byt
 // Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
 // stages and the vertex input layout are the recipe's (derived from the same compiled stages)
 // instead of computed.
+bool autoRangeFits(std::uint32_t first, std::uint32_t count) {
+    return count == 0 || first <= std::numeric_limits<std::uint32_t>::max() - (count - 1u);
+}
+
+bool indexAliasesColor(const State& state, const Pm4::DrawParameters& draw, std::uint64_t indexBytes) {
+    if (!draw.indexed || !state.hasColorTarget || !indexBytes || !state.color.bytes) return false;
+    const auto target = state.color.MemoryAddress();
+    return draw.indexAddress <= target ? target - draw.indexAddress < indexBytes : draw.indexAddress - target < state.color.bytes;
+}
+
 struct DrawPlan {
     bool nothing = false;
     std::uint64_t indexBytes = 0;
@@ -1823,8 +1833,8 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
                 plan.nothing = true;
                 return plan;
             }
-            Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - (draw.indexCount - 1u), "auto draw vertex range overflow");
-            Require(draw.firstInstance <= std::numeric_limits<std::uint32_t>::max() - (draw.instanceCount - 1u), "auto draw instance range overflow");
+            Require(autoRangeFits(draw.firstVertex, draw.indexCount), "auto draw vertex range overflow");
+            Require(autoRangeFits(draw.firstInstance, draw.instanceCount), "auto draw instance range overflow");
         }
     }
     if (args == nullptr) {
@@ -1837,7 +1847,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     const auto indexBytes = plan.indexBytes;
     APS5_LOG_OUT_DEBUG("Index buffer bytes=%llu", static_cast<unsigned long long>(indexBytes));
     Require(indexBytes <= std::numeric_limits<std::size_t>::max(), "index buffer size overflow");
-    Require(!draw.indexed || !state.hasColorTarget || draw.indexAddress + indexBytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= draw.indexAddress, "index buffer aliases the render target");
+    Require(!indexAliasesColor(state, draw, indexBytes), "index buffer aliases the render target");
     APS5_LOG_CHARS_OUT_DEBUG("ValidateShaders");
     if (recipe != nullptr) {
         plan.fragmentOutputs = recipe->fragmentOutputs;
@@ -3482,6 +3492,7 @@ struct PreparedDraw {
     bool listed = false;
     bool recorded = false;
     bool lean = false;
+    bool individualRecords = false;
     bool multisampled = false;
     std::optional<State> masked;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
@@ -4407,6 +4418,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] { return color.arrayLastSlice != 0 ? CachedStorageLayers(context, ArraySurfaceForTarget(color), color.arraySlice, color.layers) : CachedStorageSurface(context, SurfaceForTarget(color)); });
         if (binding.resident != nullptr) targetViews[index] = binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
     }
+    if (args != nullptr && args->capturedRecords && std::ranges::any_of(targets, [&](const TargetBinding& binding) {
+            if (resources->ReadsImage(binding.resident.get()) || resources->ReadsImageRange(binding.color.MemoryAddress(), binding.color.bytes)) return true;
+            return (binding.proxied || binding.multisampled) &&
+                   (!resources->SampledTextures().empty() || !resources->StorageImages().empty());
+        })) {
+        prepared.individualRecords = true;
+        return false;
+    }
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
         const auto readImages = resources->StorageImages();
@@ -5128,11 +5147,19 @@ std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const 
     return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
+    if (draw.indirect && draw.indirect->capturedRecords) {
+        const auto& args = *draw.indirect;
+        if (indexAliasesColor(state, draw, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize)) return DrawResult::NeedsIndividualRecords;
+        if (!draw.indexed && std::ranges::any_of(*args.capturedRecords, [&](const Pm4::DrawArguments& record) {
+                return record.count != 0 && record.instances != 0 &&
+                       (!autoRangeFits(args.vertexConstant, record.count) || !autoRangeFits(args.instanceConstant, record.instances));
+            })) return DrawResult::NeedsIndividualRecords;
+    }
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
-        return;
+        return DrawResult::Handled;
     }
     if (state.stages.mesh && state.layerExports != 0u && state.renderLayers > context.meshLimits.maxMeshOutputLayers && (draw.indirect || (draw.indexCount != 0u && draw.instanceCount != 0u))) {
         const auto limit = context.meshLimits.maxMeshOutputLayers;
@@ -5173,7 +5200,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         try {
             if (!prepareDraw(context, firstWindow, draw, shaders, snapshots, prepared)) {
                 keepHeldSpace(prepared);
-                return;
+                return DrawResult::Handled;
             }
             sharePrepared = !draw.indirect && prepared.lean && !prepared.multisampled && prepared.stencilReplay.empty() && prepared.resolved.resources != nullptr && !prepared.resolved.resources->SpaceReuse() && !prepared.targets.empty() && std::none_of(prepared.targets.begin(), prepared.targets.end(), [](const TargetBinding& binding) { return binding.resident == nullptr || binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; });
             const bool finalCompletion = prepared.completion;
@@ -5222,7 +5249,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                 base += window.renderLayers;
             }
         }
-        return;
+        return DrawResult::Handled;
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PreparedDraw prepared(profile);
@@ -5249,6 +5276,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         throw;
     }
     keepHeldSpace(prepared);
+    return prepared.individualRecords ? DrawResult::NeedsIndividualRecords : DrawResult::Handled;
 }
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace) {

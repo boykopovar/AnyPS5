@@ -1215,7 +1215,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         static const bool uniformRecords = std::getenv("APS5_UNIFORM_INDIRECT_RECORDS") != nullptr;
         const auto plainStages = [&] {
             return std::ranges::all_of(stages, [](const Graphics::CompiledShader& shader) {
-                return shader.program != nullptr && (shader.stage == Stage::Vertex || shader.stage == Stage::Fragment) && shader.program->stencilReferences.empty();
+                return shader.program != nullptr && (shader.stage == Stage::Vertex || shader.stage == Stage::Fragment) && shader.program->stencilReferences.empty() && !shader.program->functionLdsBuffer;
             }) && !Graphics::ShadersWriteMemory(stages);
         };
         if (uniformRecords && *indirectCpu == Graphics::IndirectDrawPath::NotFolded && !indirect.drawIndexEnabled &&
@@ -1245,14 +1245,17 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                         const RecaptureScope recapture;
                         return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
                     }
-                    args.capturedRecords = std::make_shared<const std::vector<Pm4::DrawArguments>>(std::move(records));
-                    if (traceIndirect) std::fprintf(stderr, "[uniform-indirect] grouped %zu drawable records\n", static_cast<std::size_t>(live));
+                    auto captured = std::make_shared<std::vector<Pm4::DrawArguments>>(std::move(records));
+                    args.capturedRecords = captured;
                     noteDrawWriters(stages, submission.queue);
                     phaseTiming.Phase(DrawRowVectors);
-                    localDevice->Draw(graphics, grouped, stages, snapshots, nullptr, tracePtr);
-                    phaseTiming.Phase(DrawRowGraphics);
-                    timing.Mark("draw_and_resource_release");
-                    return drawn();
+                    if (localDevice->Draw(graphics, grouped, stages, snapshots, nullptr, tracePtr) == Graphics::DrawResult::Handled) {
+                        if (traceIndirect) std::fprintf(stderr, "[uniform-indirect] grouped %zu drawable records\n", static_cast<std::size_t>(live));
+                        phaseTiming.Phase(DrawRowGraphics);
+                        timing.Mark("draw_and_resource_release");
+                        return drawn();
+                    }
+                    records = std::move(*captured);
                 }
             }
         }

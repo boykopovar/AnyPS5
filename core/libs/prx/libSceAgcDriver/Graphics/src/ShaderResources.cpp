@@ -7714,6 +7714,13 @@ bool ShaderResources::HoldsReleasedTexture() const {
     return std::any_of(textures.begin(), textures.end(), [](const auto& texture) { return texture != nullptr && texture->Released(); });
 }
 
+bool ShaderResources::ReadsImageRange(std::uint64_t address, std::size_t bytes) const {
+    return std::ranges::any_of(describedRanges, [&](const DescribedRange& range) {
+        return overlap(address, bytes, range.address, range.bytes) ||
+               (range.dccAddress != 0 && overlap(address, bytes, range.dccAddress, DccKeyBytes(range.bytes)));
+    });
+}
+
 bool ShaderResources::ReadsImage(const StorageTexture* image) const {
     if (image == nullptr) return false;
     for (const auto& texture : textures) {
