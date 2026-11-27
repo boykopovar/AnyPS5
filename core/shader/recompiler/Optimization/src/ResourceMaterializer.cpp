@@ -1884,12 +1884,10 @@ bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValu
 bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
     const auto& buffer = plan.info.buffers[index];
     if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
-    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
     bool accessed = false;
     for (const auto& memory : plan.memoryInfo) {
         if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
         if (memory.typed || memory.gpuDescriptor) return false;
-        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
         accessed = true;
     }
     return accessed;
