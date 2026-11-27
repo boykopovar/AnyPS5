@@ -4732,7 +4732,8 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                             ++textureIndex;
                             continue;
                         }
-                        const auto resource = DecodeTextureResource(words);
+                        auto resource = DecodeTextureResource(words);
+                        if (element < binding.imageFlattened1DArray.size() && binding.imageFlattened1DArray[element]) FlattenLargeOneDimensionalArray(resource);
                         const VkComponentMapping components = ViewComponents(resource);
                         const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
                         const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
@@ -4751,10 +4752,11 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         std::shared_ptr<StorageTexture> expected;
                         if (SameAsPreviousStorageElement(binding, element) && StorageDedupeEnabled()) expected = storageTextures[storageIndex - 1];
                         else {
-                            const auto decoded = DecodeTextureResource(words);
-                            const auto claim = storageWritten[storageIndex] ? OverwriteClaimFor(shaders, binding, element, decoded, storageMips[storageIndex], storageIndex < storageFirstLayer.size() && storageFirstLayer[storageIndex]) : std::nullopt;
+                            auto resource = DecodeTextureResource(words);
+                            if (element < binding.imageFlattened1DArray.size() && binding.imageFlattened1DArray[element]) FlattenLargeOneDimensionalArray(resource);
+                            const auto claim = storageWritten[storageIndex] ? OverwriteClaimFor(shaders, binding, element, resource, storageMips[storageIndex], storageIndex < storageFirstLayer.size() && storageFirstLayer[storageIndex]) : std::nullopt;
                             const StorageTexture::OverwriteScope overwrite(claim ? &*claim : nullptr);
-                            expected = cachedStorageTexture(context, words, decoded, storageMips[storageIndex], 0, storageWritten[storageIndex]);
+                            expected = cachedStorageTexture(context, words, resource, storageMips[storageIndex], 0, storageWritten[storageIndex]);
                         }
                         if (expected != storageTextures[storageIndex]) return miss("storage image", storageIndex, true);
                         ++storageIndex;
@@ -6180,7 +6182,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
                 --plannedSampledImages;
                 continue;
             }
-            const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
+            auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
+            if (element < binding.imageFlattened1DArray.size() && binding.imageFlattened1DArray[element]) FlattenLargeOneDimensionalArray(resource);
             const auto minLod = context.shaderImageMinLod && resource.minLod > resource.baseLevel * 256u && resource.lastLevel > resource.baseLevel ? std::min(resource.minLod - resource.baseLevel * 256u, (resource.lastLevel - resource.baseLevel) * 256u) : 0u;
             if (minLod != 0u && !shaderSamplers.empty()) {
                 const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
@@ -6274,7 +6277,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             --plannedStorageImages;
             continue;
         }
-        const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
+        auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
+        if (element < binding.imageFlattened1DArray.size() && binding.imageFlattened1DArray[element]) FlattenLargeOneDimensionalArray(resource);
         const bool firstLayer = (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image1D && resource.dimension == TextureDimension::k1DArray && resource.baseArray == resource.depthOrLastArray);
         if (binding.imageShape.has_value() && !firstLayer && !MatchesGuestDimension(*binding.imageShape, resource.dimension)) throw std::runtime_error("AGC graphics: guest storage texture dimension disagrees with the shader's declared image shape (shape " + std::to_string(static_cast<int>(*binding.imageShape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
         if (resource.dimension == TextureDimension::k2DMsaa) {

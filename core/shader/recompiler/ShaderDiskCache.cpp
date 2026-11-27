@@ -92,12 +92,12 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 1000, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
-static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
-static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
+static_assert(sizeof(CompiledShaderInfo) == 360, "CompiledShaderInfo changed: update the info encoder");
+static_assert(sizeof(ShaderInfo) == 240, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 244, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
@@ -109,7 +109,7 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
-static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(sizeof(IrResourcePlan) == 736, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
@@ -143,9 +143,9 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 25, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 52, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 54, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -519,6 +519,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.samplerUnnormalized);
     writer.Flags(binding.imageUnnormalized);
     writer.Flags(binding.imageUnnormalizedBaseLevel);
+    writer.Flags(binding.imageFlattened1DArray);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerCoordinatesIgnored);
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
@@ -550,6 +551,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.samplerUnnormalized);
     reader.Flags(binding.imageUnnormalized);
     reader.Flags(binding.imageUnnormalizedBaseLevel);
+    reader.Flags(binding.imageFlattened1DArray);
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerCoordinatesIgnored);
     reader.Values(binding.imageSamplers);
@@ -813,6 +815,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
 void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.scratchDwords);
     writer.Value(info.sharedMemoryBytes);
+    writer.Value(info.maxImageArrayLayers);
     writer.List(info.buffers, [](Writer& out, const BufferResource& buffer) {
         out.Value(buffer.source);
         out.Value(buffer.firstUsePc);
@@ -879,6 +882,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.table);
         out.Value(image.tableOperation);
         out.Value(image.targetMerge);
+        out.Value(image.flattened1DArray);
+        out.Value(image.flattenAllowed);
         encodeOverwrite(out, image.overwrite);
     });
     writer.Value(!info.runtimeImageModes.empty());
@@ -931,6 +936,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
 void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.scratchDwords);
     reader.Value(info.sharedMemoryBytes);
+    reader.Value(info.maxImageArrayLayers);
     reader.List(info.buffers, 27, [](Reader& in, BufferResource& buffer) {
         in.Value(buffer.source);
         in.Value(buffer.firstUsePc);
@@ -997,11 +1003,12 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.table);
         in.Value(image.tableOperation);
         in.Value(image.targetMerge);
+        in.Value(image.flattened1DArray);
+        in.Value(image.flattenAllowed);
         decodeOverwrite(in, image.overwrite);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
-    if (preparedImageModes) ResourceMaterializer::PrepareImageModes(info);
     reader.List(info.samplers, 21, [](Reader& in, SamplerResource& sampler) {
         in.Value(sampler.source);
         in.Value(sampler.firstUsePc);
@@ -1046,6 +1053,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
     reader.Value(info.smoothOffsetBarycentrics);
+    if (preparedImageModes) ResourceMaterializer::PrepareImageModes(info);
 }
 
 void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {

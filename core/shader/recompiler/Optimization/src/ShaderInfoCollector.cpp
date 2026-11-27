@@ -575,7 +575,7 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
         image.numericClass = merge.blend.enabled ? IrTextureNumericClass::Float : IrTextureNumericClass::Uint;
         image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : merge.layered ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
         info.images.push_back(image);
-        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image, info.maxImageArrayLayers));
     }
     AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
     if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
