@@ -91,12 +91,27 @@ static void CheckAlignedWordsDoNotTear() {
 }
 #endif
 
+#ifdef ANYPS5_ENABLE_ASAN
+static void CheckReadsPastHostObject() {
+    auto* const object = new unsigned char[5]{1, 2, 3, 4, 5};
+    std::array<unsigned char, 32> copy{};
+    AgcDriver::GuestMemory::CopyGuestBytes(copy.data(), object + 1, 31);
+    Require(copy[0] == 2 && copy[3] == 5, "the bytes of an object were not copied when the read ran past its end");
+    AgcDriver::GuestMemory::CopyGuestBytes(copy.data(), object, copy.size());
+    Require(copy[0] == 1 && copy[4] == 5, "the bytes of an object were not copied when a word read ran past its end");
+    delete[] object;
+}
+#endif
+
 int main() {
     CheckCopies();
     CheckComparisons();
     CheckConcurrentAccess();
 #if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
     CheckAlignedWordsDoNotTear();
+#endif
+#ifdef ANYPS5_ENABLE_ASAN
+    CheckReadsPastHostObject();
 #endif
     std::puts("copy guest bytes: ok");
 }
