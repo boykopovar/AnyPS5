@@ -194,12 +194,9 @@ int GuestRandomizedPath_nid_no_patch(const char* set, char* get, std::size_t* le
     if (capacity == 0 || pathLength == 0) return 0;
 
     const std::size_t copied = std::min(capacity - 1, pathLength);
-    if (copied != 0 && !GuestCopyOut_nid_no_patch(get, path, copied)) {
-        *__error_nid_postfix() = GuestEfault;
-        return -1;
-    }
-    const char terminator = '\0';
-    if (!GuestCopyOut_nid_no_patch(get + copied, &terminator, sizeof(terminator))) {
+    std::string output(path, copied);
+    output.push_back('\0');
+    if (!GuestWritable_nid_no_patch(get, output.size()) || !GuestCopyOut_nid_no_patch(get, output.data(), output.size())) {
         *__error_nid_postfix() = GuestEfault;
         return -1;
     }
