@@ -307,6 +307,14 @@ std::uint32_t NormStoreBits(SpirvEmitterState& state, std::uint32_t bits, std::u
     return EmitSelectValueU32(state, negative, Unary(state, spv::OpSNegate, TypeU32(state), result), result);
 }
 
+std::uint32_t TwoBitSnormStoreBits(SpirvEmitterState& state, std::uint32_t bits) {
+    const auto value = EmitBitcastU32ToF32(state, bits);
+    const auto magnitude = EmitBitcastU32ToF32(state, EmitAndConstant(state, bits, 0x7fffffffu));
+    const auto nonzero = Binary(state, spv::OpFOrdGreaterThanEqual, TypeBool(state), magnitude, ConstantF32Value(state, 0.5f));
+    const auto negative = Binary(state, spv::OpFOrdLessThan, TypeBool(state), value, ConstantF32Value(state, 0.0f));
+    return EmitSelectValueU32(state, nonzero, EmitSelectValueU32(state, negative, ConstantU32(state, 3u), ConstantU32(state, 1u)), ConstantU32(state, 0u));
+}
+
 }
 
 std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw) {
@@ -366,6 +374,8 @@ std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBuff
     case SpirvFormatComponentType::Uscaled:
         return NormStoreBits(state, data, mask, false);
     case SpirvFormatComponentType::Snorm:
+        if (bits == 2u) return TwoBitSnormStoreBits(state, data);
+        return EmitAndConstant(state, NormStoreBits(state, data, mask >> 1u, true), mask);
     case SpirvFormatComponentType::Sscaled:
         return EmitAndConstant(state, NormStoreBits(state, data, mask >> 1u, true), mask);
     case SpirvFormatComponentType::Float:

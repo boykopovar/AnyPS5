@@ -90,6 +90,7 @@ public:
     std::string DriverInfo() const;
     VkDriverId DriverId() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
+    bool SupportsVertexBufferFormat(VkFormat format) const;
     bool BdaAtomicsUsable() const;
     bool RasterOrderGroupUsable() const;
     bool CalibrateClock(double& gpuNs, std::chrono::steady_clock::time_point& cpu) const;
@@ -122,12 +123,13 @@ public:
     // mutex through the flush hook, so a thread submitting on another queue's behalf (a WAIT_REG_MEM
     // poller, a compute worker's between-packet flush) passes false: it must only submit, never wait.
     void SubmitRecorded(bool reapFirst = true);
-    void StoreIdleResults(bool reapFirst = true, const std::function<bool()>& stop = [] { return false; });
+    bool StoreIdleResults(bool reapFirst = true, const std::function<bool()>& stop = [] { return false; });
     // Unlocked drain: SubmitAndEpoch (under the mutex) returns the serial covering every recorded
     // batch (0: nothing in flight); WaitRecorded(serial) waits for it WITHOUT the mutex (the caller
     // holds a shared_ptr to this device); ReapRecorded(serial) (under the mutex) runs the completions
     // of the batches up to it. CanWaitUnlocked is false without timeline semaphores: use WaitIdle.
     bool CanWaitUnlocked() const;
+    bool SubmittedWorkRunning() const;
     std::uint64_t SubmitAndEpoch();
     void WaitRecorded(std::uint64_t serial);
     std::uint64_t SubmittedEpoch() const;
@@ -248,6 +250,7 @@ public:
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
     bool SamplerMirrorClampToEdge() const;
+    bool BorderColorSwizzle() const;
     bool ConservativeRasterization() const;
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;

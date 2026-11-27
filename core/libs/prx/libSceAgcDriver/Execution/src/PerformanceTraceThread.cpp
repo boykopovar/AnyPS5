@@ -31,6 +31,5 @@ extern "C" AgcDriver::TraceThread* AgcDriverTraceThread_nid_postfix() {
 }
 
 extern "C" void AgcDriverTraceCount_nid_postfix(const char* scope) {
-    if (AgcDriver::PerformanceTrace::binder.load(std::memory_order_relaxed) == nullptr) return;
     if (auto* thread = AgcDriverTraceThread_nid_postfix()) thread->Add(scope, nullptr, {}, {});
 }

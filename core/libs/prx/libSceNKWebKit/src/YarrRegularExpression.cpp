@@ -55,4 +55,10 @@ RegularExpression* APS5_VABI _ZN3JSC4Yarr17RegularExpressionaSERKS1_(RegularExpr
     return self;
 }
 
+int APS5_VABI _ZNK3JSC4Yarr17RegularExpression13matchedLengthEv(const RegularExpression* self) {
+    if (!self) throw std::invalid_argument("JSC::Yarr::RegularExpression::matchedLength: null this");
+    if (!self->d) throw std::invalid_argument("JSC::Yarr::RegularExpression::matchedLength: null regular expression");
+    return self->d->lastMatchLength;
+}
+
 }

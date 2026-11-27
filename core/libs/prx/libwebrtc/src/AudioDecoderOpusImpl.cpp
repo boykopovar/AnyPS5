@@ -573,7 +573,7 @@ void APS5_VABI AudioDecoderOpusGeneratePlc_nid_no_patch(WebRtcAudioDecoderOpusIm
         return;
     const std::size_t newSize = hostBuffer.size + appended;
     if (newSize > hostBuffer.capacity) {
-        const std::size_t newCapacity = std::max(newSize, hostBuffer.capacity + hostBuffer.capacity / 2);
+        const std::size_t newCapacity = std::max<std::size_t>(newSize, hostBuffer.capacity + hostBuffer.capacity / 2);
         auto* grown = static_cast<std::int16_t*>(_Znam_nid_postfix(newCapacity * sizeof(std::int16_t)));
         if (hostBuffer.size != 0) {
             std::vector<std::int16_t> existing(hostBuffer.size);

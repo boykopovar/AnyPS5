@@ -1493,9 +1493,13 @@ void Readback(AgcDriver::VulkanDevice& device) {
         CheckUniform(ReadHalfSamples(context, color), Ones, "after a native color fill");
         if (fragments == Samples) {
             CheckUniform(LoadSamples(device, block), Ones, "before storage migration");
-            const auto selected = [](std::uint32_t x, std::uint32_t, std::uint32_t sample) { return x < Side / 2u && sample == StoredSample; };
-            StoreSamples(device, TargetDescriptor(block, SampleShift), SampleWrites(selected));
-            CheckWritten(std::vector<std::array<float, 4>>(Side * Side * Samples, Ones), ReadHalfSamples(context, color), selected, "after storage migration and per-sample writes");
+            if (context.storageImageMultisample) {
+                const auto selected = [](std::uint32_t x, std::uint32_t, std::uint32_t sample) { return x < Side / 2u && sample == StoredSample; };
+                StoreSamples(device, TargetDescriptor(block, SampleShift), SampleWrites(selected));
+                CheckWritten(std::vector<std::array<float, 4>>(Side * Side * Samples, Ones), ReadHalfSamples(context, color), selected, "after storage migration and per-sample writes");
+            } else {
+                std::puts("native color readback: storage migration skipped, the device lacks multisampled storage images");
+            }
         }
         std::printf("native color readback: RGBA16F samples=%u coverage/fill/refusals/chunks passed\n", fragments);
         ++exercised;

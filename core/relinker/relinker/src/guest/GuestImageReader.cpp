@@ -194,6 +194,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 if (symbolCount > std::numeric_limits<std::uint32_t>::max()) fail("Invalid GNU hash chain");
                 if (chain & 1) break;
             }
+        } else {
+            const auto symbolOffset = table(6, 0x61000039, symbolCount * 24);
+            symbolCount = ElfReader(bytes).ReadDynamicSymbolCount(symbolOffset, firstSymbol);
         }
         symSize = symbolCount * 24;
     } else fail("Missing dynamic symbol count");
@@ -333,7 +336,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 relativeAddress(addend);
             } else if (relocation == 1 || relocation == 6 || relocation == 7) {
                 const auto& symbol = image.Symbols[info >> 32];
-                if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
+                if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation == 7 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
             } else {
                 const auto& symbol = image.Symbols[info >> 32];
                 const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
@@ -343,6 +346,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
             if (ownTlsBlock) Io::WriteU64(output, position + 8, relocation);
+            if (relocation == 6 && addend != 0) {
+                Io::WriteU64(output, position + 16, 0);
+                ++image.IgnoredGlobDatAddends;
+            }
             if (relative) relativeEntries.emplace(target, position);
         }
     };
