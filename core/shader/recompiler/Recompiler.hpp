@@ -377,6 +377,7 @@ struct SpirvTarget {
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
     bool tessellationEvaluationSubgroups = true;
+    bool pixelWave32Subgroups = false;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool spannedAnySubgroup = false;
@@ -991,10 +992,12 @@ struct PipelineIdentity {
 
 struct ResultKeyMemo {
     mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    mutable std::atomic<const std::vector<std::uint32_t>*> raw{nullptr};
     ResultKeyMemo() = default;
     ResultKeyMemo(const ResultKeyMemo&) {}
     ResultKeyMemo& operator=(const ResultKeyMemo&) {
         words.store(nullptr, std::memory_order_relaxed);
+        raw.store(nullptr, std::memory_order_relaxed);
         return *this;
     }
 };
