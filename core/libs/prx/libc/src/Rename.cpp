@@ -64,6 +64,7 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
     return error;
 #else
     fs::rename(source, destination, error);
+    if (error == std::errc::file_exists) return std::make_error_code(std::errc::directory_not_empty);
     return error;
 #endif
 }
