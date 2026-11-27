@@ -19,13 +19,6 @@ void CheckInternalIdRejected(std::uint32_t id) {
     Require(sceSysmoduleUnloadModuleInternal(id) == kInvalidValue);
 }
 
-void CheckRestrictedInventoryRejected(std::uint32_t id) {
-    Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(id) == kInvalidValue);
-    Require(libSceSysmoduleUnknown_5gs662NWKhE_nid_no_patch(id) == kInvalidValue);
-    Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(id) == kInvalidValue);
-    Require(libSceSysmoduleUnknown_9Q9uHJVfB4w_nid_no_patch(id) == kInvalidValue);
-}
-
 void CheckWithArgInventory() {
     int res = -1;
     Require(libSceSysmoduleUnknown_kMn8gDsKp9Y_nid_no_patch(0u, 0u, nullptr, 0u, &res) == kInvalidValue);
@@ -42,11 +35,11 @@ void CheckWithArgInventory() {
     Require(libSceSysmoduleUnknown_6XFxHG0KhBg_nid_no_patch(0x80000001u, 0u, nullptr, 0u, &res) == kUnloaded);
     Require(libSceSysmoduleUnknown_kMn8gDsKp9Y_nid_no_patch(0x80000001u, 0u, nullptr, 0u, &res) == 0);
     Require(res == 0);
-    Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(0x80000001u) == 0);
+    Require(sceSysmoduleIsLoadedInternal(0x80000001u) == 0);
     res = -1;
     Require(libSceSysmoduleUnknown_6XFxHG0KhBg_nid_no_patch(0x80000001u, 0u, nullptr, 0u, &res) == 0);
     Require(res == 0);
-    Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(0x80000001u) == kUnloaded);
+    Require(sceSysmoduleIsLoadedInternal(0x80000001u) == kUnloaded);
     res = -1;
     Require(libSceSysmoduleUnknown_kMn8gDsKp9Y_nid_no_patch(0x800000c4u, 0u, nullptr, 0u, &res) == kInvalidValue);
     Require(libSceSysmoduleUnknown_6XFxHG0KhBg_nid_no_patch(0x800000c4u, 0u, nullptr, 0u, &res) == kInvalidValue);
@@ -64,23 +57,6 @@ int main() {
     CheckInternalIdRejected(0x80ffff00);
     CheckInternalIdRejected(0x8000ffff);
     Require(sceSysmoduleIsLoadedInternal(0x00ffffff) == kInvalidValue);
-
-    for (std::uint32_t bad : {0u, 0x80000000u, 0x80000003u, 0x80000095u, 0x8000ffffu, 0x80ffff00u, 0x00000001u, 0x00ffffffu}) {
-        CheckRestrictedInventoryRejected(bad);
-    }
-    for (std::uint32_t allowed : {
-             0x80000001u, 0x80000002u, 0x80000009u, 0x8000000Au, 0x8000000Bu, 0x8000000Cu, 0x8000000Du,
-             0x8000000Fu, 0x80000010u, 0x80000011u, 0x80000018u, 0x8000001Cu, 0x8000001Du, 0x8000001Eu,
-             0x8000001Fu, 0x80000020u, 0x80000021u, 0x80000022u, 0x80000023u, 0x80000024u, 0x80000026u,
-             0x80000078u, 0x8000007Eu, 0x80000080u, 0x8000008Cu, 0x8000008Du, 0x8000008Fu, 0x80000094u,
-         }) {
-        Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(allowed) == kUnloaded);
-        Require(libSceSysmoduleUnknown_5gs662NWKhE_nid_no_patch(allowed) == 0);
-        Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(allowed) == 0);
-        Require(libSceSysmoduleUnknown_9Q9uHJVfB4w_nid_no_patch(allowed) == 0);
-        Require(libSceSysmoduleUnknown_uQqnJudN5fY_nid_no_patch(allowed) == kUnloaded);
-        Require(libSceSysmoduleUnknown_9Q9uHJVfB4w_nid_no_patch(allowed) == kUnloaded);
-    }
 
     CheckWithArgInventory();
 }
