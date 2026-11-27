@@ -18211,7 +18211,7 @@ int pipelineCacheFileTests(const Device& device) {
 
 void descriptorPoolTests(const Device& device) {
     DescriptorCache cache(device.GetContext());
-    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min(32u, device.GetContext().limits.maxPerStageDescriptorStorageBuffers), VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
     const auto layout = cache.Layout(key, std::span(&binding, 1));
     const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
