@@ -424,6 +424,7 @@ static void CheckIntegerOrders() {
         {2, 0xfff0000000000000ull, 0x0000000000000000ull}, {7, 0x7ff8000000000123ull, 0x7ff8000000000123ull}, {-1, 0x3fe0000000000000ull, 0xbfcf02a71f4870d7ull},
         {0, 0xbfe0000000000000ull, 0x3fee07f1d54c3f34ull}, {3, 0x3fe91c9d97f75a72ull, 0x3f83d672272043afull}, {3, 0x3ff33bf06c96fafdull, 0x3fa0ea842d47fdfdull},
         {3, 0x3ffa0a4f9419df40ull, 0x3fb36db8f4e44fabull}, {3, 0x3ffb2f9912a3a9a6ull, 0x3fb5c4cf9b0be24full},
+        {INT_MIN, 0x3fe0000000000000ull, 0x3fcf02a71f4870d7ull}, {INT_MIN, 0xbfe0000000000000ull, 0x3fcf02a71f4870d7ull}, {INT_MIN, 0x3ddb7cdfd9d7bdbbull, 0x3dcb7cdfd9d7bdbbull},
     };
     CheckOrder("jn", jn_nid_postfix, first, std::size(first));
     const OrderCase second[] = {

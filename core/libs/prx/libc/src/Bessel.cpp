@@ -311,7 +311,7 @@ double APS5_VABI jn_nid_postfix(int order, double x) {
                 double previous = j0_nid_postfix(absolute);
                 result = j1_nid_postfix(absolute);
                 std::uint32_t twice = 2;
-                for (std::uint32_t remaining = n - 1; remaining != 0; --remaining) {
+                for (std::int32_t index = 1; index < static_cast<std::int32_t>(n); ++index) {
                     const double next = Fused(result, Signed(twice) / absolute, -previous);
                     previous = result;
                     result = next;
