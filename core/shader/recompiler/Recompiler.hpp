@@ -237,6 +237,9 @@ struct ShaderPixelStageInfo {
     bool depthExportEnable;
     float depthExportMin = 0.0f;
     float depthExportMax = 1.0f;
+    bool depthExportViewportRanges = false;
+    std::array<float, 16> depthExportMinByViewport{};
+    std::array<float, 16> depthExportMaxByViewport{};
     bool sampleMaskExportEnable;
     bool earlyZ;
     bool executeOnNoop;

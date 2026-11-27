@@ -177,6 +177,9 @@ struct ShaderPixelInputInfo {
     bool psDepthExportEnable = false;
     float psDepthExportMin = 0.0f;
     float psDepthExportMax = 1.0f;
+    bool psDepthExportViewportRanges = false;
+    std::array<float, 16> psDepthExportMinByViewport{};
+    std::array<float, 16> psDepthExportMaxByViewport{};
     bool psSampleMaskExportEnable = false;
     bool psStencilRefExportEnable = false;
     bool psStencilOperationValueExport = false;

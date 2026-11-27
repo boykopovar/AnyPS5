@@ -230,6 +230,11 @@ private:
         if (value.depthExportEnable) {
             append(key, std::bit_cast<std::uint32_t>(value.depthExportMin));
             append(key, std::bit_cast<std::uint32_t>(value.depthExportMax));
+            append(key, value.depthExportViewportRanges);
+            if (value.depthExportViewportRanges) {
+                for (const float bound : value.depthExportMinByViewport) append(key, std::bit_cast<std::uint32_t>(bound));
+                for (const float bound : value.depthExportMaxByViewport) append(key, std::bit_cast<std::uint32_t>(bound));
+            }
         }
         append(key, value.sampleMaskExportEnable);
         append(key, value.earlyZ);

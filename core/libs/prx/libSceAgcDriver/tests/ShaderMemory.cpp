@@ -8950,6 +8950,7 @@ void verifyPixelRequestSerialization() {
                         value.hasPerspectiveCenterVgpr, value.perspectiveCentroid, value.posX, value.posY,
                         value.posZ, value.posW, value.frontFace, value.frontFaceAllBits, value.ancillary, value.sampleShading,
                         value.noPerspective, value.linearCentroid, value.pixelKillEnable, value.depthExportEnable,
+                        value.depthExportMin, value.depthExportMax, value.depthExportViewportRanges, value.depthExportMinByViewport, value.depthExportMaxByViewport,
                         value.sampleMaskExportEnable, value.earlyZ, value.executeOnNoop, value.conservativeZExport, value.orderedPixelShader,
                         value.targetOutputMode, value.targetExportMapping, value.alphaToCoverage, value.stencilRefExportEnable, value.rasterPrimitive, value.layerExported, value.ditheredAlphaToCoverage, value.reversedBlend, value.targetMerges);
     };
@@ -8995,6 +8996,16 @@ void verifyPixelRequestSerialization() {
         .targetOutputMode = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}
     };
     for (std::uint32_t i = 0; i < pixel.interpolatorSettings.size(); ++i) pixel.interpolatorSettings[i] = 0x10101010u + i;
+    pixel.depthExportEnable = true;
+    pixel.depthExportMin = -0.25f;
+    pixel.depthExportMax = 0.75f;
+    pixel.depthExportViewportRanges = true;
+    pixel.depthExportMinByViewport[0] = pixel.depthExportMin;
+    pixel.depthExportMaxByViewport[0] = pixel.depthExportMax;
+    for (std::uint32_t i = 1; i < pixel.depthExportMinByViewport.size(); ++i) {
+        pixel.depthExportMinByViewport[i] = static_cast<float>(i) * -0.01f;
+        pixel.depthExportMaxByViewport[i] = 1.0f - static_cast<float>(i) * 0.01f;
+    }
     pixel.alphaToCoverage = true;
     pixel.stencilRefExportEnable = true;
     pixel.ditheredAlphaToCoverage = true;
@@ -9119,7 +9130,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQT8AAAA=", "new requests did not use serialization version 63");
+    require(requestPrefix(encoded, 8u) == "NVNQQUIAAAA=", "new requests did not use serialization version 66");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9297,8 +9308,24 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
     return bytes;
 }
 
-std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 14u && bytes[4] == 63u, "a legacy fixture did not start from serialization version 63");
+std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes, const ShaderRecompiler::ShaderPixelStageInfo* pixel = nullptr) {
+    require(bytes.size() > 14u && bytes[4] == 66u, "a legacy fixture did not start from serialization version 66");
+    if (pixel != nullptr && pixel->depthExportEnable) {
+        const auto minimum = std::bit_cast<std::uint32_t>(pixel->depthExportMin);
+        const auto maximum = std::bit_cast<std::uint32_t>(pixel->depthExportMax);
+        const std::array<std::uint8_t, 8> bounds{
+            static_cast<std::uint8_t>(minimum), static_cast<std::uint8_t>(minimum >> 8u), static_cast<std::uint8_t>(minimum >> 16u), static_cast<std::uint8_t>(minimum >> 24u),
+            static_cast<std::uint8_t>(maximum), static_cast<std::uint8_t>(maximum >> 8u), static_cast<std::uint8_t>(maximum >> 16u), static_cast<std::uint8_t>(maximum >> 24u),
+        };
+        const auto found = std::search(bytes.begin(), bytes.end(), bounds.begin(), bounds.end());
+        require(found != bytes.end(), "a version 66 depth-export request omitted its clamp bounds");
+        require(found + bounds.size() < bytes.end(), "a version 66 depth-export request omitted its viewport-range flag");
+        const auto hasViewportRanges = *(found + bounds.size());
+        require(hasViewportRanges <= 1u, "a version 66 depth-export request has an invalid viewport-range flag");
+        const auto extra = 1u + (hasViewportRanges != 0u ? 2u * 16u * sizeof(float) : 0u);
+        bytes.erase(found + bounds.size(), found + bounds.size() + extra);
+    }
+    require(bytes.size() > 14u, "a version 66 legacy fixture was truncated while removing its depth-export viewport ranges");
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return bytes;
@@ -9360,7 +9387,7 @@ void verifyEmulatedBarycentricRequests() {
     require(replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics && serializer.Serialize(replay.request) == encoded, "emulated barycentrics were lost in serialization");
     auto bytes = decodeBase64(serializer.Serialize(request));
     auto flagged = decodeBase64(encoded);
-    require(bytes[4] == 63u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
+    require(bytes[4] == 66u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
     auto legacyBytes = bytes;
     legacyBytes[4] = 62u;
     const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
@@ -9416,8 +9443,51 @@ void verifyDepthExportClamp() {
     bool clampStored = false;
     for (std::size_t i = 0; i + 1 < stored.size(); i += 2) clampStored = clampStored || (stored[i] == depthVariable && stored[i + 1] == clamps[0][0]);
     require(clampStored, "depth export: gl_FragDepth was not written from the clamped value");
+
+    auto perViewport = request;
+    perViewport.context.pixel->depthExportMin = 0.0f;
+    perViewport.context.pixel->depthExportMax = 1.0f;
+    perViewport.context.pixel->depthExportViewportRanges = true;
+    static constexpr std::array<std::uint32_t, 1> viewportCapabilities{static_cast<std::uint32_t>(spv::CapabilityMultiViewport)};
+    perViewport.target.supportedCapabilities = viewportCapabilities;
+    perViewport.context.pixel->depthExportMinByViewport.fill(0.0f);
+    perViewport.context.pixel->depthExportMaxByViewport.fill(1.0f);
+    perViewport.context.pixel->depthExportMinByViewport[0] = perViewport.context.pixel->depthExportMin;
+    perViewport.context.pixel->depthExportMaxByViewport[0] = perViewport.context.pixel->depthExportMax;
+    perViewport.context.pixel->depthExportMinByViewport[1] = 0.25f;
+    perViewport.context.pixel->depthExportMaxByViewport[1] = 0.75f;
+    const auto perViewportResult = Recompile(perViewport);
+    const auto& perViewportWords = perViewportResult.spirv.Words();
+    bool viewportIndexInput = false;
+    bool multiViewportCapability = false;
+    bool viewportIndexLayerCapability = false;
+    bool viewportIndexLayerExtension = false;
+    bool viewportComparison = false;
+    bool viewportSelection = false;
+    for (std::size_t at = 5; at < perViewportWords.size() && (perViewportWords[at] >> 16u) != 0; at += perViewportWords[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(perViewportWords[at] & 0xffffu);
+        if (op == spv::OpDecorate && perViewportWords[at + 2] == spv::DecorationBuiltIn && perViewportWords[at + 3] == spv::BuiltInViewportIndex) viewportIndexInput = true;
+        if (op == spv::OpCapability && perViewportWords[at + 1] == spv::CapabilityMultiViewport) multiViewportCapability = true;
+        if (op == spv::OpCapability && perViewportWords[at + 1] == spv::CapabilityShaderViewportIndexLayerEXT) viewportIndexLayerCapability = true;
+        if (op == spv::OpExtension && std::string_view(reinterpret_cast<const char*>(&perViewportWords[at + 1])).starts_with("SPV_EXT_shader_viewport_index_layer")) viewportIndexLayerExtension = true;
+        if (op == spv::OpIEqual) viewportComparison = true;
+        if (op == spv::OpSelect) viewportSelection = true;
+    }
+    require(viewportIndexInput && multiViewportCapability && !viewportIndexLayerCapability && !viewportIndexLayerExtension && viewportComparison && viewportSelection, "depth export: fragment viewport-index input must use MultiViewport without requiring the viewport-index-layer output extension");
+    std::vector<std::uint64_t> viewportKey;
+    RecompileCacheKey::Build(perViewport, viewportKey);
+    auto changedViewportRange = perViewport;
+    changedViewportRange.context.pixel->depthExportMaxByViewport[1] = 0.8f;
+    std::vector<std::uint64_t> changedViewportKey;
+    RecompileCacheKey::Build(changedViewportRange, changedViewportKey);
+    require(viewportKey != changedViewportKey, "depth export: changing a nonzero viewport's clamp did not change shader identity");
+
     const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
     require(replay.request.context.pixel->depthExportMin == 0.25f && replay.request.context.pixel->depthExportMax == 0.75f, "depth export: the clamp did not survive serialization");
+    auto perViewportReplay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(perViewport));
+    require(perViewportReplay.request.context.pixel->depthExportViewportRanges && perViewportReplay.request.context.pixel->depthExportMinByViewport == perViewport.context.pixel->depthExportMinByViewport &&
+                perViewportReplay.request.context.pixel->depthExportMaxByViewport == perViewport.context.pixel->depthExportMaxByViewport,
+            "depth export: per-viewport clamp bounds did not survive request serialization");
     {
         auto tail = request;
         tail.target.largePixelFunctionLdsBuffer = true;
@@ -9426,13 +9496,13 @@ void verifyDepthExportClamp() {
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
             "depth export: a version 55 request lost the bounds or the version 45 target tail");
-        auto bytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(tail)));
+        auto bytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(tail)), &*tail.context.pixel);
         require(bytes.size() > 8u && bytes[4] == 56u, "depth export: a depth exporting request did not use serialization version 56");
         const auto eraseVersion55MergeFields = [](std::vector<std::uint8_t>& serialized, RecompileRequest marked) {
             static constexpr std::array<std::uint8_t, 4> marker{0xefu, 0xcdu, 0xabu, 0x89u};
             marked.context.pixel->targetMerges.assign(1u, {});
             marked.context.pixel->targetMerges.front().descriptor[7] = 0x89abcdefu;
-            const auto markedBytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(marked)));
+            const auto markedBytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(marked)), &*marked.context.pixel);
             const auto descriptorEnd = std::search(markedBytes.begin(), markedBytes.end(), marker.begin(), marker.end()) - markedBytes.begin() + 4;
             const auto fields = serialized.begin() + descriptorEnd + 2;
             require(markedBytes.size() == serialized.size() && serialized.end() - fields > 15 && std::all_of(fields, fields + 15, [](std::uint8_t value) { return value == 0u; }), "the version 55 color target merge fields do not follow the merge's depth and stencil flags");
@@ -9472,7 +9542,7 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaToCoverage = true;
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
-            auto ditheredBytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(dithered)));
+            auto ditheredBytes = version56Bytes(decodeBase64(RequestSerializer{}.Serialize(dithered)), &*dithered.context.pixel);
             require(ditheredBytes.size() > 8u && ditheredBytes[4] == 56u, "a two-sample dithered request did not use serialization version 56");
             eraseVersion55MergeFields(ditheredBytes, dithered);
             if (depthExport) {
@@ -13779,6 +13849,12 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-phis") {
             verifyDescriptorPhis();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-export-clamp") {
+            verifyPixelRequestSerialization();
+            verifyDepthExportClamp();
+            std::cout << "Depth export clamp, viewport-index selection, cache identity and request serialization passed\n";
             return 0;
         }
         require(argc == 1, "unknown shader memory test arguments");
