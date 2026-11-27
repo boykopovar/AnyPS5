@@ -125,6 +125,7 @@ void NewLibrary() {
     Require(library->references == 1 && library->host && recorder.selfFrees == 0 && recorder.otherFrees == 0);
     Require(FT_Get_Char_Index_nid_postfix(face, 'A') == FT_Get_Char_Index(oracleFace, 'A'));
     Require(FT_Done_Library(library->host) == 0);
+    Require(DestroyCacheManagers_nid_no_patch(library));
     delete library;
     Require(FT_Done_Library(oracle) == 0);
     Require(recorder.selfFrees == 0 && recorder.otherFrees == 0);

@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -299,6 +300,8 @@ struct ShaderFloatMode {
     bool operator==(const ShaderFloatMode&) const = default;
 };
 
+inline constexpr std::uint32_t InterpolationFlushResult32 = 0x80u;
+inline constexpr std::uint32_t InterpolationFlushResult16 = 0x100u;
 inline constexpr std::uint32_t InterpolationQuiet = 1u;
 inline constexpr std::uint32_t InterpolationFlush32 = 2u;
 inline constexpr std::uint32_t InterpolationFlush16 = 4u;
@@ -401,10 +404,10 @@ struct SpirvTarget {
 };
 
 struct BindingLayout {
-    std::uint32_t descriptorSet;
-    std::uint32_t firstBinding;
-    std::uint32_t pushConstantOffsetBytes;
-    std::uint32_t pushConstantSizeBytes;
+    std::uint32_t descriptorSet = 0u;
+    std::uint32_t firstBinding = 0u;
+    std::uint32_t pushConstantOffsetBytes = 0u;
+    std::uint32_t pushConstantSizeBytes = 0u;
 };
 
 enum class ProgramRole {
@@ -734,6 +737,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<ImageOverwrite> imageOverwrites;
 };
 
 struct ImageTableEntryPoison {
@@ -1020,6 +1024,8 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         return identity;
     }
 };
+
+[[nodiscard]] std::uint64_t MetadataBytes(const RecompileResult& result);
 
 [[nodiscard]] std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment);
 

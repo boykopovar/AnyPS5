@@ -19,6 +19,10 @@ void APS5_VABI sceFreeTypeOlFtaAddModuleOtvalid_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaRemoveModuleGxvalid_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaRemoveModuleOtvalid_nid_postfix(void* library);
 
+int APS5_VABI sceFreeTypeOlCMapNew_nid_no_patch(const FreeType::GuestCMapClass* clazz, void* initData,
+                                               const FreeType::GuestCharMapRec* charmap, FreeType::GuestCMap** output);
+void APS5_VABI sceFreeTypeOlCMapDone_nid_no_patch(FreeType::GuestCMap* cmap);
+
 int APS5_VABI sceFreeTypeOlAlloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t size, void** output);
 void APS5_VABI sceFreeTypeOlFree_nid_postfix(FreeType::GuestMemoryRec* memory, void** block);
 void APS5_VABI sceFreeTypeOlFtaAddModuleAutofitter_nid_postfix(void* library);

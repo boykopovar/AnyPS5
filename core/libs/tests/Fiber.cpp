@@ -48,7 +48,7 @@ FiberStorage g_secondStorage;
 auto* const g_first = reinterpret_cast<FiberObject*>(&g_firstStorage);
 auto* const g_second = reinterpret_cast<FiberObject*>(&g_secondStorage);
 
-[[gnu::no_sanitize("address")]] void CheckActiveContext(FiberObject* fiber, std::uint64_t expectedSize) {
+[[gnu::no_sanitize_address]] void CheckActiveContext(FiberObject* fiber, std::uint64_t expectedSize) {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(fiber, &info) == 0, "active fiber context info");

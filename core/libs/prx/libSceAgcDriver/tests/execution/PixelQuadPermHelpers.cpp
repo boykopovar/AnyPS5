@@ -24,12 +24,17 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-std::vector<std::uint32_t> PixelCode(std::uint32_t waveSize, bool fetchInactive) {
+struct QuadPerms {
+    std::uint32_t low;
+    std::uint32_t high;
+};
+
+std::vector<std::uint32_t> PixelCode(std::uint32_t waveSize, bool fetchInactive, QuadPerms perms) {
     const bool wave32 = waveSize == 32u;
     const std::uint32_t fi = fetchInactive ? 0x00040000u : 0u;
     return {
         wave32 ? 0xbe8a037eu : 0xbe8a047eu, wave32 ? 0xbefe097eu : 0xbefe0a7eu, 0x7e040f00, 0x7e060f01, 0xd5430006, 0x0409ff03, 0x000000c0,
-        0x7e0802fa, 0xff00b106 | fi, 0x7e0a02fa, 0xff004e06 | fi, wave32 ? 0xbefe030au : 0xbefe040au, 0xd76f0005, 0x04112105,
+        0x7e0802fa, 0xff000006u | (perms.low << 8u) | fi, 0x7e0a02fa, 0xff000006u | (perms.high << 8u) | fi, wave32 ? 0xbefe030au : 0xbefe040au, 0xd76f0005, 0x04112105,
         0xe0702000, 0x80010506, 0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
     };
 }
@@ -123,7 +128,18 @@ bool Covered(std::uint32_t pixel) {
     return std::to_integer<std::uint8_t>(Pixels[pixel * 4u]) == 255u;
 }
 
-std::uint32_t Check(const std::string& what) {
+std::uint32_t QuadSource(std::uint32_t pixel, std::uint32_t perm) {
+    const auto x = pixel % Width;
+    const auto y = pixel / Width;
+    const auto source = (perm >> (2u * ((x & 1u) | ((y & 1u) << 1u)))) & 3u;
+    return ((y & ~1u) | (source >> 1u)) * Width + ((x & ~1u) | (source & 1u));
+}
+
+std::string PermName(std::uint32_t perm) {
+    return "quad_perm [" + std::to_string(perm & 3u) + "," + std::to_string((perm >> 2u) & 3u) + "," + std::to_string((perm >> 4u) & 3u) + "," + std::to_string(perm >> 6u) + "]";
+}
+
+std::uint32_t Check(const std::string& what, QuadPerms perms) {
     std::uint32_t covered = 0;
     std::uint32_t helperReads = 0;
     for (std::uint32_t pixel = 0; pixel < Results.size(); ++pixel) {
@@ -132,14 +148,12 @@ std::uint32_t Check(const std::string& what) {
             continue;
         }
         ++covered;
-        const auto x = pixel % Width;
-        const auto y = pixel / Width;
-        const auto across = y * Width + (x ^ 1u);
-        const auto down = (y ^ 1u) * Width + x;
+        const auto low = QuadSource(pixel, perms.low);
+        const auto high = QuadSource(pixel, perms.high);
         Require(Results[pixel] != Sentinel, what + ": covered pixel " + std::to_string(pixel) + " stored nothing");
-        Require((Results[pixel] & 0xffffu) == across, what + ": pixel " + std::to_string(pixel) + " read " + std::to_string(Results[pixel] & 0xffffu) + " from quad_perm [1,0,3,2], its " + (Covered(across) ? "covered" : "helper") + " neighbour is pixel " + std::to_string(across));
-        Require((Results[pixel] >> 16u) == down, what + ": pixel " + std::to_string(pixel) + " read " + std::to_string(Results[pixel] >> 16u) + " from quad_perm [2,3,0,1], its " + (Covered(down) ? "covered" : "helper") + " neighbour is pixel " + std::to_string(down));
-        helperReads += (Covered(across) ? 0u : 1u) + (Covered(down) ? 0u : 1u);
+        Require((Results[pixel] & 0xffffu) == low, what + ": pixel " + std::to_string(pixel) + " read " + std::to_string(Results[pixel] & 0xffffu) + " from " + PermName(perms.low) + ", its " + (Covered(low) ? "covered" : "helper") + " source is pixel " + std::to_string(low));
+        Require((Results[pixel] >> 16u) == high, what + ": pixel " + std::to_string(pixel) + " read " + std::to_string(Results[pixel] >> 16u) + " from " + PermName(perms.high) + ", its " + (Covered(high) ? "covered" : "helper") + " source is pixel " + std::to_string(high));
+        helperReads += (Covered(low) ? 0u : 1u) + (Covered(high) ? 0u : 1u);
     }
     Require(covered > 1000, what + ": the triangles covered only " + std::to_string(covered) + " pixels");
     Require(helperReads > 100, what + ": only " + std::to_string(helperReads) + " reads had a helper neighbour");
@@ -161,16 +175,18 @@ int main() {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", target.subgroupSize);
             return VulkanTestSkipped;
         }
-        for (const auto waveSize : {64u, 32u}) {
-            for (const bool fetchInactive : {false, true}) {
-                const auto code = PixelCode(waveSize, fetchInactive);
-                const auto what = "pixel quad_perm wave" + std::to_string(waveSize) + (fetchInactive ? " fi" : "");
-                std::uint32_t helperReads = 0;
-                for (std::uint32_t pass = 0; pass < 4; ++pass) {
-                    Draw(*device, code, waveSize, target);
-                    helperReads += Check(what);
+        for (const auto perms : {QuadPerms{0xb1u, 0x4eu}, QuadPerms{0x55u, 0xaau}, QuadPerms{0x00u, 0xffu}}) {
+            for (const auto waveSize : {64u, 32u}) {
+                for (const bool fetchInactive : {false, true}) {
+                    const auto code = PixelCode(waveSize, fetchInactive, perms);
+                    const auto what = "pixel " + PermName(perms.low) + " and " + PermName(perms.high) + " wave" + std::to_string(waveSize) + (fetchInactive ? " fi" : "");
+                    std::uint32_t helperReads = 0;
+                    for (std::uint32_t pass = 0; pass < 4; ++pass) {
+                        Draw(*device, code, waveSize, target);
+                        helperReads += Check(what, perms);
+                    }
+                    std::printf("%s: %u reads from helper sources over 4 draws\n", what.c_str(), helperReads);
                 }
-                std::printf("%s: %u reads from helper neighbours over 4 draws\n", what.c_str(), helperReads);
             }
         }
         std::puts("pixel quad_perm helper tests passed");

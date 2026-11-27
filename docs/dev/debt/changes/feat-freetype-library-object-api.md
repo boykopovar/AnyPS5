@@ -14,9 +14,7 @@
 
 # libSceFreeTypeOl
 
-## change [`FT_Attach_Stream`, `FT_CMap_New`, and `FT_CMap_Done`]
-
-- [`FT_CMap_New` and `FT_CMap_Done`](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (`wLqQQWyOdpc`, `h0n4Fb9j2R8`): direct native calls bypass the existing guest face/charmap layout and lifecycle ownership. These require a dedicated guest bridge before implementation.
+## remove h0n4Fb9j2R8
 
 ## add Signature and layout provenance
 

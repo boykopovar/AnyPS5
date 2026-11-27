@@ -24,6 +24,7 @@ constexpr std::uint32_t MaxSmemByteOffset = 0xfffffu;
 constexpr std::uint32_t LinkedCallSopk = 0x16u;
 constexpr std::uint32_t CodeEndSopp = 0x1fu;
 constexpr std::uint32_t SetRegImmSopk = 0x15u;
+constexpr std::uint32_t DppSource = 0xfau;
 
 template <std::size_t N>
 std::optional<std::uint32_t> mapOpcode(const std::array<std::pair<std::uint16_t, std::uint16_t>, N>& table, std::uint32_t opcode) {
@@ -191,13 +192,18 @@ bool gcnVop3bCarryOut(std::uint32_t opcode) {
     }
 }
 
+std::uint32_t vop3Opcode(std::uint32_t word0) {
+    return ((word0 >> 17u) & 0x1ffu) | (((word0 >> 16u) & 1u) << 9u);
+}
+
 Encoded encodeVop3(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
     if (index + 1 >= code.size()) throw std::out_of_range("truncated GCN VOP3 instruction");
     const auto word0 = code[index];
-    const auto opcode = (word0 >> 17u) & 0x1ffu;
+    const auto opcode = vop3Opcode(word0);
     if (const auto shift = reversedShift(opcode)) return encodeVop3Words(swapAbsolute(word0), swapSources(code[index + 1]), *shift, false);
     const auto mapped = opcode < 0x40u ? mapOpcode(GcnTables::Vopc, opcode) : mapOpcode(GcnTables::Vop3, opcode);
     if (!mapped) unsupported("VOP3", opcode, programCounter);
+    if (opcode >= 0x200u && ((word0 >> 12u) & 0xfu) != 0u) throw UnsupportedInstructionError("GCN VOP3 opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " sets OP_SEL bits 15:12, which are not implemented", "VOP3", opcode, __FILE__, __LINE__);
     auto out = encodeVop3Words(word0, code[index + 1], *mapped, gcnVop3bCarryOut(opcode));
     if (compareWritesExec(opcode)) out.compareDestination = word0 & 0xffu;
     return out;
@@ -355,7 +361,13 @@ Encoded encodePassThrough(std::span<const std::uint32_t> code, std::uint32_t ind
 Encoded encodeGcn(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
     const auto word = code[index];
     if ((word >> 31u) == 0) {
-        switch ((word >> 25u) & 0x3fu) {
+        const auto family = (word >> 25u) & 0x3fu;
+        if ((word & 0x1ffu) == DppSource) {
+            if (family == 0x3eu) unsupported("VOPC_DPP", (word >> 17u) & 0xffu, programCounter);
+            if (family == 0x3fu) unsupported("VOP1_DPP", (word >> 9u) & 0xffu, programCounter);
+            unsupported("VOP2_DPP", family, programCounter);
+        }
+        switch (family) {
             case 0x3eu: return encodeVopc(code, index, programCounter);
             case 0x3fu: return encodeVop1(code, index, programCounter);
             default: return encodeVop2(code, index, programCounter);

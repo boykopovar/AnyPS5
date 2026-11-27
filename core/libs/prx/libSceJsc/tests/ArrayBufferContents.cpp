@@ -2,6 +2,7 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <atomic>
@@ -392,6 +393,7 @@ void TestTransferErrors() {
     buffer.locked = false;
     Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), api), __LINE__);
     Check(Throws([] { _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(nullptr); }), __LINE__);
+    Check(Throws([] { _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(reinterpret_cast<ArrayBuffer*>(0x10)); }), __LINE__);
 }
 
 } // namespace

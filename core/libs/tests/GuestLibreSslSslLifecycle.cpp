@@ -308,6 +308,42 @@ void TestContextReferences() {
     Require(contextReleased == released + 1 && lastContextReleased == ctx);
 }
 
+void TestSetSslCtx() {
+    RequireThrows([] { SSL_set_SSL_CTX_nid_postfix(nullptr, nullptr); });
+    LibreSslCtx* initial = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    LibreSslCtx* other = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    LibreSslSsl* ssl = SSL_new_nid_postfix(initial);
+    Require(initial->references == 3 && other->references == 1);
+
+    void* const firstCert = ssl->cert;
+    Require(SSL_set_SSL_CTX_nid_postfix(ssl, initial) == initial);
+    Require(ssl->cert == firstCert && initial->references == 3);
+
+    const void* digest = &exMarker;
+    Write<const void*>(ssl->cert, 80 + 2 * 24 + 16, digest);
+    Require(SSL_set_SSL_CTX_nid_postfix(ssl, other) == other);
+    Require(ssl->ctx == other && ssl->initialCtx == initial && SSL_get_SSL_CTX_nid_postfix(ssl) == other);
+    Require(initial->references == 2 && other->references == 2);
+    Require(ssl->cert != nullptr && ssl->cert != other->internal->cert && Read<int>(ssl->cert, 248) == 1);
+    Require(Read<void*>(ssl->cert, 0) == static_cast<unsigned char*>(ssl->cert) + 80);
+    Require(Read<const void*>(ssl->cert, 80 + 2 * 24 + 16) == digest);
+
+    Require(SSL_set_SSL_CTX_nid_postfix(ssl, nullptr) == initial);
+    Require(ssl->ctx == initial && initial->references == 3 && other->references == 1);
+    Require(Read<const void*>(ssl->cert, 80 + 2 * 24 + 16) == digest);
+    Write<const void*>(ssl->cert, 80 + 2 * 24 + 16, nullptr);
+
+    Require(SSL_set_SSL_CTX_nid_postfix(ssl, nullptr) == initial);
+    Require(ssl->ctx == initial && initial->references == 3);
+
+    SSL_set_SSL_CTX_nid_postfix(ssl, other);
+    SSL_CTX_free_nid_postfix(other);
+    Require(other->references == 1);
+    SSL_free_nid_postfix(ssl);
+    Require(initial->references == 1);
+    SSL_CTX_free_nid_postfix(initial);
+}
+
 void TestSslNew() {
     ERR_clear_error_nid_postfix();
     Require(SSL_new_nid_postfix(nullptr) == nullptr);
@@ -568,6 +604,7 @@ int main() {
     Run(TestMethodSlots);
     Run(TestContextNew);
     Run(TestContextReferences);
+    Run(TestSetSslCtx);
     Run(TestSslNew);
     Run(TestExDataTeardownUnderHostAllocationFailure);
     Run(TestStoredExDataReachesRelease);

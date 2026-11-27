@@ -13,4 +13,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_content_search PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
+
+    add_test_executable(guest_content_search_metadata_tests ${LIBS_INCLUDE_DIR}/tests/GuestContentSearchMetadata.cpp)
+    target_include_directories(guest_content_search_metadata_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_content_search_metadata_tests PRIVATE libSceContentSearch libkernel_sys libSceUserService libc)
+    configure_windows_unwind(guest_content_search_metadata_tests)
+    add_test(NAME guest_content_search_metadata COMMAND guest_content_search_metadata_tests)
+    if(WIN32)
+        set_tests_properties(guest_content_search_metadata PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceContentSearch>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
 endif()

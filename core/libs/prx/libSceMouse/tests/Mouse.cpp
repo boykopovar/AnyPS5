@@ -5,9 +5,21 @@
 #include "SDL_events.h"
 #include "SDL_mouse.h"
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 bool MouseIsOpen_nid_no_patch();
@@ -27,6 +39,109 @@ struct AbsoluteRecord {
     std::int32_t tilt;
     std::uint8_t reserved[12];
 };
+
+namespace {
+
+struct GuardedPages {
+    std::uint8_t* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE, PAGE_NOACCESS));
+        Require(base != nullptr);
+        Require(VirtualAlloc(base, pageSize, MEM_COMMIT, PAGE_READWRITE) == base);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        base = static_cast<std::uint8_t*>(mapping);
+        Require(mprotect(base, pageSize, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 2);
+#endif
+    }
+
+    void SetWritable(bool writable) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, pageSize, writable ? PAGE_READWRITE : PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, pageSize, writable ? (PROT_READ | PROT_WRITE) : PROT_READ) == 0);
+#endif
+    }
+
+    template <typename T>
+    T* AtEnd(std::size_t bytesBeforeBoundary) const {
+        return reinterpret_cast<T*>(base + pageSize - bytesBeforeBoundary);
+    }
+
+    bool HasByte(std::size_t offset, std::size_t bytes, std::uint8_t value) const {
+        for (std::size_t i = 0; i < bytes; ++i) {
+            if (base[offset + i] != value) return false;
+        }
+        return true;
+    }
+};
+
+void CheckGuardedRead() {
+    MouseData data[64]{};
+    GuardedPages guarded;
+    std::memset(guarded.base, 0xA5, guarded.pageSize);
+    Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_HANDLE);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 64) == 1);
+
+    MouseInputEvent buttonOne{};
+    buttonOne.button = 1;
+    buttonOne.pressed = true;
+    MousePublishInput_nid_no_patch(buttonOne);
+    errno = EINVAL;
+    Require(sceMouseRead(MOUSE_HANDLE, reinterpret_cast<MouseData*>(0x10), 1) == MOUSE_ERROR_INVALID_ARG);
+    Require(errno == EINVAL);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 1);
+
+    MouseInputEvent buttonTwo{};
+    buttonTwo.button = 2;
+    buttonTwo.pressed = true;
+    MousePublishInput_nid_no_patch(buttonTwo);
+    buttonTwo.pressed = false;
+    MousePublishInput_nid_no_patch(buttonTwo);
+
+    guarded.SetWritable(false);
+    errno = EACCES;
+    Require(sceMouseRead(MOUSE_HANDLE, reinterpret_cast<MouseData*>(guarded.base), 2) == MOUSE_ERROR_INVALID_ARG);
+    Require(errno == EACCES);
+    Require(guarded.HasByte(0, sizeof(MouseData) * 2, 0xA5));
+    guarded.SetWritable(true);
+
+    MouseData* crossing = guarded.AtEnd<MouseData>(sizeof(MouseData));
+    errno = EDOM;
+    Require(sceMouseRead(MOUSE_HANDLE, crossing, 2) == MOUSE_ERROR_INVALID_ARG);
+    Require(errno == EDOM);
+    Require(guarded.HasByte(guarded.pageSize - sizeof(MouseData), sizeof(MouseData), 0xA5));
+
+    Require(sceMouseRead(MOUSE_HANDLE, data, 4) == 2 && data[0].buttons == 3 && data[1].buttons == 1);
+
+    MouseInputEvent buttonThree{};
+    buttonThree.button = 4;
+    buttonThree.pressed = true;
+    MousePublishInput_nid_no_patch(buttonThree);
+    Require(sceMouseRead(MOUSE_HANDLE, crossing, 2) == 1 && crossing[0].buttons == 5);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
+    Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
+}
+
+}
 
 int main() {
     MouseData data[64]{};
@@ -288,4 +403,5 @@ int main() {
     Require(readAbsolute(MOUSE_HANDLE, absolute, 1) == 1 && absolute[0].x == 110 && absolute[0].y == 105);
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_ERROR_INVALID_HANDLE && deviceId == -1);
+    CheckGuardedRead();
 }
