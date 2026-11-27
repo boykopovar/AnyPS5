@@ -340,7 +340,8 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
                 const auto& image = info.images.at(pair.image);
                 const auto& modes = info.runtimeImageModes.at(pair.image);
                 const auto& mode = modes.at(ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(pair.image), modes));
-                planar = planar && image.table == NoTable && !mode.cube && (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim2D);
+                planar = planar && image.table == NoTable && !mode.cube && (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim2D) &&
+                         ResourceMaterializer::UnnormalizedSampleMismatch(mode) == nullptr;
             }
             if (planar) {
                 proof.samplersScaled[r] = true;

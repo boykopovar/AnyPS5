@@ -11012,6 +11012,12 @@ void verifyAnisotropicUnnormalizedSampler() {
     volumeMode.dimension = RdnaImageDimension::Dim3D;
     planeModes.push_back(volumeMode);
     expectFailure([&] { static_cast<void>(populate(plane, volumeDescriptor, sampler, anisotropic, planeModes)); }, "samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized anisotropic samplers: a 2D image whose runtime mode is 3D was scaled");
+    ImageResource rows = plane;
+    rows.dimension = RdnaImageDimension::Dim1DArray;
+    rows.layerRowsCompatible = true;
+    rows.maxArrayLayers = 2u;
+    const DescriptorValue rowsDescriptor{{0x00002000u, 0x03800000u, 0x0000c000u, 0xc0000facu, 3u, 0u, 0u, 0u}, 8u};
+    expectFailure([&] { static_cast<void>(populate(rows, rowsDescriptor, sampler, anisotropic)); }, "samples a 1D array laid out as rows of a 2D image", "unnormalized anisotropic samplers: a 1D array laid out as rows of a 2D image was scaled");
 }
 
 void verifyNullVolumeUnnormalizedSampler() {
