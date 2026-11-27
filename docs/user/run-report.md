@@ -1,6 +1,6 @@
 # Run report
 
-`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](../run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](../run-report-fixtures/) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
+`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](https://github.com/boykopovar/AnyPS5/blob/main/docs/run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](https://github.com/boykopovar/AnyPS5/tree/main/docs/run-report-fixtures) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
 
 Print a readable summary of a report with:
 
@@ -20,6 +20,20 @@ cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > sum
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
+## Triage multiple reports
+
+Pass the report files to `--triage` to print a JSON overview without starting a game:
+
+```sh
+python3 tools/run_report_summary.py --triage run-a/anyps5-report.json run-b/anyps5-report.json
+```
+
+The version 1 `anyps5-run-triage` output includes the input count, unique runs, duplicate reports, and groups by title ID, game content version, build commit, release and modification state. An unknown value stays `null`. These groups describe the supplied reports. They do not establish that the runs used identical hardware or settings.
+
+Each group counts recorded exit types, stages and stop reasons. Its missing-function list counts the runs that observed each function and the total recorded calls. Missing-function coverage separates complete lists, partial lists and runs that did not collect the data. A recovered or incomplete run, or a run that omitted missing functions, has partial coverage when collection was on. Only a complete empty list is counted in `complete_without_observations`. An absent report contributes no evidence.
+
+Copies with the same run ID and matching triage data count once. If two reports disagree about the triage data for a run, the command exits with 2 and identifies the conflicting input by its position. A report it cannot read or interpret also causes exit 2 without a partial summary. The overview omits run IDs, file paths, system details and free-form stop messages.
+
 ## Switching it off
 
 The report is written by default. Turn it off with the launch flag `--aps5-report=off` or the environment variable `APS5_REPORT=0`. The flag wins over the environment variable, and the environment variable wins over the default (on). There is no ini setting. The flag needs a game converted with a new enough relinker; the environment variable also works with older conversions. The runtime reads the flag from the command line and does not remove it, so the game can see `--aps5-report=...` in its arguments. When the game relaunches itself, the choice is passed on through `APS5_REPORT`.
@@ -38,7 +52,7 @@ The report is written once, when the run ends through the guest's `exit` or `_ex
 
 ## What `anyps5.modified` means
 
-`false` means the build's git tree had no change to tracked files, no untracked files that git does not ignore, and no change inside a submodule. `true` means any of those. `null` means the build did not come from a git checkout. A mixed set of libraries from different builds is not detected.
+`true` means the build's Git tree had tracked changes, unignored untracked files, or a modified submodule. A registered library built from a different commit or a modified tree also makes it `true` when library provenance is checked. `false` means the build and all checked libraries were clean and matched. The value is `null` when the build's Git state is unknown, or when an otherwise clean build can't verify a required library.
 
 ## Unknown is null
 
@@ -66,9 +80,9 @@ Every text value in the report goes through the same filter for user names, host
 
 ## Run recipe
 
-Next to `anyps5-report.json` the runtime writes `anyps5-recipe.json`, a small JSON file that records how the run was started, so a report can be reproduced. It holds `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), `environment` (only the `ANYPS5_*` variables that are set), and `configFiles` (the file names of configuration files the run was given, for example the input mapping, without their folders).
+After writing `anyps5-report.json`, the runtime tries to write `anyps5-recipe.json` beside it. The recipe records `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), and `environment` (set `ANYPS5_*` variables that pass the name filter). `configFiles` records the filename from `ANYPS5_INPUT_CONFIG` when supplied. The runtime does not discover default input mappings or per-title profiles for this list.
 
-Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. The recipe is written only when the report is written; the same rules about killed and crashed runs apply.
+Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. If writing the recipe fails, the report is still available.
 
 ## Stop
 
@@ -109,7 +123,7 @@ Values pass through the same text filter as the report, so a path or a user name
 - `coverage` says which sections the runtime collected for this run. A list can be empty because nothing happened or because this build doesn't collect it. With a section's coverage off, don't read its empty list as "nothing missing".
 - `truncated` counts the entries dropped from each capped list, so a capped list never looks complete.
 
-Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. When it would be larger, the runtime drops the lowest-ranked list entries first, then optional descriptions, and never the build, game or stop details.
+Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. If it would be larger, the runtime removes the last entry from the list with the most entries and increments that list's `truncated` count. This repeats until the report fits. If it still exceeds the limit with empty lists, the runtime does not write the report.
 
 ## Privacy
 

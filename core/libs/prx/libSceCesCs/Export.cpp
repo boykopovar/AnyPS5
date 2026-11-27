@@ -2544,6 +2544,11 @@ int APS5_VABI sceCesSJisToUcs2(const void* profile, const uint8_t* sjisBuffer, u
 }
 
 int APS5_VABI sceCesSJisToUtf8(const void* profile, const uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+    if (!profile || (!sjisBuffer && isSjis(profile))) {
+        if (sjisSize && !CesGuest::Store(sjisSize, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        if (utf8Length && !CesGuest::Store(utf8Length, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        return !profile ? CES_ERROR_INVALID_PROFILE : CES_ERROR_INVALID_SRC_BUFFER;
+    }
     if (!utf8Buffer) {
         uint8_t encoded[4];
         uint32_t length = 0;
@@ -2673,7 +2678,10 @@ int APS5_VABI sceCesSJisCodeToJisX0208(uint16_t sjisCode, uint8_t* ku, uint8_t* 
     if (!ku || !ten) return CES_ERROR_INVALID_DST_BUFFER;
     int row = 0;
     int cell = 0;
-    if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell) || row > 94) return CES_ERROR_INVALID_ENCODE;
+    if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell) || row > 94) {
+        if (!CesGuest::Store(ku, uint8_t{0}) || !CesGuest::Store(ten, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        return sjisCode == 0x0020 ? CES_ERROR_UNSUPPORTED_CODE : CES_ERROR_INVALID_ENCODE;
+    }
     if (!CesGuest::Store(ku, static_cast<uint8_t>(row))) return CES_ERROR_INVALID_DST_BUFFER;
     if (!CesGuest::Store(ten, static_cast<uint8_t>(cell))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
@@ -2681,7 +2689,13 @@ int APS5_VABI sceCesSJisCodeToJisX0208(uint16_t sjisCode, uint8_t* ku, uint8_t* 
 
 int APS5_VABI sceCesJisX0208ToSJisCode(uint8_t ku, uint8_t ten, uint16_t* sjisCode) {
     if (!sjisCode) return CES_ERROR_INVALID_DST_BUFFER;
-    if (ku < 1 || ku > 94 || ten < 1 || ten > 94) return CES_ERROR_INVALID_ENCODE;
+    if (ku < 1 || ku > 94 || ten < 1 || ten > 94) {
+        const bool measuredZero = (ku == 0 && ten == 1) || (ku == 1 && (ten == 0 || ten == 95)) || (ku == 93 && ten == 95);
+        const bool measuredCode = ku == 95 && ten == 1;
+        if (!measuredZero && !measuredCode) return CES_ERROR_INVALID_ENCODE;
+        if (!CesGuest::Store(sjisCode, static_cast<uint16_t>(measuredCode ? 0xF040 : 0))) return CES_ERROR_INVALID_DST_BUFFER;
+        return CES_ERROR_ILLEGAL_CODE;
+    }
     uint8_t lead = 0;
     uint8_t trail = 0;
     jisToSjis(ku, ten, lead, trail);

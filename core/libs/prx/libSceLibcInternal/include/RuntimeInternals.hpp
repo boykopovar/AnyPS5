@@ -12,8 +12,8 @@ static_assert(sizeof(LibcCollationState) == 128);
 
 extern "C" {
 
-int APS5_VABI _Atqexit_nid_postfix();
-int APS5_VABI _Atthreadexit_nid_postfix();
+int APS5_VABI _Atqexit_nid_postfix(void (APS5_VABI *func)());
+int APS5_VABI _Atthreadexit_nid_postfix(void (APS5_VABI *func)());
 int APS5_VABI _CStrftime_nid_postfix();
 size_t APS5_VABI _CStrxfrm_nid_postfix(char* destination, const char* source, size_t count);
 size_t APS5_VABI _CWcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count);

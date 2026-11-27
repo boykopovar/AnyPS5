@@ -1,0 +1,17 @@
+# libwebrtc
+
+## change webrtc::rtcp::CommonHeader::Parse
+
+- [webrtc::rtcp::CommonHeader::Parse](../../../core/libs/prx/libwebrtc/src/RtcpCommonHeader.cpp) (libwebrtc) - unverified on PS5; omits upstream `RTC_LOG(LS_WARNING)` on parse failures. Adapted from [common_header.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/common_header.cc) on the 16-byte `CommonHeader` layout. Structs and packet/padding bytes use `GuestPtr`/`GuestBytes` and `GuestWritable_nid_no_patch` before writing; short buffers or wrong versions leave the header untouched, while null, unwritable, or inaccessible buffers throw `std::invalid_argument`. Closes when: warnings are logged and compared with the console.
+
+## change webrtc::rtcp::App
+
+- [webrtc::rtcp::App](../../../core/libs/prx/libwebrtc/src/RtcpApp.cpp) (libwebrtc) - unverified on PS5; omits `RTC_LOG` and type checks in `Parse`. Structs, headers, indices, and buffers use `GuestPtr`/`GuestBytes` and `GuestWritable_nid_no_patch` before writing; `Parse`/`Create` reject payloads exceeding `262140` bytes (`262132` app data), and `SetData` probes destination writability while growing via `max(size, 1.5 * cap)` guest `new[]`. Adapted from [app.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/app.cc), [rtcp_packet.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet.cc), and [buffer.h](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/rtc_base/buffer.h) (same at M127). Closes when: compared with the console.
+
+## change webrtc::rtcp::Nack::Parse
+
+- [webrtc::rtcp::Nack::Parse](../../../core/libs/prx/libwebrtc/src/RtcpNack.cpp) (libwebrtc) - unverified on PS5; omits debug `DCHECK`s and warning logs. Adapted from [nack.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/nack.cc) and [rtpfb.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/rtpfb.cc) (64-byte layout, same at M127). Structs, vectors, headers, and destinations use `GuestPtr`/`GuestBytes` and `GuestWritable_nid_no_patch` before mutation; `Parse`/`Create` cap RTCP payloads (`262140` bytes), validate and prepare both `packed` and `packetIds` vectors (growing to exact size needed instead of doubling) before freeing old buffers, and throw `std::invalid_argument` on bad pointers or inconsistent triples. Closes when: console ABI and behaviour are compared.
+
+## change webrtc::rtcp::TransportFeedback constructor, destructor and Parse
+
+- [webrtc::rtcp::TransportFeedback constructor, destructor and Parse](../../../core/libs/prx/libwebrtc/src/RtcpTransportFeedback.cpp) (libwebrtc) - unverified on PS5. Adapted from M134 [transport_feedback.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/transport_feedback.cc) (152-byte layout, M127 agrees). Structs, headers, payloads, and vectors use `GuestPtr`/`GuestBytes` and `GuestWritable_nid_no_patch` before mutation; `Parse` caps `payloadSize <= 262140`, prepares both `encodedChunks` and `receivedPackets` vectors to exact needed size before freeing old buffers, preserves release failure state, and throws `std::invalid_argument` on bad pointers or inconsistent triples. Closes when: compared with the console.

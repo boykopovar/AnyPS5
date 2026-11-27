@@ -328,9 +328,18 @@ def gained(points, days):
     return points[-1]["libraries"]["done"] - start["libraries"]["done"]
 
 
+def measured_days(points):
+    return (date.fromisoformat(points[-1]["date"]) - date.fromisoformat(points[0]["date"])).days
+
+
+def day_count_text(days):
+    return f"{days} {'day' if days == 1 else 'days'}"
+
+
 def weekly_badge(points):
-    value = f"{gained(points, 7):+,} functions"
-    return progress.badge("implemented in 7 days", points[-1]["libraries"], value, "#2f81f7")
+    days = min(7, measured_days(points))
+    value = f"{gained(points, days):+,} functions" if days else "unavailable"
+    return progress.badge(f"implemented in {day_count_text(days or 7)}", points[-1]["libraries"], value, "#2f81f7")
 
 
 def daily(points):
@@ -358,9 +367,12 @@ def daily(points):
         label = labelled(date.fromisoformat(day), len(bars))
         if label:
             out.append(f'<text x="{x + slot / 2:.1f}" y="{top + 168}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>')
-    week = gained(points, 7)
-    out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last 7 days {week:+,}</text>'
-               f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">Last day {bars[-1][1]:+,}</text>')
+    days = min(7, measured_days(points))
+    gain = gained(points, days)
+    last_days = measured_days(points[-2:])
+    last_label = "Last day" if last_days == 1 else f"Last {last_days}-day interval"
+    out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last {day_count_text(days)} {gain:+,}</text>'
+               f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">{last_label} {bars[-1][1]:+,}</text>')
     out.append(SVG_STYLE)
     out.append("</svg>")
     return "\n".join(out)

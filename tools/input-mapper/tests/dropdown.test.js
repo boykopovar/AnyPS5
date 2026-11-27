@@ -77,6 +77,35 @@ test('choosing the selected type preserves the binding until the type changes', 
     assert.equal(changes, 1);
 });
 
+test('the picker lets an IME handle keys during composition', () => {
+    const japanese = '日本語';
+    const control = createDropdown({label: 'Language', choices: [japanese, 'English'], value: 'English', text: {}});
+    control.trigger.dispatchEvent(new Event('click'));
+    const search = document.getElementById('picker-search');
+    search.value = japanese;
+    search.dispatchEvent(new Event('input'));
+
+    const keydown = (key, isComposing, keyCode) => {
+        const event = Object.assign(new Event('keydown', {cancelable: true}), {key, isComposing, keyCode});
+        Object.defineProperty(event, 'target', {value: search});
+        dialog.dispatchEvent(event);
+        return event;
+    };
+
+    assert.equal(keydown('ArrowDown', true).defaultPrevented, false);
+    assert.equal(keydown('Enter', true).defaultPrevented, false);
+    for (const key of ['ArrowDown', 'ArrowUp', 'Enter']) {
+        assert.equal(keydown(key, false, 229).defaultPrevented, false);
+    }
+    assert.equal(dialog.open, true);
+    assert.equal(control.select.value, 'English');
+
+    assert.equal(keydown('Enter', false).defaultPrevented, true);
+    assert.equal(dialog.open, false);
+    assert.equal(control.select.value, japanese);
+    dialog.dispatchEvent(new Event('close'));
+});
+
 test('a delayed close event leaves the reopened picker active', () => {
     const makeControl = label => createDropdown({label, choices: ['X', 'J'], value: 'X', text: {}});
     const first = makeControl('Cross');
@@ -97,29 +126,4 @@ test('a delayed close event leaves the reopened picker active', () => {
     assert.equal(second.select.value, 'J');
     assert.equal(second.trigger.attributes.get('aria-expanded'), 'false');
     assert.equal(second.trigger.focused, true);
-});
-
-test('the picker leaves candidate navigation and confirmation to the input method', () => {
-    const control = createDropdown({label: 'Language', choices: ['English', '日本語'], value: 'English', text: {}});
-    control.trigger.dispatchEvent(new Event('click'));
-    const search = document.getElementById('picker-search');
-    search.value = '日本';
-    search.dispatchEvent(new Event('input'));
-    function press(key, properties) {
-        const event = Object.assign(new Event('keydown', {cancelable: true}), {key}, properties);
-        Object.defineProperty(event, 'target', {value: search});
-        return dialog.dispatchEvent(event);
-    }
-
-    for (const properties of [{isComposing: true}, {isComposing: false, keyCode: 229}]) {
-        for (const key of ['ArrowDown', 'ArrowUp', 'Enter']) {
-            assert.equal(press(key, properties), true);
-            assert.equal(dialog.open, true);
-            assert.equal(control.select.value, 'English');
-        }
-    }
-    assert.equal(press('Enter'), false);
-    assert.equal(dialog.open, false);
-    assert.equal(control.select.value, '日本語');
-    dialog.dispatchEvent(new Event('close'));
 });
