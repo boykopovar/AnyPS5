@@ -953,6 +953,8 @@ void CheckValueClasses() {
     constexpr int AccountIdMissing = static_cast<int>(0x80559E2Bu);
     constexpr int GuestUser = 0x20000000;
 
+    Require(sceUserServiceInitialize(nullptr) == 0, "the value classes need an initialized user service");
+
     NpOnlineIdObject onlineId;
     _ZN3sce2np10NpOnlineIdC1Ev(&onlineId);
     Require(_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a default online id must be empty");
