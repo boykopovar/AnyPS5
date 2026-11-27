@@ -55,6 +55,12 @@ namespace AgcDriver::Graphics {
         void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
         void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat = false);
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
+        static bool UsesWordGroups(bool wordGroupsFaulty, std::uint32_t elementBytes, bool equation, bool retile, bool image);
+        struct WordGroupProbeResult {
+            std::uint32_t mismatches = 0;
+            std::uint32_t compared = 0;
+        };
+        static WordGroupProbeResult ProbeWordGroups(const Context& context);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
@@ -63,6 +69,7 @@ namespace AgcDriver::Graphics {
         void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
+        friend struct TextureDetilerTestAccess;
         struct Retired {};
         TextureDetiler(const Context& context, Retired);
         void adopt(TextureDetiler& other) noexcept;

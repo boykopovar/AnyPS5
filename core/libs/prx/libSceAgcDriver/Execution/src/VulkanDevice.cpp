@@ -622,6 +622,7 @@ struct VulkanDevice::State {
     bool float32DenormPreserve = false;
     bool float16HostNanCandidate = false;
     bool float16HostNans = false;
+    bool detileWordGroupsFaulty = false;
     bool probingFloatControls = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
@@ -2821,6 +2822,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     static const bool headlessPipelineCache = std::getenv("APS5_HEADLESS_PIPELINE_CACHE") != nullptr;
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly || headlessPipelineCache);
+    if (!compileOnly) {
+        std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::defer_lock);
+        if (!GuestMemory::GpuMutex().HeldByThisThread()) gpuLock.lock();
+        const auto probeStart = std::chrono::steady_clock::now();
+        const auto probe = Graphics::TextureDetiler::ProbeWordGroups(graphicsContext());
+        state->detileWordGroupsFaulty = probe.mismatches != 0u;
+        std::fprintf(stderr, "[detile] word groups: %s (%u of %u probe bytes came out wrong through workgroup shared memory, %.0f ms)\n", state->detileWordGroupsFaulty ? "off, 1- and 2-byte elements move one at a time" : "on", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
@@ -5089,6 +5098,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     };
     context.pipelineCacheSynchronization = state->pipelineCache ? &state->pipelineCache->Synchronization() : nullptr;
     context.individuallyFreeDescriptorSets = state->individuallyFreeDescriptorSets;
+    context.detileWordGroupsFaulty = state->detileWordGroupsFaulty;
     context.hostImportsInHeapUsage = Graphics::HostImportsInHeapUsage(state->driverId);
     context.tessellationPipelineCache = state->tessellationPipelineCache;
     context.orderedInterlockEpilogs = state->orderedInterlockEpilogs;
