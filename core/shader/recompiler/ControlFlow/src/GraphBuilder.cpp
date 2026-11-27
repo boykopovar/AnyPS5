@@ -1940,6 +1940,12 @@ bool splitReadsM0(const RdnaInstruction& instruction) {
         case RdnaOpcode::VMovrelsB32:
         case RdnaOpcode::VMovrelsdB32:
         case RdnaOpcode::VMovrelsd2B32:
+        case RdnaOpcode::VInterpP1F32:
+        case RdnaOpcode::VInterpP2F32:
+        case RdnaOpcode::VInterpMovF32:
+        case RdnaOpcode::VInterpP1llF16:
+        case RdnaOpcode::VInterpP1lvF16:
+        case RdnaOpcode::VInterpP2F16:
         case RdnaOpcode::SSendmsg:
         case RdnaOpcode::SSendmsghalt: return true;
         default: return operandIs(instruction, RdnaOperandKind::M0);

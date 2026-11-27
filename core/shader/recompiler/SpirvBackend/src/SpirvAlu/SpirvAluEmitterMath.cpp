@@ -2286,6 +2286,14 @@ static std::uint32_t TypeU16x2(SpirvEmitterState& state) {
     return state.module.Type(spv::OpTypeVector, state.module.Type(spv::OpTypeInt, 16u, 0u), 2u);
 }
 
+std::uint32_t EmitSplatLowU16x2(SpirvEmitterState& state, std::uint32_t value) {
+    const auto type = TypeU16x2(state);
+    const auto lanes = Unary(state, spv::OpBitcast, type, value);
+    const auto splat = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVectorShuffle, type, splat, lanes, lanes, 0u, 0u);
+    return Unary(state, spv::OpBitcast, TypeU32(state), splat);
+}
+
 static std::uint32_t EmitInteger16x2(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t arg0, std::uint32_t arg1) {
     const auto u16x2 = TypeU16x2(state);
     const auto result = Binary(state, opcode, u16x2, Unary(state, spv::OpBitcast, u16x2, arg0), Unary(state, spv::OpBitcast, u16x2, arg1));

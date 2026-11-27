@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,11 +15,14 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using Jsc::WtfAbi::CStringBuffer;
+using Jsc::WtfAbi::CStringBuffer;
 using Jsc::WtfAbi::OptionalCString;
 using Jsc::WtfAbi::OptionalSHA1Digest;
+using Jsc::WtfAbi::OwnedCString;
 using Jsc::WtfAbi::OptionalString;
 using Jsc::WtfAbi::PersistenceAllocator;
 using Jsc::WtfAbi::PersistenceDecoder;
@@ -26,6 +30,9 @@ using Jsc::WtfAbi::PersistenceEncoder;
 using Jsc::WtfAbi::SHA1;
 using Jsc::WtfAbi::SHA1Digest;
 using Jsc::WtfAbi::StringImpl;
+
+static_assert(std::is_same_v<decltype(&_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE),
+                             OwnedCString (APS5_VABI*)(const SHA1Digest*)>);
 
 namespace {
 
@@ -575,6 +582,91 @@ int main() {
             _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(&encoder, &digest);
         }), __LINE__);
         Check(encoder.size == std::numeric_limits<unsigned>::max() - 19, __LINE__);
+    }
+
+    {
+        SHA1Digest sample{};
+        for (std::size_t i = 0; i < sample.size(); ++i) sample[i] = static_cast<std::uint8_t>(i);
+
+        errno = 53;
+        Check(ThrowsInvalidArgument([] {
+            (void)_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(nullptr);
+        }), __LINE__);
+        Check(errno == 53, __LINE__);
+
+        errno = 54;
+        const auto* unreadable = reinterpret_cast<const SHA1Digest*>(std::uintptr_t{0x10});
+        Check(ThrowsInvalidArgument([&] {
+            (void)_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(unreadable);
+        }), __LINE__);
+        Check(errno == 54, __LINE__);
+
+        Check(ThrowsException<std::runtime_error>([&] {
+            (void)_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(&sample);
+        }), __LINE__);
+
+        TestAllocatorState state{};
+        activeAllocatorState = &state;
+        constexpr PersistenceAllocator allocator{&TestAllocate, &TestDeallocate};
+        RegisterPersistenceAllocator_nid_no_patch(&allocator);
+
+        errno = 55;
+        Check(ThrowsInvalidArgument([&] {
+            (void)_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(unreadable);
+        }), __LINE__);
+        Check(errno == 55 && state.allocateCalls == 0, __LINE__);
+
+        auto CheckHexResult = [&](const SHA1Digest& input, const char* expected) {
+            errno = 56;
+            OwnedCString result = _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(&input);
+            Check(errno == 56, __LINE__);
+            Check(result.buffer != nullptr, __LINE__);
+            Check(result.buffer->refCount == 1u, __LINE__);
+            Check(result.buffer->length == 40u, __LINE__);
+            const char* text = reinterpret_cast<const char*>(result.buffer + 1);
+            Check(std::memcmp(text, expected, 41) == 0, __LINE__);
+            Check(state.lastAllocateSize == sizeof(CStringBuffer) + 41, __LINE__);
+            TestDeallocate(result.buffer);
+        };
+
+        CheckHexResult(sample, "000102030405060708090A0B0C0D0E0F10111213");
+
+        SHA1Digest zeroes{};
+        CheckHexResult(zeroes, "0000000000000000000000000000000000000000");
+
+        SHA1Digest ones{};
+        ones.fill(0xFF);
+        CheckHexResult(ones, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+
+        SHA1Digest highNibbles{};
+        for (std::size_t i = 0; i < highNibbles.size(); ++i)
+            highNibbles[i] = static_cast<std::uint8_t>(0xA0 + (i % 6) * 0x10 + (15 - (i % 16)));
+        CheckHexResult(highNibbles, Hex(highNibbles).c_str());
+
+        for (const auto& entry : cases) {
+            SHA1 sha1 = Make(entry);
+            SHA1Digest computed{};
+            _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &computed);
+            CheckHexResult(computed, entry.digest);
+        }
+
+        using RawSretCall = void* (APS5_VABI*)(CStringBuffer**, const SHA1Digest*);
+        const auto rawCall = reinterpret_cast<RawSretCall>(&_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE);
+        CStringBuffer* sretSlot = nullptr;
+        void* returned = rawCall(&sretSlot, &sample);
+        Check(returned == &sretSlot, __LINE__);
+        Check(sretSlot != nullptr && sretSlot->refCount == 1u && sretSlot->length == 40u, __LINE__);
+        Check(std::memcmp(reinterpret_cast<const char*>(sretSlot + 1), "000102030405060708090A0B0C0D0E0F10111213", 41) == 0, __LINE__);
+        TestDeallocate(sretSlot);
+
+        state.failNext = true;
+        Check(ThrowsException<std::bad_alloc>([&] {
+            (void)_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(&sample);
+        }), __LINE__);
+
+        Check(state.liveAllocations.empty(), __LINE__);
+        RegisterPersistenceAllocator_nid_no_patch(nullptr);
+        activeAllocatorState = nullptr;
     }
     DecodeCStrings();
     DecodeStrings();

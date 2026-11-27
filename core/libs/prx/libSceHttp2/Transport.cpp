@@ -1345,6 +1345,7 @@ int Request::Headers(char** header, std::size_t* size) {
         outputHeader = state->strippedHeaders.data();
         outputSize = state->strippedHeaders.size();
     }
+    if (state->version < 3) ++outputSize;
     return Http2Guest::Store(header, outputHeader) && Http2Guest::Store(size, outputSize) ? 0 : NullPointer;
 }
 

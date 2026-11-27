@@ -9,6 +9,7 @@
 #include <ws2tcpip.h>
 #else
 #include <cerrno>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -17,6 +18,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketSelectDeadline.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceNet/src/ResolverTestHooks.hpp"
@@ -429,6 +431,20 @@ static void CheckStatisticsInfo() {
     Require(sceNetGetStatisticsInfo(&again, 0x1234) == 0);
     Require(errno == 71);
     Require(std::memcmp(&again, &info, sizeof(info)) == 0);
+}
+
+static void CheckInterfaceStats() {
+    Require(Failed(sceNetGetInterfaceStats(reinterpret_cast<NetInterfaceStats*>(std::uintptr_t{0x10}), 0), 14));
+    Require(errno == 14);
+    NetInterfaceStats stats;
+    std::memset(&stats, 0xaa, sizeof(stats));
+    errno = 71;
+    Require(sceNetGetInterfaceStats(&stats, 0) == 0);
+    Require(errno == 71);
+    for (const std::uint32_t word : stats.reserved) Require(word == 0);
+    NetInterfaceStats later{};
+    Require(sceNetGetInterfaceStats(&later, 0) == 0);
+    Require(later.txBytes >= stats.txBytes && later.rxBytes >= stats.rxBytes);
 }
 
 static void CheckIfName() {
@@ -1714,11 +1730,77 @@ static void CheckKernelStatusFlags() {
     Require(fcntl_nid_postfix(descriptor, 3) == 2);
     length = sizeof(enabled);
     Require(sceNetGetsockopt(descriptor, 0xffff, 0x1200, &enabled, &length) == 0 && enabled == 0);
+    constexpr int kept = 0x8 | 0x40 | 0x80 | 0x200 | 0x10000;
+    Require(fcntl_nid_postfix(descriptor, 4, kept | 0x8000) == 0);
+    Require(fcntl_nid_postfix(descriptor, 3) == (2 | kept));
     *__error_nid_postfix() = 0;
-    Require(fcntl_nid_postfix(descriptor, 4, 0x100) == -1 && *__error_nid_postfix() == 45);
+    Require(fcntl_nid_postfix(descriptor, 4, 0x100 | 4) == -1 && *__error_nid_postfix() == 45 && fcntl_nid_postfix(descriptor, 3) == (2 | kept));
     *__error_nid_postfix() = 0;
     Require(fcntl_nid_postfix(descriptor, 1) == -1 && *__error_nid_postfix() == 22);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(descriptor, address.data(), address.size()) == 0 && sceNetListen(descriptor, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(descriptor, address.data(), &size) == 0);
+    const int client = sceNetSocket("kernel-status-client", 2, 1, 6);
+    Require(client >= 0 && sceNetConnect(client, address.data(), address.size()) == 0);
+    Require(fcntl_nid_postfix(client, 3) == 2);
+    const int accepted = sceNetAccept(descriptor, nullptr, nullptr);
+    Require(accepted >= 0 && fcntl_nid_postfix(accepted, 3) == (2 | kept));
+    Require(fcntl_nid_postfix(descriptor, 4, 0) == 0 && fcntl_nid_postfix(descriptor, 3) == 2);
+    Require(fcntl_nid_postfix(accepted, 3) == (2 | kept));
+    for (const int socket : {accepted, client}) Require(close_nid_postfix(socket) == 0);
     Require(close_nid_postfix(descriptor) == 0);
+    const int raced = sceNetSocket("kernel-status-race", 2, 1, 6);
+    Require(raced >= 0);
+    constexpr int first = 4 | 0x8;
+    constexpr int second = 0x40;
+    std::atomic<bool> start{false};
+    std::atomic<bool> mixed{false};
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> setters;
+    for (const int flags : {first, second}) {
+        setters.emplace_back([raced, flags, &start, &failed] {
+            while (!start.load()) std::this_thread::yield();
+            for (int round = 0; round < 2000; ++round)
+                if (fcntl_nid_postfix(raced, 4, flags) != 0) failed = true;
+        });
+    }
+    start = true;
+    for (int round = 0; round < 4000; ++round) {
+        const int seen = fcntl_nid_postfix(raced, 3);
+        if (seen != 2 && seen != (2 | first) && seen != (2 | second)) mixed = true;
+    }
+    for (auto& setter : setters) setter.join();
+    const int last = fcntl_nid_postfix(raced, 3);
+    Require(!failed && !mixed && (last == (2 | first) || last == (2 | second)));
+    Require(close_nid_postfix(raced) == 0);
+    const int toggled = sceNetSocket("kernel-status-nbio", 2, 1, 6);
+    Require(toggled >= 0);
+    std::atomic<bool> go{false};
+    std::atomic<bool> toggleFailed{false};
+    std::thread toggler([toggled, &go, &toggleFailed] {
+        while (!go.load()) std::this_thread::yield();
+        for (int round = 0; round < 2000; ++round) {
+            const int enabled = round & 1;
+            if (sceNetSetsockopt(toggled, 0xffff, 0x1200, &enabled, sizeof(enabled)) != 0) toggleFailed = true;
+        }
+    });
+    go = true;
+    bool keptStable = true;
+    for (int round = 0; round < 2000; ++round) {
+        const int flags = (round & 1) != 0 ? (4 | 0x8) : 0x40;
+        if (fcntl_nid_postfix(toggled, 4, flags) != 0 || (fcntl_nid_postfix(toggled, 3) & ~4) != (2 | (flags & ~4))) keptStable = false;
+    }
+    toggler.join();
+    Require(!toggleFailed && keptStable);
+#ifndef _WIN32
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    Require(KernelFindSocketNative_nid_no_patch(toggled, &owner, &native));
+    const bool hostNonblocking = (::fcntl(static_cast<int>(native), F_GETFL) & O_NONBLOCK) != 0;
+    Require(hostNonblocking == ((fcntl_nid_postfix(toggled, 3) & 4) != 0));
+#endif
+    Require(close_nid_postfix(toggled) == 0);
 }
 
 static void CheckAddressText(int family, const char* text) {
@@ -3201,6 +3283,7 @@ int main(int argc, char** argv) {
     CheckPoolStats();
     CheckPoolErrors();
     CheckStatisticsInfo();
+    CheckInterfaceStats();
     CheckIfName();
     CheckExForwards();
     CheckSysctl();
