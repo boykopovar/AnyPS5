@@ -1190,6 +1190,22 @@ int main() {
         return true;
     });
 
+    passed &= run("a merged hull program that keeps its outputs on chip is refused before its LDS writes are taken as merged records", [] {
+        Hull hull;
+        auto& record = hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u));
+        auto& own = hull.builder.IAdd(record, hull.builder.IMul(hull.invocation(), hull.builder.Constant(16u)));
+        static_cast<void>(hull.builder.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&own, &hull.builder.Constant(7u), &hull.builder.ConstantBool(true)}, MemoryFlags{0u, RingWritePc}));
+        static_cast<void>(hull.read(hull.builder.IAdd(hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u)), hull.builder.Constant(4u))));
+        const ShaderTessellationInputInfo merged{.inputControlPoints = 1u, .outputControlPoints = 1u, .patchesPerGroup = 1u, .mergedHull = true, .onChip = true};
+        const TessellationTargetLimits limits{32u, 128u, 128u, 120u, 4096u, 128u, 128u};
+        try {
+            TessellationLowering{}.Lower(hull.program, merged, &limits);
+        } catch (const std::exception& error) {
+            return std::string(error.what()).find("merged hull program cannot keep its outputs on chip") != std::string::npos;
+        }
+        return false;
+    });
+
     passed &= run("quad factors at an address that adds the invocation are refused when the hull program has several control points", [] {
         Hull hull;
         hull.writeFactor(hull.builder.IAdd(hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(24u)), hull.builder.IMul(hull.invocation(), hull.builder.Constant(4u))));
