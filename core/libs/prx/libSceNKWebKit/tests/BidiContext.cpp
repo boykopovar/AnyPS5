@@ -291,8 +291,19 @@ static void TestGuestPointers() {
     RequireNotImplemented([&] {
         create(reinterpret_cast<BidiContextRef*>(pages.Guard()), 0, kLTR, false, kStyle, nullptr);
     });
+    Require(shared.ltr->refCount == ltrBefore);
     RequireNotImplemented([&] {
         create(reinterpret_cast<BidiContextRef*>(pages.ReadOnly()), 0, kLTR, false, kStyle, shared.ltr);
+    });
+    Require(shared.ltr->refCount == ltrBefore);
+
+    BidiContext customParent{1, Bits(2, kLTR, false, kStyle), nullptr};
+    RequireNotImplemented([&] {
+        create(reinterpret_cast<BidiContextRef*>(pages.ReadOnly() - 4), 1, kRTL, false, kStyle, &customParent);
+    });
+    Require(customParent.refCount == 1);
+    RequireNotImplemented([&] {
+        create(reinterpret_cast<BidiContextRef*>(pages.ReadOnly() - 4), 0, kLTR, false, kStyle, nullptr);
     });
     Require(shared.ltr->refCount == ltrBefore);
 

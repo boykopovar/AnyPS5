@@ -102,21 +102,31 @@ struct RawAllocGuard {
     }
 };
 
-struct CreatedContextGuard {
+struct CreatedContext {
     BidiContext* ptr = nullptr;
-    BidiContext* parent = nullptr;
+    BidiContext* referencedParent = nullptr;
+    bool allocated = false;
+};
+
+struct CreatedContextGuard {
+    CreatedContext created{};
 
     ~CreatedContextGuard() {
-        if (!ptr) return;
+        if (!created.ptr) return;
         try {
-            if (parent) {
-                const GuestArena::HostWrite guard(parent, sizeof(BidiContext));
-                if (guard.Open() && GuestWritable_nid_no_patch(parent, sizeof(BidiContext))) {
-                    std::atomic_ref<unsigned>(parent->refCount).fetch_sub(1);
+            if (created.allocated) {
+                if (created.referencedParent) {
+                    const GuestArena::HostWrite guard(created.referencedParent, sizeof(BidiContext));
+                    if (guard.Open() && GuestWritable_nid_no_patch(created.referencedParent, sizeof(BidiContext))) {
+                        std::atomic_ref<unsigned>(created.referencedParent->refCount).fetch_sub(1);
+                    }
                 }
-                _ZN3WTF8fastFreeEPv(ptr);
+                _ZN3WTF8fastFreeEPv(created.ptr);
             } else {
-                std::atomic_ref<unsigned>(ptr->refCount).fetch_sub(1);
+                const GuestArena::HostWrite guard(created.ptr, sizeof(BidiContext));
+                if (guard.Open() && GuestWritable_nid_no_patch(created.ptr, sizeof(BidiContext))) {
+                    std::atomic_ref<unsigned>(created.ptr->refCount).fetch_sub(1);
+                }
             }
         } catch (...) {
         }
@@ -155,8 +165,8 @@ BidiContext* CreateUncached(unsigned char level, std::int32_t direction, bool ov
     return context;
 }
 
-BidiContext* Create(unsigned char level, std::int32_t direction, bool override, std::uint32_t source, BidiContext* parent, const char* function) {
-    if (parent) return CreateUncached(level, direction, override, source, parent, function);
+CreatedContext Create(unsigned char level, std::int32_t direction, bool override, std::uint32_t source, BidiContext* parent, const char* function) {
+    if (parent) return CreatedContext{CreateUncached(level, direction, override, source, parent, function), parent, true};
     BidiContext* shared = nullptr;
     if (!level) {
         if (!override) {
@@ -174,14 +184,14 @@ BidiContext* Create(unsigned char level, std::int32_t direction, bool override, 
         shared = rtlOverrideContext;
     }
     Ref(shared, function);
-    return shared;
+    return CreatedContext{shared, nullptr, false};
 }
 
 BidiContext* CopyAndRebaselineLevel(const BidiContext& context, BidiContext* parent, const char* function) {
     int newLevel = parent ? static_cast<int>(Level(*parent)) : 0;
     if (Direction(context) == kRightToLeft) newLevel = static_cast<unsigned char>((newLevel + 1) | 1);
     else if (parent) newLevel = static_cast<unsigned char>((newLevel + 2) & ~1);
-    return Create(static_cast<unsigned char>(newLevel), Direction(context), Override(context), Source(context), parent, function);
+    return Create(static_cast<unsigned char>(newLevel), Direction(context), Override(context), Source(context), parent, function).ptr;
 }
 
 struct BidiContextGuard {
@@ -200,11 +210,11 @@ BidiContextRef* APS5_VABI _ZN7WebCore11BidiContext6createEh14UCharDirectionbNS_1
     BidiContextRef* result, unsigned char level, std::int32_t direction, bool override, std::uint32_t source, BidiContext* parent) {
     if (!result) throw std::invalid_argument("WebCore::BidiContext::create: null result");
     RequireWritableGuestBytes(result, sizeof(BidiContextRef), __func__);
-    CreatedContextGuard created{Create(level, direction, override, source, parent, __func__), parent};
-    const BidiContextRef output{created.ptr};
+    CreatedContextGuard created{Create(level, direction, override, source, parent, __func__)};
+    const BidiContextRef output{created.created.ptr};
     if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    created.ptr = nullptr;
+    created.created.ptr = nullptr;
     return result;
 }
 
