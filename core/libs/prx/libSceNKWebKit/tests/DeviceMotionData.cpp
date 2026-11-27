@@ -6,6 +6,13 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 using NKWebKit::WebCoreAbi::LegacyDeviceMotionData;
 using NKWebKit::WebCoreAbi::LegacyDeviceMotionVector;
 using NKWebKit::WebCoreAbi::LegacyDeviceOrientationData;
@@ -140,9 +147,151 @@ static void TestMotion() {
     kept->deref();
 }
 
+template<typename TFunction>
+static bool ThrowsNotImplemented(TFunction&& function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+
+    template<typename T>
+    T* SplitReadWriteToReadOnly() const {
+        return reinterpret_cast<T*>(base + pageSize - sizeof(T) / 2);
+    }
+
+    template<typename T>
+    T* SplitReadOnlyToGuard() const {
+        return reinterpret_cast<T*>(base + pageSize * 2 - sizeof(T) / 2);
+    }
+};
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    constexpr auto createOrientation = &_ZN7WebCore21DeviceOrientationData6createEN3WTF8OptionalIdEES3_S3_NS2_IbEE;
+    constexpr auto createMotion = &_ZN7WebCore16DeviceMotionData6createEON3WTF6RefPtrINS0_12AccelerationENS1_13DumbPtrTraitsIS3_EEEES7_ONS2_INS0_12RotationRateENS4_IS8_EEEENS1_8OptionalIdEE;
+
+    const LegacyOptionalDouble validDouble = Some(1.0);
+    const LegacyOptionalBool validBool{true, true};
+    const auto* unmappedDouble = reinterpret_cast<const LegacyOptionalDouble*>(pages.Guard());
+    const auto* splitDouble = pages.SplitReadOnlyToGuard<const LegacyOptionalDouble>();
+    const auto* unmappedBool = reinterpret_cast<const LegacyOptionalBool*>(pages.Guard());
+    const auto* splitBool = pages.SplitReadOnlyToGuard<const LegacyOptionalBool>();
+
+    Require(ThrowsNotImplemented([&] { createOrientation(unmappedDouble, &validDouble, &validDouble, &validBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(splitDouble, &validDouble, &validDouble, &validBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(&validDouble, unmappedDouble, &validDouble, &validBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(&validDouble, splitDouble, &validDouble, &validBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(&validDouble, &validDouble, unmappedDouble, &validBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(&validDouble, &validDouble, splitDouble, &validBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(&validDouble, &validDouble, &validDouble, unmappedBool); }));
+    Require(ThrowsNotImplemented([&] { createOrientation(&validDouble, &validDouble, &validDouble, splitBool); }));
+
+    auto* unmappedSlot = reinterpret_cast<LegacyDeviceMotionVector**>(pages.Guard());
+    auto* readOnlySlot = reinterpret_cast<LegacyDeviceMotionVector**>(pages.ReadOnly());
+    auto* splitSlot = pages.SplitReadWriteToReadOnly<LegacyDeviceMotionVector*>();
+    const std::size_t splitSlotHead = sizeof(LegacyDeviceMotionVector*) / 2;
+
+    LegacyDeviceMotionVector* keptA = Vector(10);
+    LegacyDeviceMotionVector* keptB = Vector(20);
+    LegacyDeviceMotionVector* const origA = keptA;
+    LegacyDeviceMotionVector* const origB = keptB;
+
+    Require(ThrowsNotImplemented([&] { createMotion(unmappedSlot, &keptA, &keptB, &validDouble); }));
+    Require(keptA == origA && keptB == origB);
+    Require(ThrowsNotImplemented([&] { createMotion(readOnlySlot, &keptA, &keptB, &validDouble); }));
+    Require(keptA == origA && keptB == origB);
+    std::memset(splitSlot, 0x5A, splitSlotHead);
+    Require(ThrowsNotImplemented([&] { createMotion(splitSlot, &keptA, &keptB, &validDouble); }));
+    for (std::size_t i = 0; i < splitSlotHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitSlot)[i] == 0x5A);
+    Require(keptA == origA && keptB == origB);
+
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, unmappedSlot, &keptB, &validDouble); }));
+    Require(keptA == origA && keptB == origB);
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, readOnlySlot, &keptB, &validDouble); }));
+    Require(keptA == origA && keptB == origB);
+    std::memset(splitSlot, 0x6B, splitSlotHead);
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, splitSlot, &keptB, &validDouble); }));
+    for (std::size_t i = 0; i < splitSlotHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitSlot)[i] == 0x6B);
+    Require(keptA == origA && keptB == origB);
+
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, &keptB, unmappedSlot, &validDouble); }));
+    Require(keptA == origA && keptB == origB);
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, &keptB, readOnlySlot, &validDouble); }));
+    Require(keptA == origA && keptB == origB);
+    std::memset(splitSlot, 0x7C, splitSlotHead);
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, &keptB, splitSlot, &validDouble); }));
+    for (std::size_t i = 0; i < splitSlotHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitSlot)[i] == 0x7C);
+    Require(keptA == origA && keptB == origB);
+
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, &keptB, &keptB, unmappedDouble); }));
+    Require(keptA == origA && keptB == origB);
+    Require(ThrowsNotImplemented([&] { createMotion(&keptA, &keptB, &keptB, splitDouble); }));
+    Require(keptA == origA && keptB == origB);
+
+    keptA->deref();
+    keptB->deref();
+
+    LegacyDeviceMotionVector* triple = Vector(30);
+    LegacyDeviceMotionVector* const origTriple = triple;
+    {
+        const LegacyDeviceRef<LegacyDeviceMotionData> data = createMotion(&triple, &triple, &triple, &validDouble);
+        Require(triple == nullptr);
+        Require(data.ptr->acceleration == origTriple && data.ptr->accelerationIncludingGravity == nullptr && data.ptr->rotationRate == nullptr);
+    }
+}
+
 int main() {
     TestOrientation();
     TestMotion();
+    TestGuestPointers();
     std::puts("libSceNKWebKit device motion data tests passed");
     return 0;
 }
