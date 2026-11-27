@@ -13,32 +13,32 @@
 | `Unknown` | `-3HTIXaIx7U` |
 | `Unknown` | `0Oz9yG27ovw` |
 | `Unknown` | `1pWftEwJg6w` |
-| `Unknown` | `4Ac+2ezx1lY` |
-| `Unknown` | `6hw5LpQh6-M` |
+| `sceAudioOut2GetLoContextParam` | `4Ac+2ezx1lY` |
+| `sceAudioOut2LoPortGetParam` | `6hw5LpQh6-M` |
 | `Unknown` | `87IcZgIbuxQ` |
 | `Unknown` | `8qn2ceJ4HVg` |
-| `Unknown` | `96EqlBA6q4I` |
-| `Unknown` | `B88xqT6vI88` |
+| `sceAudioOut2GetLoContextHandle` | `96EqlBA6q4I` |
+| `sceAudioOut2SetDebugAudioMode` | `B88xqT6vI88` |
 | `Unknown` | `DEpjrJh-flc` |
 | `Unknown` | `GIcJie+rjvM` |
 | `Unknown` | `KeHpCnAvtGw` |
-| `Unknown` | `Oqn65W-w8bo` |
+| `sceAudioOut2GetMainUserHandle` | `Oqn65W-w8bo` |
 | `Unknown` | `PNeVjMfwq1M` |
 | `Unknown` | `PSg2qlLNCqM` |
 | `Unknown` | `UAk5DtTuUMo` |
 | `Unknown` | `WKpJvbBdcbU` |
 | `Unknown` | `WOfIge9NmBA` |
 | `Unknown` | `YSm2BXd3gfE` |
-| `Unknown` | `Zk1Cn7Z2tVs` |
+| `sceAudioOut2GetDebugMemoryInfo` | `Zk1Cn7Z2tVs` |
 | `Unknown` | `bd5H255vnsk` |
 | `Unknown` | `f3xQNbru2m8` |
-| `Unknown` | `g33sQzMRRmQ` |
+| `sceAudioOut2EnableTVVirtual` | `g33sQzMRRmQ` |
 | `Unknown` | `gaUU6uC15vs` |
 | `Unknown` | `jEcHKuQ4k8I` |
 | `Unknown` | `lyHeaetMYXg` |
-| `Unknown` | `r5LqvBxfG+0` |
+| `sceAudioOutSysGetLastOutputTime` | `r5LqvBxfG+0` |
 | `Unknown` | `rSyeebu6wWI` |
-| `Unknown` | `rzjbvXzvDtE` |
+| `sceAudioOut2AssignHRTF` | `rzjbvXzvDtE` |
 | `Unknown` | `spvw78DsDzU` |
 | `Unknown` | `tqTyWw6NgyU` |
 | `Unknown` | `tvPlXmc4MHs` |
@@ -81,7 +81,7 @@
 - [sceAudioOut2LoTerminate](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) - returns 0, as the PS5 13.60 module (0x248d0) does whether or not the low-latency service runs. The module disconnects from the audio server and clears the service tables; here `sceAudioOut2LoInit` starts no service and open contexts and ports are left as they are
 - [sceAudioOutMasteringTerm](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - returns 0 once and clears the state `sceAudioOutMasteringInit(0)` set; a Term without a matching Init returns `0x80260203`, as on a PS5 (firmware 11.60, payload process, after `sceAudioOutInit`). There is no mastering stage to tear down
 - [sceAudioOutSetMainOutput](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) (libSceAudioOut) - returns 0 and does nothing, as the console function does on firmware 12.70: [PS5-Audio-Passthrough-Research](https://github.com/sainsaji/PS5-Audio-Passthrough-Research/blob/cf3c921d79bf00db4847f31b68a7bd95a8037cd7/docs/FINDINGS.md#L25) reads that export as `xor eax,eax; ret`. The export reads no argument, so its parameters stay unknown; other firmware versions are unverified
-- [sceAudioOut2ContextSetAttributes](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - for a valid context and attribute list, returns 0 and ignores every attribute (an invalid context gives `INVALID_HANDLE`, a null list with a nonzero count `INVALID_ARGUMENT`); what a context attribute changes on a console is unknown. PPSA25286 01.000.568 sets attribute 2 to a 4-byte 1 at start-up, and PPSA02225 passes two attributes from an object at its single call.
+- [sceAudioOut2ContextSetAttributes](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - for a valid context and a non-null attribute list, returns 0 and ignores every attribute (an invalid context gives `INVALID_HANDLE`, a null list 0x80268001); what a context attribute changes on a console is unknown. A PS5 (firmware 11.60, payload process; a title process may differ) accepted ids 1 and 2 with a 4-byte value 1 and refused with 0x80268001 a null list with count 0 or 1, as this library does, and ids 0, 3, 4, 0x100 and 0xffffffff, a null value and size 0 for id 2, which it still accepts; it answered 0 for context 0, which this library refuses; ids above 4 other than 0x100 are not measured. PPSA25286 01.000.568 sets attribute 2 to a 4-byte 1 at start-up, and PPSA02225 passes two attributes from an object at its single call.
 
 ### Unknown function info
 

@@ -59,6 +59,7 @@ const BooleanCase booleanCases[]{
     {"IsNSURLSessionWebSocketEnabled", WKPreferencesSetIsNSURLSessionWebSocketEnabled, WKPreferencesGetIsNSURLSessionWebSocketEnabled, false},
     {"UseLegacyTextAlignPositionedElementBehavior", WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior, WKPreferencesUseLegacyTextAlignPositionedElementBehavior, false},
     {"AVFoundationEnabled", WKPreferencesSetAVFoundationEnabled, WKPreferencesGetAVFoundationEnabled, false},
+    {"Accelerated2DCanvasEnabled", WKPreferencesSetAccelerated2DCanvasEnabled, WKPreferencesGetAccelerated2DCanvasEnabled, true},
     {"AcceleratedCompositingEnabled", WKPreferencesSetAcceleratedCompositingEnabled, WKPreferencesGetAcceleratedCompositingEnabled, true},
     {"AcceleratedDrawingEnabled", WKPreferencesSetAcceleratedDrawingEnabled, WKPreferencesGetAcceleratedDrawingEnabled, true},
     {"AggressiveTileRetentionEnabled", WKPreferencesSetAggressiveTileRetentionEnabled, WKPreferencesGetAggressiveTileRetentionEnabled, false},
@@ -606,10 +607,28 @@ void CreationAndUnknownDefaults() {
     RequireThrows<std::runtime_error>([&] { WKPreferencesGetMediaSourceEnabled(copiedUnknown.Get()); });
 }
 
+void Accelerated2DCanvas() {
+    auto preferences = Create();
+    Require(WKPreferencesGetAccelerated2DCanvasEnabled(preferences.Get()));
+    Require(WKPreferencesGetCanvasUsesAcceleratedDrawing(preferences.Get()));
+
+    WKPreferencesSetAccelerated2DCanvasEnabled(preferences.Get(), false);
+    Require(!WKPreferencesGetAccelerated2DCanvasEnabled(preferences.Get()));
+    Require(!WKPreferencesGetCanvasUsesAcceleratedDrawing(preferences.Get()));
+
+    WKPreferencesSetCanvasUsesAcceleratedDrawing(preferences.Get(), true);
+    Require(WKPreferencesGetAccelerated2DCanvasEnabled(preferences.Get()));
+    Require(WKPreferencesGetCanvasUsesAcceleratedDrawing(preferences.Get()));
+
+    RequireThrows<std::invalid_argument>([&] { WKPreferencesGetAccelerated2DCanvasEnabled(nullptr); });
+    RequireThrows<std::invalid_argument>([&] { WKPreferencesSetAccelerated2DCanvasEnabled(nullptr, true); });
+}
+
 }
 
 int main() {
     Booleans();
+    Accelerated2DCanvas();
     LegacyTabToLinks();
     Deprecated();
     Numeric();

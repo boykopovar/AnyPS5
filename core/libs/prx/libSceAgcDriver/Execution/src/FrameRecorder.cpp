@@ -450,7 +450,16 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     for (auto& span : spans) {
         span.since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
         blocks.insert(blocks.end(), written.begin(), written.end());
+        GuestMemory::ChangedComparedPages(span.address, static_cast<std::size_t>(span.bytes), written);
+        blocks.insert(blocks.end(), written.begin(), written.end());
     }
+    std::ranges::sort(blocks);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    for (const auto& [begin, end] : blocks) {
+        if (!merged.empty() && merged.back().second >= begin) merged.back().second = std::max(merged.back().second, end);
+        else merged.emplace_back(begin, end);
+    }
+    blocks = std::move(merged);
     auto& driver = DriverDetail::Driver::Get();
     const struct Hold {
         DriverDetail::Driver& driver;
@@ -483,6 +492,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         for (std::uint64_t at = 0; at < range.bytes;) {
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
             readGuest(range.address + at, bytes);
+            if (stored.kind == FrameRangeKind::Unwatched) GuestMemory::SeedComparedPages(range.address + at, bytes);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
             if (!zero || collected) {
                 writer->WriteDelta(group, completed, range.address + at, bytes);
@@ -507,6 +517,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
         readGuest(begin, bytes);
+        GuestMemory::UpdateComparedPages(begin, bytes);
         writer->WriteDelta(group, completed, begin, bytes);
         deltaBytes += bytes.size();
         any = true;
@@ -533,6 +544,7 @@ void FrameRecorder::snapshot(const Range& range) {
         if (abandonIfDiskLow()) return;
         bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(SnapshotPieceBytes, range.bytes - at)));
         readGuest(range.address + at, bytes);
+        if (range.kind == FrameRangeKind::Unwatched) GuestMemory::SeedComparedPages(range.address + at, bytes);
         snapshotBytes += writer->WriteSnapshot(range.address + at, bytes);
     }
 }
@@ -552,6 +564,7 @@ bool FrameRecorder::abandonIfDiskLow() {
 
 void FrameRecorder::stop(const char* reason) {
     GuestMemory::SetOwnStoreCompare(false);
+    GuestMemory::SetLeftWatchCompare(false);
     warnings.push_back(reason);
     std::fprintf(stderr, "[frame-capture] %s\n", reason);
     try {
@@ -580,6 +593,7 @@ void FrameRecorder::start() {
     rewindTailFlips = std::max(rewindTailFlips, driver.RewindTailFlips());
     if (!GuestMemory::WriteWatched()) throw std::runtime_error("frame capture: the guest write watch is unavailable, so CPU stores during the frames cannot be recorded");
     GuestMemory::SetOwnStoreCompare(true);
+    GuestMemory::SetLeftWatchCompare(true);
     startedAt = std::chrono::steady_clock::now();
     startBoundary = boundaries;
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
@@ -637,6 +651,7 @@ void FrameRecorder::start() {
 void FrameRecorder::finish() {
     emitDelta();
     GuestMemory::SetOwnStoreCompare(false);
+    GuestMemory::SetLeftWatchCompare(false);
     if (!writer) return;
     auto end = make(FrameCallKind::End);
     end.ordinal = ++ordinal;
@@ -688,12 +703,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
         const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
-        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        const auto access = (allocation->readable ? FrameRangeAccess::Readable : 0u) | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         for (auto address = first; address < end;) {
             MEMORY_BASIC_INFORMATION info{};
             if (VirtualQuery(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), &info, sizeof(info)) == 0) throw std::runtime_error("frame capture: VirtualQuery failed inside the guest arena");
@@ -724,12 +739,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
         const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
-        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        const auto access = (allocation->readable ? FrameRangeAccess::Readable : 0u) | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
             if (!mapping.readable && !mapping.writable && !mapping.executable) return;
             const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable) {

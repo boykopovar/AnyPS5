@@ -13,6 +13,8 @@ static void Require(bool value) { if (!value) std::abort(); }
 static const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<const std::uint8_t*>(text); }
 
 constexpr int invalidParameter = static_cast<int>(0x805C0001);
+constexpr int invalidProfile = static_cast<int>(0x805C0004);
+constexpr int unsupportedCode = static_cast<int>(0x805C0024);
 constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 constexpr int invalidEncode = static_cast<int>(0x805C0014);
 constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
@@ -49,6 +51,15 @@ static bool SJisEncodes(const void* profile, std::uint16_t ucs2, const char* exp
     std::uint8_t mbcs[4] = {};
     std::uint32_t size = 0;
     return sceCesUcs2ToSJis(ucs2, profile, mbcs, sizeof(mbcs), &size) == 0 && size == std::strlen(expected) && std::memcmp(mbcs, expected, size) == 0;
+}
+
+static void CheckRejectedUtf8ToSJis(const void* profile, const char* text, std::uint32_t length, int expected) {
+    std::uint32_t consumed = 0xBBBBBBBB;
+    std::uint32_t produced = 0xBBBBBBBB;
+    std::uint8_t output[] = {0xAA, 0xAA, 0xAA, 0xAA};
+    Require(sceCesUtf8ToSJis(Bytes(text), length, &consumed, profile, output, sizeof(output), &produced) == expected);
+    Require(consumed == length && produced == 0);
+    Require(std::all_of(std::begin(output), std::end(output), [](std::uint8_t byte) { return byte == 0xAA; }));
 }
 
 static bool EncodeLeavesOutputs(int expected, const void* profile, std::uint16_t ucs2, bool sjis) {
@@ -237,6 +248,42 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
     Require(sceCesMbcsStrToUcs2Str(context, Bytes("A\\"), 2, &used, wide, 8, &produced) == 0 && used == 2 && produced == 2 && wide[1] == 0x00A5);
 }
 
+static void CheckSJisToJisFailure(std::uint16_t sjisCode, int expected) {
+    std::uint8_t ku = 0xAA;
+    std::uint8_t ten = 0xAA;
+    Require(sceCesSJisCodeToJisX0208(sjisCode, &ku, &ten) == expected);
+    Require(ku == 0 && ten == 0);
+}
+
+static void CheckJisToSJisFailure(std::uint8_t ku, std::uint8_t ten, std::uint16_t expectedCode) {
+    std::uint16_t code = 0xAAAA;
+    Require(sceCesJisX0208ToSJisCode(ku, ten, &code) == outOfCodeSpace);
+    Require(code == expectedCode);
+}
+
+static void TestJisHelperErrorOutputs() {
+    CheckSJisToJisFailure(0x0020, unsupportedCode);
+    CheckSJisToJisFailure(0xA0A0, invalidEncode);
+    CheckJisToSJisFailure(0, 1, 0);
+    CheckJisToSJisFailure(1, 0, 0);
+    CheckJisToSJisFailure(1, 95, 0);
+    CheckJisToSJisFailure(93, 95, 0);
+    CheckJisToSJisFailure(95, 1, 0xF040);
+}
+
+static void TestSJisToUtf8NullArguments(const void* sjis) {
+    std::uint32_t size = 0xBBBBBBBB;
+    std::uint32_t length = 0xBBBBBBBB;
+    std::uint8_t out[16];
+    std::memset(out, 0xAA, sizeof(out));
+    Require(sceCesSJisToUtf8(nullptr, Bytes("\x82\xA0"), 2, &size, out, sizeof(out), &length) == invalidProfile);
+    Require(size == 0 && length == 0);
+    size = 0xBBBBBBBB;
+    length = 0xBBBBBBBB;
+    Require(sceCesSJisToUtf8(sjis, nullptr, 2, &size, out, sizeof(out), &length) == static_cast<int>(0x805C0010));
+    Require(size == 0 && length == 0);
+}
+
 int main() {
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
     constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
@@ -267,6 +314,11 @@ int main() {
     Require(sceCesSJisToUtf8(sjis, Bytes("\x93\xFA"), 2, &consumed, utf8, sizeof(utf8), &produced) == 0);
     Require(consumed == 2 && produced == 3 && std::memcmp(utf8, "\xE6\x97\xA5", 3) == 0);
     Require(sceCesSJisToUtf8(sjis, Bytes("\x93\xFA"), 2, &consumed, utf8, 2, &produced) == dstBufferEnd);
+
+    consumed = 0xBBBBBBBB;
+    produced = 0xBBBBBBBB;
+    Require(sceCesSJisToUtf8(sjis, Bytes("\x82\xA0"), 2, &consumed, nullptr, 16, &produced) == invalidDstBuffer);
+    Require(consumed == 2 && produced == 3);
 
     std::uint16_t utf16 = 0;
     Require(sceCesSJisToUtf16(sjis, Bytes("\x82\xA0"), 2, &consumed, &utf16, 1, &produced) == 0 && utf16 == 0x3042 && produced == 1);
@@ -311,6 +363,10 @@ int main() {
     Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 2, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == srcBufferEnd);
     Require(sceCesUtf8ToSJis(Bytes("\xF0\x9F\x98\x80"), 4, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUtf8ToSJis(nullptr, 3, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
+    CheckRejectedUtf8ToSJis(sjis, "\xF0\x90\x80\x80", 4, unassignedCode);
+    CheckRejectedUtf8ToSJis(sjis, "\xED\xA0\x80", 3, outOfCodeSpace);
+    CheckRejectedUtf8ToSJis(sjis, "\xF4\x90\x80\x80", 4, unassignedCode);
+    CheckRejectedUtf8ToSJis(sjis, "\xC0\x80", 2, outOfCodeSpace);
     Require(sceCesUtf8ToEucJp(Bytes("\xE6\x97\xA5"), 3, &consumed, euc, mbcs, sizeof(mbcs), &produced) == 0);
     Require(produced == 2 && std::memcmp(mbcs, "\xC6\xFC", 2) == 0);
     Require(sceCesUtf8ToEucJp(nullptr, 3, &consumed, euc, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
@@ -376,6 +432,8 @@ int main() {
     Require(sceCesJisX0208ToSJisCode(0, 2, &sjisCode) == invalidEncode);
     Require(sceCesJisX0208ToSJisCode(4, 95, &sjisCode) == invalidEncode);
     Require(sceCesJisX0208ToSJisCode(4, 2, nullptr) == invalidDstBuffer);
+    TestJisHelperErrorOutputs();
+    TestSJisToUtf8NullArguments(sjis);
     for (int row = 1; row <= 94; ++row) {
         for (int cell = 1; cell <= 94; ++cell) {
             Require(sceCesJisX0208ToSJisCode(static_cast<std::uint8_t>(row), static_cast<std::uint8_t>(cell), &sjisCode) == 0);

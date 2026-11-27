@@ -15,7 +15,13 @@ public:
     static constexpr std::size_t MaxFrames = 160;
 
     void Push(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate, unsigned percent = 100) {
-        if (rate == 0) return;
+        if (rate == 0 || frames == 0 || left == nullptr || right == nullptr) return;
+        if (activeRate != 0 && activeRate != rate) {
+            sum = {};
+            summed = 0;
+            phase = 0;
+        }
+        activeRate = rate;
         const float gain = static_cast<float>(std::min(percent, 100u)) / 100.0f;
         for (std::uint32_t frame = 0; frame < frames; ++frame) {
             const auto offset = static_cast<std::size_t>(frame) * stride;
@@ -24,10 +30,16 @@ public:
             ++summed;
             phase += Rate;
             if (phase < rate) continue;
-            phase -= rate;
-            append({sample(sum[0] / summed * gain), sample(sum[1] / summed * gain)});
+            const std::array<std::int8_t, 2> stereo{
+                sample(sum[0] / summed * gain),
+                sample(sum[1] / summed * gain),
+            };
             sum = {};
             summed = 0;
+            while (phase >= rate) {
+                phase -= rate;
+                append(stereo);
+            }
         }
     }
 
@@ -74,7 +86,8 @@ private:
     std::size_t size = 0;
     std::array<double, 2> sum{};
     std::uint32_t summed = 0;
-    std::uint32_t phase = 0;
+    std::uint32_t activeRate = 0;
+    std::uint64_t phase = 0;
 };
 
 #endif
