@@ -4172,7 +4172,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
         if (compared != Compare::Unmapped) continue;
         compared = Compare::Equal;
         for (std::size_t at = done, next = 0; at < end && compared == Compare::Equal; at = next) {
-            next = std::min(end, at + PageBytes - (address + at) % PageBytes);
+            next = std::min<std::size_t>(end, at + PageBytes - static_cast<std::size_t>((address + at) % PageBytes));
             compared = compareRun(at, next - at);
         }
     }
