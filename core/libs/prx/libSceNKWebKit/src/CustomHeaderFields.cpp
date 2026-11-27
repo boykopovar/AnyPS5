@@ -81,7 +81,7 @@ using NKWebKit::WtfAbi::URL;
 constexpr std::string_view kNullOrigin = "nullOrigin";
 constexpr unsigned kStringImplFlag8Bit = 4u;
 constexpr unsigned kStringImplBufferOwnershipMask = 3u;
-constexpr unsigned kStringImplBufferSubstring = 1u;
+constexpr unsigned kStringImplBufferSubstring = 2u;
 constexpr std::size_t kSubstringHeaderBytes = 24u + sizeof(StringImpl*);
 
 struct RawVectorHeader {
@@ -145,39 +145,115 @@ void ValidateRefCountableString(StringImpl* impl, const char* function) {
     RequireWritableGuestBytes(impl, sizeof(StringImpl), function);
 }
 
-void ValidateReleasableString(StringImpl* impl, const char* function, unsigned depth = 0) {
-    if (!impl) return;
-    if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+struct PlannedRefState {
+    StringImpl* impl;
+    unsigned refCount;
+    unsigned hashAndFlags;
+};
+
+PlannedRefState& EnsurePlannedRefState(StringImpl* impl, std::vector<PlannedRefState>& states, const char* function) {
+    for (auto& entry : states) {
+        if (entry.impl == impl) return entry;
+    }
     const StringImpl header = ReadGuestValue(impl, function);
     RequireWritableGuestBytes(impl, sizeof(StringImpl), function);
-    if ((header.refCount & ~1u) == 2u && (header.hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
+    states.push_back({impl, header.refCount, header.hashAndFlags});
+    return states.back();
+}
+
+void SimulateRelease(StringImpl* impl, std::vector<PlannedRefState>& states, const char* function, unsigned depth = 0) {
+    if (!impl) return;
+    if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    PlannedRefState& state = EnsurePlannedRefState(impl, states, function);
+    if (state.refCount != 2u) {
+        state.refCount -= 2u;
+        return;
+    }
+    state.refCount = 0u;
+    if ((state.hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
         RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
         StringImpl* owner = nullptr;
         if (!GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(impl) + 24, sizeof(owner)))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-        if (owner) ValidateReleasableString(owner, function, depth + 1u);
+        if (owner) SimulateRelease(owner, states, function, depth + 1u);
     }
 }
 
-void RetainGuestString(StringImpl* impl, const char* function) {
+void ValidatePlannedReleases(
+    const std::vector<RawHeaderField>& retainedFields,
+    const std::vector<StringImpl*>& retainedDomains,
+    const std::vector<RawHeaderField>& releasedFields,
+    const std::vector<StringImpl*>& releasedDomains,
+    const char* function) {
+    std::vector<PlannedRefState> states;
+    for (const auto& entry : retainedFields) {
+        if (entry.name) EnsurePlannedRefState(entry.name, states, function).refCount += 2u;
+        if (entry.value) EnsurePlannedRefState(entry.value, states, function).refCount += 2u;
+    }
+    for (StringImpl* domain : retainedDomains) {
+        if (domain) EnsurePlannedRefState(domain, states, function).refCount += 2u;
+    }
+    for (const auto& entry : releasedFields) {
+        SimulateRelease(entry.value, states, function);
+        SimulateRelease(entry.name, states, function);
+    }
+    for (StringImpl* domain : releasedDomains) {
+        SimulateRelease(domain, states, function);
+    }
+}
+
+struct RetainedString {
+    StringImpl* impl;
+    unsigned originalRefCount;
+};
+
+struct BuiltCopyGuard {
+    std::vector<RetainedString> retained;
+    void* fieldsBuffer{nullptr};
+    void* domainsBuffer{nullptr};
+    bool armed{true};
+
+    ~BuiltCopyGuard() {
+        if (!armed) return;
+        for (auto it = retained.rbegin(); it != retained.rend(); ++it) {
+            static_cast<void>(GuestCopyOut_nid_no_patch(
+                reinterpret_cast<unsigned char*>(it->impl) + offsetof(StringImpl, refCount),
+                &it->originalRefCount,
+                sizeof(it->originalRefCount)));
+        }
+        if (domainsBuffer) _ZN3WTF8fastFreeEPv(domainsBuffer);
+        if (fieldsBuffer) _ZN3WTF8fastFreeEPv(fieldsBuffer);
+    }
+
+    BuiltCopyGuard() = default;
+    BuiltCopyGuard(const BuiltCopyGuard&) = delete;
+    BuiltCopyGuard& operator=(const BuiltCopyGuard&) = delete;
+};
+
+void RetainGuestString(StringImpl* impl, BuiltCopyGuard& guard, const char* function) {
     if (!impl) return;
-    unsigned refCount = 0;
-    if (!GuestCopyIn_nid_no_patch(&refCount, reinterpret_cast<const unsigned char*>(impl) + offsetof(StringImpl, refCount), sizeof(refCount)))
+    unsigned originalRefCount = 0;
+    if (!GuestCopyIn_nid_no_patch(&originalRefCount, reinterpret_cast<const unsigned char*>(impl) + offsetof(StringImpl, refCount), sizeof(originalRefCount)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    refCount += 2u;
-    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(impl) + offsetof(StringImpl, refCount), &refCount, sizeof(refCount)))
+    const unsigned updatedRefCount = originalRefCount + 2u;
+    guard.retained.push_back({impl, originalRefCount});
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(impl) + offsetof(StringImpl, refCount), &updatedRefCount, sizeof(updatedRefCount)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-void UndoRetainGuestString(StringImpl* impl) {
-    if (!impl) return;
-    unsigned refCount = 0;
-    if (!GuestCopyIn_nid_no_patch(&refCount, reinterpret_cast<const unsigned char*>(impl) + offsetof(StringImpl, refCount), sizeof(refCount)))
-        return;
-    if (refCount >= 2u) {
-        refCount -= 2u;
-        static_cast<void>(GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(impl) + offsetof(StringImpl, refCount), &refCount, sizeof(refCount)));
-    }
+template <typename T>
+void ValidateReleasableVectorBuffer(const RawVectorHeader& header, const char* function) {
+    if (!header.buffer) return;
+    if (header.size > header.capacity)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (header.capacity > std::numeric_limits<std::size_t>::max() / sizeof(T))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t checkBytes = header.capacity ? static_cast<std::size_t>(header.capacity) * sizeof(T) : 1u;
+    const auto baseAddress = reinterpret_cast<std::uintptr_t>(header.buffer);
+    if (checkBytes > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(header.buffer, checkBytes, function);
+    RequireWritableGuestBytes(header.buffer, checkBytes, function);
 }
 
 template <typename T>
@@ -198,27 +274,11 @@ std::vector<T> ReadGuestVectorElements(const RawVectorHeader& header, const char
     return elements;
 }
 
-struct BuiltCopyGuard {
-    std::vector<StringImpl*> retained;
-    void* fieldsBuffer{nullptr};
-    void* domainsBuffer{nullptr};
-    bool armed{true};
-
-    ~BuiltCopyGuard() {
-        if (!armed) return;
-        for (auto it = retained.rbegin(); it != retained.rend(); ++it) UndoRetainGuestString(*it);
-        if (domainsBuffer) _ZN3WTF8fastFreeEPv(domainsBuffer);
-        if (fieldsBuffer) _ZN3WTF8fastFreeEPv(fieldsBuffer);
-    }
-
-    BuiltCopyGuard() = default;
-    BuiltCopyGuard(const BuiltCopyGuard&) = delete;
-    BuiltCopyGuard& operator=(const BuiltCopyGuard&) = delete;
-};
-
-RawCustomHeaderFields BuildClonedFields(const RawCustomHeaderFields& sourceRaw, BuiltCopyGuard& guard, const char* function) {
-    const auto sourceFields = ReadGuestVectorElements<RawHeaderField>(sourceRaw.fields, function);
-    const auto sourceDomains = ReadGuestVectorElements<StringImpl*>(sourceRaw.thirdPartyDomains, function);
+RawCustomHeaderFields BuildClonedFieldsFromElements(
+    const std::vector<RawHeaderField>& sourceFields,
+    const std::vector<StringImpl*>& sourceDomains,
+    BuiltCopyGuard& guard,
+    const char* function) {
     for (const auto& entry : sourceFields) {
         ValidateRefCountableString(entry.name, function);
         ValidateRefCountableString(entry.value, function);
@@ -243,25 +303,22 @@ RawCustomHeaderFields BuildClonedFields(const RawCustomHeaderFields& sourceRaw, 
 
     guard.retained.reserve(sourceFields.size() * 2 + sourceDomains.size());
     for (const auto& entry : sourceFields) {
-        if (entry.name) {
-            RetainGuestString(entry.name, function);
-            guard.retained.push_back(entry.name);
-        }
-        if (entry.value) {
-            RetainGuestString(entry.value, function);
-            guard.retained.push_back(entry.value);
-        }
+        if (entry.name) RetainGuestString(entry.name, guard, function);
+        if (entry.value) RetainGuestString(entry.value, guard, function);
     }
     for (StringImpl* domain : sourceDomains) {
-        if (domain) {
-            RetainGuestString(domain, function);
-            guard.retained.push_back(domain);
-        }
+        if (domain) RetainGuestString(domain, guard, function);
     }
 
     if (guard.fieldsBuffer) std::memcpy(guard.fieldsBuffer, sourceFields.data(), sourceFields.size() * sizeof(RawHeaderField));
     if (guard.domainsBuffer) std::memcpy(guard.domainsBuffer, sourceDomains.data(), sourceDomains.size() * sizeof(StringImpl*));
     return built;
+}
+
+RawCustomHeaderFields BuildClonedFields(const RawCustomHeaderFields& sourceRaw, BuiltCopyGuard& guard, const char* function) {
+    const auto sourceFields = ReadGuestVectorElements<RawHeaderField>(sourceRaw.fields, function);
+    const auto sourceDomains = ReadGuestVectorElements<StringImpl*>(sourceRaw.thirdPartyDomains, function);
+    return BuildClonedFieldsFromElements(sourceFields, sourceDomains, guard, function);
 }
 
 void ConstructEmpty(CustomHeaderFields* self, const char* function) {
@@ -359,20 +416,20 @@ CustomHeaderFields& AssignFields(CustomHeaderFields* self, const CustomHeaderFie
     if (self == other) return *self;
 
     const RawCustomHeaderFields sourceRaw = ReadRawFields(other, function);
+    const auto sourceFields = ReadGuestVectorElements<RawHeaderField>(sourceRaw.fields, function);
+    const auto sourceDomains = ReadGuestVectorElements<StringImpl*>(sourceRaw.thirdPartyDomains, function);
+    ValidateReleasableVectorBuffer<RawHeaderField>(targetRaw.fields, function);
+    ValidateReleasableVectorBuffer<StringImpl*>(targetRaw.thirdPartyDomains, function);
     const auto oldFields = ReadGuestVectorElements<RawHeaderField>(targetRaw.fields, function);
     const auto oldDomains = ReadGuestVectorElements<StringImpl*>(targetRaw.thirdPartyDomains, function);
-    for (const auto& entry : oldFields) {
-        ValidateReleasableString(entry.name, function);
-        ValidateReleasableString(entry.value, function);
-    }
-    for (StringImpl* domain : oldDomains) {
-        ValidateReleasableString(domain, function);
-    }
+    ValidatePlannedReleases(sourceFields, sourceDomains, oldFields, oldDomains, function);
 
     BuiltCopyGuard guard;
-    const RawCustomHeaderFields built = BuildClonedFields(sourceRaw, guard, function);
-    if (!GuestCopyOut_nid_no_patch(self, &built, sizeof(built)))
+    const RawCustomHeaderFields built = BuildClonedFieldsFromElements(sourceFields, sourceDomains, guard, function);
+    if (!GuestCopyOut_nid_no_patch(self, &built, sizeof(built))) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(self, &targetRaw, sizeof(targetRaw)));
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
     guard.armed = false;
     ReleaseRawFields(targetRaw, oldFields, oldDomains);
     return *self;
@@ -407,15 +464,11 @@ void APS5_VABI _ZN7WebCore18CustomHeaderFieldsD2Ev(CustomHeaderFields* self) {
     RequireReadableGuestBytes(self, sizeof(CustomHeaderFields), __func__);
     RequireWritableGuestBytes(self, sizeof(CustomHeaderFields), __func__);
     const RawCustomHeaderFields raw = ReadRawFields(self, __func__);
+    ValidateReleasableVectorBuffer<RawHeaderField>(raw.fields, __func__);
+    ValidateReleasableVectorBuffer<StringImpl*>(raw.thirdPartyDomains, __func__);
     const auto fields = ReadGuestVectorElements<RawHeaderField>(raw.fields, __func__);
     const auto domains = ReadGuestVectorElements<StringImpl*>(raw.thirdPartyDomains, __func__);
-    for (const auto& entry : fields) {
-        ValidateReleasableString(entry.name, __func__);
-        ValidateReleasableString(entry.value, __func__);
-    }
-    for (StringImpl* domain : domains) {
-        ValidateReleasableString(domain, __func__);
-    }
+    ValidatePlannedReleases({}, {}, fields, domains, __func__);
     ReleaseRawFields(raw, fields, domains);
 }
 
@@ -423,8 +476,8 @@ bool APS5_VABI _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3
     if (!self) throw std::invalid_argument("WebCore::CustomHeaderFields::thirdPartyDomainsMatch: null this");
     if (!url) throw std::invalid_argument("WebCore::CustomHeaderFields::thirdPartyDomainsMatch: null url");
     const RawCustomHeaderFields raw = ReadRawFields(self, __func__);
-    URL localUrl = ReadGuestValue(url, __func__);
     if (!raw.thirdPartyDomains.size) return false;
+    URL localUrl = ReadGuestValue(url, __func__);
     const String copiedUrlString = CopyGuestString(localUrl.impl, __func__);
     localUrl.impl = copiedUrlString.impl;
     const auto domainPointers = ReadGuestVectorElements<StringImpl*>(raw.thirdPartyDomains, __func__);

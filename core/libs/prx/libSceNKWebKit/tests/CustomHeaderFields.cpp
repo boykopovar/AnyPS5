@@ -306,6 +306,37 @@ static void GuestPointers() {
     std::memcpy(badDomainsRaw + 28, &one, sizeof(one));
     Require(ThrowsNotImplemented([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(reinterpret_cast<const CustomHeaderFields*>(badDomainsRaw), &url.url); },
         "_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE"));
+
+    CustomHeaderFields emptyFields;
+    Require(!_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&emptyFields, reinterpret_cast<const URL*>(pages.Guard())));
+
+    struct FakeSubstringImpl {
+        NKWebKit::WtfAbi::StringImpl header;
+        NKWebKit::WtfAbi::StringImpl* owner;
+    };
+    const char sampleChars[] = "abcd";
+    FakeSubstringImpl aliasedSubstring{{4, 4, sampleChars, 4u | 2u}, reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard())};
+    NKWebKit::WtfAbi::StringImpl* aliasedEntries[2] = {&aliasedSubstring.header, &aliasedSubstring.header};
+    alignas(CustomHeaderFields) unsigned char aliasedRaw[sizeof(CustomHeaderFields)]{};
+    void* aliasedBuf = aliasedEntries;
+    unsigned two = 2;
+    std::memcpy(aliasedRaw + 16, &aliasedBuf, sizeof(aliasedBuf));
+    std::memcpy(aliasedRaw + 24, &two, sizeof(two));
+    std::memcpy(aliasedRaw + 28, &two, sizeof(two));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(aliasedRaw)); },
+        "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(aliasedSubstring.header.refCount == 4);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(aliasedRaw), &validSource); },
+        "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(aliasedSubstring.header.refCount == 4);
+
+    alignas(CustomHeaderFields) unsigned char zeroSizeBadBufRaw[sizeof(CustomHeaderFields)]{};
+    std::memcpy(zeroSizeBadBufRaw, &badBuf, sizeof(badBuf));
+    std::memcpy(zeroSizeBadBufRaw + 8, &one, sizeof(one));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(zeroSizeBadBufRaw)); },
+        "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(zeroSizeBadBufRaw), &validSource); },
+        "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
 }
 
 int main() {
