@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cstdint>
@@ -445,12 +446,13 @@ static void TestSameSiteInfo() {
 
 template<typename TFunction>
 static bool ThrowsNotImplemented(TFunction&& function) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
     try {
         function();
     } catch (const std::invalid_argument&) {
         return false;
     } catch (const std::runtime_error&) {
-        return true;
+        return NotImplementedCalls_nid_no_patch() == before + 1;
     } catch (...) {
         return false;
     }
@@ -617,6 +619,22 @@ static void TestGuestPointers() {
     cookieHeaders.append(LegacyVaryingRequestHeader{Text("Cookie"), Text("jar=1")});
     Require(ThrowsNotImplemented([&] { verify(unmappedJar, &cookieHeaders, &request.base); }));
     Require(ThrowsNotImplemented([&] { verify(&badVtableJar, &cookieHeaders, &request.base); }));
+
+    {
+        const LegacyCookieJar validJar{&jarVtable, 1, nullptr};
+        Request badFirstParty;
+        StringImpl* const origFirstParty = std::exchange(badFirstParty.base.firstPartyForCookies.impl, reinterpret_cast<StringImpl*>(pages.Guard()));
+        badFirstParty.base.resourceRequestUpdated = false;
+        Require(ThrowsNotImplemented([&] { collect(&validJar, &badFirstParty.base, cookieResponse.Base()); }));
+        Require(!badFirstParty.base.resourceRequestUpdated);
+        Require(ThrowsNotImplemented([&] { verify(&validJar, &cookieHeaders, &badFirstParty.base); }));
+        Require(!badFirstParty.base.resourceRequestUpdated);
+        StringImpl badFirstPartyData{2, 8, pages.Guard(), 4};
+        badFirstParty.base.firstPartyForCookies.impl = &badFirstPartyData;
+        Require(ThrowsNotImplemented([&] { collect(&validJar, &badFirstParty.base, cookieResponse.Base()); }));
+        Require(!badFirstParty.base.resourceRequestUpdated);
+        badFirstParty.base.firstPartyForCookies.impl = origFirstParty;
+    }
 }
 
 int main() {

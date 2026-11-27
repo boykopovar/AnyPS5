@@ -401,15 +401,20 @@ String CookieRequestHeaderFieldValue(const LegacyCookieJar* cookieJar, const Leg
     const auto* requestBytes = reinterpret_cast<const unsigned char*>(request);
     const URL requestUrl = ReadGuestValue(reinterpret_cast<const URL*>(requestBytes + offsetof(LegacyResourceRequestBase, url)), function);
     const GuestString urlText = ReadGuestString(requestUrl.impl, function);
+    const URL firstPartyUrl = ReadGuestValue(reinterpret_cast<const URL*>(requestBytes + offsetof(LegacyResourceRequestBase, firstPartyForCookies)), function);
+    const GuestString firstPartyText = ReadGuestString(firstPartyUrl.impl, function);
     const LegacySameSiteInfo sameSiteInfo = SameSiteInfoOf(request, function);
     URL safeUrl = requestUrl;
     const String ownedUrlText = urlText.ToWtfString();
     safeUrl.impl = ownedUrlText.impl;
+    URL safeFirstParty = firstPartyUrl;
+    const String ownedFirstPartyText = firstPartyText.ToWtfString();
+    safeFirstParty.impl = ownedFirstPartyText.impl;
     const bool includeSecureCookies = _ZNK3WTF3URL10protocolIsEPKc(&safeUrl, "https");
     const LegacyOptionalIdentifier frame{};
     const LegacyOptionalIdentifier page{};
     LegacyCookieRequestHeaderFieldValue result = vtable.cookieRequestHeaderFieldValue(
-        cookieJar, &request->firstPartyForCookies, &sameSiteInfo, &request->url, &frame, &page, includeSecureCookies);
+        cookieJar, &safeFirstParty, &sameSiteInfo, &safeUrl, &frame, &page, includeSecureCookies);
     return std::move(result.value);
 }
 
