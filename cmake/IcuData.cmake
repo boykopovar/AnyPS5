@@ -72,6 +72,7 @@ add_custom_command(OUTPUT ${icu_data_dir}/icudt78l_dat.c
     VERBATIM)
 get_target_property(icu_common_sources icu_common SOURCES)
 list(REMOVE_ITEM icu_common_sources ${ICU_SOURCE_DIR}/stubdata/stubdata.cpp ${ICU_NORMALIZATION_SOURCE})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ICU_SOURCE_DIR}/common/sources.txt)
 file(STRINGS ${ICU_SOURCE_DIR}/common/sources.txt icu_all_common)
 list(TRANSFORM icu_all_common PREPEND ${ICU_SOURCE_DIR}/common/)
 list(APPEND icu_common_sources ${icu_all_common})
