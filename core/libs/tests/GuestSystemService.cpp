@@ -469,5 +469,6 @@ int main() {
     TestRemoteSharePlayCpuBudget();
     TestPlayerDialogParam();
     TestGpuLoadEmulationMode();
+    Require(sceSystemServiceUsbStorageRequestMapWSB(0, nullptr, 0, 0, nullptr, nullptr) == static_cast<int>(0x80f40004));
     TestSuspendConfirmationDialog();
 }

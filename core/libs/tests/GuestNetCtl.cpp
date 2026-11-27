@@ -1,4 +1,5 @@
 #include "prx/libSceNetCtl/include/NetCtl.hpp"
+#include "prx/libSceNetCtl/include/InventoryExports.hpp"
 #include <cerrno>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -152,6 +153,7 @@ void CheckCallbacks() {
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 1 && g_second.calls == 2);
     Require(sceNetCtlInit() == 0);
+    Require(sceInetStatInit() == 0);
     Require(sceNetCtlUnregisterCallback(first) == 0);
     Require(sceNetCtlUnregisterCallback(second) == 0);
     Require(sceNetCtlUnregisterCallbackV6(v6) == 0);

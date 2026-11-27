@@ -1573,7 +1573,7 @@ int APS5_VABI sceNetCtlGetWifiInfoIpcInt(NetCtlWifiInfo* info) {
 extern "C" {
 
 int APS5_VABI sceInetStatInit() {
-    NotImplemented_nid_no_patch(__func__);
+    return sceNetCtlInit();
 }
 
 int APS5_VABI sceInetStatTerm() {
