@@ -5232,7 +5232,8 @@ std::vector<LayeredSlice> layeredSlices(const Context& context, const LayeredDep
 }
 
 std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, DepthSurface& surface, const GuestTextureResource& resource, std::uint32_t mip) {
-    const auto& target = surface.target;
+    auto target = surface.target;
+    target.address = resource.baseAddress;
     const auto layers = resource.depthOrLastArray + 1u;
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto bytesPerTexel = d16 ? 2u : 4u;
@@ -5268,7 +5269,7 @@ std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std:
     const bool stencil = surface.target.stencilAddress != 0 && surface.target.stencilAddress == resource.baseAddress;
     if (stencil || resource.dimension != TextureDimension::k2DArray || (resource.baseArray == 0 && resource.depthOrLastArray == 0)) return surface.Storage(words, resource, mip);
     if (!surface.StorageViewMatches(words, resource)) return nullptr;
-    return layeredDepthStorage(context, surface, resource, mip);
+    return layeredDepthStorage(context, surface, ViewedArrayWindow(resource, true), mip);
 }
 
 DepthCopySourceScope::DepthCopySourceScope(bool active) : previous(depthCopySourceActive) {
