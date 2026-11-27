@@ -521,6 +521,27 @@ class RebaseVerifyTests(unittest.TestCase):
         self.prepare_shorter_overlap_rebase()
         self.assertEqual(self.verify(), [])
 
+    def test_large_boundary_overlap_availability_is_not_quadratic(self):
+        count = 50_000
+        base = "a\npivot\nb\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add large boundary overlap fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "a\nX\npivot\n" + "X\n" * count + "b\n")
+        self.git("commit", "-q", "-am", "feat(tools): add repeated boundary lines")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "a\n" + "X\n" * count + "b\n")
+        self.git("commit", "-q", "-am", "docs(tools): replace pivot with repeated lines")
+        new_commit = self.commit_tree_file("main", "f.txt", ("a\n" + "X\n" * (count + 1) + "b\n").encode("utf-8"),
+                                           "feat(tools): add repeated boundary lines")
+        self.git("update-ref", "refs/heads/new", new_commit)
+        started = time.perf_counter()
+        self.assertEqual(self.verify(), [])
+        self.assertLess(time.perf_counter() - started, 10.0)
+
     def prepare_duplicate_upstream_line_rebase(self):
         base = "a\nb\n"
         self.git("checkout", "-q", "main")
