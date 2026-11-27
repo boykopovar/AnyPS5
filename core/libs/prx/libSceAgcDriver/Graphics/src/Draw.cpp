@@ -2170,7 +2170,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& attribute = attributes[i];
         const auto described = std::find_if(layout.attributes.begin(), layout.attributes.end(), [&](const auto& entry) { return entry.location == attribute.location; });
         Require(described != layout.attributes.end(), "vertex attribute missing from its input layout");
-        if (VertexFetchOutOfRange(attribute)) {
+        if (VertexFetchUsesZeroBuffer(attribute)) {
             zeroed[i] = zeroVertexBuffer(context, ZeroVertexFormat(attribute).bytes);
             continue;
         }
@@ -2196,7 +2196,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         fetchLimit.push_back(args == nullptr ? std::max<std::uint64_t>(VertexDescriptorEnd(attribute, widened), address + bytes) : address + bytes);
         fetchBindingEnd.push_back(address + bindingBytes);
     }
-    const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
+    const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid, wholeRange);
     auto& isSolo = planLease->isSolo;
     auto& plannedFetches = planLease->plannedFetches;
     auto& plannedOf = planLease->plannedOf;
