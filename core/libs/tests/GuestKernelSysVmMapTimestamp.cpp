@@ -53,9 +53,18 @@ int main() {
     Require(addFailed);
     Require(get_vm_map_timestamp_nid_postfix() == failedMutationTimestamp);
 
+    const auto beforeProtectTimestamp = get_vm_map_timestamp_nid_postfix();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(mapped, page, true, false, false, [] {});
+    }
+    const auto protectedTimestamp = get_vm_map_timestamp_nid_postfix();
+    Require(protectedTimestamp != beforeProtectTimestamp);
+    Require(get_vm_map_timestamp_nid_postfix() == protectedTimestamp);
+
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), reserveBytes) == 0);
     const auto unmappedTimestamp = get_vm_map_timestamp_nid_postfix();
-    Require(unmappedTimestamp != mappedTimestamp);
+    Require(unmappedTimestamp != protectedTimestamp);
 
     bool unmapFailed = false;
     try {
