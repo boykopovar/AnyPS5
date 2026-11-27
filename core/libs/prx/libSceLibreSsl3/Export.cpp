@@ -9,10 +9,6 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI BIO_vfree_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, std::size_t length) {
     const auto* firstBytes = static_cast<const volatile unsigned char*>(first);
@@ -49,16 +45,6 @@ const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
     case 5: return "ENGINESDIR: N/A";
     default: return "not available";
     }
-}
-
-int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI d2i_X509_bio_nid_postfix(void) {

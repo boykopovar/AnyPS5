@@ -358,7 +358,7 @@ def compare_benchmark_runs(path, require_matching_context=False):
     loaded_series = load_benchmark_series(path)
     data = loaded_series["data"]
     runs, pairs = [], {}
-    seen_files, seen_hashes, seen_decoded = set(), set(), set()
+    seen_files, seen_captures = set(), set()
     total_frames = 0
     reference = None
     arms = {}
@@ -379,12 +379,13 @@ def compare_benchmark_runs(path, require_matching_context=False):
             if "sha256" in attempt and source["sha256"] != attempt["sha256"].lower():
                 raise ValueError(f"{attempt['id']}: SHA-256 does not match original capture bytes")
             identity = source["_identity"]
-            if identity in seen_files or source["sha256"] in seen_hashes or source["decoded_sha256"] in seen_decoded:
+            canonical = json.dumps(loaded["data"], sort_keys=True, separators=(",", ":"))
+            capture_hash = hashlib.sha256(canonical.encode("ascii")).digest()
+            if identity in seen_files or capture_hash in seen_captures:
                 raise ValueError(f"{attempt['id']}: duplicate capture evidence cannot count as another run")
             if identity[1]:
                 seen_files.add(identity)
-            seen_hashes.add(source["sha256"])
-            seen_decoded.add(source["decoded_sha256"])
+            seen_captures.add(capture_hash)
             total_frames += sum(len(interval["frame_us"]) for interval in loaded["data"]["intervals"])
             if total_frames > MAX_TOTAL_FRAMES:
                 raise ValueError(f"series exceeds {MAX_TOTAL_FRAMES} supplied frames")

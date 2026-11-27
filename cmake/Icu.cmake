@@ -37,6 +37,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/errorcode.cpp
         ${ICU_SOURCE_DIR}/common/locavailable.cpp
+    ${ICU_SOURCE_DIR}/common/locresdata.cpp
         ${ICU_SOURCE_DIR}/common/locmap.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2impl.cpp
