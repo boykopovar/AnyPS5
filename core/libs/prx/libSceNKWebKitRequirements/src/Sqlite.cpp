@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/include/Sqlite.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <sqlite3.h>
@@ -34,7 +35,7 @@ int ForwardVfs(sqlite3_vfs* vfs, TArgs... arguments) {
 int GuestFullPathname(sqlite3_vfs* vfs, const char* name, int size, char* result) {
     auto* native = NativeVfs(vfs);
     try {
-        const auto host = ResolvePath_nid_no_patch(name).u8string();
+        const auto host = ResolveArchivedPath_nid_no_patch(name).u8string();
         return native->xFullPathname(native, reinterpret_cast<const char*>(host.c_str()), size, result);
     } catch (const std::bad_alloc&) {
         return SQLITE_NOMEM;
@@ -43,17 +44,72 @@ int GuestFullPathname(sqlite3_vfs* vfs, const char* name, int size, char* result
     }
 }
 
+struct ArchiveDatabase : sqlite3_file {
+    AppArchiveNode node;
+};
+
+int ReadArchiveDatabase(sqlite3_file* file, void* output, int amount, sqlite3_int64 offset) {
+    try {
+        const auto read = AppArchiveRead_nid_no_patch(static_cast<ArchiveDatabase*>(file)->node.Handle,
+            offset, output, amount);
+        if (read == static_cast<unsigned>(amount)) return SQLITE_OK;
+        std::memset(static_cast<char*>(output) + read, 0, amount - read);
+        return SQLITE_IOERR_SHORT_READ;
+    } catch (const std::bad_alloc&) {
+        return SQLITE_NOMEM;
+    } catch (...) {
+        return SQLITE_IOERR_READ;
+    }
+}
+
+const sqlite3_io_methods archiveMethods = {
+    .iVersion = 1,
+    .xClose = [](sqlite3_file* file) { file->pMethods = nullptr; return SQLITE_OK; },
+    .xRead = ReadArchiveDatabase,
+    .xWrite = [](sqlite3_file*, const void*, int, sqlite3_int64) { return SQLITE_READONLY; },
+    .xTruncate = [](sqlite3_file*, sqlite3_int64) { return SQLITE_READONLY; },
+    .xSync = [](sqlite3_file*, int) { return SQLITE_OK; },
+    .xFileSize = [](sqlite3_file* file, sqlite3_int64* size) {
+        *size = static_cast<ArchiveDatabase*>(file)->node.Size;
+        return SQLITE_OK;
+    },
+    .xLock = [](sqlite3_file*, int) { return SQLITE_OK; },
+    .xUnlock = [](sqlite3_file*, int) { return SQLITE_OK; },
+    .xCheckReservedLock = [](sqlite3_file*, int* reserved) { *reserved = 0; return SQLITE_OK; },
+    .xFileControl = [](sqlite3_file*, int, void*) { return SQLITE_NOTFOUND; },
+    .xSectorSize = nullptr,
+    .xDeviceCharacteristics = [](sqlite3_file*) { return SQLITE_IOCAP_IMMUTABLE; },
+};
+
+bool HasRecoveryFile(std::filesystem::path path, const char* suffix) {
+    path += suffix;
+    if (AppArchiveOnly_nid_no_patch(path)) {
+        AppArchiveNode node{};
+        return AppArchiveLookup_nid_no_patch(path, &node) && (node.Directory || node.Size != 0);
+    }
+    return std::filesystem::exists(path) && std::filesystem::file_size(path) != 0;
+}
+
 int GuestFileOpen(sqlite3_vfs* vfs, sqlite3_filename name, sqlite3_file* file, int flags, int* outFlags) {
     auto* native = NativeVfs(vfs);
-    int openedFlags = 0;
-    int* actualFlags = outFlags ? outFlags : &openedFlags;
-    const int result = native->xOpen(native, name, file, flags, actualFlags);
-    if (result != SQLITE_OK || !name || !(flags & SQLITE_OPEN_MAIN_DB) || !(*actualFlags & SQLITE_OPEN_READWRITE)) {
-        return result;
-    }
+    if (!name || !(flags & SQLITE_OPEN_MAIN_DB)) return native->xOpen(native, name, file, flags, outFlags);
+    file->pMethods = nullptr;
     int error;
     try {
         const std::filesystem::path host(std::u8string(name, name + std::strlen(name)));
+        if (AppArchiveOnly_nid_no_patch(host)) {
+            AppArchiveNode node{};
+            if (!AppArchiveLookup_nid_no_patch(host, &node) || node.Directory ||
+                (flags & (SQLITE_OPEN_EXCLUSIVE | SQLITE_OPEN_DELETEONCLOSE)) ||
+                HasRecoveryFile(host, "-wal") || HasRecoveryFile(host, "-journal")) return SQLITE_CANTOPEN;
+            new (file) ArchiveDatabase{{&archiveMethods}, node};
+            if (outFlags) *outFlags = (flags & ~(SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)) | SQLITE_OPEN_READONLY;
+            return SQLITE_OK;
+        }
+        int openedFlags = 0;
+        int* actualFlags = outFlags ? outFlags : &openedFlags;
+        const int result = native->xOpen(native, name, file, flags, actualFlags);
+        if (result != SQLITE_OK || !(*actualFlags & SQLITE_OPEN_READWRITE)) return result;
         for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
             auto path = host;
             path += suffix;
@@ -65,7 +121,7 @@ int GuestFileOpen(sqlite3_vfs* vfs, sqlite3_filename name, sqlite3_file* file, i
     } catch (...) {
         error = SQLITE_IOERR;
     }
-    file->pMethods->xClose(file);
+    if (file->pMethods) file->pMethods->xClose(file);
     file->pMethods = nullptr;
     return error;
 }
@@ -75,7 +131,8 @@ int RegisterGuestVfs() {
     if (!native) return SQLITE_CANTOPEN;
     static sqlite3_vfs guest{};
     guest.iVersion = native->iVersion >= 2 && native->xCurrentTimeInt64 ? 2 : 1;
-    guest.szOsFile = native->szOsFile;
+    constexpr int archiveFileSize = sizeof(ArchiveDatabase);
+    guest.szOsFile = native->szOsFile < archiveFileSize ? archiveFileSize : native->szOsFile;
     guest.mxPathname = native->mxPathname;
     guest.zName = native->zName;
     guest.pAppData = native;
