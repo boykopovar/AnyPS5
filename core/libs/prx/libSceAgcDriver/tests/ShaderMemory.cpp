@@ -10491,7 +10491,7 @@ void verifyInt64AtomicCapabilities() {
     const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80010003u, 0xe1685000u, 0x80010203u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80010003u, 0xe1645000u, 0x80010203u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
-        const std::array<std::uint32_t, 8> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageWriteWithoutFormat, static_cast<std::uint32_t>(added)};
+        const std::array<std::uint32_t, 6> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, 0x58000u, code, 0, {}};
         request.context.waveSize = 32;
@@ -10576,6 +10576,7 @@ void verifyInt64AtomicCapabilities() {
     const auto locked = compile(imageAtomic, spv::CapabilityShader);
     require(!declares(locked.spirv, spv::CapabilityInt64ImageEXT) && !declares(locked.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics declares 64-bit atomics");
     require(asksForLockTable(locked), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not ask for the atomic lock table");
+    require(declares(locked.spirv, spv::CapabilityStorageImageExtendedFormats) && !declares(locked.spirv, spv::CapabilityStorageImageReadWithoutFormat) && !declares(locked.spirv, spv::CapabilityStorageImageWriteWithoutFormat), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not declare its image as Rg32ui");
     const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
     require(declares(native.spirv, spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
     require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
