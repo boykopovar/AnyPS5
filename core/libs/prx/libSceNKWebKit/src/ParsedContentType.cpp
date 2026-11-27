@@ -118,6 +118,8 @@
  */
 
 #include "prx/libSceNKWebKit/include/ParsedContentTypeExports.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <algorithm>
@@ -128,7 +130,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -157,22 +161,75 @@ struct Text {
     bool is8Bit = true;
 };
 
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+static_assert(std::is_trivially_copyable_v<StringImpl*>);
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (size && (!pointer || !GuestReadable_nid_no_patch(pointer, size)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename T>
+void RequireWritableGuestValue(T* pointer, const char* function) {
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, sizeof(T));
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, sizeof(T));
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T))) return true;
+    static_cast<void>(GuestCopyOut_nid_no_patch(pointer, &previous, sizeof(T)));
+    return false;
+}
+
 StringImpl* Retain(StringImpl* impl) {
     if (impl) impl->refCount += 2;
     return impl;
 }
 
-Text TextOf(const StringImpl* impl) {
+StringImpl* RetainGuest(StringImpl* impl, const char* function) {
+    if (!impl) return nullptr;
+    const StringImpl previous = ReadGuestValue(impl, function);
+    RequireWritableGuestValue(impl, function);
+    StringImpl updated = previous;
+    updated.refCount += 2;
+    if (!TryPublishGuestValue(impl, updated, previous))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return impl;
+}
+
+Text TextOfGuest(const StringImpl* impl, const char* function, unsigned* outHash = nullptr) {
     Text text;
-    if (!impl || !impl->length) return text;
-    if (!impl->data) throw std::invalid_argument("null WTF::StringImpl characters");
-    text.is8Bit = impl->hashAndFlags & Is8BitFlag;
+    if (outHash) *outHash = 0;
+    if (!impl) return text;
+    const StringImpl header = ReadGuestValue(impl, function);
+    if (outHash) *outHash = header.hashAndFlags >> HashFlagCount;
+    if (!header.length) return text;
+    if (!header.data) throw std::invalid_argument("null WTF::StringImpl characters");
+    text.is8Bit = (header.hashAndFlags & Is8BitFlag) != 0;
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (text.is8Bit ? 1u : sizeof(char16_t));
+    RequireReadableGuestBytes(header.data, byteLength, function);
     if (text.is8Bit) {
-        const auto* characters = static_cast<const unsigned char*>(impl->data);
-        text.units.assign(characters, characters + impl->length);
+        std::vector<unsigned char> buffer(header.length);
+        if (!GuestCopyIn_nid_no_patch(buffer.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        text.units.assign(buffer.begin(), buffer.end());
     } else {
-        const auto* characters = static_cast<const char16_t*>(impl->data);
-        text.units.assign(characters, characters + impl->length);
+        text.units.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(text.units.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
     return text;
 }
@@ -542,6 +599,42 @@ void Destroy(ParsedContentType& value) {
     value = {};
 }
 
+struct GuestTableMeta {
+    unsigned deletedCount;
+    unsigned keyCount;
+    unsigned tableSizeMask;
+    unsigned tableSize;
+};
+
+static_assert(std::is_trivially_copyable_v<GuestTableMeta>);
+static_assert(sizeof(GuestTableMeta) == MetadataSize);
+
+Text LookupGuestParameter(const ParsedContentTypeParameter* table, const Text& nameText, unsigned cachedHash, const char* function) {
+    if (!table) return {};
+    const auto tableAddress = reinterpret_cast<std::uintptr_t>(table);
+    if (tableAddress < MetadataSize) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const auto meta = ReadGuestValue(reinterpret_cast<const GuestTableMeta*>(tableAddress - MetadataSize), function);
+    if (!meta.tableSize || (meta.tableSize & (meta.tableSize - 1)) != 0 || meta.tableSizeMask != meta.tableSize - 1)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(table, static_cast<std::size_t>(meta.tableSize) * sizeof(ParsedContentTypeParameter), function);
+    unsigned hash = cachedHash;
+    if (!hash) {
+        const String hostKey(MakeString(nameText.units, nameText.is8Bit));
+        hash = KeyHash(hostKey.impl);
+    }
+    unsigned index = hash & meta.tableSizeMask;
+    unsigned step = 0;
+    for (unsigned probes = 0; probes < meta.tableSize; ++probes) {
+        const ParsedContentTypeParameter entry = ReadGuestValue(table + index, function);
+        if (!entry.name) return {};
+        const Text entryName = TextOfGuest(entry.name, function);
+        if (entryName.units == nameText.units) return TextOfGuest(entry.value, function);
+        if (!step) step = 1 | DoubleHash(hash);
+        index = (index + step) & meta.tableSizeMask;
+    }
+    NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 }
 
 extern "C" {
@@ -550,12 +643,15 @@ OptionalParsedContentType* APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3W
     OptionalParsedContentType* result, const String* contentType, Mode mode) {
     if (!result || !contentType) throw std::invalid_argument("ParsedContentType::create requires a result and a content type");
     if (mode != Mode::Rfc2045 && mode != Mode::MimeSniff) throw std::invalid_argument("ParsedContentType::create mode is out of range");
-    Text text = TextOf(contentType->impl);
+    StringImpl* const inputImpl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(contentType), __func__);
+    const OptionalParsedContentType previousResult = ReadGuestValue(result, __func__);
+    RequireWritableGuestValue(result, __func__);
+    Text text = TextOfGuest(inputImpl, __func__);
     ParsedContentType value {};
-    if (mode == Mode::Rfc2045) value.m_contentType = Retain(contentType->impl);
+    if (mode == Mode::Rfc2045) value.m_contentType = RetainGuest(inputImpl, __func__);
     else {
         const std::u16string_view stripped = StripMatched(text.units, IsHTTPSpace);
-        if (stripped.size() == text.units.size()) value.m_contentType = Retain(contentType->impl);
+        if (stripped.size() == text.units.size()) value.m_contentType = RetainGuest(inputImpl, __func__);
         else {
             text.units = std::u16string(stripped);
             value.m_contentType = MakeString(text.units, text.is8Bit);
@@ -570,25 +666,39 @@ OptionalParsedContentType* APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3W
     }
     if (!parsed) {
         Destroy(value);
-        result->engaged = false;
+        OptionalParsedContentType output = previousResult;
+        output.engaged = false;
+        if (!TryPublishGuestValue(result, output, previousResult))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return result;
     }
-    result->engaged = true;
-    result->value = value;
+    OptionalParsedContentType output{};
+    output.engaged = true;
+    output.value = value;
+    if (!TryPublishGuestValue(result, output, previousResult)) {
+        Destroy(value);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return result;
 }
 
 String APS5_VABI _ZNK7WebCore17ParsedContentType9serializeEv(const ParsedContentType* self) {
     if (!self) throw std::invalid_argument("ParsedContentType::serialize requires an object");
-    Text mimeType = TextOf(self->m_mimeType);
+    const ParsedContentType local = ReadGuestValue(self, __func__);
+    Text mimeType = TextOfGuest(local.m_mimeType, __func__);
     std::u16string builder = std::move(mimeType.units);
     bool is8Bit = mimeType.is8Bit;
-    for (unsigned index = 0; index < self->m_parameterNames.size; ++index) {
-        StringImpl* nameImpl = self->m_parameterNames.buffer[index];
+    if (local.m_parameterNames.size > local.m_parameterNames.capacity)
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (local.m_parameterNames.size) {
+        RequireReadableGuestBytes(local.m_parameterNames.buffer, static_cast<std::size_t>(local.m_parameterNames.size) * sizeof(StringImpl*), __func__);
+    }
+    for (unsigned index = 0; index < local.m_parameterNames.size; ++index) {
+        StringImpl* const nameImpl = ReadGuestValue(local.m_parameterNames.buffer + index, __func__);
         if (!nameImpl) throw std::invalid_argument("ParsedContentType parameter name is null");
-        const Text name = TextOf(nameImpl);
-        const ParsedContentTypeParameter* entry = Find(self->m_parameterValues, nameImpl);
-        const Text value = TextOf(entry ? entry->value : nullptr);
+        unsigned nameHash = 0;
+        const Text name = TextOfGuest(nameImpl, __func__, &nameHash);
+        const Text value = LookupGuestParameter(local.m_parameterValues, name, nameHash, __func__);
         is8Bit = is8Bit && name.is8Bit && value.is8Bit;
         builder.push_back(';');
         builder.append(name.units);

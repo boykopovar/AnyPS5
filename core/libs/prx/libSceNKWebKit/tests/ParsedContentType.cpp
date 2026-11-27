@@ -35,6 +35,13 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 using NKWebKit::WtfAbi::String;
@@ -466,6 +473,150 @@ void TestNullArguments() {
     Require(!result.engaged);
 }
 
+template<typename Function>
+void RequireNotImplemented(Function function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        Require(false);
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    Require(false);
+}
+
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+
+    template<typename T>
+    T* SplitReadWriteToReadOnly() const {
+        return reinterpret_cast<T*>(base + pageSize - sizeof(T) / 2);
+    }
+
+    template<typename T>
+    T* SplitReadOnlyToGuard() const {
+        return reinterpret_cast<T*>(base + pageSize * 2 - sizeof(T) / 2);
+    }
+};
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    constexpr auto create = &_ZN7WebCore17ParsedContentType6createERKN3WTF6StringENS_4ModeE;
+    constexpr auto serialize = &_ZNK7WebCore17ParsedContentType9serializeEv;
+
+    String validInput = Make("text/plain;charset=utf-8");
+    auto* unmappedResult = reinterpret_cast<OptionalParsedContentType*>(pages.Guard());
+    auto* readOnlyResult = reinterpret_cast<OptionalParsedContentType*>(pages.ReadOnly());
+    auto* splitResult = pages.SplitReadWriteToReadOnly<OptionalParsedContentType>();
+    const auto* unmappedString = reinterpret_cast<const String*>(pages.Guard());
+    const auto* splitString = pages.SplitReadOnlyToGuard<const String>();
+
+    OptionalParsedContentType sentinel{};
+    std::memset(&sentinel, 0x5A, sizeof(sentinel));
+    RequireNotImplemented([&] { create(&sentinel, unmappedString, Mode::MimeSniff); });
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+    RequireNotImplemented([&] { create(&sentinel, splitString, Mode::MimeSniff); });
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+
+    RequireNotImplemented([&] { create(unmappedResult, &validInput, Mode::MimeSniff); });
+    RequireNotImplemented([&] { create(readOnlyResult, &validInput, Mode::MimeSniff); });
+    const std::size_t splitResultHead = sizeof(OptionalParsedContentType) / 2;
+    std::memset(splitResult, 0x6B, splitResultHead);
+    RequireNotImplemented([&] { create(splitResult, &validInput, Mode::MimeSniff); });
+    for (std::size_t i = 0; i < splitResultHead; ++i) Require(reinterpret_cast<const unsigned char*>(splitResult)[i] == 0x6B);
+
+    String badImpl;
+    badImpl.impl = reinterpret_cast<StringImpl*>(pages.Guard());
+    RequireNotImplemented([&] { create(&sentinel, &badImpl, Mode::MimeSniff); });
+    badImpl.impl = nullptr;
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+
+    StringImpl badDataImpl{2, 16, pages.Guard(), 4};
+    String badData;
+    badData.impl = &badDataImpl;
+    RequireNotImplemented([&] { create(&sentinel, &badData, Mode::MimeSniff); });
+    badData.impl = nullptr;
+    for (std::size_t i = 0; i < sizeof(sentinel); ++i) Require(reinterpret_cast<const unsigned char*>(&sentinel)[i] == 0x5A);
+
+    String readOnlyImpl;
+    readOnlyImpl.impl = reinterpret_cast<StringImpl*>(pages.ReadOnly());
+    RequireNotImplemented([&] { create(&sentinel, &readOnlyImpl, Mode::Rfc2045); });
+    readOnlyImpl.impl = nullptr;
+
+    const auto* unmappedSelf = reinterpret_cast<const ParsedContentType*>(pages.Guard());
+    const auto* splitSelf = pages.SplitReadOnlyToGuard<const ParsedContentType>();
+    RequireNotImplemented([&] { serialize(unmappedSelf); });
+    RequireNotImplemented([&] { serialize(splitSelf); });
+
+    ParsedContentType badMime{};
+    badMime.m_mimeType = reinterpret_cast<StringImpl*>(pages.Guard());
+    RequireNotImplemented([&] { serialize(&badMime); });
+    badMime.m_mimeType = &badDataImpl;
+    RequireNotImplemented([&] { serialize(&badMime); });
+
+    String mime = Make("text/plain");
+    ParsedContentType badNames{};
+    badNames.m_mimeType = mime.impl;
+    badNames.m_parameterNames.buffer = reinterpret_cast<StringImpl**>(pages.Guard());
+    badNames.m_parameterNames.capacity = 1;
+    badNames.m_parameterNames.size = 1;
+    RequireNotImplemented([&] { serialize(&badNames); });
+
+    StringImpl* badNamePtr = reinterpret_cast<StringImpl*>(pages.Guard());
+    badNames.m_parameterNames.buffer = &badNamePtr;
+    RequireNotImplemented([&] { serialize(&badNames); });
+
+    String paramName = Make("charset");
+    StringImpl* validNamePtr = paramName.impl;
+    ParsedContentType badTable{};
+    badTable.m_mimeType = mime.impl;
+    badTable.m_parameterNames.buffer = &validNamePtr;
+    badTable.m_parameterNames.capacity = 1;
+    badTable.m_parameterNames.size = 1;
+    badTable.m_parameterValues = reinterpret_cast<ParsedContentTypeParameter*>(pages.Guard());
+    RequireNotImplemented([&] { serialize(&badTable); });
+    badTable.m_parameterValues = reinterpret_cast<ParsedContentTypeParameter*>(pages.ReadOnly());
+    RequireNotImplemented([&] { serialize(&badTable); });
+}
+
 }
 
 int main() {
@@ -478,5 +629,6 @@ int main() {
     TestSixteenBit();
     TestDuplicateParameters();
     TestNullArguments();
+    TestGuestPointers();
     return 0;
 }
