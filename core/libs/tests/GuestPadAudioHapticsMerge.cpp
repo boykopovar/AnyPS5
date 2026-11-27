@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -129,15 +131,30 @@ void CheckHapticSingleBlockWakeup() {
     right.fill(-0.25f);
     PadSubmitHapticFrames_nid_postfix(left.data(), right.data(), 1, PadHapticBuffer::BlockFrames, PadHapticBuffer::Rate);
 
-    std::thread closer([] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
-        PadSetHapticStreamOpen_nid_postfix(false);
+    std::mutex watchdogMutex;
+    std::condition_variable watchdogCv;
+    bool waitCompleted = false;
+    bool watchdogTriggered = false;
+    std::thread watchdog([&] {
+        std::unique_lock<std::mutex> lock(watchdogMutex);
+        watchdogCv.wait_for(lock, std::chrono::milliseconds(2000), [&] { return waitCompleted; });
+        if (!waitCompleted) {
+            watchdogTriggered = true;
+            lock.unlock();
+            PadSetHapticStreamOpen_nid_postfix(false);
+        }
     });
 
     std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
     const bool took = PadWaitTakeHapticBlock_nid_postfix(block.data(), 5000);
-    closer.join();
-    Require(took, "waiter woke up immediately with 32 queued frames");
+    {
+        std::lock_guard<std::mutex> lock(watchdogMutex);
+        waitCompleted = true;
+    }
+    watchdogCv.notify_one();
+    watchdog.join();
+    PadSetHapticStreamOpen_nid_postfix(false);
+    Require(!watchdogTriggered && took, "waiter woke up immediately with 32 queued frames");
     for (std::size_t frame = 0; frame < PadHapticBuffer::BlockFrames; ++frame) {
         Require(block[frame * 2] == 64, "left haptic sample matched 0.5f");
         Require(block[frame * 2 + 1] == -32, "right haptic sample matched -0.25f");
