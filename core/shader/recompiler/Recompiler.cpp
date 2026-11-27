@@ -2468,6 +2468,10 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
 
 }
 
+std::uint64_t MetadataBytes(const RecompileResult& result) {
+    return resultBytes(result);
+}
+
 std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
     if (request.useCache) {
