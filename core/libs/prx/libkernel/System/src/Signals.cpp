@@ -66,10 +66,10 @@ struct ThreadSignals {
     std::atomic<std::uint64_t> holds[MaxSignal + 1]{};
     std::atomic<int> raised{0};
 };
+thread_local ThreadSignals* currentSignals = nullptr;
 ThreadSignals& CurrentSignals() {
-    thread_local ThreadSignals* signals = nullptr;
-    if (signals == nullptr) signals = new ThreadSignals();
-    return *signals;
+    if (currentSignals == nullptr) currentSignals = new ThreadSignals();
+    return *currentSignals;
 }
 constexpr std::uint64_t HoldCount = 0xffffffffu;
 thread_local std::uint32_t holdReleases[MaxSignal + 1]{};
@@ -917,6 +917,13 @@ bool HoldRaisedException(std::int64_t thread, int guest) {
     std::atomic_thread_fence(std::memory_order_seq_cst);
     if (SignalBlocked(*target, guest)) return true;
     return target->raised.exchange(0) == 0;
+}
+
+bool HoldBlockedDelivery(int guest) {
+    ThreadSignals* self = currentSignals;
+    if (self == nullptr || !SignalBlocked(*self, guest)) return false;
+    self->raised.store(guest);
+    return true;
 }
 
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);

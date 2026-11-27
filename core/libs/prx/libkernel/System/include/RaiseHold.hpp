@@ -4,6 +4,7 @@
 #include <cstdint>
 
 bool HoldRaisedException(std::int64_t thread, int guest);
+bool HoldBlockedDelivery(int guest);
 void DeliverHeldException(int guest);
 
 #endif
