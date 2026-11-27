@@ -110,6 +110,11 @@ struct ExceptionObject { const void* vtable; const char* message; };
 
 struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
 
+struct BaseTypeRecord { const TypeRecord* type; std::int64_t offsetFlags; };
+
+template<std::size_t TCount>
+struct MultipleTypeRecord { const void* const* vtable; const char* name; std::uint32_t flags; std::uint32_t baseCount; BaseTypeRecord bases[TCount]; };
+
 struct ExceptionVtable {
     std::ptrdiff_t offset;
     const TypeRecord* type;
@@ -1282,6 +1287,8 @@ int APS5_VABI putchar_nid_postfix(int value);
 int APS5_VABI putchar_unlocked_nid_postfix(int value);
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream);
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream);
+std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int delimiter, FileStream* stream);
+std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, std::size_t* n, FileStream* stream);
 int APS5_VABI feof_nid_postfix(FileStream* stream);
 int APS5_VABI ferror_nid_postfix(FileStream* stream);
 int APS5_VABI feof_unlocked_nid_postfix(FileStream* stream);
@@ -1597,6 +1604,7 @@ char* APS5_VABI ctime_nid_postfix(const int64_t* timer);
 size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
 int APS5_VABI fmtmsg_nid_postfix(std::int64_t classification, const char* label, int severity, const char* text, const char* action, const char* tag);
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr);
+char* APS5_VABI strptime_nid_postfix(const char* buf, const char* format, GuestTm* timeptr);
 int64_t APS5_VABI clock_nid_postfix();
 int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base);
 int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time);
@@ -2054,6 +2062,20 @@ int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv_nid_postfix(c
 int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE5do_inERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext, char* to, char* toEnd, char** toNext);
 int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE6do_outERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext, char* to, char* toEnd, char** toNext);
 int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m_nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, std::size_t max);
+void APS5_VABI _ZNSt3__17codecvtIcc11__mbstate_tED2Ev_nid_postfix(GuestLocale::LibcxxFacet* self);
+extern const LibcException::MultipleTypeRecord<2> _ZTINSt3__17codecvtIcc11__mbstate_tEE_nid_postfix;
+void APS5_VABI _ZNSt3__16locale5facetD2Ev_nid_postfix(GuestLocale::LibcxxFacet* self);
+void APS5_VABI _ZNSt3__16locale5facet16__on_zero_sharedEv_nid_postfix(GuestLocale::LibcxxFacet* self);
+extern const LibcException::TypeRecord _ZTINSt3__16locale5facetE_nid_postfix;
+std::int64_t APS5_VABI _ZNSt3__16locale2id5__getEv_nid_postfix(GuestLocale::LibcxxLocaleId* self);
+extern GuestLocale::LibcxxLocaleId _ZNSt3__15ctypeIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__17codecvtIcc11__mbstate_tE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__17codecvtIDic11__mbstate_tE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__17collateIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18messagesIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18numpunctIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18numpunctIwE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix;
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];

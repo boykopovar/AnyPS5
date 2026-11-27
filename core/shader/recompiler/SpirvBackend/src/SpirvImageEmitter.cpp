@@ -170,14 +170,29 @@ std::uint32_t CubeAxis(SpirvEmitterState& state, std::uint32_t value) {
     return Binary(state, spv::OpFSub, TypeF32(state), value, ConstantF32(state, 0x3f800000u));
 }
 
-std::uint32_t CubeLayer(SpirvEmitterState& state, std::uint32_t value) {
-    const auto guest = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertFToU, TypeU32(state), guest, value);
-    const auto padding = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), guest, ConstantU32(state, 3)), ConstantU32(state, 1));
-    const auto host = Binary(state, spv::OpISub, TypeU32(state), guest, padding);
-    const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), result, host);
-    return result;
+std::uint32_t CubeLayer(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t value) {
+    if (GcnGuestShaders()) {
+        const auto guest = Unary(state, spv::OpConvertFToU, TypeU32(state), value);
+        const auto padding = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), guest, ConstantU32(state, 3)), ConstantU32(state, 1));
+        return Unary(state, spv::OpConvertUToF, TypeF32(state), Binary(state, spv::OpISub, TypeU32(state), guest, padding));
+    }
+    const auto i32 = TypeI32(state);
+    const auto ext = [&](std::uint32_t op, std::uint32_t a, std::uint32_t b) {
+        const auto id = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, i32, id, GlslStd450(state), op, a, b);
+        return id;
+    };
+    const auto guest = Unary(state, spv::OpConvertFToS, i32, value);
+    const auto face = ext(GLSLstd450SMin, Binary(state, spv::OpBitwiseAnd, i32, guest, ConstantI32(state, 7)), ConstantI32(state, 5));
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 3), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    const auto layers = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, i32, layers, size, 2u);
+    const auto lastCube = ext(GLSLstd450SMax, Binary(state, spv::OpISub, i32, Binary(state, spv::OpSDiv, i32, layers, ConstantI32(state, 6)), ConstantI32(state, 1)), ConstantI32(state, 0));
+    const auto cube = ext(GLSLstd450SMin, ext(GLSLstd450SMax, Binary(state, spv::OpShiftRightArithmetic, i32, guest, ConstantI32(state, 3)), ConstantI32(state, 0)), lastCube);
+    const auto host = Binary(state, spv::OpIAdd, i32, Binary(state, spv::OpIMul, i32, cube, ConstantI32(state, 6)), face);
+    return Unary(state, spv::OpConvertSToF, TypeF32(state), host);
 }
 
 std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t first, std::uint32_t components, std::uint32_t encoded, bool gradient = false) {
@@ -204,7 +219,7 @@ std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access
     if (components == 3u) {
         auto z = (access.image.depthCompare && (access.mem.imageDimension == RdnaImageDimension::Dim1DArray || (access.image.remappedDepth1D && access.image.dimension == RdnaImageDimension::Dim2DArray))) ? component(1u) : component(2u);
         if (cube) {
-            z = CubeLayer(ctx.state, z);
+            z = CubeLayer(ctx.state, access, z);
         }
         ctx.state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(ctx.state, 3), result, x, y, z);
     } else {
@@ -1452,6 +1467,11 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageDimension == RdnaImageDimension::Dim3D && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
     }
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (VolumeSliceAddress(access)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, VolumeSliceInRange(ctx, access, LoadSampledImageDescriptor(state, access.mem.resource), LodU32(ctx, access)));
     }
@@ -1573,6 +1593,11 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageDimension == RdnaImageDimension::Dim2DArray && access.image.dimension == RdnaImageDimension::Dim1D) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
     }
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || (access.image.dimension == RdnaImageDimension::Dim1D && access.mem.imageDimension == RdnaImageDimension::Dim1DArray))) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (VolumeSliceAddress(access) || ArraySliceAddress(access)) {
         if (access.image.mipMode == ImageMipMode::DynamicStorage) ctx.Fail(access.inst, "stores a 2D-array address to a 3D image or a 3D address to a 2D-array image with dynamic mips, which is not implemented");
         const auto image = state.module.AllocateId();
@@ -1670,7 +1695,12 @@ std::uint32_t LockedImageAtomic64(SpirvValueEmitContext& ctx, const ImageEmitAcc
 void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto opcode = access.inst.Opcode();
-    const auto condition = ctx.Arg(access.inst, access.inst.ArgumentCount() - 1u);
+    auto condition = ctx.Arg(access.inst, access.inst.ArgumentCount() - 1u);
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (IsImageAtomic64Opcode(opcode) && state.requirements.imageAtomicLocks) {
         ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU64(state), ConstantU64(state, 0u), [&]() { return LockedImageAtomic64(ctx, access); }));
         return;

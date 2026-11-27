@@ -1,6 +1,7 @@
 #pragma once
 #include "prx/libSceNKWebKit/include/AsyncFileStreamExports.hpp"
 #include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
+#include "prx/libSceNKWebKit/include/CrossOriginPreflightExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossThreadTaskHandlerExports.hpp"
 #include "prx/libSceNKWebKit/include/DeviceMotionDataExports.hpp"
 #include "prx/libSceNKWebKit/include/DOMCacheEngineExports.hpp"
@@ -145,3 +146,4 @@
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteFileSystemDatabaseExports.hpp"
+#include "prx/libSceNKWebKit/include/DisplayListDrawGlyphsExports.hpp"
