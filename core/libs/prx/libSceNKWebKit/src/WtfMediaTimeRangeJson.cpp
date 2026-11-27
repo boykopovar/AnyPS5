@@ -103,6 +103,10 @@
 #include <stdexcept>
 #include <string>
 
+#include "prx/libc/include/General.hpp"
+#include <cstddef>
+#include <cstdint>
+
 namespace {
 
 using NKWebKit::MediaAbi::MediaTimeRange;
@@ -143,13 +147,41 @@ String Make(const std::string& text) {
     return result;
 }
 
+MediaTime UnpackMediaTime(const unsigned char* bytes) {
+    std::int64_t rawValue = 0;
+    std::uint32_t scale = 0;
+    std::uint8_t flags = 0;
+    std::memcpy(&rawValue, bytes + offsetof(MediaTime, m_timeValue), sizeof(rawValue));
+    std::memcpy(&scale, bytes + offsetof(MediaTime, m_timeScale), sizeof(scale));
+    std::memcpy(&flags, bytes + offsetof(MediaTime, m_timeFlags), sizeof(flags));
+    if (flags & MediaTime::DoubleValue) {
+        double doubleValue = 0.0;
+        std::memcpy(&doubleValue, bytes + offsetof(MediaTime, m_timeValueAsDouble), sizeof(doubleValue));
+        MediaTime time(0, scale, flags);
+        time.m_timeValueAsDouble = doubleValue;
+        return time;
+    }
+    return MediaTime(rawValue, scale, flags);
+}
+
+MediaTimeRange ReadGuestRange(const MediaTimeRange* self, const char* function) {
+    unsigned char raw[sizeof(MediaTimeRange)]{};
+    if (!GuestCopyIn_nid_no_patch(raw, self, sizeof(raw)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return MediaTimeRange{
+        UnpackMediaTime(raw + offsetof(MediaTimeRange, start)),
+        UnpackMediaTime(raw + offsetof(MediaTimeRange, end)),
+    };
+}
+
 }
 
 extern "C" {
 
 String APS5_VABI _ZNK3WTF14MediaTimeRange12toJSONStringEv(const MediaTimeRange* self) {
     if (!self) throw std::invalid_argument("null WTF::MediaTimeRange");
-    return Make("{\"start\":" + JSONObject(self->start) + ",\"end\":" + JSONObject(self->end) + "}");
+    const MediaTimeRange range = ReadGuestRange(self, __func__);
+    return Make("{\"start\":" + JSONObject(range.start) + ",\"end\":" + JSONObject(range.end) + "}");
 }
 
 }
