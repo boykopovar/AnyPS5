@@ -729,4 +729,9 @@ void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainF
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
 
+void APS5_VABI WKPageLoadHTMLString(const void* pageRef, const void* htmlStringRef, const void* baseURLRef);
+void APS5_VABI WKPageLoadHTMLStringWithUserData(const void* pageRef, const void* htmlStringRef, const void* baseURLRef, const void* userDataRef);
+void APS5_VABI WKPageLoadPlainTextString(const void* pageRef, const void* plainTextStringRef);
+void APS5_VABI WKPageLoadPlainTextStringWithUserData(const void* pageRef, const void* plainTextStringRef, const void* userDataRef);
+
 }

@@ -8870,21 +8870,6 @@ int APS5_VABI WKPageLoadFileWithUserData() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageLoadHTMLString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLoadHTMLStringWithUserData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLoadPlainTextString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLoadPlainTextStringWithUserData() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageLoadURL() {
     NotImplemented_nid_no_patch(__func__);
