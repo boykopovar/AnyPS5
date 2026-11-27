@@ -267,6 +267,10 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
             throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
         }
 
+        if (sh.Type == SHT_DYNAMIC && sh.EntrySize != kDynEntrySize) {
+            throw RelinkerException("Invalid dynamic section entry size", offset + kShdrEntSizeOffset);
+        }
+
         if (sh.Type == SHT_RELA && sh.EntrySize != kRelaEntrySize) {
             throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
         }

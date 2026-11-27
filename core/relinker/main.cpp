@@ -485,7 +485,10 @@ int Run(const int argc, char* argv[]) {
             return 0;
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        if (args.windowsDiagnostics) {
+            if (!guestArtifacts.empty()) std::filesystem::create_directories(outputDirectory);
+            fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        }
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;

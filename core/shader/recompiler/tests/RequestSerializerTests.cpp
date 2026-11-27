@@ -200,14 +200,27 @@ void VerifyTessellationInstancePatches() {
 
 }
 
-std::string SerializeVersion63(const ShaderRecompiler::RecompileRequest& request) {
-    auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes[4] == 65u);
-    const auto tail = request.graphics.has_value() && request.graphics->emulateBarycentrics ? 1u : 0u;
-    const auto mesh = request.graphics.has_value() && request.graphics->mesh.has_value() ? 8u : 0u;
-    bytes.erase(bytes.end() - tail - mesh - 11u, bytes.end() - tail);
+std::vector<std::uint8_t> Version64Bytes(std::vector<std::uint8_t> bytes) {
+    Require(bytes.size() > 27u && bytes[4] == 67u);
+    const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
+    const std::size_t barycentrics = replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics ? 1u : 0u;
+    const auto end = bytes.end() - static_cast<std::ptrdiff_t>(barycentrics);
+    const auto mesh = replay.request.graphics.has_value() && replay.request.graphics->mesh.has_value() ? 8 : 0;
+    bytes.erase(end - 11 - mesh, end);
+    bytes[4] = 64u;
+    return bytes;
+}
+
+std::vector<std::uint8_t> Version63Bytes(std::vector<std::uint8_t> bytes) {
+    bytes = Version64Bytes(std::move(bytes));
+    const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
+    Require(replay.request.context.splitState.empty());
+    const std::size_t barycentrics = replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics ? 1u : 0u;
+    const auto at = bytes.end() - static_cast<std::ptrdiff_t>(8u + barycentrics);
+    Require(std::all_of(at, at + 8, [](std::uint8_t value) { return value == 0u; }));
+    bytes.erase(at, at + 8);
     bytes[4] = 63u;
-    return EncodeBase64(bytes);
+    return bytes;
 }
 
 void VerifyMeshReuseLimits() {
@@ -221,20 +234,39 @@ void VerifyMeshReuseLimits() {
     mesh.reuseVertexLimit = 14u;
     mesh.reusePrimitiveLimit = 13u;
     request.graphics->mesh = mesh;
+    const std::array splitState{7u};
+    request.context.splitState = splitState;
     request.target.meshInlineFunctions = true;
     const auto encoded = serializer.Serialize(request);
     const auto replay = serializer.Deserialize(encoded);
     Require(replay.request.graphics.has_value() && replay.request.graphics->mesh.has_value());
     Require(replay.request.graphics->mesh->reuseVertexLimit == 14u && replay.request.graphics->mesh->reusePrimitiveLimit == 13u);
     Require(serializer.Serialize(replay.request) == encoded);
-    auto bytes = DecodeBase64(encoded);
-    Require(bytes[4] == 65u);
-    bytes.resize(bytes.size() - 8u);
-    bytes[4] = 64u;
-    const auto version64 = serializer.Deserialize(EncodeBase64(bytes));
-    Require(version64.request.graphics->mesh->reuseVertexLimit == 0u && version64.request.graphics->mesh->reusePrimitiveLimit == 0u);
-    Require(version64.request.graphics->mesh->verticesPerGroup == 12u && version64.request.target.meshInlineFunctions);
-    const auto version63 = serializer.Deserialize(SerializeVersion63(request));
+    Require(std::ranges::equal(replay.request.context.splitState, splitState));
+    Require(replay.request.target.meshInlineFunctions);
+    const auto bytes = DecodeBase64(encoded);
+    Require(bytes[4] == 67u);
+    auto previousReplay = bytes;
+    previousReplay.resize(previousReplay.size() - 8u);
+    previousReplay[4] = 66u;
+    const auto version66 = serializer.Deserialize(EncodeBase64(previousReplay));
+    Require(version66.request.graphics->mesh->reuseVertexLimit == 0u && version66.request.graphics->mesh->reusePrimitiveLimit == 0u);
+    Require(version66.request.graphics->mesh->verticesPerGroup == 12u && version66.request.target.meshInlineFunctions);
+    Require(std::ranges::equal(version66.request.context.splitState, splitState));
+
+    auto previousMesh = bytes;
+    const auto splitEnd = previousMesh.end() - 19;
+    previousMesh.erase(splitEnd - 12, splitEnd);
+    previousMesh[4] = 65u;
+    const auto version65 = serializer.Deserialize(EncodeBase64(previousMesh));
+    Require(version65.request.graphics->mesh->reuseVertexLimit == 14u && version65.request.graphics->mesh->reusePrimitiveLimit == 13u);
+    Require(version65.request.target.meshInlineFunctions && version65.request.context.splitState.empty());
+
+    const auto version64 = serializer.Deserialize(EncodeBase64(Version64Bytes(bytes)));
+    Require(std::ranges::equal(version64.request.context.splitState, splitState));
+    Require(version64.request.graphics->mesh->reuseVertexLimit == 0u && !version64.request.target.meshInlineFunctions);
+    request.context.splitState = {};
+    const auto version63 = serializer.Deserialize(EncodeBase64(Version63Bytes(DecodeBase64(serializer.Serialize(request)))));
     Require(version63.request.graphics->mesh->reuseVertexLimit == 0u && version63.request.graphics->mesh->reusePrimitiveLimit == 0u);
     Require(version63.request.graphics->mesh->verticesPerGroup == 12u && !version63.request.target.meshInlineFunctions);
 }
@@ -257,11 +289,11 @@ void VerifySampleContexts() {
             Require(serializer.Serialize(replay.request) == encoded);
             Require(replay.request.graphics.has_value() == request.graphics.has_value());
             if (graphics != 0u) Require(replay.request.graphics->emulateBarycentrics == (graphics == 2u));
-            const auto legacy = serializer.Deserialize(SerializeVersion63(request));
+            const auto legacy = serializer.Deserialize(EncodeBase64(Version63Bytes(DecodeBase64(encoded))));
             Require(!legacy.request.context.convertedSamples && !legacy.request.context.layerRowSamples);
             if (graphics != 0u) Require(legacy.request.graphics->emulateBarycentrics == (graphics == 2u));
             const auto bytes = DecodeBase64(encoded);
-            Require(bytes[4] == 65u);
+            Require(bytes[4] == 67u);
             const auto tail = graphics == 2u ? 1u : 0u;
             auto trailing = bytes;
             trailing.push_back(0u);
@@ -303,7 +335,7 @@ void VerifyReplayOptions() {
             for (unsigned index = 0; index != options.size(); ++index) request.target.*options[index] = choice == index || choice == options.size();
             const auto encoded = serializer.Serialize(request);
             const auto replay = serializer.Deserialize(encoded);
-            const auto legacy = serializer.Deserialize(SerializeVersion63(request));
+            const auto legacy = serializer.Deserialize(EncodeBase64(Version63Bytes(DecodeBase64(encoded))));
             for (const auto option : options) {
                 Require(replay.request.target.*option == request.target.*option);
                 Require(!(legacy.request.target.*option));
@@ -315,7 +347,7 @@ void VerifyReplayOptions() {
 }
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
-    auto bytes = DecodeBase64(SerializeVersion63(request));
+    auto bytes = Version63Bytes(DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request)));
     Require(bytes.size() > 14u && bytes[4] == 63u);
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
@@ -333,13 +365,13 @@ void VerifyTargetOptions() {
                     request.target.maxImageArrayLayers = layers;
                     request.target.float16WidenNans = widen;
                     request.target.float16NarrowNans = narrow;
-                    const auto encoded = SerializeVersion63(request);
+                    const auto encoded = serializer.Serialize(request);
                     const auto replay = serializer.Deserialize(encoded);
                     if (replay.request.target.fixedPushSlots != fixed) throw std::runtime_error("shader request changed fixedPushSlots");
                     Require(replay.request.target.maxImageArrayLayers == layers);
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
-                    Require(SerializeVersion63(replay.request) == encoded);
-                    auto bytes = DecodeBase64(encoded);
+                    Require(serializer.Serialize(replay.request) == encoded);
+                    auto bytes = Version63Bytes(DecodeBase64(encoded));
                     Require(bytes[4] == 63u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
@@ -386,7 +418,7 @@ void VerifyTargetOptions() {
     ShaderRecompiler::RecompileRequest emulated{};
     emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
     emulated.graphics->emulateBarycentrics = true;
-    auto trailing = DecodeBase64(SerializeVersion63(emulated));
+    auto trailing = DecodeBase64(serializer.Serialize(emulated));
     Require(trailing.back() == 1u && serializer.Deserialize(EncodeBase64(trailing)).request.graphics->emulateBarycentrics);
     trailing.push_back(2u);
     bool rejected = false;
@@ -898,7 +930,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 66u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -927,7 +959,7 @@ int VerifyVersion56Compatibility() {
         compute.context.compute->scratchDwords = 24u;
         compute.context.compute->granulatedVgprCount = 13u;
         compute.context.compute->sharedVgprBlocks = 2u;
-        const auto encoded = SerializeVersion63(compute);
+        const auto encoded = serializer.Serialize(compute);
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.context.compute.has_value() && replay.request.context.compute->granulatedVgprCount == 13u && replay.request.context.compute->sharedVgprBlocks == 2u);
         auto version55 = DecodeBase64(SerializeVersion56(compute));
@@ -1013,7 +1045,7 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        auto version62 = DecodeBase64(SerializeVersion63(request));
+        auto version62 = Version63Bytes(DecodeBase64(serializer.Serialize(request)));
         Require(version62[4] == 63u && version62.back() == (spanned ? 1u : 0u));
         version62[4] = 62u;
         Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
@@ -1307,14 +1339,13 @@ void VerifySingleSampleVersion63() {
     for (const auto mode : {ShaderRecompiler::SingleSampleDither::E701, ShaderRecompiler::SingleSampleDither::Rounded18701}) {
         request.context.pixel->ditheredAlphaSamples = 1u;
         request.context.pixel->singleSampleDither = mode;
-        const auto current = serializer.Deserialize(serializer.Serialize(request));
-        Require(current.request.context.pixel->singleSampleDither == mode && current.request.context.pixel->ditheredAlphaSamples == 1u);
-        const auto bytes = DecodeBase64(SerializeVersion63(request));
+        const auto current = DecodeBase64(serializer.Serialize(request));
+        const auto bytes = Version63Bytes(current);
         Require(bytes[4] == 63u);
         const auto replay = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay.request.context.pixel->singleSampleDither == mode && replay.request.context.pixel->ditheredAlphaSamples == 1u);
         Require(replay.request.target.maxImageArrayLayers == 4097u && replay.request.target.fixedPushSlots && replay.request.target.spannedAnySubgroup);
-        Require(SerializeVersion63(replay.request) == EncodeBase64(bytes));
+        Require(serializer.Serialize(replay.request) == EncodeBase64(current));
         for (const auto version : {53u, 54u, 55u, 56u, 57u, 62u}) {
             auto previous = bytes;
             previous[4] = version;
@@ -1342,7 +1373,7 @@ void VerifySingleSampleVersion63() {
         for (const auto samples : {2u, 8u}) {
             request.context.pixel->ditheredAlphaSamples = samples;
             request.context.pixel->singleSampleDither = ShaderRecompiler::SingleSampleDither::None;
-            auto legacy = DecodeBase64(SerializeVersion63(request));
+            auto legacy = Version63Bytes(DecodeBase64(serializer.Serialize(request)));
             legacy[4] = version;
             if (version < 57u) legacy.resize(legacy.size() - 6u);
             else if (version < 62u) legacy.pop_back();
@@ -1351,7 +1382,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 5u}, std::pair{65u, 5u}, std::pair{66u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{65u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
@@ -1365,7 +1396,40 @@ void VerifySingleSampleVersion63() {
     }
 }
 
+void VerifySplitState() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    const std::vector<std::uint32_t> state{3u, 7u, 11u};
+    ShaderRecompiler::RecompileRequest request{};
+    request.context.splitState = state;
+    request.target.meshInlineFunctions = true;
+    const auto encoded = serializer.Serialize(request);
+    auto bytes = DecodeBase64(encoded);
+    Require(bytes[4] == 67u);
+    const auto replay = serializer.Deserialize(encoded);
+    Require(std::ranges::equal(replay.request.context.splitState, state));
+    Require(replay.request.target.meshInlineFunctions);
+    const auto legacy = serializer.Deserialize(EncodeBase64(Version64Bytes(bytes)));
+    Require(std::ranges::equal(legacy.request.context.splitState, state));
+    Require(!legacy.request.target.meshInlineFunctions);
+    Require(serializer.Serialize(replay.request) == encoded);
+    for (std::size_t missing = 1u; missing <= 4u * state.size() + 11u; ++missing) {
+        auto truncated = bytes;
+        truncated.resize(truncated.size() - missing);
+        bool rejected = false;
+        try {
+            static_cast<void>(serializer.Deserialize(EncodeBase64(truncated)));
+        } catch (const std::runtime_error& error) {
+            rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+        }
+        Require(rejected);
+    }
+    bytes.resize(bytes.size() - 19u - 4u * state.size());
+    bytes[4] = 63u;
+    Require(serializer.Deserialize(EncodeBase64(bytes)).request.context.splitState.empty());
+}
+
 int main() {
+    VerifySplitState();
     VerifyMeshReuseLimits();
     VerifySampleContexts();
     VerifyReplayOptions();

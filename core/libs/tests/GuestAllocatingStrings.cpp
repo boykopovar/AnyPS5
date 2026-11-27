@@ -16,8 +16,10 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -169,6 +171,54 @@ int main() {
     Require(allocations == allocationsBeforeBadDestination);
 
     InitializeHeap();
+
+#ifdef _WIN32
+    SYSTEM_INFO guardInfo{};
+    GetSystemInfo(&guardInfo);
+    const std::size_t guardPage = guardInfo.dwPageSize;
+    auto* guard = static_cast<unsigned char*>(VirtualAlloc(nullptr, guardPage * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(guard != nullptr);
+    DWORD previousProtect{};
+    Require(VirtualProtect(guard + guardPage * 2, guardPage, PAGE_NOACCESS, &previousProtect) != 0);
+#else
+    const std::size_t guardPage = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* guard = static_cast<unsigned char*>(mmap(nullptr, guardPage * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(guard != MAP_FAILED);
+    Require(mprotect(guard + guardPage * 2, guardPage, PROT_NONE) == 0);
+#endif
+    std::memset(guard + guardPage, 'a', guardPage);
+    std::memcpy(guard, "hello world", sizeof("hello world") - 1);
+
+    *__error_nid_postfix() = 7;
+    char* guarded = strndup_nid_postfix(reinterpret_cast<const char*>(guard), guardPage);
+    Require(guarded != nullptr);
+    Require(std::strcmp(guarded, "hello world") == 0);
+    free_nid_postfix(guarded);
+    Require(*__error_nid_postfix() == 7);
+
+    *__error_nid_postfix() = 0;
+    char* unreadable = strndup_nid_postfix(reinterpret_cast<const char*>(guard + guardPage), guardPage + 8);
+    Require(unreadable == nullptr);
+    Require(*__error_nid_postfix() == 14);
+
+    *__error_nid_postfix() = 0;
+    char* unreadableFull = strdup_nid_postfix(reinterpret_cast<const char*>(guard + guardPage));
+    Require(unreadableFull == nullptr);
+    Require(*__error_nid_postfix() == 14);
+
+    std::memcpy(guard + guardPage * 2 - 4, "abc\0", 4);
+    *__error_nid_postfix() = 7;
+    char* pageEnd = strndup_nid_postfix(reinterpret_cast<const char*>(guard + guardPage * 2 - 4), guardPage + 8);
+    Require(pageEnd != nullptr);
+    Require(std::strcmp(pageEnd, "abc") == 0);
+    free_nid_postfix(pageEnd);
+    Require(*__error_nid_postfix() == 7);
+
+#ifdef _WIN32
+    Require(VirtualFree(guard, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(guard, guardPage * 3) == 0);
+#endif
 
     *__error_nid_postfix() = 0;
     char* empty = strndup_nid_postfix(nullptr, 0);

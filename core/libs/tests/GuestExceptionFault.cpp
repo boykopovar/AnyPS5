@@ -204,6 +204,10 @@ static constexpr std::size_t TrapnoOffset = 0xc0;
 static constexpr std::size_t AddrOffset = 0xc8;
 static constexpr std::size_t ErrOffset = 0xd8;
 static constexpr std::size_t RipOffset = 0xe0;
+static constexpr std::size_t FpformatOffset = 0x110;
+static constexpr std::size_t OwnedfpOffset = 0x118;
+static constexpr std::uint64_t MC_FPFMT_XMM = 0x10002;
+static constexpr std::uint64_t MC_FPOWNED_FPU = 0x20001;
 static constexpr std::size_t Xmm8Offset = 0x140 + 160 + 8 * 16;
 static constexpr std::uintptr_t NullAddress = 0x10;
 static constexpr std::uintptr_t NonCanonicalAddress = 0x8000000000000000ULL;
@@ -217,7 +221,7 @@ static constexpr int ChildTimeoutSeconds = 10;
 static constexpr const char* RemoveAndReturnMode = "remove-and-return";
 static constexpr const char* HandledMarker = "[guest_exception_fault] handler removed itself\n";
 
-enum class Mode { Resume, Registers, Nested, Jump, Retry, Unprotect, Remove };
+enum class Mode { Resume, Registers, Nested, Jump, Sigreturn, Retry, Unprotect, Remove };
 
 static void RequireFailed(const char* expression, const char* file, int line) {
     std::fprintf(stderr, "[guest_exception_fault] Require failed: %s at %s:%d\n", expression, file, line);
@@ -284,6 +288,8 @@ static void Check(int signum, void* context, const Expected& want) {
     Require(Field<std::uint32_t>(context, TrapnoOffset) == want.trapno);
     Require(Field<std::uint64_t>(context, AddrOffset) == want.addr);
     Require(Field<std::uint64_t>(context, RipOffset) == want.site);
+    Require(Field<std::uint64_t>(context, FpformatOffset) == MC_FPFMT_XMM);
+    Require(Field<std::uint64_t>(context, OwnedfpOffset) == MC_FPOWNED_FPU);
 }
 
 static void Resume(void* context, std::uintptr_t resume) {
@@ -319,6 +325,10 @@ static void APS5_VABI Handler(int signum, void* context) {
         return;
     }
     if (mode == Mode::Jump) longjmp_nid_postfix(jumpBuffer, JumpValue);
+    if (mode == Mode::Sigreturn) {
+        Resume(context, expected.resume);
+        Require(SigreturnContext_nid_no_patch(static_cast<const UserUcontext*>(context)) != -1);
+    }
     if (mode == Mode::Nested) Require(FaultTestIllegal() == Resumed);
     if (mode == Mode::Registers) {
         Require(Field<std::uint64_t>(context, R13Offset) == 0x5555666677778888ULL);
@@ -433,6 +443,15 @@ static void TestJumpOut() {
     for (int round = 0; round < 3; ++round) {
         Arm(Mode::Jump, {GUEST_SIGSEGV, T_PAGEFLT, NullAddress, Address(FaultTestJumpSite), 0});
         Require(FaultTestJump(NullAddress, jumpBuffer) == JumpValue);
+        Require(calls.load() == 1);
+    }
+    TestRead();
+}
+
+static void TestSigreturn() {
+    for (int round = 0; round < 3; ++round) {
+        Arm(Mode::Sigreturn, {GUEST_SIGSEGV, T_PAGEFLT, NullAddress, Address(FaultTestReadSite), Address(FaultTestReadResume)});
+        Require(FaultTestRead(NullAddress) == Resumed);
         Require(calls.load() == 1);
     }
     TestRead();
@@ -610,6 +629,7 @@ int main(int argc, char** argv) {
     TestRegisters();
     TestNested();
     TestJumpOut();
+    TestSigreturn();
     TestOtherThread();
     TestWatchedStore();
     TestReturnUnchanged();
