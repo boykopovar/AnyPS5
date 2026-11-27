@@ -388,6 +388,10 @@ private:
 
 private:
     Watch() {
+        const struct ErrnoGuard {
+            int saved = errno;
+            ~ErrnoGuard() { errno = saved; }
+        } restoreErrno{};
         if (std::getenv("APS5_NO_WRITE_WATCH") == nullptr) open();
         else std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "disabled by APS5_NO_WRITE_WATCH");
     }
