@@ -59,6 +59,14 @@ void APS5_VABI _ZN7WebCore8Gradient25setGradientSpaceTransformERKNS_15AffineTran
     self->setGradientSpaceTransform(transform);
 }
 
+void APS5_VABI _ZN7WebCore8GradientD0Ev(WebCore::Gradient* self) {
+    if (!self) {
+        throw std::invalid_argument("WebCore::Gradient::~Gradient: null object");
+    }
+    WebCore::Destroy(self);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
 void APS5_VABI _ZN7WebCore8GradientD1Ev(WebCore::Gradient* self) {
     WebCore::Destroy(self);
 }

@@ -105,6 +105,7 @@ void APS5_VABI _ZN7WebCore8Gradient15setSpreadMethodENS_20GradientSpreadMethodE(
 void APS5_VABI _ZN7WebCore8Gradient19setSortedColorStopsEON3WTF6VectorINS0_9ColorStopELm2ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
     WebCore::Gradient* self, WTF::Vector<WebCore::Gradient::ColorStop, 2>&& stops);
 void APS5_VABI _ZN7WebCore8Gradient25setGradientSpaceTransformERKNS_15AffineTransformE(WebCore::Gradient* self, const WebCore::AffineTransform& transform);
+void APS5_VABI _ZN7WebCore8GradientD0Ev(WebCore::Gradient* self);
 void APS5_VABI _ZN7WebCore8GradientD1Ev(WebCore::Gradient* self);
 void APS5_VABI _ZN7WebCore8GradientD2Ev(WebCore::Gradient* self);
 

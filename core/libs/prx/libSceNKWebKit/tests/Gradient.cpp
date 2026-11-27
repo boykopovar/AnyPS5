@@ -45,7 +45,7 @@ void TestLifecycleLinear() {
     Require(grad->m_stops.isEmpty(), "linear stops empty");
     Require(!grad->m_stopsSorted, "linear stops not sorted initially");
     Require(grad->m_spreadMethod == WebCore::GradientSpreadMethod::Pad, "default spread pad");
-    _ZN7WebCore8GradientD1Ev(grad);
+    _ZN7WebCore8GradientD0Ev(grad);
 }
 
 void TestLifecycleRadialAndConic() {
@@ -63,6 +63,7 @@ void TestLifecycleRadialAndConic() {
     Require(gradR->m_data.radial.endRadius == 25.0f, "endRadius");
     Require(gradR->m_data.radial.aspectRatio == 1.75f, "aspectRatio");
     _ZN7WebCore8GradientD2Ev(gradR);
+    _ZN3WTF8fastFreeEPv(gradR);
 
     WebCore::GradientData conic{};
     conic.conic.point0 = {15.0f, 25.0f};
@@ -73,6 +74,11 @@ void TestLifecycleRadialAndConic() {
     Require(gradC != nullptr, "conic gradient created");
     Require(gradC->m_data.conic.angleRadians == 3.14159f, "angleRadians");
     _ZN7WebCore8GradientD1Ev(gradC);
+    _ZN3WTF8fastFreeEPv(gradC);
+
+    WebCore::Gradient stackGradient;
+    _ZN7WebCore8GradientD1Ev(&stackGradient);
+    _ZN7WebCore8GradientD2Ev(&stackGradient);
 }
 
 void TestAddColorStop() {
@@ -94,7 +100,7 @@ void TestAddColorStop() {
     Require(grad->m_stops.size() == 3, "stops size 3");
     Require(!grad->m_stopsSorted, "descending stop marks stopsSorted false");
 
-    _ZN7WebCore8GradientD1Ev(grad);
+    _ZN7WebCore8GradientD0Ev(grad);
 }
 
 void TestSetSortedColorStops() {
@@ -114,7 +120,7 @@ void TestSetSortedColorStops() {
     Require(grad->m_stops[1].offset == 0.5f, "stop 1 offset");
     Require(grad->m_stops[2].offset == 1.0f, "stop 2 offset");
 
-    _ZN7WebCore8GradientD1Ev(grad);
+    _ZN7WebCore8GradientD0Ev(grad);
 }
 
 void TestSpreadMethod() {
@@ -131,7 +137,7 @@ void TestSpreadMethod() {
     _ZN7WebCore8Gradient15setSpreadMethodENS_20GradientSpreadMethodE(grad, WebCore::GradientSpreadMethod::Pad);
     Require(grad->m_spreadMethod == WebCore::GradientSpreadMethod::Pad, "spread pad");
 
-    _ZN7WebCore8GradientD1Ev(grad);
+    _ZN7WebCore8GradientD0Ev(grad);
 }
 
 void TestGradientSpaceTransform() {
@@ -146,7 +152,7 @@ void TestGradientSpaceTransform() {
     Require(grad->m_gradientSpaceTransformation.m_transform[4] == 10.0, "xform tx");
     Require(grad->m_gradientSpaceTransformation.m_transform[5] == 20.0, "xform ty");
 
-    _ZN7WebCore8GradientD1Ev(grad);
+    _ZN7WebCore8GradientD0Ev(grad);
 }
 
 void TestNullGuards() {
@@ -167,6 +173,10 @@ void TestNullGuards() {
         WebCore::AffineTransform t;
         _ZN7WebCore8Gradient25setGradientSpaceTransformERKNS_15AffineTransformE(nullptr, t);
     }, "null setGradientSpaceTransform");
+
+    RequireException([] {
+        _ZN7WebCore8GradientD0Ev(nullptr);
+    }, "null D0");
 
     RequireException([] {
         _ZN7WebCore8GradientD1Ev(nullptr);
