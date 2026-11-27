@@ -77,6 +77,11 @@ class PrepareInputTests(ReleaseNotesCase):
         self.assertEqual(self.body.read_bytes(), b"hi")
         self.assertEqual(self.full.read_bytes(), b"hi")
 
+    def test_directory_input_is_rejected_before_reading(self):
+        self.source.mkdir()
+        with patch.object(Path, "open", side_effect=AssertionError("attempted to open the directory")):
+            self.assertRejectedWithoutOutputs("release note input must be a regular file")
+
 
 class PrepareBodyLimitTests(ReleaseNotesCase):
     def test_body_still_over_limit_after_stripping_is_rejected_and_outputs_kept(self):
@@ -166,6 +171,27 @@ class PrepareWriteTests(ReleaseNotesCase):
 
 
 class PrepareCheckTests(ReleaseNotesCase):
+    def test_check_detects_oversized_output_without_opening_it(self):
+        self.write_source('{"body":"notes"}')
+        self.body.write_bytes(b"notes")
+        self.full.write_bytes(b"notes with stale trailing content")
+        open_file = Path.open
+
+        def open_checked(path, *args, **kwargs):
+            self.assertNotEqual(path, self.full)
+            return open_file(path, *args, **kwargs)
+
+        with patch.object(Path, "open", open_checked):
+            self.assertFalse(prepare_release_notes.prepare_notes(self.source, self.body, self.full, check=True))
+        self.assertEqual(self.full.read_bytes(), b"notes with stale trailing content")
+
+    def test_check_rejects_a_nonregular_output_before_opening_it(self):
+        self.write_source('{"body":"notes"}')
+        self.body.write_bytes(b"notes")
+        self.full.mkdir()
+        with self.assertRaisesRegex(ValueError, "release note output must be a regular file"):
+            prepare_release_notes.prepare_notes(self.source, self.body, self.full, check=True)
+
     def test_check_is_true_only_when_both_outputs_match_the_stripped_and_full_text(self):
         notes = "## What's Changed\n* " + "x" * LIMIT + "\n## New Contributors\n* n\n"
         stripped = "## New Contributors\n* n\n"
@@ -223,6 +249,15 @@ class PrepareDistinctPathTests(ReleaseNotesCase):
 
 
 class PrepareDestinationTests(ReleaseNotesCase):
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX named pipes")
+    def test_write_preserves_a_named_pipe_destination(self):
+        self.write_source('{"body":"notes"}')
+        os.mkfifo(self.full)
+        with self.assertRaisesRegex(ValueError, "release note output must be a regular file"):
+            prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertFalse(self.body.exists())
+        self.assertTrue(self.full.is_fifo())
+
     def link(self, name, target):
         path = self.root / name
         try:
@@ -286,6 +321,13 @@ class PrepareFailureCleanupTests(ReleaseNotesCase):
         with self.assertRaises(ValueError):
             prepare_release_notes.prepare_notes(self.source, self.body, self.full)
         self.assertOutputsKept()
+
+    def test_invalid_unicode_leaves_missing_output_directories_uncreated(self):
+        self.write_source('{"body":"\\ud800"}')
+        missing = self.root / "new"
+        with self.assertRaises(UnicodeEncodeError):
+            prepare_release_notes.prepare_notes(self.source, missing / "body.md", missing / "full.md")
+        self.assertFalse(missing.exists())
 
     def test_failed_replace_keeps_outputs_and_removes_temporaries(self):
         self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))

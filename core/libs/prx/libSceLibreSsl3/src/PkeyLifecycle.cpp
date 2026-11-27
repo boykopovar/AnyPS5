@@ -297,8 +297,40 @@ constexpr int MallocFailure = 65;
 constexpr int Asn1OctetString = 4;
 constexpr int DifferentKeyTypes = 101;
 constexpr int MissingParameters = 103;
+constexpr int CommandNotSupported = 147;
+constexpr int OperationNotSupported = 150;
+constexpr int UnsupportedAlgorithm = 156;
 constexpr int RsaType = 6;
 constexpr int EcType = 408;
+constexpr int NoKeyType = -1;
+constexpr int DhType = 28;
+constexpr int DsaType = 116;
+constexpr int CmacType = 894;
+constexpr int X25519Type = 950;
+constexpr int Ed25519Type = 952;
+constexpr int HkdfType = 1022;
+constexpr int Tls1PrfType = 1055;
+
+int MacKeyRejection(int type) {
+    switch (type) {
+    case NoKeyType:
+    case CmacType:
+        return 0;
+    case RsaType:
+    case DhType:
+    case DsaType:
+    case EcType:
+    case LibreSsl3PkeyRsaPss:
+    case X25519Type:
+    case Ed25519Type:
+        return CommandNotSupported;
+    case HkdfType:
+    case Tls1PrfType:
+        return OperationNotSupported;
+    default:
+        return UnsupportedAlgorithm;
+    }
+}
 
 void ReleasePkeyData(LibreSsl3EvpPkey* key) {
     if (!key->key) return;
@@ -383,7 +415,10 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
 }
 
 LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(int type, void*, const unsigned char* key, int keyLength) {
-    if (type != LibreSsl3PkeyHmac) return nullptr;
+    if (type != LibreSsl3PkeyHmac) {
+        if (const int reason = MacKeyRejection(type)) LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
+        return nullptr;
+    }
     if ((!key && keyLength > 0) || keyLength < -1) return nullptr;
     auto* octets = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
     if (!octets) return nullptr;

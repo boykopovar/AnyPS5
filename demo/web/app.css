@@ -12,3 +12,4 @@
 :root[dir=rtl] h1,:root[dir=rtl] .eyebrow{letter-spacing:normal}
 :root[dir=rtl] code,:root[dir=rtl] .choices span{direction:ltr;unicode-bidi:isolate}
 :root:not([lang=ar]) .arabic-credit{display:none}
+#result-info{overflow-wrap:anywhere}

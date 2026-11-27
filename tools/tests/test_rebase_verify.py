@@ -47,11 +47,14 @@ class TestShardTests(unittest.TestCase):
                             for shard in range(REBASE_VERIFY_TEST_SHARDS)))
 
 
-def run_git(root, *arguments):
+def run_git(root, *arguments, input_bytes=None, raw=False):
     environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1"}
-    return subprocess.run(["git", "-C", str(root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
-                           "-c", "commit.gpgsign=false", *arguments], capture_output=True, text=True, check=True,
-                          env=environment).stdout.strip()
+    output = subprocess.run(["git", "-C", str(root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
+                             "-c", "commit.gpgsign=false", *arguments], input=input_bytes, capture_output=True,
+                            text=input_bytes is None and not raw, check=True, env=environment).stdout
+    if raw:
+        return output
+    return (output if input_bytes is None else output.decode("ascii")).strip()
 
 
 class RebaseVerifyTests(unittest.TestCase):
@@ -88,11 +91,19 @@ class RebaseVerifyTests(unittest.TestCase):
         self.root = Path(directory.name) / "repository"
         shutil.copytree(self.template, self.root, symlinks=True)
 
-    def git(self, *arguments):
-        return run_git(self.root, *arguments)
+    def git(self, *arguments, input_bytes=None, raw=False):
+        return run_git(self.root, *arguments, input_bytes=input_bytes, raw=raw)
 
     def write(self, name, text):
         (self.root / name).write_bytes(text.encode("utf-8"))
+
+    def commit_tree_file(self, parent, name, content, message):
+        blob = self.git("hash-object", "-w", "--stdin", input_bytes=content).encode("ascii")
+        entries = self.git("ls-tree", "-z", parent, raw=True).split(b"\0")
+        retained = [entry for entry in entries if entry and entry.split(b"\t", 1)[1] != name]
+        retained.append(b"100644 blob " + blob + b"\t" + name)
+        tree = self.git("mktree", "-z", input_bytes=b"\0".join(retained) + b"\0")
+        return self.git("commit-tree", tree, "-p", parent, "-m", message)
 
     def verify(self):
         return rebase_verify.verify(self.root, "old", "new", "main")[3]
@@ -104,22 +115,38 @@ class RebaseVerifyTests(unittest.TestCase):
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
 
-    @unittest.skipIf(os.name == "nt", "Windows does not support these filename characters")
-    def test_rebase_checks_added_and_deleted_lines_at_quoted_paths(self):
-        path = 'quoted-"-\\-\t-é.txt'
-        self.git("checkout", "-q", "main")
-        self.write(path, "old line\n")
-        self.git("add", "--", path)
-        self.git("commit", "-qm", "feat(tools): add a quoted path")
-        self.git("checkout", "-q", "-B", "old", "main")
-        self.write(path, "new line\n")
-        self.git("commit", "-qam", "fix(tools): change content at a quoted path")
-        self.git("checkout", "-q", "-B", "new", "main")
-        self.git("cherry-pick", "old")
+    def test_revision_range_like_filename_does_not_break_validation(self):
+        (self.root / f"{self.base}..old").touch()
+        (self.root / f"{self.base}..{self.old}").touch()
         self.assertEqual(self.verify(), [])
 
-        self.write(path, "old line\ndifferent line\n")
-        self.git("commit", "-qa", "--amend", "--no-edit")
+    def test_non_utf8_text_edits_are_distinguished(self):
+        self.git("checkout", "-q", "-B", "old", self.base)
+        self.commit_bytes(b"changed: \xfe\n", "fix(tools): record identifier")
+        self.git("checkout", "-q", "-B", "new", "main")
+        self.commit_bytes(b"changed: \xff\n", "fix(tools): record identifier")
+        self.assertEqual(len(self.verify()), 2)
+
+    def test_non_utf8_paths_remain_distinct(self):
+        for branch, ref, suffix in (("old", self.base, b"\xfe"), ("new", "main", b"\xff")):
+            commit = self.commit_tree_file(ref, b"file " + suffix + b".txt", b"same content\n",
+                                           "fix(tools): add a file")
+            self.git("update-ref", f"refs/heads/{branch}", commit)
+        self.assertEqual(len(self.verify()), 4)
+
+    def test_rebase_checks_added_and_deleted_lines_at_quoted_paths(self):
+        path = 'quoted-"-\\-\t-é.txt'
+        name = path.encode("utf-8")
+        main = self.commit_tree_file("main", name, b"old line\n", "feat(tools): add a quoted path")
+        old = self.commit_tree_file(main, name, b"new line\n", "fix(tools): change content at a quoted path")
+        self.git("update-ref", "refs/heads/main", main)
+        self.git("update-ref", "refs/heads/old", old)
+        self.git("update-ref", "refs/heads/new", old)
+        self.assertEqual(self.verify(), [])
+
+        new = self.commit_tree_file(main, name, b"old line\ndifferent line\n",
+                                    "fix(tools): change content at a quoted path")
+        self.git("update-ref", "refs/heads/new", new)
         self.assertEqual(self.verify(), [
             f"{path}: an added line is missing (1x): new line",
             f"{path}: a line is added that the branch did not add (1x): different line",
@@ -493,6 +520,16 @@ class RebaseDiffTextTests(unittest.TestCase):
 
 
 class CountHelperTests(unittest.TestCase):
+    def test_people_keeps_unicode_line_separators_inside_each_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "commit", "-q", "--allow-empty", "-m", "base")
+            run_git(root, "commit", "-q", "--allow-empty", "-m", "first\u2028second")
+            people = rebase_verify.people(root, "HEAD^", "HEAD")
+            self.assertEqual(sum(people.values()), 1)
+            self.assertIn("first\u2028second", next(iter(people)))
+
     def test_default_onto_returns_an_explicit_name_without_asking_git(self):
         self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
 

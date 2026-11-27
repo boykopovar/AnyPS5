@@ -428,6 +428,52 @@ void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
 
 }
 
+Outcome SegmentsCoverAdjacentImports() {
+    constexpr std::uint64_t piece = 2 * MiB;
+    GuestBlock guest(2 * piece + GuestAlignment);
+    GuestAllocations::Mutation().Remove(guest.Data());
+    GuestAllocations::Mutation().Add(guest.Data(), piece, true, true, true);
+    GuestAllocations::Mutation().Add(guest.Data() + piece, piece, true, true, true);
+    const auto restore = [&] {
+        GuestAllocations::Mutation().Remove(guest.Data() + piece);
+        GuestAllocations::Mutation().Remove(guest.Data());
+        GuestAllocations::Mutation().Add(guest.Data(), 2 * piece + GuestAlignment, true, true, true);
+    };
+    try {
+        auto device = OpenVulkanTestDevice();
+        if (!device) {
+            restore();
+            return Outcome::NoDevice;
+        }
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        if (context.hostImportAlignment == 0) {
+            restore();
+            return Outcome::NoImport;
+        }
+        Graphics::ClearHostImports(device->Device());
+        const auto first = guest.Address();
+        const auto second = first + piece;
+        const auto across = first + piece / 2;
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: two unimported allocations count as covered");
+        Require(Fill(*device, first), "import segments: cannot fill the first allocation");
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: an unimported second allocation counts as covered");
+        Require(Fill(*device, second), "import segments: cannot fill the second allocation");
+        Require(Graphics::HostImportCovers(context, first, piece) && Graphics::HostImportCovers(context, second, piece), "import segments: an allocation was not imported whole");
+        Require(!Graphics::HostImportCovers(context, across, piece), "import segments: one import covers both allocations, so nothing straddles");
+        Require(Graphics::HostImportSegmentsCover(context, across, piece), "import segments: the imports of two adjacent allocations do not cover the range across them");
+        Require(Graphics::HostImportSegmentsCover(context, first, 2 * piece), "import segments: the imports do not cover both allocations whole");
+        Require(!Graphics::HostImportSegmentsCover(context, first, piece / 2), "import segments: a range inside one allocation counts as segments");
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece + piece / 2 + GuestAlignment), "import segments: a range past the registered allocations counts as covered");
+        Graphics::ClearHostImports(device->Device());
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: cleared imports still cover the range");
+    } catch (...) {
+        restore();
+        throw;
+    }
+    restore();
+    return Outcome::Passed;
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--alias-failure") {
@@ -464,6 +510,7 @@ int main(int argc, char** argv) {
         Require(ResidentMappingsImportAfterCollection() == Outcome::Passed, "resident import test failed");
         Require(MixedBlocksImportInSmallerRuns() == Outcome::Passed, "mixed import test failed");
         Require(SmallMappingsImportOnFirstUse() == Outcome::Passed, "mapped import test lost its Vulkan device or host import support");
+        Require(SegmentsCoverAdjacentImports() == Outcome::Passed, "import segments test lost its Vulkan device or host import support");
         std::puts("host import windows tests passed");
         return 0;
     } catch (const std::exception& error) {

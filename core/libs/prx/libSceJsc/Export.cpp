@@ -37,6 +37,8 @@ bool GuestTextLength(const char* text, std::size_t& length) {
 }
 
 bool GuestBufferReadable(const void* address, std::size_t size) {
+    if (size == 0) return true;
+    if (size - 1 > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(address)) return false;
     char chunk[4096];
     for (std::size_t offset = 0; offset < size;) {
         const auto current = reinterpret_cast<std::uintptr_t>(address) + offset;
@@ -48,6 +50,10 @@ bool GuestBufferReadable(const void* address, std::size_t size) {
         offset += step;
     }
     return true;
+}
+
+const GuestJSString* ReadableString(const GuestJSString* string) {
+    return string && GuestBufferReadable(string, sizeof(GuestJSString)) ? string : nullptr;
 }
 
 void ZeroGuestObject(void* self, std::size_t size, const char* function) {
@@ -149,8 +155,10 @@ GuestJSString* APS5_VABI JSStringCreateWithUTF8CString_nid_postfix(const char* t
 
 GuestJSString* APS5_VABI JSStringRetain_nid_postfix(GuestJSString* string) {
     if (!string) throw std::invalid_argument("JSStringRetain: null string");
-    string->references.fetch_add(1, std::memory_order_relaxed);
-    return string;
+    auto* checked = const_cast<GuestJSString*>(ReadableString(string));
+    if (!checked) throw std::invalid_argument("JSStringRetain: unreadable string");
+    checked->references.fetch_add(1, std::memory_order_relaxed);
+    return checked;
 }
 
 void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string) {
@@ -159,11 +167,13 @@ void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string) {
 }
 
 std::size_t APS5_VABI JSStringGetLength_nid_postfix(const GuestJSString* string) {
-    return string ? string->characters.size() - 1 : 0;
+    const auto* checked = ReadableString(string);
+    return checked ? checked->characters.size() - 1 : 0;
 }
 
 const std::uint16_t* APS5_VABI JSStringGetCharactersPtr_nid_postfix(const GuestJSString* string) {
-    return string && !string->nullString ? string->characters.data() : nullptr;
+    const auto* checked = ReadableString(string);
+    return checked && !checked->nullString ? checked->characters.data() : nullptr;
 }
 
 std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJSString* string) {
@@ -192,15 +202,22 @@ std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* st
         return true;
     };
     const auto count = string->characters.size() - 1;
+    bool failed = false;
     for (std::size_t index = 0; index < count; ++index) {
         std::uint32_t codepoint = string->characters[index];
         if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
-            if (index + 1 == count) break;
+            const bool paired = index + 1 < count && string->characters[index + 1] >= 0xDC00 && string->characters[index + 1] <= 0xDFFF;
+            if (!paired) {
+                failed = true;
+                break;
+            }
             const auto low = string->characters[index + 1];
-            if (low < 0xDC00 || low > 0xDFFF) break;
             codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + low - 0xDC00;
             ++index;
-        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) break;
+        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+            failed = true;
+            break;
+        }
         const std::size_t bytes = codepoint < 0x80 ? 1 : codepoint < 0x800 ? 2 : codepoint < 0x10000 ? 3 : 4;
         if (bytes > bufferSize - 1 - written - pending) break;
         if (bytes > staging.size() - pending && !flush()) return 0;
@@ -215,7 +232,7 @@ std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* st
     }
     if (pending == staging.size() && !flush()) return 0;
     staging[pending++] = '\0';
-    return flush() ? written : 0;
+    return flush() && !failed ? written : 0;
 }
 
 bool APS5_VABI JSStringIsEqual(const GuestJSString* first, const GuestJSString* second) {
@@ -308,23 +325,11 @@ int APS5_VABI _ZN3JSC2VM14sharedInstanceEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector8Protocol16InspectorHelpers24parseEnumValueFromStringINS0_7Runtime20ExecutionContextTypeEEEN3WTF8OptionalIT_EERKNS5_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector8Protocol16InspectorHelpers24parseEnumValueFromStringINS0_4Page16CoordinateSystemEEEN3WTF8OptionalIT_EERKNS5_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector23TargetBackendDispatcher15setPauseOnStartElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZNK3JSC8Profiler8Database6toJSONEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector8Protocol16InspectorHelpers24parseEnumValueFromStringINS0_7Console14ConsoleMessage5LevelEEEN3WTF8OptionalIT_EERKNS6_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -460,10 +465,6 @@ int APS5_VABI _ZN3WTF6StringC2ENS_12ASCIILiteralE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URLC1ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector14InjectedScript14callFunctionOnERN3WTF6StringERKS2_S5_S5_bbRNS1_6RefPtrINS_8Protocol7Runtime12RemoteObjectENS1_13DumbPtrTraitsIS9_EEEERNS1_8OptionalIbEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -565,10 +566,6 @@ int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtr
 }
 
 int APS5_VABI _ZN3JSC6Config23enableRestrictedOptionsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WTFLogAlwaysV() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -683,10 +680,6 @@ int APS5_VABI _ZN3JSC16callCustomSetterEPNS_14JSGlobalObjectENS_7JSValueEbPNS_8J
 }
 
 int APS5_VABI _ZNK3WTF8JSONImpl5Value8asStringERNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF3URL11setPasswordENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1136,10 +1129,6 @@ int APS5_VABI _ZN3JSC4Yarr25unicodeMatchPropertyValueEN3WTF6StringES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC4Yarr7replaceERN3WTF6StringERKNS0_17RegularExpressionERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC4Yarr9interpretEPNS0_15BytecodePatternERKN3WTF6StringEjPj() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1160,10 +1149,6 @@ int APS5_VABI _ZN3JSC6JSCell11analyzeHeapEPS0_RNS_12HeapAnalyzerE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC6JSCell11getCallDataEPS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC6JSCell12dumpToStreamEPKS0_RN3WTF11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1172,15 +1157,7 @@ int APS5_VABI _ZN3JSC6JSCell13estimatedSizeEPS0_RNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC6JSCell16getConstructDataEPS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC6JSCell17customHasInstanceEPNS_8JSObjectEPNS_14JSGlobalObjectENS_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC6JSCell7destroyEPS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1481,10 +1458,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 }
 
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -1,0 +1,9 @@
+# libSceLibreSsl
+
+## change [EVP_DigestVerifyInit and EVP_DigestVerifyFinal]
+
+- [EVP_DigestVerifyInit and EVP_DigestVerifyFinal](../../../core/libs/prx/libSceLibreSsl/src/DigestVerify.cpp) (libSceLibreSsl) - unverified on PS5. Results, reason codes and offsets follow pinned LibreSSL 2.5.4 [m_sigver.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/m_sigver.c) and its `pmeth_lib.c`. With an RSA key, init creates the key context, raises the key references, writes `pctx` and defaults to SHA-1 when `type` is null; a null key with no key context still returns 0 without reading `type` or `engine`. Final copies the context, finalizes the digest and verifies through `RSA_verify` with PKCS#1 v1.5, including corrupt, truncated and wrong-digest signatures. An `ENGINE`, a non-RSA key, a key context this library did not create and RSA-PSS and X9.31 padding throw: no export reaches them.
+
+## change [RSA_verify](
+
+- [RSA_verify](../../../core/libs/prx/libSceLibreSsl/src/Rsa.cpp) (libSceLibreSsl) - nothing is checked on the console. It follows [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/rsa/rsa_sign.c) `RSA_verify` and `int_rsa_verify`, and `tasn_dec.c` for the `X509_SIG` decode, with their reason codes in LibreSSL's order; a rejected DigestInfo queues no `Field=` or `Type=` error data. `OBJ_obj2nid` is modelled by the 15 digest objects of that version's object table, so a digest type and an object both outside them, `NID_undef` included, throw, as does a signature OID registered with `OBJ_create`. The BER forms of the `d2i_RSA_PUBKEY` entry throw here too, as do a null key, a null method under `RSA_FLAG_SIGN_VER`, and a null digest or signature that LibreSSL reads

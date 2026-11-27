@@ -59,6 +59,21 @@ void NoDecoderAnswers() {
         }
     }
     Require(handle == before);
+
+    std::array<unsigned char, 0x40> destroyed{};
+    destroyed.fill(0xA5);
+    PutQuad(destroyed, 0x10, 0);
+    errno = 71;
+    Require(sceSdecDestroySwHevc(destroyed.data()) == 0);
+    Require(errno == 71);
+    Require(GetQuad(destroyed, 0x8) == 0);
+    const auto destroyedBefore = destroyed;
+    for (const HandleCall call : calls) {
+        errno = 71;
+        Require(call(destroyed.data()) == 1);
+        Require(errno == 71);
+    }
+    Require(destroyed == destroyedBefore);
 }
 
 void CreateRejects() {

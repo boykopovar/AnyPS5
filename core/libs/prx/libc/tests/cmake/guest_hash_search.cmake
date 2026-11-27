@@ -1,0 +1,10 @@
+add_test_executable(guest_hash_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestHashSearch.cpp)
+target_include_directories(guest_hash_search_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_hash_search_tests PRIVATE libc)
+configure_windows_unwind(guest_hash_search_tests)
+add_test(NAME guest_hash_search COMMAND guest_hash_search_tests)
+set_tests_properties(guest_hash_search PROPERTIES TIMEOUT 30)
+if(WIN32)
+    set_tests_properties(guest_hash_search PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

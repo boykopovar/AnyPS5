@@ -11,9 +11,19 @@ inline constexpr std::size_t MaxClipboardBytes = 65536;
 
 inline std::size_t BoundedUtf8Size(const char* text, std::size_t size) {
     if (size <= MaxClipboardBytes) return size;
-    std::size_t end = MaxClipboardBytes;
-    while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80) --end;
-    return end;
+    if ((static_cast<unsigned char>(text[MaxClipboardBytes]) & 0xc0) != 0x80) {
+        return MaxClipboardBytes;
+    }
+    std::size_t pos = MaxClipboardBytes - 1;
+    while (pos > 0 && MaxClipboardBytes - pos < 3 && (static_cast<unsigned char>(text[pos]) & 0xc0) == 0x80) {
+        --pos;
+    }
+    const auto lead = static_cast<unsigned char>(text[pos]);
+    std::size_t sequenceBytes = 0;
+    if (lead >= 0xc2 && lead <= 0xdf) sequenceBytes = 2;
+    else if ((lead & 0xf0) == 0xe0) sequenceBytes = 3;
+    else if (lead >= 0xf0 && lead <= 0xf4) sequenceBytes = 4;
+    return pos + sequenceBytes > MaxClipboardBytes ? pos : MaxClipboardBytes;
 }
 
 inline std::u32string DecodeUtf8Lenient(const char* text, std::size_t size, bool dropIncompleteTail) {
@@ -82,7 +92,7 @@ inline std::u16string ClipboardUnits(const char* text, std::size_t size, bool mu
     const std::u32string points = DecodeUtf8Lenient(text, BoundedUtf8Size(text, size), false);
     for (std::size_t i = 0; i < points.size(); ++i) {
         const char32_t point = points[i];
-        const bool lineBreak = point == U'\n' || point == U'\r' || point == 0x85 || point == 0x2028 || point == 0x2029;
+        const bool lineBreak = point == U'\n' || point == U'\r' || point == U'\f' || point == U'\v' || point == 0x85 || point == 0x2028 || point == 0x2029;
         if (lineBreak) {
             if (point == U'\r' && i + 1 < points.size() && points[i + 1] == U'\n') ++i;
             if (multiline) units.push_back(u'\n');

@@ -5856,7 +5856,7 @@ void DepthClipTests() {
     collapsedQueue.context[0x10f] = std::bit_cast<std::uint32_t>(-1.0f);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(collapsedQueue); }, "unsupported viewport transform");
     for (std::uint32_t bit = 0; bit < 32; ++bit) {
-        if (bit == 16 || bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
+        if (bit == 16 || bit == 17 || bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
         for (const auto linearBit : {0u, 0x01000000u}) {
             queue.context[0x204] = (1u << bit) | linearBit;
             expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
@@ -5869,12 +5869,28 @@ void DepthClipTests() {
     for (const auto clip : {0x00080000u, 0x00000000u, 0x0c080000u, 0x04000000u}) {
         queue.context[0x204] = clip;
         const auto plain = AgcDriver::Graphics::DecodeState(queue);
-        for (const auto extraBit : {0x00010000u, 0x01000000u, 0x01010000u}) {
+        for (const auto extraBit : {0x00010000u, 0x00020000u, 0x01000000u, 0x01010000u, 0x01030000u}) {
             queue.context[0x204] = clip | extraBit;
             const auto decoded = AgcDriver::Graphics::DecodeState(queue);
-            Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected CLIP_DISABLE or DX_LINEAR_ATTR_CLIP_ENA");
-            Require(decoded.negativeOneToOne == plain.negativeOneToOne && decoded.depthClamp == plain.depthClamp && decoded.viewport.minDepth == plain.viewport.minDepth && decoded.viewport.maxDepth == plain.viewport.maxDepth, "CLIP_DISABLE or DX_LINEAR_ATTR_CLIP_ENA changed the clip space, depth clamping or depth range");
+            Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected CLIP_DISABLE, UCP_CULL_ONLY_ENA or DX_LINEAR_ATTR_CLIP_ENA");
+            Require(decoded.negativeOneToOne == plain.negativeOneToOne && decoded.depthClamp == plain.depthClamp && decoded.viewport.minDepth == plain.viewport.minDepth && decoded.viewport.maxDepth == plain.viewport.maxDepth, "CLIP_DISABLE, UCP_CULL_ONLY_ENA or DX_LINEAR_ATTR_CLIP_ENA changed the clip space, depth clamping or depth range");
         }
+    }
+    queue.context[0x207] = 0x0100u;
+    queue.context[0x204] = 0x000a0000u;
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected UCP_CULL_ONLY_ENA with cull distances only");
+    for (std::uint32_t bit = 0; bit < 8; ++bit) {
+        queue.context[0x207] = 1u << bit;
+        queue.context[0x204] = 0x000a0000u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_CLIP_CNTL") != std::string::npos, "the precheck accepted UCP_CULL_ONLY_ENA with an enabled clip distance");
+    }
+    queue.context[0x207] = 0u;
+    for (std::uint32_t ucp = 0; ucp < 6; ++ucp) {
+        queue.context[0x204] = 0x000a0000u | (1u << ucp);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_CLIP_CNTL") != std::string::npos, "the precheck accepted UCP_CULL_ONLY_ENA with an enabled user clip plane");
     }
 }
 

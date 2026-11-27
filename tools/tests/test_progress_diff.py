@@ -118,6 +118,7 @@ class MainErrorTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(stdout, "")
         self.assertIn("error:", stderr)
+        self.assertIn("head.json:", stderr)
         self.assertNotIn("Traceback", stderr)
 
     def test_invalid_snapshot_is_a_parser_error_with_exit_code_2(self):
@@ -126,6 +127,18 @@ class MainErrorTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertIn("error:", stderr)
         self.assertIn("percent", stderr)
+        self.assertIn("head.json:", stderr)
+
+    def test_invalid_baseline_is_reported_before_loading_the_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / "baseline.json"
+            candidate = Path(directory) / "missing.json"
+            baseline.write_text("[]", encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                progress_diff.main([str(baseline), str(candidate)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(f"{baseline}: snapshot must be an object", stderr.getvalue())
 
     def test_missing_file_is_a_parser_error_with_exit_code_2(self):
         with tempfile.TemporaryDirectory() as directory:

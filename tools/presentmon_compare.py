@@ -67,8 +67,11 @@ def read_pinned(path, expected_sha256, limit):
         if info.st_size > limit:
             raise ValueError(f"{path}: input exceeds {limit} bytes")
         raw = source.read(limit + 1)
+        after = os.fstat(source.fileno())
     if len(raw) > limit:
         raise ValueError(f"{path}: input exceeds {limit} bytes")
+    if len(raw) != info.st_size or (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+        raise ValueError(f"{path}: input changed while reading")
     actual = hashlib.sha256(raw).hexdigest()
     if actual != expected:
         raise ValueError(f"{path}: SHA-256 mismatch (expected {expected}, read {actual})")
@@ -94,7 +97,7 @@ def csv_decimal(value, label, maximum=MAX_TIME):
 
 def presentmon_stream(raw, run):
     reader = csv.reader(io.StringIO(raw.decode("utf-8-sig"), newline=""), strict=True)
-    header = next(reader, [])
+    header = next((row for row in reader if row), [])
     if len(header) != len(set(header)) or not set(CSV_FIELDS).issubset(header):
         raise ValueError("expected distinct PresentMon v1 CSV columns: " + ", ".join(CSV_FIELDS))
     columns = [header.index(field) for field in CSV_FIELDS]
@@ -216,7 +219,9 @@ def read_presentmon_plan(raw):
         fields = ("id", "arm", "status")
         if run["status"] == "captured":
             require_fields(run, (*fields, "capture", "sha256", "pid", "application", "swapchain", "start_s"), label)
-            benchmark_text(run["capture"], f"{label}.capture", True)
+            capture = benchmark_text(run["capture"], f"{label}.capture", True)
+            if "\0" in capture:
+                raise ValueError(f"{label}.capture contains a NUL character")
             run["sha256"] = digest_value(run["sha256"], f"{label}.sha256")
             if not benchmark_integer(run["pid"], f"{label}.pid", UINT32_MAX):
                 raise ValueError(f"{label}.pid must be positive")
@@ -342,7 +347,8 @@ def render_presentmon_comparison(report):
                   "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |"])
     for run in report["runs"]:
         metrics = run["metrics"] or {}
-        values = [benchmark_display(metrics.get(name)) for name in ("presents", "dropped", *METRICS)]
+        values = [str(metrics.get(name, "n/a")) for name in ("presents", "dropped")]
+        values.extend(benchmark_display(metrics.get(name)) for name in METRICS)
         lines.append(f"| {cell(run['id'])} | {run['arm']} | {run['status']} | {' | '.join(values)} | "
                      f"{cell(run.get('reason', ''))} |")
     lines.extend(["", "## Capture selections", ""])
