@@ -249,7 +249,9 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         for (std::size_t i = 0; i < programs.size(); ++i) {
                             if (ranks[i] == 0) continue;
                             auto& variants = rotated->stages[i];
+                            accountDrawVariant(*variants[ranks[i]], false);
                             variants.erase(variants.begin() + static_cast<std::ptrdiff_t>(ranks[i]));
+                            accountDrawVariant(*matched[i], true);
                             variants.insert(variants.begin(), matched[i]);
                         }
                         rotated->touched = entry->touched;
