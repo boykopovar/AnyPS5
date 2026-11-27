@@ -4482,11 +4482,17 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require(!imageRead && !resources->ReadsImage(target.resident.get()) && !resources->ReadsOverlap(target.color.MemoryAddress(), static_cast<std::size_t>(target.color.bytes)) && !inputOverlaps(target.color.MemoryAddress(), target.color.bytes), "stencil replay refuses attachment feedback reads");
         }
         if (state.depth) {
-            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u * std::max(state.depth->samples, 1u);
-            Require(!resources->ReadsOverlap(state.depth->address, bytes) && !resources->ReadsOverlap(state.depth->stencilAddress, bytes) && !inputOverlaps(state.depth->address, bytes) && !inputOverlaps(state.depth->stencilAddress, bytes), "stencil replay refuses depth or stencil feedback reads");
+            const bool d16 = state.depth->format == VK_FORMAT_D16_UNORM || state.depth->format == VK_FORMAT_D16_UNORM_S8_UINT;
+            const auto planeBytes = [&](std::uint32_t bytesPerTexel) {
+                return static_cast<std::size_t>(state.depth->samples > 1u ? MultisampledDepthBytes_nid_no_patch(state.depth->extent, bytesPerTexel, state.depth->samples) : DepthSliceBytes(state.depth->extent, bytesPerTexel));
+            };
+            const auto depthBytes = planeBytes(d16 ? 2u : 4u);
+            const auto stencilBytes = state.depth->stencilAddress != 0u ? planeBytes(1u) : std::size_t{0};
+            const auto planeRead = [&](std::uint64_t plane, std::size_t length) { return length != 0u && (resources->ReadsOverlap(plane, length) || inputOverlaps(plane, length)); };
+            Require(!planeRead(state.depth->address, depthBytes) && !planeRead(state.depth->stencilAddress, stencilBytes), "stencil replay refuses depth or stencil feedback reads");
             const auto boundPlane = [&](std::uint64_t address, std::uint64_t length) {
-                const auto overlaps = [&](std::uint64_t plane) { return plane != 0u && address < plane + bytes && plane < address + length; };
-                return overlaps(state.depth->address) || overlaps(state.depth->stencilAddress);
+                const auto overlaps = [&](std::uint64_t plane, std::uint64_t planeLength) { return plane != 0u && planeLength != 0u && address < plane + planeLength && plane < address + length; };
+                return overlaps(state.depth->address, depthBytes) || overlaps(state.depth->stencilAddress, stencilBytes);
             };
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
