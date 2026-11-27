@@ -216,6 +216,12 @@ public:
         return _handle != nullptr;
     }
 
+    static bool IsOpenInBytes(const std::byte (&raw)[sizeof(FileStream)]) {
+        std::FILE* handle = nullptr;
+        std::memcpy(&handle, raw + offsetof(FileStream, _handle), sizeof(handle));
+        return handle != nullptr;
+    }
+
     int Orientation(int mode) {
         if (mode == 0) return _orientation.load(std::memory_order_relaxed);
         int expected = 0;
