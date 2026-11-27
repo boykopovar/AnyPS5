@@ -8191,10 +8191,6 @@ int APS5_VABI WKBundleNodeHandleCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleNodeHandleGetElementBounds() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds() {
     NotImplemented_nid_no_patch(__func__);
 }
