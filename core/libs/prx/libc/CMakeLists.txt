@@ -201,6 +201,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxThreadState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Strptime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxIntegerToString.cpp
@@ -866,6 +867,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_time_extras PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_time_extras PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_strptime_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrptime.cpp)
+    target_include_directories(guest_strptime_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_strptime_tests PRIVATE libc)
+    configure_windows_unwind(guest_strptime_tests)
+    add_test(NAME guest_strptime COMMAND guest_strptime_tests)
+    set_tests_properties(guest_strptime PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_strptime PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(precise_wait_tests ${LIBS_INCLUDE_DIR}/tests/PreciseWait.cpp)

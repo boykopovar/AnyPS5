@@ -4414,6 +4414,11 @@ std::uint64_t Recorder::readTimeline() const {
     return reachedSerial;
 }
 
+bool Recorder::SubmittedWorkRunning() const {
+    if (inFlight.empty()) return false;
+    return !gpuDone(*inFlight.back());
+}
+
 bool Recorder::gpuDone(const Batch& batch) const {
     if (!fenceless) return fenceStatus(batch.fence) == VK_SUCCESS;
     return batch.serial != 0 && (batch.serial <= reachedSerial || batch.serial <= readTimeline());
