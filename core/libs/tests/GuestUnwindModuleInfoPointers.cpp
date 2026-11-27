@@ -94,18 +94,17 @@ std::uint64_t MissingAddress(std::size_t pageSize) {
     (void)pageSize;
     return 0xffff800000000000ull;
 #else
-    void* unmapped = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    Require(unmapped != MAP_FAILED);
-    const auto address = reinterpret_cast<std::uint64_t>(unmapped);
-    Require(munmap(unmapped, pageSize) == 0);
-    return address;
+    (void)pageSize;
+    return 0x10;
 #endif
 }
 
-void CheckPreservesErrno(int expected, int result) {
-    Require(result == expected);
-    Require(errno == 73);
-    Require(*__error_nid_postfix() == 73);
+void CheckPreservesErrno(int expected, int result, const std::source_location& location = std::source_location::current()) {
+    if (result != expected || errno != 73 || *__error_nid_postfix() != 73) {
+        std::fprintf(stderr, "unwind module info pointer test failed at line %u: result=0x%x expected=0x%x errno=%d guest_errno=%d\n",
+            location.line(), result, expected, errno, *__error_nid_postfix());
+        std::abort();
+    }
 }
 
 void SetTestErrno() {
@@ -166,9 +165,12 @@ int main() {
     }
 
     pages.ProtectReadWrite();
-    auto* partial = reinterpret_cast<ModuleInfoForUnwind*>(pages.End() - sizeof(ModuleInfoForUnwind) + 16);
-    std::memset(partial, 0x5a, sizeof(ModuleInfoForUnwind) - 16);
+    constexpr std::size_t partialPrefixBytes = sizeof(ModuleInfoForUnwind) - 16;
+    auto* partial = reinterpret_cast<ModuleInfoForUnwind*>(pages.End() - partialPrefixBytes);
+    std::memset(partial, 0x5a, partialPrefixBytes);
     partial->st_size = sizeof(ModuleInfoForUnwind);
+    unsigned char savedPrefix[partialPrefixBytes]{};
+    std::memcpy(savedPrefix, partial, partialPrefixBytes);
     for (const auto& [addr, flags] : {
              std::pair{validAddr, 1},
              std::pair{missingAddr, 1},
@@ -176,6 +178,7 @@ int main() {
          }) {
         SetTestErrno();
         CheckPreservesErrno(SCE_KERNEL_ERROR_EFAULT, sceKernelGetModuleInfoForUnwind(addr, flags, partial));
+        Require(std::memcmp(partial, savedPrefix, partialPrefixBytes) == 0);
     }
 
     ModuleInfoForUnwind wide{};

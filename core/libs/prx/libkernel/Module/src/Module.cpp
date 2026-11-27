@@ -10,6 +10,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -265,18 +266,19 @@ int FindModuleInfoForUnwind(uint64_t addr, ModuleInfoForUnwind* info) {
 #endif
 }
 
+struct ErrnoGuard {
+  int saved = errno;
+  ~ErrnoGuard() { errno = saved; }
+};
+
 bool CopyUnwindSize(const ModuleInfoForUnwind* info, std::uint64_t& size) {
-  const int savedErrno = errno;
-  const bool copied = GuestCopyIn_nid_no_patch(&size, &info->st_size, sizeof(size));
-  errno = savedErrno;
-  return copied;
+  return GuestCopyIn_nid_no_patch(&size, &info->st_size, sizeof(size));
 }
 
 bool StoreUnwindInfo(ModuleInfoForUnwind* info, const ModuleInfoForUnwind& value) {
-  const int savedErrno = errno;
-  const bool copied = GuestCopyOut_nid_no_patch(info, &value, sizeof(value));
-  errno = savedErrno;
-  return copied;
+  const GuestArena::HostWrite guard(info, sizeof(value));
+  if (!guard.Open() || !GuestWritable_nid_no_patch(info, sizeof(value))) return false;
+  return GuestCopyOut_nid_no_patch(info, &value, sizeof(value));
 }
 
 }
@@ -301,6 +303,7 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
   if (!info) return SCE_KERNEL_ERROR_EFAULT;
   NotImplemented_nid_no_patch(__func__);
 #else
+  const ErrnoGuard restoreErrno;
   if (flags != 1 && flags != 2) {
     if (!info) throw std::invalid_argument("sceKernelGetModuleInfoForUnwind: a null output with flags other than 1 or 2, which the console clears without checking");
     constexpr ModuleInfoForUnwind empty{};
