@@ -192,15 +192,23 @@ SharedVectorRegisters GuestSharedVectorRegisters(const GuestContext& context) {
 }
 
 bool MeshSoftwareControlBarriersSafe(const RdnaProgram& decoded, const ControlFlowGraph& cfg) {
-    std::vector<std::uint32_t> returns;
-    for (const auto& block : cfg.blocks) {
-        if (block.terminator.kind == TerminatorKind::Return) returns.push_back(block.id);
-    }
+    if (cfg.entryBlock == InvalidControlFlowId || cfg.irreducible || cfg.unsupported || cfg.failureKind != FailureKind::None) return false;
+    std::vector<std::uint32_t> barriers;
     for (const auto& block : cfg.blocks) {
         if (block.instructionBegin > block.instructionEnd || block.instructionEnd > decoded.instructions.size()) return false;
         const bool barrier = std::ranges::any_of(decoded.instructions.begin() + block.instructionBegin, decoded.instructions.begin() + block.instructionEnd, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SBarrier; });
         if (!barrier) continue;
-        if (std::ranges::any_of(returns, [&](std::uint32_t returnBlock) { return !cfg.Dominates(block.id, returnBlock); })) return false;
+        if (!cfg.EveryPathReaches(block.id)) return false;
+        const bool inLoop = std::ranges::any_of(cfg.naturalLoops, [&](const NaturalLoop& loop) {
+            return std::ranges::find(loop.blocks, block.id) != loop.blocks.end();
+        });
+        if (inLoop) return false;
+        barriers.push_back(block.id);
+    }
+    for (std::size_t first = 0; first < barriers.size(); ++first) {
+        for (std::size_t second = first + 1u; second < barriers.size(); ++second) {
+            if (!cfg.Dominates(barriers[first], barriers[second]) && !cfg.Dominates(barriers[second], barriers[first])) return false;
+        }
     }
     return true;
 }
