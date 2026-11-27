@@ -67,11 +67,11 @@ Every text value in the report goes through the same filter for user names, host
 | Field | Meaning |
 |---|---|
 | `stage` | The furthest milestone the runtime observed. `unknown` is the starting value. The runtime never claims `converts`: conversion happens in the converter. |
-| `loads` | The runtime reached the game's entry point. This does not prove every import resolved, because imports can load later. |
-| `starts` | Game code was entered on its thread. |
+| `loads` | The entry bridge reached its startup handoff. On Windows this is after loading the startup libraries and resolving required eager imports. Imports can still load later. |
+| `starts` | The entry bridge reached the call to the game's main entry point. |
 | `first-draw` | A real game draw or dispatch was submitted to the GPU. |
 | `presents` | The GPU accepted a game frame for display. This does not prove the frame was visible or not black. |
-| `milestones` | Seconds since start. Milestones not reached are left out. |
+| `milestones` | Seconds since start for each observed milestone. |
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
@@ -97,14 +97,14 @@ Values pass through the same text filter as the report, so a path or a user name
 | System | `loaded`, `started` | `firstDraw`, `firstPresent` | `stage`, `framesPresented`, frame rate |
 |---|---|---|---|
 | Linux | never recorded | recorded | recorded |
-| Windows | never recorded | recorded | recorded |
+| Windows | recorded with a recent relinker and a runtime that supports the report hook | recorded | recorded |
 | macOS | recorded | recorded | recorded |
 
-`coverage.milestones` is true on every system; it means the stage, the milestones the system records and the frame counts were collected. Read a missing `loaded` or `started` on Linux or Windows as "this system does not record it", never as "not reached": a report with `stage: first-draw` and no `loaded` is a run that drew. The report says only what was observed: any other milestone that is missing may mean the run did not reach it, and it may mean the system does not record it, so read the table before you read a gap. `firstDraw` in particular is not set by compute work that is submitted and waited for on its own.
+`coverage.milestones` is true on every system; it means the stage, the milestones the system records and the frame counts were collected. A missing milestone can mean the run ended earlier or that the system or conversion lacks support for it. Linux and older Windows conversions can reach `first-draw` or `presents` with no `loaded` or `started`. `firstDraw` in particular is not set by compute work that is submitted and waited for on its own.
 
 ## What the runtime counts
 
-- `milestones.firstDraw` is set when a batch that carries a recorded guest draw or dispatch has been accepted by the GPU queue. A guest draw counts in either kind of batch the runtime submits; a guest compute dispatch counts only when it is recorded into the runtime's main batch (a dispatch that is submitted and waited for on its own does not set the milestone). `firstPresent` and `framesPresented` count guest display buffers that the swapchain queue accepted (a suboptimal one too); internal clears, test pixels and rejected presents are not counted. `loaded` and `started` come from the entry bridge of the converted executable; only the macOS bridge reports them so far, so on other systems those two are left out.
+- `milestones.firstDraw` is set when a batch that carries a recorded guest draw or dispatch has been accepted by the GPU queue. A guest draw counts in either kind of batch the runtime submits; a guest compute dispatch counts only when it is recorded into the runtime's main batch (a dispatch that is submitted and waited for on its own does not set the milestone). `firstPresent` and `framesPresented` count guest display buffers that the swapchain queue accepted (a suboptimal one too); internal clears, test pixels and rejected presents are not counted. On Windows, `loaded` is recorded before running guest startup initializers or preparing the main entry's arguments. `started` is recorded immediately before passing control to that entry.
 - `missing.functions` counts calls to a function the runtime does not implement. The library is the folder the stub is compiled in; a call from older code that does not say where it is made has a null library. The name is the exported name without the runtime's suffix; a name that does not fit the schema is not listed and is counted in `truncated.functions`.
 - `shaders.compiled` and `failed` count compilations where they happen (once per variant); reuse of a variant, in memory or from the disk cache, counts as a cache hit.
 - `shaders.compileMs` is the total wall time spent in those compilations, failed ones included, in milliseconds. `shaders.slowCompiles` counts compilations that took more than 100 ms. Both are left out when shader coverage is off. These are measured on the machine that ran the game, so compare them only on the same machine.

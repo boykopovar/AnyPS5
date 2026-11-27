@@ -47,6 +47,7 @@
 #include "Optimization/include/Optimization/RequestMemoryView.hpp"
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Optimization/include/Optimization/NanFlagPruner.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
 #include "Optimization/include/Optimization/VectorWindowIndexNarrower.hpp"
 #include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
@@ -101,6 +102,10 @@ bool MergedHullStage(const RecompileRequest& request) {
     return (stage == ShaderStage::Local || stage == ShaderStage::TessellationControl) && request.graphics && request.graphics->tessellation && request.graphics->tessellation->mergedHull;
 }
 
+bool PixelWave32Subgroups(const RecompileRequest& request) {
+    return request.shader.stage == ShaderStage::Fragment && request.context.waveSize == 32u && request.target.pixelWave32Subgroups && request.target.subgroupSize > 32u;
+}
+
 // The host subgroup width wave64 programs are laid out for. Debug aid: APS5_SINGLE_LANE=<hex code
 // addresses, comma separated, or "all"> keeps the listed programs at one guest lane per invocation.
 std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
@@ -115,6 +120,7 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
         std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
         if (list.find(address) != std::string::npos) return 64u;
     }
+    if (PixelWave32Subgroups(request)) return 32u;
     return request.target.subgroupSize;
 }
 
@@ -335,6 +341,13 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         constantFolder.Fold(program);
         deadCodeEliminator.RemoveIdentities(program);
         deadCodeEliminator.Eliminate(program);
+        const auto pruned = NanFlagPruner{}.Prune(program);
+        program.Metadata().nanSpeculationPrunedChecks += pruned.removedChecks;
+        if (pruned.removedChecks != 0u) {
+            constantFolder.Fold(program);
+            deadCodeEliminator.RemoveIdentities(program);
+            deadCodeEliminator.Eliminate(program);
+        }
         dumpIr("fold");
 
         const auto readLaneStats = readLaneEliminator.Eliminate(program, translateOptions.waveSize);
@@ -376,6 +389,12 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         program = translator.Translate(decoded, cfg, translateOptions);
         program.Metadata().barycentricEmulation = !hostInterpolationFirst;
         simplify();
+    }
+
+    if (NanSpeculation().enabled) {
+        const auto& metadata = program.Metadata();
+        NoteNanSpeculationProgram(static_cast<std::uint32_t>(request.shader.stage), metadata.nanSpeculationKept != 0u, metadata.nanSpeculationDeclines != 0u);
+        std::fprintf(stderr, "[recompile] nan speculation 0x%llx stage=%d candidates=%u speculated=%u clean=%u declined=%u checks_pruned=%u f32_fast_ops=%u f32_repaired_ops=%u\n", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<int>(stageKind), metadata.nanSpeculationCandidates, metadata.nanSpeculationKept, metadata.nanSpeculationClean, metadata.nanSpeculationDeclines, metadata.nanSpeculationPrunedChecks, metadata.nanSpeculationFastOps, metadata.nanSpeculationRepairedOps);
     }
 
     constexpr DenormalFlushEliminator denormalFlushEliminator;
@@ -467,6 +486,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::uint64_t planShaderHash = 0;
     std::uint64_t planBytes = 0;
     std::uint64_t planUsed = 0;
+    bool nanSpeculated = false;
     bool runtimeCaptured = false;
     // A plan build that threw (an unsupported resource chain or control flow) is remembered and
     // rethrown: the front end ran every pass before failing, ~13 ms per dispatch of a shader the
@@ -835,7 +855,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
     targetOptions.spirvVersion = request.target.spirvVersion;
-    targetOptions.subgroupSize = HostSubgroupSize(request) == 1u ? 1u : request.target.subgroupSize;
+    targetOptions.subgroupSize = HostSubgroupSize(request) == 1u ? 1u : PixelWave32Subgroups(request) ? 32u : request.target.subgroupSize;
     targetOptions.bdaAbiVersion = request.target.bdaAbiVersion;
     targetOptions.supportedCapabilities = request.target.supportedCapabilities;
     targetOptions.supportedExtensions = request.target.supportedExtensions;
@@ -999,10 +1019,30 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     return {request.layout, {}, std::move(static_cast<CompiledBindingLayout&>(bindings)), std::move(result)};
 }
 
+struct InjectedNanFailures {
+    std::atomic<std::uint32_t> remaining{0};
+    std::atomic<bool> includingExact{false};
+};
+
+InjectedNanFailures& injectedNanFailures() {
+    static InjectedNanFailures failures;
+    return failures;
+}
+
+void throwInjectedNanFailure(const RecompileRequest& request) {
+    auto& injected = injectedNanFailures();
+    if (injected.remaining.load(std::memory_order_relaxed) == 0u || !NanSpeculationApplied(request.shader.codeAddress)) return;
+    if (!injected.includingExact.load(std::memory_order_relaxed) && NanSpeculationSuppressed(request.shader.codeAddress)) return;
+    auto left = injected.remaining.load(std::memory_order_relaxed);
+    while (left != 0u && !injected.remaining.compare_exchange_weak(left, left - 1u, std::memory_order_relaxed)) {}
+    if (left != 0u) throw std::runtime_error("injected NaN speculation failure");
+}
+
 CompiledVariant compileVariant(const RecompileRequest& request, IrProgram program, std::exception_ptr* emissionFailure = nullptr) {
     return recordEmissionFailure(emissionFailure, [&] {
         prepareInterface(request, program);
         auto variant = emitVariant(request, program);
+        throwInjectedNanFailure(request);
         variant.info = std::move(program).TakeCompiledInfo();
         return variant;
     });
@@ -1849,6 +1889,7 @@ auto CountedCompile(Compile&& compile) {
 }
 
 std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source, const RecompileRequest& request, bool& cacheHit, ShaderPreparationContext* preparation = nullptr) {
+    if (source.nanSpeculated) MarkNanSpeculationApplied(request.shader.codeAddress);
     for (const auto& candidate : source.variants) {
         if (sameLayout(candidate->layout, request.layout)) {
             cacheHit = true;
@@ -1873,6 +1914,10 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             ShaderDiskCache::ReleaseMapped(loaded.artifact.spirv);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
             NoteShader(2);
+            if (NanSpeculation().enabled) {
+                source.nanSpeculated = true;
+                MarkNanSpeculationApplied(request.shader.codeAddress);
+            }
         }
     }
     if (variant == nullptr) {
@@ -1891,6 +1936,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             if (emissionFailure != nullptr && FailureMemo()) source.emissionFailures.push_back({request.shader.codeAddress, request.layout, emissionFailure});
             throw;
         }
+        if (NanSpeculationApplied(request.shader.codeAddress)) source.nanSpeculated = true;
         if (disk) {
             if (auto persisted = ShaderDiskCache::Persist(diskKey, *variant)) variant = std::move(persisted);
             else ShaderDiskCache::Store(std::move(diskKey), variant);
@@ -2460,6 +2506,57 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
     return materializeMemoized(*capture.source, request, capture.snapshot, memoHit);
 }
 
+template <typename Impl, typename Retry>
+auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl, Retry&& retry) -> decltype(impl()) {
+    if (!NanSpeculation().enabled || NanSpeculationSuppressed(request.shader.codeAddress)) return impl();
+    try {
+        return impl();
+    } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const LayerRowSamplesRequired&) {
+        throw;
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception& error) {
+        if (!NanSpeculationApplied(request.shader.codeAddress) || !SuppressNanSpeculation(request.shader.codeAddress)) throw;
+        const std::string_view reason(error.what());
+        std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; recompiling without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), std::string(reason.substr(0u, reason.find('\n'))).c_str());
+        try {
+            auto result = retry();
+            NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
+            return result;
+        } catch (...) {
+            RestoreNanSpeculation(request.shader.codeAddress);
+            throw;
+        }
+    }
+}
+
+template <typename Impl>
+auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
+    return withNanSpeculationFallback(request, impl, impl);
+}
+
+template <typename Impl>
+auto retryWithoutNanSpeculation(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
+    if (!NanSpeculation().enabled || NanSpeculationSuppressed(request.shader.codeAddress)) return impl();
+    try {
+        return impl();
+    } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const LayerRowSamplesRequired&) {
+        throw;
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception& error) {
+        if (!NanSpeculationApplied(request.shader.codeAddress) || !SuppressNanSpeculation(request.shader.codeAddress)) throw;
+        const std::string_view reason(error.what());
+        const std::string text(reason.substr(0u, reason.find('\n')));
+        std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; preparing again without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), text.c_str());
+        throw NanSpeculationRetry(text);
+    }
+}
+
 template <typename Impl>
 auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
     try {
@@ -2476,6 +2573,10 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     }
 }
 
+}
+
+std::uint64_t MetadataBytes(const RecompileResult& result) {
+    return resultBytes(result);
 }
 
 std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {
@@ -2516,7 +2617,13 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
 
 }
 
+static std::shared_ptr<const ResourceCapture> captureResources(const RecompileRequest& request, const SrtRuntime& runtime);
+
 std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime) {
+    return withNanSpeculationFallback(request, [&] { return captureResources(request, runtime); });
+}
+
+static std::shared_ptr<const ResourceCapture> captureResources(const RecompileRequest& request, const SrtRuntime& runtime) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // Validates the stage inputs once per request, as GetResourcePlan and Recompile(request) do.
@@ -2545,7 +2652,7 @@ std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& reques
 }
 
 std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation) {
-    auto prepared = recompileReporting(request, [&]() -> std::shared_ptr<const SourceHandle> {
+    auto prepared = recompileReporting(request, [&] { return withNanSpeculationFallback(request, [&]() -> std::shared_ptr<const SourceHandle> {
         static_cast<void>(RequestInputInfo(request));
         auto handle = std::make_shared<SourceHandle>();
         handle->source = getSource(request, preparation, false);
@@ -2555,7 +2662,7 @@ std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& reques
         std::lock_guard lock(handle->source->mutex);
         handle->artifact = findOrCompileVariant(*handle->source, request, cacheHit, preparation);
         return handle;
-    });
+    }); });
     trimResourcePlansOverBudget();
     return prepared;
 }
@@ -2612,12 +2719,15 @@ std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(cons
 }
 
 std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const SrtRuntime& runtime) const {
-    auto capture = std::make_shared<ResourceCapture>();
-    capture->source = handle->source;
-    capture->plan = acquirePlan(request, handle->source, true, handle.get());
-    trimResourcePlansOverBudget();
-    materializeCapture(*capture, runtime);
-    return capture;
+    return retryWithoutNanSpeculation(request, [&] {
+        throwInjectedNanFailure(request);
+        auto capture = std::make_shared<ResourceCapture>();
+        capture->source = handle->source;
+        capture->plan = acquirePlan(request, handle->source, true, handle.get());
+        trimResourcePlansOverBudget();
+        materializeCapture(*capture, runtime);
+        return capture;
+    });
 }
 
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(const ResourceCapture& capture) const {
@@ -2684,22 +2794,39 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // The whole vertex family (Vertex, Local, TC, TE, Mesh) validates V# fields the memo key does not cover.
     if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) ValidateRequestInputs(request);
-    auto capture = std::make_shared<ResourceCapture>();
-    capture->source = handle.source;
-    capture->plan = acquirePlan(request, handle.source, true, &handle);
-    trimResourcePlansOverBudget();
-    if (profile) capture->sourceNanoseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
-    materializeCapture(*capture, runtime);
-    return capture;
+    return retryWithoutNanSpeculation(request, [&] {
+        throwInjectedNanFailure(request);
+        auto capture = std::make_shared<ResourceCapture>();
+        capture->source = handle.source;
+        capture->plan = acquirePlan(request, handle.source, true, &handle);
+        trimResourcePlansOverBudget();
+        if (profile) capture->sourceNanoseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
+        materializeCapture(*capture, runtime);
+        return capture;
+    });
 }
 
 RecompileResult Recompile(const RecompileRequest& request) {
-    return recompileReporting(request, [&] { return RecompileImpl(request); });
+    return recompileReporting(request, [&] { return withNanSpeculationFallback(request, [&] { return RecompileImpl(request); }); });
 }
 
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
-    return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+    return recompileReporting(request, [&] {
+        return withNanSpeculationFallback(
+            request, [&] { return RecompileImpl(request, capture, memoHit); },
+            [&] {
+                auto program = PrepareResourceProgram(request);
+                const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
+                return std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot));
+            });
+    });
+}
+
+void InjectNanSpeculationFailures(std::uint32_t count, bool includingExact) {
+    auto& injected = injectedNanFailures();
+    injected.includingExact.store(includingExact, std::memory_order_relaxed);
+    injected.remaining.store(count, std::memory_order_relaxed);
 }
 
 void SetResultMemoBudget(std::uint64_t bytes) {

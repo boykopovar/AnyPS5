@@ -304,7 +304,11 @@ int main() {
 #ifndef _WIN32
     rusage after{};
     getrusage(RUSAGE_SELF, &after);
+#ifdef __APPLE__
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024 * 1024, "a huge attribute count sized a buffer before reading");
+#else
     Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024, "a huge attribute count sized a buffer before reading");
+#endif
 #endif
 
     std::uint8_t materialBytes[AudioPropagation::MaterialSize]{};

@@ -748,6 +748,11 @@ bool isNativeVop3I16TernaryOpcode(RdnaOpcode opcode) {
         opcode == RdnaOpcode::VMadI32I16;
 }
 
+bool isNativeVop3I32TernaryOpcode(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VMed3I32 || opcode == RdnaOpcode::VMed3U32 || opcode == RdnaOpcode::VMax3I32 ||
+        opcode == RdnaOpcode::VMax3U32 || opcode == RdnaOpcode::VMin3I32 || opcode == RdnaOpcode::VMin3U32;
+}
+
 bool isNativeVop3AlignOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VAlignbitB32 || opcode == RdnaOpcode::VAlignbyteB32;
 }
@@ -1168,7 +1173,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
@@ -2078,6 +2083,12 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     }
     if (isNativeVop3I16TernaryOpcode(opcode)) {
         if (abs != 0u || omod != 0u || neg != 0u) {
+            throw std::invalid_argument("VOP3 source modifiers are not implemented");
+        }
+        return;
+    }
+    if (isNativeVop3I32TernaryOpcode(opcode)) {
+        if (abs != 0u || opSel != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;

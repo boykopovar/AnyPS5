@@ -1674,6 +1674,10 @@ void CommandState::SetViewports(const Context& context, std::span<const VkViewpo
     wrote(Mask(Viewport) | Mask(Scissor));
 }
 
+void CommandState::ExecuteCommands(const Context& context, std::uint32_t count, const VkCommandBuffer* buffers) {
+    context.tracked(&DeviceFunctions::cmdExecuteCommands, "vkCmdExecuteCommands")(commands, count, buffers);
+}
+
 void CommandState::SetDepthBias(const Context& context, float constant, float clamp, float slope) {
     const std::array<float, 3> bias{constant, clamp, slope};
     apply(DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.tracked(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope); });
@@ -2099,14 +2103,15 @@ void Recorder::MarkCovered(VkAccessFlags access) {
     if (open != nullptr) open->coveredAccess = access;
 }
 
-Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool wantPrologue) {
+Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool secondaryContents, bool wantPrologue) {
     ensureOpen();
     flushDeferredDispatch();
     auto& pass = open->renderPass;
     const bool prologue = wantPrologue && (!countingSamples || segmentMode());
     const bool needsPrologue = wantPrologue && pass.open && open->prologue == VK_NULL_HANDLE;
-    if (!pass.open || forced || needsPrologue || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
-        const auto reason = !pass.open ? pass.closedBy : forced || needsPrologue ? PassBreak::Forced : PassBreak::Segment;
+    const bool contentsDiffer = pass.open && pass.secondaryContents != secondaryContents;
+    if (!pass.open || forced || needsPrologue || contentsDiffer || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
+        const auto reason = !pass.open ? pass.closedBy : forced || needsPrologue || contentsDiffer ? PassBreak::Forced : PassBreak::Segment;
         auto commands = Commands();
         if (prologue) {
             splitForPrologue();
@@ -2170,12 +2175,13 @@ void Recorder::splitForPrologue() {
     open->coveredAccess = 0;
 }
 
-void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass) {
+void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass, bool secondaryContents) {
     Require(open != nullptr, "no batch is open for the render pass");
     auto& pass = open->renderPass;
     if (!pass.open) {
         pass.timing = timing;
         pass.afterPass = std::move(afterPass);
+        pass.secondaryContents = secondaryContents;
     }
     pass.open = true;
     pass.key = key;
@@ -4462,6 +4468,11 @@ std::uint64_t Recorder::readTimeline() const {
     std::uint64_t value = 0;
     if (function(getSemaphoreCounterValue, "vkGetSemaphoreCounterValueKHR")(context.device, timeline, &value) == VK_SUCCESS && value > reachedSerial) reachedSerial = value;
     return reachedSerial;
+}
+
+bool Recorder::SubmittedWorkRunning() const {
+    if (inFlight.empty()) return false;
+    return !gpuDone(*inFlight.back());
 }
 
 bool Recorder::gpuDone(const Batch& batch) const {

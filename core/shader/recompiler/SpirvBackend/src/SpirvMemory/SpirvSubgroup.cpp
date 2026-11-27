@@ -179,6 +179,24 @@ namespace ShaderRecompiler
         state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, result, ConstantU32(state, spv::ScopeSubgroup), value, lane);
     }
 
+    bool EmitWaveSum(SpirvEmitterState& state, std::uint32_t result, std::uint32_t value) {
+        if (state.spannedWave || HostSubgroupSingleLane(state)) return false;
+        const auto supports = [&](spv::Capability capability) {
+            return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
+        };
+        const auto cluster = std::min(state.hostSubgroupSize, state.program.WaveSize() / state.laneCount);
+        const bool clustered = cluster < state.hostSubgroupSize;
+        if (!supports(spv::CapabilityGroupNonUniformArithmetic) || (clustered && !supports(spv::CapabilityGroupNonUniformClustered))) return false;
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformArithmetic);
+        if (!clustered) {
+            state.module.AddFunction(spv::OpGroupNonUniformIAdd, TypeU32(state), result, ConstantU32(state, spv::ScopeSubgroup), static_cast<std::uint32_t>(spv::GroupOperationReduce), value);
+            return true;
+        }
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformClustered);
+        state.module.AddFunction(spv::OpGroupNonUniformIAdd, TypeU32(state), result, ConstantU32(state, spv::ScopeSubgroup), static_cast<std::uint32_t>(spv::GroupOperationClusteredReduce), value, ConstantU32(state, cluster));
+        return true;
+    }
+
     void EmitSubgroupShuffleInHalf(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane) {
         if (!state.spannedWave) {
             EmitSubgroupShuffle(state, type, result, value, EmitHostSubgroupLane(state, lane));

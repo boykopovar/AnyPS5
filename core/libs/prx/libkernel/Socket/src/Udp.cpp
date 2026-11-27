@@ -164,6 +164,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool externalPeer = false;
     bool pairCreated = false;
     std::optional<GuestSockets::LocalCredentials> peerCredentials;
+    bool connectWait = false;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -1119,7 +1120,7 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
         if (level != 0) return 22;
         const bool handledByFreeBsd = (!set && option == GuestLocalPeerCredentials) || option == GuestLocalCredentials || option == GuestLocalConnectWait;
         if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
-        return 45;
+        return set ? 42 : 45;
     }
     const bool ownProtocol = level == 17 && socket.type == 2 && socket.family == 2;
     const bool ownFamily = socket.family == 2 && level == 0;
@@ -2042,6 +2043,14 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->pairCreated && level == 0 && option == GuestLocalConnectWait) {
+        if (length < sizeof(int)) return Fail(22);
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, value, sizeof(enable))) return Fail(14);
+        std::lock_guard lock(socket->modeMutex);
+        socket->connectWait = enable != 0;
+        return 0;
+    }
     if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, true));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
@@ -2069,7 +2078,12 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family == GuestUnix && socket->pairCreated && level == 0 && (option == GuestLocalPeerCredentials || option == GuestLocalCredentials || option == GuestLocalConnectWait)) {
-        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, option, value, &declared);
+        bool connectWait = false;
+        {
+            std::lock_guard lock(socket->modeMutex);
+            connectWait = socket->connectWait;
+        }
+        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, connectWait, option, value, &declared);
         if (error != 0) return Fail(error);
         return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
     }
@@ -3157,8 +3171,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     ReceivedRights rights;
     bool controlTruncated = false;
     bool shut = ReceiveEnded(*socket);
+    const bool emptyStream = socket->type == 1 && total == 0 && !passing;
+    if (emptyStream && !shut) {
+        if (const int error = ReceiveAnsweredHere(*socket, 0)) return Fail(error);
+    }
     std::vector<unsigned char> stamps;
-    if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
+    if (!shut && !emptyStream && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveEnded(*socket);
