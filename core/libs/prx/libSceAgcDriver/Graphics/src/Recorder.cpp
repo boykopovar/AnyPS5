@@ -3952,6 +3952,8 @@ std::shared_ptr<Buffer> Recorder::mirrorDrawInput(std::map<DrawSnapshotKey, Draw
     }
     while (pool.bytes + bytes > DrawInputBudget && pool.recency.front() != entry->first) eraseDrawSnapshot(drawSnapshots.find(pool.recency.front()));
     const auto commands = Commands();
+    Keep(host);
+    Keep(mirror);
     const auto timing = BeginGpuTiming(CommandClass::InputMirror);
     CopyBuffer(context, commands, host->Handle(), 0, mirror->Handle(), 0, copied);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT);
@@ -3959,8 +3961,6 @@ std::shared_ptr<Buffer> Recorder::mirrorDrawInput(std::map<DrawSnapshotKey, Draw
     EndGpuTiming(timing, copied);
     ChangeUndoneOnDiscard(
         [&] {
-            Keep(host);
-            Keep(mirror);
             pool.bytes += bytes;
             drawInputMirrorBytes += bytes;
         },
