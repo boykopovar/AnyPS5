@@ -127,6 +127,7 @@ void EmitReturnReleasingScratch(SpirvEmitterState& state);
 void VerifyScratchPoolReturns(const SpirvEmitterState& state, const std::vector<std::uint32_t>& words);
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
 std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t index);
+std::uint32_t EmitQwordAtomicLockPointer(SpirvEmitterState& state, std::uint32_t guest);
 std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index);
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem);
 std::uint32_t EmitMemoryElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t rawIndex);
@@ -286,7 +287,11 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     const auto exchanged = state.module.AllocateId();
     state.module.AddFunction(spv::OpBranch, preheader);
     EmitLabel(state, preheader);
-    state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    if (kind == ResourceKind::Image && type != TypeU32(state)) {
+        state.module.AddFunction(spv::OpAtomicIAdd, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone), state.module.Constant(spv::OpConstant, type, 0u, 0u));
+    } else {
+        state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    }
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, header);
     state.module.AddFunction(spv::OpPhi, type, observed, initial, preheader, exchanged, cont);
@@ -318,8 +323,10 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     const auto header = state.module.AllocateId();
     const auto body = state.module.AllocateId();
     const auto pending = state.module.AllocateId();
-    const auto critical = state.module.AllocateId();
+    const auto attempt = state.module.AllocateId();
     const auto attemptMerge = state.module.AllocateId();
+    const auto critical = state.module.AllocateId();
+    const auto servedMerge = state.module.AllocateId();
     const auto pendingMerge = state.module.AllocateId();
     const auto cont = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
@@ -340,6 +347,11 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     state.module.AddFunction(spv::OpSelectionMerge, pendingMerge, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, done, pendingMerge, pending);
     EmitLabel(state, pending);
+    const auto elected = state.module.AllocateId();
+    EmitSubgroupElect(state, elected);
+    state.module.AddFunction(spv::OpSelectionMerge, servedMerge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, elected, attempt, servedMerge);
+    EmitLabel(state, attempt);
     const auto previous = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, lock, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u), ConstantU32(state, 0u));
     const auto acquired = state.module.AllocateId();
@@ -355,14 +367,20 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     const auto criticalExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, attemptMerge);
     EmitLabel(state, attemptMerge);
+    const auto attempted = state.module.AllocateId();
+    const auto attemptedResult = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), attempted, ConstantBool(state, true), criticalExit, ConstantBool(state, false), attempt);
+    state.module.AddFunction(spv::OpPhi, type, attemptedResult, old, criticalExit, result, attempt);
+    state.module.AddFunction(spv::OpBranch, servedMerge);
+    EmitLabel(state, servedMerge);
     const auto served = state.module.AllocateId();
     const auto servedResult = state.module.AllocateId();
-    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, ConstantBool(state, true), criticalExit, ConstantBool(state, false), pending);
-    state.module.AddFunction(spv::OpPhi, type, servedResult, old, criticalExit, result, pending);
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, attempted, attemptMerge, ConstantBool(state, false), pending);
+    state.module.AddFunction(spv::OpPhi, type, servedResult, attemptedResult, attemptMerge, result, pending);
     state.module.AddFunction(spv::OpBranch, pendingMerge);
     EmitLabel(state, pendingMerge);
-    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, attemptMerge, done, body);
-    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, attemptMerge, result, body);
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, servedMerge, done, body);
+    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, servedMerge, result, body);
     const auto waiting = state.module.AllocateId();
     state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), waiting, doneNext);
     const auto ballot = state.module.AllocateId();

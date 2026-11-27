@@ -137,19 +137,9 @@ std::vector<std::uint32_t> faultCheckKey(SpirvValueEmitContext& context, const I
     return {check, memory.resource, memory.gpuDescriptor ? 1u : 0u, based ? 1u : 0u, static_cast<std::uint32_t>(memory.kind), context.Arg(*handle, 0u), context.Arg(*handle, 1u), context.Arg(*handle, 2u), context.Arg(*handle, 3u)};
 }
 
-std::uint32_t qwordLockIndex(SpirvEmitterState& state, std::uint32_t guest) {
-    const auto u32 = TypeU32(state);
-    const auto u64 = TypeScalarU64(state);
-    const auto qword = Binary(state, spv::OpShiftRightLogical, u64, guest, ConstantU32(state, 3u));
-    const auto low = Unary(state, spv::OpUConvert, u32, qword);
-    const auto high = Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, u64, qword, ConstantU32(state, 32u)));
-    const auto mixed = Binary(state, spv::OpBitwiseXor, u32, Binary(state, spv::OpIMul, u32, low, ConstantU32(state, 0x9e3779b1u)), Binary(state, spv::OpIMul, u32, high, ConstantU32(state, 0x85ebca77u)));
-    return Binary(state, spv::OpBitwiseXor, u32, mixed, Binary(state, spv::OpShiftRightLogical, u32, mixed, ConstantU32(state, 16u)));
-}
-
 template<typename TOperation>
 std::uint32_t lockedAtQword(SpirvEmitterState& state, std::uint32_t guest, std::uint32_t type, std::uint32_t zero, TOperation&& operation) {
-    return LockedDeviceUpdate(state, EmitAtomicLockPointer(state, qwordLockIndex(state, guest)), type, zero, std::forward<TOperation>(operation));
+    return LockedDeviceUpdate(state, EmitQwordAtomicLockPointer(state, guest), type, zero, std::forward<TOperation>(operation));
 }
 
 RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t guard) {

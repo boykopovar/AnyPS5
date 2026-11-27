@@ -226,7 +226,7 @@ int RunWait(std::uint64_t expected) {
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "cap";
-    const std::uint64_t expected = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 512;
+    const std::uint64_t expected = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 128;
     try {
         if (mode == "cap") return RunCap(expected);
         if (mode == "wait") return RunWait(expected);

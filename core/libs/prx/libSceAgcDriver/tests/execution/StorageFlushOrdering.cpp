@@ -355,6 +355,13 @@ std::uint64_t OpenSerial() {
     return recorder->OpenSerial();
 }
 
+bool WritesPending(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+    Require(recorder != nullptr, "storage flush ordering: no active recorder");
+    return recorder->PendingWriteOverlaps(address, bytes);
+}
+
 void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, std::size_t images, bool unrelated) {
     const auto first = guest.Address() + offset;
     const auto target = device.Target();
@@ -378,11 +385,12 @@ void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, st
         AgcDriver::Graphics::Recorder::Active()->NoteStampedWrites(stamped);
     }
     const auto open = OpenSerial();
+    const bool pending = WritesPending(first, ImageBytes * images);
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), what + "the second store left no results pending");
     if (!compared || unrelated) {
         if (skips) Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
         else if (unrelated) Require(OpenSerial() != open, what + "the second store did not wait for a stamped write that is not the image's own");
-        else Require(OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
+        else Require(!pending || OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
     }
     device.WaitIdle();
     for (std::size_t index = 0; index < images; ++index) {
@@ -402,8 +410,9 @@ void RunStoredAloneAfterJoint(AgcDriver::VulkanDevice& device, const GuestBlock&
     const bool compared = AgcDriver::Graphics::ComparedHostImportCovers(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), first, ImageBytes * 2u);
     device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
     const auto open = OpenSerial();
+    const bool pending = WritesPending(first, ImageBytes * 2u);
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes, nullptr, "test"), what + "the second store left no results pending");
-    Require(compared || OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
+    Require(compared || !pending || OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
     device.WaitIdle();
     const auto* words = guest.Words() + offset / 4u;
     Require(words[0] == Restored && words[FarDword] == Restored, what + "the newer texels did not land over the joint store");

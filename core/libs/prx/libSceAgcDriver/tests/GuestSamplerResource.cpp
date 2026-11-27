@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -93,6 +95,9 @@ struct SamplerCapture {
     bool created = false;
     const void* next = nullptr;
     VkSamplerReductionMode reductionMode = VK_SAMPLER_REDUCTION_MODE_MAX_ENUM;
+    bool borderMapping = false;
+    VkComponentMapping borderComponents{};
+    bool borderSrgb = false;
     VkSamplerCreateFlags flags = 0;
     bool anisotropyEnable = false;
     float maxAnisotropy = 0.0f;
@@ -119,6 +124,13 @@ VKAPI_ATTR VkResult VKAPI_CALL captureCreateSampler(VkDevice, const VkSamplerCre
     samplerCapture.addressModeW = info->addressModeW;
     const auto* reduction = static_cast<const VkSamplerReductionModeCreateInfoEXT*>(info->pNext);
     if (reduction != nullptr && reduction->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT && reduction->pNext == nullptr) samplerCapture.reductionMode = reduction->reductionMode;
+    for (const auto* next = static_cast<const VkBaseInStructure*>(info->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT) continue;
+        const auto* border = reinterpret_cast<const VkSamplerBorderColorComponentMappingCreateInfoEXT*>(next);
+        samplerCapture.borderMapping = true;
+        samplerCapture.borderComponents = border->components;
+        samplerCapture.borderSrgb = border->srgb == VK_TRUE;
+    }
     *sampler = fakeHandle<VkSampler>(0x5a);
     return VK_SUCCESS;
 }
@@ -131,9 +143,9 @@ PFN_vkVoidFunction VKAPI_CALL captureProc(VkDevice, const char* name) {
     return nullptr;
 }
 
-SamplerCapture createSampler(const Context& context, const GuestSamplerResource& resource) {
+SamplerCapture createSampler(const Context& context, const GuestSamplerResource& resource, const std::optional<BorderComponentMapping>& borderMapping = std::nullopt) {
     samplerCapture = {};
-    const Sampler sampler(context, resource);
+    const Sampler sampler(context, resource, borderMapping);
     Require(sampler.Handle() != VK_NULL_HANDLE, "sampler test did not create a sampler");
     return samplerCapture;
 }
@@ -326,6 +338,83 @@ void RunMirrorOnceTests(const Fields& base) {
     }
     context.samplerMirrorClampToEdge = false;
     Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "a sampler without mirror-once modes needs VK_KHR_sampler_mirror_clamp_to_edge");
+}
+
+bool SameSwizzles(const VkComponentMapping& left, const VkComponentMapping& right) {
+    return left.r == right.r && left.g == right.g && left.b == right.b && left.a == right.a;
+}
+
+void RunBorderComponentMappingTests(const Fields& base) {
+    constexpr auto R = VK_COMPONENT_SWIZZLE_R;
+    constexpr auto G = VK_COMPONENT_SWIZZLE_G;
+    constexpr auto B = VK_COMPONENT_SWIZZLE_B;
+    constexpr auto A = VK_COMPONENT_SWIZZLE_A;
+    const OpaqueBlackPairing plain{{{R, G, B, A}, false}, {4, 5, 6, 7}};
+    const OpaqueBlackPairing unswizzled{{{}, false}, {7, 6, 5, 4}};
+    const OpaqueBlackPairing reversed{{{A, B, G, R}, false}, {7, 6, 5, 4}};
+    const OpaqueBlackPairing reversedSrgb{{{A, B, G, R}, true}, {7, 6, 5, 4}};
+    const OpaqueBlackPairing splat{{{R, R, R, R}, false}, {4, 4, 4, 4}};
+    const OpaqueBlackPairing bgra{{{B, G, R, A}, false}, {6, 5, 4, 7}};
+    const OpaqueBlackPairing constantAlpha{{{R, G, B, VK_COMPONENT_SWIZZLE_ONE}, false}, {4, 5, 6, 1}};
+    const OpaqueBlackPairing reorderedHost{{{A, B, G, R}, false}, {4, 5, 6, 7}};
+    const OpaqueBlackPairing reorderedHostMoving{{{B, R, G, B}, false}, {7, 6, 5, 4}};
+
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.borderColorSwizzle = true;
+    context.borderColorSwizzleFromImage = true;
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed, plain, reorderedHostMoving}).has_value(), "a device that swizzles borders from the image view was given a border component mapping");
+    context.borderColorSwizzleFromImage = false;
+    Require(!OpaqueBlackBorderMapping(context, std::span<const OpaqueBlackPairing>{}).has_value(), "a sampler without textures was given a border component mapping");
+    Require(!OpaqueBlackBorderMapping(context, std::array{plain, unswizzled, bgra, constantAlpha, reorderedHost}).has_value(), "textures whose swizzles keep the opaque black border gave their sampler a border component mapping");
+    const OpaqueBlackPairing implicitAlpha{{{A, B, G, VK_COMPONENT_SWIZZLE_IDENTITY}, false}, {7, 6, 5, 7}};
+    const OpaqueBlackPairing explicitAlpha{{{A, B, G, A}, false}, {7, 6, 5, 7}};
+    Require(OpaqueBlackBorderMapping(context, std::array{implicitAlpha, explicitAlpha}).has_value(), "an identity component and its explicit channel were taken for different swizzles");
+    const auto mapping = OpaqueBlackBorderMapping(context, std::array{reversed, reversed});
+    Require(mapping.has_value() && SameSwizzles(mapping->components, reversed.view.components) && !mapping->srgb, "a W,Z,Y,X texture did not give its sampler the view's border component mapping");
+    const auto splatMapping = OpaqueBlackBorderMapping(context, std::array{splat});
+    Require(splatMapping.has_value() && SameSwizzles(splatMapping->components, splat.view.components), "an X,X,X,X texture did not give its sampler the view's border component mapping");
+    const auto srgbMapping = OpaqueBlackBorderMapping(context, std::array{reversedSrgb});
+    Require(srgbMapping.has_value() && srgbMapping->srgb, "an sRGB view's border component mapping was not marked sRGB");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed, plain}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{bgra, reversed}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed, reversedSrgb}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{splat, unswizzled}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reorderedHostMoving}).has_value(), "a texture whose host channel order changes the swizzled opaque black border did not keep the host's border");
+    context.borderColorSwizzle = false;
+    Require(!OpaqueBlackBorderMapping(context, std::array{plain, bgra}).has_value(), "textures that keep the opaque black border needed VK_EXT_border_color_swizzle");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed}).has_value(), "a texture that moves the opaque black border did not keep the host's border without VK_EXT_border_color_swizzle");
+
+    Fields black = base;
+    black.clampX = 6u;
+    black.borderColorType = 1u;
+    const auto blackResource = DecodeSamplerResource(pack(black));
+    reject([&] { createSampler(context, blackResource, mapping); }, "border color component mapping needs VK_EXT_border_color_swizzle");
+    context.borderColorSwizzle = true;
+    const auto created = createSampler(context, blackResource, mapping);
+    Require(created.borderMapping && SameSwizzles(created.borderComponents, reversed.view.components) && !created.borderSrgb, "a sampler was created without its border component mapping");
+    Require(createSampler(context, blackResource, srgbMapping).borderSrgb, "an sRGB border component mapping was created without srgb");
+    Require(!createSampler(context, blackResource).borderMapping, "a sampler without a border component mapping chained one");
+
+    Require(BorderMappingKey(std::nullopt) == 0u && BorderMappingKey(mapping) != 0u && BorderMappingKey(mapping) != BorderMappingKey(srgbMapping) && BorderMappingKey(mapping) != BorderMappingKey(splatMapping), "border component mappings share a sampler key");
+    SamplerCache cache;
+    const auto words = pack(black);
+    const auto unmapped = cache.Get(context, words, false);
+    const auto mapped = cache.Get(context, words, false, false, false, false, mapping);
+    Require(unmapped != mapped && !unmapped->BorderMapping().has_value() && mapped->BorderMapping().has_value(), "the sampler cache served one sampler with and without a border component mapping");
+    Require(cache.Get(context, words, false, false, false, false, mapping) == mapped && cache.Misses() == 2u, "a sampler with a border component mapping was not served from the cache");
+    Require(cache.Get(context, words, false, false, false, false, srgbMapping) != mapped && cache.Misses() == 3u, "the sampler cache served an sRGB border component mapping from a linear one");
+
+    Fields white = black;
+    white.borderColorType = 2u;
+    const std::array samplers{std::make_shared<Sampler>(context, blackResource), std::make_shared<Sampler>(context, blackResource, mapping), std::make_shared<Sampler>(context, DecodeSamplerResource(pack(white)))};
+    Require(CheckOpaqueBlackPairing(context, plain, 0b001u, samplers) && CheckOpaqueBlackPairing(context, bgra, 0b101u, samplers) && CheckOpaqueBlackPairing(context, reversed, 0b110u, samplers), "an image table texture whose swizzle agrees with its samplers' borders was reported as disagreeing");
+    Require(!CheckOpaqueBlackPairing(context, reversed, 0b001u, samplers), "an image table texture whose swizzle moves the border of an unmapped sampler was reported as agreeing");
+    Require(!CheckOpaqueBlackPairing(context, plain, 0b010u, samplers) && !CheckOpaqueBlackPairing(context, reversedSrgb, 0b010u, samplers), "an image table texture whose swizzle disagrees with its sampler's border mapping was reported as agreeing");
+    reject([&] { CheckOpaqueBlackPairing(context, plain, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
+    context.borderColorSwizzleFromImage = true;
+    Require(CheckOpaqueBlackPairing(context, reversed, 0b011u, samplers), "a device that swizzles borders from the image view reported an image table texture as disagreeing");
 }
 
 void RunSamplerCacheDegammaTests(const Fields& base) {
@@ -524,6 +613,7 @@ void RunGuestSamplerResourceTests() {
     Require(forced.forceDegamma && !plain.forceDegamma, "FORCE_DEGAMMA must be decoded into forceDegamma");
     Require(forced.magFilter == plain.magFilter && forced.minFilter == plain.minFilter && forced.mipmapMode == plain.mipmapMode && forced.maxLod == plain.maxLod, "FORCE_DEGAMMA must not change the host sampler state");
     RunSamplerCacheDegammaTests(base);
+    RunBorderComponentMappingTests(base);
 
     Fields truncated = base;
     truncated.truncCoord = true;

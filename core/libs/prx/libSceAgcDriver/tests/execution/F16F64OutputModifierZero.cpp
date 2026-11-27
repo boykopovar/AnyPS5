@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -484,17 +485,6 @@ constexpr std::uint32_t FloatModes[ModeCount] = {0x00u, 0x50u, 0xf0u};
 constexpr std::uint32_t Omods[OmodCount] = {1u, 2u, 3u};
 constexpr const char* OmodNames[OmodCount] = {"mul:2", "mul:4", "div:2"};
 constexpr std::uint32_t F16AnyNan = (1u << 15u) | (1u << 16u);
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device, bool f64, std::uint32_t floatMode, std::uint32_t omod) {
     Code[5] = f64 ? 0xbf800000u : 0x7e140304u;

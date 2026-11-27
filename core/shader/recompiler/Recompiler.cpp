@@ -102,6 +102,10 @@ bool MergedHullStage(const RecompileRequest& request) {
     return (stage == ShaderStage::Local || stage == ShaderStage::TessellationControl) && request.graphics && request.graphics->tessellation && request.graphics->tessellation->mergedHull;
 }
 
+bool PixelWave32Subgroups(const RecompileRequest& request) {
+    return request.shader.stage == ShaderStage::Fragment && request.context.waveSize == 32u && request.target.pixelWave32Subgroups && request.target.subgroupSize > 32u;
+}
+
 // The host subgroup width wave64 programs are laid out for. Debug aid: APS5_SINGLE_LANE=<hex code
 // addresses, comma separated, or "all"> keeps the listed programs at one guest lane per invocation.
 std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
@@ -116,6 +120,7 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
         std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
         if (list.find(address) != std::string::npos) return 64u;
     }
+    if (PixelWave32Subgroups(request)) return 32u;
     return request.target.subgroupSize;
 }
 
@@ -362,13 +367,13 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             deadCodeEliminator.Eliminate(program);
         }
 
-        if (maskedSelectEliminator.Eliminate(program).removedSelects != 0u) {
+        if (const auto maskedSelects = maskedSelectEliminator.Eliminate(program); maskedSelects.removedSelects != 0u) {
             const bool liveAncillary = std::ranges::any_of(program.Blocks(), [](const auto& block) {
                 return std::ranges::any_of(block->Instructions(), [](const IrValue* value) {
                     return value->Opcode() == IrOpcode::GetBuiltin && value->HasUses() && value->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::PackedAncillary);
                 });
             });
-            if (liveAncillary) {
+            if (liveAncillary || maskedSelects.immediateSelects != 0u) {
                 constantFolder.Fold(program);
                 deadCodeEliminator.RemoveIdentities(program);
                 deadCodeEliminator.Eliminate(program);
@@ -854,7 +859,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
     targetOptions.spirvVersion = request.target.spirvVersion;
-    targetOptions.subgroupSize = HostSubgroupSize(request) == 1u ? 1u : request.target.subgroupSize;
+    targetOptions.subgroupSize = HostSubgroupSize(request) == 1u ? 1u : PixelWave32Subgroups(request) ? 32u : request.target.subgroupSize;
     targetOptions.bdaAbiVersion = request.target.bdaAbiVersion;
     targetOptions.supportedCapabilities = request.target.supportedCapabilities;
     targetOptions.supportedExtensions = request.target.supportedExtensions;
@@ -2563,8 +2568,7 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     } catch (const std::exception& e) {
         NoteFailureOnce();
         constexpr auto requestSerializer = RequestSerializer{};
-        const auto inputInfo = request.context.splitState.empty() ? "\nRecompileRequest:\n" + requestSerializer.Serialize(request) : std::string();
-        throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + inputInfo);
+        throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + "\nRecompileRequest:\n" + requestSerializer.Serialize(request));
     } catch (...) {
         throw std::runtime_error("ShaderRecompiler::Recompile: unknown exception");
     }

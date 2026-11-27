@@ -226,12 +226,34 @@ void CheckLongAncillaryForwarding() {
     Require(run.error.empty(), "long ancillary forwarding: folding failed");
 }
 
+void CheckSampleBitFoldsInOnePass() {
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.BlockOrder().push_back(&block);
+    BlockInfo info;
+    info.id = 0u;
+    info.terminator.kind = TerminatorKind::Return;
+    program.Metadata().blockInfo.push_back(info);
+    program.SetEntryBlock(block);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(block);
+    auto& ancillary = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::PackedAncillary)), &builder.Constant(0u)});
+    auto& sampleBit = builder.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&ancillary, &builder.Constant(8u), &builder.Constant(1u)});
+    auto& oddSample = builder.Emit(IrOpcode::IEqual32, IrType::Bool, {&builder.Constant(1u), &sampleBit});
+    auto& selected = builder.Emit(IrOpcode::SelectU32, IrType::U32, {&oddSample, &builder.Constant(7u), &builder.Constant(9u)});
+    auto& reference = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&selected});
+    ConstantFolder{}.Fold(program);
+    const IrValue& folded = *reference.Argument(0)->Resolve();
+    Require(folded.HasImmediate() && folded.ImmediateU32() == 9u, "single-sample ancillary: one fold left the users of the sample bit unfolded");
+}
+
 }
 
 int main() {
     try {
         for (unsigned mode = 0; mode < 5u; ++mode) CheckDiamond(mode);
         CheckLongAncillaryForwarding();
+        CheckSampleBitFoldsInOnePass();
         CheckUnobservedPhiCycles();
         CheckBranchConditionIdentity();
         std::puts("constant phi dominance tests passed");

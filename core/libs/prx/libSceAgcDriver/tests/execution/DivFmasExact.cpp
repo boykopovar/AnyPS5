@@ -118,7 +118,8 @@ std::uint32_t Reference(const Vector& v) {
 }
 
 std::vector<Vector> Vectors() {
-    std::mt19937 random(0xd1f3a5u);
+    std::mt19937 engine(0xd1f3a5u);
+    const auto random = [&engine] { return static_cast<std::uint32_t>(engine()); };
     const auto bits = [&](std::uint32_t lowField, std::uint32_t highField) {
         const std::uint32_t field = lowField + random() % (highField - lowField + 1u);
         return (random() & 0x80000000u) | (field << 23u) | (random() & 0x007fffffu);
