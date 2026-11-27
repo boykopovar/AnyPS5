@@ -4,6 +4,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -43,12 +44,6 @@ std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t records,
 
 constexpr std::array<std::uint32_t, 4> GameNull{0x00000000u, 0x00080050u, 0x00000000u, 0x00005204u};
 constexpr std::array<std::uint32_t, 4> ZeroNull{0u, 0u, 0u, 0u};
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 struct Outcome {
     std::uint64_t pipeline = 0;

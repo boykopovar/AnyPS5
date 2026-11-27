@@ -14,6 +14,7 @@ public:
     ElfHeader ReadHeader() const override;
     std::vector<ProgramHeader> ReadProgramHeaders() const override;
     std::vector<SectionHeader> ReadSectionHeaders() const override;
+    std::uint64_t ReadDynamicSymbolCount(FileByteOffset symbolOffset, std::uint32_t minimum) const;
     std::vector<DynamicTag> ReadDynamicTags(const ProgramHeader& dynamicHeader) const override;
     FileByteOffset TranslateVirtualAddress(VirtualAddress address) const override;
     std::vector<std::uint8_t> ReadSegment(const ProgramHeader& header) const override;

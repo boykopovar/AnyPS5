@@ -3260,6 +3260,13 @@ bool DepthSurface::PublishToGuest(DepthReadCause cause) {
     } scope{publicationInProgress};
     publicationInProgress = true;
     if (publicationFailure) std::rethrow_exception(publicationFailure);
+    if (!clearPending && (clearGeneration != 0u || stencilClearGeneration != 0u) &&
+        target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && hostFormat == target.format &&
+        publication.size() == (uniformPlaneTarget(target) ? 2u : 3u) &&
+        sampling.refusal.empty() && sampleable && context.detiler != nullptr) {
+        CheckCurrent();
+        if (publicationFailure) std::rethrow_exception(publicationFailure);
+    }
     const bool bare = bareDepthTarget(target);
     const bool htile = !uniformPlaneTarget(target) && !bare;
     const bool publishable = bare ? publication.size() == 1u : target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && publication.size() == (htile ? 3u : 2u);

@@ -75,7 +75,7 @@ int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void);
 int APS5_VABI sceGnmGetShaderProgramBaseAddress_nid_disambig1(void);
 int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void);
 int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void);
-int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void);
+int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset, std::uint32_t priority);
 int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void);
 int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void);
 int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
