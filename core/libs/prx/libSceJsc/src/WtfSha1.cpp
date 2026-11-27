@@ -85,16 +85,21 @@
  */
 
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libSceJsc/src/WtfStringAbi.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -216,6 +221,47 @@ void EnsureEncoderCapacity(PersistenceEncoder& encoder, std::size_t additional) 
     encoder.capacity = static_cast<unsigned>(nextCapacity);
 }
 
+constexpr unsigned BoolSalt = 3;
+constexpr unsigned UInt32Salt = 11;
+constexpr unsigned DataSalt = 101;
+constexpr std::uint32_t NullStringLength = std::numeric_limits<std::uint32_t>::max();
+constexpr std::uint32_t MaxDecodedLength = std::numeric_limits<std::int32_t>::max();
+
+void CheckDecoder(const void* result, const Jsc::WtfAbi::PersistenceDecoder* decoder, const std::string& name) {
+    if (!result || !decoder) throw std::invalid_argument(name + " requires return storage and a decoder");
+    if (decoder->sha1.cursor >= BlockSize) throw std::invalid_argument(name + ": buffer cursor out of range");
+    if (decoder->bufferPosition > decoder->bufferEnd) throw std::invalid_argument(name + ": position past the buffer end");
+}
+
+std::size_t Remaining(const Jsc::WtfAbi::PersistenceDecoder& decoder) {
+    return static_cast<std::size_t>(decoder.bufferEnd - decoder.bufferPosition);
+}
+
+bool DecodeNumber(Jsc::WtfAbi::PersistenceDecoder& decoder, unsigned salt, void* value, std::size_t size) {
+    if (Remaining(decoder) < size) return false;
+    std::memcpy(value, decoder.bufferPosition, size);
+    decoder.bufferPosition += size;
+    AddBytes(decoder.sha1, reinterpret_cast<const std::uint8_t*>(&salt), sizeof(salt));
+    AddBytes(decoder.sha1, static_cast<const std::uint8_t*>(value), size);
+    return true;
+}
+
+void DecodeData(Jsc::WtfAbi::PersistenceDecoder& decoder, std::uint8_t* data, std::size_t size) {
+    std::memcpy(data, decoder.bufferPosition, size);
+    decoder.bufferPosition += size;
+    AddBytes(decoder.sha1, reinterpret_cast<const std::uint8_t*>(&DataSalt), sizeof(DataSalt));
+    AddBytes(decoder.sha1, data, size);
+}
+
+void* FastMalloc(std::size_t size, const std::string& name) {
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate || !allocator->deallocate)
+        throw std::runtime_error(name + ": the string requires libSceNKWebKit fastMalloc");
+    void* storage = allocator->allocate(size);
+    if (!storage) throw std::bad_alloc();
+    return storage;
+}
+
 }
 
 extern "C" {
@@ -234,6 +280,30 @@ void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(SHA1* self, Jsc::WtfA
     }
 
     Reset(*self);
+}
+
+Jsc::WtfAbi::OwnedCString APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(const Jsc::WtfAbi::SHA1Digest* digest) {
+    if (!digest) throw std::invalid_argument("WTF::SHA1::hexDigest requires a digest");
+    Jsc::WtfAbi::SHA1Digest value{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(value.data(), digest, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::SHA1::hexDigest: unreadable digest");
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate)
+        throw std::runtime_error("WTF::SHA1::hexDigest: CString allocation requires libSceNKWebKit fastMalloc");
+    constexpr std::size_t HexLength = value.size() * 2;
+    void* memory = allocator->allocate(sizeof(Jsc::WtfAbi::CStringBuffer) + HexLength + 1);
+    if (!memory) throw std::bad_alloc();
+    auto* buffer = new (memory) Jsc::WtfAbi::CStringBuffer{1u, HexLength};
+    auto* output = reinterpret_cast<char*>(buffer + 1);
+    static constexpr char Digits[] = "0123456789ABCDEF";
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        output[2 * i] = Digits[value[i] >> 4];
+        output[2 * i + 1] = Digits[value[i] & 15];
+    }
+    output[HexLength] = '\0';
+    return Jsc::WtfAbi::OwnedCString(buffer);
 }
 
 Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder) {
@@ -266,6 +336,59 @@ void APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7Encoder
     AddBytes(encoder->sha1, value.data(), value.size());
     std::memcpy(encoder->buffer + encoder->size, value.data(), value.size());
     encoder->size += static_cast<unsigned>(value.size());
+}
+
+Jsc::WtfAbi::OptionalCString* APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE(
+    Jsc::WtfAbi::OptionalCString* result, Jsc::WtfAbi::PersistenceDecoder* decoder) {
+    const std::string name = "WTF::Persistence::Coder<CString>::decode";
+    CheckDecoder(result, decoder, name);
+    *result = {};
+    std::uint32_t length = 0;
+    if (!DecodeNumber(*decoder, UInt32Salt, &length, sizeof(length))) return result;
+    if (length == NullStringLength) {
+        result->hasValue = true;
+        return result;
+    }
+    if (Remaining(*decoder) < length) return result;
+    if (length > MaxDecodedLength) throw std::length_error(name + ": length above INT32_MAX");
+    using Jsc::WtfAbi::CStringBuffer;
+    auto* buffer = new (FastMalloc(sizeof(CStringBuffer) + length + 1, name)) CStringBuffer{1u, length};
+    auto* characters = reinterpret_cast<std::uint8_t*>(buffer + 1);
+    DecodeData(*decoder, characters, length);
+    characters[length] = 0;
+    result->value.buffer = buffer;
+    result->hasValue = true;
+    return result;
+}
+
+Jsc::WtfAbi::OptionalString* APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE(
+    Jsc::WtfAbi::OptionalString* result, Jsc::WtfAbi::PersistenceDecoder* decoder) {
+    const std::string name = "WTF::Persistence::Coder<String>::decode";
+    CheckDecoder(result, decoder, name);
+    *result = {};
+    std::uint32_t length = 0;
+    if (!DecodeNumber(*decoder, UInt32Salt, &length, sizeof(length))) return result;
+    if (length == NullStringLength) {
+        result->hasValue = true;
+        return result;
+    }
+    std::uint8_t is8Bit = 0;
+    if (!DecodeNumber(*decoder, BoolSalt, &is8Bit, sizeof(is8Bit))) return result;
+    if (is8Bit > 1) throw std::invalid_argument(name + ": the 8-bit flag byte is neither 0 nor 1");
+    const std::size_t byteLength = static_cast<std::size_t>(length) * (is8Bit ? 1 : 2);
+    if (Remaining(*decoder) < byteLength) return result;
+    if (!length) NotImplemented_nid_no_patch(__func__);
+    if (length > MaxDecodedLength) throw std::length_error(name + ": length above INT32_MAX");
+    using Jsc::WtfAbi::StringImpl;
+    constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
+    const std::size_t allocationSize = std::max<std::size_t>(sizeof(StringImpl), charactersOffset + byteLength);
+    void* storage = FastMalloc(allocationSize, name);
+    auto* characters = static_cast<std::uint8_t*>(storage) + charactersOffset;
+    auto* string = new (storage) StringImpl{2u, length, characters, is8Bit ? Jsc::WtfAbi::StringImplFlag8Bit : 0u};
+    DecodeData(*decoder, characters, byteLength);
+    result->value = string;
+    result->hasValue = true;
+    return result;
 }
 
 void RegisterPersistenceAllocator_nid_no_patch(const PersistenceAllocator* allocator) {
