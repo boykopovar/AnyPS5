@@ -39,7 +39,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         with ab_split.open_log(args.log) as lines:
-            text = render(ab_split.split(lines, args.program, args.classes), args.spreadsheet_safe)
+            try:
+                result = ab_split.split(lines, args.program, args.classes)
+            except ValueError as error:
+                raise ValueError(f"{args.log}: {error}") from error
+            text = render(result, args.spreadsheet_safe)
     except (OSError, ValueError, OverflowError) as error:
         parser.error(str(error))
     sys.stdout.write(text)

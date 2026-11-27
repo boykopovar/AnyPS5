@@ -1014,8 +1014,15 @@ void ReleaseLegacyHandlers() {
     state.legacyHandlers = nullptr;
 }
 
-void Construct(Object& object, bool releaseMissingHeader = false) {
+void Construct(Object& object, bool releaseMissingHeader = false, Object* guestTarget = nullptr, const char* function = nullptr) {
     object.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (guestTarget) {
+        try { StoreGuest(guestTarget, object, function); }
+        catch (...) {
+            if (object.items) { Release(object.items); object.items = nullptr; }
+            throw;
+        }
+    }
     if (!object.items) { if (releaseMissingHeader) Release(nullptr); return; }
     object.items->count = 0;
     object.items->head = NewObjectHead();
@@ -1025,6 +1032,7 @@ void Construct(Object& object, bool releaseMissingHeader = false) {
         object.items->count = std::numeric_limits<std::size_t>::max();
         Release(object.items);
         object.items = nullptr;
+        if (guestTarget) StoreGuest(guestTarget, object, function);
     }
 }
 
@@ -1083,16 +1091,18 @@ void Destroy(Array& a) {
     a.items = nullptr;
     SetDefaultHeaderRetired(TypeArray, &a, false);
 }
-void Destroy(Object& object) {
+void Destroy(Object& object, Object* guestTarget = nullptr, const char* function = nullptr) {
     if (!object.items) return;
+    const void* owner = guestTarget ? static_cast<const void*>(guestTarget) : static_cast<const void*>(&object);
     object.items->clear();
     if (object.items->head) Release(object.items->head);
-    SetDefaultHeaderRetired(TypeObject, &object, true);
+    SetDefaultHeaderRetired(TypeObject, owner, true);
     object.items->head = reinterpret_cast<ObjectLink*>(std::uintptr_t{0xffffffff});
     object.items->count = std::numeric_limits<std::size_t>::max();
     Release(object.items);
     object.items = nullptr;
-    SetDefaultHeaderRetired(TypeObject, &object, false);
+    if (guestTarget) StoreGuest(guestTarget, object, function);
+    SetDefaultHeaderRetired(TypeObject, owner, false);
 }
 
 const Node& RootOf(const Node& n) {
@@ -1295,13 +1305,25 @@ void CopyArray(Array& destination, const Array& source) {
     CopyArrayStorage(*destination.items, *source.items);
 }
 
-void CopyObject(Object& destination, const Object& source) {
-    if (!source.items) { destination = {}; return; }
+void CopyObject(Object& destination, const Object& source, Object* guestTarget = nullptr, const char* function = nullptr) {
+    if (!source.items) {
+        destination = {};
+        if (guestTarget) StoreGuest(guestTarget, destination, function);
+        return;
+    }
     destination.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
-    if (!destination.items) { destination = {}; return; }
+    if (!destination.items) {
+        destination = {};
+        if (guestTarget) StoreGuest(guestTarget, destination, function);
+        return;
+    }
     destination.items->count = 0;
     destination.items->head = NewObjectHead();
     destination.items->SetOwner(nullptr);
+    if (guestTarget) {
+        try { StoreGuest(guestTarget, destination, function); }
+        catch (...) { Destroy(destination); throw; }
+    }
     CopyObjectStorage(*destination.items, *source.items);
 }
 
@@ -1604,7 +1626,58 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     return 0;
 }
 
+void RequireGuestValueReadableWritable(Value* destination, const char* function) {
+    static_cast<void>(LoadGuest<Value>(destination, function));
+    if (!GuestWritable_nid_no_patch(destination, sizeof(Value)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestValueRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
+void ValidateGuestValueText(const Text* textPointer, const char* function) {
+    if (!textPointer) return;
+    const auto text = LoadGuest<Text>(textPointer, function);
+    if (!text.characters || text.length == std::numeric_limits<std::size_t>::max())
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    char chunk[4096];
+    const std::size_t total = text.length + 1;
+    for (std::size_t offset = 0; offset < total;) {
+        const std::size_t step = std::min(sizeof(chunk), total - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, text.characters + offset, step))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        offset += step;
+    }
+}
+
+String LoadGuestValueString(const String* source, const char* function) {
+    const auto value = LoadGuest<String>(source, function);
+    ValidateGuestValueText(value.text, function);
+    return value;
+}
+
+String ValidateGuestValueOutputString(String* destination, const char* function) {
+    const auto value = LoadGuestValueString(destination, function);
+    if (!GuestWritable_nid_no_patch(destination, sizeof(String)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (value.text) {
+        const auto text = LoadGuest<Text>(value.text, function);
+        if (!GuestWritable_nid_no_patch(value.text, sizeof(Text)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        if (text.characters != emptyCharacters && text.capacity > 0 &&
+            !GuestWritable_nid_no_patch(text.characters, text.capacity))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return value;
+}
+
 const Node& Typed(const Value* self, ValueType requested, bool* usedDefault = nullptr) {
+    static_cast<void>(LoadGuest<Value>(self, __func__));
     const auto fallback = [&]() -> const Node& {
         if (usedDefault) *usedDefault = true;
         if (usedDefault && requested >= TypeString) return SharedDefaults().values[requested];
@@ -1672,13 +1745,15 @@ const Value& MissingElement(const Value* self, int error, const String* key, con
 }
 
 const Value* LookupKey(const Value* self, const String* key) {
-    if (!key) { NotImplemented_nid_no_patch(__func__); return nullptr; }
+    static_cast<void>(LoadGuest<Value>(self, __func__));
+    if (!key) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const auto loadedKey = LoadGuestValueString(key, __func__);
     auto moduleFallback = [] {
         auto& state = State();
         std::lock_guard lock(state.mutex);
         return state.fallback;
     };
-    if (!key->text) return moduleFallback();
+    if (!loadedKey.text) return moduleFallback();
     struct IteratorState {
         ObjectIteratorState* state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
         IteratorState() { if (state) state->position = nullptr; }
@@ -1686,9 +1761,9 @@ const Value* LookupKey(const Value* self, const String* key) {
     };
     if (self->type == TypeObject) {
         IteratorState found;
-        if (!self->object) { NotImplemented_nid_no_patch(__func__); return nullptr; }
+        if (!self->object) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         auto* items = self->object->items;
-        if (found.state) found.state->position = items ? items->Find(Characters(*key)) : nullptr;
+        if (found.state) found.state->position = items ? items->Find(Characters(loadedKey)) : nullptr;
         if (items && !items->head) { Release(found.state); found.state = nullptr; }
         bool present;
         {
@@ -1993,7 +2068,7 @@ struct ScopedPair {
     ~ScopedPair() { Destroy(pair.value); Destroy(pair.key); }
 };
 
-void AssignObject(Object& destination, const Object& source) {
+void AssignObjectWithTarget(Object& destination, const Object& source, Object* guestTarget, const char* function) {
     if (!destination.items || !source.items) return;
     if (!ModernValues()) {
         CopyObjectStorage(*destination.items, *source.items);
@@ -2031,8 +2106,63 @@ void AssignObject(Object& destination, const Object& source) {
     } catch (...) { Destroy(pending); throw; }
     auto previous = destination;
     destination = pending;
+    if (guestTarget) {
+        try { StoreGuest(guestTarget, destination, function); }
+        catch (...) { destination = previous; Destroy(pending); throw; }
+    }
     Destroy(previous);
 }
+
+void AssignObject(Object& destination, const Object& source) {
+    AssignObjectWithTarget(destination, source, nullptr, nullptr);
+}
+
+template <typename TValue>
+void RequireGuestObjectWritable(void* destination, const char* function) {
+    if (!destination || !GuestWritable_nid_no_patch(destination, sizeof(TValue))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestObjectRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
+void ValidateGuestKeyText(const Text* textPointer, const char* function) {
+    if (!textPointer) return;
+    const auto text = LoadGuest<Text>(textPointer, function);
+    if (!text.characters || text.length == std::numeric_limits<std::size_t>::max())
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    char chunk[4096];
+    const std::size_t total = text.length + 1;
+    for (std::size_t offset = 0; offset < total;) {
+        const std::size_t step = std::min(sizeof(chunk), total - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, text.characters + offset, step))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        offset += step;
+    }
+}
+
+String LoadGuestKeyString(const String* source, const char* function) {
+    const auto value = LoadGuest<String>(source, function);
+    ValidateGuestKeyText(value.text, function);
+    return value;
+}
+
+struct ScopedObjectIteratorState {
+    ObjectIteratorState* state = nullptr;
+    explicit ScopedObjectIteratorState(ObjectIteratorState* value) : state(value) {}
+    ~ScopedObjectIteratorState() { Release(state); }
+    ScopedObjectIteratorState(const ScopedObjectIteratorState&) = delete;
+    ScopedObjectIteratorState& operator=(const ScopedObjectIteratorState&) = delete;
+    void Reset() {
+        Release(state);
+        state = nullptr;
+    }
+    void ReleaseOwnership() { state = nullptr; }
+};
 
 Value* ObjectAccess(Object& object, const String& input) {
     if (!object.items || !input.text) return const_cast<Value*>(&Defaults(TypeNull));
@@ -2292,12 +2422,19 @@ private:
 int APS5_VABI SerializationSucceeded(String&, void*) { return 0; }
 
 int SerializeCallbackValue(Value* value, String* destination, SerializationCallback callback, void* context, bool collect) {
+    static_cast<void>(LoadGuest<Value>(value, __func__));
+    if (!callback || (collect && !destination)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (collect) {
+        const auto loadedDestination = ValidateGuestValueOutputString(destination, __func__);
+        if (GuestValueRangesOverlap(value, sizeof(Value), destination, sizeof(String)) ||
+            (loadedDestination.text && GuestValueRangesOverlap(value, sizeof(Value), loadedDestination.text, sizeof(Text))))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     {
         auto& state = State();
         std::lock_guard lock(state.mutex);
         if (!state.allocation) return JsonErrorNotInitialized;
     }
-    if (!callback || (collect && !destination)) { NotImplemented_nid_no_patch(__func__); return 0; }
     ScopedString buffer(std::string_view{});
     CallbackSerializer serializer(buffer.string, destination, callback, context, collect);
     return serializer.SerializeValue(*value);
@@ -2345,7 +2482,7 @@ double ParseDecimal(std::string_view text) {
 
 class Parser {
 public:
-    Parser(const char* text, std::size_t size) : text(text), end(text + size) {}
+    Parser(const char* text, std::size_t size) : text(text), remaining(size) {}
     Parser(ParserReadCallback read, void* context) : read(read), context(context) {}
 
     bool Parse(Node& out) { return value(out); }
@@ -2356,7 +2493,10 @@ private:
     static constexpr std::size_t MaxNestingDepth = 512;
 
     const char* text = nullptr;
-    const char* end = nullptr;
+    std::size_t remaining = 0;
+    char buffer[256]{};
+    std::size_t buffered = 0;
+    std::size_t cursor = 0;
     ParserReadCallback read = nullptr;
     void* context = nullptr;
     std::size_t depth = 0;
@@ -2369,11 +2509,19 @@ private:
             char character = 0;
             readError = read(character, context);
             current = readError < 0 ? -1 : static_cast<unsigned char>(character);
-        } else if (text == end) {
+        } else if (cursor < buffered) {
+            current = static_cast<unsigned char>(buffer[cursor++]);
+        } else if (remaining == 0) {
             readError = JsonErrorParse;
             current = -1;
         } else {
-            current = static_cast<unsigned char>(*text++);
+            const std::size_t count = std::min(sizeof(buffer), remaining);
+            if (!GuestCopyIn_nid_no_patch(buffer, text, count)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            text += count;
+            remaining -= count;
+            buffered = count;
+            cursor = 1;
+            current = static_cast<unsigned char>(buffer[0]);
         }
         return current;
     }
@@ -2573,6 +2721,41 @@ private:
         }
     }
 };
+
+void ValidateGuestParserTarget(Value* out, const char* function) {
+    static_cast<void>(LoadGuest<Value>(out, function));
+    if (!GuestWritable_nid_no_patch(out, sizeof(Value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestParserRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
+void ValidateGuestParserBytes(const char* text, std::size_t size, const char* function) {
+    if (reinterpret_cast<std::uintptr_t>(text) > std::numeric_limits<std::uintptr_t>::max() - size)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    char chunk[4096];
+    for (std::size_t offset = 0; offset < size;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t step = std::min(sizeof(chunk) - address % sizeof(chunk), size - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, step)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        offset += step;
+    }
+}
+
+void CopyGuestParserPath(const Value* out, const char* path, std::string& copy, const char* function) {
+    std::size_t length = 0;
+    if (!path || !GuestTextLength(path, length)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (length == std::numeric_limits<std::size_t>::max() ||
+        GuestParserRangesOverlap(out, sizeof(Value), path, length + 1))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    copy.resize(length);
+    if (length && !GuestCopyIn_nid_no_patch(copy.data(), path, length)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
 
 int ParseValue(Value* out, Parser& parser) {
     AllocationOperation operation;
@@ -2927,34 +3110,84 @@ void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::s
     self->state->position = node;
 }
 
-void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) { Construct(*self); }
-void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) { CopyObject(*self, *other); }
-void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) { Destroy(*self); }
+void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) {
+    RequireGuestObjectWritable<Object>(self, __func__);
+    Object object{};
+    Construct(object, false, self, __func__);
+}
+void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) {
+    const auto source = LoadGuest<Object>(other, __func__);
+    if (GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<Object>(self, __func__);
+    Object copy{};
+    CopyObject(copy, source, self, __func__);
+}
+void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) {
+    auto object = LoadGuest<Object>(self, __func__);
+    if (!object.items) return;
+    RequireGuestObjectWritable<Object>(self, __func__);
+    Destroy(object, self, __func__);
+}
 Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object* self, const Object* other) {
-    AssignObject(*self, *other);
+    auto destination = LoadGuest<Object>(self, __func__);
+    const auto source = LoadGuest<Object>(other, __func__);
+    if (self != other && GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<Object>(self, __func__);
+    AssignObjectWithTarget(destination, source, self, __func__);
     return self;
 }
-void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) { if (self->items) self->items->clear(); }
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return ObjectAccess(*self, *key); }
+void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) {
+    const auto object = LoadGuest<Object>(self, __func__);
+    if (object.items) object.items->clear();
+}
+Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) {
+    auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    return ObjectAccess(object, loadedKey);
+}
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = self->items && self->items->head ? self->items->head->left : nullptr;
-    if (self->items && (!self->items->head || !self->items->head->left)) { Release(result->state); result->state = nullptr; }
+    const auto object = LoadGuest<Object>(self, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = object.items && object.items->head ? object.items->head->left : nullptr;
+    if (object.items && (!object.items->head || !object.items->head->left)) state.Reset();
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = self->items ? self->items->head : nullptr;
-    if (self->items && !self->items->head) { Release(result->state); result->state = nullptr; }
+    const auto object = LoadGuest<Object>(self, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = object.items ? object.items->head : nullptr;
+    if (object.items && !object.items->head) state.Reset();
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { Release(self->state); self->state = nullptr; }
+void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) {
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+    Release(iterator.state);
+    StoreGuest(self, ObjectIterator{}, __func__);
+}
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) {
-    if (self->state) self->state->position = NextObjectLink(self->state->position);
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    if (iterator.state) {
+        auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
+        state.position = NextObjectLink(state.position);
+        StoreGuest(iterator.state, state, __func__);
+    }
     return self;
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
-    if (self->state) return reinterpret_cast<Pair*>(reinterpret_cast<std::uintptr_t>(self->state->position) + 48);
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    if (iterator.state) {
+        const auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
+        return reinterpret_cast<Pair*>(reinterpret_cast<std::uintptr_t>(state.position) + 48);
+    }
     const auto* object = Defaults(TypeObject).object;
     if (!object || !object->items) NotImplemented_nid_no_patch(__func__);
     ObjectIterator fallback{};
@@ -2966,74 +3199,167 @@ Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratorptEv(const ObjectIterator* self) { return _ZNK3sce4Json6Object8iteratordeEv(self); }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterator* result, const Object* self, const String* key) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = self->items && key->text ? self->items->Find(Characters(*key)) : nullptr;
-    if (self->items && key->text && !self->items->head) { Release(result->state); result->state = nullptr; }
+    const auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object)) ||
+        GuestObjectRangesOverlap(result, sizeof(ObjectIterator), key, sizeof(String)) ||
+        (loadedKey.text && GuestObjectRangesOverlap(result, sizeof(ObjectIterator), loadedKey.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = object.items && loadedKey.text ? object.items->Find(Characters(loadedKey)) : nullptr;
+    if (object.items && loadedKey.text && !object.items->head) state.Reset();
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratoreqERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    return self->state && other->state && self->state->position == other->state->position;
+    const auto left = LoadGuest<ObjectIterator>(self, __func__);
+    const auto right = LoadGuest<ObjectIterator>(other, __func__);
+    if (!left.state || !right.state) return false;
+    return LoadGuest<ObjectIteratorState>(left.state, __func__).position == LoadGuest<ObjectIteratorState>(right.state, __func__).position;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    return self->state && other->state && self->state->position != other->state->position;
+    const auto left = LoadGuest<ObjectIterator>(self, __func__);
+    const auto right = LoadGuest<ObjectIterator>(other, __func__);
+    if (!left.state || !right.state) return false;
+    return LoadGuest<ObjectIteratorState>(left.state, __func__).position != LoadGuest<ObjectIteratorState>(right.state, __func__).position;
 }
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    self->state = other->state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr;
-    if (self->state) *self->state = *other->state;
+    const auto source = LoadGuest<ObjectIterator>(other, __func__);
+    ObjectIteratorState sourceState{};
+    if (source.state) sourceState = LoadGuest<ObjectIteratorState>(source.state, __func__);
+    if (GuestObjectRangesOverlap(self, sizeof(ObjectIterator), other, sizeof(ObjectIterator)) ||
+        (source.state && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), source.state, sizeof(ObjectIteratorState))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+    ScopedObjectIteratorState state(source.state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr);
+    if (state.state) *state.state = sourceState;
+    StoreGuest(self, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
 }
 void APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std::size_t count) {
-    if (self->state) while (count--) self->state->position = NextObjectLink(self->state->position);
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    if (iterator.state) {
+        auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
+        if (!count) return;
+        while (count--) state.position = NextObjectLink(state.position);
+        StoreGuest(iterator.state, state, __func__);
+    }
 }
-bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return !self->items || self->items->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items ? self->items->size() : 0; }
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) {
+    const auto object = LoadGuest<Object>(self, __func__);
+    return !object.items || object.items->empty();
+}
+std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) {
+    const auto object = LoadGuest<Object>(self, __func__);
+    return object.items ? object.items->size() : 0;
+}
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
-    if (!self->items || !key->text) return;
-    self->items->Erase(self->items->Find(Characters(*key)));
+    const auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    if (!object.items || !loadedKey.text) return;
+    object.items->Erase(object.items->Find(Characters(loadedKey)));
 }
 
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
-void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) { Construct(*self); self->type = TypeBoolean; self->boolean = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) { Construct(*self); self->type = TypeInteger; self->integer = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Construct(*self); self->type = TypeUInteger; self->uinteger = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); AssignReal(*self, value); }
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
+void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) {
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
+}
+void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    Construct(*self);
+    self->type = TypeBoolean;
+    self->boolean = value;
+}
+void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    Construct(*self);
+    self->type = TypeInteger;
+    self->integer = value;
+}
+void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    Construct(*self);
+    self->type = TypeUInteger;
+    self->uinteger = value;
+}
+void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    Construct(*self);
+    AssignReal(*self, value);
+}
+void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
+    RequireGuestValueReadableWritable(self, __func__);
     std::size_t length = 0;
     if (text && !GuestTextLength(text, length)) text = nullptr;
+    if (text && GuestValueRangesOverlap(self, sizeof(Value), text, length + 1))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    Construct(*self);
     ScopedString temporary{text ? std::string_view{text, length} : std::string_view{""}};
     if (!temporary.string.text) return;
     SetType(*self, TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value* self, const String* text) {
+    const auto loaded = LoadGuestValueString(text, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), text, sizeof(String)) ||
+        (loaded.text && GuestValueRangesOverlap(self, sizeof(Value), loaded.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
-    if (!text->text) return;
+    if (!loaded.text) return;
     SetType(*self, TypeString);
-    if (self->type == TypeString) AssignText(*self->string, View(*text), true);
+    if (self->type == TypeString) AssignText(*self->string, View(loaded), true);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value* self, const Array* array) {
+    const auto loaded = LoadGuest<Array>(array, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), array, sizeof(Array)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
-    if (!array->items) return;
+    if (!loaded.items) return;
     SetType(*self, TypeArray);
-    if (self->array) AssignArray(*self->array, *array);
+    if (self->array) AssignArray(*self->array, loaded);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value* self, const Object* object) {
+    const auto loaded = LoadGuest<Object>(object, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), object, sizeof(Object)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
-    if (!object->items) return;
+    if (!loaded.items) return;
     SetType(*self, TypeObject);
-    if (self->object) AssignObject(*self->object, *object);
+    if (self->object) AssignObject(*self->object, loaded);
 }
-void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) { CopyInto(*self, *other); }
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) { Destroy(*self); }
+void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) {
+    static_cast<void>(LoadGuest<Value>(other, __func__));
+    if (GuestValueRangesOverlap(self, sizeof(Value), other, sizeof(Value)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestValueReadableWritable(self, __func__);
+    CopyInto(*self, *other);
+}
+void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) {
+    RequireGuestValueReadableWritable(self, __func__);
+    Destroy(*self);
+}
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value* self, const Value* other) {
+    RequireGuestValueReadableWritable(self, __func__);
+    static_cast<void>(LoadGuest<Value>(other, __func__));
+    if (self != other && GuestValueRangesOverlap(self, sizeof(Value), other, sizeof(Value)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     AssignNode(NodeOf(*self), NodeOf(*other));
     return self;
 }
 void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
+    RequireGuestValueReadableWritable(self, __func__);
+    RequireGuestValueReadableWritable(other, __func__);
+    if (self != other && GuestValueRangesOverlap(self, sizeof(Value), other, sizeof(Value)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     for (auto* parent = other->parent; parent; parent = parent->parent)
-        if (parent == self) NotImplemented_nid_no_patch(__func__);
+        if (parent == self) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     for (auto* parent = self->parent; parent; parent = parent->parent)
-        if (parent == other) NotImplemented_nid_no_patch(__func__);
+        if (parent == other) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     Node temporary{};
     try {
         AssignNode(temporary, NodeOf(*self));
@@ -3046,67 +3372,99 @@ void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
     Destroy(temporary);
 }
 
-void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) { SetType(NodeOf(*self), type); }
-void APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) { SetType(NodeOf(*self), TypeBoolean); self->boolean = value; }
-void APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) { SetType(NodeOf(*self), TypeInteger); self->integer = value; }
-void APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetType(NodeOf(*self), TypeUInteger); self->uinteger = value; }
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { AssignReal(NodeOf(*self), value); }
+void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) {
+    RequireGuestValueReadableWritable(self, __func__);
+    SetType(NodeOf(*self), type);
+}
+void APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    SetType(NodeOf(*self), TypeBoolean);
+    self->boolean = value;
+}
+void APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    SetType(NodeOf(*self), TypeInteger);
+    self->integer = value;
+}
+void APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    SetType(NodeOf(*self), TypeUInteger);
+    self->uinteger = value;
+}
+void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) {
+    RequireGuestValueReadableWritable(self, __func__);
+    AssignReal(NodeOf(*self), value);
+}
 void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
+    RequireGuestValueReadableWritable(self, __func__);
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
     std::size_t length = 0;
     if (!GuestTextLength(text, length)) throw std::invalid_argument("sce::Json::Value::set: unreadable text");
+    if (GuestValueRangesOverlap(self, sizeof(Value), text, length + 1))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     ScopedString temporary{std::string_view{text, length}};
     if (!temporary.string.text) return;
     SetType(NodeOf(*self), TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
-    if (!text->text) return;
+    const auto loaded = LoadGuestValueString(text, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), text, sizeof(String)) ||
+        (loaded.text && GuestValueRangesOverlap(self, sizeof(Value), loaded.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!loaded.text) return;
     Value source{};
     source.type = TypeString;
     source.string = const_cast<String*>(text);
     AssignPayload(*self, source);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
-    if (!array->items) return;
+    const auto loaded = LoadGuest<Array>(array, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), array, sizeof(Array)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!loaded.items) return;
     Value source{};
     source.type = TypeArray;
     source.array = const_cast<Array*>(array);
     AssignPayload(*self, source);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* object) {
-    if (!object->items) return;
+    const auto loaded = LoadGuest<Object>(object, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), object, sizeof(Object)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!loaded.items) return;
     Value source{};
     source.type = TypeObject;
     source.object = const_cast<Object*>(object);
     AssignPayload(*self, source);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
+    RequireGuestValueReadableWritable(self, __func__);
+    static_cast<void>(LoadGuest<Value>(other, __func__));
+    if (self != other && GuestValueRangesOverlap(self, sizeof(Value), other, sizeof(Value)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     AssignNode(NodeOf(*self), NodeOf(*other));
 }
 
-ValueType APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value* self) { return NodeOf(*self).type; }
+ValueType APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value* self) { return LoadGuest<Value>(self, __func__).type; }
 const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value* self) {
     bool usedDefault = false;
     const auto& value = Typed(self, TypeBoolean, &usedDefault);
     return usedDefault ? &_ZN3sce4Json5Value10s_nullboolE : &value.boolean;
 }
 const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value* self) {
-    Node& n = const_cast<Node&>(NodeOf(*self));
-    if (n.type == TypeUInteger) {
-        n.integer = std::bit_cast<std::int64_t>(n.uinteger);
-        return &n.integer;
-    }
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    if (loaded.type == TypeUInteger) return &self->integer;
     bool usedDefault = false;
     const auto& value = Typed(self, TypeInteger, &usedDefault);
     return usedDefault ? &_ZN3sce4Json5Value13s_nullintegerE : &value.integer;
 }
 const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv(const Value* self) {
-    Node& n = const_cast<Node&>(NodeOf(*self));
-    if (n.type == TypeInteger) {
-        n.uinteger = static_cast<std::uint64_t>(n.integer);
-        return &n.uinteger;
-    }
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    if (loaded.type == TypeInteger) return &self->uinteger;
     bool usedDefault = false;
     const auto& value = Typed(self, TypeUInteger, &usedDefault);
     return usedDefault ? &_ZN3sce4Json5Value14s_nulluintegerE : &value.uinteger;
@@ -3120,63 +3478,72 @@ const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value* self) { boo
 const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value* self) { bool fallback = false; const auto& value = Typed(self, TypeArray, &fallback); return fallback ? _ZN3sce4Json5Value11s_nullarrayE : value.array; }
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value* self) { bool fallback = false; const auto& value = Typed(self, TypeObject, &fallback); return fallback ? _ZN3sce4Json5Value12s_nullobjectE : value.object; }
 std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value* self) {
-    const Node& n = NodeOf(*self);
-    if (n.type == TypeArray) return n.array->items->size();
-    if (n.type == TypeObject) return n.object->items->size();
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    if (loaded.type == TypeArray) return loaded.array && loaded.array->items ? loaded.array->items->size() : 0;
+    if (loaded.type == TypeObject) return loaded.object && loaded.object->items ? loaded.object->items->size() : 0;
     return 0;
 }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixERKNS0_6StringE(const Value* self, const String* key) { return LookupKey(self, key); }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* key) {
-    ScopedString text(key ? key : "");
+    static_cast<void>(LoadGuest<Value>(self, __func__));
+    std::size_t length = 0;
+    if (key && !GuestTextLength(key, length)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    ScopedString text(key ? std::string_view{key, length} : std::string_view{});
     return LookupKey(self, &text.string);
 }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t index) {
-    if (self->type == TypeArray && index < self->array->items->size()) {
-        auto it = self->array->items->begin();
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    if (loaded.type == TypeArray && loaded.array && loaded.array->items && index < loaded.array->items->size()) {
+        auto it = loaded.array->items->begin();
         std::advance(it, static_cast<std::ptrdiff_t>(index));
         return &*it;
     }
-    if (self->type == TypeObject && index < self->object->items->size()) {
-        auto it = self->object->items->begin();
+    if (loaded.type == TypeObject && loaded.object && loaded.object->items && index < loaded.object->items->size()) {
+        auto it = loaded.object->items->begin();
         std::advance(it, static_cast<std::ptrdiff_t>(index));
         return &it->value;
     }
-    const auto error = self->type == TypeArray || self->type == TypeObject ? 0x80848116 : 0x80848118;
+    const auto error = loaded.type == TypeArray || loaded.type == TypeObject ? 0x80848116 : 0x80848118;
     return &MissingElement(self, static_cast<int>(error), nullptr, &index);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type) {
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     SetType(*self, type);
 }
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) { return _ZNK3sce4Json5ValueixEm(self, index); }
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) { return LookupKey(self, key); }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
-    if (self->type == TypeArray && index < self->array->items->size()) {
-        auto it = self->array->items->begin();
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    if (loaded.type == TypeArray && loaded.array && loaded.array->items && index < loaded.array->items->size()) {
+        auto it = loaded.array->items->begin();
         std::advance(it, static_cast<std::ptrdiff_t>(index));
         return &*it;
     }
-    if (self->type == TypeObject && index < self->object->items->size()) {
-        auto it = self->object->items->begin();
+    if (loaded.type == TypeObject && loaded.object && loaded.object->items && index < loaded.object->items->size()) {
+        auto it = loaded.object->items->begin();
         std::advance(it, static_cast<std::ptrdiff_t>(index));
         return &it->value;
     }
     return nullptr;
 }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value* self, const String* key) {
-    Node& n = NodeOf(*self);
-    if (key == nullptr || n.type != TypeObject) return nullptr;
-    if (!n.object->items) return nullptr;
-    auto* node = n.object->items->Find(Characters(*key));
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    if (key == nullptr || loaded.type != TypeObject) return nullptr;
+    const auto loadedKey = LoadGuestValueString(key, __func__);
+    if (!loaded.object || !loaded.object->items || !loadedKey.text) return nullptr;
+    auto* node = loaded.object->items->Find(Characters(loadedKey));
     return node && !node->nil ? &node->pair.value : nullptr;
 }
 Array* APS5_VABI _ZN3sce4Json5Value10referArrayEv(Value* self) {
+    RequireGuestValueReadableWritable(self, __func__);
     Node& n = NodeOf(*self);
     if (n.type == TypeNull) SetType(n, TypeArray);
     if (n.type != TypeArray) throw std::runtime_error("sce::Json::Value::referArray: value is not an array");
     return n.array;
 }
 Object* APS5_VABI _ZN3sce4Json5Value11referObjectEv(Value* self) {
+    RequireGuestValueReadableWritable(self, __func__);
     Node& n = NodeOf(*self);
     if (n.type == TypeNull) SetType(n, TypeObject);
     if (n.type != TypeObject) throw std::runtime_error("sce::Json::Value::referObject: value is not an object");
@@ -3189,42 +3556,51 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(Value* self
     return SerializeCallbackValue(self, output, callback, context, true);
 }
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* out) {
-    {
-        auto& state = State();
-        std::lock_guard lock(state.mutex);
-        if (!state.allocation) return JsonErrorNotInitialized;
-    }
     return SerializeCallbackValue(self, out, SerializationSucceeded, nullptr, true);
 }
 void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    const auto loadedOut = ValidateGuestValueOutputString(out, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), out, sizeof(String)) ||
+        (loadedOut.text && GuestValueRangesOverlap(self, sizeof(Value), loadedOut.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     std::string text;
-    if (self->type == TypeString) AppendText(*out, Characters(*self->string));
-    else {
-        if (self->type == TypeArray) text = "array";
-        else if (self->type == TypeObject) text = "object";
-        else if (self->type == TypeReal) {
-            if (!FloatConfiguration().enabled) { AppendLegacyReal(*out, self->real); return; }
-            AppendReal(text, self->real);
+    if (loaded.type == TypeString) {
+        const auto loadedStr = LoadGuestValueString(loaded.string, __func__);
+        AppendText(*out, Characters(loadedStr));
+    } else {
+        if (loaded.type == TypeArray) text = "array";
+        else if (loaded.type == TypeObject) text = "object";
+        else if (loaded.type == TypeReal) {
+            if (!FloatConfiguration().enabled) { AppendLegacyReal(*out, loaded.real); return; }
+            AppendReal(text, loaded.real);
         }
-        else Serialize(text, *self);
+        else Serialize(text, loaded);
         AppendText(*out, text);
     }
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
+    ValidateGuestParserTarget(out, __func__);
     Parser parser(read, context);
     return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char* text, std::size_t size) {
+    ValidateGuestParserTarget(out, __func__);
     if (size == 0) return JsonErrorParse;
     if (text == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null text");
+    ValidateGuestParserBytes(text, size, __func__);
+    if (GuestParserRangesOverlap(out, sizeof(Value), text, size)) NotImplemented_nid_no_patch(__func__);
     Parser parser(text, size);
     return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* path) {
+    ValidateGuestParserTarget(out, __func__);
+    std::string guestPath;
+    CopyGuestParserPath(out, path, guestPath, __func__);
     AllocationContext allocation;
     {
         auto& state = State();
@@ -3235,7 +3611,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
     if (!allocation.fileBufferSize) return static_cast<int>(0x80848105);
     FileReader reader{allocation};
     reader.buffer = Allocate(allocation, allocation.fileBufferSize);
-    if (reader.buffer) reader.descriptor = sceKernelOpen(path, 0, 0555);
+    if (reader.buffer) reader.descriptor = sceKernelOpen(guestPath.c_str(), 0, 0555);
     Parser parser(FileReader::Read, &reader);
     return ParseValue(out, parser);
 }
@@ -3311,6 +3687,7 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void
 
 void APS5_VABI _ZN3sce4Json5Value5clearEv(Value* self) {
     if (self == nullptr) return;
+    RequireGuestValueReadableWritable(self, __func__);
     Clear(NodeOf(*self));
 }
 
@@ -3322,6 +3699,7 @@ void APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void* self, int erro
 }
 
 int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value* self, NullAccessCallback callback, void* context) {
+    RequireGuestValueReadableWritable(self, __func__);
     if (self->parent) return static_cast<int>(0x80848104);
     {
         auto& state = State();
@@ -3337,34 +3715,38 @@ int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS
 }
 
 int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value* self, ElementAccessFailureHandler handler, void* context) {
+    RequireGuestValueReadableWritable(self, __func__);
     return SetHandler(*self, &Auxiliary::elementAccessFailure, handler, context);
 }
 
 int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value* self, SpecialFloatHandler handler, void* context) {
+    RequireGuestValueReadableWritable(self, __func__);
     return SetHandler(*self, &Auxiliary::specialFloat, handler, context, true);
 }
 
 int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value* self, TypeMismatchHandler handler, void* context) {
+    RequireGuestValueReadableWritable(self, __func__);
     return SetHandler(*self, &Auxiliary::typeMismatch, handler, context);
 }
 
 bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
     const Node& n = NodeOf(*self);
-    if (n.type != TypeBoolean) {
+    if (loaded.type != TypeBoolean) {
         CallbackScope scope;
         const auto handlers = HandlersOf(n);
         if (scope.entered && handlers.typeMismatch) {
-            const Value& replacement = handlers.typeMismatch(TypeBoolean, self, self->parent, handlers.typeMismatchContext);
+            const Value& replacement = handlers.typeMismatch(TypeBoolean, self, loaded.parent, handlers.typeMismatchContext);
             return Typed(&replacement, TypeBoolean).boolean;
         }
     }
-    switch (n.type) {
+    switch (loaded.type) {
         case TypeNull: return false;
-        case TypeBoolean: return n.boolean;
-        case TypeInteger: return n.integer != 0;
-        case TypeUInteger: return n.uinteger != 0;
-        case TypeReal: return n.real != 0.0;
-        case TypeString: return !View(*n.string).empty();
+        case TypeBoolean: return loaded.boolean;
+        case TypeInteger: return loaded.integer != 0;
+        case TypeUInteger: return loaded.uinteger != 0;
+        case TypeReal: return loaded.real != 0.0;
+        case TypeString: return !View(*loaded.string).empty();
         case TypeArray:
         case TypeObject: return true;
         default: throw std::runtime_error("sce::Json::Value: invalid value type");
@@ -3372,52 +3754,85 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) {
-    Construct(self->key, *key);
-    CopyInto(self->value, *value);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    const auto loadedValue = LoadGuest<Value>(value, __func__);
+    if (GuestObjectRangesOverlap(self, sizeof(Pair), key, sizeof(String)) ||
+        GuestObjectRangesOverlap(self, sizeof(Pair), value, sizeof(Value)) ||
+        (loadedKey.text && GuestObjectRangesOverlap(self, sizeof(Pair), loadedKey.text, sizeof(Text))) ||
+        (loadedValue.type >= TypeString && loadedValue.type <= TypeObject && loadedValue.payload != 0 &&
+            GuestObjectRangesOverlap(self, sizeof(Pair), reinterpret_cast<const void*>(loadedValue.payload), sizeof(void*))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<Pair>(self, __func__);
+    String builtKey{};
+    Construct(builtKey, loadedKey);
+    try { StoreGuest(&self->key, builtKey, __func__); }
+    catch (...) { Destroy(builtKey); throw; }
+    try { CopyInto(self->value, loadedValue); }
+    catch (...) { Destroy(self->key); throw; }
+    if (!ModernValues()) CopyLegacyHandler(self->value, *value);
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
+    static_cast<void>(LoadGuest<Pair>(self, __func__));
+    RequireGuestObjectWritable<Pair>(self, __func__);
     Destroy(self->value);
     Destroy(self->key);
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator* result, Object* self, const Pair* pair) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = nullptr;
-    if (!self->items) return result;
+    auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedPair = LoadGuest<Pair>(pair, __func__);
+    ValidateGuestKeyText(loadedPair.key.text, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object)) ||
+        GuestObjectRangesOverlap(result, sizeof(ObjectIterator), pair, sizeof(Pair)) ||
+        (loadedPair.key.text && GuestObjectRangesOverlap(result, sizeof(ObjectIterator), loadedPair.key.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = nullptr;
+    if (!object.items) {
+        StoreGuest(result, ObjectIterator{state.state}, __func__);
+        state.ReleaseOwnership();
+        return result;
+    }
     if (!ModernValues()) {
         ObjectLink* node;
+        bool inserted = false;
         {
-            InlineText key; key.Assign(Characters(pair->key));
-            TemporaryTreeEntry entry(key.text, *pair);
-            bool inserted;
-            node = self->items->Insert(entry.key.text, entry.pair, inserted);
+            InlineText key; key.Assign(Characters(loadedPair.key));
+            TemporaryTreeEntry entry(key.text, loadedPair);
+            CopyLegacyHandler(entry.pair.value, pair->value);
+            node = object.items->Insert(entry.key.text, entry.pair, inserted);
         }
-        if (!node) { Release(result->state); result->state = nullptr; }
-        else if (result->state) result->state->position = node;
+        if (!node) state.Reset();
+        else if (state.state) state.state->position = node;
+        StoreGuest(result, ObjectIterator{state.state}, __func__);
+        state.ReleaseOwnership();
         return result;
     }
     ScopedValue value;
-    value.value.parent = self->items->Owner();
-    AssignNode(value.value, pair->value);
+    value.value.parent = object.items->Owner();
+    AssignNode(value.value, loadedPair.value);
     AllocationOperation operation;
     ObjectLink* node;
     bool inserted;
     {
-        InlineText key; key.Assign(Characters(pair->key));
-        ScopedString copiedKey(pair->key);
+        InlineText key; key.Assign(Characters(loadedPair.key));
+        ScopedString copiedKey(loadedPair.key);
         Pair source{}; source.key = copiedKey.string;
         TemporaryTreeEntry entry(key.text, source);
-        node = self->items->Insert(entry.key.text, entry.pair, inserted);
+        node = object.items->Insert(entry.key.text, entry.pair, inserted);
     }
     const bool failed = operation.Finish();
     if (inserted && !failed) {
         TransferPayload(node->pair.value, value.value);
-        node->pair.value.parent = self->items->Owner();
+        node->pair.value.parent = object.items->Owner();
         BindChildren(node->pair.value);
     }
-    if (!node) { Release(result->state); result->state = nullptr; }
-    else if (result->state) result->state->position = node;
+    if (!node) state.Reset();
+    else if (state.state) state.state->position = node;
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
 
@@ -3443,26 +3858,42 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* self,
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    if (self->state) {
-        if (other->state && other->state->position) *self->state = *other->state;
-        else { Release(self->state); self->state = nullptr; }
+    const auto destination = LoadGuest<ObjectIterator>(self, __func__);
+    const auto source = LoadGuest<ObjectIterator>(other, __func__);
+    ObjectIteratorState sourceState{};
+    if (source.state) sourceState = LoadGuest<ObjectIteratorState>(source.state, __func__);
+    if ((self != other && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), other, sizeof(ObjectIterator))) ||
+        (source.state && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), source.state, sizeof(ObjectIteratorState))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (destination.state) {
+        if (source.state && sourceState.position) {
+            RequireGuestObjectWritable<ObjectIteratorState>(destination.state, __func__);
+            StoreGuest(destination.state, sourceState, __func__);
+        } else {
+            RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+            Release(destination.state);
+            StoreGuest(self, ObjectIterator{}, __func__);
+        }
     }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(ObjectIterator* self) {
-    self->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (self->state) self->state->position = nullptr;
+    RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = nullptr;
+    StoreGuest(self, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {
-    Construct(self->key, std::string_view{});
-    try {
-        Construct(self->value);
-    } catch (...) {
-        Destroy(self->key);
-        throw;
-    }
+    RequireGuestObjectWritable<Pair>(self, __func__);
+    String builtKey{};
+    Construct(builtKey, std::string_view{});
+    try { StoreGuest(&self->key, builtKey, __func__); }
+    catch (...) { Destroy(builtKey); throw; }
+    try { Construct(self->value); }
+    catch (...) { Destroy(self->key); throw; }
 }
 
 void APS5_VABI _ZN3sce4Json11InitializerC2Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }
@@ -3500,11 +3931,26 @@ void APS5_VABI _ZN3sce4Json6StringC2ERKS1_(String* self, const String* other) { 
 void APS5_VABI _ZN3sce4Json6StringC2Ev(String* self) { _ZN3sce4Json6StringC1Ev(self); }
 void APS5_VABI _ZN3sce4Json6StringD2Ev(String* self) { _ZN3sce4Json6StringD1Ev(self); }
 
-String* APS5_VABI _ZN3sce4Json5Value11referStringEv(Value* self) { return self->type == TypeString ? self->string : nullptr; }
-bool* APS5_VABI _ZN3sce4Json5Value12referBooleanEv(Value* self) { return self->type == TypeBoolean ? &self->boolean : nullptr; }
-std::int64_t* APS5_VABI _ZN3sce4Json5Value12referIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->integer : nullptr; }
-std::uint64_t* APS5_VABI _ZN3sce4Json5Value13referUIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->uinteger : nullptr; }
-double* APS5_VABI _ZN3sce4Json5Value9referRealEv(Value* self) { return self->type == TypeReal ? &self->real : nullptr; }
+String* APS5_VABI _ZN3sce4Json5Value11referStringEv(Value* self) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    return loaded.type == TypeString ? loaded.string : nullptr;
+}
+bool* APS5_VABI _ZN3sce4Json5Value12referBooleanEv(Value* self) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    return loaded.type == TypeBoolean ? &self->boolean : nullptr;
+}
+std::int64_t* APS5_VABI _ZN3sce4Json5Value12referIntegerEv(Value* self) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    return loaded.type == TypeInteger || loaded.type == TypeUInteger ? &self->integer : nullptr;
+}
+std::uint64_t* APS5_VABI _ZN3sce4Json5Value13referUIntegerEv(Value* self) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    return loaded.type == TypeInteger || loaded.type == TypeUInteger ? &self->uinteger : nullptr;
+}
+double* APS5_VABI _ZN3sce4Json5Value9referRealEv(Value* self) {
+    const auto loaded = LoadGuest<Value>(self, __func__);
+    return loaded.type == TypeReal ? &self->real : nullptr;
+}
 void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).userData; }
 void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).allocator; }
 std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).fileBufferSize; }

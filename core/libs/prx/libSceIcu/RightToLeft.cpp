@@ -21,6 +21,23 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 17> Directio
     {"ita", "it"}, {"jpn", "ja"}, {"kor", "ko"}, {"nld", "nl"}, {"pol", "pl"}, {"por", "pt"},
     {"rus", "ru"}, {"spa", "es"}, {"tha", "th"}, {"tur", "tr"}, {"zho", "zh"}
 }};
+constexpr std::array<std::string_view, 28> RtlLanguages{{
+    "ar", "ara",
+    "fa", "fas", "per",
+    "he", "iw", "heb",
+    "ur", "urd",
+    "ps", "pus",
+    "sd", "snd",
+    "ug", "uig",
+    "ckb",
+    "ks", "kas",
+    "yi", "ji", "yid",
+    "dv", "div",
+    "syr",
+    "nqo",
+    "lrc",
+    "mzn"
+}};
 constexpr std::size_t LanguageLimit = 11;
 constexpr std::size_t ScriptLength = 4;
 
@@ -53,6 +70,13 @@ std::string Lowered(std::string_view value) {
 
 bool SameIgnoringCase(std::string_view left, std::string_view right) {
     return left.size() == right.size() && Lowered(left) == Lowered(right);
+}
+
+bool IsRightToLeftLanguage(std::string_view language) {
+    for (const auto& rtl : RtlLanguages) {
+        if (language == rtl) return true;
+    }
+    return false;
 }
 
 struct Subtags {
@@ -95,6 +119,8 @@ Subtags LanguageAndScript(std::string_view locale) {
 
 }
 
+#undef uloc_getCharacterOrientation
+
 extern "C" {
 
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
@@ -115,6 +141,22 @@ std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
     }
     const auto script = static_cast<UScriptCode>(u_getPropertyValueEnum(UCHAR_SCRIPT, subtags.script.c_str()));
     return uscript_isRightToLeft(script) ? 1 : 0;
+}
+
+std::int32_t APS5_VABI uloc_getCharacterOrientation(const char* localeId, std::int32_t* status) {
+    if (!status || *status > 0) return ULOC_LAYOUT_UNKNOWN;
+    if (!localeId) localeId = Icu::DefaultLocaleName();
+    const Subtags subtags = LanguageAndScript(localeId);
+    if (subtags.failed) return ULOC_LAYOUT_UNKNOWN;
+    if (!subtags.script.empty()) {
+        const auto script = static_cast<UScriptCode>(u_getPropertyValueEnum(UCHAR_SCRIPT, subtags.script.c_str()));
+        return uscript_isRightToLeft(script) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
+    }
+    UErrorCode likelyStatus = U_ZERO_ERROR;
+    if (icu::LikelySubtags::getSingleton(likelyStatus)) {
+        return uloc_isRightToLeft(localeId) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
+    }
+    return IsRightToLeftLanguage(subtags.language) ? ULOC_LAYOUT_RTL : ULOC_LAYOUT_LTR;
 }
 
 }

@@ -6,20 +6,25 @@ import re
 import sys
 from pathlib import Path
 
-DESCRIPTION = """Per-phase means of an in-run A/B (APS5_AB) log. The driver prints "[ab] phase A|B <k> begins at present
-<n> (t <s> s)" when a phase starts and "[ab] phase A|B <k> settled at present <n> (t <s> s)" APS5_AB_SETTLE seconds
-later. Each periodic report covers the time since the previous report of its kind, so a report counts for phase k
+DESCRIPTION = """Per-phase means of an in-run A/B (APS5_AB) log. The driver prints "[ab] phase <arm> <k> begins at present
+<n> (t <s> s)" when a phase starts and "[ab] phase <arm> <k> settled at present <n> (t <s> s)" APS5_AB_SETTLE seconds
+later; <arm> is A or B in the two-arm form and the arm's name in the multi-arm form. Each periodic report covers the time since the previous report of its kind, so a report counts for phase k
 only when the previous report of its kind came after phase k's settled line and the report came before phase k+1
 began. Presents per 10 s and frame time come from the [ab] lines (settled line to the next phase's begin), GPU busy
 and idle gaps per frame from [present], GPU time per present from [gputime] (APS5_PROFILE_GPU), the committer and
 drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_DRAW). The noise column compares
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
-error, standard deviation and count. A counted GPU timing report that dropped ranges refuses the comparison.
+error, standard deviation and count. With more than two arms, or with APS5_AB_ROTATE, it compares each phase of an
+arm with the mean of the A phases of its own cycle (the phases of one pass of the plan, as many as the [ab] header
+lists arms): rotated orders put an arm before A in one cycle and after it in the next, so a linear drift cancels in
+the mean of the differences. Every arm other than A gets its own row of each metric, named "<metric> [<arm>]". A counted GPU timing report that dropped ranges refuses the comparison.
 A requested program's phase metric is omitted if a report lists 12 programs
 without it: the list may be truncated, so the program's time is unknown.
 A counted present report with missing batch completion records also refuses the comparison."""
 
-PHASE = re.compile(r"\[ab\] phase ([AB]) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
+PHASE = re.compile(r"\[ab\] phase ([A-Za-z0-9_+]+) ([0-9]+) (begins|settled) at present ([0-9]+) \(t ([0-9]+(?:\.[0-9]+)?) s\)(:.*)?")
+ROTATION = re.compile(r", the arm order rotates by one at every cycle of (\d+) phases")
+ARM_ENTRY = re.compile(r"; ([A-Za-z0-9_+]+): ")
 KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
          ("draw", re.compile(r"\[draw\] pipelined \(")), ("syncwait", re.compile(r"\[syncwait\] unlocked hook waits")))
 
@@ -178,14 +183,28 @@ def metrics(phase, programs, classes):
     return {name: value for name, value in out.items() if value is not None}
 
 
-def noise(values, phases):
+def cycle_length(config):
+    if not config:
+        return None
+    rotation = ROTATION.search(config)
+    if rotation:
+        return int(rotation.group(1))
+    entries = len(ARM_ENTRY.findall(config))
+    return entries if entries > 2 else None
+
+
+def noise(values, phases, arm="B", cycle=None):
     differences = []
     for index, phase in enumerate(phases):
-        if phase["kind"] != "B" or values[index] is None:
+        if phase["kind"] != arm or values[index] is None:
             continue
-        neighbours = [values[other] for other in (index - 1, index + 1)
-                      if 0 <= other < len(phases) and phases[other]["kind"] == "A"
-                      and abs(phases[other]["index"] - phase["index"]) == 1 and values[other] is not None]
+        if cycle:
+            neighbours = [values[other] for other, partner in enumerate(phases)
+                          if partner["kind"] == "A" and partner["index"] // cycle == phase["index"] // cycle and values[other] is not None]
+        else:
+            neighbours = [values[other] for other in (index - 1, index + 1)
+                          if 0 <= other < len(phases) and phases[other]["kind"] == "A"
+                          and abs(phases[other]["index"] - phase["index"]) == 1 and values[other] is not None]
         if neighbours:
             differences.append(values[index] - finite_sum(neighbours) / len(neighbours))
     if not differences:
@@ -208,15 +227,21 @@ def split_report(lines, programs, classes):
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")
     table = [metrics(phase, programs, classes) for phase in phases]
     names = list(dict.fromkeys(name for row in table for name in row))
+    arms = list(dict.fromkeys(phase["kind"] for phase in phases if phase["kind"] != "A"))
+    cycle = cycle_length(config)
     rows = []
-    for name in names:
-        values = [row.get(name) for row in table]
-        a = [value for phase, value in zip(phases, values) if phase["kind"] == "A" and value is not None]
-        b = [value for phase, value in zip(phases, values) if phase["kind"] == "B" and value is not None]
-        if a and b:
-            mean_a, mean_b = finite_sum(a) / len(a), finite_sum(b) / len(b)
-            rows.append({"metric": name, "a": mean_a, "b": mean_b, "change": mean_b - mean_a,
-                         "change_pct": (mean_b / mean_a - 1) * 100 if mean_a else None, "noise": noise(values, phases)})
+    for arm in arms:
+        for name in names:
+            values = [row.get(name) for row in table]
+            a = [value for phase, value in zip(phases, values) if phase["kind"] == "A" and value is not None]
+            b = [value for phase, value in zip(phases, values) if phase["kind"] == arm and value is not None]
+            if a and b:
+                mean_a, mean_b = finite_sum(a) / len(a), finite_sum(b) / len(b)
+                row = {"metric": name, "a": mean_a, "b": mean_b, "change": mean_b - mean_a,
+                       "change_pct": (mean_b / mean_a - 1) * 100 if mean_a else None, "noise": noise(values, phases, arm, cycle)}
+                if len(arms) > 1:
+                    row["metric"], row["arm"] = f"{name} [{arm}]", arm
+                rows.append(row)
     return {"config": config,
             "phases": [{"kind": phase["kind"], "index": phase["index"], "begin_present": phase["begin"][0],
                         "settled_present": phase["settled"][0] if phase["settled"] else None,
@@ -234,6 +259,7 @@ def split(lines, programs=(), classes=()):
 
 
 def text_report(result):
+    cycled = cycle_length(result["config"]) is not None
     lines = [result["config"] or "[ab] configuration line missing", "",
              "phase  begin / settled / end   clean reports (present/gputime/draw/syncwait)  presents/10s"]
     for phase in result["phases"]:
@@ -243,7 +269,7 @@ def text_report(result):
         rate = phase["metrics"].get("presents/10s")
         lines.append(f"{phase['kind']} {phase['index']:<3} {phase['begin_present']:>7} / {settled:>7} / {end:>7}   {reports:<45}  "
                      + ("unfinished" if rate is None else f"{rate:.2f}"))
-    lines.extend(["", f"{'metric':<30} {'A':>10} {'B':>10} {'B-A':>10} {'B/A-1':>8}   B vs neighbouring A: mean +- SE (SD, n)"])
+    lines.extend(["", f"{'metric':<30} {'A':>10} {'B':>10} {'B-A':>10} {'B/A-1':>8}   " + ("arm vs A of its cycle" if cycled else "B vs neighbouring A") + ": mean +- SE (SD, n)"])
     for row in result["metrics"]:
         spread = row["noise"]
         if spread is None:
@@ -258,7 +284,7 @@ def text_report(result):
 
 
 def program_key(value):
-    if not re.fullmatch(r"0x[0-9a-fA-F]+", value):
+    if not re.fullmatch(r"0[xX][0-9a-fA-F]+", value):
         raise argparse.ArgumentTypeError("must be a hexadecimal program key such as 0x1000")
     return "0x" + value[2:].lower().lstrip("0").rjust(1, "0")
 

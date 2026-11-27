@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <span>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -410,30 +411,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE() {
- return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody18setStartSerialRankERKi() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setGroupERKNS3_5GroupE() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setLimitERKi() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setUsersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_4UserEEEEE() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody9setOffsetERKi() {
- return 0;
-}
-
 void* APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122GetRankingResponseBody10getEntriesEv(void* out, void* self) {
     return CopyMemberIntrusivePtr(out, self, 0x30, VectorReferenceCountOffset);
 }
@@ -458,37 +435,12 @@ int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody7setP
  return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V128GetRankingRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_21GetRankingRequestBodyEEE() {
- return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
-}
-
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V129RecordScoreRequestBodyFactory6createEPNS1_6Common10LibContextElPNS5_12IntrusivePtrINS3_22RecordScoreRequestBodyEEE() {
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V14User12setAccountIdERKm() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V14User7setPcIdERKi() {
- return 0;
-}
-
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi10getRankingEiRKNS4_21ParameterToGetRankingERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_22GetRankingResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE() {
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(void* self, const std::uint64_t* context, int boardId) {
-    (void)boardId;
-    return InitializeParameter(self, context, true);
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(void* self) {
-    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev(void* self) {
@@ -1083,13 +1035,96 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter14accountIdIsSetEv(
     return value;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
-    (void)value;
-    return InitializeParameter(self, context, text != nullptr);
+struct CloudParameterLayout {
+    std::size_t size;
+    std::span<const std::size_t> strings;
+};
+
+static constexpr std::size_t DownloadStrings[] = {0x00, 0x30, 0x58, 0x80};
+static constexpr std::size_t MultiSlotStrings[] = {0x00, 0x20, 0x40};
+static constexpr CloudParameterLayout DownloadLayout{0xb0, DownloadStrings};
+static constexpr CloudParameterLayout SlotStatusLayout{0x98, MultiSlotStrings};
+static constexpr CloudParameterLayout SlotDeleteLayout{0x88, MultiSlotStrings};
+
+static void DestroyCloudParameterData(void* data, const CloudParameterLayout& layout) {
+    for (auto offset : layout.strings) DestroyCommonString(CommonStringAt(data, offset));
+    std::free(data);
+}
+
+static int InitializeCloudParameter(void* self, const std::uint64_t* context, const CloudParameterLayout& layout,
+                                   std::span<const char* const> arguments) {
+    if (!context) return ParameterInvalidArgument;
+    if (!*context) return ParameterNotInitialized;
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (parameter->implementation) return ParameterAlreadyInitialized;
+    void* data = AllocateParameterImplementation(layout.size);
+    if (!data) return ParameterOutOfMemory;
+    auto* libContext = const_cast<std::uint64_t*>(context);
+    for (auto offset : layout.strings) ConstructCommonString(CommonStringAt(data, offset), libContext);
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+        const int status = AssignCommonString(CommonStringAt(data, layout.strings[i]), arguments[i]);
+        if (status != 0) {
+            DestroyCloudParameterData(data, layout);
+            return status;
+        }
+    }
+    std::memcpy(static_cast<std::uint8_t*>(data) + layout.size - sizeof(libContext), &libContext, sizeof(libContext));
+    parameter->implementation = data;
+    return 0;
+}
+
+static int TerminateCloudParameter(void* self, const CloudParameterLayout& layout) {
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (!parameter->implementation) return ParameterTerminatedUninitialized;
+    DestroyCloudParameterData(const_cast<void*>(parameter->implementation), layout);
+    parameter->implementation = nullptr;
+    return 0;
+}
+
+static std::uint8_t* CloudParameterData(void* self) {
+    return static_cast<std::uint8_t*>(const_cast<void*>(static_cast<ParameterObject*>(self)->implementation));
+}
+
+static int SetCloudString(void* self, const char* text, std::size_t offset, std::size_t flag = 0) {
+    auto* data = CloudParameterData(self);
+    if (!data) return ParameterNotInitialized;
+    const int status = AssignCommonString(CommonStringAt(data, offset), text);
+    if (status == 0 && flag) data[flag] = 1;
+    return status;
+}
+
+static void SetCloudInteger(void* self, std::uint32_t value, std::size_t offset, std::size_t flag = 0) {
+    auto* data = CloudParameterData(self);
+    if (!data) return;
+    std::memcpy(data + offset, &value, sizeof(value));
+    if (flag) data[flag] = 1;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10setifMatchEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x80, 0xa0);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData8setrangeEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x58, 0x78);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9setslotIdEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x20);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* accountId, int slotId) {
+    const char* arguments[] = {accountId};
+    const int result = InitializeCloudParameter(self, context, DownloadLayout, arguments);
+    if (result == 0) SetCloudInteger(self, slotId, 0x20);
+    return result;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, DownloadLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadDataC1Ev(void* self) {
@@ -1189,22 +1224,29 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSet
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x24, 0x28);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
-    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10setslotIdsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x20);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* slotIds, const char* accountId) {
+    const char* arguments[] = {slotIds, accountId};
+    return InitializeCloudParameter(self, context, SlotDeleteLayout, arguments);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x74, 0x78);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, SlotDeleteLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserC1Ev(void* self) {
@@ -1217,9 +1259,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDel
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x84, 0x88);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
@@ -1587,20 +1628,6 @@ static_assert(sizeof(CommonString) == 0x20 && offsetof(CommonString, buffer) == 
 static_assert(offsetof(CommonString, bufferSize) == 0x10 && offsetof(CommonString, libContext) == 0x18);
 
 
-
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEE8pushBackERKS8_() {
- return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEEC1EPNS2_10LibContextE(void* self) {
-    (void)self;
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEED1Ev(void* self) {
-    (void)self;
-    return 0;
-}
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE3endEv(void* out, void* self) {
     return HostVectorEnd(out, self, 1, sizeof(IntrusivePtr), __func__);
@@ -3226,8 +3253,8 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V57Product9skusIsSetEv(const
     return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x1f8) != 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData11setobjectIdEPKc(void* self, const char* objectId) {
-    return SetParameterText(self, objectId);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData11setobjectIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x30, 0x50);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserC1Ev(void* self) {
@@ -3235,16 +3262,41 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGet
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
-    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10setslotIdsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x20);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setfieldsEPKc(void* self, const char* fields) {
-    return SetParameterText(self, fields);
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser11setsortModeENS5_8SortModeE(void* self, int value) {
+    SetCloudInteger(self, value, 0x7c, 0x80);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser7setsortENS5_4SortE(void* self, int value) {
+    SetCloudInteger(self, value, 0x74, 0x78);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser8setlimitEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x64, 0x68);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setoffsetEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x6c, 0x70);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* accountId, const char* slotIds) {
+    const char* arguments[] = {accountId, slotIds};
+    return InitializeCloudParameter(self, context, SlotStatusLayout, arguments);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setfieldsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x40, 0x60);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, SlotStatusLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserD1Ev(void* self) {
@@ -7469,6 +7521,192 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V124Upda
 }
 
 
+struct RankingUserVector {
+    IntrusivePtr inlineElement;
+    IntrusivePtr* begin;
+    IntrusivePtr* capacityEnd;
+    IntrusivePtr* end;
+    std::int32_t references;
+    const void* context;
+};
+
+struct RankingParameterState {
+    int boardId;
+    IntrusivePtr body;
+    std::uint8_t hasBody;
+    const void* context;
+};
+
+static_assert(sizeof(RankingUserVector) == 0x40 && offsetof(RankingUserVector, references) == 0x30);
+static_assert(sizeof(RankingParameterState) == 0x30 && offsetof(RankingParameterState, hasBody) == 0x20);
+
+static int CreateRankingModel(const std::uint64_t* context, IntrusivePtr* out, std::size_t size,
+                              void (APS5_VABI* destroy)(void*)) {
+    if (!context || !out) return ParameterInvalidArgument;
+    if (!*context) return ParameterOutOfMemory;
+    return MatchesFactoryCreate(context, out, size, destroy);
+}
+
+static void ConstructRankingVector(RankingUserVector* vector, const void* context) {
+    *vector = {};
+    vector->begin = vector->capacityEnd = vector->end = &vector->inlineElement;
+    vector->context = context;
+}
+
+static void DestroyRankingVector(RankingUserVector* vector) {
+    for (auto* element = vector->begin; element != vector->end; ++element)
+        ReleaseIntrusivePtr(element, ReferenceCountOffset, __func__);
+    if (vector->begin != &vector->inlineElement) std::free(vector->begin);
+}
+
+static bool ReserveRankingUsers(RankingUserVector* vector, std::size_t capacity) {
+    if (capacity > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(IntrusivePtr)) return false;
+    const auto size = vector->end - vector->begin;
+    void* heap = vector->begin == &vector->inlineElement ? nullptr : vector->begin;
+    auto* data = static_cast<IntrusivePtr*>(std::realloc(heap, capacity * sizeof(IntrusivePtr)));
+    if (!data) return false;
+    vector->begin = data;
+    vector->end = data + size;
+    vector->capacityEnd = data + capacity;
+    return true;
+}
+
+static void ReleaseRankingUsers(IntrusivePtr* member) {
+    auto* vector = static_cast<RankingUserVector*>(member->object);
+    if (!vector || std::atomic_ref(vector->references).fetch_sub(1) != 1) return;
+    if (member->deleter) {
+        member->deleter(vector);
+    } else {
+        DestroyRankingVector(vector);
+        std::free(vector);
+    }
+}
+
+static void APS5_VABI DestroyRankingRequest(void* object) {
+    auto* data = static_cast<std::uint8_t*>(object);
+    ReleaseRankingUsers(reinterpret_cast<IntrusivePtr*>(data + 0x60));
+    ReleaseIntrusivePtr(reinterpret_cast<IntrusivePtr*>(data + 0x40), VectorReferenceCountOffset, __func__);
+    std::free(object);
+}
+
+static int SetRankingInteger(void* self, std::size_t offset, const int* input) {
+    int value;
+    std::memcpy(&value, input, sizeof(value));
+    auto* data = static_cast<std::uint8_t*>(self);
+    std::memcpy(data + offset, &value, sizeof(value));
+    data[offset + sizeof(value)] = 1;
+    return value;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE(const std::uint64_t* context, IntrusivePtr* out) {
+    return CreateRankingModel(context, out, 0x28, &DestroyMatchesModel);
+}
+
+std::uint64_t APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V14User12setAccountIdERKm(void* self, const std::uint64_t* input) {
+    std::uint64_t value;
+    std::memcpy(&value, input, sizeof(value));
+    auto* data = static_cast<std::uint8_t*>(self);
+    std::memcpy(data + 0x10, &value, sizeof(value));
+    data[0x18] = 1;
+    return value;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V14User7setPcIdERKi(void* self, const int* value) {
+    return SetRankingInteger(self, 0x1c, value);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V128GetRankingRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_21GetRankingRequestBodyEEE(const std::uint64_t* context, IntrusivePtr* out) {
+    return CreateRankingModel(context, out, 0x80, &DestroyRankingRequest);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setGroupERKNS3_5GroupE(void* self, const int* value) {
+    return SetRankingInteger(self, 0x18, value);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setLimitERKi(void* self, const int* value) {
+    return SetRankingInteger(self, 0x20, value);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody9setOffsetERKi(void* self, const int* value) {
+    return SetRankingInteger(self, 0x30, value);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody18setStartSerialRankERKi(void* self, const int* value) {
+    return SetRankingInteger(self, 0x38, value);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEEC1EPNS2_10LibContextE(void* self, const void* context) {
+    ConstructRankingVector(static_cast<RankingUserVector*>(self), context);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEE8pushBackERKS8_(void* self, const IntrusivePtr* input) {
+    auto* vector = static_cast<RankingUserVector*>(self);
+    const IntrusivePtr value = *input;
+    if (vector->end == vector->capacityEnd) {
+        const auto size = static_cast<std::size_t>(vector->end - vector->begin);
+        if (!ReserveRankingUsers(vector, size ? 2 * size : 8)) return ParameterOutOfMemory;
+    }
+    CopyIntrusivePtr(vector->end++, &value, ReferenceCountOffset);
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEED1Ev(void* self) {
+    DestroyRankingVector(static_cast<RankingUserVector*>(self));
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setUsersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_4UserEEEEE(void* self, const void* users) {
+    auto* data = static_cast<std::uint8_t*>(self);
+    void* context = *reinterpret_cast<void**>(data + 8);
+    const auto* source = static_cast<const RankingUserVector*>(users);
+    auto* copy = static_cast<RankingUserVector*>(std::malloc(sizeof(RankingUserVector)));
+    if (!copy) return ParameterOutOfMemory;
+    ConstructRankingVector(copy, context);
+    const auto count = static_cast<std::size_t>(source->end - source->begin);
+    if (!ReserveRankingUsers(copy, count < 4 ? 8 : 2 * count)) {
+        std::free(copy);
+        return ParameterOutOfMemory;
+    }
+    for (auto* item = source->begin; item != source->end; ++item)
+        CopyIntrusivePtr(copy->end++, item, ReferenceCountOffset);
+    copy->references = 1;
+    auto* member = reinterpret_cast<IntrusivePtr*>(data + 0x60);
+    IntrusivePtr previous = *member;
+    *member = {copy, nullptr, context};
+    data[0x78] = 1;
+    ReleaseRankingUsers(&previous);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(void* self, const std::uint64_t* context, int boardId) {
+    if (!context) return ParameterInvalidArgument;
+    if (!*context) return ParameterNotInitialized;
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (parameter->implementation) return ParameterAlreadyInitialized;
+    auto* state = static_cast<RankingParameterState*>(AllocateParameterImplementation(sizeof(RankingParameterState)));
+    if (!state) return ParameterOutOfMemory;
+    state->boardId = boardId;
+    state->context = context;
+    parameter->implementation = state;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(void* self, const IntrusivePtr* body) {
+    auto* state = static_cast<RankingParameterState*>(const_cast<void*>(static_cast<ParameterObject*>(self)->implementation));
+    if (!state) return;
+    AssignIntrusivePtr(&state->body, body, ReferenceCountOffset, __func__);
+    state->hasBody = 1;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(void* self) {
+    auto* parameter = static_cast<ParameterObject*>(self);
+    auto* state = static_cast<RankingParameterState*>(const_cast<void*>(parameter->implementation));
+    if (!state) return ParameterTerminatedUninitialized;
+    ReleaseIntrusivePtr(&state->body, ReferenceCountOffset, __func__);
+    std::free(state);
+    parameter->implementation = nullptr;
+    return 0;
+}
+
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEEptEv(const IntrusivePtr* self) {
     return self->object;
 }
@@ -9499,4 +9737,48 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Us
     return HostIteratorNotEqual(self, other);
 }
 
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V15EntryEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
+    CopyIntrusivePtr(self, source, ReferenceCountOffset);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V15EntryEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
+    return TransactionNotStarted;
+}
+
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEixEm(void* self, std::uint64_t index) {
+    return HostVectorElement(self, index, __func__);
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE11hasResponseEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
+    return 0;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEE3getEv(const IntrusivePtr* self) {
+    return self->object;
 }

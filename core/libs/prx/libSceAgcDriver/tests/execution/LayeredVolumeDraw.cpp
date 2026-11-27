@@ -27,6 +27,14 @@
 #include <string>
 #include <vector>
 
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
+
 namespace {
 
 using AgcDriver::Graphics::ColorTileMode;
@@ -164,7 +172,7 @@ bool DeclaresLayer(std::span<const std::uint32_t> words) {
     return false;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField, std::span<const Vertex> vertices = Vertices, bool executeMesh = true) {
+void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField, std::span<const Vertex> vertices = Vertices, bool executeMesh = true, std::uint32_t windowLimit = 0u) {
     const auto target = device.Target();
     const auto vertexBuffer = BufferDescriptor(vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(vertices.size()));
     const AgcDriver::Pm4::DrawParameters draw{0, 6u * color.layers, 0, 1, 0, false};
@@ -253,7 +261,13 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
         device.Draw(state, empty, shaders);
         geometryResult.layerReplaySafe = replaySafe;
     }
-    device.Draw(state, draw, shaders);
+    if (windowLimit != 0u) {
+        auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+        context.meshLimits.maxMeshOutputLayers = std::min(windowLimit, context.meshLimits.maxMeshOutputLayers);
+        AgcDriver::Graphics::Draw(context, state, draw, shaders);
+    } else {
+        device.Draw(state, draw, shaders);
+    }
     device.WaitIdle();
     AgcDriver::Graphics::StorageTexture::FlushAllPending("layered volume draw test");
     device.WaitIdle();
@@ -472,6 +486,10 @@ int main(int argc, char** argv) {
             const auto meshFieldColor = VolumeTarget(meshFieldVolume.Data());
             Run(*device, meshFieldColor, true, LayerFieldPixelCode, true);
             Check(meshFieldVolume.Data(), meshFieldColor, "mesh fragment layer input", LayerFieldBands);
+            const GuestVolume windowVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
+            const auto windowColor = VolumeTarget(windowVolume.Data());
+            Run(*device, windowColor, true, LayerFieldPixelCode, true, Vertices, true, 8u);
+            Check(windowVolume.Data(), windowColor, "mesh fragment layer input in eight-layer windows", LayerFieldBands);
         }
         else if (target.meshAsCompute) {
             const GuestVolume meshVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
