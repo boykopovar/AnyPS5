@@ -826,6 +826,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 
 void Ngs2Voice::ApplyPendingControls() {
     bool restart = false, stop = false, kill = false;
+    std::uint32_t stopEvent = 0;
     std::uint32_t pause = 0;
     const auto reduceEvent = [&](std::uint32_t event) {
         if (event == SCE_NGS2_VOICE_EVENT_PLAY) {
@@ -836,8 +837,10 @@ void Ngs2Voice::ApplyPendingControls() {
             restart = stop = false;
             kill = true;
             pause = 0;
-        } else if (event == SCE_NGS2_VOICE_EVENT_STOP || event == SCE_NGS2_VOICE_EVENT_STOP_IMM) stop = true;
-        else if (event != 0) pause = event;
+        } else if (event == SCE_NGS2_VOICE_EVENT_STOP || event == SCE_NGS2_VOICE_EVENT_STOP_IMM) {
+            stop = true;
+            if (PS4_LIBRARY) stopEvent = event;
+        } else if (event != 0) pause = event;
     };
     const auto applyEvents = [&] {
         if (kill) {
@@ -848,7 +851,8 @@ void Ngs2Voice::ApplyPendingControls() {
                 if (state != Ngs2PlayState::Empty) state = Ngs2PlayState::Stopped;
                 SetEvent(SCE_NGS2_VOICE_EVENT_PLAY);
             }
-            if (stop) SetEvent(SCE_NGS2_VOICE_EVENT_STOP);
+            if (stopEvent != 0) SetEvent(stopEvent);
+            else if (stop) SetEvent(SCE_NGS2_VOICE_EVENT_STOP);
             else if (pause != 0) SetEvent(pause);
             if (restart && pause == SCE_NGS2_VOICE_EVENT_PAUSE && !stop) {
                 outputTransition = Ngs2VoiceTransition::None;
@@ -856,6 +860,7 @@ void Ngs2Voice::ApplyPendingControls() {
             }
         }
         restart = stop = kill = false;
+        stopEvent = 0;
         pause = 0;
     };
     std::size_t applied = 0;
