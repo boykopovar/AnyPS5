@@ -1,9 +1,11 @@
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "IcuScriptNames.hpp"
 
 #include <hb-ft.h>
@@ -13,7 +15,8 @@ namespace {
 template <typename T>
 bool GuestCopyInPreservingErrno(T& out, const void* source) {
     const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&out, source, sizeof(T));
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, sizeof(T));
+    const bool ok = GuestReadable_nid_no_patch(source, sizeof(T)) && GuestCopyIn_nid_no_patch(&out, source, sizeof(T));
     errno = savedErrno;
     return ok;
 }
@@ -26,17 +29,35 @@ bool GuestCopyOutPreservingErrno(void* destination, const T& value) {
     return ok;
 }
 
-bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
-    return ok;
-}
+struct HostWriteGuard {
+    void* pointer{nullptr};
+    std::size_t bytes{0};
+    bool open{false};
+    bool writable{false};
+
+    HostWriteGuard(void* destination, std::size_t size) : pointer(destination), bytes(size) {
+        const int savedErrno = errno;
+        open = GuestArena::GuestArenaBeginHostWrite_nid_postfix(pointer, bytes);
+        writable = open && GuestWritable_nid_no_patch(pointer, bytes);
+        errno = savedErrno;
+    }
+
+    ~HostWriteGuard() {
+        if (!open) return;
+        const int savedErrno = errno;
+        GuestArena::GuestArenaEndHostWrite_nid_postfix(pointer, bytes);
+        errno = savedErrno;
+    }
+
+    HostWriteGuard(const HostWriteGuard&) = delete;
+    HostWriteGuard& operator=(const HostWriteGuard&) = delete;
+};
 
 void APS5_VABI FinalizeCachedFace(void* object) {
-    auto* face = static_cast<FreeType::GuestFaceRec*>(object);
-    std::remove_reference_t<decltype(face->generic)> generic{};
-    if (!GuestCopyInPreservingErrno(generic, &face->generic)) return;
+    if (!object) return;
+    std::remove_reference_t<decltype(FreeType::GuestFaceRec::generic)> generic{};
+    const auto* genericAddress = reinterpret_cast<const unsigned char*>(object) + offsetof(FreeType::GuestFaceRec, generic);
+    if (!GuestCopyInPreservingErrno(generic, genericAddress)) return;
     hb_face_destroy(static_cast<hb_face_t*>(generic.data));
 }
 
@@ -60,12 +81,12 @@ hb_face_t* APS5_VABI hb_ft_face_create_cached_nid_postfix(FreeType::GuestFaceRec
 
     auto generic = guestFace.generic;
     if (!generic.data || generic.finalizer != FinalizeCachedFace) {
-        if (!GuestWritablePreservingErrno(&face->generic, sizeof(face->generic))) {
-            NotImplemented_nid_no_patch(__func__);
-        }
+        auto* const genericAddress = reinterpret_cast<unsigned char*>(face) + offsetof(FreeType::GuestFaceRec, generic);
+        const HostWriteGuard writeGuard(genericAddress, sizeof(generic));
+        if (!writeGuard.writable) NotImplemented_nid_no_patch(__func__);
         if (generic.finalizer) generic.finalizer(face);
         generic = {hb_ft_face_create(host, nullptr), FinalizeCachedFace};
-        if (!GuestCopyOutPreservingErrno(&face->generic, generic)) {
+        if (!GuestCopyOutPreservingErrno(genericAddress, generic)) {
             hb_face_destroy(static_cast<hb_face_t*>(generic.data));
             NotImplemented_nid_no_patch(__func__);
         }
