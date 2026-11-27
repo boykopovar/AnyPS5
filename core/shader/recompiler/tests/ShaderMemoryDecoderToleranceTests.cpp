@@ -412,6 +412,24 @@ void TestGfx1013OnlyFormsTranslate() {
         EXPECT_EQ(written, 2u);
     }
     {
+        const std::array<std::uint32_t, 2> words = {smemWord(0x8bu, 5u, false), 0x10u};
+        const RdnaInstruction inc = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(inc);
+        const IrValue* atomic = nullptr;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::AddressAtomicInc32) atomic = value;
+        EXPECT_EQ(atomic != nullptr, true);
+        const IrValue* bound = atomic->Argument(3)->Resolve();
+        EXPECT_EQ(bound->Opcode(), IrOpcode::GetScalarRegister);
+        const GuestRegister source = bound->Argument(0)->Resolve()->Register();
+        EXPECT_EQ(source.index, 5u);
+        EXPECT_EQ(source.bank, RegisterBank::Scalar);
+    }
+    {
         const std::array<std::uint32_t, 2> words = {smemWord(0x15u, 3u, false), 0x10u};
         const RdnaInstruction store = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
         IrProgram program;
@@ -497,6 +515,23 @@ void TestGfx1013OnlyFormsTranslate() {
         }
         EXPECT_EQ(foundLoad, true);
         EXPECT_EQ(foundAtomic, true);
+    }
+    {
+        const std::array<std::uint32_t, 2> oddWords = {(0x36u << 26u) | (0xC0u << 18u) | 1u, (4u << 24u) | (6u << 16u) | (5u << 8u) | 7u};
+        const RdnaInstruction odd = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(oddWords), 0u);
+        EXPECT_EQ(odd.secondaryOffset, 4u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(odd);
+        bool masked = false;
+        for (const auto* value : block.Instructions()) {
+            if (value->Opcode() != IrOpcode::LoadSharedU32x2) continue;
+            const IrValue* sourceAddress = value->Argument(0)->Resolve();
+            masked = sourceAddress->Opcode() == IrOpcode::BitwiseAnd32 && sourceAddress->Argument(1)->Resolve()->ImmediateU32() == 0xfffffff8u;
+        }
+        EXPECT_EQ(masked, true);
     }
 }
 

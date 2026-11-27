@@ -224,10 +224,11 @@ bool TranslationContext::dsSrc264(const RdnaInstruction& inst, IrOpcode opcode) 
     }
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     const IrU32 address = readU32(inst.source0);
+    const IrU32 sourceAddress(ir.BitwiseAnd(ir.IAdd(address.Value(), ir.Constant(memory.secondaryOffset)), ir.Constant(0xfffffff8u)));
     MemoryInfo source = memory;
-    source.offset = memory.secondaryOffset;
+    source.offset = 0u;
     source.secondaryOffset = 0u;
-    IrValue* loaded = loadSharedU32(2u, address, source, inst.programCounter);
+    IrValue* loaded = loadSharedU32(2u, sourceAddress, source, inst.programCounter);
     IrValue& low = ir.CompositeExtract(*loaded, 0u);
     IrValue& high = ir.CompositeExtract(*loaded, 1u);
     MemoryInfo target = memory;
