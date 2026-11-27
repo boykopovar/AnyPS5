@@ -185,7 +185,6 @@ def main():
         struct.pack_into('<QQ', nonexec_overlap_image, 64 + 32, 0x2000, 0x2000)
         struct.pack_into('<IIQQQQQQ', nonexec_overlap_image, 64 + 2 * 56, 1, 4, 0x5000, 0x5000, 0x5000,
                          0x1000, 0x1000, 0x1000)
-        nonexec_overlap_image[0x5010:0x5016] = b'\\xb8\\x2c\\0\\0\\0\\xc3'
         result, nonexec_overlap_output = convert_image('nonexec-overlap-absolute-function', nonexec_overlap_image)
         assert result.returncode == 0 and nonexec_overlap_output.exists(), (result.stdout, result.stderr)
         assert 'absolute_function' not in exports(nonexec_overlap_output.read_bytes())
