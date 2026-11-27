@@ -433,6 +433,7 @@ void Run() {
     Require(Icu::StringSearchHost::Next(opened, status) == 2);
     Require(status <= 0);
     Require(usearch_getMatchedLength_nid_postfix(opened) == 3);
+    status = 0;
     usearch_setText_nid_postfix(opened, u"banana", -1, &status);
     Require(status == 0);
     Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
