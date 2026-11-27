@@ -1,10 +1,20 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
+#include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #include "../src/WtfTextAbi.hpp"
 
@@ -156,6 +166,143 @@ void TestDump() {
     Check(Dump(VelocityData{2.0f, 0.0f, 0.5f, MonotonicTime{7.0}}, NumberRespectingIntegers) == "\n(timestamp 7)\n(horizontalVelocity 2)\n(scaleChangeRate 0.50)");
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Check(base != nullptr);
+        DWORD previous = 0;
+        Check(VirtualProtect(base + pageSize * 3, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Check(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Check(mprotect(base + pageSize * 3, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 4);
+#endif
+    }
+
+    void ProtectReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Check(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+        Check(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 3; }
+};
+
+template<typename TFunction>
+void RequireNotImplemented(TFunction&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Check(threw);
+    Check(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+template<typename TFunction>
+void RequireInvalidArgument(TFunction&& function) {
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Check(threw);
+}
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    const VelocityData sample{1.5f, 0.0f, -2.25f, MonotonicTime{3.0}};
+    std::memcpy(pages.ReadOnly(), &sample, sizeof(sample));
+    pages.ProtectReadOnly();
+
+    TextStream stream = NewStream(0, true, 0);
+    _ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE(
+        stream, *reinterpret_cast<const VelocityData*>(pages.ReadOnly()));
+    Check(Release(stream) == "\n(timestamp 3.00)\n(horizontalVelocity 1.50)\n(scaleChangeRate -2.25)");
+
+    RequireInvalidArgument([&] {
+        _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE(
+            nullptr, {1.0f, 2.0f}, 1.0, MonotonicTime{1.0});
+    });
+
+    HistoricalVelocityData badHistory;
+    badHistory.m_historySize = HistoricalVelocityData::maxHistoryDepth + 1;
+    RequireInvalidArgument([&] {
+        _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE(
+            &badHistory, {1.0f, 2.0f}, 1.0, MonotonicTime{1.0});
+    });
+
+    HistoricalVelocityData badIndex;
+    badIndex.m_latestDataIndex = HistoricalVelocityData::maxHistoryDepth;
+    RequireInvalidArgument([&] {
+        _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE(
+            &badIndex, {1.0f, 2.0f}, 1.0, MonotonicTime{1.0});
+    });
+
+    RequireNotImplemented([&] {
+        _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE(
+            reinterpret_cast<HistoricalVelocityData*>(pages.Guard()), {1.0f, 2.0f}, 1.0, MonotonicTime{1.0});
+    });
+    RequireNotImplemented([&] {
+        _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE(
+            reinterpret_cast<HistoricalVelocityData*>(pages.ReadOnly()), {1.0f, 2.0f}, 1.0, MonotonicTime{1.0});
+    });
+
+    unsigned char* const splitHistory = pages.ReadOnly() - 8;
+    std::memset(splitHistory, 0x5A, 8);
+    RequireNotImplemented([&] {
+        _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE(
+            reinterpret_cast<HistoricalVelocityData*>(splitHistory), {1.0f, 2.0f}, 1.0, MonotonicTime{1.0});
+    });
+    for (std::size_t i = 0; i < 8; ++i) Check(splitHistory[i] == 0x5A);
+
+    TextStream validStream = NewStream(0, true, 0);
+    RequireNotImplemented([&] {
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE(
+            validStream, *reinterpret_cast<const VelocityData*>(pages.Guard()));
+    });
+    RequireNotImplemented([&] {
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE(
+            validStream, *reinterpret_cast<const VelocityData*>(pages.Guard() - 8));
+    });
+    RequireNotImplemented([&] {
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE(
+            *reinterpret_cast<TextStream*>(pages.Guard()), sample);
+    });
+    RequireNotImplemented([&] {
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE(
+            *reinterpret_cast<TextStream*>(pages.ReadOnly()), sample);
+    });
+    Check(Release(validStream).empty());
+}
+
 }  // namespace
 
 int main() {
@@ -163,5 +310,6 @@ int main() {
     TestFirstSampleInsideThreshold();
     TestDeltaEqualToThreshold();
     TestDump();
+    TestGuestPointers();
     return 0;
 }
