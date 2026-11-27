@@ -18,5 +18,6 @@ void APS5_VABI _ZN3JSC18PropertyDescriptor15setConfigurableEb(NKWebKit::JscAbi::
 void APS5_VABI _ZN3JSC18PropertyDescriptor12setUndefinedEv(NKWebKit::JscAbi::PropertyDescriptor* self);
 void APS5_VABI _ZN3JSC18PropertyDescriptor9setGetterENS_7JSValueE(NKWebKit::JscAbi::PropertyDescriptor* self, std::uint64_t getter);
 void APS5_VABI _ZN3JSC18PropertyDescriptor9setSetterENS_7JSValueE(NKWebKit::JscAbi::PropertyDescriptor* self, std::uint64_t setter);
+void APS5_VABI _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(NKWebKit::JscAbi::PropertyDescriptor* self, std::uint64_t value, std::uint32_t attributes);
 
 }

@@ -668,7 +668,6 @@ int APS5_VABI _ZN3JSC18GCActivityCallbackD2Ev();
 int APS5_VABI _ZN3JSC18IncrementalSweeper13startSweepingERNS_4HeapE();
 int APS5_VABI _ZN3JSC18IncrementalSweeperC1EPNS_4HeapE();
 int APS5_VABI _ZN3JSC18IncrementalSweeperC2EPNS_4HeapE();
-int APS5_VABI _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj();
 int APS5_VABI _ZN3JSC18PropertyDescriptor21setAccessorDescriptorEPNS_12GetterSetterEj();
 int APS5_VABI _ZN3JSC19HeapSnapshotBuilder11analyzeNodeEPNS_6JSCellE();
 int APS5_VABI _ZN3JSC19HeapSnapshotBuilder13buildSnapshotEv();

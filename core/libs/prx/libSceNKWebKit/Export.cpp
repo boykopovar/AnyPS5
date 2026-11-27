@@ -10373,10 +10373,6 @@ int APS5_VABI _ZN3JSC18IncrementalSweeperC2EPNS_4HeapE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC18PropertyDescriptor21setAccessorDescriptorEPNS_12GetterSetterEj() {
     NotImplemented_nid_no_patch(__func__);
 }

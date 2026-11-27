@@ -34,6 +34,16 @@ static bool Throws(Call call) {
     return false;
 }
 
+template <typename Call>
+static bool ThrowsRuntime(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 int main() {
     PropertyDescriptor descriptor{0x1234, 0x5678, 0x9abc, 0x40, 0x8};
     _ZN3JSC18PropertyDescriptor12setUndefinedEv(&descriptor);
@@ -76,6 +86,29 @@ int main() {
     _ZN3JSC18PropertyDescriptor9setSetterENS_7JSValueE(&descriptor, 0x8877665544332211ull);
     Require(descriptor.setter == 0x8877665544332211ull);
     Require(descriptor.attributes == 0x10 && descriptor.getter == 0x44 && descriptor.seenAttributes == 0);
+
+    descriptor = {0x11, 0x22, 0x33, 0x9, 0x8};
+    _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(&descriptor, 0xfffe000000001234ull, 0x1a);
+    Require(descriptor.value == 0xfffe000000001234ull);
+    Require(descriptor.attributes == 0x1a && descriptor.seenAttributes == 0x7);
+    Require(descriptor.getter == 0x22 && descriptor.setter == 0x33);
+
+    descriptor = {0x11, 0x22, 0x33, 0x9, 0x8};
+    _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(&descriptor, 0xfffe000000001234ull, 0x5a);
+    Require(descriptor.value == 0xfffe000000001234ull && descriptor.attributes == 0x1a);
+    Require(descriptor.getter == 0x22 && descriptor.setter == 0x33 && descriptor.seenAttributes == 0x7);
+
+    const PropertyDescriptor unchanged{0x11, 0x22, 0x33, 0x9, 0x8};
+    descriptor = unchanged;
+    Require(Throws([&] { _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(&descriptor, 0, 0x5a); }));
+    Require(descriptor.value == unchanged.value && descriptor.getter == unchanged.getter && descriptor.setter == unchanged.setter);
+    Require(descriptor.attributes == unchanged.attributes && descriptor.seenAttributes == unchanged.seenAttributes);
+
+    Require(ThrowsRuntime([&] { _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(&descriptor, 0x10000, 0x5a); }));
+    Require(descriptor.value == unchanged.value && descriptor.getter == unchanged.getter && descriptor.setter == unchanged.setter);
+    Require(descriptor.attributes == unchanged.attributes && descriptor.seenAttributes == unchanged.seenAttributes);
+
+    Require(Throws([&] { _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(nullptr, 0xfffe000000001234ull, 0x5a); }));
 
     descriptor = {0, 0, 0, 0, 0};
     Require(!_ZNK3JSC18PropertyDescriptor16isDataDescriptorEv(&descriptor));
