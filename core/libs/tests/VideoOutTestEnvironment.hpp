@@ -42,7 +42,7 @@ public:
                 if (!param) throw std::runtime_error("Cannot write VideoOut param.sfo fixture");
             } else {
                 std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-                param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
+                param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0,"attribute3":4})";
                 if (!param) throw std::runtime_error("Cannot write VideoOut param.json fixture");
             }
         } catch (...) {

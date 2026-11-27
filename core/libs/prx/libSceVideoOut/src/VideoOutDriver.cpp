@@ -15,6 +15,7 @@
 #include "SDL.h"
 #include "SDL_vulkan.h"
 #include "prx/libc/include/HostThread.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceVideoOut/include/MainThread.hpp"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -603,6 +604,7 @@ int VideoOutDriver::GetDisplayRefreshRate() {
 
 std::uint32_t VideoOutDriver::GetDisplayResolution() {
     if (const auto configured = configuredResolution()) return *configured;
+    if (HasAppParamJson_nid_no_patch() && (GetAppAttribute3_nid_no_patch() & APP_ATTRIBUTE3_RECEIVES_VIDEO_OUT_INFO) == 0) return VIDEO_OUT_RESOLUTION_2160P;
     return displayResolution.load();
 }
 

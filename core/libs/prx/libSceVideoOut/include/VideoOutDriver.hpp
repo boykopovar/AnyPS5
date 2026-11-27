@@ -107,6 +107,7 @@ static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_119_88HZ = 13;
 
 static constexpr std::uint32_t VIDEO_OUT_RESOLUTION_1080P = 1;
 static constexpr std::uint32_t VIDEO_OUT_RESOLUTION_2160P = 2;
+static constexpr std::uint32_t APP_ATTRIBUTE3_RECEIVES_VIDEO_OUT_INFO = 0x4;
 
 struct VideoOutBuffer {
     int groupIndex = -1;
