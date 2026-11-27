@@ -39,8 +39,10 @@ int main() {
     ExpectText(0x0a000000u, 5, "10");
     ExpectText(0u, 8, "0.0.0.0");
     ExpectText(0xc0a80100u, 13, "192.168.1");
+    ExpectText(0x00000001u, 5, "1");
     ExpectTooSmall(0x0a000000u, 4);
     ExpectTooSmall(0u, 7);
     ExpectTooSmall(0xc0a80100u, 12);
+    ExpectTooSmall(0x00000001u, 2);
     return 0;
 }
