@@ -50,7 +50,7 @@ void ExpectRefused(AgcDriver::VulkanDevice& device, std::uint32_t word, const ch
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("only the MODE round and denormal fields are modeled") != std::string::npos, std::string("s_getreg_b32 reading ") + what + " was not refused");
+    Require(refusal.find("only the MODE round, denormal and status fields are modeled") != std::string::npos, std::string("s_getreg_b32 reading ") + what + " was not refused");
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::optional<ShaderRecompiler::ShaderFloatMode> floatMode) {
