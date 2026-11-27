@@ -169,6 +169,13 @@ void Run() {
         Require(status == IllegalArgument);
     }
 
+    status = 0;
+    Require(usearch_open_nid_postfix(reinterpret_cast<const char16_t*>(0x10), 3, text, 0, "en", nullptr, &status) == nullptr);
+    Require(status == IllegalArgument);
+    status = 0;
+    Require(usearch_open_nid_postfix(pattern, 0, reinterpret_cast<const char16_t*>(0x10), 3, "en", nullptr, &status) == nullptr);
+    Require(status == IllegalArgument);
+
     Require(Unchanged(storage));
     RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", nullptr, nullptr); });
     GuestPointers(pattern, text);

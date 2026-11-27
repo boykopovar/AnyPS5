@@ -30,8 +30,8 @@ struct RegisteredCollator {
 };
 
 Registry& Collators() {
-    static Registry registry;
-    return registry;
+    static auto* registry = new Registry;
+    return *registry;
 }
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {

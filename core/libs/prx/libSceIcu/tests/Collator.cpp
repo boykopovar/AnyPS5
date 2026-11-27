@@ -192,6 +192,21 @@ void Run() {
         }
     }
 
+    const std::string previous = uloc_getDefault();
+    std::int32_t status = 0;
+    uloc_setDefault_nid_postfix("sv", &status);
+    Require(status <= 0);
+    auto* selected = ucol_open_nid_postfix(nullptr, &status);
+    auto* explicitSwedish = ucol_open_nid_postfix("sv", &status);
+    Require(selected != nullptr && explicitSwedish != nullptr && status <= 0);
+    Require(ucol_strcoll_nid_postfix(selected, u"z", -1, u"ä", -1) ==
+            ucol_strcoll_nid_postfix(explicitSwedish, u"z", -1, u"ä", -1));
+    ucol_close_nid_postfix(selected);
+    ucol_close_nid_postfix(explicitSwedish);
+    status = 0;
+    uloc_setDefault_nid_postfix(previous.c_str(), &status);
+    Require(status <= 0);
+
     RequireThrows([&] { ucol_open_nid_postfix("en", nullptr); });
 }
 

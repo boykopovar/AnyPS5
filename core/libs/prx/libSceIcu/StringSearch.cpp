@@ -147,7 +147,7 @@ UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::
     Icu::RequireStatus(status);
     const auto incoming = CopyIn<std::int32_t>(status, __func__);
     if (incoming > 0) return nullptr;
-    if (!pattern || !text || !locale || patternLength < -1 || textLength < -1) {
+    if (!pattern || !text || !locale || patternLength < -1 || textLength < -1 || patternLength == 0 || textLength == 0) {
         WriteChangedStatus(status, incoming, Icu::IllegalArgument, __func__);
         return nullptr;
     }
