@@ -146,8 +146,8 @@ void CheckTypeInfo() {
     const void* objectVtable[] {nullptr, &guestType, nullptr};
     struct GuestObject { const void* const* vtable; std::int64_t sharedOwners; } object {objectVtable + 2, 0};
 
-    const auto upcastCodecvt = reinterpret_cast<Upcast>(codecvtRecord.vtable[5]);
-    const auto upcastGuest = reinterpret_cast<Upcast>(guestType.vtable[5]);
+    const auto upcastCodecvt = reinterpret_cast<Upcast>(const_cast<void*>(codecvtRecord.vtable[5]));
+    const auto upcastGuest = reinterpret_cast<Upcast>(const_cast<void*>(guestType.vtable[5]));
     for (const auto* target : {static_cast<const ClassTypeInfo*>(facetType), codecvtBase.__base_type, facet->__base_type}) {
         void* adjusted = &object;
         Require(upcastCodecvt(codecvtType, target, &adjusted) && adjusted == &object);
