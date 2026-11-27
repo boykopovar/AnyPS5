@@ -11,6 +11,15 @@
 #include <limits>
 #include <stdexcept>
 
+namespace LibcException {
+struct TypeInfoVtable;
+}
+
+extern "C" {
+extern LibcException::TypeInfoVtable _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix;
+extern LibcException::TypeInfoVtable _ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix;
+}
+
 namespace {
 
 constexpr int Ok = 0;
@@ -98,6 +107,16 @@ int CodecvtUtfLength(const void* self, void* state, const char* first, const cha
     constexpr auto maxResult = static_cast<std::ptrdiff_t>(std::numeric_limits<int>::max());
     return static_cast<int>(consumed > maxResult ? maxResult : consumed);
 }
+
+const void* const* TypeInfoVptr(LibcException::TypeInfoVtable& vtable) {
+    return reinterpret_cast<const void* const*>(&vtable) + 2;
+}
+
+constexpr std::int64_t PublicBase = 2;
+
+const LibcException::TypeRecord LibcxxCodecvtBaseType {
+    TypeInfoVptr(_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix), "NSt3__112codecvt_baseE", nullptr,
+};
 
 }
 
@@ -491,5 +510,14 @@ int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m_nid_post
     const std::size_t size = end - start;
     return static_cast<int>(size < max ? size : max);
 }
+
+void APS5_VABI _ZNSt3__17codecvtIcc11__mbstate_tED2Ev_nid_postfix(GuestLocale::LibcxxFacet* self) {
+    _ZNSt3__16locale5facetD2Ev_nid_postfix(self);
+}
+
+const LibcException::MultipleTypeRecord<2> _ZTINSt3__17codecvtIcc11__mbstate_tEE_nid_postfix {
+    TypeInfoVptr(_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix), "NSt3__17codecvtIcc11__mbstate_tEE", 0, 2,
+    {{&_ZTINSt3__16locale5facetE_nid_postfix, PublicBase}, {&LibcxxCodecvtBaseType, PublicBase}},
+};
 
 }

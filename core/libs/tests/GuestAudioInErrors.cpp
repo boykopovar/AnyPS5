@@ -24,8 +24,10 @@ namespace {
 
 constexpr int UserId = 0x10000000;
 constexpr int InvalidHandle = static_cast<int>(0x80260101);
+constexpr int InvalidParam = static_cast<int>(0x80260106);
 constexpr int InvalidPointer = static_cast<int>(0x80260105);
 constexpr int InvalidState = static_cast<int>(0x80260109);
+constexpr int InvalidDevice = static_cast<int>(0x8026010F);
 constexpr int TestErrno = EBUSY;
 
 void ClobberErrnoHook(std::uintptr_t, std::size_t) {
@@ -206,6 +208,21 @@ void TestInputErrors(const GuardPage& guard) {
     ExpectErrno([&] { return sceAudioInInput(handle, buffer.data()); }, InvalidState);
 }
 
+void TestDeviceTypeGates() {
+    for (const int type : {-2, -1, 0, 5, 8, 32, 33}) {
+        ExpectErrno([&] { return sceAudioInSetUserMute(type, 8, 1); }, InvalidDevice);
+        ExpectErrno([&] { return sceAudioInSetDeviceMuteStatus(type, 8, 1); }, InvalidDevice);
+    }
+
+    for (const int type : {-2, -1, 0, 5, 6}) {
+        ExpectErrno([&] { return sceAudioInSetMicLevel(type, 8, 50, 0, 0); }, InvalidDevice);
+        ExpectErrno([&] { return sceAudioInSetMicrophoneLevel(type, 8, 50, 0); }, InvalidDevice);
+    }
+
+    ExpectErrno([&] { return sceAudioInSetMicLevel(-1, 8, 101, 0, 0); }, InvalidParam);
+    ExpectErrno([&] { return sceAudioInSetMicrophoneLevel(5, 8, 101, 0); }, InvalidParam);
+}
+
 void TestConcurrentHandleStatusInfo() {
     const int slotHandle = sceAudioInOpen(UserId, 0, 0, 128, 48000, 2);
     Require(slotHandle > 0);
@@ -245,6 +262,7 @@ int main() {
         TestHandleStatusInfo(guard);
         TestGainErrors(guard);
         TestInputErrors(guard);
+        TestDeviceTypeGates();
     }
     TestConcurrentHandleStatusInfo();
     std::puts("AudioIn error and errno tests passed");

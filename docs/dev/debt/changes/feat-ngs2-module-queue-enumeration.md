@@ -1,5 +1,0 @@
-# libSceNgs2.native
-
-## change [libSceNgs2.native command, query, stream and enumeration exports]
-
-- [libSceNgs2.native command, query, stream and enumeration exports](../../../core/libs/prx/libSceNgs2.native/Export.cpp) (libSceNgs2.native) - checks follow @BunnyFl's [13.42 disassembly](https://github.com/boykopovar/AnyPS5/issues/19400#issuecomment-6849148427), not a console. Inferred: system slots and queries, float store, grain limit, custom module count and stream handle validation. `sceNgs2ModuleQueueEnumItems` locks the selected queue ring, copies up to `max` items circularly, and returns the full count. The count and first index widths are inferred as 64-bit from their 8-byte field spacing. Lock commands can throw from job threads after earlier records apply, and unlocked command validation state can change. Placeholders throwing NotImplemented_nid_no_patch: StreamCreate/WithAllocator, StreamDestroy, StreamRunCommands, StreamQueryInfo, ModuleEnumConfigs, and queries 0xf04004, 0xf04070, 0xf14070, 0xf14002.

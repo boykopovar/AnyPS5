@@ -280,22 +280,13 @@ struct Case {
 
 enum class Outcome { Kept, Lost, Missed };
 
-// The surface is outside the write watch from the start. Its first results are stored, which
-// leaves their bytes saved for the next store to compare with; the CPU writes another block, then
-// the next results land and are stored: the CPU's block was written after the first store, so it
-// keeps the CPU's bytes as the write watch would keep them.
 Outcome RunSecondStore(const char* name) {
-    Surface surface(true);
+    Surface surface;
     struct WaitForWork {
         ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
     } waitForWork;
     const auto address = surface.Address();
-    if (!AgcDriver::GuestMemory::Watched(address, SurfaceBytes)) {
-        std::fprintf(stderr, "[store over untracked] %s: not run, the surface is not write-watched\n", name);
-        return Outcome::Kept;
-    }
-    AgcDriver::GuestMemory::Unwatch(address, SurfaceBytes);
-    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the surface is still write-watched");
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the second-store surface is write-watched");
     std::unique_lock hold(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
     const auto heldLive = [&](std::uint32_t result) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -319,6 +310,7 @@ Outcome RunSecondStore(const char* name) {
     }
     Require(static_cast<const volatile std::uint32_t*>(surface.Texels())[0] == Stored, "store over untracked: the first result was not stored");
     hold.lock();
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the surface regained the write watch after its first store");
     const auto image = StorageTexture::FindLive(address, SurfaceBytes);
     const bool saved = image != nullptr && image->GuestSnapshotValid();
     hold.unlock();
@@ -398,7 +390,7 @@ Outcome Run(const Case& test) {
     const bool neighbour = test.kind == Kind::NeighbourLeftWatch;
     const bool leaves = test.kind == Kind::LeftWatch || test.kind == Kind::WrittenThenLeftWatch || test.kind == Kind::ImportLeftWatch || neighbour;
     surfaceTile = neighbour ? TileLinear : TileR64KBX;
-    Surface surface(leaves, neighbour ? Page : 0);
+    Surface surface(leaves, neighbour ? Page : 0, leaves ? 16 * Block : 0);
     struct WaitForWork {
         ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
     } waitForWork;

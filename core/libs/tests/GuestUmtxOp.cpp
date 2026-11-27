@@ -668,6 +668,38 @@ static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter(std::uint32_t flag
     Require(mutex.owner == 0);
 }
 
+static void MutexLockAndWaitDoNotLoseAWakeupToAUserlandUnlock() {
+    for (const int operation : {UMTX_OP_MUTEX_LOCK, UMTX_OP_MUTEX_WAIT}) {
+        Umutex mutex;
+        std::atomic_ref<std::uint32_t> owner(mutex.owner);
+        std::atomic<int> started{0};
+        std::atomic<bool> stop{false};
+        std::vector<std::thread> holders;
+        for (int index = 0; index < 2; ++index) {
+            holders.emplace_back([&] {
+                const std::uint32_t self = Self();
+                started.fetch_add(1);
+                while (!stop.load()) {
+                    std::uint32_t unowned = 0;
+                    if (!owner.compare_exchange_strong(unowned, self)) continue;
+                    std::uint32_t held = self;
+                    if (!owner.compare_exchange_strong(held, 0)) Require(Umtx(&mutex, UMTX_OP_MUTEX_UNLOCK, 0) == 0);
+                }
+            });
+        }
+        AwaitCount(started, 2);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+        while (std::chrono::steady_clock::now() < until) {
+            KernelTimespec failsafe = FailsafeTimeout();
+            Require(Umtx(&mutex, operation, 0, SizeOf(sizeof(failsafe)), &failsafe) == 0);
+            if (operation == UMTX_OP_MUTEX_LOCK) Require(Umtx(&mutex, UMTX_OP_MUTEX_UNLOCK, 0) == 0);
+        }
+        stop.store(true);
+        for (auto& holder : holders) holder.join();
+        Require(mutex.owner == 0);
+    }
+}
+
 static void ConditionWaitReleasesTheMutexAndWakes() {
     Ucond condition;
     Require(Umtx(&condition, UMTX_OP_CV_SIGNAL, 0) == 0 && condition.hasWaiters == 0);
@@ -1001,6 +1033,7 @@ int main() {
     MutexWake2LeavesAnUnwaitedMutexAlone();
     MutexWake2RepairsTheContestedBitAndWakesOneWaiter(0);
     MutexWake2RepairsTheContestedBitAndWakesOneWaiter(ROBUST);
+    MutexLockAndWaitDoNotLoseAWakeupToAUserlandUnlock();
     ConditionWaitReleasesTheMutexAndWakes();
     RwlockStateFollowsTheConsole();
     RwlockUnlockWakesTheBlockedWriter();

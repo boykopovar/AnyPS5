@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <vector>
 
 namespace File {
 
@@ -11,6 +12,7 @@ enum class FcntlArgument { None, Int, Pointer };
 FcntlArgument FcntlArgumentOf(int command);
 int Fcntl(int fd, int command, std::intptr_t argument);
 bool IoctlRequestMalformed(std::uint64_t request);
+bool CopyIoctlInput(std::uint64_t request, const void* argument, std::vector<unsigned char>& input);
 int Ioctl(int fd, std::uint64_t request, void* argument);
 int DuplicateFrom(int fd, int start);
 void RememberDescriptor(int fd, int openFlags, bool fixedSizeWrites = false);
