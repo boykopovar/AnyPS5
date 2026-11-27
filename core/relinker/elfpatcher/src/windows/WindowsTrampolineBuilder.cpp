@@ -2,6 +2,8 @@
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <cstdio>
+#include <cstdlib>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
@@ -67,6 +69,8 @@ void WindowsTrampolineBuilder::Build(const std::vector<Codegen::TrampolineSite>&
         const auto bodyOffset = bytes.size();
         bytes.insert(bytes.end(), site.Body.begin(), site.Body.end());
         Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + bodyOffset, site.ReturnBranchOffset), site.Relocations, siteRva, stubRva, site.Offset);
+        static const bool stubMap = std::getenv("APS5_RELINK_STUB_MAP") != nullptr;
+        if (stubMap) std::fprintf(stderr, "stub rva 0x%x-0x%llx for site rva 0x%x+0x%zx (%zu relocations, return branch at +0x%zx)\n", stubRva, static_cast<unsigned long long>(stubRva + site.Body.size()), siteRva, site.Length, site.Relocations.size(), site.ReturnBranchOffset);
         const auto returnRva = CheckedRva(siteEndRva);
         const auto displacement = static_cast<std::int64_t>(returnRva) - (static_cast<std::int64_t>(stubRva) + static_cast<std::int64_t>(site.ReturnBranchOffset + kJmpRel32.Size));
         if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
