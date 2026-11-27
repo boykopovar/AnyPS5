@@ -1710,7 +1710,8 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 
 SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto& dimensionInfo = RdnaImageDimensionInfoFor(access.image.dimension);
-    const auto layout = Layout(access.mem);
+    auto layout = Layout(access.mem);
+    if (access.image.cube) layout.offset = NoImageComponent;
     const bool dref = HasFlag(access.mem, RdnaImageSampleFlagCompare);
     if (dref && access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");
