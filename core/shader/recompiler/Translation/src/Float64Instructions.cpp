@@ -49,7 +49,7 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
         if (rounding == 1u || rounding == 2u) {
             IrValue& negative = ir.INotEqual(sign, ir.Constant(0u));
             IrValue& away = rounding == 1u ? ir.LogicalNot(negative) : negative;
-            tiny = &ir.LogicalOr(ir.LogicalAnd(away, below(0x380fffffe0000001ull)), ir.LogicalAnd(ir.LogicalNot(away), *tiny));
+            tiny = &ir.LogicalOr(ir.LogicalAnd(away, below(0x380fffffe0000000ull)), ir.LogicalAnd(ir.LogicalNot(away), *tiny));
         }
         result = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), result});
     }
