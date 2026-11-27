@@ -35,6 +35,10 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstring>
+
 namespace {
 
 NKWebKit::WtfAbi::AtomString EmptyAtom() {
@@ -92,15 +96,31 @@ const TrackPrivateBaseVtableStorage TrackPrivateBaseVtableInstance = {
     },
 };
 
+constexpr std::size_t kInitializedBytes = offsetof(TrackPrivateBase, refCount) + sizeof(std::uint32_t);
+static_assert(kInitializedBytes == 12);
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const GuestArena::HostWrite guard(pointer, size);
+    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 }
 
 extern "C" {
 
 void APS5_VABI _ZN7WebCore16TrackPrivateBaseC2Ev(void* self) {
     if (self == nullptr) throw std::invalid_argument("WebCore::TrackPrivateBase::TrackPrivateBase: null object");
-    auto& base = *static_cast<TrackPrivateBase*>(self);
-    base.vptr = &TrackPrivateBaseVtableInstance.dispatch;
-    base.refCount = 1;
+    RequireWritableGuestBytes(self, kInitializedBytes, __func__);
+    unsigned char initialBytes[kInitializedBytes]{};
+    const TrackPrivateBaseVtable* const vptr = &TrackPrivateBaseVtableInstance.dispatch;
+    const std::uint32_t refCount = 1;
+    std::memcpy(initialBytes + offsetof(TrackPrivateBase, vptr), &vptr, sizeof(vptr));
+    std::memcpy(initialBytes + offsetof(TrackPrivateBase, refCount), &refCount, sizeof(refCount));
+    if (!GuestCopyOut_nid_no_patch(self, initialBytes, kInitializedBytes))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 NKWebKit::WtfAbi::AtomString APS5_VABI _ZNK7WebCore16TrackPrivateBase2idEv(const void*) {
