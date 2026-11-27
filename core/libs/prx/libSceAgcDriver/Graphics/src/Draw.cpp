@@ -2874,7 +2874,9 @@ bool StencilReplayStrip(const Context& context, const State& state, std::span<co
     const auto same = [](const VkStencilOpState& left, const VkStencilOpState& right) {
         return left.failOp == right.failOp && left.passOp == right.passOp && left.depthFailOp == right.depthFailOp && left.compareOp == right.compareOp && left.compareMask == right.compareMask && left.writeMask == right.writeMask && left.reference == right.reference;
     };
-    return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (state.cullMode == VK_CULL_MODE_NONE || context.graphicsPipelineLibrary) && same(state.stencilFront, state.stencilBack) &&
+    if (state.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) return false;
+    Require(context.graphicsPipelineLibrary || !ReadsFrontFacing(shaders), "stencil replay of a triangle strip whose pixel shader reads FrontFacing needs graphics pipeline libraries to flip the front face of its odd triangles");
+    return (state.cullMode == VK_CULL_MODE_NONE || context.graphicsPipelineLibrary) && same(state.stencilFront, state.stencilBack) &&
         std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::none_of(shader.program->fragmentParameters, [](const ShaderRecompiler::FragmentParameter& parameter) { return parameter.flat || parameter.perVertex || parameter.flatP10 || parameter.flatP20 || parameter.vertexOrder; }); });
 }
 
@@ -2919,7 +2921,7 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
     const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
-    const bool faceDynamic = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE;
+    const bool faceDynamic = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && context.graphicsPipelineLibrary;
     Require(!replay.empty(), "stencil replay has no reference values");
     const auto& pipeline = *replay.front().second;
     bool bitwise = false;

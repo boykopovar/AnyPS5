@@ -103,6 +103,13 @@ alignas(256) constexpr std::array<std::array<float, 4>, 6> Vertices{{
     {-1.0f, -1.0f, 0.75f, 1.0f}, {3.0f, -1.0f, 0.75f, 1.0f}, {-1.0f, 3.0f, 0.75f, 1.0f},
 }};
 
+ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl, std::uint32_t inputs) {
+    const AgcDriver::Registers context{
+        {0x003, 0u}, {0x0b4, 0u}, {0x0b5, 0x3f800000u}, {0x1b3, inputs}, {0x1b4, inputs}, {0x1b6, 0u}, {0x1b8, 0u}, {0x1c5, 9u}, {0x203, shaderControl},
+    };
+    return AgcDriver::Graphics::DecodePixelStageInfo(context, {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u});
+}
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
@@ -118,7 +125,7 @@ ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
 bool LastReplayStored = false;
 std::uint64_t LastDraws = 0;
 
-void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u) {
+void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u, std::uint32_t pixelInputs = 0u) {
     Pixels.fill(Kept);
     auto target = device.Target();
     std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
@@ -147,7 +154,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     if (pixelPushBytes != 0u) pixelLayout.pushConstantSizeBytes = pixelPushBytes;
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
-        {WaveSize, 0, pixelUserData, std::nullopt, PixelInfo(shaderControl), std::nullopt, pixelMemory},
+        {WaveSize, 0, pixelUserData, std::nullopt, pixelInputs == 0u ? PixelInfo(shaderControl) : PixelInfo(shaderControl, pixelInputs), std::nullopt, pixelMemory},
         target,
         pixelLayout
     };
@@ -299,6 +306,37 @@ int main() {
             if (!culled[variant]) Check(even, "a replayed culled triangle strip draws both of its triangles or none");
         }
         Require(!dynamicFace || (culled[0] != culled[1] && culled[0] != culled[2] && culled[1] != culled[3]), "culling a replayed triangle strip does not follow the face state");
+        constexpr std::array<std::uint32_t, 12> frontFacingColor{
+            0x7e040f00u, 0x36060481u,
+            0x7c000000u | (0xc2u << 17u) | (3u << 9u) | 0x80u,
+            0x7e0802ffu, 0xffu,
+            (1u << 25u) | (5u << 17u) | (4u << 9u) | 0x80u,
+            (0x10u << 25u) | (7u << 17u) | (1u << 9u) | 0x80u, 0xf8000082u, 5u << 8u,
+            0xf800180fu, 0x07070707u, 0xbf810000u
+        };
+        std::array<std::byte, 2> faces{};
+        for (std::uint32_t variant = 0; variant < 2u; ++variant) {
+            bool refused = false;
+            try {
+                Draw(*device, frontFacingColor, exported, replace(), 4u, 1u, false, [variant](AgcDriver::Graphics::State& state) {
+                    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+                    state.frontFace = variant != 0u ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+                }, {}, stripVertices, VertexCode, {}, {}, {}, 0u, 0x1100u);
+            } catch (const std::exception& error) {
+                refused = std::string_view(error.what()).find("reads FrontFacing") != std::string_view::npos;
+                if (!refused) throw;
+            }
+            Require(refused != dynamicFace, dynamicFace ? "a replayed triangle strip that reads FrontFacing was refused with graphics pipeline libraries" : "a replayed triangle strip that reads FrontFacing was accepted without graphics pipeline libraries");
+            if (refused) continue;
+            faces[variant] = Pixels[0];
+            Require(faces[variant] == std::byte{0} || faces[variant] == std::byte{255}, "a replayed triangle strip did not write FrontFacing to its color target");
+            for (std::uint32_t y = 0; y < Height; ++y) {
+                for (std::uint32_t x = 0; x < Width; ++x) {
+                    Require(Pixels[(y * Width + x) * 4u] == faces[variant], "a replayed odd strip triangle reads a different FrontFacing than its strip at pixel (" + std::to_string(x) + ", " + std::to_string(y) + ")");
+                }
+            }
+        }
+        Require(!dynamicFace || faces[0] != faces[1], "FrontFacing of a replayed triangle strip does not follow the front face state");
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, replace(), 6u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
