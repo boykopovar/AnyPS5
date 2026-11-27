@@ -4197,11 +4197,11 @@ template <typename OnByte, typename OnWord>
     const auto* from = static_cast<const unsigned char*>(source);
     WalkGuestBytes(
         source, bytes,
-        [&](std::size_t index) {
+        [&](std::size_t index) __attribute__((no_sanitize_address)) {
             to[index] = __atomic_load_n(from + index, __ATOMIC_RELAXED);
             return true;
         },
-        [&](std::size_t index) {
+        [&](std::size_t index) __attribute__((no_sanitize_address)) {
             const std::uint64_t word = __atomic_load_n(reinterpret_cast<const std::uint64_t*>(from + index), __ATOMIC_RELAXED);
             std::memcpy(to + index, &word, sizeof(word));
             return true;
