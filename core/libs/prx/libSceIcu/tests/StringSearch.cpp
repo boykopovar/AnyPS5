@@ -192,6 +192,14 @@ void Run() {
     Require(restricted != nullptr && status <= 0);
     Require(ubrk_last(iterator) == 3);
     ubrk_close(iterator);
+    status = 0;
+    auto* fallbackIterator = ubrk_open(0, "zz_ZZ", u"bananas", 7, &status);
+    Require(fallbackIterator != nullptr && status < 0);
+    status = 0;
+    auto* fallbackSearch = usearch_open_nid_postfix(
+        u"ana", 3, u"bananas", 7, "root", static_cast<UBreakIterator*>(fallbackIterator), &status);
+    Require(fallbackSearch != nullptr && status == 0);
+    ubrk_close(fallbackIterator);
     u_cleanup_nid_postfix();
 }
 

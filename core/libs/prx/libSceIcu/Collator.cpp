@@ -102,11 +102,14 @@ bool Unregister(const void* collator) {
 
 void CloseRegistered(void* collator, const char* caller) {
     auto& registry = Collators();
-    const std::unique_lock lock(registry.mutex);
-    const auto found = registry.collators.find(collator);
-    if (found == registry.collators.end()) NotImplemented_nid_no_patch(caller);
-    void* native = found->second;
-    registry.collators.erase(found);
+    void* native = nullptr;
+    {
+        const std::unique_lock lock(registry.mutex);
+        const auto found = registry.collators.find(collator);
+        if (found == registry.collators.end()) NotImplemented_nid_no_patch(caller);
+        native = found->second;
+        registry.collators.erase(found);
+    }
     Icu::CollatorHost::Close(native);
 }
 

@@ -1,15 +1,23 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -26,6 +34,53 @@ void Equal(std::int32_t actual, std::int32_t expected, const char* what) {
     std::fprintf(stderr, "%s: %s: got %d, expected %d\n", Context.c_str(), what, actual, expected);
     std::abort();
 }
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Expect(data != nullptr, "allocate read-only test page");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Expect(page > 0, "read page size");
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Expect(data != nullptr && data != MAP_FAILED, "allocate read-only test page");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename TValue>
+    TValue* Set(const TValue& value) {
+        Expect(sizeof(value) <= bytes, "fit read-only test value");
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<TValue*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Expect(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "protect test page");
+#else
+        Expect(mprotect(data, bytes, PROT_READ) == 0, "protect test page");
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
 
 void Append(std::u16string& text, std::uint32_t point) {
     Expect(point <= 0x10ffff, "valid test code point");
@@ -202,6 +257,16 @@ void Api() {
     ubrk_setText(iterator, u"new text", -1, &status);
     Equal(status, 15, "input failure preserved");
     Equal(ubrk_last(iterator), 0, "failed setText preserves text");
+    {
+        ReadOnlyPage page;
+        auto* failed = page.Set<std::int32_t>(15);
+        page.Protect();
+        ubrk_setText(iterator, reinterpret_cast<const char16_t*>(std::uintptr_t{1}), 1, failed);
+        Expect(!ubrk_open(0, reinterpret_cast<const char*>(std::uintptr_t{1}),
+                          reinterpret_cast<const char16_t*>(std::uintptr_t{1}), 1, failed),
+               "read-only failure prevents input access");
+        Equal(*failed, 15, "read-only failure remains unchanged");
+    }
     status = -128;
     ubrk_setText(iterator, u"xy", -1, &status);
     Equal(status, -128, "input warning preserved");
@@ -216,6 +281,21 @@ void Api() {
                       reinterpret_cast<const char16_t*>(std::uintptr_t{1}), 1, &status),
            "input failure prevents open without reading inputs");
     Equal(status, 15, "open preserves failure");
+    bool rejected = false;
+    try {
+        status = 0;
+        ubrk_open(0, reinterpret_cast<const char*>(std::uintptr_t{1}), nullptr, 0, &status);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    Expect(rejected, "unreadable locale rejected");
+    rejected = false;
+    try {
+        ubrk_open(0, "en", nullptr, 0, reinterpret_cast<std::int32_t*>(std::uintptr_t{1}));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    Expect(rejected, "unreadable status rejected");
     status = 0;
     iterator = ubrk_open(0, "zz_ZZ", u"a", 1, &status);
     Expect(iterator && status == -127, "unknown locale uses root with default warning");

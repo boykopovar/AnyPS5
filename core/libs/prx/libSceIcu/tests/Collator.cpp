@@ -206,15 +206,19 @@ void Run() {
 
     const std::string previous = uloc_getDefault();
     status = 0;
-    uloc_setDefault_nid_postfix("sv", &status);
+    uloc_setDefault_nid_postfix("de", &status);
     Require(status <= 0);
     auto* selected = ucol_open_nid_postfix(nullptr, &status);
-    auto* explicitSwedish = ucol_open_nid_postfix("sv", &status);
-    Require(selected != nullptr && explicitSwedish != nullptr && status <= 0);
-    Require(ucol_strcoll_nid_postfix(selected, u"z", -1, u"ä", -1) ==
-            ucol_strcoll_nid_postfix(explicitSwedish, u"z", -1, u"ä", -1));
+    Require(selected != nullptr && status <= 0);
+    Require(ucol_strcoll_nid_postfix(selected, u"z", -1, u"ä", -1) == UCOL_GREATER);
     ucol_close_nid_postfix(selected);
-    ucol_close_nid_postfix(explicitSwedish);
+    status = 0;
+    uloc_setDefault_nid_postfix("sv", &status);
+    Require(status <= 0);
+    selected = ucol_open_nid_postfix(nullptr, &status);
+    Require(selected != nullptr && status <= 0);
+    Require(ucol_strcoll_nid_postfix(selected, u"z", -1, u"ä", -1) == UCOL_LESS);
+    ucol_close_nid_postfix(selected);
     status = 0;
     uloc_setDefault_nid_postfix(previous.c_str(), &status);
     Require(status <= 0);

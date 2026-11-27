@@ -4,6 +4,8 @@
 #include "unicode/ubrk.h"
 #include "unicode/uenum.h"
 #include "unicode/uloc.h"
+#include <cerrno>
+#include <cstddef>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -25,6 +27,8 @@
 #undef ubrk_getAvailable
 
 namespace {
+
+constexpr std::size_t LocaleBytes = 4096;
 
 struct Registry {
     std::mutex mutex;
@@ -52,6 +56,34 @@ bool Unregister(const UBreakIterator* iterator) {
     return registry.iterators.erase(iterator) != 0;
 }
 
+std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
+    if (!status) APS5_INVALID_ARG_EX;
+    std::int32_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, status, sizeof(value));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(caller);
+    return value;
+}
+
+void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
+    if (incoming == outgoing) return;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(caller);
+}
+
+std::string CopyLocale(const char* locale, const char* caller) {
+    if (!locale) return Icu::DefaultLocaleName();
+    std::string result;
+    const int savedErrno = errno;
+    const int copied = CopyGuestString_nid_no_patch(locale, LocaleBytes, result);
+    errno = savedErrno;
+    if (copied != 0) NotImplemented_nid_no_patch(caller);
+    return result;
+}
+
 }
 
 namespace Icu::BreakIterator {
@@ -66,9 +98,10 @@ void* CloneRegistered(const void* iterator, std::int32_t& status, const char* ca
         if (found == registry.iterators.end()) NotImplemented_nid_no_patch(caller);
         recipe = found->second;
     }
-    auto code = static_cast<UErrorCode>(status);
+    const auto incoming = status;
+    auto code = static_cast<UErrorCode>(incoming);
     auto* clone = ubrk_open_78(static_cast<UBreakIteratorType>(recipe.type), recipe.locale.c_str(), u"", 0, &code);
-    status = code;
+    if (!clone || code > 0) status = code;
     return clone;
 }
 
@@ -82,19 +115,26 @@ extern "C" {
 
 void* APS5_VABI ubrk_open(std::int32_t type, const char* locale, const char16_t* text, std::int32_t length,
                          std::int32_t* error) {
-    if (!error) APS5_INVALID_ARG_EX;
-    if (*error > 0) return nullptr;
-    auto status = static_cast<UErrorCode>(*error);
-    const std::string localeName = locale ? locale : Icu::DefaultLocaleName();
+    const auto incoming = ReadStatus(error, __func__);
+    if (incoming > 0) return nullptr;
+    if (type < UBRK_CHARACTER || type >= UBRK_COUNT) {
+        WriteStatus(error, incoming, U_ILLEGAL_ARGUMENT_ERROR, __func__);
+        return nullptr;
+    }
+    const std::string localeName = CopyLocale(locale, __func__);
+    auto status = static_cast<UErrorCode>(incoming);
     auto* result = ubrk_open_78(static_cast<UBreakIteratorType>(type), localeName.c_str(), text, length, &status);
-    *error = status;
     if (result) {
         try {
             Register(result, type, localeName);
+            WriteStatus(error, incoming, status, __func__);
         } catch (...) {
+            Unregister(result);
             ubrk_close_78(result);
             throw;
         }
+    } else {
+        WriteStatus(error, incoming, status, __func__);
     }
     return result;
 }
@@ -107,9 +147,11 @@ void APS5_VABI ubrk_close(void* iterator) {
 
 void APS5_VABI ubrk_setText(void* iterator, const char16_t* text, std::int32_t length, std::int32_t* error) {
     if (!iterator || !error) APS5_INVALID_ARG_EX;
-    auto status = static_cast<UErrorCode>(*error);
+    const auto incoming = ReadStatus(error, __func__);
+    if (incoming > 0) return;
+    auto status = static_cast<UErrorCode>(incoming);
     ubrk_setText_78(static_cast<UBreakIterator*>(iterator), text, length, &status);
-    *error = status;
+    WriteStatus(error, incoming, status, __func__);
 }
 
 std::int32_t APS5_VABI ubrk_first(void* iterator) {
