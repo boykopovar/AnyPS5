@@ -324,6 +324,7 @@ public:
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool StorePages() const;
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
@@ -435,7 +436,7 @@ public:
     std::size_t BindingCount() const { return bindings.size(); }
     // Why the fast proof of a Revalidate left the object to the full walk (the [rescache]
     // revalidate line's reasons); Count: it did not.
-    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Depth, Replaced, Audit, Count };
+    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Depth, Replaced, Audit, PerUse, Count };
     struct CollectRefusals {
         std::uint64_t sampled = 0;
         std::uint64_t storage = 0;
@@ -665,6 +666,7 @@ private:
         bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
+    bool recordsEveryTexture() const;
     void captureValidation(bool spaceReusable);
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
@@ -823,6 +825,7 @@ private:
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
+    bool perUseTextures = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
     std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;

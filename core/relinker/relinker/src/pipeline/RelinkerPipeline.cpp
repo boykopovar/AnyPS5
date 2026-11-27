@@ -541,6 +541,7 @@ RelinkResult RelinkerPipeline::Relink() {
         try {
             syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index], &segmentRoutedStubs);
         } catch (const RelinkerException& error) {
+            if (!error.HasFailureOffset) throw;
             const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
             if (cause.empty()) throw;
             RelinkerException explained(error.what() + cause, error.FailureOffset);

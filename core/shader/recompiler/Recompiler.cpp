@@ -333,7 +333,6 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         dumpIr("ssa");
 
         constantFolder.Fold(program);
-        ResolveControlFlowIdentities(program);
         deadCodeEliminator.RemoveIdentities(program);
         deadCodeEliminator.Eliminate(program);
         dumpIr("fold");
@@ -341,7 +340,6 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         const auto readLaneStats = readLaneEliminator.Eliminate(program, translateOptions.waveSize);
         if (readLaneStats.rewrittenReads != 0u) {
             constantFolder.Fold(program);
-            ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
             deadCodeEliminator.Eliminate(program);
         }
@@ -363,7 +361,6 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             });
             if (liveAncillary) {
                 constantFolder.Fold(program);
-                ResolveControlFlowIdentities(program);
                 deadCodeEliminator.RemoveIdentities(program);
                 deadCodeEliminator.Eliminate(program);
             }
@@ -816,7 +813,6 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     constexpr ConstantFolder constantFolder;
     if (request.shader.stage == ShaderStage::Vertex && constantFolder.FoldVertexLaneBounds(program, HostSubgroupSize(request), request.target.spirvVersion)) {
         constantFolder.Fold(program);
-        ResolveControlFlowIdentities(program);
     }
 
     deadCodeEliminator.RemoveIdentities(program);
@@ -1037,9 +1033,9 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
         if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated prepared specialization instruction");
         if (!artifact.stencilReferences.empty() && op == spv::OpTypePointer && count == 4u && words[cursor + 2u] == spv::StorageClassPushConstant) pushTypes.insert(words[cursor + 3u]);
         if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId) {
-            if (PipelineSpecialization::IsWorkgroupOffset(words[cursor + 3u])) {
-                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a workgroup offset is supplied at dispatch, not prepared");
-                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate workgroup offset specialization");
+            if (PipelineSpecialization::IsDispatchSupplied(words[cursor + 3u])) {
+                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a dispatch specialization value is supplied at dispatch, not prepared");
+                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate dispatch specialization");
                 cursor += count;
                 continue;
             }
@@ -1225,7 +1221,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet || (compute && materialized[cursor + 3u] == WorkgroupMemoryDescriptorSet))) ldsBuffers.insert(materialized[cursor + 1u]);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationSpecId) {
             const auto id = materialized[cursor + 3u];
-            if (!PipelineSpecialization::IsWorkgroupOffset(id) && !PipelineSpecialization::IsAtomicLockTable(id)) module->specialization.push_back({id, supplied.at(id)});
+            if (!PipelineSpecialization::IsDispatchSupplied(id) && !PipelineSpecialization::IsAtomicLockTable(id)) module->specialization.push_back({id, supplied.at(id)});
         }
         if (op == spv::OpVariable && count >= 4u && !ldsBuffers.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
@@ -1683,6 +1679,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.readsDepthRemapPush = depthRemap;
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
+        result.specialization.push_back({PipelineSpecialization::StorePages, 0u});
     }
     if (declaresAtomicLockTable(artifact.spirv.Words())) {
         for (std::uint32_t word = 0; word < PipelineSpecialization::AtomicLockTableWords; ++word) result.specialization.push_back({PipelineSpecialization::AtomicLockTableBase + word, 0u});
@@ -2469,6 +2466,10 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     }
 }
 
+}
+
+std::uint64_t MetadataBytes(const RecompileResult& result) {
+    return resultBytes(result);
 }
 
 std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {

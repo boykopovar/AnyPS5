@@ -485,6 +485,7 @@ int* errno_slot() {
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity);
 extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu);
 extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway);
+extern "C" void NetCtlHostTraffic_nid_no_patch(std::uint64_t* sent, std::uint64_t* received);
 
 std::mutex g_dnsLock;
 bool g_dnsOverridden = false;
@@ -3490,7 +3491,13 @@ int APS5_VABI sceNetGetStatisticsInfo(NetStatisticsInfo* info, std::uint32_t fla
 }
 
 int APS5_VABI sceNetGetInterfaceStats(NetInterfaceStats* stats, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (stats == nullptr || flags != 0) NotImplemented_nid_no_patch(__func__);
+    NetInterfaceStats result{};
+    NetCtlHostTraffic_nid_no_patch(&result.txBytes, &result.rxBytes);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
