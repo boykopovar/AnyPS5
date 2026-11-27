@@ -479,7 +479,8 @@ int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, 
     if (!std::isfinite(gamma) || gamma < 0.1f || gamma > 2.0f) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
     }
-    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<std::byte*>(settings) + offsetof(VideoOutColorSettings, gamma), &gamma, sizeof(gamma));
+    static_assert(offsetof(VideoOutColorSettings, gamma) == 0);
+    const bool copied = GuestCopyOut_nid_no_patch(settings, &gamma, sizeof(gamma));
     if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
