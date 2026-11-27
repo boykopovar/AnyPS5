@@ -230,7 +230,6 @@ void testIndexedIndirectDraws() {
     check(unaligned == console.words.data() && std::equal(expectedUnaligned.begin(), expectedUnaligned.end(), unaligned), "indexed indirect draw did not encode an unaligned offset and high modifier bits as the console does");
     const auto before = storage.words;
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, nullptr, 20, 0); });
-    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 3, 8, &count, 20, 0); });
     check(storage.words == before, "invalid indexed indirect draw modified packet memory");
 }
 
@@ -256,10 +255,21 @@ void testMeasuredMultiDraws() {
     }
     Storage refused;
     const auto before = refused.words;
-    alignas(4) std::uint32_t count = 0;
     expectFailure([&] { sceAgcDcbDrawIndirectMulti(&refused.buffer, 0, 1, 8, nullptr, 16, 0); });
-    expectFailure([&] { sceAgcDcbDrawIndirectMulti(&refused.buffer, 0, 0x11111111u, 8, &count, 16, 0); });
     check(refused.words == before && refused.buffer.cursor_up == refused.words.data(), "refused indirect multi draw modified the buffer");
+}
+
+void testOddCountSelectors() {
+    alignas(4) std::uint32_t count = 0;
+    for (const std::uint32_t selector : {0x22222222u, 2u, 0x80000000u, 1u, 3u, 5u, 7u, 0x11111111u, 0x22222223u, 0x80000001u}) {
+        const std::uint32_t control = (selector & 1u) != 0 ? 0x40000280u : 0x280u;
+        Storage indexed;
+        const auto* indexedPacket = sceAgcDcbDrawIndexIndirectMulti(&indexed.buffer, 0x100, selector, 7, &count, 0x10, 0);
+        check(indexedPacket == indexed.words.data() && indexedPacket[7] == control, "indexed indirect multi draw did not set the count-indirect bit exactly for an odd count selector");
+        Storage plain;
+        const auto* plainPacket = sceAgcDcbDrawIndirectMulti(&plain.buffer, 0x100, selector, 7, &count, 0x10, 0);
+        check(plainPacket == plain.words.data() && plainPacket[7] == control, "indirect multi draw did not set the count-indirect bit exactly for an odd count selector");
+    }
 }
 
 void testTagHeaders() {
@@ -1462,6 +1472,7 @@ int main(int argc, char** argv) {
         testClearState();
         testIndexedIndirectDraws();
     testMeasuredMultiDraws();
+    testOddCountSelectors();
         testTagHeaders();
         testWaitConsoleArguments();
         testMarkers();
