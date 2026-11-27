@@ -1831,6 +1831,12 @@ int DoMunmap(void* addr, size_t len) {
     return 0;
 }
 
+static bool RegisteredPiecesReleasable(const GuestAllocations::Mutation& mutation, const void* addr, size_t len) {
+    bool releasable = true;
+    mutation.ForRegistered(addr, len, [&](const void* piece, std::size_t bytes) { releasable = releasable && mutation.Covers(piece, bytes); });
+    return releasable;
+}
+
 static bool ArenaUsedOutsideRegistered(const GuestAllocations::Mutation& mutation, const void* addr, size_t len) {
     if (!GuestArena::GuestArenaAvailable_nid_postfix()) return false;
     const auto start = reinterpret_cast<std::uintptr_t>(addr);
@@ -1865,6 +1871,7 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
                 return 0;
             }
         }
+        if (!RegisteredPiecesReleasable(mutation, *addr, len)) mutation.RequireAvailable(*addr, len);
         if (ArenaUsedOutsideRegistered(mutation, *addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
         try {
             ValidateRange(*addr, len, ValidateAlignment(alignment));
