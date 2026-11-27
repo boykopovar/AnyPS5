@@ -372,13 +372,9 @@ void TestPreDecoderValidation() {
     checkMemReject(0x38, ReadU64(memInfo.data(), 0x38) - 1ULL, false, "JawAvxR7M+k size2 small");
     checkMemReject(0x40, 0x180ULL, true, "JawAvxR7M+k align2 bad");
     checkMemReject(0x30, 0x30040ULL, false, "JawAvxR7M+k base2 misaligned");
-    for (std::size_t alignOff : {std::size_t{0x10}, std::size_t{0x28}, std::size_t{0x40}}) {
-        auto zeroAlignMem = memInfo;
-        WriteU32(zeroAlignMem.data(), alignOff, 0u);
-        RequireNotImplemented([&] {
-            libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), zeroAlignMem.data(), &dummyA4, handle.data());
-        }, "JawAvxR7M+k align == 0 passes validation");
-    }
+    checkMemReject(0x10, 0ULL, true, "JawAvxR7M+k align0 == 0");
+    checkMemReject(0x28, 0ULL, true, "JawAvxR7M+k align1 == 0");
+    checkMemReject(0x40, 0ULL, true, "JawAvxR7M+k align2 == 0");
     {
         auto reqAlignMem = memInfo;
         WriteU64(reqAlignMem.data(), 0x00, 0x13ULL);

@@ -385,10 +385,10 @@ int APS5_VABI libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(const void* cf
     const std::uint64_t base2 = ReadU64(memBuf + 0x30);
     const std::uint64_t size2 = ReadU64(memBuf + 0x38);
     const std::uint32_t align2 = ReadU32(memBuf + 0x40);
-    if (size0 < req[0].size || (align0 % req[0].align) != 0u ||
-        size1 < req[1].size || (align1 % req[1].align) != 0u ||
+    if (size0 < req[0].size || align0 == 0u || (align0 % req[0].align) != 0u ||
+        size1 < req[1].size || align1 == 0u || (align1 % req[1].align) != 0u ||
         (base1 % static_cast<std::uint64_t>(req[1].align)) != 0ULL ||
-        (align2 % req[2].align) != 0u ||
+        align2 == 0u || (align2 % req[2].align) != 0u ||
         (base2 % static_cast<std::uint64_t>(req[2].align)) != 0ULL ||
         size2 < req[2].size) {
         return -8;
