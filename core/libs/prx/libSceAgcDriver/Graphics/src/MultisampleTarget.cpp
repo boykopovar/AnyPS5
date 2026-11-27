@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -1493,6 +1494,19 @@ bool holdHostOnly(const MultisampleTarget& target) {
     return true;
 }
 
+void requireNoTextureHost(const Context& context, const ColorTarget& target) {
+    if (!ColorTileModeIsGcn(target.tileMode)) return;
+    const auto bytes = guardedColorBytes(target);
+    for (const auto& candidate : targets()) {
+        if (!candidate->active->load(std::memory_order_acquire) || candidate->context.device != context.device || !candidate->fromTexture) continue;
+        const auto& texture = candidate->target;
+        if (target.address >= texture.address + guardedColorBytes(texture) || texture.address >= target.address + bytes) continue;
+        char text[288];
+        std::snprintf(text, sizeof(text), "AGC graphics: the %ux%u PS4 multisampled color target 0x%llx over the %ux%u host target a texture built at 0x%llx, which it does not match in size, format or samples, is not implemented", target.extent.width, target.extent.height, static_cast<unsigned long long>(target.address), texture.extent.width, texture.extent.height, static_cast<unsigned long long>(texture.address));
+        throw std::runtime_error(text);
+    }
+}
+
 MultisampleTarget& acquire(const Context& context, const ColorTarget& requested, std::optional<VkClearColorValue> initialClear = std::nullopt, std::shared_ptr<Buffer> initialUpload = {}, std::vector<std::byte> initialBaseline = {}) {
     discardRetiredTargets();
     for (const auto& target : targets()) {
@@ -1542,6 +1556,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
         return *target;
     }
     const auto& use = requested;
+    requireNoTextureHost(context, use);
     auto target = std::make_shared<MultisampleTarget>(context, use, false, initialClear, std::move(initialUpload), std::move(initialBaseline));
     target->Keep();
     targets().push_back(std::move(target));
@@ -1572,6 +1587,8 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
         case TextureTileMode::kZ64KBX: use.tileMode = ColorTileMode::Z64KBX; break;
         case TextureTileMode::kD64KBX: use.tileMode = ColorTileMode::D64KBX; break;
         case TextureTileMode::kR64KBX: use.tileMode = ColorTileMode::RenderTarget; break;
+        case TextureTileMode::kGcnDisplay2D: use.tileMode = ColorTileMode::GcnDisplay2D; break;
+        case TextureTileMode::kGcnThin2D: use.tileMode = ColorTileMode::GcnThin2D; break;
         default: refuse("whose tile mode " + std::to_string(static_cast<int>(resource.tileMode)) + " has no modeled multisampled color footprint");
     }
     use.address = resource.baseAddress;
@@ -1582,9 +1599,15 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     use.elementBytes = BytesPerElement(resource.format);
     use.pipeBankXor = resource.pipeBankXor;
     use.samples = resource.samples;
+    const bool gcn = ColorTileModeIsGcn(use.tileMode);
+    if (gcn) {
+        const auto surfaceBytes = DescribeSurface(resource).guestBytes;
+        if (surfaceBytes % use.samples != 0) refuse("whose PS4 surface of " + std::to_string(surfaceBytes) + " bytes does not hold whole samples");
+        use.bytes = static_cast<std::size_t>(surfaceBytes / use.samples);
+    }
     const auto bytes = MultisampledColorBytes(use);
     if (bytes == 0) refuse("whose " + std::to_string(use.elementBytes) + "-byte elements have no modeled multisampled color footprint");
-    use.bytes = ColorTargetLayout(use.extent.width, use.extent.height, use.tileMode, use.elementBytes).Bytes();
+    if (!gcn) use.bytes = ColorTargetLayout(use.extent.width, use.extent.height, use.tileMode, use.elementBytes).Bytes();
     char range[64];
     std::snprintf(range, sizeof(range), "0x%llx+0x%llx", static_cast<unsigned long long>(use.address), static_cast<unsigned long long>(bytes));
     RequireNoResidentDepthRead_nid_no_patch(use.address, static_cast<std::size_t>(bytes), std::nullopt, false);
@@ -1629,6 +1652,7 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     char held[16];
     std::snprintf(held, sizeof(held), "0x%08x", value);
     const bool uniform = htileCleared || std::equal(memory + sizeof(value), memory + bytes, memory);
+    if (gcn && !uniform) refuse(std::string("whose PS4 color memory ") + range + " does not repeat one 32-bit value");
     VkClearColorValue clear{};
     if (uniform && !MultisampledFillClearColor(use, value, clear)) refuse(std::string("whose color memory ") + range + " holds " + held + ", which has no exact clear value in its format");
     auto target = std::make_shared<MultisampleTarget>(context, use, !uniform);
@@ -1732,6 +1756,7 @@ bool MultisampledCmask::TakeClear() {
 }
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target) {
+    if (target.tileMode == ColorTileMode::GcnThin2D || target.tileMode == ColorTileMode::GcnDisplay2D) return static_cast<std::uint64_t>(target.bytes) * storedFragments(target);
     const auto blockLog2 = MultisampledBlockLog2(target.tileMode);
     const auto fragments = storedFragments(target);
     if (blockLog2 == 0 || !std::has_single_bit(target.elementBytes) || !std::has_single_bit(fragments)) return 0;
@@ -1905,6 +1930,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
         TargetsLock lock;
         discardRetiredTargets();
         if (std::ranges::any_of(targets(), [&](const auto& candidate) { return candidate->context.device == context.device && candidate->Serves(target); })) return;
+        requireNoTextureHost(context, target);
     }
     if (target.dccAddress != 0u || target.cmaskFastClear) return;
     Require(target.cmaskAddress == 0u, "initial multisample color contents with CMASK require a modeled metadata import");
