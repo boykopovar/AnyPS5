@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <stdexcept>
 
 namespace DualSenseHaptics {
 
@@ -34,6 +35,7 @@ constexpr std::array<std::uint32_t, 256> CrcTable = [] {
 }();
 
 inline void Sign(std::span<std::uint8_t> report) {
+    if (report.size() < 4) throw std::invalid_argument("DualSenseHaptics: report shorter than CRC trailer");
     std::uint32_t crc = 0xFFFFFFFFu;
     const auto feed = [&crc](std::uint8_t byte) { crc = CrcTable[(crc ^ byte) & 0xFFu] ^ (crc >> 8u); };
     feed(0xA2);

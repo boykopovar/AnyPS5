@@ -644,6 +644,9 @@ int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t*
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -925,7 +928,7 @@ int APS5_VABI sceUserServiceSetGlsLfpsSortOrder(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceLogin(void) {
+int APS5_VABI sceUserServiceLogin(int userId, std::uint64_t request) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1145,19 +1148,21 @@ int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::si
     if (!UserGroupSlotExists(groupIndex)) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    std::memset(name, 0, size);
+    char output[129]{};
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor >= 0) {
-        const std::int64_t bytesRead = sceKernelRead(descriptor, name, 128);
+        const std::int64_t bytesRead = sceKernelRead(descriptor, output, 128);
         sceKernelClose(descriptor);
-        if (bytesRead > 0) {
-            return USER_SERVICE_OK;
-        }
+        if (bytesRead <= 0) std::snprintf(output, sizeof(output), "User Group %d", groupIndex + 1);
+    } else {
+        std::snprintf(output, sizeof(output), "User Group %d", groupIndex + 1);
     }
-    std::snprintf(name, size, "User Group %d", groupIndex + 1);
-    return USER_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(name, output, sizeof(output));
+    errno = savedErrno;
+    return copied ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceUserServiceSetAutoLoginEnabled(void) {
@@ -1390,7 +1395,7 @@ int APS5_VABI sceUserServiceGetKratosPrimaryUser(int* userId) {
  return USER_SERVICE_ERROR_NOT_SUPPORTED;
 }
 
-int APS5_VABI sceUserServiceLogout(void) {
+int APS5_VABI sceUserServiceLogout(int userId, int request) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2552,7 +2557,7 @@ int APS5_VABI sceUserServiceSetGlsCameraBrightness(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceDestroyUser(void) {
+int APS5_VABI sceUserServiceDestroyUser(int userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

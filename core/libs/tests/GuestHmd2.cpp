@@ -76,6 +76,20 @@ void TestCallsWithoutReprojectionSession() {
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 1, 1) == Hmd2::ReprojectionNotInitialized, "render config with nonzero reserved arguments without a reprojection session");
     }
+    for (const std::uint64_t frameId : frameIds) {
+        Require(sceHmd2ReprojectionBeginFrame(frameId) == Hmd2::ReprojectionNotInitialized, "begin frame without a reprojection session");
+    }
+    Require(sceHmd2ReprojectionBeginFrame(0x7fffffffffffffffull) == Hmd2::ReprojectionNotInitialized, "begin frame with the largest signed frame id without a reprojection session");
+    Hmd2::MirroringOption option;
+    std::memset(&option, 0xaa, sizeof(option));
+    const Hmd2::MirroringOption optionBefore = option;
+    for (int call = 0; call < 2; ++call) {
+        Require(sceHmd2ReprojectionDisableMirroring() == Hmd2::ReprojectionNotInitialized, "disabling mirroring without a reprojection session");
+        Require(sceHmd2ReprojectionDisableVrMode() == Hmd2::ReprojectionNotInitialized, "disabling VR mode without a reprojection session");
+        Require(sceHmd2ReprojectionSetMirroringOption(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring option with a null option without a reprojection session");
+        Require(sceHmd2ReprojectionSetMirroringOption(&option) == Hmd2::ReprojectionNotInitialized, "mirroring option without a reprojection session");
+    }
+    Require(std::memcmp(&option, &optionBefore, sizeof(option)) == 0, "mirroring option was written without a reprojection session");
 }
 
 void InstallProcessParameters() {
@@ -376,11 +390,18 @@ void TestGatedCallsInsideReprojectionSession() {
     const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
     std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionEnableMirroring(&mirroring); }), "mirroring inside a reprojection session answered as without one");
-    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionGetPredictedDisplayTime(1, &time); }), "predicted display time inside a reprojection session answered as without one");
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1, 0, 0); }), "render config inside a reprojection session answered as without one");
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1ull << 32, 0, 0); }), "render config with the second accepted bit inside a reprojection session answered as without one");
+    const Hmd2::MirroringOption option{};
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionBeginFrame(1); }), "begin frame inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionDisableMirroring(); }), "disabling mirroring inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionDisableVrMode(); }), "disabling VR mode inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetMirroringOption(&option); }), "mirroring option inside a reprojection session answered as without one");
     for (const std::uint64_t frameId : {0ull, 1ull, 0x123456789ull}) {
         Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ParameterNull, "predicted display time into a null output inside a reprojection session");
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, &time) == static_cast<std::int32_t>(0x8A720019),
+            "predicted display time did not report the missing headset inside a reprojection session");
+        Require(time == 0xaaaaaaaaaaaaaaaa, "predicted display time was written without a headset");
     }
     Require(sceHmd2ReprojectionSetRenderConfig(0, 1, 1) == Hmd2::ParameterInvalid, "render config with nonzero reserved arguments inside a reprojection session");
     Require(sceHmd2ReprojectionSetRenderConfig(2, 0, 0) == Hmd2::ParameterInvalid, "render config with a bit outside the accepted ones inside a reprojection session");

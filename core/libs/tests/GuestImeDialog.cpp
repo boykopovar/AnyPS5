@@ -381,6 +381,17 @@ int main() {
     errno = 71;
     Require(sceImeDialogInit(reinterpret_cast<const Param*>(1), nullptr) == ErrorInvalidAddress);
     Require(errno == 71);
+    {
+        unsigned char subInfo[0x128] = {};
+        Require(sceImeDialogInitInternalWithSubInfo(nullptr, nullptr, subInfo) == ErrorInvalidAddress);
+        Require(sceImeDialogInitInternalWithSubInfo(nullptr, nullptr, nullptr) == ErrorInvalidAddress);
+        Require(sceImeDialogInitInternalWithSubInfo(&param, nullptr, subInfo) == 0);
+        Require(sceImeDialogGetStatus() == StatusRunning);
+        Require(sceImeDialogInitInternalWithSubInfo(&param, nullptr, subInfo) == ErrorBusy);
+        Require(sceImeDialogInitInternalWithSubInfo(&param, nullptr, nullptr) == ErrorBusy);
+        Require(sceImeDialogTerm() == 0);
+        Require(sceImeDialogGetStatus() == StatusNone);
+    }
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

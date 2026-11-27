@@ -96,6 +96,12 @@ struct KernelEventFlagPrivate {
         node->prev = nullptr;
         node->next = nullptr;
     }
+
+    void releaseWaiter(WaiterNode* node, WaiterNode::Outcome outcome) {
+        removeWaiter(node);
+        node->outcome = outcome;
+        node->wake.NotifyOne();
+    }
 };
 
 namespace {
@@ -259,12 +265,7 @@ int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef) {
     std::unique_lock lock(flag->_mutex);
     if (flag->_deleted) return SCE_KERNEL_ERROR_ESRCH;
     flag->_deleted = true;
-    for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
-        if (waiter->outcome == WaiterNode::Outcome::Pending) {
-            waiter->outcome = WaiterNode::Outcome::Deleted;
-            waiter->wake.NotifyOne();
-        }
-    }
+    while (flag->_waiterHead) flag->releaseWaiter(flag->_waiterHead, WaiterNode::Outcome::Deleted);
     flag->_changed.Wait(lock, [&] { return flag->_waiters == 0; });
     lock.unlock();
     RetireEventFlag(ef, entry);
@@ -279,17 +280,18 @@ int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern) {
     if (flag->_deleted) return entry->opened ? SCE_OK : SCE_KERNEL_ERROR_ESRCH;
     flag->_pattern |= bit_pattern;
     if (TraceSync()) std::fprintf(stderr, "[evf] set %p '%s' |=0x%llx -> 0x%llx\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), static_cast<unsigned long long>(flag->_pattern));
-    for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
-        if (waiter->outcome == WaiterNode::Outcome::Pending && IsSatisfied(flag->_pattern, waiter->bitPattern, waiter->waitMode)) {
-            waiter->outcome = WaiterNode::Outcome::Satisfied;
+    for (auto* waiter = flag->_waiterHead; waiter != nullptr;) {
+        auto* const next = waiter->next;
+        if (IsSatisfied(flag->_pattern, waiter->bitPattern, waiter->waitMode)) {
             waiter->resultPattern = flag->_pattern;
             if (waiter->waitMode & EVF_WAITMODE_CLEAR_ALL) {
                 flag->_pattern = 0;
             } else if (waiter->waitMode & EVF_WAITMODE_CLEAR_PAT) {
                 flag->_pattern &= ~waiter->bitPattern;
             }
-            waiter->wake.NotifyOne();
+            flag->releaseWaiter(waiter, WaiterNode::Outcome::Satisfied);
         }
+        waiter = next;
     }
     return SCE_OK;
 }
@@ -314,14 +316,11 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern,
         if (num_wait_threads && !StoreGuest(num_wait_threads, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_OK;
     }
-    if (num_wait_threads && !StoreGuest(num_wait_threads, flag->_waiters)) return SCE_KERNEL_ERROR_EFAULT;
+    int waiting = 0;
+    for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) ++waiting;
+    if (num_wait_threads && !StoreGuest(num_wait_threads, waiting)) return SCE_KERNEL_ERROR_EFAULT;
     flag->_pattern = set_pattern;
-    for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
-        if (waiter->outcome == WaiterNode::Outcome::Pending) {
-            waiter->outcome = WaiterNode::Outcome::Canceled;
-            waiter->wake.NotifyOne();
-        }
-    }
+    while (flag->_waiterHead) flag->releaseWaiter(flag->_waiterHead, WaiterNode::Outcome::Canceled);
     return SCE_OK;
 }
 
@@ -335,7 +334,7 @@ int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
         return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EACCES);
     }
-    if (!flag->_multipleWaiters && flag->_waiters != 0) return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EPERM);
+    if (!flag->_multipleWaiters && flag->_waiterHead) return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EPERM);
     if (!IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) return ReportPattern(result_pat, flag->_pattern, SCE_KERNEL_ERROR_EBUSY);
     return ReportPattern(result_pat, Consume(flag, bit_pattern, wait_mode), SCE_OK);
 }
@@ -350,7 +349,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
         return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EACCES);
     }
-    if (!flag->_multipleWaiters && flag->_waiters != 0) return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EPERM);
+    if (!flag->_multipleWaiters && flag->_waiterHead) return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EPERM);
     if (IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) return ReportPattern(result_pat, Consume(flag, bit_pattern, wait_mode), SCE_OK);
     KernelUseconds limit = 0;
     if (timeout && !LoadGuest(timeout, limit)) return SCE_KERNEL_ERROR_EFAULT;
@@ -368,7 +367,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         KernelEventFlagPrivate* flag;
         WaiterNode* node;
         ~WaiterGuard() {
-            flag->removeWaiter(node);
+            if (node->outcome == WaiterNode::Outcome::Pending) flag->removeWaiter(node);
             --flag->_waiters;
             if (flag->_deleted) flag->_changed.NotifyAll();
         }

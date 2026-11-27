@@ -89,6 +89,19 @@ struct Ngs2FilterHistory {
     float y2 = 0.0f;
 };
 
+struct Ngs2MasteringLfe {
+    struct Section {
+        float gain = 0.0f;
+        float a1 = 0.0f;
+        float a2 = 0.0f;
+        Ngs2FilterHistory history;
+    };
+    bool enabled = false;
+    std::uint32_t cutoff = 120;
+    std::uint32_t designRate = 0;
+    std::array<Section, 2> sections{};
+};
+
 struct Ngs2Filter {
     bool enabled = false;
     bool pending = false;
@@ -147,6 +160,7 @@ struct Ngs2VoiceCustomChannelMixer {
 struct Ngs2SubmixerCompressor {
     bool configured = false;
     Ngs2SubmixerVoiceCompressorParam param{};
+    std::vector<float> keySamples;
     std::array<float, NGS2_MAX_CHANNELS> gain{};
 };
 
@@ -231,10 +245,12 @@ struct Ngs2Voice {
     std::uint32_t outputId = 0;
     float fbwLevel = 1.0f;
     float lfeLevel = 1.0f;
+    Ngs2MasteringLfe masteringLfe;
     std::vector<Ngs2UserFx2> userFx;
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
     std::vector<Ngs2VoiceCustomChannelMixer> customChannelMixer;
+    std::vector<Ngs2Filter> customFilter;
     Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
@@ -302,6 +318,11 @@ struct Ngs2Rack {
     bool destroying = false;
 };
 
+struct Ngs2Stream {
+    Ngs2System* system = nullptr;
+    bool destroying = false;
+};
+
 struct Ngs2JobManager {
     Ngs2JobSchedulerOption option{};
     std::uintptr_t handle = 0;
@@ -323,6 +344,7 @@ struct Ngs2System {
     std::uint32_t controlCallbacks = 0;
     std::uintptr_t userData = 0;
     std::vector<Ngs2Rack*> racks;
+    std::vector<Ngs2Stream*> streams;
     std::atomic<std::uint64_t> callbackSequence{0};
     std::array<std::array<std::uint8_t, 24>, 32> slotData{};
     std::array<bool, 32> slotSet{};
@@ -374,6 +396,7 @@ const TParam& ParamAs(const Ngs2VoiceParamHeader& param) {
 std::vector<Ngs2Rack*>& Ngs2DetachedRacks();
 Ngs2Rack* Ngs2FindRack(Ngs2Handle handle);
 Ngs2Voice* Ngs2FindVoice(Ngs2Handle handle);
+Ngs2Stream* Ngs2FindStream(Ngs2Handle handle);
 void* Ngs2Place(const Ngs2ContextBufferInfo* bufferInfo, std::size_t size, std::size_t alignment);
 int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo);
 int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInfo bufferInfo, Ngs2ContextBufferInfo* outBufferInfo);
@@ -381,8 +404,11 @@ void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format);
 void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param);
 void Ngs2ConfigureFilter(Ngs2Filter& filter, const Ngs2SamplerVoiceFilterParam& param, float rate);
 void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain);
+void Ngs2FilterChannels(Ngs2Filter& filter, float* samples, std::uint32_t channels, std::uint32_t grain);
 bool Ngs2FilterHasHistory(const Ngs2Filter& filter);
 void Ngs2ResetFilterHistory(Ngs2Voice& voice);
+void Ngs2ResetCustomFilterHistory(Ngs2Voice& voice);
+void Ngs2ApplyMasteringLfe(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block);
 bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame);

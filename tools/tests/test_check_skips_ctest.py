@@ -57,6 +57,13 @@ class IntentionalSkipTests(unittest.TestCase):
     def test_real_regex_skip_with_unexpected_reason_fails(self):
         self.check_real_skip("SKIP_REGULAR_EXPRESSION", "skipped,", "skipped, flaky", 0, 1)
 
+    def test_device_skip_cannot_hide_a_different_skip_marker(self):
+        self.check_real_skip("SKIP_RETURN_CODE", "77", "skipped, no display\nfixture: SKIP: unexpected failure", 77, 1)
+
+    def test_device_skip_accepts_both_reason_markers(self):
+        self.check_real_skip("SKIP_RETURN_CODE", "77", "skipped, no display\nfixture: SKIP: no usable Vulkan device", 77, 0)
+        self.check_real_skip("SKIP_RETURN_CODE", "77", "SKIP: no display", 77, 0)
+
     def test_disabled_status_is_rejected_even_with_ctest_skip_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "report.xml"

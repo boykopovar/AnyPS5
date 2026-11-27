@@ -592,6 +592,35 @@ void CheckGapWalkBranchTargets() {
     Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
 }
 
+void CheckRelativeJumpTablesAtHighBases() {
+    constexpr std::size_t tableOffset = 16;
+    Bytes text(32, 0x90);
+    text[0] = 0x48;
+    text[1] = 0x8d;
+    text[2] = 0x05;
+    const auto displacement = static_cast<std::int32_t>(tableOffset - 7);
+    std::memcpy(text.data() + 3, &displacement, sizeof(displacement));
+    text[7] = 0xff;
+    text[8] = 0xe0;
+    const std::int32_t targets[]{-16, -9};
+    std::memcpy(text.data() + tableOffset, targets, sizeof(targets));
+    for (const VirtualAddress base : {VirtualAddress{0x7ffffffffffffff0}, VirtualAddress{0x8000000000000000}, VirtualAddress{0xffffffffffffff00}}) {
+        const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{base, base + 9}, {base + text.size(), base + text.size() + 8}};
+        const auto tables = Relinker::FindRelativeJumpTables(text, base, functions);
+        Require(tables.size() == 1, "A relative jump table was missed in a segment at a high base address");
+        Require(tables[0].Function == base && tables[0].Begin == base + tableOffset && tables[0].End == base + text.size(), "A relative jump table range changed in a segment at a high base address");
+    }
+
+    Bytes backwardJump(32, 0x90);
+    backwardJump[0] = 0xeb;
+    backwardJump[1] = 0xf0;
+    for (const VirtualAddress base : {VirtualAddress{0x8000000000000000}, VirtualAddress{0xffffffffffffff00}}) {
+        const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{base, base + backwardJump.size()}};
+        Require(Relinker::FindRelativeJumpTables(backwardJump, base, functions).empty(), "A backward branch from a segment at a high base address produced a table");
+        Require(Relinker::FindRelativeJumpTables(backwardJump, base, {}).empty(), "A backward branch from an unmapped-function segment at a high base address produced a table");
+    }
+}
+
 void CheckEmbeddedDataTables() {
     constexpr std::size_t tableOffset = 24;
     Bytes text(48, 0x90);
@@ -873,6 +902,34 @@ void CheckLargeZeroGaps() {
     Require(elapsed < std::chrono::seconds(10), "Large gap analysis took too long");
 }
 
+void CheckRelativeJumpTableDisplacementBounds() {
+    const Bytes underflowBranch{0x75, 0x80};
+    const auto underflowStart = std::chrono::steady_clock::now();
+    const auto underflowTables = Relinker::FindRelativeJumpTables(underflowBranch, 0, {{0, 2}});
+    Require(underflowTables.empty(), "Underflow branch displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - underflowStart < std::chrono::seconds(2), "Underflow branch scan timed out");
+
+    constexpr auto highAddress = std::numeric_limits<VirtualAddress>::max() - 10;
+    const Bytes overflowBranch{0x75, 0x7f, 0xc3};
+    const auto overflowStart = std::chrono::steady_clock::now();
+    const auto overflowTables = Relinker::FindRelativeJumpTables(overflowBranch, highAddress, {{highAddress, highAddress + 2}});
+    Require(overflowTables.empty(), "Overflow branch displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - overflowStart < std::chrono::seconds(2), "Overflow branch scan timed out");
+
+    const Bytes underflowLea{0x48, 0x8d, 0x05, 0x80, 0xff, 0xff, 0xff, 0xcc, 0xc3};
+    const auto leaStart = std::chrono::steady_clock::now();
+    const auto leaTables = Relinker::FindRelativeJumpTables(underflowLea, 0, {{0, 7}, {8, 9}});
+    Require(leaTables.empty(), "Underflow LEA displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - leaStart < std::chrono::seconds(2), "Underflow LEA scan timed out");
+
+    constexpr auto highLeaAddress = std::numeric_limits<VirtualAddress>::max() - 20;
+    const Bytes overflowLea{0x48, 0x8d, 0x05, 0x7f, 0x00, 0x00, 0x00, 0xcc, 0xc3};
+    const auto overflowLeaStart = std::chrono::steady_clock::now();
+    const auto overflowLeaTables = Relinker::FindRelativeJumpTables(overflowLea, highLeaAddress, {{highLeaAddress, highLeaAddress + 7}, {highLeaAddress + 8, highLeaAddress + 9}});
+    Require(overflowLeaTables.empty(), "Overflow LEA displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - overflowLeaStart < std::chrono::seconds(2), "Overflow LEA scan timed out");
+}
+
 }
 
 int main() {
@@ -895,6 +952,7 @@ int main() {
         CheckAddressOverflow();
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
+        CheckRelativeJumpTablesAtHighBases();
         CheckEmbeddedDataTables();
         CheckSyscallsBeforeLaterPadding();
         CheckDecodedPaddingSuffix();
@@ -902,6 +960,7 @@ int main() {
         CheckTableWithPaddingAndReturnBytes();
         CheckLargeZeroGaps();
         CheckGapWalkBranchTargets();
+        CheckRelativeJumpTableDisplacementBounds();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {
