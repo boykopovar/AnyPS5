@@ -1814,6 +1814,12 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
         std::lock_guard lock(snapshotMutex);
         if (const auto found = snapshotTables.find(snapshot.get()); found != snapshotTables.end() && sameSnapshot(found->second)) return found->second.table;
     }
+    const auto rememberSnapshot = [&](const std::shared_ptr<const std::vector<std::uint32_t>>& table) {
+        if (snapshot == nullptr) return;
+        std::lock_guard lock(snapshotMutex);
+        if (snapshotTables.size() >= 8192u) std::erase_if(snapshotTables, [](const auto& entry) { return entry.second.snapshot.expired(); });
+        snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, table};
+    };
     std::vector<std::uint32_t> indices(draw.indexCount);
     if (draw.indexed) {
         Require(draw.indexSize == 2u || draw.indexSize == 4u, "mesh reuse grouping reads 16- or 32-bit indices");
@@ -1859,10 +1865,7 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
     {
         std::lock_guard lock(cacheMutex);
         if (const auto found = cache.find(key); found != cache.end() && found->second.indices == indices) {
-            if (snapshot != nullptr) {
-                std::lock_guard snapshotLock(snapshotMutex);
-                snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, found->second.table};
-            }
+            rememberSnapshot(found->second.table);
             return found->second.table;
         }
     }
@@ -1874,11 +1877,7 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
         if (cache.size() >= 8192u) cache.clear();
         cache.insert_or_assign(key, CachedTable{indices, table});
     }
-    if (snapshot != nullptr) {
-        std::lock_guard lock(snapshotMutex);
-        if (snapshotTables.size() >= 8192u) std::erase_if(snapshotTables, [](const auto& entry) { return entry.second.snapshot.expired(); });
-        snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, table};
-    }
+    rememberSnapshot(table);
     return table;
 }
 
