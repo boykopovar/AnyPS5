@@ -77,6 +77,12 @@ void booleanFlags() {
     require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "flags consumed the positional paths");
 }
 
+void functionSymbolRoots() {
+    const auto args = parse({"--function-symbol-roots", "input.elf", "output.elf"});
+    require(args.functionSymbolRoots, "--function-symbol-roots was ignored");
+    require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "--function-symbol-roots consumed the positional paths");
+}
+
 void trapSdkSyscallStubs() {
     const auto args = parse({"--trap-sdk-syscall-stubs", "input.elf", "output.elf"});
     require(args.trapSdkSyscallStubs, "--trap-sdk-syscall-stubs was ignored");
@@ -423,6 +429,7 @@ int main() {
         defaults();
         dryRun();
         booleanFlags();
+        functionSymbolRoots();
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
         singleDashIsPositional();
