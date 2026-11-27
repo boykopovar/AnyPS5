@@ -110,6 +110,7 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
         return SCE_NGS2_OK;
     }
     if (option->size != size) {
+        if (CustomMasteringHasModules(rackId, option)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
         const auto* bytes = reinterpret_cast<const unsigned char*>(option);
         if (PS4_LIBRARY && rackId == SCE_NGS2_RACK_ID_SAMPLER && option->size == 168) {
             options = {};
@@ -131,10 +132,6 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
             std::memcpy(&options.reverb.max_channels, bytes + 128, 2 * sizeof(std::uint32_t));
         } else throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
     } else {
-        if (option->size != size) {
-            if (CustomMasteringHasModules(rackId, option)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
-            throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
-        }
         options = {};
         std::memcpy(&options, option, size);
     }

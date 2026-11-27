@@ -690,13 +690,19 @@ static void TestPs4ZeroVoiceEvent() {
     const auto system = CreateSystem();
     const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_MASTERING));
     const Ngs2VoiceEventParam event{{sizeof(Ngs2VoiceEventParam), 0, SCE_NGS2_VOICE_PARAM_EVENT}, 0};
+    const Ngs2VoiceCommand zeroCommand{2, 0, 4, 0, {.u = 0}};
 #ifdef APS5_NGS2_PS4_LIBRARY
     Require(sceNgs2VoiceControl(voice, &event.header) == SCE_NGS2_OK);
+    Require(sceNgs2VoiceRunCommands(voice, &zeroCommand, 1) == SCE_NGS2_OK);
     Require(Flags(voice) == 0);
 #else
     bool rejected = false;
     try { sceNgs2VoiceControl(voice, &event.header); }
     catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+    rejected = false;
+    try { sceNgs2VoiceRunCommands(voice, &zeroCommand, 1); }
+    catch (const std::exception&) { rejected = true; }
     Require(rejected);
 #endif
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);

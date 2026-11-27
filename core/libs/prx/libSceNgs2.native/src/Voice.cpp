@@ -217,6 +217,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 static std::uint32_t PendingChannels(const Ngs2Voice& voice);
 
 static void ValidateDeferredEvent(const Ngs2Voice& voice, std::uint32_t event) {
+    if (PS4_LIBRARY && event == 0) return;
     if (PS4_LIBRARY && event != 0 && (event & ~0x3fu) == 0) {
         if ((event & SCE_NGS2_VOICE_EVENT_PLAY) != 0 && PendingChannels(voice) == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
         if (!voice.IsSampler() && !voice.IsMixer()) throw std::runtime_error("NGS2: deferred events for this voice configuration are not implemented");

@@ -173,7 +173,8 @@ void CheckSystemErrorTableDoraise() {
     REQUIRE(source.base.message == nullptr);
 }
 
-void CheckSystemErrorCopyConstruct() {    LibcException::SystemErrorObject source {};
+void CheckSystemErrorCopyConstruct() {
+    LibcException::SystemErrorObject source {};
     LibcException::ErrorCode code {0, 22, _ZSt16generic_categoryv_nid_postfix()};
     _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&source, code, "system-msg");
 
