@@ -11,6 +11,13 @@
 #include <new>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 using NKWebKit::WtfAbi::AtomString;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
@@ -270,6 +277,168 @@ void RequireSetterQuiet(FamilySetter setter, const AtomString& family, int scrip
     const auto before = NotImplementedCalls_nid_no_patch();
     setter(settings(), &family, script);
     Require(NotImplementedCalls_nid_no_patch() == before);
+}
+
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    ResetSettings();
+    ResetFamilies();
+
+    const AtomString validFamily = MakeFamily("Times");
+    RequireNotImplemented([&] {
+        _ZNK7WebCore12SettingsBase18standardFontFamilyE11UScriptCode(pages.Guard(), 0);
+    }, "_ZNK7WebCore12SettingsBase18standardFontFamilyE11UScriptCode");
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode(pages.Guard(), &validFamily, 0);
+    }, "_ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode");
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode(
+            settings(), reinterpret_cast<const AtomString*>(pages.Guard()), 0);
+    }, "_ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode");
+
+    {
+        alignas(8) unsigned char badVtableSettings[kSettingsSize]{};
+        void* badVtable = pages.Guard();
+        std::memcpy(badVtableSettings, &badVtable, sizeof(badVtable));
+        RequireNotImplemented([&] {
+            _ZNK7WebCore12SettingsBase15fixedFontFamilyE11UScriptCode(badVtableSettings, 0);
+        }, "_ZNK7WebCore12SettingsBase15fixedFontFamilyE11UScriptCode");
+    }
+
+    {
+        void* badTable = pages.Guard();
+        std::memcpy(familiesStorage + kStandardMapOffset, &badTable, sizeof(badTable));
+        RequireNotImplemented([&] {
+            _ZNK7WebCore12SettingsBase18standardFontFamilyE11UScriptCode(settings(), 0);
+        }, "_ZNK7WebCore12SettingsBase18standardFontFamilyE11UScriptCode");
+        ResetFamilies();
+    }
+
+    {
+        AtomString badFamily;
+        badFamily.string.impl = reinterpret_cast<StringImpl*>(pages.Guard());
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode(settings(), &badFamily, 0);
+        }, "_ZN7WebCore12SettingsBase21setStandardFontFamilyERKN3WTF10AtomStringE11UScriptCode");
+        badFamily.string.impl = nullptr;
+    }
+
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7SecondsE(pages.Guard(), WTF::Seconds{2.0});
+    }, "_ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7SecondsE");
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7SecondsE(pages.ReadOnly(), WTF::Seconds{2.0});
+    }, "_ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7SecondsE");
+
+    ResetMediaVector();
+    const AtomString initial = MakeFamily("video/mp4");
+    _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(settings(), &initial.string);
+    MediaVector& target = MediaVectorOf();
+    Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
+
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(pages.Guard(), &initial.string);
+    }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE");
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(pages.ReadOnly(), &initial.string);
+    }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE");
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(
+            settings(), reinterpret_cast<const String*>(pages.Guard()));
+    }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE");
+    Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
+
+    {
+        String badImpl;
+        badImpl.impl = reinterpret_cast<StringImpl*>(pages.Guard());
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(settings(), &badImpl);
+        }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE");
+        badImpl.impl = nullptr;
+        Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
+
+        StringImpl badDataImpl{2, 16, pages.Guard(), 4};
+        String badData;
+        badData.impl = &badDataImpl;
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(settings(), &badData);
+        }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE");
+        badData.impl = nullptr;
+        Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
+    }
+
+    RequireNotImplemented([&] {
+        _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+            settings(), reinterpret_cast<const MediaVector*>(pages.Guard()));
+    }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
+    Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
+
+    {
+        MediaVector badVec(0);
+        badVec.buffer = reinterpret_cast<MediaContentType*>(pages.Guard());
+        badVec.capacity = 1;
+        badVec.size = 1;
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+                settings(), &badVec);
+        }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
+        badVec.buffer = nullptr;
+        badVec.capacity = 0;
+        badVec.size = 0;
+        Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
+
+        MediaVector readOnlyTargetSrc(1);
+        new (&readOnlyTargetSrc.buffer[0]) MediaContentType{MakeLatin1("video/webm")};
+        readOnlyTargetSrc.size = 1;
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+                pages.ReadOnly(), &readOnlyTargetSrc);
+        }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
+    }
+
+    ResetMediaVector();
 }
 
 }  // namespace
@@ -693,6 +862,8 @@ int main() {
         Require(target.capacity == 3);
         Require(FamilyEquals(target.buffer[0].type, "z"));
     }
+
+    TestGuestPointers();
 
     return 0;
 }

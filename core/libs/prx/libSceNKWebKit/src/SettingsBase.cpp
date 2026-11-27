@@ -71,6 +71,7 @@
  */
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include "prx/libSceNKWebKit/include/SettingsBaseExports.hpp"
 
@@ -82,7 +83,9 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -102,12 +105,116 @@ constexpr int kUscriptTraditionalHan = 74;
 constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
 constexpr std::size_t kMinVectorCapacity = 16;
 
-struct GuestMap {
-    ScriptFontFamilyEntry* table;
+struct RawTableMeta {
+    unsigned deletedCount;
+    unsigned keyCount;
+    unsigned sizeMask;
+    unsigned tableSize;
 };
 
-static_assert(sizeof(GuestMap) == 8);
-static_assert(alignof(GuestMap) == 8);
+struct RawScriptEntry {
+    int key;
+    StringImpl* value;
+};
+
+struct RawVector {
+    ContentType* buffer;
+    unsigned capacity;
+    unsigned size;
+};
+
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+static_assert(std::is_trivially_copyable_v<StringImpl*>);
+static_assert(std::is_trivially_copyable_v<void*>);
+static_assert(std::is_trivially_copyable_v<double>);
+static_assert(std::is_trivially_copyable_v<RawTableMeta>);
+static_assert(sizeof(RawTableMeta) == kTableMetadataSize);
+static_assert(std::is_trivially_copyable_v<RawScriptEntry>);
+static_assert(sizeof(RawScriptEntry) == sizeof(ScriptFontFamilyEntry));
+static_assert(std::is_trivially_copyable_v<RawVector>);
+static_assert(sizeof(RawVector) == sizeof(WtfAbi::Vector<ContentType>));
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (size && (!pointer || !GuestReadable_nid_no_patch(pointer, size)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename T>
+void RequireWritableGuestValue(T* pointer, const char* function) {
+    RequireWritableGuestBytes(pointer, sizeof(T), function);
+}
+
+template<typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T))) return true;
+    static_cast<void>(GuestCopyOut_nid_no_patch(pointer, &previous, sizeof(T)));
+    return false;
+}
+
+struct GuestString {
+    std::vector<unsigned char> narrow;
+    std::vector<char16_t> wide;
+    unsigned length = 0;
+    bool is8Bit = true;
+    bool isNull = true;
+
+    StringView View() const {
+        if (isNull || !length) return StringView{nullptr, 0, is8Bit};
+        return StringView{is8Bit ? static_cast<const void*>(narrow.data()) : static_cast<const void*>(wide.data()), length, is8Bit};
+    }
+};
+
+GuestString ReadGuestString(const StringImpl* impl, const char* function) {
+    GuestString result{};
+    if (!impl) return result;
+    const StringImpl header = ReadGuestValue(impl, function);
+    result.isNull = false;
+    result.length = header.length;
+    result.is8Bit = (header.hashAndFlags & 4u) != 0;
+    if (!header.length) return result;
+    if (!header.data) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (result.is8Bit ? 1u : sizeof(char16_t));
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    if (result.is8Bit) {
+        result.narrow.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(result.narrow.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    } else {
+        result.wide.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(result.wide.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return result;
+}
+
+bool GuestStringsEqual(const GuestString& left, const GuestString& right) {
+    if (left.isNull || right.isNull) return left.isNull && right.isNull;
+    if (left.length != right.length) return false;
+    const StringView leftView = left.View();
+    const StringView rightView = right.View();
+    for (unsigned index = 0; index < left.length; ++index) {
+        if (NKWebKit::WtfAbi::CodeUnitAt(leftView, index) != NKWebKit::WtfAbi::CodeUnitAt(rightView, index)) return false;
+    }
+    return true;
+}
 
 void* CheckedSelf(void* self) {
     if (!self) throw std::invalid_argument("null WebCore::SettingsBase");
@@ -116,15 +223,16 @@ void* CheckedSelf(void* self) {
 
 using FontGenericFamiliesGetter = void* (APS5_VABI*)(void*);
 
-void* FontGenericFamiliesOf(void* self, bool constant) {
+void* FontGenericFamiliesOf(void* self, bool constant, const char* function) {
     CheckedSelf(self);
-    void* const* entries = *reinterpret_cast<void* const**>(self);
-    auto getter = reinterpret_cast<FontGenericFamiliesGetter>(entries[constant ? 1 : 0]);
-    return getter(self);
-}
-
-unsigned TableSizeMask(const ScriptFontFamilyEntry* table) {
-    return reinterpret_cast<const unsigned*>(table)[-kTableSizeMaskSlot];
+    void* const* entries = ReadGuestValue(reinterpret_cast<void* const* const*>(self), function);
+    if (!entries) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    void* getterAddress = ReadGuestValue(entries + (constant ? 1 : 0), function);
+    if (!getterAddress) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    auto getter = reinterpret_cast<FontGenericFamiliesGetter>(getterAddress);
+    void* families = getter(self);
+    if (!families) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return families;
 }
 
 unsigned HashScript(int script) {
@@ -138,22 +246,24 @@ unsigned HashScript(int script) {
     return key;
 }
 
-bool IsEmptyBucket(const ScriptFontFamilyEntry& entry) {
-    return entry.key == kEmptyKey;
-}
-
-ScriptFontFamilyEntry* Lookup(ScriptFontFamilyEntry* table, int script) {
+ScriptFontFamilyEntry* Lookup(ScriptFontFamilyEntry* table, int script, const char* function) {
     if (!table) return nullptr;
-    const unsigned sizeMask = TableSizeMask(table);
-    unsigned i = HashScript(script) & sizeMask;
+    const auto tableAddress = reinterpret_cast<std::uintptr_t>(table);
+    if (tableAddress < kTableMetadataSize) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const RawTableMeta meta = ReadGuestValue(reinterpret_cast<const RawTableMeta*>(tableAddress - kTableMetadataSize), function);
+    if (!meta.tableSize || (meta.tableSize & (meta.tableSize - 1)) != 0 || meta.sizeMask != meta.tableSize - 1)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(table, static_cast<std::size_t>(meta.tableSize) * sizeof(ScriptFontFamilyEntry), function);
+    unsigned i = HashScript(script) & meta.sizeMask;
     unsigned probeCount = 0;
-    while (true) {
-        ScriptFontFamilyEntry& entry = table[i];
-        if (entry.key == script) return &entry;
-        if (IsEmptyBucket(entry)) return nullptr;
+    for (unsigned step = 0; step < meta.tableSize; ++step) {
+        const RawScriptEntry entry = ReadGuestValue(reinterpret_cast<const RawScriptEntry*>(table) + i, function);
+        if (entry.key == script) return &table[i];
+        if (entry.key == kEmptyKey) return nullptr;
         ++probeCount;
-        i = (i + probeCount) & sizeMask;
+        i = (i + probeCount) & meta.sizeMask;
     }
+    NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 const String* EmptyFamilyAtom() {
@@ -161,40 +271,62 @@ const String* EmptyFamilyAtom() {
     return &value;
 }
 
-const String* GenericFamilyForScript(ScriptFontFamilyEntry* table, int script) {
-    if (ScriptFontFamilyEntry* found = Lookup(table, script)) return &found->value;
+const String* GenericFamilyForScript(ScriptFontFamilyEntry* table, int script, const char* function) {
+    if (ScriptFontFamilyEntry* found = Lookup(table, script, function)) return &found->value;
     if (script == kUscriptHan) {
         const int fallback = NKWebKit::UserPrefersSimplifiedChinese_nid_no_patch() ? kUscriptSimplifiedHan : kUscriptTraditionalHan;
-        if (ScriptFontFamilyEntry* found = Lookup(table, fallback)) return &found->value;
+        if (ScriptFontFamilyEntry* found = Lookup(table, fallback, function)) return &found->value;
     }
-    if (script != kUscriptCommon) return GenericFamilyForScript(table, kUscriptCommon);
+    if (script != kUscriptCommon) return GenericFamilyForScript(table, kUscriptCommon, function);
     return EmptyFamilyAtom();
 }
 
-bool GenericFamilyWouldChange(const GuestMap& map, const String& family, int script) {
-    ScriptFontFamilyEntry* entry = Lookup(map.table, script);
-    if (!family.impl || !family.impl->length) return entry != nullptr;
+bool GenericFamilyWouldChange(ScriptFontFamilyEntry* table, const AtomString* family, int script, const char* function) {
+    StringImpl* const familyImpl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(family), function);
+    const GuestString familyText = ReadGuestString(familyImpl, function);
+    ScriptFontFamilyEntry* entry = Lookup(table, script, function);
+    if (familyText.isNull || !familyText.length) return entry != nullptr;
     if (!entry) return true;
-    return !_ZN3WTF5equalEPKNS_10StringImplES2_(entry->value.impl, family.impl);
+    StringImpl* const entryImpl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(entry) + offsetof(ScriptFontFamilyEntry, value)), function);
+    const GuestString entryText = ReadGuestString(entryImpl, function);
+    return !GuestStringsEqual(entryText, familyText);
 }
 
-GuestMap& MapOf(void* families, std::size_t offset) {
-    return *reinterpret_cast<GuestMap*>(static_cast<unsigned char*>(families) + offset);
+ScriptFontFamilyEntry* MapTableOf(void* families, std::size_t offset, const char* function) {
+    return ReadGuestValue(reinterpret_cast<ScriptFontFamilyEntry* const*>(static_cast<const unsigned char*>(families) + offset), function);
 }
 
-const String* FamilyOf(void* self, std::size_t offset, int script) {
-    void* families = FontGenericFamiliesOf(const_cast<void*>(self), true);
-    return GenericFamilyForScript(MapOf(families, offset).table, script);
+const String* FamilyOf(void* self, std::size_t offset, int script, const char* function) {
+    void* families = FontGenericFamiliesOf(self, true, function);
+    return GenericFamilyForScript(MapTableOf(families, offset, function), script, function);
 }
 
 void SetFamilyOf(void* self, std::size_t offset, const AtomString* family, int script, const char* name) {
     if (!family) throw std::invalid_argument("null WTF::AtomString");
-    void* families = FontGenericFamiliesOf(self, false);
-    if (GenericFamilyWouldChange(MapOf(families, offset), family->string, script)) NotImplemented_nid_no_patch(name);
+    void* families = FontGenericFamiliesOf(self, false, name);
+    if (GenericFamilyWouldChange(MapTableOf(families, offset, name), family, script, name)) NotImplemented_nid_no_patch(name);
 }
 
 WtfAbi::Vector<ContentType>& MediaVectorOf(void* self) {
     return *reinterpret_cast<WtfAbi::Vector<ContentType>*>(static_cast<unsigned char*>(self) + kMediaContentTypesRequiringHardwareSupportOffset);
+}
+
+void ValidateTargetMediaVector(void* self, const char* function) {
+    auto* vectorPtr = reinterpret_cast<RawVector*>(static_cast<unsigned char*>(self) + kMediaContentTypesRequiringHardwareSupportOffset);
+    const RawVector vector = ReadGuestValue(vectorPtr, function);
+    RequireWritableGuestValue(vectorPtr, function);
+    if (vector.size > vector.capacity) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if ((vector.size || vector.capacity) && !vector.buffer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (vector.capacity) {
+        RequireWritableGuestBytes(vector.buffer, static_cast<std::size_t>(vector.capacity) * sizeof(ContentType), function);
+    }
+    for (unsigned i = 0; i < vector.size; ++i) {
+        StringImpl* const impl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(vector.buffer) + i, function);
+        if (impl) {
+            static_cast<void>(ReadGuestValue(impl, function));
+            RequireWritableGuestValue(impl, function);
+        }
+    }
 }
 
 void ReserveMediaVector(WtfAbi::Vector<ContentType>& vector, std::size_t newCapacity) {
@@ -281,70 +413,101 @@ void APS5_VABI _ZN7WebCore12SettingsBase23setPictographFontFamilyERKN3WTF10AtomS
 
 void APS5_VABI _ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7SecondsE(void* self, WTF::Seconds interval) {
     CheckedSelf(self);
-    void* page;
-    std::memcpy(&page, static_cast<unsigned char*>(self) + kPageOffset, sizeof(page));
+    void* const page = ReadGuestValue(reinterpret_cast<void* const*>(static_cast<const unsigned char*>(self) + kPageOffset), __func__);
     if (page) NotImplemented_nid_no_patch(__func__);
-    *reinterpret_cast<double*>(static_cast<unsigned char*>(self) + kMinimumDOMTimerIntervalOffset) = interval.m_value;
+    auto* intervalPtr = reinterpret_cast<double*>(static_cast<unsigned char*>(self) + kMinimumDOMTimerIntervalOffset);
+    const double previous = ReadGuestValue(intervalPtr, __func__);
+    RequireWritableGuestValue(intervalPtr, __func__);
+    if (!TryPublishGuestValue(intervalPtr, interval.m_value, previous))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE(void* self, const String* contentTypes) {
     CheckedSelf(self);
     if (!contentTypes) throw std::invalid_argument("null WTF::String");
-    auto& vector = MediaVectorOf(self);
-    ShrinkMediaVector(vector, 0);
-    const StringView view = NKWebKit::WtfAbi::ViewOf(contentTypes->impl);
+    StringImpl* const impl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(contentTypes), __func__);
+    const GuestString source = ReadGuestString(impl, __func__);
+    ValidateTargetMediaVector(self, __func__);
+    const StringView view = source.View();
+    std::vector<String> parsed;
     unsigned start = 0;
     while (true) {
         const std::size_t separator = FindCodeUnit(view, ':', start);
         const unsigned end = separator == kNotFound ? view.length : static_cast<unsigned>(separator);
-        if (end > start) AppendContentType(vector, MakeStringFromView(view, start, end - start));
+        if (end > start) parsed.push_back(MakeStringFromView(view, start, end - start));
         if (separator == kNotFound) break;
         start = static_cast<unsigned>(separator) + 1;
     }
+    auto& vector = MediaVectorOf(self);
+    ShrinkMediaVector(vector, 0);
+    for (String& item : parsed) AppendContentType(vector, std::move(item));
 }
 
 void APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(void* self, const WtfAbi::Vector<ContentType>* contentTypes) {
     CheckedSelf(self);
     if (!contentTypes) throw std::invalid_argument("null WTF::Vector");
-    auto& target = MediaVectorOf(self);
-    if (static_cast<const void*>(contentTypes) == static_cast<const void*>(&target)) return;
-    if (target.size > contentTypes->size) {
-        ShrinkMediaVector(target, contentTypes->size);
-    } else if (contentTypes->size > target.capacity) {
-        ClearMediaVector(target);
-        ReserveMediaVector(target, contentTypes->size);
+    const RawVector source = ReadGuestValue(reinterpret_cast<const RawVector*>(contentTypes), __func__);
+    if (source.size > source.capacity || (source.size && !source.buffer))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const void* const targetAddress = static_cast<const unsigned char*>(self) + kMediaContentTypesRequiringHardwareSupportOffset;
+    if (static_cast<const void*>(contentTypes) == targetAddress) return;
+    ValidateTargetMediaVector(self, __func__);
+    if (source.size) {
+        RequireReadableGuestBytes(source.buffer, static_cast<std::size_t>(source.size) * sizeof(ContentType), __func__);
     }
-    for (unsigned i = 0; i < target.size; ++i) target.buffer[i].type = contentTypes->buffer[i].type;
-    for (unsigned i = target.size; i < contentTypes->size; ++i) new (&target.buffer[i]) ContentType(contentTypes->buffer[i].type);
-    target.size = contentTypes->size;
+    std::vector<StringImpl*> sourceImpls(source.size);
+    for (unsigned i = 0; i < source.size; ++i) {
+        StringImpl* const impl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(source.buffer) + i, __func__);
+        if (impl) {
+            static_cast<void>(ReadGuestValue(impl, __func__));
+            RequireWritableGuestValue(impl, __func__);
+        }
+        sourceImpls[i] = impl;
+    }
+    std::vector<String> copies;
+    copies.reserve(source.size);
+    for (StringImpl* impl : sourceImpls) {
+        if (impl) impl->refCount += 2;
+        copies.emplace_back(impl);
+    }
+    auto& target = MediaVectorOf(self);
+    if (target.size > source.size) {
+        ShrinkMediaVector(target, source.size);
+    } else if (source.size > target.capacity) {
+        ClearMediaVector(target);
+        ReserveMediaVector(target, source.size);
+    }
+    for (unsigned i = 0; i < target.size; ++i) target.buffer[i].type = std::move(copies[i]);
+    for (unsigned i = target.size; i < source.size; ++i) new (&target.buffer[i]) ContentType(std::move(copies[i]));
+    target.size = source.size;
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase15fixedFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kFixedFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kFixedFontFamilyMapOffset, script, __func__);
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase15serifFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kSerifFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kSerifFontFamilyMapOffset, script, __func__);
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase17cursiveFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kCursiveFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kCursiveFontFamilyMapOffset, script, __func__);
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase17fantasyFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kFantasyFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kFantasyFontFamilyMapOffset, script, __func__);
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase18standardFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kStandardFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kStandardFontFamilyMapOffset, script, __func__);
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase19sansSerifFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kSansSerifFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kSansSerifFontFamilyMapOffset, script, __func__);
 }
 
 const String& APS5_VABI _ZNK7WebCore12SettingsBase20pictographFontFamilyE11UScriptCode(const void* self, int script) {
-    return *FamilyOf(const_cast<void*>(self), kPictographFontFamilyMapOffset, script);
+    return *FamilyOf(const_cast<void*>(self), kPictographFontFamilyMapOffset, script, __func__);
 }
 
 }
