@@ -1382,8 +1382,10 @@ int APS5_VABI sceCLCGetTrackList(std::uint32_t startIndex, std::int32_t maxCount
 
     for (std::int32_t i = 0; i < plannedCount; ++i) {
         const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
+        const std::int32_t mappedIdx = state.shuffleOrder[idx];
+        if (mappedIdx < 0 || mappedIdx >= state.trackFileCount) return SceClcErrorInvalidArg;
         char checkPath[PathBufferSize]{};
-        if (!CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(idx) * EntryNameSize, checkPath, sizeof(checkPath))) {
+        if (!CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(mappedIdx) * EntryNameSize, checkPath, sizeof(checkPath))) {
             return SceClcErrorInvalidArg;
         }
     }
@@ -1391,11 +1393,12 @@ int APS5_VABI sceCLCGetTrackList(std::uint32_t startIndex, std::int32_t maxCount
     std::int32_t count = 0;
     for (std::int32_t i = 0; i < plannedCount; ++i) {
         const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
+        const std::int32_t mappedIdx = state.shuffleOrder[idx];
         SceCLCListEntry item{};
         item.deviceId = state.trackDeviceId;
-        CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(idx) * EntryNameSize, item.name, sizeof(item.name));
+        CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(mappedIdx) * EntryNameSize, item.name, sizeof(item.name));
         item.isFile = 1;
-        item.state = state.playbackResults[idx];
+        item.state = state.playbackResults[mappedIdx];
         if (!SafeCopyOut(localList.items + i, &item, sizeof(item))) return SceClcErrorInvalidArg;
         ++count;
     }

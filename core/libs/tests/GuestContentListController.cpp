@@ -747,11 +747,47 @@ int main() {
     Require(sceCLCGetTrackInfo(3, &fileInfo) == kErrInvalidArg);
     Require(sceCLCGetTrackInfo(-1, &fileInfo) == kErrInvalidArg);
 
+    std::array<SceCLCListEntry, 3> shuffledEntries{};
+    std::memset(entryBuf.data(), 0xA5, sizeof(entryBuf));
+    Require(sceCLCGetTrackList(0, 2, &listOut) == 0);
+    Require(listOut.totalCount == 3 && listOut.returnedCount == 2 && listOut.startIndex == 0);
+    shuffledEntries[0] = entryBuf[0];
+    shuffledEntries[1] = entryBuf[1];
+
+    std::memset(entryBuf.data(), 0xA5, sizeof(entryBuf));
+    Require(sceCLCGetTrackList(2, 2, &listOut) == 0);
+    Require(listOut.totalCount == 3 && listOut.returnedCount == 1 && listOut.startIndex == 2);
+    shuffledEntries[2] = entryBuf[0];
+
+    std::uint32_t seenMask = 0;
+    for (std::int32_t idx = 0; idx < 3; ++idx) {
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetTrackInfo(idx, &fileInfo) == 0);
+        Require(fileInfo.index >= 0 && fileInfo.index < 3);
+        Require(shuffledEntries[idx].deviceId == fileInfo.deviceId);
+        Require(shuffledEntries[idx].isFile == 1);
+        Require(std::strcmp(shuffledEntries[idx].name, fileInfo.path) == 0);
+        Require(shuffledEntries[idx].state == (fileInfo.index == 1 ? 1u : 0u));
+        seenMask |= (1u << static_cast<std::uint32_t>(fileInfo.index));
+        if (idx == 0) {
+            Require(fileInfo.index == 2);
+            Require(std::strcmp(shuffledEntries[0].name, "/music/c_track.flac") == 0);
+        }
+    }
+    Require(seenMask == 0x7u);
+
     Require(sceCLCSetShuffle(0, 0) == 0);
     Require(sceCLCGetShuffle() == 0);
     Require(sceCLCGetTrackInfo(1, &fileInfo) == 0);
     Require(fileInfo.index == 1);
     Require(std::strcmp(fileInfo.title, "M4A Title") == 0);
+
+    std::memset(entryBuf.data(), 0xA5, sizeof(entryBuf));
+    Require(sceCLCGetTrackList(0, 10, &listOut) == 0);
+    Require(listOut.totalCount == 3 && listOut.returnedCount == 3 && listOut.startIndex == 0);
+    Require(entryBuf[0].isFile == 1 && entryBuf[0].state == 0 && std::strcmp(entryBuf[0].name, "/music/a_track.mp3") == 0);
+    Require(entryBuf[1].isFile == 1 && entryBuf[1].state == 1 && std::strcmp(entryBuf[1].name, "/music/b_track.m4a") == 0);
+    Require(entryBuf[2].isFile == 1 && entryBuf[2].state == 0 && std::strcmp(entryBuf[2].name, "/music/c_track.flac") == 0);
 
     Require(sceCLCClearTrackList() == 0);
     std::memset(&trackInfo, 0xA5, sizeof(trackInfo));
