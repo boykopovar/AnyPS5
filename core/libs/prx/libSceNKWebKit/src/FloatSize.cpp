@@ -34,19 +34,42 @@
 
 #include <stdexcept>
 
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstddef>
+#include <type_traits>
+
+namespace {
+
+static_assert(std::is_trivially_copyable_v<WebCore::FloatSize>);
+static_assert(std::is_trivially_copyable_v<WebCore::IntSize>);
+
+bool CanWriteGuestBytes(void* pointer, std::size_t size) {
+    if (!pointer) return false;
+    const GuestArena::HostWrite guard(pointer, size);
+    return guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+}
+
+void ConstructFromIntSize(WebCore::FloatSize* self, const WebCore::IntSize& size, const char* function) {
+    if (!CanWriteGuestBytes(self, sizeof(*self)))
+        throw std::invalid_argument("WebCore::FloatSize(IntSize): invalid guest FloatSize");
+    WebCore::IntSize source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &size, sizeof(source)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const WebCore::FloatSize result{static_cast<float>(source.m_width), static_cast<float>(source.m_height)};
+    if (!GuestCopyOut_nid_no_patch(self, &result, sizeof(result)))
+        throw std::invalid_argument("WebCore::FloatSize(IntSize): invalid guest FloatSize");
+}
+
+}  // namespace
+
 extern "C" {
 
 void APS5_VABI _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(WebCore::FloatSize* self, const WebCore::IntSize& size) {
-    if (!self || !GuestWritable_nid_no_patch(self, sizeof(*self))) throw std::invalid_argument("WebCore::FloatSize(IntSize): invalid guest FloatSize");
-    WebCore::IntSize source;
-    if (!GuestCopyIn_nid_no_patch(&source, &size, sizeof(source)))
-        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    self->m_width = static_cast<float>(source.m_width);
-    self->m_height = static_cast<float>(source.m_height);
+    ConstructFromIntSize(self, size, __func__);
 }
 
 void APS5_VABI _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE(WebCore::FloatSize* self, const WebCore::IntSize& size) {
-    _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(self, size);
+    ConstructFromIntSize(self, size, __func__);
 }
 
 }
