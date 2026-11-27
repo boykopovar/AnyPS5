@@ -150,10 +150,6 @@ constexpr bool Sorted() {
 
 static_assert(Sorted());
 
-[[noreturn]] void Missing(const char* getter) {
-    NotImplemented_nid_no_patch((std::string("EVP_get_digestbyname: ") + getter).c_str());
-}
-
 const void* Resolve(Digest digest) {
     switch (digest) {
     case Digest::Md5:
@@ -169,7 +165,7 @@ const void* Resolve(Digest digest) {
     case Digest::Sha512:
         return EVP_sha512_nid_postfix();
     case Digest::Md4:
-        Missing("EVP_md4");
+        return LibreSsl3::Md4Digest();
     case Digest::Md5Sha1:
         return LibreSsl3::Md5Sha1Digest();
     case Digest::Ripemd160:
@@ -187,9 +183,9 @@ const void* Resolve(Digest digest) {
     case Digest::Sha3_512:
         return LibreSsl3::Sha3_512Digest();
     case Digest::Sm3:
-        Missing("EVP_sm3");
+        return LibreSsl3::Sm3Digest();
     }
-    Missing("unknown digest");
+    throw std::logic_error("EVP_get_digestbyname: unknown digest");
 }
 
 } // namespace
