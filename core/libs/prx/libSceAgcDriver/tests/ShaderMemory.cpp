@@ -7169,7 +7169,9 @@ void verifyLaneImageTable() {
     require((sharedFault & Abi::PoisonFlag) != 0u && shared->poison.at(sharedFault & ~Abi::PoisonFlag).reason == Abi::PoisonReason::LaneModes, "lane image table: resolution reuse ignored a changed shared-mode requirement");
     require(ResourceMaterializer::ResolveImageTablesShared(modeInfo, independentModes, ModeMemo)->map == independent->map, "lane image table: a shared-mode fault contaminated independent-mode resolution reuse");
     records[1] = TableT(textures[1].bytes.data(), TableFormat8888UNorm, TableType2D);
-    require(fault(CompileTable(request(lodCode, 4u))) == Abi::PoisonReason::Count, "lane image table: records of one mode under an LOD query faulted");
+    require(fault(CompileTable(request(lodCode, 4u))) == Abi::PoisonReason::LaneModes, "lane image table: different records of one mode under an LOD query did not fault");
+    records[1] = records[0];
+    require(fault(CompileTable(request(lodCode, 4u))) == Abi::PoisonReason::Count, "lane image table: one record under an LOD query faulted");
 
     const auto holeRequest = request(TableWaterfallCode, 2u);
     HoleMemory hole{reinterpret_cast<std::uintptr_t>(records[0].data() + 3u)};
