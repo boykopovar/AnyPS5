@@ -2,6 +2,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -29,6 +30,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace FreeType;
 
@@ -1430,6 +1438,96 @@ static void APS5_VABI GuestMultipleSizeFaceFinalizer(void* object) {
 static FT_Alloc_Func SizeOriginalAlloc = nullptr;
 static int SizeAllocationsBeforeFailure = 0;
 
+static std::uintptr_t SizeOutputFailurePage = 0;
+static std::size_t SizeOutputFailurePageBytes = 0;
+static unsigned SizeOutputFailureCalls = 0;
+
+static std::size_t SizeOutputPageBytes() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long bytes = sysconf(_SC_PAGESIZE);
+    Require(bytes > 0);
+    return static_cast<std::size_t>(bytes);
+#endif
+}
+
+static void ProtectSizeOutputPage(void* page, std::size_t bytes, bool writable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, bytes, writable ? PAGE_READWRITE : PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, bytes, writable ? PROT_READ | PROT_WRITE : PROT_READ) == 0);
+#endif
+}
+
+static void* AllocateSizeOutputPage(std::size_t bytes) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* page = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return page == MAP_FAILED ? nullptr : page;
+#endif
+}
+
+static void ReleaseSizeOutputPage(void* page, std::size_t bytes) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, bytes) == 0);
+#endif
+}
+
+static void FailSecondSizeOutputCopy(std::uintptr_t address, std::size_t bytes) {
+    if (address != SizeOutputFailurePage || bytes != sizeof(GuestSizeRec*)) return;
+    ++SizeOutputFailureCalls;
+    if (SizeOutputFailureCalls == 2) ProtectSizeOutputPage(reinterpret_cast<void*>(SizeOutputFailurePage), SizeOutputFailurePageBytes, false);
+}
+
+static void CheckSizeOutputCopyRollback(GuestFaceRec* face) {
+    GuestFace* owner = FaceOf(face);
+    Require(owner != nullptr && owner->host != nullptr);
+    Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, 14) == 0);
+    GuestSizeRec* const activeGuestSize = face->size;
+    FT_Size const activeHostSize = owner->host->size;
+    const std::size_t sizeCount = owner->sizes.size();
+    Require(activeGuestSize != nullptr && activeHostSize != nullptr);
+    Require(OwnsSize(*owner, activeGuestSize));
+
+    const std::size_t pageBytes = SizeOutputPageBytes();
+    void* page = AllocateSizeOutputPage(pageBytes);
+    Require(page != nullptr);
+    auto** output = static_cast<GuestSizeRec**>(page);
+    *output = reinterpret_cast<GuestSizeRec*>(std::uintptr_t{0x1234});
+    SizeOutputFailurePage = reinterpret_cast<std::uintptr_t>(page);
+    SizeOutputFailurePageBytes = pageBytes;
+    SizeOutputFailureCalls = 0;
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(FailSecondSizeOutputCopy);
+    const FT_Error error = FT_New_Size_nid_postfix(face, output);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    ProtectSizeOutputPage(page, pageBytes, true);
+    SizeOutputFailurePage = 0;
+    SizeOutputFailurePageBytes = 0;
+
+    Require(error == FT_Err_Invalid_Argument);
+    Require(SizeOutputFailureCalls == 2);
+    Require(*output == nullptr);
+    Require(owner->sizes.size() == sizeCount);
+    Require(face->size == activeGuestSize && owner->host->size == activeHostSize);
+    Require(OwnsSize(*owner, face->size));
+
+    GuestSizeRec* subsequent = nullptr;
+    Require(FT_New_Size_nid_postfix(face, &subsequent) == 0);
+    Require(subsequent != nullptr && owner->sizes.size() == sizeCount + 1);
+    Require(face->size == activeGuestSize && owner->host->size == activeHostSize);
+    Require(FT_Done_Size_nid_postfix(subsequent) == 0);
+    Require(owner->sizes.size() == sizeCount);
+    Require(face->size == activeGuestSize && owner->host->size == activeHostSize);
+    ReleaseSizeOutputPage(page, pageBytes);
+}
+
 static void* SizeFailingAlloc(FT_Memory memory, long bytes) {
     if (SizeAllocationsBeforeFailure-- == 0) return nullptr;
     return SizeOriginalAlloc(memory, bytes);
@@ -1494,6 +1592,7 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
                     SizeMatches(size, original);
                 };
                 if (native->size) remember(face->size, native->size);
+                if (faceIndex == 0 && count == 0 && cleanup == 0) CheckSizeOutputCopyRollback(face);
                 Require(FT_New_Size_nid_postfix(face, nullptr) == FT_New_Size(native, nullptr));
                 errno = 333;
                 Require(FT_New_Size_nid_postfix(face, reinterpret_cast<GuestSizeRec**>(0x10)) == FT_Err_Invalid_Argument);
