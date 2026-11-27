@@ -478,7 +478,9 @@ std::string ModuleTargetName(const std::filesystem::path& modulePath, const std:
     return name;
 }
 
-PatchFile ParsePatchFile(const std::string_view text) {
+PatchFile ParsePatchFile(std::string_view text) {
+    constexpr std::string_view utf8Bom = "\xef\xbb\xbf";
+    if (text.starts_with(utf8Bom)) text.remove_prefix(utf8Bom.size());
     ValidateUtf8(text);
     PatchFile file;
     Table top;

@@ -71,6 +71,7 @@ constexpr std::uint32_t NOTE_USECONDS = 0x0004;
 constexpr std::uint32_t NOTE_NSECONDS = 0x0008;
 constexpr std::uint32_t NOTE_TIMER_PRECMASK = NOTE_SECONDS | NOTE_MSECONDS | NOTE_USECONDS | NOTE_NSECONDS;
 constexpr std::uint16_t KNOTE_CLEARED_FLAGS = EV_ADD | EV_DELETE | EV_ENABLE | EV_DISABLE | EV_FORCEONESHOT;
+constexpr std::uint64_t ZERO_TIMER_CHANGE_INTERVAL_NS = 100'000;
 
 std::mutex g_kqueueMutex;
 std::unordered_map<int, KernelEqueueRef> g_kqueues;
@@ -472,15 +473,18 @@ void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
     }
 }
 
-int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change);
+int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change, bool setDefaultTimerPeriod = false);
 
 int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if ((change.flags & ~(EV_ADD | EV_ONESHOT | EV_ENABLE | EV_DISABLE)) != 0) {
         NotImplemented_nid_no_patch("kevent: changing an EVFILT_TIMER with flags other than EV_ADD, EV_ONESHOT, EV_ENABLE and EV_DISABLE");
     }
-    const auto periodNs = TimerPeriodNanos(change.data, change.fflags);
-    if (change.data <= 0 || (change.fflags & ~NOTE_TIMER_PRECMASK) != 0 || !periodNs) {
-        NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with a period of 0 or less or an unknown unit");
+    auto periodNs = TimerPeriodNanos(change.data, change.fflags);
+    if (change.data < 0 || (change.fflags & ~NOTE_TIMER_PRECMASK) != 0 || !periodNs) {
+        NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with a negative period or an unknown unit");
+    }
+    if (*periodNs == 0) {
+        periodNs = ZERO_TIMER_CHANGE_INTERVAL_NS;
     }
     bool oneShot = false;
     bool overflow = false;
@@ -530,7 +534,7 @@ void RetriggerAioKnote(KernelEqueueEvent& event) {
     event.triggered = true;
 }
 
-int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
+int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change, bool setDefaultTimerPeriod) {
     if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
     }
@@ -540,11 +544,14 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if (change.filter == EVFILT_VNODE) {
         RequireVnodeNotes(change.fflags);
     }
-    return GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, descriptor, lowWater, alwaysMet](KernelEqueueEvent& event) {
+    return GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, descriptor, lowWater, alwaysMet, setDefaultTimerPeriod](KernelEqueueEvent& event) {
         if (event.filter.pollFunc == PollEdge) {
             RejectEdgeWriteMark(change, lowWater);
         }
         event.event.udata = change.udata;
+        if (setDefaultTimerPeriod && event.intervalNs != 0) {
+            event.intervalNs = ZERO_TIMER_CHANGE_INTERVAL_NS;
+        }
         if (descriptor) {
             event.lowWater = lowWater;
             event.lowWaterAlwaysMet = alwaysMet;
@@ -652,7 +659,8 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
     if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         return ModifyTimerKnote(queue, change);
     }
-    return ModifyKnote(queue, change);
+    const bool setDefaultTimerPeriod = change.filter == EVFILT_TIMER && (change.flags & (EV_ENABLE | EV_DISABLE)) != 0;
+    return ModifyKnote(queue, change, setDefaultTimerPeriod);
 }
 
 std::optional<std::uint64_t> ScanDeadline(const KernelTimespec& timeout) {
@@ -829,32 +837,34 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
         return PosixFailure(GUEST_EFAULT);
     }
     int errors = 0;
-    for (int i = 0; i < nchanges; ++i) {
-        KernelEvent change{};
-        if (!GuestCopyIn_nid_no_patch(&change, changelist + i, sizeof(change))) {
+    KernelEvent changes[KQ_NEVENTS];
+    for (int copied = 0; copied < nchanges;) {
+        const int batch = std::min(nchanges - copied, KQ_NEVENTS);
+        if (!GuestCopyIn_nid_no_patch(changes, changelist + copied, static_cast<std::size_t>(batch) * sizeof(KernelEvent))) {
             return PosixFailure(GUEST_EFAULT);
         }
-        if (change.filter == 0) {
-            continue;
-        }
-        change.flags = static_cast<std::uint16_t>(change.flags & ~EV_SYSFLAGS);
-        const int error = Register(queue, descriptor, change);
-        if (error == 0 && (change.flags & EV_RECEIPT) == 0) {
-            continue;
-        }
-        if (nevents == 0) {
-            return error == 0 ? 0 : PosixFailure(error);
-        }
-        change.flags = EV_ERROR;
-        change.data = error;
-        if (eventlist != nullptr) {
-            if (!GuestCopyOut_nid_no_patch(eventlist, &change, sizeof(change))) {
-                return PosixFailure(GUEST_EFAULT);
+        copied += batch;
+        for (int i = 0; i < batch; ++i) {
+            KernelEvent& change = changes[i];
+            if (change.filter == 0) {
+                continue;
             }
-            ++eventlist;
+            change.flags = static_cast<std::uint16_t>(change.flags & ~EV_SYSFLAGS);
+            const int error = Register(queue, descriptor, change);
+            if (error == 0 && (change.flags & EV_RECEIPT) == 0) {
+                continue;
+            }
+            if (nevents == 0) {
+                return error == 0 ? 0 : PosixFailure(error);
+            }
+            change.flags = EV_ERROR;
+            change.data = error;
+            if (GuestCopyOut_nid_no_patch(eventlist, &change, sizeof(change))) {
+                ++eventlist;
+            }
+            --nevents;
+            ++errors;
         }
-        --nevents;
-        ++errors;
     }
     if (errors != 0) {
         return errors;

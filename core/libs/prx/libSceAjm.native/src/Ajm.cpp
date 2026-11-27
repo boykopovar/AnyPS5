@@ -19,6 +19,7 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -241,34 +242,64 @@ struct PackedJob {
 };
 static_assert(sizeof(PackedJob) == 32);
 
-int JobRejected(const AjmBatchInfo* info, const JobHeader& header) {
-    if (!info || !info->p_buffer) return SCE_AJM_ERROR_INVALID_PARAMETER;
+bool CopyBatchGuestIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyBatchGuestOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+int JobRejected(const AjmBatchInfo* info, const JobHeader& header, AjmBatchInfo& localInfo) {
+    if (!info) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!CopyBatchGuestIn(&localInfo, info, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!localInfo.p_buffer) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (header.inputCount > 0xffu || header.outputCount > 0xffu || header.parameterSize > sizeof(header.parameters) || header.sidebandSize > 0xffffffffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
-int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
-    if (const int rejected = JobRejected(info, header)) return rejected;
+int AppendLoaded(AjmBatchInfo* info, AjmBatchInfo& localInfo, const JobHeader& header, std::span<const AjmBuffer> inputs, std::span<const AjmBuffer> outputs) {
     const std::size_t parameterBytes = (header.parameterSize + 7u) & ~std::size_t{7};
     const std::size_t bytes = sizeof(PackedJob) + (header.inputCount + header.outputCount) * sizeof(AjmBuffer) + parameterBytes;
-    if (info->offset > info->size || bytes > info->size - info->offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
-    auto* cursor = static_cast<std::uint8_t*>(info->p_buffer) + info->offset;
+    if (localInfo.offset > localInfo.size || bytes > localInfo.size - localInfo.offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
+    const auto base = reinterpret_cast<std::uintptr_t>(localInfo.p_buffer);
+    if (localInfo.offset > std::numeric_limits<std::uintptr_t>::max() - base) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    const auto writeAddress = base + static_cast<std::uintptr_t>(localInfo.offset);
+    if (bytes - 1 > std::numeric_limits<std::uintptr_t>::max() - writeAddress) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!CopyBatchGuestOut(info, &localInfo, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    std::vector<std::uint8_t> packed(bytes, 0);
+    std::size_t cursor = 0;
     const PackedJob record{static_cast<std::uint8_t>(header.kind), static_cast<std::uint8_t>(header.inputCount), static_cast<std::uint8_t>(header.outputCount), static_cast<std::uint8_t>(header.parameterSize), header.instance, header.flags, header.sideband, static_cast<std::uint32_t>(header.sidebandSize), static_cast<std::uint32_t>(bytes)};
-    std::memcpy(cursor, &record, sizeof(record));
+    std::memcpy(packed.data() + cursor, &record, sizeof(record));
     cursor += sizeof(record);
-    if (inputs) std::memcpy(cursor, inputs, header.inputCount * sizeof(AjmBuffer));
+    if (!inputs.empty()) std::memcpy(packed.data() + cursor, inputs.data(), inputs.size_bytes());
     cursor += header.inputCount * sizeof(AjmBuffer);
-    if (outputs) std::memcpy(cursor, outputs, header.outputCount * sizeof(AjmBuffer));
+    if (!outputs.empty()) std::memcpy(packed.data() + cursor, outputs.data(), outputs.size_bytes());
     cursor += header.outputCount * sizeof(AjmBuffer);
-    if (header.parameterSize) std::memcpy(cursor, header.parameters, header.parameterSize);
-    info->offset += bytes;
+    if (header.parameterSize) std::memcpy(packed.data() + cursor, header.parameters, header.parameterSize);
+    if (!CopyBatchGuestOut(reinterpret_cast<void*>(writeAddress), packed.data(), packed.size())) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    localInfo.offset += bytes;
+    if (!CopyBatchGuestOut(info, &localInfo, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
-int CheckedAppend(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
-    if (const int rejected = JobRejected(info, header)) return rejected;
-    if ((header.inputCount && !inputs) || (header.outputCount && !outputs)) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
-    return Append(info, header, inputs, outputs);
+int Append(AjmBatchInfo* info, const JobHeader& header, std::span<const AjmBuffer> inputs, std::span<const AjmBuffer> outputs) {
+    AjmBatchInfo localInfo{};
+    if (const int rejected = JobRejected(info, header, localInfo)) return rejected;
+    return AppendLoaded(info, localInfo, header, inputs, outputs);
+}
+
+int CheckedAppend(AjmBatchInfo* info, const JobHeader& header, std::span<const AjmBuffer> inputs, std::span<const AjmBuffer> outputs) {
+    AjmBatchInfo localInfo{};
+    if (const int rejected = JobRejected(info, header, localInfo)) return rejected;
+    if ((header.inputCount && inputs.empty()) || (header.outputCount && outputs.empty())) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
+    return AppendLoaded(info, localInfo, header, inputs, outputs);
 }
 
 JobHeader MakeHeader(JobKind kind, std::uint32_t instance, void* sideband, std::uint64_t sidebandSize) {
@@ -292,10 +323,13 @@ std::uint32_t ChannelMask(std::size_t channels) {
     }
 }
 
+void CopyBatchIn(void* destination, const void* source, std::size_t bytes, const char* message);
+void CopyBatchOut(void* destination, const void* source, std::size_t bytes, const char* message);
+
 void WriteResult(void* sideband, std::uint64_t size, std::int32_t result) {
     if (!sideband || size < sizeof(SidebandResult)) return;
     const SidebandResult value{result, 0};
-    std::memcpy(sideband, &value, sizeof(value));
+    CopyBatchOut(sideband, &value, sizeof(value), "AJM job sideband is unwritable");
 }
 
 Instance* Find(std::uint32_t id) {
@@ -524,16 +558,66 @@ std::int32_t InitializeInstance(Instance& instance, const std::uint8_t* paramete
     return 0;
 }
 
+class JobInput {
+public:
+    JobInput(const JobHeader& job, const AjmBuffer* inputs) {
+        if (job.inputCount == 1) {
+            single = true;
+            guest = reinterpret_cast<std::uintptr_t>(inputs[0].ptr);
+            bytes = static_cast<std::size_t>(inputs[0].size);
+            return;
+        }
+        for (std::uint32_t index = 0; index < job.inputCount; ++index) {
+            const auto offset = joined.size();
+            joined.resize(offset + static_cast<std::size_t>(inputs[index].size));
+            if (inputs[index].size != 0) CopyBatchIn(joined.data() + offset, inputs[index].ptr, static_cast<std::size_t>(inputs[index].size), "AJM job input is unreadable");
+        }
+        bytes = joined.size();
+    }
+    JobInput(const JobInput&) = delete;
+    JobInput& operator=(const JobInput&) = delete;
+    std::size_t size() const { return bytes; }
+    bool empty() const { return bytes == 0; }
+    void Copy(std::size_t offset, void* destination, std::size_t length) const {
+        if (length == 0) return;
+        if (single) CopyBatchIn(destination, reinterpret_cast<const void*>(guest + offset), length, "AJM job input is unreadable");
+        else std::memcpy(destination, joined.data() + offset, length);
+    }
+    bool TryCopy(std::size_t offset, void* destination, std::size_t length) const {
+        if (length == 0) return true;
+        if (!single) {
+            std::memcpy(destination, joined.data() + offset, length);
+            return true;
+        }
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(destination, reinterpret_cast<const void*>(guest + offset), length);
+        errno = savedErrno;
+        return copied;
+    }
+
+private:
+    std::vector<std::uint8_t> joined;
+    std::uintptr_t guest = 0;
+    bool single = false;
+    std::size_t bytes = 0;
+};
+
 // Titles may hand the decoder a whole .at9 file. Like the console's decoder, a RIFF/WAVE header at a
 // frame boundary is skipped up to the data chunk's payload and counted as consumed input. Returns the
 // payload offset, or 0 when the bytes do not start a complete RIFF header.
-std::size_t RiffDataOffset(const std::uint8_t* data, std::size_t size) {
-    if (size < 12 || std::memcmp(data, "RIFF", 4) != 0 || std::memcmp(data + 8, "WAVE", 4) != 0) return 0;
+std::size_t RiffDataOffset(const JobInput& input, std::size_t start) {
+    const std::size_t size = input.size() - start;
+    std::array<std::uint8_t, 12> riff{};
+    if (size < riff.size()) return 0;
+    input.Copy(start, riff.data(), riff.size());
+    if (std::memcmp(riff.data(), "RIFF", 4) != 0 || std::memcmp(riff.data() + 8, "WAVE", 4) != 0) return 0;
     std::size_t cursor = 12;
     while (cursor + 8 <= size) {
+        std::array<std::uint8_t, 8> chunk{};
+        input.Copy(start + cursor, chunk.data(), chunk.size());
         std::uint32_t chunkBytes = 0;
-        std::memcpy(&chunkBytes, data + cursor + 4, sizeof(chunkBytes));
-        if (std::memcmp(data + cursor, "data", 4) == 0) return cursor + 8;
+        std::memcpy(&chunkBytes, chunk.data() + 4, sizeof(chunkBytes));
+        if (std::memcmp(chunk.data(), "data", 4) == 0) return cursor + 8;
         cursor += 8 + static_cast<std::size_t>(chunkBytes) + (chunkBytes & 1u);
     }
     return 0;
@@ -545,31 +629,6 @@ bool consumedFirstRun(Instance& instance) {
     instance.flagsReported = true;
     return true;
 }
-
-class JobInput {
-public:
-    JobInput(const JobHeader& job, const AjmBuffer* inputs) {
-        if (job.inputCount == 1) {
-            bytes = {static_cast<const std::uint8_t*>(inputs[0].ptr), static_cast<std::size_t>(inputs[0].size)};
-            return;
-        }
-        for (std::uint32_t index = 0; index < job.inputCount; ++index) {
-            const auto* data = static_cast<const std::uint8_t*>(inputs[index].ptr);
-            joined.insert(joined.end(), data, data + inputs[index].size);
-        }
-        bytes = joined;
-    }
-    JobInput(const JobInput&) = delete;
-    JobInput& operator=(const JobInput&) = delete;
-    std::size_t size() const { return bytes.size(); }
-    bool empty() const { return bytes.empty(); }
-    const std::uint8_t* data() const { return bytes.data(); }
-    std::uint8_t operator[](std::size_t index) const { return bytes[index]; }
-
-private:
-    std::vector<std::uint8_t> joined;
-    std::span<const std::uint8_t> bytes;
-};
 
 struct PcmOutputs {
     const AjmBuffer* buffers;
@@ -586,7 +645,7 @@ struct PcmOutputs {
     void Emit(const std::uint8_t* source, std::size_t bytes) {
         while (bytes > 0 && index < count) {
             const std::size_t chunk = std::min(buffers[index].size - offset, bytes);
-            std::memcpy(static_cast<std::uint8_t*>(buffers[index].ptr) + offset, source, chunk);
+            CopyBatchOut(static_cast<std::uint8_t*>(buffers[index].ptr) + offset, source, chunk, "AJM job output buffer is unwritable");
             source += chunk;
             bytes -= chunk;
             produced += chunk;
@@ -748,7 +807,7 @@ void WriteRunSideband(const JobHeader& job, const Instance& instance, std::int32
             stopped = true;
             return;
         }
-        std::memcpy(sideband + offset, value, size);
+        CopyBatchOut(sideband + offset, value, size, "AJM job sideband is unwritable");
         offset += size;
     };
     const SidebandResult status{result, 0};
@@ -782,6 +841,7 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     const std::size_t sampleBytes = encoding == 0 ? sizeof(std::int16_t) : sizeof(std::int32_t);
     const std::size_t frameBytes = frameSamples * channels * sampleBytes;
     std::vector<std::uint8_t> pcm(frameBytes);
+    std::vector<std::uint8_t> superframe;
     static const bool traceFlags = std::getenv("APS5_TRACE_AJM") != nullptr;
     if (traceFlags && instance.totalDecodedSamples == 0 && consumedFirstRun(instance)) std::fprintf(stderr, "[ajm] instance %u flags 0x%llx (encoding %u)\n", job.instance, static_cast<unsigned long long>(instance.flags), encoding);
 
@@ -801,7 +861,7 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
     const auto segmentEnded = [&] { return instance.gapless.totalSamples != 0 && instance.segmentSamples >= instance.gapless.totalSamples; };
     for (;;) {
-        if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
+        if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input, consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
         const bool roomForFrame = segmentEnded() || (Resampling(instance) ? pcmOutputs.Room() >= channels * sampleBytes : pcmOutputs.Room() >= frameBytes);
         // A PS4 reports which side ran out (probe runs of a title's ATRAC9 stream through libSceAjm's
@@ -826,7 +886,9 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
             instance.frameInSuperframe = 0;
         }
         int used = 0;
-        decodeStatus = DecodeAt9Frame(instance, input.data() + consumed, static_cast<int>(instance.superframeRemaining), pcm.data(), encoding, sampleBytes, &used);
+        superframe.resize(instance.superframeRemaining);
+        input.Copy(consumed, superframe.data(), superframe.size());
+        decodeStatus = DecodeAt9Frame(instance, superframe.data(), static_cast<int>(instance.superframeRemaining), pcm.data(), encoding, sampleBytes, &used);
         if (decodeStatus != 0 || used <= 0 || static_cast<std::uint32_t>(used) > instance.superframeRemaining) {
             result |= AJM_RESULT_INVALID_DATA;
             // The decoder tracks its position in the superframe; a fresh one starts the next superframe.
@@ -849,7 +911,10 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         std::fprintf(stderr, "[ajm] instance %u run flags 0x%llx: %zu input bytes in %u buffers, %zu output bytes in %u buffers, sideband %llu bytes; superframe %d (%d frames), %d channels, %d samples/frame, %d Hz, config %02x %02x %02x %02x -> result 0x%x, decoder status 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu, gapless total %u skip %u skipped %u, input",
                      job.instance, static_cast<unsigned long long>(job.flags), input.size(), job.inputCount, pcmOutputs.capacity, job.outputCount, static_cast<unsigned long long>(job.sidebandSize), instance.info.superframeSize, instance.info.framesInSuperframe, instance.info.channels, instance.info.frameSamples, instance.info.samplingRate,
                      instance.info.configData[0], instance.info.configData[1], instance.info.configData[2], instance.info.configData[3], static_cast<unsigned>(result), static_cast<unsigned>(decodeStatus), frames, consumed, pcmOutputs.produced, static_cast<unsigned long long>(instance.totalDecodedSamples), instance.gapless.totalSamples, instance.gapless.skipSamples, instance.gapless.skippedSamples);
-        for (std::size_t i = 0; i < consumed && i < 16; ++i) std::fprintf(stderr, " %02x", input[i]);
+        std::array<std::uint8_t, 16> first{};
+        const std::size_t shown = std::min(consumed, first.size());
+        input.Copy(0, first.data(), shown);
+        for (std::size_t i = 0; i < shown; ++i) std::fprintf(stderr, " %02x", first[i]);
         std::fprintf(stderr, "\n");
     }
     WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, CurrentFormat(instance));
@@ -1048,6 +1113,7 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     std::unique_ptr<AVFrame, void (*)(AVFrame*)> decoded(av_frame_alloc(), [](AVFrame* f) { av_frame_free(&f); });
     if (!packet || !decoded) throw std::bad_alloc();
     std::vector<std::uint8_t> pcm;
+    std::vector<std::uint8_t> frameBytes;
 
     std::int32_t result = 0;
     std::size_t consumed = 0;
@@ -1055,7 +1121,10 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, instance.mp3Channels, encoding, sampleBytes);
     while (consumed < input.size()) {
         Mp3Frame frame{};
-        if (!ParseMp3Frame(input.data() + consumed, input.size() - consumed, frame)) {
+        std::array<std::uint8_t, 4> header{};
+        const std::size_t headerBytes = std::min(header.size(), input.size() - consumed);
+        input.Copy(consumed, header.data(), headerBytes);
+        if (!ParseMp3Frame(header.data(), headerBytes, frame)) {
             result |= AJM_RESULT_INVALID_DATA;
             break;
         }
@@ -1067,7 +1136,9 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
             if (frames == 0 && pcmOutputs.produced == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }
-        packet->data = const_cast<std::uint8_t*>(input.data() + consumed);
+        frameBytes.resize(frame.bytes);
+        input.Copy(consumed, frameBytes.data(), frameBytes.size());
+        packet->data = frameBytes.data();
         packet->size = static_cast<int>(frame.bytes);
         if (avcodec_send_packet(instance.mp3, packet.get()) < 0) {
             result |= AJM_RESULT_INVALID_DATA;
@@ -1279,7 +1350,9 @@ void RunPcm(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     std::size_t outputFrames = 0;
     while (outputFrames < room && static_cast<double>(outputFrames) * ratio < static_cast<double>(frames)) ++outputFrames;
     if (static_cast<double>(outputFrames) * ratio < static_cast<double>(frames)) NotImplemented_nid_no_patch("AJM codec 23 run whose output cannot hold the whole resampled input");
-    const auto sample = [&](std::size_t index, std::size_t channel) { return PcmValue(input.data() + (std::min(index, frames - 1) * channels + channel) * sizeof(std::int16_t), 0); };
+    std::vector<std::uint8_t> samples(input.size());
+    input.Copy(0, samples.data(), samples.size());
+    const auto sample = [&](std::size_t index, std::size_t channel) { return PcmValue(samples.data() + (std::min(index, frames - 1) * channels + channel) * sizeof(std::int16_t), 0); };
     std::vector<std::uint8_t> frame(channels * sampleBytes);
     for (std::size_t output = 0; output < outputFrames; ++output) {
         const double position = static_cast<double>(output) * ratio;
@@ -1306,6 +1379,7 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
     std::unique_ptr<AVPacket, void (*)(AVPacket*)> packet(av_packet_alloc(), [](AVPacket* p) { av_packet_free(&p); });
     std::unique_ptr<AVFrame, void (*)(AVFrame*)> decoded(av_frame_alloc(), [](AVFrame* f) { av_frame_free(&f); });
     if (!packet || !decoded) throw std::bad_alloc();
+    std::vector<std::uint8_t> packetBytes;
     std::vector<std::uint8_t> pcm;
     const std::size_t channels = instance.opusChannels;
 
@@ -1331,12 +1405,19 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
             result |= AJM_RESULT_PARTIAL_INPUT;
             break;
         }
-        const std::size_t bytes = input[consumed] | (std::size_t{input[consumed + 1]} << 8u);
+        std::array<std::uint8_t, 2> length{};
+        input.Copy(consumed, length.data(), length.size());
+        const std::size_t bytes = length[0] | (std::size_t{length[1]} << 8u);
         if (input.size() - consumed - 2 < bytes) {
             result |= AJM_RESULT_PARTIAL_INPUT;
             break;
         }
-        const auto* data = input.data() + consumed + 2;
+        packetBytes.resize(bytes);
+        if (!input.TryCopy(consumed + 2, packetBytes.data(), bytes)) {
+            result |= AJM_RESULT_INVALID_DATA;
+            break;
+        }
+        const auto* data = packetBytes.data();
         const std::size_t samples = OpusPacketSamples(data, bytes);
         if (bytes == 0 || samples == 0) {
             result |= AJM_RESULT_INVALID_DATA;
@@ -1530,7 +1611,9 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         if (raw && !input.empty() && (AacRawChannels(instance) == 3 || AacRawChannels(instance) == 5)) NotImplemented_nid_no_patch("AJM M4AAC format with an unknown three- or five-channel speaker mask");
         for (std::size_t offset = 0; !raw && input.size() - offset >= ADTS_HEADER_BYTES;) {
             AdtsHeader header{};
-            if (!ParseAdtsHeader(input.data() + offset, header) || header.frameBytes > input.size() - offset) break;
+            std::array<std::uint8_t, ADTS_HEADER_BYTES> headerBytes{};
+            input.Copy(offset, headerBytes.data(), headerBytes.size());
+            if (!ParseAdtsHeader(headerBytes.data(), header) || header.frameBytes > input.size() - offset) break;
             if (header.channelConfig == 3 || header.channelConfig == 5) NotImplemented_nid_no_patch("AJM M4AAC format with an unknown three- or five-channel speaker mask");
             if ((job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
             offset += header.frameBytes;
@@ -1548,13 +1631,14 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     std::uint32_t frames = 0;
     if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, instance.aacChannels, encoding, sampleBytes);
     while (consumed < input.size()) {
-        const std::uint8_t* data = input.data() + consumed;
         const std::size_t available = input.size() - consumed;
         if (!raw && available < ADTS_HEADER_BYTES) {
             result |= AJM_RESULT_PARTIAL_INPUT;
             break;
         }
-        const std::size_t frameBytes = raw ? available : AdtsFrameBytes(instance, data);
+        std::array<std::uint8_t, ADTS_HEADER_BYTES> header{};
+        if (!raw) input.Copy(consumed, header.data(), header.size());
+        const std::size_t frameBytes = raw ? available : AdtsFrameBytes(instance, header.data());
         if (available < frameBytes) {
             result |= AJM_RESULT_PARTIAL_INPUT;
             break;
@@ -1564,8 +1648,8 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
             if (frames == 0 && pcmOutputs.produced == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }
-        bitstream.assign(data, data + frameBytes);
-        bitstream.resize(frameBytes + AV_INPUT_BUFFER_PADDING_SIZE, 0);
+        bitstream.assign(frameBytes + AV_INPUT_BUFFER_PADDING_SIZE, 0);
+        input.Copy(consumed, bitstream.data(), frameBytes);
         packet->data = bitstream.data();
         packet->size = static_cast<int>(frameBytes);
         int status = avcodec_send_packet(instance.aac, packet.get());
@@ -1642,11 +1726,13 @@ std::size_t ControlInitializeSize(std::uint32_t codec) {
 }
 
 void Control(Instance& instance, const JobHeader& job, const AjmBuffer* inputs) {
-    const auto* input = job.inputCount ? static_cast<const std::uint8_t*>(inputs[0].ptr) : nullptr;
     const std::size_t inputSize = job.inputCount ? inputs[0].size : 0;
     const std::size_t gaplessSize = (job.flags & SIDEBAND_GAPLESS_DECODE) ? sizeof(SidebandGaplessDecode) : 0;
     const std::size_t initializeSize = (job.flags & CONTROL_INITIALIZE) ? ControlInitializeSize(instance.codec) : 0;
     if (inputSize != gaplessSize + initializeSize) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband input size other than the gapless decode and the codec's initialize parameters)");
+    std::vector<std::uint8_t> copied(inputSize);
+    if (inputSize != 0) CopyBatchIn(copied.data(), inputs[0].ptr, inputSize, "AJM control job input is unreadable");
+    const auto* input = job.inputCount ? copied.data() : nullptr;
     std::int32_t result = 0;
     if (job.flags & CONTROL_RESET) ClearContext(instance);
     if (job.flags & CONTROL_INITIALIZE) result = InitializeInstance(instance, input + gaplessSize, initializeSize);
@@ -1670,7 +1756,10 @@ std::size_t HeldSamples(const Instance& instance) {
 void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* outputs) {
     if (job.kind == JobKind::GetStatistics) {
         AJM_TRACE("[ajm] statistics job: sideband %llu bytes\n", static_cast<unsigned long long>(job.sidebandSize));
-        if (job.sideband && job.sidebandSize) std::memset(job.sideband, 0, std::min<std::uint64_t>(job.sidebandSize, 24));
+        if (job.sideband && job.sidebandSize) {
+            const std::array<std::uint8_t, 24> zeros{};
+            CopyBatchOut(job.sideband, zeros.data(), static_cast<std::size_t>(std::min<std::uint64_t>(job.sidebandSize, zeros.size())), "AJM job sideband is unwritable");
+        }
         return;
     }
     std::lock_guard lock(g_lock);
@@ -1721,7 +1810,7 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
     case JobKind::GetResampleInfo: {
         const SidebandResampleInfo resample{instance->resampler.ratio, static_cast<std::int32_t>(HeldSamples(*instance)), {}};
         WriteResult(job.sideband, job.sidebandSize, 0);
-        if (job.sideband && job.sidebandSize >= sizeof(SidebandResult) + sizeof(resample)) std::memcpy(static_cast<std::uint8_t*>(job.sideband) + sizeof(SidebandResult), &resample, sizeof(resample));
+        if (job.sideband && job.sidebandSize >= sizeof(SidebandResult) + sizeof(resample)) CopyBatchOut(static_cast<std::uint8_t*>(job.sideband) + sizeof(SidebandResult), &resample, sizeof(resample), "AJM job sideband is unwritable");
         break;
     }
     case JobKind::Run:
@@ -2104,20 +2193,24 @@ int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* inf
 int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo* info, uint32_t instance, const void* codec_parameters, size_t codec_parameters_size, void* result) {
     auto header = MakeHeader(JobKind::Initialize, instance, result, sizeof(SidebandResult));
     header.parameterSize = std::min<std::size_t>(codec_parameters_size, sizeof(header.parameters));
-    if (codec_parameters && header.parameterSize) std::memcpy(header.parameters, codec_parameters, header.parameterSize);
-    return Append(info, header, nullptr, nullptr);
+    if (codec_parameters && header.parameterSize) {
+        if (!CopyBatchGuestIn(header.parameters, codec_parameters, header.parameterSize)) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
+    return Append(info, header, {}, {});
 }
 
 int APS5_VABI sceAjmBatchJobClearContext(AjmBatchInfo* info, uint32_t instance, void* result) {
-    return Append(info, MakeHeader(JobKind::ClearContext, instance, result, sizeof(SidebandResult)), nullptr, nullptr);
+    return Append(info, MakeHeader(JobKind::ClearContext, instance, result, sizeof(SidebandResult)), {}, {});
 }
 
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instance, const void* gapless_decode, int reset, void* result) {
     auto header = MakeHeader(JobKind::SetGaplessDecode, instance, result, sizeof(SidebandResult));
-    if (gapless_decode) std::memcpy(header.parameters, gapless_decode, sizeof(SidebandGaplessDecode));
+    if (gapless_decode) {
+        if (!CopyBatchGuestIn(header.parameters, gapless_decode, sizeof(SidebandGaplessDecode))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     header.parameterSize = gapless_decode ? sizeof(SidebandGaplessDecode) : 0;
     header.flags = reset ? 1 : 0;
-    return Append(info, header, nullptr, nullptr);
+    return Append(info, header, {}, {});
 }
 
 int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size) {
@@ -2130,40 +2223,61 @@ int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint6
     header.flags = flags;
     header.inputCount = sideband_input_size != 0 ? 1 : 0;
     const AjmBuffer input{const_cast<void*>(sideband_input), sideband_input_size};
-    return CheckedAppend(info, header, &input, nullptr);
+    const std::span<const AjmBuffer> inputs = header.inputCount ? std::span<const AjmBuffer>(&input, 1) : std::span<const AjmBuffer>{};
+    return CheckedAppend(info, header, inputs, {});
 }
 
-int AppendRun(AjmBatchInfo* info, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* input_buffers, std::size_t input_buffers_num, const AjmBuffer* output_buffers, std::size_t output_buffers_num, void* sideband_output, std::size_t sideband_output_size) {
+int AppendRun(AjmBatchInfo* info, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* input_buffers, std::size_t input_buffers_num, const AjmBuffer* output_buffers, std::size_t output_buffers_num, void* sideband_output, std::size_t sideband_output_size, bool guestBufferLists) {
     if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto header = MakeHeader(JobKind::Run, instance, sideband_output, sideband_output_size);
     header.flags = flags;
     header.inputCount = static_cast<std::uint32_t>(input_buffers_num);
     header.outputCount = static_cast<std::uint32_t>(output_buffers_num);
-    if (const int rejected = JobRejected(info, header)) return rejected;
+    AjmBatchInfo localInfo{};
+    if (const int rejected = JobRejected(info, header, localInfo)) return rejected;
     if ((input_buffers_num && !input_buffers) || (output_buffers_num && !output_buffers)) throw std::runtime_error("AJM batch job with a null buffer list and a nonzero buffer count is not implemented");
-    return Append(info, header, input_buffers, output_buffers);
+    std::vector<AjmBuffer> copiedInputs;
+    std::vector<AjmBuffer> copiedOutputs;
+    std::span<const AjmBuffer> inputSpan(input_buffers, input_buffers_num);
+    std::span<const AjmBuffer> outputSpan(output_buffers, output_buffers_num);
+    if (guestBufferLists) {
+        if (input_buffers_num) {
+            copiedInputs.resize(input_buffers_num);
+            if (!CopyBatchGuestIn(copiedInputs.data(), input_buffers, input_buffers_num * sizeof(AjmBuffer))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+            inputSpan = copiedInputs;
+        }
+        if (output_buffers_num) {
+            copiedOutputs.resize(output_buffers_num);
+            if (!CopyBatchGuestIn(copiedOutputs.data(), output_buffers, output_buffers_num * sizeof(AjmBuffer))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+            outputSpan = copiedOutputs;
+        }
+    }
+    return AppendLoaded(info, localInfo, header, inputSpan, outputSpan);
 }
 
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
     if (!info || sideband_output_size < sizeof(SidebandResult)) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (input_buffers_num != 0 && !input_buffers) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (output_buffers_num != 0 && !output_buffers) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    AjmBatchInfo localInfo{};
+    if (!CopyBatchGuestIn(&localInfo, info, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     const std::uint64_t buffers = static_cast<std::uint64_t>(input_buffers_num) + output_buffers_num;
     const std::uint64_t limit = UINT64_MAX - sizeof(PackedJob);
-    if (buffers < input_buffers_num || info->offset > limit || buffers > (limit - info->offset) / sizeof(AjmBuffer)) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (a job size past 64 bits)");
-    const std::uint64_t end = info->offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer);
-    if (end > info->size) {
-        info->offset = end;
+    if (buffers < input_buffers_num || localInfo.offset > limit || buffers > (limit - localInfo.offset) / sizeof(AjmBuffer)) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (a job size past 64 bits)");
+    const std::uint64_t end = localInfo.offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer);
+    if (end > localInfo.size) {
+        localInfo.offset = end;
+        if (!CopyBatchGuestOut(info, &localInfo, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
         return SCE_AJM_ERROR_JOB_CREATION;
     }
     if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (more than 255 input or output buffers in one job)");
-    return AppendRun(info, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size);
+    return AppendRun(info, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size, true);
 }
 
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size) {
     const AjmBuffer input{const_cast<void*>(data_input), data_input_size};
     const AjmBuffer output{data_output, data_output_size};
-    return AppendRun(info, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size);
+    return AppendRun(info, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size, false);
 }
 
 int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, float ratio, uint32_t flags, void* result) {
@@ -2172,7 +2286,7 @@ int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t i
     auto header = MakeHeader(JobKind::SetResampleParameters, instance, result, sizeof(SidebandResult));
     std::memcpy(header.parameters, &ratio, sizeof(ratio));
     header.parameterSize = sizeof(ratio);
-    return Append(info, header, nullptr, nullptr);
+    return Append(info, header, {}, {});
 }
 
 int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t instance, float ratio_start, float ratio_change_per_sample, uint32_t flags, void* result) {
@@ -2182,11 +2296,11 @@ int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t
     const float parameters[2] = {ratio_start, ratio_change_per_sample};
     std::memcpy(header.parameters, parameters, sizeof(parameters));
     header.parameterSize = sizeof(parameters);
-    return Append(info, header, nullptr, nullptr);
+    return Append(info, header, {}, {});
 }
 
 int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
-    return Append(info, MakeHeader(JobKind::GetResampleInfo, instance, result, sizeof(SidebandResult) + sizeof(SidebandResampleInfo)), nullptr, nullptr);
+    return Append(info, MakeHeader(JobKind::GetResampleInfo, instance, result, sizeof(SidebandResult) + sizeof(SidebandResampleInfo)), {}, {});
 }
 
 int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
@@ -2194,7 +2308,7 @@ int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const 
 }
 
 int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo* info, uint32_t instance, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* result) {
-    return AppendRun(info, instance, SIDEBAND_STREAM, input_buffers, input_buffers_num, output_buffers, output_buffers_num, result, sizeof(SidebandResult) + sizeof(SidebandStream));
+    return AppendRun(info, instance, SIDEBAND_STREAM, input_buffers, input_buffers_num, output_buffers, output_buffers_num, result, sizeof(SidebandResult) + sizeof(SidebandStream), true);
 }
 
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
@@ -2202,20 +2316,20 @@ int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, 
 }
 
 int APS5_VABI sceAjmBatchJobGetGaplessDecode(AjmBatchInfo* info, uint32_t instance, void* result) {
-    return AppendRun(info, instance, SIDEBAND_GAPLESS_DECODE, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandGaplessDecode));
+    return AppendRun(info, instance, SIDEBAND_GAPLESS_DECODE, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandGaplessDecode), false);
 }
 
 int APS5_VABI sceAjmBatchJobGetInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
-    return AppendRun(info, instance, SIDEBAND_FORMAT, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandFormat));
+    return AppendRun(info, instance, SIDEBAND_FORMAT, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandFormat), false);
 }
 
 int APS5_VABI sceAjmBatchJobGetCodecInfo(AjmBatchInfo* info, uint32_t instance, void* result, size_t result_size) {
-    return AppendRun(info, instance, RUN_GET_CODEC_INFO, nullptr, 0, nullptr, 0, result, result_size);
+    return AppendRun(info, instance, RUN_GET_CODEC_INFO, nullptr, 0, nullptr, 0, result, result_size, false);
 }
 
 int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, void* result) {
     (void)interval;
-    return CheckedAppend(info, MakeHeader(JobKind::GetStatistics, 0, result, 24), nullptr, nullptr);
+    return CheckedAppend(info, MakeHeader(JobKind::GetStatistics, 0, result, 24), {}, {});
 }
 
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {

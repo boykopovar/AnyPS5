@@ -52,7 +52,7 @@ from the saved log.
 | `APS5_TRACE_DRAWS` | Draw inputs and per-draw timing phases. With `APS5_PROFILE_DRAW`, also prints the detailed draw lines. |
 | `APS5_TRACE_DRAW_PROGRAMS` | One line per draw listing selected shader stages, roles, code addresses and entry addresses. |
 | `APS5_TRACE_FILL_COVER` | Initial fill/image coverage mismatches and refused image-layer clears. |
-| `APS5_TRACE_FLUSH` | Storage images flushed to guest memory and ranges left for the CPU. |
+| `APS5_TRACE_FLUSH` | Storage images flushed to guest memory and ranges left for the CPU. Also `[flush-skip]`, whether each flush was ordered on the GPU or why not, and `[refresh-eligible]`, why a storage refresh could not be ordered. |
 | `APS5_TRACE_GPU` | Queue submissions, packet execution, waits and display-buffer scanouts. |
 | `APS5_TRACE_HOST_IMPORT` | Host-import mapping attempts, memory-map details, failures and retirement. |
 | `APS5_TRACE_IMAGE_TABLE` | Image-table resource materialization and descriptor selection. |
@@ -124,3 +124,10 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.
   On Windows PowerShell 5.1, capture the log through `cmd /d /c "<command> 2> run.log"`. PowerShell's own
   `2>` can write UTF-16 and wrap long report lines, which the A/B tools cannot use.
+
+For a performance CSV from JSONL files with multiple captures, select the exact `trace` value for either input.
+Each selector must match exactly one row. For example:
+
+```sh
+python3 tools/performance_csv.py before.jsonl after.jsonl --baseline-trace aps5-trace-before.json.gz --candidate-trace aps5-trace-after.json.gz
+```

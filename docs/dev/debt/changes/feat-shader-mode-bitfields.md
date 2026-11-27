@@ -1,0 +1,5 @@
+# shader
+
+## change Shader MODE register access
+
+- [Shader MODE register access](../../../core/shader/recompiler/Translation/src/RoundingMode.cpp) follows immediate writes to MODE round (0-3) and denormal (4-7) fields (`s_round_mode`, `s_denorm_mode`, `s_setreg_imm32_b32`) through the CFG; `s_getreg_b32` returns tracked bits 0-7 and static status fields (`DX10_CLAMP` 8, `IEEE` 9, `FP16_OVFL` 23; RDNA2 ISA §§5.8, 6.4 Table 24). Only `RoundingUseOf` ops modeling runtime mode act on it; others throw if consulted fields changed, as do reads written by `s_setreg_b32` or differing across paths. The per-instruction denormal-field masks follow the public RDNA2/LLVM contract, not console measurements. A shader without `FLOAT_MODE` metadata is tracked with the translator's effective default (f32 denormals flushed, f16/f64 kept) and throws on a write that changes it. Unmodeled MODE reads (10-22, 24-31), other registers, and MODE bits 8+ writes (`s_setreg*`) throw; non-MODE `s_setreg_b32` is ignored. Labels: console, tested.
