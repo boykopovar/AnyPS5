@@ -351,12 +351,19 @@ bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode op
 bool TranslationContext::float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand) {
     const IrU32 lhs = readF16Bits(lhsOperand);
     const IrU32 rhs = readF16Bits(rhsOperand);
-    IrU32 result;
-    if (opcode == IrOpcode::FPMul32) {
-        result = IrU32(ir.Emit(IrOpcode::FPMul16x2, IrType::U32, {&lhs.Value(), &rhs.Value()}));
-    } else {
-        const IrU32 addend = opcode == IrOpcode::FPSub32 ? IrU32(ir.BitwiseXor(rhs.Value(), ir.Constant(0x8000u))) : rhs;
-        result = IrU32(ir.Emit(IrOpcode::FPAdd16x2, IrType::U32, {&lhs.Value(), &addend.Value()}));
+    const IrU32 second = opcode == IrOpcode::FPSub32 ? IrU32(ir.BitwiseXor(rhs.Value(), ir.Constant(0x8000u))) : rhs;
+    const auto isNan = [&](const IrU32& value) { return IrU1(ir.UGreaterThan(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u))); };
+    const bool hostNans = hostFloat16Nans(inst, 2u, false);
+    const bool reverse = inst.op == RdnaOpcode::VSubrevF16;
+    const IrU32& first = reverse ? second : lhs;
+    const IrU32& last = reverse ? lhs : second;
+    const IrU32 left = hostNans ? IrU32(ir.Select(isNan(first).Value(), first.Value(), lhs.Value())) : lhs;
+    const IrU32 right = hostNans ? IrU32(ir.Select(isNan(first).Value(), first.Value(), second.Value())) : second;
+    IrU32 result(ir.Emit(opcode == IrOpcode::FPMul32 ? IrOpcode::FPMul16x2 : IrOpcode::FPAdd16x2, IrType::U32, {&left.Value(), &right.Value()}));
+    if (!hostNans) {
+        result = IrU32(ir.Select(isNan(result).Value(), ir.Constant(0xfe00u), result.Value()));
+        result = IrU32(ir.Select(isNan(last).Value(), quietNan16(last).Value(), result.Value()));
+        result = IrU32(ir.Select(isNan(first).Value(), quietNan16(first).Value(), result.Value()));
     }
     if (fp16Overflow()) {
         const auto infinite = [&](const IrU32& value) { return IrU1(ir.IEqual(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u))); };
