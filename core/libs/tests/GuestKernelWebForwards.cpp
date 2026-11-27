@@ -170,6 +170,21 @@ void TestRandomizedPath() {
     RequireFailure(__sys_randomized_path_nid_postfix(nullptr, full, reinterpret_cast<std::size_t*>(0x10)), GuestEfault,
                    "unreadable randomized-path length did not fail with EFAULT");
 
+    constexpr std::size_t Page = 0x4000;
+    void* const failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    auto* const memory = static_cast<char*>(mmap_nid_postfix(nullptr, Page * 2, 3, 0x1002, -1, 0));
+    Require(memory != failed, "randomized-path boundary mapping failed");
+    char* const boundary = memory + Page - ExpectedLength;
+    std::memset(boundary, 'x', ExpectedLength);
+    Require(sceKernelMprotect(memory + Page, Page, 0) == 0, "randomized-path boundary protection failed");
+    std::size_t boundaryLength = ExpectedLength + 1;
+    RequireFailure(__sys_randomized_path_nid_postfix(nullptr, boundary, &boundaryLength), GuestEfault,
+                   "randomized-path terminator crossing an inaccessible page did not fail with EFAULT");
+    Require(boundaryLength == ExpectedLength, "randomized-path boundary failure did not preserve length-first output");
+    Require(std::memcmp(boundary, "xxxxxxxxxx", ExpectedLength) == 0,
+            "randomized-path boundary failure partially modified the unterminated output");
+    Require(sceKernelMprotect(memory + Page, Page, 3) == 0, "randomized-path boundary protection restore failed");
+    Require(munmap_nid_postfix(memory, Page * 2) == 0, "randomized-path boundary mapping release failed");
     bool threw = false;
     try {
         __sys_randomized_path_nid_postfix("replacement", full, &fullLength);
