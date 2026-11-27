@@ -37,15 +37,36 @@
  */
 
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 
 namespace {
+
+void ProbeGuestRange(void* base, std::size_t totalBytes) {
+    constexpr std::uintptr_t pageSize = 4096;
+    const auto start = reinterpret_cast<std::uintptr_t>(base);
+    const auto last = start + (totalBytes - 1);
+    auto probeAddress = [](std::uintptr_t address) {
+        unsigned char byte = 0;
+        auto* const ptr = reinterpret_cast<void*>(address);
+        if (!GuestCopyIn_nid_no_patch(&byte, ptr, 1) || !GuestCopyOut_nid_no_patch(ptr, &byte, 1)) {
+            throw std::invalid_argument("heapsort: inaccessible guest buffer");
+        }
+    };
+    probeAddress(start);
+    const std::uintptr_t firstPage = start / pageSize;
+    const std::uintptr_t lastPage = last / pageSize;
+    for (std::uintptr_t page = firstPage + 1; page <= lastPage; ++page) {
+        probeAddress(page * pageSize);
+    }
+}
 
 class HeapSorter {
 public:
@@ -76,18 +97,20 @@ private:
 
     void Create(std::size_t start, std::size_t count) const {
         std::size_t parent = start;
-        for (std::size_t child; (child = parent * 2) <= count; parent = child) {
-            child = LargerChild(child, count);
+        while (parent <= count / 2) {
+            const std::size_t child = LargerChild(parent * 2, count);
             if (compare(Element(child), Element(parent)) <= 0) break;
             std::swap_ranges(Element(parent), Element(parent) + size, Element(child));
+            parent = child;
         }
     }
 
     void Select(std::size_t count, const unsigned char* displaced) const {
         std::size_t parent = 1;
-        for (std::size_t child; (child = parent * 2) <= count; parent = child) {
-            child = LargerChild(child, count);
+        while (parent <= count / 2) {
+            const std::size_t child = LargerChild(parent * 2, count);
             Copy(Element(parent), Element(child));
+            parent = child;
         }
         for (;;) {
             const std::size_t child = parent;
@@ -110,12 +133,17 @@ private:
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
     if (count <= 1) return 0;
     if (size == 0) {
-        errno = 22;
+        *__error_nid_postfix() = 22;
         return -1;
     }
     if (!compare) throw std::invalid_argument("heapsort: null comparator");
     if (!base) throw std::invalid_argument("heapsort: null base");
     if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
+    const std::size_t totalBytes = count * size;
+    if (reinterpret_cast<std::uintptr_t>(base) > UINTPTR_MAX - totalBytes) {
+        throw std::overflow_error("heapsort: array address overflow");
+    }
+    ProbeGuestRange(base, totalBytes);
     auto* const displaced = static_cast<unsigned char*>(malloc_nid_postfix(size));
     if (!displaced) return -1;
     const std::unique_ptr<unsigned char, decltype(&free_nid_postfix)> owner(displaced, free_nid_postfix);

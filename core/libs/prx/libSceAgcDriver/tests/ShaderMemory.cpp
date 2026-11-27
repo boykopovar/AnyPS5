@@ -10482,6 +10482,8 @@ void verifyInt64AtomicCapabilities() {
         0u, 0u, 0u, 0u};
     const std::vector<std::uint32_t> bufferAtomic{0xe1705000u, 0x80012803u, 0xbf810000u};
     const std::vector<std::uint32_t> imageAtomic{0xf03c0308u, 0x00020a08u, 0xbf810000u};
+    const std::vector<std::uint32_t> imageAtomicInc{0xf06c2308u, 0x00020a08u, 0xbf810000u};
+    const std::vector<std::uint32_t> imageAtomicDec{0xf0702308u, 0x00020a08u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOr{0xe1685000u, 0x80010003u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferAnd{0xe1645000u, 0x80010003u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80010003u, 0xbf810000u};
@@ -10576,6 +10578,24 @@ void verifyInt64AtomicCapabilities() {
     const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
     require(declares(native.spirv, spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
     require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
+    const std::array<std::pair<const std::vector<std::uint32_t>*, const char*>, 2> updates{{{&imageAtomicInc, "image_atomic_inc"}, {&imageAtomicDec, "image_atomic_dec"}}};
+    for (const auto& [code, name] : updates) {
+        const auto words = compile(*code, spv::CapabilityInt64ImageEXT).spirv;
+        std::set<std::uint32_t> texelPointers;
+        std::size_t exchanges = 0;
+        std::size_t loads = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "64-bit atomics: truncated SPIR-V instruction");
+            const auto op = words[cursor] & 0xffffu;
+            if (op == spv::OpImageTexelPointer) texelPointers.insert(words[cursor + 2]);
+            if (op == spv::OpAtomicCompareExchange && texelPointers.contains(words[cursor + 3])) ++exchanges;
+            if (op == spv::OpAtomicLoad && texelPointers.contains(words[cursor + 3])) ++loads;
+            cursor += count;
+        }
+        require(exchanges != 0u, (std::string("64-bit atomics: a 64-bit ") + name + " on a 32_32 image has no compare-exchange on its texel").c_str());
+        require(loads == 0u, (std::string("64-bit atomics: a 64-bit ") + name + " on a 32_32 image reads its starting value with OpAtomicLoad from the texel pointer").c_str());
+    }
 }
 
 void verifySpecializedBufferAtomicBindings(bool finalAbiOnly = false) {

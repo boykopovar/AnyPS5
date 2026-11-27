@@ -69,6 +69,8 @@ function update() {
   const target = document.querySelector('input[name="target"]:checked').value;
   const multi = selectedInputs.length > 1;
   const inspected = inspectionComplete && summaries.length === selectedInputs.length;
+  $("patch-options").hidden = !inspected || multi;
+  $("patch").disabled = working || !inspected || multi;
   const folderBlocked = $("save").value === "disk" && (target === "windows" || multi);
   const folderOption = $("save").querySelector('[value="disk"]');
   folderOption.disabled = !canStream || target === "windows" || multi;
@@ -391,6 +393,7 @@ async function selectInputs(inputs) {
   worker?.terminate();
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
   selectedInputs = inputs;
+  $("patch").value = "";
   summaries = [];
   inspectionComplete = false;
   working = true;
@@ -433,6 +436,7 @@ $("change").onclick = () => {
   inspectionComplete = false;
   $("file").value = "";
   $("folder").value = "";
+  $("patch").value = "";
   $("app-list").replaceChildren();
   for (const id of ["selection", "warnings", "error", "done", "download", "app-list"]) $(id).hidden = true;
   $("acknowledge").checked = false;
@@ -512,7 +516,8 @@ $("convert").onclick = async () => {
     $("status").hidden = false;
     $("cancel").hidden = false;
     $("error").hidden = true;
-    currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value, locale });
+    const patchFile = selectedInputs.length === 1 ? $("patch").files?.[0] : undefined;
+    currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value, patchFile, locale });
   } catch (error) {
     if (currentWorker === worker && preparingOutput && error.name !== "AbortError") {
       await fail(error, { keepInspection: true });

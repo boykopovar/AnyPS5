@@ -76,8 +76,22 @@ emscripten::val Convert(const emscripten::val& request, const emscripten::val& c
         options.WindowsGui = false;
         options.WindowsDiagnostics = target == "windows";
         options.ToIntel = request["toIntel"].as<bool>();
+        const auto patch = request["patch"];
+        if (!patch.isUndefined()) {
+            const auto text = patch.as<std::string>();
+            if (text.size() > 1024 * 1024) throw std::invalid_argument("Patch TOML exceeds 1 MiB");
+            options.TargetName = name;
+            options.Patches = Relinker::GamePatch::ParsePatchFile(text).Entries;
+            if (options.Patches.empty()) throw std::invalid_argument("Patch TOML has no patch entries");
+        }
+        const auto moduleRoot = input.ModuleRoot;
         BrowserProgress progress(callback);
         auto output = Relinker::Conversion(progress).Convert(std::move(input), options);
+        if (!options.Patches.empty()) {
+            std::vector<std::string> targets{name};
+            for (const auto& module : output.Modules) targets.push_back(Relinker::GamePatch::ModuleTargetName(module.SourcePath, moduleRoot));
+            Relinker::GamePatch::MatchTargets(options.Patches, targets);
+        }
         result.set("executable", CopyBytes(output.Executable));
         result.set("diagnostics", output.WindowsDiagnostics);
         auto artifacts = emscripten::val::array();

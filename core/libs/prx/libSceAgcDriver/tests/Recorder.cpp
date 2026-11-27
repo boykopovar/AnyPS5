@@ -5415,7 +5415,7 @@ bool pendingUploadGpuCopy(const Device& device, Recorder& recorder, std::size_t 
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
     if (alignment < 8 || alignment > 256) {
-        std::cout << "storage buffer offset alignment " << alignment << ": uploads behind a pending GPU write not tested\n";
+        std::cout << "uploads behind a pending GPU write skipped, the device reports a storage buffer offset alignment of " << alignment << "\n";
         return false;
     }
     constexpr std::size_t bytes = 4u << 20u;
@@ -12219,6 +12219,152 @@ private:
     static inline StorageUploadProbe* active = nullptr;
 };
 
+class DetilerReleaseProbe {
+public:
+    explicit DetilerReleaseProbe(Context& context) : context(context), resolver(context.deviceProc) {
+        Require(active == nullptr, "nested detiler release probe");
+        active = this;
+        context.deviceProc = resolve;
+    }
+    ~DetilerReleaseProbe() {
+        context.deviceProc = resolver;
+        active = nullptr;
+    }
+    std::uint64_t Released() const { return released; }
+
+private:
+    template<typename TFunction>
+    TFunction function(VkDevice device, const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks* callbacks) {
+        if (pipeline != VK_NULL_HANDLE) ++active->released;
+        active->function<PFN_vkDestroyPipeline>(device, "vkDestroyPipeline")(device, pipeline, callbacks);
+    }
+    static VKAPI_ATTR void VKAPI_CALL destroyPool(VkDevice device, VkDescriptorPool pool, const VkAllocationCallbacks* callbacks) {
+        if (pool != VK_NULL_HANDLE) ++active->released;
+        active->function<PFN_vkDestroyDescriptorPool>(device, "vkDestroyDescriptorPool")(device, pool, callbacks);
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkDestroyPipeline") == 0) return reinterpret_cast<PFN_vkVoidFunction>(destroyPipeline);
+        if (std::strcmp(name, "vkDestroyDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(destroyPool);
+        return active->resolver(device, name);
+    }
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    std::uint64_t released = 0;
+    static inline DetilerReleaseProbe* active = nullptr;
+};
+
+void detilerRetirementTests(const Device& device, Recorder& previous) {
+    auto context = device.GetContext();
+    DetilerReleaseProbe probe(context);
+    constexpr std::uint32_t side = 64;
+    const auto layout = ComputeMipLayout(TextureTileMode::kLinear, 56, side, side, 1).front();
+    Require(layout.pitchBytes == side * 4u && layout.tiledSize == layout.linearSize, "the linear detile fixture has a padded pitch");
+    const auto bytes = static_cast<std::size_t>(layout.linearSize);
+    Buffer source(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer destination(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer otherSource(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer otherDestination(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    for (std::size_t index = 0; index < bytes; ++index) {
+        source.Bytes()[index] = static_cast<std::byte>((index * 7u + 3u) & 0xffu);
+        otherSource.Bytes()[index] = static_cast<std::byte>((index * 13u + 5u) & 0xffu);
+    }
+    constexpr int rounds = 4;
+    const auto initial = probe.Released();
+    std::uint64_t perDetiler = 0;
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler measured(context);
+                measured.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                measured.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                recorder.Sync();
+            }
+            perDetiler = probe.Released() - before;
+        }
+        Require(perDetiler != 0, "a detiler destroyed while its recorder was idle released no pipeline or descriptor pool");
+        for (int round = 0; round < rounds; ++round) {
+            std::memset(destination.Bytes().data(), 0, bytes);
+            std::memset(otherDestination.Bytes().data(), 0, bytes);
+            const auto record = [&](TextureDetiler& detiler, const Buffer& from, const Buffer& to) {
+                detiler.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                detiler.Dispatch(commands, TextureTileMode::kLinear, 4, from.Handle(), 0, to.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            };
+            const auto before = probe.Released();
+            {
+                std::lock_guard gpu(GpuMutex());
+                {
+                    TextureDetiler retired(context);
+                    record(retired, source, destination);
+                }
+                Require(recorder.Recording(), "the recorded detile was submitted before its detiler was destroyed");
+                Require(probe.Released() == before, "a destroyed detiler released its pipeline or descriptor pool while its recorded detile was unsubmitted");
+                TextureDetiler live(context);
+                record(live, otherSource, otherDestination);
+                Require(probe.Released() == before, "recording after a detiler was destroyed released its objects early");
+                recorder.Sync();
+            }
+            Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded by a destroyed detiler did not run with its own descriptors");
+            Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded after another detiler was destroyed lost its descriptors");
+        }
+        std::memset(destination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler switched(context);
+                switched.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                switched.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+            }
+            Require(probe.Released() == before, "a detiler destroyed while another recorder was active released objects its own recorder's open batch still uses");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded before another recorder was activated did not run with its own descriptors");
+        std::memset(destination.Bytes().data(), 0, bytes);
+        std::memset(otherDestination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler shared(context);
+                shared.BeginBatch();
+                auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+                commands = previous.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, otherSource.Handle(), 0, otherDestination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Sync();
+            }
+            Require(probe.Released() == before, "a detiler that recorded under two recorders released objects the first recorder's open batch still uses once the second recorder was idle");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded under the first of two recorders did not run with its own descriptors");
+        Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded under the second of two recorders did not run with its own descriptors");
+    }
+    Require(probe.Released() - initial == perDetiler * (2u * rounds + 3u), "the destroyed detilers' pipelines and descriptor pools were not all released exactly once after their batches completed");
+    previous.Activate();
+    std::cout << "Detiler retirement: passed\n";
+}
+
 void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool failView) {
     auto context = device.GetContext();
     context.hostImportAlignment = 0;
@@ -13953,6 +14099,13 @@ public:
         return continued;
     }
 
+    auto DrawSecondary(Recorder& recorder) const {
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{}, true);
+        if (!start.continued) begin(start.commands, true);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{}, {}, true);
+        return start;
+    }
+
     void Record(CommandState& recording) const {
         const auto commands = recording.Commands();
         begin(commands);
@@ -13965,7 +14118,7 @@ public:
 
 private:
     static constexpr std::uint64_t PassKey = 0xc0de;
-    void begin(VkCommandBuffer commands) const {
+    void begin(VkCommandBuffer commands, bool secondaryContents = false) const {
         if (context.graphicsPipelineLibrary) {
             if (!transitioned) {
                 transitioned = true;
@@ -13987,13 +14140,14 @@ private:
             rendering.layerCount = 1;
             rendering.colorAttachmentCount = 1;
             rendering.pColorAttachments = &attachment;
+            if (secondaryContents) rendering.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
             context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
         } else {
             VkRenderPassBeginInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
             info.renderPass = renderPass;
             info.framebuffer = framebuffer;
             info.renderArea = {{0, 0}, {8, 8}};
-            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
+            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &info, secondaryContents ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
         }
     }
     void release() noexcept {
@@ -14784,6 +14938,21 @@ void graphicsStateTests(const Device& device) {
     statePipelines.clear();
     stateLog.clear();
     std::cout << "graphics state through the recorder passed (" << (suppressing ? "suppressing" : "unsuppressed") << ")\n";
+}
+
+void passContentsTests(const Device& device) {
+    auto context = device.GetContext();
+    Recorder recorder(context);
+    CoverPass cover(context);
+    Require(!cover.Draw(recorder), "the first inline draw continued a pass");
+    Require(cover.Draw(recorder), "an inline draw did not continue the inline pass of its key");
+    const auto secondary = cover.DrawSecondary(recorder);
+    Require(!secondary.continued && secondary.reason == PassBreak::Forced, "a draw recorded into secondary command buffers continued an inline pass");
+    Require(cover.DrawSecondary(recorder).continued, "a draw recorded into secondary command buffers did not continue the pass begun for them");
+    Require(!cover.Draw(recorder), "an inline draw continued a pass begun for secondary command buffers");
+    Require(cover.Draw(recorder), "an inline draw did not continue the inline pass begun after a secondary one");
+    recorder.Submit();
+    recorder.Sync();
 }
 
 void cmaskPassTests(const Device& device, Recorder& recorder) {
@@ -17469,7 +17638,7 @@ bool vertexTargetRangeTests(const Device& device, Recorder& recorder, bool impor
         check(24);
         vertex.vertexAttributes = {attributeFor(address, 16, fetchIndex)};
         auto indirect = draw;
-        indirect.indirect.emplace();
+        indirect.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{};
         reject([&] { Draw(context, consumer, indirect, shaders); }, "vertex buffer aliases the render target");
         if (fetchIndex == 0) {
             const std::array<std::uint16_t, 3> indices{0, 1, 2};
@@ -19317,6 +19486,117 @@ void hostBarrier(const Context& context, VkCommandBuffer commands) {
 
 }
 
+void bandedDetileTests(Device& device) {
+    using namespace SmallElementDetileTest;
+    const auto& context = device.GetContext();
+    const auto fillBandedPattern = [](std::span<std::byte> bytes, std::uint32_t seed) {
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(((i * 37u) ^ (i >> 8u) ^ (i >> 16u) ^ seed) & 0xffu);
+    };
+    struct Case {
+        TextureTileMode mode;
+        const char* name;
+        std::uint32_t elementBytes;
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t rowsPerBand;
+        std::uint32_t pitch = 0;
+    };
+    const std::array<Case, 9> cases{{
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 4, 600, 400, 1},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 8, 200, 300, 2},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 16, 130, 200, 1},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 1, 700, 600, 1},
+        {TextureTileMode::kStandard64KB, "SW_64KB_S", 2, 300, 600, 1},
+        {TextureTileMode::kStandard4KB, "SW_4KB_S", 1, 300, 200, 3},
+        {TextureTileMode::kLinear, "linear", 4, 37, 50, 7},
+        {TextureTileMode::kLinear, "linear R8", 1, 257, 12, 1, 257},
+        {TextureTileMode::kLinear, "linear", 2, 300, 9, 2},
+    }};
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    for (const auto& testCase : cases) {
+        const auto elementBytes = testCase.elementBytes;
+        const auto layouts = testCase.pitch != 0 ? ComputeMipLayout(testCase.mode, 1u, testCase.width, testCase.height, 1, testCase.pitch) : ComputeElementMipLayout(testCase.mode, elementBytes, testCase.width, testCase.height, 1);
+        const auto& mip = layouts[0];
+        const bool linearMode = testCase.mode == TextureTileMode::kLinear;
+        const auto block = linearMode ? std::array<std::uint32_t, 3>{0u, 0u, 1u} : ThinBlockLayout(testCase.mode, elementBytes);
+        const std::uint64_t tiledPerRow = linearMode ? mip.pitchBytes : static_cast<std::uint64_t>(mip.blocksPerRow) * block[0];
+        const std::uint64_t linearPerRow = static_cast<std::uint64_t>(block[2]) * mip.pitchBytes;
+        auto limited = context;
+        limited.limits.maxStorageBufferRange = static_cast<std::uint32_t>(testCase.rowsPerBand * std::max(tiledPerRow, linearPerRow) + alignment + 8u);
+        const auto what = std::string(testCase.name) + " " + std::to_string(elementBytes) + "B " + std::to_string(mip.width) + "x" + std::to_string(mip.height) + " under a " + std::to_string(limited.limits.maxStorageBufferRange) + "-byte storage buffer range";
+        Require(mip.tiledSize > limited.limits.maxStorageBufferRange && mip.linearSize > limited.limits.maxStorageBufferRange, what + ": the mip fits the lowered range, so no band is tested");
+        DetileWindow window{};
+        if (testCase.mode == TextureTileMode::kR64KBX) window.pipeBankXor = 0x100u;
+        TextureDetiler detiler(limited);
+        const auto tiledBytes = static_cast<std::size_t>(mip.tiledSize);
+        const auto linearBytes = static_cast<std::size_t>(mip.linearSize);
+        Buffer linear(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer tiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer retiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer detiled(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        fillBandedPattern(linear.Bytes(), 13u);
+        fillBandedPattern(tiled.Bytes(), 31u);
+        fillSentinel(retiled.Bytes());
+        fillSentinel(detiled.Bytes());
+        std::vector<std::byte> expectedRetile(tiledBytes, std::byte{0xa5});
+        std::vector<std::byte> expectedDetile(linearBytes, std::byte{0xa5});
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y) ^ window.pipeBankXor;
+                const auto linearOffset = y * mip.pitchBytes + x * elementBytes;
+                for (std::uint32_t byte = 0; byte < elementBytes; ++byte) {
+                    expectedRetile[offset + byte] = linear.Bytes()[linearOffset + byte];
+                    expectedDetile[linearOffset + byte] = tiled.Bytes()[offset + byte];
+                }
+            }
+        }
+        detiler.BeginBatch();
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        detiler.Dispatch(commands, testCase.mode, elementBytes, linear.Handle(), 0, retiled.Handle(), 0, mip, true, 0, false, window);
+        detiler.Dispatch(commands, testCase.mode, elementBytes, tiled.Handle(), 0, detiled.Handle(), 0, mip, false, 0, false, window);
+        hostBarrier(context, commands);
+        batch.SubmitAndWait();
+        requireBytes(retiled.Bytes(), expectedRetile, what + ", buffer retile");
+        requireBytes(detiled.Bytes(), expectedDetile, what + ", buffer detile");
+        const auto format = TextureDetiler::ImageElementFormat(elementBytes);
+        VkFormatProperties properties{};
+        context.formatProperties(context.physical, format, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) continue;
+        StorageImage image(context, format, mip.width, mip.height);
+        Buffer imageRetiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        fillSentinel(imageRetiled.Bytes());
+        std::vector<std::byte> expectedImage(tiledBytes, std::byte{0xa5});
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y) ^ window.pipeBankXor;
+                for (std::uint32_t byte = 0; byte < elementBytes; ++byte) expectedImage[offset + byte] = tiled.Bytes()[offset + byte];
+            }
+        }
+        detiler.BeginBatch();
+        CommandBatch imageBatch(context);
+        const auto imageCommands = imageBatch.Handle();
+        VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.image = image.Image();
+        toGeneral.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+        RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, tiled.Handle(), 0, image.View(), mip, false, 0, window);
+        RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, imageRetiled.Handle(), 0, image.View(), mip, true, 0, window);
+        hostBarrier(context, imageCommands);
+        imageBatch.SubmitAndWait();
+        requireBytes(imageRetiled.Bytes(), expectedImage, what + ", image round trip");
+    }
+    std::cout << "oversized detile band tests passed\n";
+}
+
 void smallElementDetileTests(Device& device) {
     using namespace SmallElementDetileTest;
     const auto& context = device.GetContext();
@@ -19630,6 +19910,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-stress-only") return mapGateStressTests(device) ? 0 : 77;
         std::unique_lock gpu(GpuMutex());
+        if (argc == 2 && std::string_view(argv[1]) == "--banded-detile-only") {
+            bandedDetileTests(device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--small-element-detile-only") {
             smallElementDetileTests(device);
             return 0;
@@ -19685,6 +19969,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-pending-write-snapshot") {
             pendingWriteSnapshotBenchmark(recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--detiler-retirement-only") {
+            detilerRetirementTests(device, recorder);
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--storage-upload-lifetime-only" || std::string_view(argv[1]) == "--storage-upload-failure-only")) {
@@ -20015,6 +20303,15 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot-read-into-staging-only") {
             if (!snapshotReadIntoStagingTests(device, recorder)) return 77;
             std::cout << "Snapshot read into staging tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pass-contents-only") {
+            if (!device.Graphics()) {
+                std::cout << "skipped, the test queue has no graphics\n";
+                return 77;
+            }
+            passContentsTests(device);
+            std::cout << "Pass contents tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uncounted-passes-only") {

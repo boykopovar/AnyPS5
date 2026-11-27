@@ -2521,6 +2521,69 @@ void testRewindSize() {
     check(std::atomic_ref<std::uint32_t>(done).load() == 0, "a rejected REWIND submission executed");
 }
 
+void testRewindInCalledBuffer() {
+    const auto read = [](std::uint32_t& label) { return std::atomic_ref<std::uint32_t>(label).load(); };
+    const auto settle = [](const auto& done) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!done() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    };
+    alignas(8) static std::array<std::uint32_t, 3> simple{};
+    static std::vector<std::uint32_t> target, words;
+    target = joinPackets({makePacket(0x59, {0}), writeWord(simple[0], 1)});
+    words = joinPackets({indirectBuffer(target), writeWord(simple[1], 1)});
+    submitWords(words);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    check(read(simple[0]) == 0 && read(simple[1]) == 0, "packets after a REWIND in a called buffer ran before the title released it");
+    sceAgcRewindPatchSetRewindState(&target[0], 1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(read(simple[0]) == 1, "the called buffer's packets after its released REWIND did not run");
+    check(read(simple[1]) == 1, "the caller's packets after a call whose REWIND was released did not run");
+    alignas(8) static std::array<std::uint32_t, 4> nested{};
+    static std::vector<std::uint32_t> inner, middle;
+    inner = joinPackets({makePacket(0x59, {0}), writeWord(nested[0], 1)});
+    middle = joinPackets({indirectBuffer(inner), writeWord(nested[1], 1), makePacket(0x59, {0}), writeWord(nested[2], 1)});
+    const auto secondRewind = indirectBuffer(inner).size() + writeWord(nested[1], 1).size();
+    words = joinPackets({indirectBuffer(middle), writeWord(nested[3], 1)});
+    submitWords(words);
+    sceAgcRewindPatchSetRewindState(&inner[0], 1);
+    settle([&] { return read(nested[1]) != 0; });
+    check(read(nested[0]) == 1 && read(nested[1]) == 1, "a released REWIND two calls deep did not run its tail and the packets after its call");
+    check(read(nested[2]) == 0 && read(nested[3]) == 0, "packets after a second REWIND, met in the packets after a call, ran before the title released it");
+    sceAgcRewindPatchSetRewindState(&middle[secondRewind], 1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(read(nested[2]) == 1 && read(nested[3]) == 1, "the packets after a second released REWIND and after the outer call did not run");
+    alignas(8) static std::array<std::uint32_t, 3> branched{};
+    static std::vector<std::uint32_t> taken, wrapper;
+    taken = joinPackets({makePacket(0x59, {0}), writeWord(branched[0], 1)});
+    wrapper = joinPackets({branch(1, 0, &taken, nullptr), writeWord(branched[1], 1)});
+    words = joinPackets({indirectBuffer(wrapper), writeWord(branched[2], 1)});
+    submitWords(words);
+    sceAgcRewindPatchSetRewindState(&taken[0], 1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(read(branched[0]) == 1 && read(branched[2]) == 1, "the packets after a released REWIND in a branch, or after the call holding the branch, did not run");
+    check(read(branched[1]) == 0, "the packets after a COND_INDIRECT_BUFFER ran after the REWIND in its buffer was released: the branch returned like a call");
+    alignas(8) static std::array<std::uint32_t, 3> chainedLabels{};
+    static std::vector<std::uint32_t> chainTarget, chaining;
+    chainTarget = joinPackets({makePacket(0x59, {0}), writeWord(chainedLabels[0], 1)});
+    chaining = joinPackets({indirectBuffer(chainTarget, true), writeWord(chainedLabels[1], 1)});
+    words = joinPackets({indirectBuffer(chaining), writeWord(chainedLabels[2], 1)});
+    submitWords(words);
+    sceAgcRewindPatchSetRewindState(&chainTarget[0], 1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(read(chainedLabels[0]) == 1 && read(chainedLabels[2]) == 1, "the packets after a released REWIND in a chained buffer, or after the call that reached the chain, did not run");
+    check(read(chainedLabels[1]) == 0, "the packets after a chained INDIRECT_BUFFER ran: the chain returned like a call");
+    alignas(8) static std::array<std::uint32_t, 2> temporary{};
+    static std::vector<std::uint32_t> gated;
+    gated = joinPackets({makePacket(0x59, {0}), writeWord(temporary[0], 1)});
+    words = joinPackets({indirectBuffer(gated), writeWord(temporary[1], 1)});
+    submitWords(words);
+    std::fill(words.begin() + static_cast<std::ptrdiff_t>(indirectBuffer(gated).size()), words.end(), 0u);
+    sceAgcRewindPatchSetRewindState(&gated[0], 1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(read(temporary[0]) == 1 && read(temporary[1]) == 1, "the packets after a call, copied at submit, did not run once the caller's buffer was cleared, as a temporary one is freed");
+}
+
 struct RenderingGateState {
     std::mutex mutex;
     std::condition_variable changed;
@@ -3031,6 +3094,12 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "context-reg-rmw") {
             testContextRegRmw();
             std::puts("PM4 CONTEXT_REG_RMW test passed");
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "rewind-call") {
+            testRewindInCalledBuffer();
+            LibcRunShutdown_nid_postfix();
+            std::puts("PM4 rewind-call test passed");
             return 0;
         }
         if (argc == 2 && std::string(argv[1]) == "failure") {
