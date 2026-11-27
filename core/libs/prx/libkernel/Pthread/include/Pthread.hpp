@@ -86,6 +86,8 @@ struct PthreadCondattrPrivate {
 struct PthreadCondPrivate {
     std::shared_ptr<TimedWait::Condition> _cv = std::make_shared<TimedWait::Condition>();
     int _clockid = 0;
+    std::string _name;
+    bool _named = false;
 };
 
 struct PthreadSemPrivate {
@@ -206,6 +208,8 @@ bool SetLiveGuestThreadsAffinity(KernelCpumask mask);
 KernelCpumask LiveGuestThreadsAffinity();
 KernelCpumask GuestProcessCpusetAffinity();
 bool SetLiveGuestProcessCpuset(KernelCpumask mask);
+enum class GuestCpusetTarget { Missing, Root, Process, Other };
+GuestCpusetTarget FindGuestCpuset(std::int64_t id);
 bool GuestThreadIsLive(const PthreadPrivate* thread);
 std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread);
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);

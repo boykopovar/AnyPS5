@@ -11,6 +11,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
@@ -29,7 +30,6 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include "prx/libc/include/GuestCpu.hpp"
 
 #ifdef _WIN32
@@ -37,7 +37,7 @@
 #else
 #include <time.h>
 #include <sys/time.h>
-#include <sys/times.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/resource.h>
@@ -531,13 +531,6 @@ static bool ProcessCpuTimeNanos(bool countKernel, std::uint64_t* nanos) {
 }
 
 #else
-static std::uint64_t ClockTicksPerSecond() {
-    const long rate = sysconf(_SC_CLK_TCK);
-    if (rate <= 0)
-        throw std::runtime_error("clock_gettime: sysconf(_SC_CLK_TCK) reported no clock tick rate");
-    return static_cast<std::uint64_t>(rate);
-}
-
 #ifdef __APPLE__
 static std::uint64_t CurrentThreadCpuNanos() {
     thread_basic_info_data_t info{};
@@ -550,20 +543,36 @@ static std::uint64_t CurrentThreadCpuNanos() {
 }
 #endif
 
-static std::uint64_t ProcessCpuNanos(bool countSystem) {
-    struct tms usage{};
-    errno = 0;
-    if (times(&usage) == static_cast<clock_t>(-1) && errno != 0)
-        throw std::system_error(errno, std::generic_category(), "clock_gettime: times failed");
-    const std::uint64_t rate = ClockTicksPerSecond();
-    const std::uint64_t ticks = static_cast<std::uint64_t>(usage.tms_utime) + (countSystem ? static_cast<std::uint64_t>(usage.tms_stime) : 0ULL);
-    return ticks / rate * 1000000000ULL + ticks % rate * 1000000000ULL / rate;
+static bool ProcessCpuTimeNanos(bool countSystem, std::uint64_t* nanos) {
+    struct rusage usage{};
+    if (::getrusage(RUSAGE_SELF, &usage) != 0) {
+        *__error_nid_postfix() = GuestErrnoFromHost_nid_no_patch(errno);
+        return false;
+    }
+    const auto toMicros = [](const struct timeval& time) {
+        return static_cast<std::uint64_t>(time.tv_sec) * 1000000ULL + static_cast<std::uint64_t>(time.tv_usec);
+    };
+    *nanos = (toMicros(usage.ru_utime) + (countSystem ? toMicros(usage.ru_stime) : 0ULL)) * 1000ULL;
+    return true;
 }
 #endif
 
 static constexpr int SLOW_CLOCK_ID = 20;
 
+#ifdef APS5_MQUEUE_TESTING
+static std::atomic<RealtimeClockHookForTesting> g_realtimeClockHookForTesting{nullptr};
+
+void SetRealtimeClockHookForTesting(RealtimeClockHookForTesting hook) {
+    g_realtimeClockHookForTesting.store(hook, std::memory_order_release);
+}
+#endif
+
 static int ReadClock(int clockId, KernelTimespec* tp) {
+#ifdef APS5_MQUEUE_TESTING
+    if (clockId == 0) {
+        if (const auto hook = g_realtimeClockHookForTesting.load(std::memory_order_acquire)) return hook(tp);
+    }
+#endif
     if (clockId == 21) {
         if (ReadClock(2, tp) != 0) return -1;
         tp->tv_nsec -= tp->tv_nsec % 1000;
@@ -595,12 +604,8 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         return 0;
     }
     if (clockId == 1 || clockId == 2) {
-#ifdef _WIN32
         std::uint64_t nanos = 0;
         if (!ProcessCpuTimeNanos(clockId == 2, &nanos)) return -1;
-#else
-        const std::uint64_t nanos = ProcessCpuNanos(clockId == 2);
-#endif
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;

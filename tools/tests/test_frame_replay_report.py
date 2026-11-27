@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import frame_replay_report as report
+import frame_replay_sweep as sweep
 
 
 COMMIT = "a" * 40
@@ -62,6 +63,43 @@ ANYPS5_HOST_REPORT: 1
 
 
 class FrameReplayReportTests(unittest.TestCase):
+    def test_bad_saved_metrics_do_not_break_other_observations(self):
+        assessment = report.parse_replay_result(json.dumps(NATIVE), HOST)
+        trial = {"phase": "trial", "iteration": 1, "returncode": 0, "timed_out": False, "log_limit": False}
+        for key, value, metric in (("frame_ms", [], "p50_ms"), ("fps", 10**309, "fps"),
+                                   ("replay_s", 1e308, "replay_s")):
+            with self.subTest(key=key):
+                candidate = copy.deepcopy(assessment)
+                candidate["native"][key] = value
+                payload = {"format": "aps5-frame-replay-comparison/1", "complete": True,
+                           "runs": [{**trial, "arm": "baseline", "assessment": assessment},
+                                    {**trial, "arm": "candidate", "assessment": candidate}]}
+                result = report.replay_comparison_report(payload)
+                metrics = result["observations"]["candidate"]["metrics"]
+                self.assertIsNone(metrics[metric]["median"])
+                self.assertEqual(metrics["replay_s" if metric == "fps" else "fps"]["n"], 1)
+                self.assertIsNone(result["pairs"][0]["metrics"][metric]["candidate"])
+                self.assertIsNone(result["paired_observations"][metric]["median_change_pct"])
+
+    def test_saved_comparison_refuses_a_non_object_inputs_section(self):
+        with self.assertRaisesRegex(ValueError, "comparison inputs must be an object"):
+            report.replay_comparison_report({"format": "aps5-frame-replay-comparison/1", "runs": [], "inputs": []})
+
+    def test_large_finite_percentage_changes_keep_a_finite_median(self):
+        baseline = report.parse_replay_result(json.dumps(NATIVE), HOST)
+        candidate = copy.deepcopy(baseline)
+        baseline["native"]["fps"] = 1e-306
+        candidate["native"]["fps"] = 1.0
+        runs = [{"phase": "trial", "iteration": iteration, "returncode": 0, "timed_out": False,
+                 "log_limit": False, "arm": arm, "assessment": assessment}
+                for iteration in (1, 2)
+                for arm, assessment in (("baseline", baseline), ("candidate", candidate))]
+        result = report.replay_comparison_report(
+            {"format": "aps5-frame-replay-comparison/1", "complete": True, "runs": runs})
+        fps = result["paired_observations"]["fps"]
+        self.assertEqual(fps["n"], 2)
+        self.assertEqual(fps["median_change_pct"], fps["max_change_pct"])
+
     def test_host_report_preserves_unicode_separators_inside_values(self):
         for separator in ("\x85", "\u2028", "\u2029"):
             for newline in ("\n", "\r\n"):
@@ -328,6 +366,108 @@ class FrameReplayReportTests(unittest.TestCase):
             payload["runs"] = [{**run, "returncode": 3}]
             empty = report.replay_comparison_report(payload)
             self.assertIsNone(empty["observations"]["baseline"]["metrics"]["fps"]["median"])
+
+
+
+class FrameReplaySweepTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+
+    def bundle(self, name, *, capture=b"same capture", baseline_environment=None,
+               baseline_executable=b"replay executable", candidate_exit=0, missing_candidate=False):
+        root = self.root / name
+        metadata = {"magic": "aps5-frame-capture 1", "frames": 3, "unreadable_bytes": 0,
+                    "host_only_sample_bytes": 0, "warnings": []}
+        capture_dir = root / "capture"
+        capture_dir.mkdir(parents=True)
+        (capture_dir / "capture.json").write_text(json.dumps(metadata), encoding="utf-8")
+        (capture_dir / "calls.bin").write_bytes(capture)
+        (capture_dir / "memory.bin").write_bytes(b"memory capture")
+        for arm_name in ("baseline", "candidate"):
+            runtime = root / "runtime" / arm_name
+            runtime.mkdir(parents=True)
+            (runtime / "replay").write_bytes(baseline_executable if arm_name == "baseline" else b"replay executable")
+            (runtime / "inspect").write_bytes(b"capture inspector")
+            (runtime / "library.prx").write_bytes(b"project library")
+        arm = {"commit": COMMIT, "replay": "replay", "inspect": "inspect", "library_dirs": ["."]}
+        recipe = {"format": "aps5-frame-replay-recipe/1", "trials": 1, "warmups": 0,
+                  "timeout": 120, "log_mib": 16, "environment": {},
+                  "arms": {"baseline": {**arm, "environment": baseline_environment or {}},
+                           "candidate": {**arm, "environment": {"APS5_TEST_SETTING": "private setting value"}}}}
+        runs = []
+        for name in ("baseline", "candidate"):
+            if name == "candidate" and missing_candidate:
+                continue
+            relative = f"runs/trial-01-{name}"
+            runs.append({"arm": name, "phase": "trial", "iteration": 1, "path": relative})
+            run = root / relative
+            run.mkdir(parents=True)
+            (run / "stdout.txt").write_text(json.dumps(NATIVE), encoding="utf-8")
+            (run / "stderr.txt").write_text(HOST, encoding="utf-8")
+            receipt = {"returncode": candidate_exit if name == "candidate" else 0,
+                       "timed_out": False, "log_limit": False, "io_errors": []}
+            (run / "process.json").write_text(json.dumps(receipt), encoding="utf-8")
+        staged = {"capture": capture_dir, **{arm_name: root / "runtime" / arm_name
+                                            for arm_name in ("baseline", "candidate")}}
+        original = {"format": "aps5-frame-replay-comparison/1", "complete": not missing_candidate,
+                    "runs": runs, "recipe": recipe, "issues": [],
+                    "inputs": {name: report.replay_tree_manifest(directory) for name, directory in staged.items()}}
+        (root / "comparison.json").write_text(json.dumps(original), encoding="utf-8")
+        metadata = {"format": original["format"], "artifacts": report.replay_tree_manifest(root)}
+        (root / "report.json").write_text(json.dumps(metadata), encoding="utf-8")
+        return root
+
+    def sweep(self, *cases):
+        before = report.replay_tree_manifest(self.root)
+        command = [sys.executable, str(Path(report.__file__).with_name("frame_replay_sweep.py"))]
+        for label, bundle in cases:
+            command.extend(("--case", label, str(bundle)))
+        result = subprocess.run(command, cwd=self.root, capture_output=True, encoding="utf-8", timeout=20)
+        self.assertEqual(report.replay_tree_manifest(self.root), before)
+        return result
+
+    def test_renders_success_failure_and_unattempted_cases_from_sealed_evidence(self):
+        passed = self.bundle("passed")
+        failed = self.bundle("failed", candidate_exit=3)
+        incomplete = self.bundle("incomplete", missing_candidate=True)
+        result = self.sweep(("Pass | and <tag>", passed), ("Stops", failed), ("Partial", incomplete))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(r"Pass \| and &lt;tag&gt;", result.stdout)
+        self.assertIn("APS5_TEST_SETTING", result.stdout)
+        self.assertNotIn("private setting value", result.stdout)
+        self.assertNotIn(str(self.root), result.stdout)
+        self.assertIn("1 / 1 | 0 / 1 | exit 3 (1) | complete", result.stdout)
+        self.assertIn("1 / 1 | 0 / 0 | none recorded | incomplete", result.stdout)
+
+    def test_refuses_different_capture_or_baseline_settings(self):
+        matching = self.bundle("matching")
+        other_capture = self.bundle("other-capture", capture=b"different")
+        other_flag = self.bundle("other-baseline", baseline_environment={"APS5_OTHER_SETTING": "1"})
+        other_binary = self.bundle("other-binary", baseline_executable=b"other baseline build")
+        for other, message in ((other_capture, "capture differs"), (other_flag, "baseline settings differ"),
+                               (other_binary, "staged baseline")):
+            with self.subTest(bundle=other.name):
+                result = self.sweep(("First", matching), ("Second", other))
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_refuses_tampered_evidence(self):
+        first = self.bundle("first")
+        second = self.bundle("second")
+        (second / "runs" / "trial-01-candidate" / "stdout.txt").write_text("changed", encoding="utf-8")
+        result = self.sweep(("First", first), ("Bad", second))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Bad: bundle files differ from their pinned manifest", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_escapes_multiline_and_carriage_return_values_in_table_cells(self):
+        self.assertEqual(
+            sweep._markdown_cell("a\r\nb\rc\nd|<tag>"),
+            r"a<br>b<br>c<br>d\|&lt;tag&gt;",
+        )
 
 
 if __name__ == "__main__":

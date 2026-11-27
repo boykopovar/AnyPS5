@@ -1,7 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <new>
 
@@ -29,28 +28,28 @@ struct Position {
 };
 
 template <typename T>
-bool GuestCopyInPreservingErrno(T& out, const void* source) {
+bool GuestCopyIn(T& out, const void* source) {
     return GuestPtr<const T>(source).CopyIn(out);
 }
 
 template <typename T>
-bool GuestCopyOutPreservingErrno(void* destination, const T& value) {
+bool GuestCopyOut(void* destination, const T& value) {
     return GuestPtr<T>(destination).CopyOut(value);
 }
 
 Position* Validate(const UConstrainedFieldPosition* handle, std::int32_t* error, const char* caller) {
     if (!error) APS5_INVALID_ARG_EX;
     std::int32_t currentError = 0;
-    if (!GuestCopyInPreservingErrno(currentError, error)) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyIn(currentError, error)) NotImplemented_nid_no_patch(caller);
     if (currentError > 0) return nullptr;
     if (!handle) {
-        if (!GuestCopyOutPreservingErrno(error, IllegalArgumentError)) NotImplemented_nid_no_patch(caller);
+        if (!GuestCopyOut(error, IllegalArgumentError)) NotImplemented_nid_no_patch(caller);
         return nullptr;
     }
     std::int32_t magic = 0;
-    if (!GuestCopyInPreservingErrno(magic, handle)) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyIn(magic, handle)) NotImplemented_nid_no_patch(caller);
     if (magic != Magic) {
-        if (!GuestCopyOutPreservingErrno(error, InvalidFormatError)) NotImplemented_nid_no_patch(caller);
+        if (!GuestCopyOut(error, InvalidFormatError)) NotImplemented_nid_no_patch(caller);
         return nullptr;
     }
     return reinterpret_cast<Position*>(const_cast<UConstrainedFieldPosition*>(handle));
@@ -67,7 +66,7 @@ UConstrainedFieldPosition* APS5_VABI ucfpos_open_nid_postfix(std::int32_t* error
     auto* position = new (std::nothrow) Position();
     if (!position) {
         if (!error) APS5_INVALID_ARG_EX;
-        if (!GuestCopyOutPreservingErrno(error, MemoryAllocationError)) {
+        if (!GuestCopyOut(error, MemoryAllocationError)) {
             NotImplemented_nid_no_patch(__func__);
         }
         return nullptr;
@@ -116,8 +115,8 @@ void APS5_VABI ucfpos_getIndexes_nid_postfix(const UConstrainedFieldPosition* ha
         !GuestWritable_nid_no_patch(limit, sizeof(*limit))) {
         NotImplemented_nid_no_patch(__func__);
     }
-    if (!GuestCopyOutPreservingErrno(start, position->start) ||
-        !GuestCopyOutPreservingErrno(limit, position->limit)) {
+    if (!GuestCopyOut(start, position->start) ||
+        !GuestCopyOut(limit, position->limit)) {
         NotImplemented_nid_no_patch(__func__);
     }
 }

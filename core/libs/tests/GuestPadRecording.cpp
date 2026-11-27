@@ -43,13 +43,22 @@ bool ReadRefused() {
     return false;
 }
 
+std::string ReadRefusal() {
+    try {
+        Pad::ReadState(0);
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+    return {};
+}
+
 bool Replayed(const PadData& data) {
     return data.buttons == 0x4000 && data.left_stick_x == 255 && data.left_stick_y == 0 && data.right_stick_x == 128 && data.right_stick_y == 128 &&
         data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 200;
 }
 
-bool Idle(const PadData& data) {
-    return data.buttons == 0 && data.left_stick_x == 128 && data.left_stick_y == 128 && data.right_stick_x == 128 && data.right_stick_y == 128 &&
+bool Neutral(const PadData& data, std::uint32_t buttons = 0) {
+    return data.buttons == buttons && data.left_stick_x == 128 && data.left_stick_y == 128 && data.right_stick_x == 128 && data.right_stick_y == 128 &&
         data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 0;
 }
 
@@ -61,7 +70,8 @@ int main() {
     std::filesystem::create_directories(directory);
     const auto replay = directory / "replay.aps5pad";
     const auto record = directory / "record.aps5pad";
-    std::ofstream(replay, std::ios::binary) << "APS5_PAD_RECORDING 1\n0 4000 255 0 128 128 0 200\n150 0 128 128 128 128 0 0\n";
+    const std::string replayText = "APS5_PAD_RECORDING 1\n0 4000 255 0 128 128 0 200\n150 0 128 128 128 128 0 0\n";
+    std::ofstream(replay, std::ios::binary) << replayText;
 
     Require(scePadInit_nid_postfix() == PAD_OK, "scePadInit failed");
     const int handle = scePadOpen_nid_postfix(0x10000000, 0, 0, nullptr);
@@ -72,12 +82,62 @@ int main() {
     live.analogButtonsL2 = 90;
     PadPublishInput_nid_postfix(live);
 
+    const auto surviving = directory / "surviving-record.aps5pad";
+    std::ofstream(surviving, std::ios::binary) << "previous recording";
     SetPath("APS5_PAD_REPLAY", directory / "missing.aps5pad");
+    SetPath("APS5_PAD_RECORD", surviving);
+    const auto requireSurviving = [&] {
+        std::stringstream contents;
+        contents << std::ifstream(surviving, std::ios::binary).rdbuf();
+        Require(contents.str() == "previous recording", "a failed replay initialization opened the existing APS5_PAD_RECORD file");
+    };
     Require(ReadRefused(), "a missing APS5_PAD_REPLAY file did not stop the controller read");
+    requireSurviving();
+    const std::string missingReplayRefusal = ReadRefusal();
+    Require(!missingReplayRefusal.empty() && missingReplayRefusal.find("APS5_PAD_REPLAY") != std::string::npos && missingReplayRefusal.find("cannot compare") == std::string::npos,
+        "a missing APS5_PAD_REPLAY with an existing APS5_PAD_RECORD was not refused as a replay read failure");
+    requireSurviving();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const std::string refusal = ReadRefusal();
+        Require(!refusal.empty() && refusal.find("APS5_PAD_REPLAY") != std::string::npos && refusal.find("cannot compare") == std::string::npos,
+            "a repeated read with a missing APS5_PAD_REPLAY and an existing APS5_PAD_RECORD was not refused as a replay read failure");
+        requireSurviving();
+    }
+    const auto invalid = directory / "invalid.aps5pad";
+    std::ofstream(invalid, std::ios::binary) << "not a recording";
+    SetPath("APS5_PAD_REPLAY", invalid);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const std::string refusal = ReadRefusal();
+        Require(!refusal.empty() && refusal.find("APS5_PAD_REPLAY") != std::string::npos && refusal.find("cannot compare") == std::string::npos,
+            "a read with an invalid APS5_PAD_REPLAY and an existing APS5_PAD_RECORD was not refused as a replay parse failure");
+        requireSurviving();
+    }
+    SetPath("APS5_PAD_RECORD", std::filesystem::path{});
     SetPath("APS5_PAD_REPLAY", replay);
     SetPath("APS5_PAD_RECORD", directory / "missing-directory" / "record.aps5pad");
     Require(ReadRefused(), "an unwritable APS5_PAD_RECORD path did not stop the controller read");
+    const auto hardLink = directory / "hard-link.aps5pad";
+    std::filesystem::create_hard_link(replay, hardLink);
+    const auto checkAlias = [&](const std::filesystem::path& alias) {
+        SetPath("APS5_PAD_RECORD", alias);
+        Require(ReadRefused(), "a recording path aliasing the replay did not stop the controller read");
+        std::stringstream contents;
+        contents << std::ifstream(replay, std::ios::binary).rdbuf();
+        Require(contents.str() == replayText, "the replay was overwritten");
+    };
+    checkAlias(replay);
+    checkAlias(hardLink);
+#ifndef _WIN32
+    const auto symlink = directory / "symlink.aps5pad";
+    std::filesystem::create_symlink(replay, symlink);
+    checkAlias(symlink);
+#endif
+    std::ofstream(record, std::ios::binary) << "previous recording";
     SetPath("APS5_PAD_RECORD", record);
+    std::error_code removed;
+    std::filesystem::remove(replay, removed);
+    const std::string deletedReplayRefusal = ReadRefusal();
+    Require(deletedReplayRefusal.empty(), "recording to an existing APS5_PAD_RECORD was refused while APS5_PAD_REPLAY pointed at a deleted replay file");
 
     PadInputState pressed = live;
     pressed.buttons = 0x2000;
@@ -94,18 +154,34 @@ int main() {
     Require(Pad::Read(empty, 8, 0) == 1 && Replayed(empty[0]), "scePadRead without queued input returned the live controller");
     Require(Pad::ReadState(1).buttons != 0x4000, "the replay of port 0 reached port 1");
 
+    constexpr std::uint32_t interceptedButton = 0x80000000u;
+    PadInputState intercepted{};
+    intercepted.intercepted = true;
+    PadPublishInput_nid_postfix(intercepted);
+    Require(scePadReadState(handle, &state) == PAD_OK && Neutral(state, interceptedButton),
+        "scePadReadState replaced the intercepted state with replay input");
+    Require(Pad::Read(queued, 8, 0) == 1 && Neutral(queued[0], interceptedButton),
+        "scePadRead replaced a queued intercepted state with replay input");
+    Require(Pad::Read(empty, 8, 0) == 1 && Neutral(empty[0], interceptedButton),
+        "scePadRead without queued input replaced the intercepted state with replay input");
+
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    Require(Idle(Pad::ReadState(0)), "the replay did not move to the change recorded at 150 ms");
+    PadPublishInput_nid_postfix(live);
+    Require(Neutral(Pad::ReadState(0)), "the replay did not move to the change recorded at 150 ms");
     Require(scePadClose_nid_postfix(handle) == PAD_OK, "scePadClose failed");
 
     std::stringstream text;
     text << std::ifstream(record, std::ios::binary).rdbuf();
-    std::string header, first, second, extra;
+    std::string header, first, captured, second, extra;
     std::getline(text, header);
     std::getline(text, first);
+    std::getline(text, captured);
     std::getline(text, second);
     Require(header == "APS5_PAD_RECORDING 1", "the recording has no header");
     Require(first == "0 4000 255 0 128 128 0 200", "the recording does not start with the state the title read first");
+    const auto capturedSpace = captured.find(' ');
+    Require(capturedSpace != std::string::npos && captured.substr(capturedSpace) == " 80000000 128 128 128 128 0 0",
+        "the recording did not preserve the intercepted state seen by the title");
     const auto space = second.find(' ');
     Require(space != std::string::npos && std::stoull(second.substr(0, space)) >= 150 && second.substr(space) == " 0 128 128 128 128 0 0",
         "the recording does not hold the later change once, after its time");

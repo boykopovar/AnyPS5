@@ -24,8 +24,16 @@ AspectFitSize ComputeContainSize_nid_postfix(std::uint32_t sourceWidth, std::uin
 AspectFitRect ComputeContainRect_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t destinationWidth, std::uint32_t destinationHeight);
 std::uint32_t ComputeWidthForHeight_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t height);
 std::uint32_t ComputeHeightForWidth_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t width);
+bool PresentationStretches_nid_postfix();
+AspectFitSize ComputePresentationSize_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t boundsWidth, std::uint32_t boundsHeight);
+AspectFitRect ComputePresentationRect_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t destinationWidth, std::uint32_t destinationHeight);
 
 }
+
+enum class PresentationAspect { Keep, Stretch };
+
+PresentationAspect SelectPresentationAspect(const char* value);
+AspectFitRect ComputePresentationRect(PresentationAspect aspect, std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t destinationWidth, std::uint32_t destinationHeight);
 }
 
 #endif
