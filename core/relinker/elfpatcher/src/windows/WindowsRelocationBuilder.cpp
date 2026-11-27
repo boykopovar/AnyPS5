@@ -82,6 +82,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             result.Imports.back().Lazy = type == 7 || (dynamicSection.DynSymData[symbolOffset + 4] & 15) == STT_FUNC;
             if (const auto module = dynamicSection.ImportModules.find(target); module != dynamicSection.ImportModules.end())
                 result.Imports.back().Library = module->second;
+            if (const auto provider = dynamicSection.ImportProviders.find(target); provider != dynamicSection.ImportProviders.end())
+                result.Imports.back().Provider = provider->second;
         }
     };
     applyTable(dynamicSection.RelaData, false);
