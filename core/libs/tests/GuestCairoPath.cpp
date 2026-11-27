@@ -267,6 +267,117 @@ void CheckScaledCoordinatesAndLines() {
     cairo_destroy(context);
 }
 
+CairoContext* ArcContext() {
+    CairoSurface* surface = cairo_image_surface_create(0, 16, 16);
+    CairoContext* context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    return context;
+}
+
+void SamePath(CairoPath* a, CairoPath* b) {
+    assert(a && b && a->status == 0 && b->status == 0 && a->num_data == b->num_data);
+    for (int i = 0; i < a->num_data; i += a->data[i].header.length) {
+        assert(a->data[i].header.type == b->data[i].header.type);
+        assert(a->data[i].header.length == b->data[i].header.length);
+        for (int j = 1; j < a->data[i].header.length; ++j) {
+            Near(a->data[i + j].point.x, b->data[i + j].point.x);
+            Near(a->data[i + j].point.y, b->data[i + j].point.y);
+        }
+    }
+}
+
+int CurveCount(CairoPath* path) {
+    int curves = 0;
+    for (int i = path->data[0].header.length; i < path->num_data; i += path->data[i].header.length) {
+        assert(path->data[i].header.type == 2 && path->data[i].header.length == 4);
+        ++curves;
+    }
+    return curves;
+}
+
+void CheckArcs() {
+    constexpr double pi = 3.14159265358979323846;
+    CairoContext* forward = ArcContext();
+    cairo_arc(forward, 11, 5, 4, 0, pi / 2);
+    CairoPath* forwardPath = cairo_copy_path(forward);
+    assert(forwardPath && forwardPath->status == 0 && forwardPath->num_data >= 6);
+    assert(forwardPath->data[0].header.type == 0 && forwardPath->data[0].header.length == 2);
+    Near(forwardPath->data[1].point.x, 15);
+    Near(forwardPath->data[1].point.y, 5);
+    const int forwardCurves = CurveCount(forwardPath);
+    assert(forwardCurves >= 1);
+    assert(forwardPath->data[3].point.y > 5);
+    double x = 0, y = 0;
+    cairo_get_current_point(forward, &x, &y);
+    Near(x, 11);
+    Near(y, 9);
+
+    CairoContext* backward = ArcContext();
+    cairo_arc_negative(backward, 11, 5, 4, 0, pi / 2);
+    CairoPath* backwardPath = cairo_copy_path(backward);
+    assert(backwardPath && backwardPath->status == 0);
+    Near(backwardPath->data[1].point.x, 15);
+    Near(backwardPath->data[1].point.y, 5);
+    assert(CurveCount(backwardPath) > forwardCurves);
+    assert(backwardPath->data[3].point.y < 5);
+    cairo_get_current_point(backward, &x, &y);
+    Near(x, 11);
+    Near(y, 9);
+
+    CairoContext* explicitNegative = ArcContext();
+    cairo_arc_negative(explicitNegative, 11, 5, 4, 0, -3 * pi / 2);
+    CairoPath* explicitNegativePath = cairo_copy_path(explicitNegative);
+    SamePath(backwardPath, explicitNegativePath);
+
+    CairoContext* wrapped = ArcContext();
+    cairo_arc(wrapped, 8, 8, 4, pi / 2, 0);
+    CairoContext* unwrapped = ArcContext();
+    cairo_arc(unwrapped, 8, 8, 4, pi / 2, 2 * pi);
+    CairoPath* wrappedPath = cairo_copy_path(wrapped);
+    CairoPath* unwrappedPath = cairo_copy_path(unwrapped);
+    SamePath(wrappedPath, unwrappedPath);
+    assert(CurveCount(wrappedPath) > forwardCurves);
+    Near(wrappedPath->data[1].point.x, 8);
+    Near(wrappedPath->data[1].point.y, 12);
+    cairo_get_current_point(wrapped, &x, &y);
+    Near(x, 12);
+    Near(y, 8);
+
+    CairoContext* joined = ArcContext();
+    cairo_move_to(joined, 1, 2);
+    cairo_arc(joined, 8, 8, 4, 0, pi / 2);
+    CairoPath* joinedPath = cairo_copy_path(joined);
+    assert(joinedPath && joinedPath->status == 0);
+    assert(joinedPath->data[0].header.type == 0 && joinedPath->data[2].header.type == 1);
+    Near(joinedPath->data[3].point.x, 12);
+    Near(joinedPath->data[3].point.y, 8);
+    assert(joinedPath->num_data == forwardPath->num_data + 2);
+
+    CairoContext* joinedNegative = ArcContext();
+    cairo_move_to(joinedNegative, 1, 2);
+    cairo_arc_negative(joinedNegative, 8, 8, 4, pi, pi / 2);
+    CairoPath* joinedNegativePath = cairo_copy_path(joinedNegative);
+    assert(joinedNegativePath && joinedNegativePath->data[2].header.type == 1);
+    Near(joinedNegativePath->data[3].point.x, 4);
+    Near(joinedNegativePath->data[3].point.y, 8);
+    cairo_get_current_point(joinedNegative, &x, &y);
+    Near(x, 8);
+    Near(y, 12);
+
+    CairoContext* nil = cairo_create(nullptr);
+    cairo_arc(nil, 8, 8, 4, 0, pi);
+    cairo_arc_negative(nil, 8, 8, 4, 0, pi);
+    CairoPath* nilPath = cairo_copy_path(nil);
+    assert(nilPath && nilPath->status == 7 && nilPath->num_data == 0);
+
+    for (CairoPath* path : {forwardPath, backwardPath, explicitNegativePath, wrappedPath, unwrappedPath,
+                            joinedPath, joinedNegativePath, nilPath})
+        cairo_path_destroy(path);
+    for (CairoContext* context : {forward, backward, explicitNegative, wrapped, unwrapped, joined,
+                                  joinedNegative, nil})
+        cairo_destroy(context);
+}
+
 } // namespace
 
 int main() {
@@ -274,5 +385,6 @@ int main() {
     CheckQuantizationTransformsAndAppend();
     CheckErrorAndSaveSemantics();
     CheckScaledCoordinatesAndLines();
+    CheckArcs();
     std::puts("guest Cairo path-data tests passed");
 }

@@ -43,17 +43,7 @@ enum cairo_hint_metrics_t : int {
 
 extern "C" {
 
-int APS5_VABI cairo_arc_negative();
-int APS5_VABI cairo_pattern_reference();
-int APS5_VABI cairo_pattern_set_extend();
-int APS5_VABI cairo_pattern_create_linear();
-int APS5_VABI cairo_arc();
 int APS5_VABI cairo_in_fill();
-int APS5_VABI cairo_pattern_destroy();
-int APS5_VABI cairo_pattern_set_matrix();
-int APS5_VABI cairo_pattern_set_filter();
-int APS5_VABI cairo_pattern_create_radial();
-int APS5_VABI cairo_pattern_add_color_stop_rgba();
 
 CairoScaledFont* APS5_VABI cairo_scaled_font_create(CairoFontFace* face, const CairoMatrix* fontMatrix,
     const CairoMatrix* ctm, const cairo_font_options_t* options);

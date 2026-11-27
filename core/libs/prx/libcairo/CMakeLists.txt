@@ -1,6 +1,7 @@
 add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Png.cpp Context.cpp FontOptions.cpp Region.cpp Glyph.cpp FontFace.cpp)
 target_sources(libcairo PRIVATE ToyText.cpp FontPipeline.cpp Device.cpp)
 target_sources(libcairo PRIVATE Mesh.cpp)
+target_sources(libcairo PRIVATE Pattern.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 include(${CMAKE_SOURCE_DIR}/cmake/Cairo.cmake)
 target_link_libraries(libcairo PRIVATE cairo_backend)
@@ -86,6 +87,19 @@ if(BUILD_TESTING)
         if(WIN32)
             set_tests_properties(guest_cairo_mesh_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+        endif()
+    endforeach()
+
+    add_test_executable(guest_cairo_pattern_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoPattern.cpp)
+    target_include_directories(guest_cairo_pattern_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_pattern_tests PRIVATE libcairo cairo_backend libc)
+    configure_windows_unwind(guest_cairo_pattern_tests)
+    foreach(mode gradients state lifetime raster pointers)
+        add_test(NAME guest_cairo_pattern_${mode} COMMAND guest_cairo_pattern_tests ${mode})
+        set_tests_properties(guest_cairo_pattern_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_cairo_pattern_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
 

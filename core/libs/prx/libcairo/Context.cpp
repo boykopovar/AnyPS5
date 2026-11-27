@@ -287,6 +287,15 @@ void APS5_VABI cairo_rectangle(CairoContext* context, double x, double y, double
     aps5_cairo_rectangle(Backend(context), x, y, width, height);
 }
 
+void APS5_VABI cairo_arc(CairoContext* context, double xc, double yc, double radius, double angle1, double angle2) {
+    aps5_cairo_arc(Backend(context), xc, yc, radius, angle1, angle2);
+}
+
+void APS5_VABI cairo_arc_negative(CairoContext* context, double xc, double yc, double radius,
+                                  double angle1, double angle2) {
+    aps5_cairo_arc_negative(Backend(context), xc, yc, radius, angle1, angle2);
+}
+
 void APS5_VABI cairo_new_path(CairoContext* context) {
     aps5_cairo_new_path(Backend(context));
 }
