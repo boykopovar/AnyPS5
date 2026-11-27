@@ -1,6 +1,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +10,13 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -59,6 +68,64 @@ std::basic_string<std::uint16_t> Wide(const char* text) {
     while (*text) wide.push_back(static_cast<unsigned char>(*text++));
     return wide;
 }
+
+class Pages {
+    unsigned char* allocation = nullptr;
+    std::size_t size = 0;
+
+public:
+    Pages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        allocation = static_cast<unsigned char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(allocation != nullptr, "allocate guard pages");
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation + size, size, PAGE_NOACCESS, &previous) != 0, "protect guard page");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size");
+        size = static_cast<std::size_t>(page);
+        allocation = static_cast<unsigned char*>(mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(allocation != MAP_FAILED, "allocate guard pages");
+        Require(mprotect(allocation + size, size, PROT_NONE) == 0, "protect guard page");
+#endif
+        std::memset(allocation, 0xa5, size);
+        char value = 0;
+        Require(!GuestCopyIn_nid_no_patch(&value, allocation + size, 1), "qualify unreadable page");
+        Require(!GuestCopyOut_nid_no_patch(allocation + size, &value, 1), "qualify unwritable page");
+    }
+
+    ~Pages() {
+#ifdef _WIN32
+        Require(VirtualFree(allocation, 0, MEM_RELEASE) != 0, "release guard pages");
+#else
+        Require(munmap(allocation, size * 2) == 0, "release guard pages");
+#endif
+    }
+
+    unsigned char* Begin() { return allocation; }
+    unsigned char* End() { return allocation + size; }
+
+    void ProtectReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation, size, PAGE_READONLY, &previous) != 0, "protect read-only page");
+#else
+        Require(mprotect(allocation, size, PROT_READ) == 0, "protect read-only page");
+#endif
+    }
+
+    void ProtectReadWrite() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation, size, PAGE_READWRITE, &previous) != 0, "protect read-write page");
+#else
+        Require(mprotect(allocation, size, PROT_READ | PROT_WRITE) == 0, "protect read-write page");
+#endif
+    }
+};
 
 void CheckBsearch() {
     const int values[] = {1, 3, 3, 3, 5, 7, 9};
@@ -141,6 +208,104 @@ void CheckWcstok() {
     remaining = 4;
     Require(wcstok_s_nid_postfix(nullptr, &remaining, delimiters.c_str(), &context) == nullptr, "wcstok_s accepted a null context string");
     RequireViolation(before, "wcstok_s: bad argument", 22);
+
+    Pages pages;
+    auto checkBadPointer = [&](auto&& fn, const char* msg) {
+        const int prevCalls = constraintCalls;
+        errno = 73;
+        *__error_nid_postfix() = 73;
+        Require(fn() == nullptr, msg);
+        RequireViolation(prevCalls, "wcstok_s: bad argument", 22);
+        Require(errno == 73 && *__error_nid_postfix() == 73, msg);
+    };
+
+    auto writableText = Wide("ab,c");
+    std::size_t writableRemaining = writableText.size() + 1;
+    std::uint16_t* writableContext = writableText.data();
+    auto* const guardSize = reinterpret_cast<std::size_t*>(pages.End());
+    auto* const guardContext = reinterpret_cast<std::uint16_t**>(pages.End());
+    auto* const guardChars = reinterpret_cast<std::uint16_t*>(pages.End());
+
+    checkBadPointer([&] {
+        return wcstok_s_nid_postfix(writableText.data(), guardSize, delimiters.c_str(), &writableContext);
+    }, "wcstok_s accepted a guard remaining pointer");
+    checkBadPointer([&] {
+        return wcstok_s_nid_postfix(writableText.data(), reinterpret_cast<std::size_t*>(0x10), delimiters.c_str(), &writableContext);
+    }, "wcstok_s accepted an unmapped remaining pointer");
+    checkBadPointer([&] {
+        writableRemaining = writableText.size() + 1;
+        return wcstok_s_nid_postfix(nullptr, &writableRemaining, delimiters.c_str(), guardContext);
+    }, "wcstok_s accepted an unreadable context pointer");
+    checkBadPointer([&] {
+        writableRemaining = writableText.size() + 1;
+        return wcstok_s_nid_postfix(writableText.data(), &writableRemaining, guardChars, &writableContext);
+    }, "wcstok_s accepted a guard delimiters pointer");
+    checkBadPointer([&] {
+        writableRemaining = writableText.size() + 1;
+        return wcstok_s_nid_postfix(guardChars, &writableRemaining, delimiters.c_str(), &writableContext);
+    }, "wcstok_s accepted a guard string pointer");
+
+    auto* const partialDelim = reinterpret_cast<std::uint16_t*>(pages.End() - sizeof(std::uint16_t));
+    partialDelim[0] = ',';
+    checkBadPointer([&] {
+        writableRemaining = writableText.size() + 1;
+        return wcstok_s_nid_postfix(writableText.data(), &writableRemaining, partialDelim, &writableContext);
+    }, "wcstok_s read delimiters past a page boundary");
+
+    auto* const partialStr = reinterpret_cast<std::uint16_t*>(pages.End() - 2 * sizeof(std::uint16_t));
+    partialStr[0] = 'a';
+    partialStr[1] = 'b';
+    checkBadPointer([&] {
+        writableRemaining = 8;
+        return wcstok_s_nid_postfix(partialStr, &writableRemaining, delimiters.c_str(), &writableContext);
+    }, "wcstok_s read string past a page boundary");
+
+    auto* const roStr = reinterpret_cast<std::uint16_t*>(pages.Begin());
+    const auto withDelim = Wide("ab,c");
+    std::memcpy(roStr, withDelim.c_str(), (withDelim.size() + 1) * sizeof(std::uint16_t));
+    pages.ProtectReadOnly();
+    writableRemaining = withDelim.size() + 1;
+    writableContext = nullptr;
+    checkBadPointer([&] {
+        return wcstok_s_nid_postfix(roStr, &writableRemaining, delimiters.c_str(), &writableContext);
+    }, "wcstok_s accepted a read-only string containing a delimiter");
+    Require(writableRemaining == withDelim.size() + 1 && writableContext == nullptr, "wcstok_s mutated outputs on read-only string failure");
+
+    pages.ProtectReadWrite();
+    const auto noDelim = Wide("ab");
+    std::memcpy(roStr, noDelim.c_str(), (noDelim.size() + 1) * sizeof(std::uint16_t));
+    pages.ProtectReadOnly();
+    writableRemaining = noDelim.size() + 1;
+    writableContext = nullptr;
+    before = constraintCalls;
+    errno = 73;
+    *__error_nid_postfix() = 73;
+    Require(wcstok_s_nid_postfix(roStr, &writableRemaining, delimiters.c_str(), &writableContext) == roStr &&
+                writableRemaining == 1 && writableContext == roStr + 2 && constraintCalls == before &&
+                errno == 73 && *__error_nid_postfix() == 73,
+        "wcstok_s failed on a read-only string without a delimiter");
+
+    pages.ProtectReadWrite();
+    auto* const roRemaining = reinterpret_cast<std::size_t*>(pages.Begin());
+    *roRemaining = writableText.size() + 1;
+    pages.ProtectReadOnly();
+    writableText = Wide("ab,c");
+    writableContext = nullptr;
+    checkBadPointer([&] {
+        return wcstok_s_nid_postfix(writableText.data(), roRemaining, delimiters.c_str(), &writableContext);
+    }, "wcstok_s accepted a read-only remaining pointer");
+    Require(writableText[2] == ',' && writableContext == nullptr, "wcstok_s modified string or context on read-only remaining failure");
+
+    pages.ProtectReadWrite();
+    auto** const roContext = reinterpret_cast<std::uint16_t**>(pages.Begin());
+    *roContext = writableText.data();
+    pages.ProtectReadOnly();
+    writableText = Wide("ab,c");
+    writableRemaining = writableText.size() + 1;
+    checkBadPointer([&] {
+        return wcstok_s_nid_postfix(writableText.data(), &writableRemaining, delimiters.c_str(), roContext);
+    }, "wcstok_s accepted a read-only context pointer");
+    Require(writableText[2] == ',' && writableRemaining == writableText.size() + 1, "wcstok_s modified string or remaining on read-only context failure");
 }
 
 void CheckMemset() {
