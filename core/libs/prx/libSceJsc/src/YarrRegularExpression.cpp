@@ -27,14 +27,17 @@
  */
 
 #include "prx/libSceJsc/include/YarrRegularExpressionExports.hpp"
+#include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 #include "prx/libSceJsc/src/YarrRegExpEngine.hpp"
 #include "prx/libc/include/Api.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -211,11 +214,8 @@ const RegularExpression& Checked(const RegularExpression* self, const char* mess
     return *self;
 }
 
-int Match(RegularExpressionPrivate& d, const StringReference* string, int startFrom, int* matchLength) {
-    if (!string) throw std::invalid_argument("JSC::Yarr::RegularExpression: null string reference");
+int MatchUnits(RegularExpressionPrivate& d, const Units& input, int startFrom, int* matchLength) {
     if (!d.regExpByteCode) return -1;
-    if (!string->impl) return -1;
-    const Units input = UnitsOf(string->impl, "JSC::Yarr::RegularExpression: string with null characters and a nonzero length");
     const auto* bytecode = static_cast<const std::uint8_t*>(d.regExpByteCode);
     bool matched = false;
     std::uint8_t* captures[2 * 255] = {};
@@ -241,6 +241,14 @@ int Match(RegularExpressionPrivate& d, const StringReference* string, int startF
     return begin;
 }
 
+int Match(RegularExpressionPrivate& d, const StringReference* string, int startFrom, int* matchLength) {
+    if (!string) throw std::invalid_argument("JSC::Yarr::RegularExpression: null string reference");
+    if (!d.regExpByteCode) return -1;
+    if (!string->impl) return -1;
+    const Units input = UnitsOf(string->impl, "JSC::Yarr::RegularExpression: string with null characters and a nonzero length");
+    return MatchUnits(d, input, startFrom, matchLength);
+}
+
 void Construct(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
     if (!self) throw std::invalid_argument("JSC::Yarr::RegularExpression: null this");
     if (!pattern) throw std::invalid_argument("JSC::Yarr::RegularExpression: null pattern reference");
@@ -263,9 +271,83 @@ void Construct(RegularExpression* self, const StringReference* pattern, int case
     self->d = d;
 }
 
+void* AllocateStringStorage(std::size_t size) {
+    const auto* allocator = RegisteredPersistenceAllocator_nid_no_patch();
+    if (!allocator || !allocator->allocate || !allocator->deallocate)
+        throw std::runtime_error("JSC::Yarr::replace: the string requires libSceNKWebKit fastMalloc");
+    void* storage = allocator->allocate(size);
+    if (!storage) throw std::bad_alloc();
+    return storage;
+}
+
+void DropReferenceKeepingStorage(StringImpl* impl) {
+    if (!impl) return;
+    if (impl->refCount > 2) {
+        impl->refCount -= 2;
+        return;
+    }
+    impl->refCount = 0;
+}
+
+StringImpl* AllocateString(const std::vector<char16_t>& units, bool is8Bit) {
+    if (units.size() > std::numeric_limits<unsigned>::max()) throw std::length_error("JSC::Yarr::replace: result length above UINT_MAX");
+    constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
+    const std::size_t byteLength = units.size() * (is8Bit ? 1u : 2u);
+    void* storage = AllocateStringStorage(std::max<std::size_t>(sizeof(StringImpl), charactersOffset + byteLength));
+    auto* characters = static_cast<std::uint8_t*>(storage) + charactersOffset;
+    auto* impl = new (storage) StringImpl{2u, static_cast<unsigned>(units.size()), characters, is8Bit ? StringImplFlag8Bit : 0u};
+    if (is8Bit) {
+        for (std::size_t index = 0; index < units.size(); ++index) characters[index] = static_cast<std::uint8_t>(units[index]);
+    } else if (byteLength) {
+        std::memcpy(characters, units.data(), byteLength);
+    }
+    return impl;
+}
+
+void Replace(StringReference* string, const RegularExpression* target, const StringReference* replacement) {
+    if (!string) throw std::invalid_argument("JSC::Yarr::replace: null string reference");
+    if (!target || !target->d) throw std::invalid_argument("JSC::Yarr::replace: null regular expression");
+    if (!replacement) throw std::invalid_argument("JSC::Yarr::replace: null replacement reference");
+    if (!string->impl) return;
+    RegularExpressionPrivate& d = *target->d;
+    const Units input = UnitsOf(string->impl, "JSC::Yarr::replace: string with null characters and a nonzero length");
+    if (input.length > static_cast<unsigned>(INT_MAX)) return;
+    const Units replacementUnits = UnitsOf(replacement->impl, "JSC::Yarr::replace: replacement with null characters and a nonzero length");
+    std::vector<char16_t> text;
+    text.reserve(input.length);
+    for (unsigned at = 0; at < input.length; ++at) text.push_back(input.At(at));
+    std::vector<char16_t> rebuilt;
+    unsigned index = 0;
+    bool changed = false;
+    while (index < text.size()) {
+        const Units current{text.data(), static_cast<unsigned>(text.size()), false};
+        int matchLength = 0;
+        const int begin = MatchUnits(d, current, static_cast<int>(index), &matchLength);
+        if (begin < 0) break;
+        const unsigned start = static_cast<unsigned>(begin);
+        const unsigned removed = static_cast<unsigned>(matchLength);
+        if (!removed && !replacementUnits.length) break;
+        rebuilt.assign(text.begin(), text.begin() + start);
+        for (unsigned at = 0; at < replacementUnits.length; ++at) rebuilt.push_back(replacementUnits.At(at));
+        rebuilt.insert(rebuilt.end(), text.begin() + start + removed, text.end());
+        text.swap(rebuilt);
+        index = start + replacementUnits.length;
+        changed = true;
+        if (!removed) break;
+    }
+    if (!changed) return;
+    StringImpl* next = AllocateString(text, input.is8Bit && replacementUnits.is8Bit);
+    DropReferenceKeepingStorage(string->impl);
+    string->impl = next;
+}
+
 }
 
 extern "C" {
+
+void APS5_VABI _ZN3JSC4Yarr7replaceERN3WTF6StringERKNS0_17RegularExpressionERKS2_(StringReference* string, const RegularExpression* target, const StringReference* replacement) {
+    Replace(string, target, replacement);
+}
 
 void APS5_VABI _ZN3JSC4Yarr17RegularExpressionC1ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
     Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode);

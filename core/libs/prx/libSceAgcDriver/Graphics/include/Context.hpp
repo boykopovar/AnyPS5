@@ -276,6 +276,7 @@ struct Context {
     bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
+    bool pixelWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
     VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
@@ -321,6 +322,7 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool staticSampleMaskStopsShading = true;
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
