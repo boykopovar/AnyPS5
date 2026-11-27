@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace {
 
@@ -32,6 +33,18 @@ constexpr int GuestEinval = 22;
 int Fail(int error) {
     *__error_nid_postfix() = error;
     return -1;
+}
+
+bool CheckedSubtractAddress(std::uintptr_t address, std::size_t bytes, std::uintptr_t& result) {
+    if (bytes > address) return false;
+    result = address - bytes;
+    return true;
+}
+
+bool CheckedAddAddress(std::uintptr_t address, std::size_t bytes, std::uintptr_t& result) {
+    if (bytes > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    result = address + bytes;
+    return true;
 }
 
 }
@@ -124,20 +137,25 @@ int APS5_VABI signalcontext_nid_postfix(UserUcontext* context, int signal, Conte
     UserUcontext local{};
     if (!GuestCopyIn_nid_no_patch(&local, context, sizeof(local))) return Fail(GuestEfault);
     constexpr std::uint64_t MinimumHeadroom = 128 + sizeof(UserUcontext) + SignalInfoSize + (StackAlignment - 1) + SignalArguments * sizeof(std::uint64_t) + 16;
-    if (local.mcontext.rsp < MinimumHeadroom) return Fail(GuestEfault);
-    auto stack = (local.mcontext.rsp - 128 - sizeof(UserUcontext)) & ~(StackAlignment - 1);
-    auto* saved = reinterpret_cast<UserUcontext*>(stack);
-    if (stack < SignalInfoSize) return Fail(GuestEfault);
-    stack -= SignalInfoSize;
-    auto* info = reinterpret_cast<std::uint8_t*>(stack);
-    if (stack < SignalArguments * sizeof(std::uint64_t)) return Fail(GuestEfault);
-    stack -= SignalArguments * sizeof(std::uint64_t);
-    auto* arguments = reinterpret_cast<std::uint64_t*>(stack);
-    if (stack < 16) return Fail(GuestEfault);
-    stack -= 16;
-    const auto stackBase = static_cast<std::uintptr_t>(stack);
-    const auto stackEnd = reinterpret_cast<std::uintptr_t>(saved) + sizeof(UserUcontext);
+    if (local.mcontext.rsp > std::numeric_limits<std::uintptr_t>::max() || local.mcontext.rsp < MinimumHeadroom) return Fail(GuestEfault);
+    const auto stackPointer = static_cast<std::uintptr_t>(local.mcontext.rsp);
+    std::uintptr_t savedAddress = 0;
+    std::uintptr_t infoAddress = 0;
+    std::uintptr_t argumentsAddress = 0;
+    std::uintptr_t stackBase = 0;
+    std::uintptr_t stackEnd = 0;
+    if (!CheckedSubtractAddress(stackPointer, 128 + sizeof(UserUcontext), savedAddress)) return Fail(GuestEfault);
+    savedAddress &= ~(static_cast<std::uintptr_t>(StackAlignment) - 1);
+    if (!CheckedSubtractAddress(savedAddress, SignalInfoSize, infoAddress) ||
+        !CheckedSubtractAddress(infoAddress, SignalArguments * sizeof(std::uint64_t), argumentsAddress) ||
+        !CheckedSubtractAddress(argumentsAddress, 16, stackBase) ||
+        !CheckedAddAddress(savedAddress, sizeof(UserUcontext), stackEnd) || stackBase > stackEnd) {
+        return Fail(GuestEfault);
+    }
     const auto stackBytes = static_cast<std::size_t>(stackEnd - stackBase);
+    auto* saved = reinterpret_cast<UserUcontext*>(savedAddress);
+    auto* info = reinterpret_cast<std::uint8_t*>(infoAddress);
+    auto* arguments = reinterpret_cast<std::uint64_t*>(argumentsAddress);
     const GuestArena::HostWrite contextGuard(context, sizeof(local));
     const GuestArena::HostWrite stackGuard(reinterpret_cast<void*>(stackBase), stackBytes);
     if (!contextGuard.Open() || !GuestWritable_nid_no_patch(context, sizeof(local)) ||
@@ -155,7 +173,7 @@ int APS5_VABI signalcontext_nid_postfix(UserUcontext* context, int signal, Conte
     };
     if (!GuestCopyOut_nid_no_patch(arguments, callArguments, sizeof(callArguments))) return Fail(GuestEfault);
     const std::uint64_t zero = 0;
-    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(stack), &zero, sizeof(zero))) return Fail(GuestEfault);
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(stackBase), &zero, sizeof(zero))) return Fail(GuestEfault);
     std::memset(&local.mcontext, 0, sizeof(UserMcontext));
     local.mcontext.fpformat = FloatingPointFormatNone;
     local.mcontext.ownedfp = FloatingPointOwnedNone;
@@ -166,7 +184,7 @@ int APS5_VABI signalcontext_nid_postfix(UserUcontext* context, int signal, Conte
     machine.rdi = reinterpret_cast<std::uint64_t>(context);
     machine.rsi = reinterpret_cast<std::uint64_t>(handler);
     machine.rdx = reinterpret_cast<std::uint64_t>(arguments);
-    machine.rbp = stack;
+    machine.rbp = stackBase;
     machine.rbx = machine.rbp;
     machine.rsp = machine.rbp;
     machine.rip = reinterpret_cast<std::uint64_t>(&Aps5MakecontextStart_nid_no_patch);

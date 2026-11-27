@@ -90,6 +90,16 @@ static_assert(offsetof(GuestFilePrefix, descriptor) == 18);
 static_assert(offsetof(GuestFilePrefix, buffer) == 24);
 static_assert(offsetof(GuestFilePrefix, lineBufferSize) == 40);
 
+// FileStream is not standard-layout; mirror only its fixed host-handle prefix so
+// the probe offset is computed from a standard-layout type without starting a FileStream lifetime.
+struct FileStreamHostProbeLayout {
+    GuestFilePrefix guest;
+    std::byte reserved[256 - sizeof(GuestFilePrefix)];
+    std::FILE* handle;
+};
+static_assert(std::is_standard_layout_v<FileStreamHostProbeLayout>);
+static_assert(offsetof(FileStreamHostProbeLayout, handle) == 256);
+
 static constexpr const char* FOPEN_EXT_VERT = ".vert";
 static constexpr const char* FOPEN_MSG_NULL_ARG = "null argument";
 static constexpr const char* FOPEN_MSG_NOT_FOUND = "file not found";
@@ -220,7 +230,7 @@ public:
     static bool IsOpenInBytes(const std::byte (&raw)[N]) {
         static_assert(N == sizeof(FileStream), "raw must hold a complete FileStream");
         std::FILE* handle = nullptr;
-        std::memcpy(&handle, raw + offsetof(FileStream, _handle), sizeof(handle));
+        std::memcpy(&handle, raw + offsetof(FileStreamHostProbeLayout, handle), sizeof(handle));
         return handle != nullptr;
     }
 
