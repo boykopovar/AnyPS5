@@ -30,6 +30,7 @@ constexpr int WrongTag = 168;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
 constexpr int TypeNotPrimitive = 231;
+constexpr int TypeNotConstructed = 156;
 constexpr int NullIsWrongLength = 144;
 
 constexpr std::uint32_t IntegerTag = 2;
@@ -67,6 +68,7 @@ enum class Decoder {
     Object,
     OcspNonce,
     AuthorityKeyId,
+    GeneralNames,
     Null,
 };
 
@@ -87,8 +89,8 @@ constexpr Method Methods[] = {
     {82, Decoder::OctetString},
     {83, Decoder::BitString},
     {84, Decoder::UsagePeriod},
-    {85, Decoder::Unsupported},
-    {86, Decoder::Unsupported},
+    {85, Decoder::GeneralNames},
+    {86, Decoder::GeneralNames},
     {87, Decoder::BasicConstraints},
     {88, Decoder::Integer},
     {89, Decoder::Unsupported},
@@ -436,69 +438,14 @@ bool ReadElement(std::span<const unsigned char>& input, Header& header, std::spa
     return true;
 }
 
-bool DecodeIssuerName(const Header& header, std::span<const unsigned char> content, LibreSslGeneralName& name) {
-    constexpr int ExplicitLengthMismatch = 119;
-    constexpr int ExplicitTagNotConstructed = 120;
-    constexpr std::uint32_t DirectoryName = 4;
-    if (header.tagClass != ContextClass || header.tag > 8) {
-        PutHeaderError(WrongTag);
-        return false;
-    }
-    if (header.tag == DirectoryName) {
-        if (!header.constructed) {
-            PutHeaderError(ExplicitTagNotConstructed);
-            return false;
-        }
-        name.value = LibreSsl3DecodeX509Name_nid_no_patch(content);
-        if (name.value && !content.empty()) {
-            PutHeaderError(ExplicitLengthMismatch);
-            return false;
-        }
-        return name.value != nullptr;
-    }
-    if (header.tag == 0 || header.tag == 3 || header.tag == 5) {
-        NotImplemented_nid_no_patch("AUTHORITY_KEYID issuer GeneralName type");
-    }
-    if (header.constructed) {
-        PutHeaderError(TypeNotPrimitive);
-        return false;
-    }
-    name.value = header.tag == 8 ? NewObject(content) : NewString(header.tag == 7 ? OctetStringType : Ia5StringType, content);
-    return name.value != nullptr;
-}
+LibreSslStack* NewGeneralNames(std::span<const unsigned char> content);
 
 LibreSslStack* DecodeIssuerNames(const Header& field, std::span<const unsigned char> content) {
-    constexpr int TypeNotConstructed = 156;
     if (!field.constructed) {
         PutHeaderError(TypeNotConstructed);
         return nullptr;
     }
-    std::unique_ptr<LibreSslStack, decltype(&GENERAL_NAMES_free_nid_postfix)> names(
-        sk_new_nid_postfix(nullptr), GENERAL_NAMES_free_nid_postfix);
-    if (!names) {
-        PutError(MallocFailure);
-        return nullptr;
-    }
-    while (!content.empty()) {
-        Header header;
-        std::span<const unsigned char> bytes;
-        if (!ReadElement(content, header, bytes)) return nullptr;
-        std::unique_ptr<LibreSslGeneralName, decltype(&GENERAL_NAME_free_nid_postfix)> name(
-            static_cast<LibreSslGeneralName*>(calloc_nid_postfix(1, sizeof(LibreSslGeneralName))),
-            GENERAL_NAME_free_nid_postfix);
-        if (!name) {
-            PutError(MallocFailure);
-            return nullptr;
-        }
-        name->type = static_cast<int>(header.tag);
-        if (!DecodeIssuerName(header, bytes, *name)) return nullptr;
-        if (!sk_push_nid_postfix(names.get(), name.get())) {
-            PutError(MallocFailure);
-            return nullptr;
-        }
-        name.release();
-    }
-    return names.release();
+    return NewGeneralNames(content);
 }
 
 void* NewAuthorityKeyId(std::span<const unsigned char> value) {
@@ -607,6 +554,167 @@ bool EndsDefiniteContent(std::span<const unsigned char> body) {
     if (body.size() < 2 || body[0] != 0 || body[1] != 0) return false;
     PutError(EndOfContentsInDefiniteForm);
     return true;
+}
+
+constexpr int NoMatchingChoiceType = 143;
+constexpr int ExplicitTagNotConstructed = 120;
+constexpr std::uint32_t OtherNameTag = 0;
+constexpr std::uint32_t EmailTag = 1;
+constexpr std::uint32_t DnsNameTag = 2;
+constexpr std::uint32_t X400Tag = 3;
+constexpr std::uint32_t DirectoryNameTag = 4;
+constexpr std::uint32_t EdiPartyNameTag = 5;
+constexpr std::uint32_t UriTag = 6;
+constexpr std::uint32_t IpAddressTag = 7;
+constexpr std::uint32_t RegisteredIdTag = 8;
+
+void PutNestedErrors(int count) {
+    for (int index = 0; index < count; ++index) PutError(NestedAsn1Error);
+}
+
+bool DecodeDirectoryName(std::span<const unsigned char> content, LibreSslGeneralName& name) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(content, true, "GENERAL_NAME directoryName indefinite length", body)) {
+        PutNestedErrors(3);
+        return false;
+    }
+    std::span<const unsigned char> remaining = content;
+    name.value = LibreSsl3DecodeX509Name_nid_no_patch(remaining);
+    if (!name.value) {
+        PutNestedErrors(3);
+        return false;
+    }
+    if (!remaining.empty()) {
+        PutError(SequenceLengthMismatch);
+        PutNestedErrors(1);
+        return false;
+    }
+    return true;
+}
+
+LibreSslGeneralName* NewGeneralName(std::span<const unsigned char>& input) {
+    std::unique_ptr<LibreSslGeneralName, decltype(&GENERAL_NAME_free_nid_postfix)> name(
+        static_cast<LibreSslGeneralName*>(calloc_nid_postfix(1, sizeof(LibreSslGeneralName))),
+        GENERAL_NAME_free_nid_postfix);
+    if (!name) {
+        PutError(MallocFailure);
+        PutNestedErrors(1);
+        return nullptr;
+    }
+    const std::span<const unsigned char> element = input;
+    Header header;
+    if (!ReadIdentifier(input, header)) {
+        PutError(BadObjectHeader);
+        PutNestedErrors(3);
+        return nullptr;
+    }
+    if (header.tagClass != ContextClass || header.tag > RegisteredIdTag) {
+        PutError(NoMatchingChoiceType);
+        return nullptr;
+    }
+    const int headerNesting = header.tag == DirectoryNameTag ? 2 : 3;
+    if (!ReadLength(input, header) || (header.indefinite && !header.constructed)) {
+        PutError(BadObjectHeader);
+        PutNestedErrors(headerNesting);
+        return nullptr;
+    }
+    if (!header.indefinite && header.length > input.size()) {
+        PutError(TooLong);
+        PutNestedErrors(headerNesting);
+        return nullptr;
+    }
+    const std::size_t headerSize = element.size() - input.size();
+    name->type = static_cast<int>(header.tag);
+    switch (header.tag) {
+    case OtherNameTag:
+    case EdiPartyNameTag:
+        if (!header.constructed) {
+            PutError(SequenceNotConstructed);
+            PutNestedErrors(2);
+            return nullptr;
+        }
+        NotImplemented_nid_no_patch("GENERAL_NAME otherName and ediPartyName");
+    case X400Tag:
+        if (!header.constructed) {
+            PutError(TypeNotConstructed);
+            PutNestedErrors(2);
+            return nullptr;
+        }
+        break;
+    case DirectoryNameTag:
+        if (!header.constructed) {
+            PutError(ExplicitTagNotConstructed);
+            PutNestedErrors(1);
+            return nullptr;
+        }
+        break;
+    case RegisteredIdTag:
+        if (header.constructed) {
+            PutError(TypeNotPrimitive);
+            PutNestedErrors(2);
+            return nullptr;
+        }
+        break;
+    default:
+        if (header.constructed) NotImplemented_nid_no_patch("GENERAL_NAME constructed string");
+        break;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("GENERAL_NAME indefinite length");
+    const std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    switch (header.tag) {
+    case EmailTag:
+    case DnsNameTag:
+    case UriTag:
+        name->value = NewString(Ia5StringType, content);
+        break;
+    case IpAddressTag:
+        name->value = NewString(OctetStringType, content);
+        break;
+    case X400Tag:
+        name->value = NewString(static_cast<std::int32_t>(SequenceTag), element.first(headerSize + header.length));
+        break;
+    case DirectoryNameTag:
+        if (!DecodeDirectoryName(content, *name)) return nullptr;
+        return name.release();
+    case RegisteredIdTag:
+        name->value = NewObject(content);
+        break;
+    }
+    if (!name->value) {
+        PutNestedErrors(2);
+        return nullptr;
+    }
+    return name.release();
+}
+
+LibreSslStack* NewGeneralNames(std::span<const unsigned char> content) {
+    std::unique_ptr<LibreSslStack, decltype(&GENERAL_NAMES_free_nid_postfix)> names(
+        sk_new_nid_postfix(nullptr), GENERAL_NAMES_free_nid_postfix);
+    if (!names) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    while (!content.empty()) {
+        if (EndsDefiniteContent(content)) return nullptr;
+        LibreSslGeneralName* name = NewGeneralName(content);
+        if (!name) {
+            PutNestedErrors(1);
+            return nullptr;
+        }
+        if (!sk_push_nid_postfix(names.get(), name)) {
+            GENERAL_NAME_free_nid_postfix(name);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return names.release();
+}
+
+void* NewGeneralNamesExtension(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, true, "GENERAL_NAMES indefinite length", body)) return nullptr;
+    return NewGeneralNames(body);
 }
 
 struct BasicConstraintsValue {
@@ -804,6 +912,8 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
     }
     case Decoder::AuthorityKeyId:
         return NewAuthorityKeyId(value);
+    case Decoder::GeneralNames:
+        return NewGeneralNamesExtension(value);
     case Decoder::Null:
         return NewNull(value);
     case Decoder::Unsupported:

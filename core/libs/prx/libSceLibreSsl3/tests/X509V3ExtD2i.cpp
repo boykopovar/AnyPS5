@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +14,10 @@
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -858,11 +862,188 @@ void TestNidResolution() {
     RequireQueue({});
 }
 
+Bytes FromHex(std::string_view hex) {
+    Bytes bytes;
+    for (std::size_t index = 0; index + 1 < hex.size(); index += 2)
+        bytes.push_back(static_cast<unsigned char>(std::stoul(std::string(hex.substr(index, 2)), nullptr, 16)));
+    return bytes;
+}
+
+void FreeGeneralNames(void* value) {
+    GENERAL_NAMES_free_nid_postfix(static_cast<LibreSslStack*>(value));
+}
+
+LibreSslStack* DecodeGeneralNames(int nid, const Bytes& bytes) {
+    auto* names = static_cast<LibreSslStack*>(DecodeValue(nid, bytes));
+    Require(names != nullptr);
+    RequireQueue({});
+    return names;
+}
+
+const LibreSslGeneralName* GeneralNameAt(const LibreSslStack* names, int index, int type) {
+    const auto* name = static_cast<const LibreSslGeneralName*>(sk_value_nid_postfix(names, index));
+    Require(name != nullptr && name->type == type && name->value != nullptr);
+    return name;
+}
+
+void RequireString(const void* value, std::int32_t type, const Bytes& data) {
+    const auto* string = static_cast<const Asn1String*>(value);
+    Require(string->type == type && string->length == static_cast<std::int32_t>(data.size()));
+    if (!data.empty()) Require(std::memcmp(string->data, data.data(), data.size()) == 0);
+    Require(string->data[data.size()] == 0);
+}
+
+std::vector<std::vector<int>> DistinctQueues(std::vector<std::vector<int>> queues) {
+    std::sort(queues.begin(), queues.end());
+    queues.erase(std::unique(queues.begin(), queues.end()), queues.end());
+    return queues;
+}
+
+void TestGeneralNames() {
+    for (const Bytes& bytes : {FromHex("3000"), FromHex("30005a"), FromHex("1000")}) {
+        LibreSslStack* names = DecodeGeneralNames(85, bytes);
+        Require(sk_num_nid_postfix(names) == 0);
+        FreeGeneralNames(names);
+        Require(allocations.empty());
+    }
+
+    LibreSslStack* names = DecodeGeneralNames(85, FromHex("3014810178820261628601798704c000020188022a03"));
+    Require(sk_num_nid_postfix(names) == 5);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {'x'});
+    RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'a', 'b'});
+    RequireString(GeneralNameAt(names, 2, 6)->value, 22, {'y'});
+    RequireString(GeneralNameAt(names, 3, 7)->value, 4, {192, 0, 2, 1});
+    const auto* object = static_cast<const Asn1Object_nid_no_patch*>(GeneralNameAt(names, 4, 8)->value);
+    Require(object->length == 2 && object->flags == 0x09 && std::memcmp(object->data, "\x2a\x03", 2) == 0);
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(86, FromHex("3003820161"));
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("30088100870086008200"));
+    Require(sk_num_nid_postfix(names) == 4);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
+    RequireString(GeneralNameAt(names, 1, 7)->value, 4, {});
+    RequireString(GeneralNameAt(names, 2, 6)->value, 22, {});
+    RequireString(GeneralNameAt(names, 3, 2)->value, 22, {});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3002a300"));
+    RequireString(GeneralNameAt(names, 0, 3)->value, 16, {0xa3, 0x00});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3003a38100"));
+    RequireString(GeneralNameAt(names, 0, 3)->value, 16, {0xa3, 0x81, 0x00});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a3020500"));
+    RequireString(GeneralNameAt(names, 0, 3)->value, 16, {0xa3, 0x02, 0x05, 0x00});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    const Bytes directory = FromHex("3011a40f300d310b300906035504030c024341");
+    names = DecodeGeneralNames(85, directory);
+    const auto* name = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    Require(sk_num_nid_postfix(name->entries) == 1);
+    const auto* entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(name->entries, 0));
+    Require(entry != nullptr && entry->value != nullptr);
+    RequireString(entry->value, 12, {'C', 'A'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3011a40f300d310b3009060355040313024341"));
+    const auto* printable = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(printable->entries, 0));
+    RequireString(entry->value, 19, {'C', 'A'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3004a4023000"));
+    name = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    Require(sk_num_nid_postfix(name->entries) == 0);
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a4021000"));
+    name = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    Require(sk_num_nid_postfix(name->entries) == 0);
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("30138100a40f300d310b300906035504030c024341"));
+    Require(sk_num_nid_postfix(names) == 2);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    RequireMalformed(85, {
+        {{}, {102, 58}},
+        {FromHex("3100"), {168, 58}},
+        {FromHex("0000"), {168, 58}},
+        {FromHex("30020000"), {159}},
+        {FromHex("3005820261"), {155, 58}},
+        {FromHex("30011f"), {102, 58, 58, 58, 58}},
+        {FromHex("30029f80"), {102, 58, 58, 58, 58}},
+        {FromHex("30028900"), {143, 58}},
+        {FromHex("3003020100"), {143, 58}},
+        {FromHex("30039f810100"), {143, 58}},
+        {FromHex("30023000"), {143, 58}},
+        {FromHex("30020500"), {143, 58}},
+        {FromHex("30028a00"), {143, 58}},
+        {FromHex("300281ff"), {102, 58, 58, 58, 58}},
+        {FromHex("30028180"), {102, 58, 58, 58, 58}},
+        {FromHex("30028201"), {155, 58, 58, 58, 58}},
+        {FromHex("3003830161"), {156, 58, 58, 58}},
+        {FromHex("30028800"), {216, 58, 58, 58}},
+        {FromHex("300488028001"), {216, 58, 58, 58}},
+        {FromHex("3005a803060101"), {231, 58, 58, 58}},
+        {FromHex("3003800100"), {149, 58, 58, 58}},
+        {FromHex("3003850100"), {149, 58, 58, 58}},
+        {FromHex("30028400"), {120, 58, 58}},
+        {FromHex("3002a400"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("3012a410300d310b300906035504030c02434100"), {148, 58, 58}},
+        {FromHex("3013a411300d310b300906035504030c0243410500"), {148, 58, 58}},
+        {FromHex("3004a4023100"), {168, 58, 58, 58, 58, 58}},
+        {FromHex("3003a40100"), {168, 58, 58, 58, 58, 58}},
+        {FromHex("3004a4023005"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("3002a405"), {155, 58, 58, 58}},
+        {FromHex("30138100840f300d310b300906035504030c024341"), {120, 58, 58}},
+    });
+
+    for (const auto& [hex, reason] : {std::pair<std::string_view, int>{"3006a40430023000", 168},
+             {"300ba409300731053003060100", 121}, {"3009a40730053103020100", 168}}) {
+        Require(DecodeValue(85, FromHex(hex)) == nullptr);
+        Require(allocations.empty());
+        const std::vector<int> queue = DrainReasons();
+        Require(!queue.empty() && queue.front() == reason);
+    }
+
+    RequireUnmodelled(85, {
+        FromHex("300f810178a00a06032a0304a003160178"),
+        FromHex("3008a506a1040c026162"),
+        FromHex("3004a1028000"),
+        FromHex("3004a7028000"),
+        FromHex("3004a3800000"),
+        FromHex("3004a4800000"),
+        FromHex("30800000"),
+    });
+
+    Require(DistinctQueues(AllocationFailures(85, FromHex("3003820161"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 65, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(85, FromHex("3014810178820261628601798704c000020188022a03"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{58, 58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 65, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(85, FromHex("300488022a03"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{58, 58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(85, FromHex("3002a300"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 65, 58, 58, 58}});
+    const std::vector<std::vector<int>> directoryFailures = AllocationFailures(85, directory, FreeGeneralNames);
+    Require(!directoryFailures.empty());
+    for (const std::vector<int>& queue : directoryFailures) Require(!queue.empty());
+}
+
 void TestUnsupported() {
     Fixture certificatePolicies(89, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&certificatePolicies.extension); });
-    Fixture subjectAltName(85, {0x30, 0x00});
-    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&subjectAltName.extension); });
     Fixture serviceLocator(371, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&serviceLocator.extension); });
 }
@@ -1056,6 +1237,7 @@ int main() {
     TestPrivateKeyUsagePeriod();
     TestStructuredRoundTrips();
     TestNidResolution();
+    TestGeneralNames();
     TestUnsupported();
     TestUnknownExtensions();
     TestMethodTable();
