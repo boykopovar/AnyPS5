@@ -22,7 +22,8 @@ bool isScalar(uint32_t code) {
 int decodeUtf8(const uint8_t* source, uint32_t available, uint32_t& code, uint32_t& length) {
     if (!source) return INVALID_SRC_BUFFER;
     if (available == 0) return SRC_BUFFER_END;
-    const uint8_t lead = source[0];
+    uint8_t lead = 0;
+    if (!CesGuest::CopyIn(&lead, source, 1)) return INVALID_SRC_BUFFER;
     if (lead <= 0x7F) { code = lead; length = 1; return 0; }
     if (lead >= 0xC2 && lead <= 0xDF) { code = lead & 0x1F; length = 2; }
     else if (lead >= 0xE0 && lead <= 0xEF) { code = lead & 0x0F; length = 3; }
@@ -30,7 +31,8 @@ int decodeUtf8(const uint8_t* source, uint32_t available, uint32_t& code, uint32
     else return INVALID_ENCODE;
     for (uint32_t i = 1; i < length; ++i) {
         if (i >= available) return SRC_BUFFER_END;
-        const uint8_t next = source[i];
+        uint8_t next = 0;
+        if (!CesGuest::CopyIn(&next, source + i, 1)) return INVALID_SRC_BUFFER;
         if (next < 0x80 || next > 0xBF) return INVALID_ENCODE;
         if (i == 1 && ((lead == 0xE0 && next < 0xA0) || (lead == 0xED && next > 0x9F)
             || (lead == 0xF0 && next < 0x90) || (lead == 0xF4 && next > 0x8F))) return INVALID_ENCODE;
@@ -62,8 +64,8 @@ int encodeUtf8(uint32_t code, uint8_t* target, uint32_t capacity, uint32_t* targ
         length = 4;
     }
     if (capacity < length) return DST_BUFFER_END;
-    std::memcpy(target, bytes, length);
-    if (targetLength) *targetLength = length;
+    if (!CesGuest::CopyOut(target, bytes, length)) return INVALID_DST_BUFFER;
+    if (targetLength && !CesGuest::Store(targetLength, length)) return INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -87,8 +89,10 @@ int utf8ToUtf32(const uint8_t* source, uint32_t available, uint32_t* sourceLengt
     uint32_t length = 0;
     if (const int result = decodeUtf8(source, available, code, length); result != 0) return result;
     if (!target) return INVALID_DST_BUFFER;
-    storeUnit<uint32_t, BigEndian>(target, code);
-    if (sourceLength) *sourceLength = length;
+    uint32_t value = 0;
+    storeUnit<uint32_t, BigEndian>(&value, code);
+    if (!CesGuest::Store(target, value)) return INVALID_DST_BUFFER;
+    if (sourceLength && !CesGuest::Store(sourceLength, length)) return INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -100,14 +104,16 @@ int utf8ToUtf16(const uint8_t* source, uint32_t available, uint32_t* sourceLengt
     if (!target) return INVALID_DST_BUFFER;
     const uint32_t units = code < 0x10000 ? 1 : 2;
     if (capacity < units) return DST_BUFFER_END;
-    if (units == 1) storeUnit<uint16_t, BigEndian>(target, code);
+    uint16_t outUnits[2];
+    if (units == 1) storeUnit<uint16_t, BigEndian>(outUnits, code);
     else {
         code -= 0x10000;
-        storeUnit<uint16_t, BigEndian>(target, 0xD800 | code >> 10);
-        storeUnit<uint16_t, BigEndian>(target + 1, 0xDC00 | (code & 0x3FF));
+        storeUnit<uint16_t, BigEndian>(outUnits, 0xD800 | code >> 10);
+        storeUnit<uint16_t, BigEndian>(outUnits + 1, 0xDC00 | (code & 0x3FF));
     }
-    if (sourceLength) *sourceLength = length;
-    if (targetLength) *targetLength = units;
+    if (!CesGuest::CopyOut(target, outUnits, units * sizeof(uint16_t))) return INVALID_DST_BUFFER;
+    if (sourceLength && !CesGuest::Store(sourceLength, length)) return INVALID_DST_BUFFER;
+    if (targetLength && !CesGuest::Store(targetLength, units)) return INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -115,25 +121,31 @@ template<bool BigEndian>
 int utf16ToUtf8(const uint16_t* source, uint32_t available, uint32_t* sourceLength, uint8_t* target, uint32_t capacity, uint32_t* targetLength) {
     if (!source) return INVALID_SRC_BUFFER;
     if (available == 0) return SRC_BUFFER_END;
-    uint32_t code = loadUnit<uint16_t, BigEndian>(source);
+    uint16_t firstUnit = 0;
+    if (!CesGuest::CopyIn(&firstUnit, source, sizeof(firstUnit))) return INVALID_SRC_BUFFER;
+    uint32_t code = loadUnit<uint16_t, BigEndian>(&firstUnit);
     uint32_t units = 1;
     if (code >= 0xDC00 && code <= 0xDFFF) return INVALID_ENCODE;
     if (code >= 0xD800 && code <= 0xDBFF) {
         if (available < 2) return SRC_BUFFER_END;
-        const uint32_t low = loadUnit<uint16_t, BigEndian>(source + 1);
+        uint16_t secondUnit = 0;
+        if (!CesGuest::CopyIn(&secondUnit, source + 1, sizeof(secondUnit))) return INVALID_SRC_BUFFER;
+        const uint32_t low = loadUnit<uint16_t, BigEndian>(&secondUnit);
         if (low < 0xDC00 || low > 0xDFFF) return INVALID_ENCODE;
         code = 0x10000 + ((code - 0xD800) << 10) + low - 0xDC00;
         units = 2;
     }
     if (const int result = encodeUtf8(code, target, capacity, targetLength); result != 0) return result;
-    if (sourceLength) *sourceLength = units;
+    if (sourceLength && !CesGuest::Store(sourceLength, units)) return INVALID_DST_BUFFER;
     return 0;
 }
 
 template<bool BigEndian>
 int utf32ToUtf8(const uint32_t* source, uint8_t* target, uint32_t capacity, uint32_t* targetLength) {
     if (!source) return INVALID_SRC_BUFFER;
-    return encodeUtf8(loadUnit<uint32_t, BigEndian>(source), target, capacity, targetLength);
+    uint32_t unit = 0;
+    if (!CesGuest::CopyIn(&unit, source, sizeof(unit))) return INVALID_SRC_BUFFER;
+    return encodeUtf8(loadUnit<uint32_t, BigEndian>(&unit), target, capacity, targetLength);
 }
 
 }

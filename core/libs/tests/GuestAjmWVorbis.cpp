@@ -130,8 +130,32 @@ void TestLargePacket() {
 
 }
 
+void TestSetupPacketValidation() {
+    constexpr int InvalidParameter = static_cast<int>(0x8A6E0001u);
+    constexpr int InvalidSize = static_cast<int>(0x8A6E0002u);
+    std::uint8_t input[4]{};
+    std::uint8_t output[64]{};
+    const WVorbisSetupPacketParameter valid{sizeof(WVorbisSetupPacketParameter), 2, 0, input, sizeof(input), output, sizeof(output), 0x5A5A};
+    Require(sceAjmDecWVorbisCreateSetupPacket(nullptr) == InvalidParameter, "a null setup packet parameter is refused");
+    auto param = valid;
+    param.size = 0x30;
+    param.channels = -1;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidSize, "the size is checked before the other fields");
+    param = valid;
+    param.channels = -1;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidParameter, "negative channels are refused");
+    param = valid;
+    param.input = nullptr;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidParameter, "a null input is refused");
+    param = valid;
+    param.output = nullptr;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidParameter, "a null output is refused");
+    Require(param.outputSize == 0x5A5A && output[0] == 0, "a refused call writes nothing");
+}
+
 int main() {
     TestValidation();
+    TestSetupPacketValidation();
     TestPacket();
     TestLargePacket();
     TestInstanceCodecType();
