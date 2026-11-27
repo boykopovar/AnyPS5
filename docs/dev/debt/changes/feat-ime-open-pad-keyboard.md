@@ -1,0 +1,5 @@
+# libSceIme
+
+## change Minecraft Preview (PPSA19639, #1277) opens it when entering a world
+
+- [sceImeOpen](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) draws a host keyboard, not the console's panel, and none of it is measured on a PS5: it is the [PadKeyboard](../../../core/libs/prx/libSceImeDialog/src/PadKeyboard.cpp) of `sceImeDialogInit`, placed by the overlay and not at the position and alignment passed in; a number panel gets the Latin layout; Done and R2 send press-enter on a multi-line panel too, so the controller cannot type a line break; the one-key shift ends in `sceImeUpdate`, so two keys pressed between two updates are both upper case. No keyboard is drawn when the extended parameter disables the controller or another panel owns it. Host typing still arrives through [ImeTextInput](../../../core/libs/prx/libSceVideoOut/src/ImeTextInput.cpp). Minecraft Preview (PPSA19639, #1277) opens it when entering a world. The external keyboard filter is accepted and never called because no keycode events are produced

@@ -215,11 +215,6 @@ int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void) {
     return scePthreadGetthreadid();
 }
 
-int APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("R+hhR9jq4sU", libwebrtcUnknown14);
 int APS5_VABI libwebrtcUnknown14(void) {
     NotImplemented_nid_no_patch("R+hhR9jq4sU");
@@ -524,26 +519,6 @@ int APS5_VABI _ZN6webrtc17AudioDeviceBufferC1EPNS_16TaskQueueFactoryEb_nid_postf
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("QbtLnp-i47c", libwebrtcUnknown42);
 int APS5_VABI libwebrtcUnknown42(void) {
     NotImplemented_nid_no_patch("QbtLnp-i47c");
@@ -676,16 +651,6 @@ int APS5_VABI libwebrtcUnknown55(void) {
 APS5_EXPORT("ratmuLethas", libwebrtcUnknown56);
 int APS5_VABI libwebrtcUnknown56(void) {
     NotImplemented_nid_no_patch("ratmuLethas");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

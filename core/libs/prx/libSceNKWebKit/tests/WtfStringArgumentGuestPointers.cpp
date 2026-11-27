@@ -105,8 +105,14 @@ int main() {
     std::memcpy(pages + 16, &spaced.impl, sizeof(spaced.impl));
     std::memcpy(pages + 24, &address.impl, sizeof(address.impl));
     std::memset(pages + 32, 0, 8);
+    std::memcpy(pages + 41, &co.impl, sizeof(co.impl));
+    std::memcpy(pages + 49, &domain.impl, sizeof(domain.impl));
+    std::memcpy(pages + 57, &spaced.impl, sizeof(spaced.impl));
     Protect(pages, true);
     const auto* guest = reinterpret_cast<const String*>(pages);
+    const auto* oddCo = reinterpret_cast<const String*>(pages + 41);
+    const auto* oddDomain = reinterpret_cast<const String*>(pages + 49);
+    const auto* oddSpaced = reinterpret_cast<const String*>(pages + 57);
     const unsigned refs[] = {co.impl->refCount, domain.impl->refCount, spaced.impl->refCount, address.impl->refCount};
 
     Require(suffix(&guest[0]) && !suffix(&guest[1]) && !suffix(&guest[4]));
@@ -116,6 +122,9 @@ int main() {
         Require(same.impl == address.impl && address.impl->refCount == refs[3] + 2);
     }
     Require(Is(simplify(&guest[2], Whitespace), "a b") && !simplify(&guest[4], Whitespace).impl);
+    Require(suffix(oddCo) && !suffix(oddDomain));
+    Require(Is(top(oddDomain), "example.co.uk") && !top(oddCo).impl);
+    Require(Is(simplify(oddSpaced, Whitespace), "a b"));
     Require(co.impl->refCount == refs[0] && domain.impl->refCount == refs[1] && spaced.impl->refCount == refs[2] && address.impl->refCount == refs[3]);
 
     UnmapPages(pages);

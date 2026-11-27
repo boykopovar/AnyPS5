@@ -77,6 +77,17 @@ int main(int argc, char** argv) {
     const auto ajmTelemetryGetLog = Resolve<TelemetryGetLogFn>(ajmLibrary, "sceAjmTelemetryGetLog_nid_disambig1");
     TestQueries(ajmInstanceGetSize, ajmGetFailedInstance, ajmTelemetryGetLog, context);
 
+    for (const std::uint64_t flags : {0x180ull, 0x2000ull, 0x4000ull, 1ull << 60}) {
+        Require(sceAjmInstanceExtend(context, 0, flags, 0) == InvalidFlags, "sceAjmInstanceExtend took a rejected flag combination");
+        Require(sceAjmInstanceSwitch(context, 0, flags, 0) == InvalidFlags, "sceAjmInstanceSwitch took a rejected flag combination");
+        Require(sceAjmInstanceAvailable(context, 0, flags) == InvalidFlags, "sceAjmInstanceAvailable took a rejected flag combination");
+    }
+    std::uint8_t logBuffer[16]{};
+    std::uint64_t logOut = 0;
+    Require(sceAjmBatchGetLog(context, 5001, logBuffer, &logOut) == InvalidParameter, "sceAjmBatchGetLog took a size above 5000");
+    Require(sceAjmBatchGetLog(context, 16, nullptr, &logOut) == InvalidParameter, "sceAjmBatchGetLog took a null buffer");
+    Require(sceAjmBatchGetLog(context, 16, logBuffer, nullptr) == InvalidParameter, "sceAjmBatchGetLog took a null output");
+
     Require(sceAjmFinalize(context) == 0, "sceAjmFinalize failed");
     std::puts("Ajm driver query tests passed");
     return 0;

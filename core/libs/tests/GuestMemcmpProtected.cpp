@@ -17,13 +17,6 @@ static void Require(bool condition) {
     }
 }
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
-
 static int Sign(int value) { return (value > 0) - (value < 0); }
 
 int main() {

@@ -99,11 +99,6 @@ void* APS5_VABI sceFontSelectGraphicsAgc(std::uint32_t index) {
     return AgcFontBackend_nid_no_patch(index);
 }
 
-int APS5_VABI sceFontGraphicsAgcSurfaceInit(void* surface, const void* config) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceFontGraphicsAgcDrawupFillTextureImage(FontGraphicsFrame* graphicsObject, const void* surface, void** output,
                                                      float x, float y, float width, float height) {
     if (output == nullptr || !WriteGuest<void*>(output, nullptr)) {

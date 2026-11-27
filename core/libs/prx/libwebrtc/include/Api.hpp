@@ -10,6 +10,7 @@
 #include "prx/libwebrtc/include/CodecSpecificInfo.hpp"
 #include "prx/libwebrtc/include/Buffer.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
+#include "prx/libwebrtc/include/AudioDecoderOpusImpl.hpp"
 #include "prx/libwebrtc/include/RtcCertificate.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioDeviceBuffer.hpp"
@@ -187,7 +188,7 @@ std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(WebRt
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(WebRtcI420Buffer* buffer);
 void** APS5_VABI _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer);
 const void* APS5_VABI _ZNK6webrtc19I420BufferInterface7GetI420Ev_nid_postfix(const WebRtcVideoFrameBuffer* buffer);
-int APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(void);
+void** APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer, int offsetX, int offsetY, int cropWidth, int cropHeight, int scaledWidth, int scaledHeight);
 void** APS5_VABI _ZN6webrtc16VideoFrameBuffer20GetMappedFrameBufferEN3rtc9ArrayViewINS0_4TypeELln4711EEE_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer, WebRtcVideoFrameBufferTypes types);
 int APS5_VABI libwebrtcUnknown14(void);
 int APS5_VABI _ZNK6webrtc19I420BufferInterface11ChromaWidthEv_nid_postfix(const void* buffer);
@@ -394,10 +395,10 @@ int APS5_VABI _ZN6webrtc17AudioDeviceModule6CreateENS0_10AudioLayerEPNS_16TaskQu
 int APS5_VABI _ZN6webrtc17AudioDeviceBufferC1EPNS_16TaskQueueFactoryEb_nid_postfix(void);
 std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer20SetRecordingChannelsEm_nid_postfix(WebRtcAudioDeviceBuffer* buffer, std::uint64_t channels);
 std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer18SetPlayoutChannelsEm_nid_postfix(WebRtcAudioDeviceBuffer* buffer, std::uint64_t channels);
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(void);
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer);
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer);
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer);
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer);
 std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer21RegisterAudioCallbackEPNS_14AudioTransportE_nid_postfix(WebRtcAudioDeviceBuffer* buffer, WebRtcAudioTransport* callback);
 std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer20SetPlayoutSampleRateEj_nid_postfix(WebRtcAudioDeviceBuffer* buffer, std::uint32_t sampleRateHz);
 std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer22SetRecordingSampleRateEj_nid_postfix(WebRtcAudioDeviceBuffer* buffer, std::uint32_t sampleRateHz);
@@ -492,8 +493,8 @@ std::int16_t APS5_VABI WebRtcOpus_SetPacketLossRate_nid_postfix(WebRtcOpusEncIns
 std::int32_t APS5_VABI WebRtcOpus_GetBandwidth_nid_postfix(WebRtcOpusEncInst* inst);
 std::int16_t APS5_VABI WebRtcOpus_SetBandwidth_nid_postfix(WebRtcOpusEncInst* inst, std::int32_t bandwidth);
 std::int16_t APS5_VABI WebRtcOpus_SetForceChannels_nid_postfix(WebRtcOpusEncInst* inst, std::size_t numChannels);
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(void);
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(WebRtcAudioDecoderOpusImpl* decoder, const WebRtcFieldTrialsView* fieldTrials, std::size_t numChannels, int sampleRateHz);
+void APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(WebRtcAudioDecoderOpusImpl* decoder);
 void APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigC1Ev_nid_postfix(WebRtcAudioNetworkAdaptorConfig* config);
 int APS5_VABI libwebrtcUnknown57(void);
 int APS5_VABI libwebrtcUnknown58(void);

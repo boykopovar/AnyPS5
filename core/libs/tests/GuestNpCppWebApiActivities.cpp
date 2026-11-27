@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -240,6 +241,7 @@ void TestResonanceTransactions() {
     for (std::size_t index = 0; index < 0x10; ++index) Require(transaction[index] == 0);
     Require(transaction[0x10] == 0xcc);
     _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction.data());
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
 
     Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv(transaction.data()) == kTransactionNotStarted);
     Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction.data(), nullptr) == kInvalidArgument);
@@ -293,6 +295,36 @@ void TestRequestPlayerSessionSetters() {
     }
 }
 
+void TestIntrusivePtrProbing() {
+    using Access = void* (APS5_VABI*)(const IntrusivePtr*);
+    const Access accessors[] = {
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEptEv,
+    };
+    int target = 0;
+    const IntrusivePtr filled{&target, nullptr, reinterpret_cast<void*>(0x2)};
+    const IntrusivePtr empty{};
+    const auto* unmapped = reinterpret_cast<const IntrusivePtr*>(static_cast<std::uintptr_t>(0x10));
+    for (const auto access : accessors) {
+        errno = EINVAL;
+        Require(access(&filled) == &target);
+        Require(errno == EINVAL);
+
+        errno = EINVAL;
+        Require(access(&empty) == nullptr);
+        Require(errno == EINVAL);
+
+        errno = EINVAL;
+        Require(access(nullptr) == nullptr);
+        Require(errno == EINVAL);
+
+        errno = EINVAL;
+        Require(access(unmapped) == nullptr);
+        Require(errno == EINVAL);
+    }
+}
+
 }
 
 int main() {
@@ -301,6 +333,7 @@ int main() {
     TestActivityModelAccessors();
     TestGetUsersCopiesTheVectorHandle();
     TestUserActivitiesVectorGlue();
+    TestIntrusivePtrProbing();
     TestResonanceTransactions();
     TestRequestPlayerSessionSetters();
     return 0;

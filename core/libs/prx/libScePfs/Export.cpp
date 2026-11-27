@@ -1,5 +1,9 @@
 #include "prx/libScePfs/include/Api.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
+#include <limits>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -69,6 +73,74 @@ bool FindIndexEntry(const void* header, std::uint16_t indexCount, std::uint64_t 
         }
     }
     return true;
+}
+
+
+constexpr std::uint64_t HalfBlock = 0x20000;
+constexpr std::uint64_t FullBlock = 2 * HalfBlock;
+
+template<class T>
+T* AtOffset(T* base, std::uint64_t offset) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (offset > UINTPTR_MAX - address) return nullptr;
+    return reinterpret_cast<T*>(address + offset);
+}
+
+struct BlockCommand {
+    std::uint64_t encodedSize, fileOffset, extent, first, second, index;
+
+    bool Version3() const { return (extent >> 63) != 0; }
+    bool SingleStoredHalf() const { return !Version3() && extent == HalfBlock && encodedSize == HalfBlock; }
+    std::uint64_t LogicalSize() const {
+        if (Version3()) return extent & INT64_MAX;
+        return SingleStoredHalf() ? HalfBlock : FullBlock;
+    }
+    std::uint64_t LogicalOffset() const { return Version3() ? second & OffsetMask44 : index * FullBlock; }
+};
+
+static_assert(sizeof(BlockCommand) == 48);
+
+int CopyStoredBlock(const void* source, void* destination, const BlockCommand& block, std::uint64_t size,
+                    std::uint64_t offset, void* work, std::vector<std::uint8_t>& bytes, const char* function) {
+    if (!block.Version3() && block.index > (UINT64_MAX - FullBlock) / FullBlock) return OutOfRange;
+    const auto start = block.LogicalOffset();
+    const auto length = block.LogicalSize();
+    if (length > FullBlock || size > UINT64_MAX - offset) return OutOfRange;
+    const auto begin = std::max(start, offset);
+    const auto end = std::min(start + length, offset + size);
+    if (end < begin || (block.SingleStoredHalf() && size != 0 && offset == start + length)) return OutOfRange;
+
+    if (block.Version3()) {
+        const auto firstSize = ((block.second >> 44) & 0x1ffff) + 1;
+        const bool firstStored = (block.first & (1ULL << 51)) != 0;
+        const bool secondStored = length <= HalfBlock || (block.first & (1ULL << 55)) != 0;
+        if (!firstStored || !secondStored || ((block.first >> 44) & 0xf) != 0) {
+            NotImplemented_nid_no_patch(function);
+        }
+        if (firstSize != std::min(length, HalfBlock) || block.encodedSize != length) return InvalidTable;
+    } else if (block.extent != HalfBlock || (block.encodedSize != HalfBlock && block.encodedSize != FullBlock)) {
+        NotImplemented_nid_no_patch(function);
+    }
+
+    const auto copySize = static_cast<std::size_t>(end - begin);
+    bytes.resize(block.encodedSize);
+    if (!CopyIn(bytes.data(), source, block.encodedSize) || !CopyOut(work, bytes.data(), block.encodedSize)) return InvalidArgument;
+    if (copySize && !CopyOut(AtOffset(destination, begin - offset), bytes.data() + (begin - start), copySize)) return InvalidArgument;
+    return 0;
+}
+
+int FirstFileBlock(const void* table, std::uint64_t entries, std::uint64_t offset, std::uint64_t& index) {
+    std::uint64_t low = 0, high = entries;
+    while (low < high) {
+        const auto mid = low + (high - low) / 2;
+        PfsIndexEntry entry{};
+        if (!CopyIn(&entry, AtOffset(table, mid * sizeof(entry)), sizeof(entry))) return InvalidArgument;
+        if ((entry.words[1] & OffsetMask44) <= offset) low = mid + 1;
+        else high = mid;
+    }
+    if (!low || low >= entries) return InvalidTable;
+    index = low - 1;
+    return 0;
 }
 
 }
@@ -244,13 +316,55 @@ std::int64_t APS5_VABI scePfsPread(void* buffer, std::uint64_t size, std::uint64
     if (!CopyIn(&layout, header, sizeof(layout))) return InvalidArgument;
     if (layout.magic != PfsMagic) return UnsupportedFormat;
     if (offset > layout.uncompressedSize || size > layout.uncompressedSize - offset) return OutOfRange;
-    NotImplemented_nid_no_patch(__func__);
+    std::array<std::uint64_t, 2> tableCommand{};
+    if (const int code = scePfsGetBlockTableReadCommand(header, tableCommand.data()); code != 0) return code;
+    const void* table = AtOffset(header, tableCommand[1]);
+    if (!table || !AtOffset(table, tableCommand[0])) return InvalidArgument;
+    const bool version3 = layout.version == 3;
+    auto blockCount = (std::uint64_t{layout.blockCount} + 1) / 2;
+    std::uint64_t index = offset / FullBlock;
+    std::uint64_t dataRegionSize = 0;
+    if (version3) {
+        PfsIndexEntry region{};
+        bool foundRegion = false;
+        if (!FindIndexEntry(header, layout.indexCount, 7, region, foundRegion)) return InvalidArgument;
+        if (!foundRegion) return InvalidTable;
+        dataRegionSize = region.words[1] >> 16;
+        const auto boundaries = tableCommand[0] / sizeof(PfsIndexEntry);
+        if (boundaries < 2 || tableCommand[0] % sizeof(PfsIndexEntry) != 0) return InvalidTable;
+        blockCount = boundaries - 1;
+        if (const int code = FirstFileBlock(table, boundaries, offset, index); code != 0) return code;
+    }
+    std::vector<std::uint8_t> bytes;
+    auto position = offset;
+    const auto end = offset + size;
+    while (position < end) {
+        if (index >= blockCount || index > std::numeric_limits<int>::max()) return InvalidTable;
+        BlockCommand block{};
+        const int commandResult = scePfsGetSingleBlockReadCommand(header, table, static_cast<int>(index), &block);
+        if (commandResult != 0) return commandResult;
+        if (version3) {
+            const auto physicalOffset = block.first & OffsetMask44;
+            if (physicalOffset > dataRegionSize || block.encodedSize > dataRegionSize - physicalOffset) return InvalidTable;
+        }
+        const auto blockStart = block.LogicalOffset();
+        const auto length = block.LogicalSize();
+        if (length > FullBlock || position < blockStart || position - blockStart >= length) return InvalidTable;
+        const void* source = AtOffset(header, block.fileOffset);
+        if (!source) return InvalidArgument;
+        if (const int code = CopyStoredBlock(source, buffer, block, size, offset, workBuffer, bytes, __func__); code != 0) return code;
+        position = std::min(blockStart + length, end);
+        ++index;
+    }
     return 0;
 }
 
-int APS5_VABI scePfsPreadDecompressBlock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePfsPreadDecompressBlock(const void* source, void* destination, const void* command,
+                                       std::uint64_t size, std::uint64_t offset, void* workBuffer) {
+    BlockCommand block{};
+    if (!source || !destination || !workBuffer || !command || !CopyIn(&block, command, sizeof(block))) return InvalidArgument;
+    std::vector<std::uint8_t> bytes;
+    return CopyStoredBlock(source, destination, block, size, offset, workBuffer, bytes, __func__);
 }
 
 int APS5_VABI scePfsValidate(const void* header, int mode) {

@@ -163,6 +163,27 @@ class BlockerTests(unittest.TestCase):
     def test_more_checks_than_one_page_is_not_ready(self):
         self.assertEqual(pr_ready.blockers(make(more=True)), ["too many checks to read"])
 
+    def test_a_later_label_page_keeps_an_incomplete_pull_out_of_the_queue(self):
+        data = node()
+        data["labels"]["pageInfo"] = {"hasNextPage": True}
+        pr = pr_ready.pull(data)
+        self.assertEqual(pr_ready.blockers(pr), ["incomplete labels"])
+        self.assertEqual(pr_ready.ranked([pr]), [])
+
+    def test_a_later_review_page_keeps_an_incomplete_pull_out_of_the_queue(self):
+        data = node()
+        data["latestOpinionatedReviews"]["pageInfo"] = {"hasNextPage": True}
+        pr = pr_ready.pull(data)
+        self.assertEqual(pr_ready.blockers(pr), ["incomplete reviews"])
+        self.assertEqual(pr_ready.ranked([pr]), [])
+
+    def test_a_later_review_request_page_keeps_an_incomplete_pull_out_of_the_queue(self):
+        data = node()
+        data["reviewRequests"]["pageInfo"] = {"hasNextPage": True}
+        pr = pr_ready.pull(data)
+        self.assertEqual(pr_ready.blockers(pr), ["incomplete review requests"])
+        self.assertEqual(pr_ready.ranked([pr]), [])
+
     def test_no_checks_at_all_is_not_ready(self):
         data = node()
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None

@@ -454,5 +454,88 @@ class TextHelperTests(unittest.TestCase):
         self.assertIsNone(run_report_summary.total_count([{"a": "2"}], "a"))
 
 
+class RunReportTriageTests(unittest.TestCase):
+    fixtures = ROOT / "docs/run-report-fixtures"
+
+    def triage(self, *reports):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "tools/run_report_summary.py"), "--triage", *map(str, reports)],
+            capture_output=True, text=True, encoding="utf-8", timeout=15,
+        )
+
+    def write_report(self, directory, filename, **changes):
+        report = json.loads((self.fixtures / "stop-missing-function.json").read_text(encoding="utf-8"))
+        for section, values in changes.items():
+            report[section].update(values)
+        path = Path(directory) / filename
+        path.write_text(json.dumps(report), encoding="utf-8")
+        return path
+
+    def test_triage_groups_runs_without_counting_copies_or_exposing_ids(self):
+        missing = self.fixtures / "stop-missing-function.json"
+        with tempfile.TemporaryDirectory() as directory:
+            copied = self.write_report(directory, "copied.json")
+            another_run = self.write_report(directory, "repeat.json", run={"id": "1" * 32})
+            other_content = self.write_report(directory, "other-content.json",
+                                              game={"contentVersion": "01.003.000"}, run={"id": "2" * 32})
+            modified = self.fixtures / "stop-crash.json"
+            unknown = self.fixtures / "missing-metadata-gpu.json"
+            result = self.triage(missing, copied, another_run, other_content, modified, unknown)
+            reversed_result = self.triage(unknown, modified, other_content, another_run, copied, missing)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(reversed_result.returncode, 0, reversed_result.stderr)
+        self.assertEqual(result.stdout, reversed_result.stdout)
+        data = json.loads(result.stdout)
+        self.assertEqual((data["input_reports"], data["unique_runs"], data["duplicate_reports"]), (6, 5, 1))
+        self.assertEqual(len(data["groups"]), 4)
+        first = next(group for group in data["groups"] if group["runs"] == 2)
+        self.assertEqual(first["outcomes"],
+                         [{"exit": "abort", "stage": "first-draw", "stop_kind": "missing-function",
+                           "stop_reason": "runtime-stop", "runs": 2}])
+        self.assertEqual(first["missing_functions"],
+                         [{"library": "libSceNpTrophy", "name": "sceNpTrophyCreateContext",
+                           "observed_calls": 2, "runs": 2}])
+        self.assertEqual(first["content_version"], "01.002.000")
+        self.assertIs(first["build_modified"], False)
+        self.assertTrue(any(group["build_modified"] is True for group in data["groups"]))
+        self.assertTrue(any(group["title_id"] is None and group["build_commit"] is None for group in data["groups"]))
+        for hidden in ("a7c41e9b05d2438f8e1b6a90c3d5f712", "copied.json", "Example Game", "General.cpp"):
+            self.assertNotIn(hidden, result.stdout)
+
+    def test_triage_marks_missing_function_evidence_by_coverage(self):
+        clean = self.fixtures / "stop-none.json"
+        recovered = self.fixtures / "killed-recovered.json"
+        with tempfile.TemporaryDirectory() as directory:
+            uncollected = self.write_report(directory, "uncollected.json", coverage={"missing": False},
+                                             missing={"functions": []}, run={"id": "3" * 32})
+            truncated = self.write_report(directory, "truncated.json", truncated={"functions": 4})
+            result = self.triage(clean, recovered, uncollected, truncated)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        group, = json.loads(result.stdout)["groups"]
+        self.assertEqual(group["missing_function_coverage"],
+                         {"complete": 1, "complete_without_observations": 1, "partial": 2, "not_collected": 1})
+        self.assertEqual((group["recovered_runs"], group["incomplete_runs"]), (1, 1))
+        self.assertEqual(group["missing_functions"][0]["observed_calls"], 1)
+
+    def test_triage_rejects_invalid_or_conflicting_inputs_without_partial_output(self):
+        missing = self.fixtures / "stop-missing-function.json"
+        with tempfile.TemporaryDirectory() as directory:
+            cases = (
+                (self.write_report(directory, "id.json", run={"id": "invalid"}), "run.id"),
+                (self.write_report(directory, "calls.json",
+                                   missing={"functions": [{"library": None, "name": "sample", "calls": -1}]}), "calls"),
+                (self.write_report(directory, "conflicting.json", stop={"kind": "other"}), "conflicting"),
+                (Path(directory) / "absent.json", "read"),
+            )
+            for other, diagnostic in cases:
+                with self.subTest(input=other.name):
+                    result = self.triage(missing, other)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("report 2", result.stderr)
+                    self.assertIn(diagnostic, result.stderr)
+                    self.assertNotIn(str(directory), result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

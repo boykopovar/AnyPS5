@@ -27,6 +27,7 @@ static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
 static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
+static constexpr int SCE_NP_ERROR_REQUEST_MAX = static_cast<int>(0x80550013);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
 static constexpr int SCE_NP_ERROR_INVALID_ID = static_cast<int>(0x80550015);
 static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
@@ -40,7 +41,10 @@ static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
-static std::atomic<int> g_nextRequest{1};
+static constexpr int NP_FIRST_REQUEST_ID = 0x20000001;
+static constexpr int NP_LAST_REQUEST_ID = 0x2ffffffe;
+static constexpr std::size_t NP_MAX_LIVE_REQUESTS = 32;
+static constexpr std::uint64_t NP_ASYNC_REQUEST_PARAMETER_SIZE = 0x18;
 
 static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
     const auto preserved = errno;
@@ -112,10 +116,12 @@ std::mutex requestMutex;
 std::unordered_set<int> liveRequests;
 
 int AddRequest() {
-    const int reqId = g_nextRequest.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(requestMutex);
-    liveRequests.insert(reqId);
-    return reqId;
+    if (liveRequests.size() >= NP_MAX_LIVE_REQUESTS) return SCE_NP_ERROR_REQUEST_MAX;
+    for (int reqId = NP_FIRST_REQUEST_ID; reqId <= NP_LAST_REQUEST_ID; ++reqId) {
+        if (liveRequests.insert(reqId).second) return reqId;
+    }
+    return SCE_NP_ERROR_REQUEST_MAX;
 }
 
 std::mutex idMapperMutex;
@@ -928,6 +934,7 @@ int APS5_VABI sceNpManagerIntLoginGetAccessToken(void) {
 }
 
 int APS5_VABI sceNpAbortRequest(int req_id) {
+    if (req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     return liveRequests.count(req_id) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
@@ -985,7 +992,13 @@ int APS5_VABI sceNpCheckPremium(int req_id, const NpCheckPremiumParameter* param
 }
 
 int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter* param) {
-    (void)param;
+    if (!param) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, param, sizeof(size));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (size != NP_ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_ERROR_INVALID_SIZE;
     return AddRequest();
 }
 
@@ -994,6 +1007,7 @@ int APS5_VABI sceNpCreateRequest(void) {
 }
 
 int APS5_VABI sceNpDeleteRequest(int req_id) {
+    if (req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     liveRequests.erase(req_id);
@@ -1120,7 +1134,7 @@ int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
 }
 
 int APS5_VABI sceNpPollAsync(int req_id, int* result) {
-    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!result || req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     constexpr int val = SCE_NP_ERROR_SIGNED_OUT;
@@ -1129,7 +1143,7 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
 }
 
 int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
-    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!result || req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     constexpr int val = SCE_NP_ERROR_SIGNED_OUT;

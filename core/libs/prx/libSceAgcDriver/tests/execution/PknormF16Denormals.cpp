@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -79,17 +80,6 @@ const Case Cases[] = {
     {"v_cvt_pknorm_i16_f16", {{0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0xd712000au, 0x00020b04u, 0xe0701000u, 0x80010a02u, 0xbf810000u}}, PknormI16Rows},
     {"v_cvt_pknorm_u16_f16", {{0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0xd713000au, 0x00020b04u, 0xe0701000u, 0x80010a02u, 0xbf810000u}}, PknormU16Rows},
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device, const Case& item, std::uint32_t denorm16, bool ieee) {
     Input.fill(0u);

@@ -593,8 +593,7 @@ void OpaqueJSContextGroup::UpdateStackLimit() {
     constexpr std::size_t maxPerThreadStackUsage = 5 * 1024 * 1024;
     constexpr std::size_t softReservedZoneSize = 128 * 1024;
     JS_UpdateStackTop(rt);
-    const char marker = 0;
-    const auto start = reinterpret_cast<std::uintptr_t>(&marker);
+    const auto start = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     std::uintptr_t bound = 0;
     try {
         bound = reinterpret_cast<std::uintptr_t>(_ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv().m_bound);
