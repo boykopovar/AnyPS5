@@ -12,6 +12,14 @@ struct RegisterStateKeyParts {
     std::uint64_t auxiliaryRegisters = 0;
 };
 
+struct RegisterFingerprints {
+    std::uint64_t context = 0;
+    std::uint64_t shader = 0;
+    std::uint64_t userConfig = 0;
+    bool operator==(const RegisterFingerprints&) const = default;
+};
+
+RegisterFingerprints DrawKeyFingerprints(const QueueState& queue);
 std::uint64_t RegisterStateKey(const QueueState& queue, bool allUserWords = false, bool incremental = true, std::uint64_t* shapeKey = nullptr, RegisterStateKeyParts* parts = nullptr);
 std::uint64_t DrawShaderSetKey(const QueueState& queue, const ShaderRegistry& registry);
 
