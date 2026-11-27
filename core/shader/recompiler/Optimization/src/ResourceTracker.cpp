@@ -319,6 +319,16 @@ private:
         }
     }
 
+    IrValue* tableSamplerDword3(IrValue& handle, IrValue* word) {
+        if (word->Opcode() != IrOpcode::BitwiseOr32) return word;
+        const auto onlyAdjusted = std::ranges::all_of(handle.Uses(), [&](const IrValue* use) {
+            if (!ImageOpcodeInfoOf(use->Opcode()).needsSampler || use->ArgumentCount() < 2u || use->Argument(1)->Resolve() != &handle) return false;
+            const auto index = use->Flags<MemoryFlags>().index;
+            return index < m_program.Resources().memoryInfo.size() && (m_program.Resources().memoryInfo[index].imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u;
+        });
+        return onlyAdjusted ? canonicalizeSampleAdjustDword3(word) : word;
+    }
+
     bool ValidateSource(const DescriptorSource& descriptor, std::uint32_t& badDword) const {
         constexpr SrtWalker walker;
         for (std::uint32_t i = 0; i < descriptor.dwordCount; i++) {
@@ -853,6 +863,7 @@ private:
         for (std::uint32_t dword = 0; dword < words; dword++) {
             IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
             if (read == nullptr) return false;
+            if (sampler && dword == 3u) read = tableSamplerDword3(handle, read);
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
