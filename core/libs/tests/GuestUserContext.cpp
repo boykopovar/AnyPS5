@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -234,6 +235,22 @@ void CheckSignalcontextMinimumHeadroom() {
     Require(std::memcmp(reinterpret_cast<const void*>(savedAddress), &originalContext, sizeof(originalContext)) == 0, "minimum-headroom frame preserves the original context");
 }
 
+void CheckSignalcontextHighStackPointer() {
+    std::memset(g_signalFailureStack.bytes, 0x7c, StackBytes);
+    const std::vector<std::uint8_t> originalStack(g_signalFailureStack.bytes, g_signalFailureStack.bytes + StackBytes);
+    UserUcontext context{};
+    context.mcontext.rsp = std::numeric_limits<std::uint64_t>::max();
+    context.sigmask[0] = 0xffffffffu;
+    context.link = reinterpret_cast<UserUcontext*>(std::uintptr_t{0x12345678});
+    const UserUcontext originalContext = context;
+    *__error_nid_postfix() = 0;
+    const int result = signalcontext_nid_postfix(&context, 15, nullptr);
+    const int guestError = *__error_nid_postfix();
+    Require(result == -1 && guestError == GuestEfault, "signalcontext rejects an unmapped high guest stack range without wrapping");
+    Require(std::memcmp(&context, &originalContext, sizeof(context)) == 0, "high-stack rejection leaves the guest context unchanged");
+    Require(std::memcmp(g_signalFailureStack.bytes, originalStack.data(), StackBytes) == 0, "high-stack rejection leaves the guest stack unchanged");
+}
+
 std::uint16_t ControlWord() {
     std::uint16_t control = 0;
     asm volatile("fnstcw %0" : "=m"(control));
@@ -374,6 +391,7 @@ void CheckErrors() {
     Require(signalContext.mcontext.rdi == reinterpret_cast<std::uint64_t>(&signalContext), "signalcontext passes the context pointer as rdi");
     CheckSignalcontextPartialWrite();
     CheckSignalcontextMinimumHeadroom();
+    CheckSignalcontextHighStackPointer();
 }
 
 void CheckCapture() {
