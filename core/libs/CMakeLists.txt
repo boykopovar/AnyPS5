@@ -309,6 +309,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_abstract_youtube_immediate_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
     endif()
+
+    add_test_executable(guest_metadata_reader_writer_tests tests/GuestMetadataReaderWriter.cpp)
+    target_include_directories(guest_metadata_reader_writer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_metadata_reader_writer_tests PRIVATE libSceMetadataReaderWriter libc)
+    configure_windows_unwind(guest_metadata_reader_writer_tests)
+    add_test(NAME guest_metadata_reader_writer COMMAND guest_metadata_reader_writer_tests)
+    if(WIN32)
+        set_tests_properties(guest_metadata_reader_writer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMetadataReaderWriter>")
+    endif()
 endif()
 
 include(prx/libSceFreeType/PostScriptInfo.cmake)
