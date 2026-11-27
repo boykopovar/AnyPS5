@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(AnyPS5IcuHost LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/bin>")
 add_compile_definitions(U_STATIC_IMPLEMENTATION)
 function(icu_sources result directory)
     file(STRINGS ${ICU_SOURCE_DIR}/${directory}/sources.txt names)
