@@ -1,8 +1,123 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
 #include "prx/libSceIme/Export.cpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr int kAlreadyInitialized = static_cast<int>(0x80bc1001);
+constexpr int kNotInitialized = static_cast<int>(0x80bc1002);
+constexpr int kInvalidMode = static_cast<int>(0x80bc1010);
+constexpr int kInvalidLength = static_cast<int>(0x80bc1011);
+constexpr int kInvalidType = static_cast<int>(0x80bc1012);
+constexpr int kInvalidReservedArgument = static_cast<int>(0x80bc1014);
+constexpr int kInvalidStringSelector = static_cast<int>(0x80bc1030);
+constexpr int kNullArgument = static_cast<int>(0x80bc1031);
+constexpr int kInvalidReservedField = static_cast<int>(0x80bc1032);
+constexpr int kInvalidState = static_cast<int>(0x80bc1033);
+constexpr int kInitialStringTooLong = static_cast<int>(0x80bc1034);
+constexpr int kInvalidField18 = static_cast<int>(0x80bc1035);
+constexpr int kNotAvailable = static_cast<int>(0x80bc10ff);
+constexpr std::size_t kTextCapacity = 0x5a;
+constexpr std::size_t kInitialStringLimit = 0x3ff;
+
+struct State {
+    std::u16string text;
+    std::size_t caret = 0;
+    int convertMode = 0;
+    int status = 0;
+    int maxLength = 0;
+    int type = 0;
+};
+
+std::mutex g_mutex;
+std::unique_ptr<State> g_state;
+
+bool CopyInitialString(const char16_t* source, std::u16string& out, bool& tooLong) {
+    out.clear();
+    tooLong = false;
+    if (source == nullptr) return true;
+    constexpr std::size_t kPageSize = 4096;
+    const int savedErrno = errno;
+    const char16_t* cursor = source;
+    std::array<char16_t, 64> chunk{};
+    while (out.size() <= kInitialStringLimit) {
+        const std::size_t remaining = (kInitialStringLimit + 1) - out.size();
+        const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(cursor);
+        const std::size_t bytesToPage = kPageSize - (address & (kPageSize - 1));
+        std::size_t units = std::min({remaining, chunk.size(), bytesToPage / sizeof(char16_t)});
+        if (units == 0) units = 1;
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), cursor, units * sizeof(char16_t))) {
+            errno = savedErrno;
+            return false;
+        }
+        for (std::size_t i = 0; i < units; ++i) {
+            if (chunk[i] == 0) {
+                errno = savedErrno;
+                return true;
+            }
+            if (out.size() >= kInitialStringLimit) {
+                tooLong = true;
+                errno = savedErrno;
+                return true;
+            }
+            out.push_back(chunk[i]);
+        }
+        cursor += units;
+    }
+    tooLong = true;
+    errno = savedErrno;
+    return true;
+}
+
+bool CopyText(const std::u16string& source, char16_t* output, std::size_t capacity) {
+    if (output == nullptr) return false;
+    const std::size_t count = std::min(source.size(), capacity);
+    const std::size_t totalWords = count + 1;
+    const std::size_t totalBytes = totalWords * sizeof(char16_t);
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(output, totalBytes);
+    if (!write.Open() || !GuestWritable_nid_no_patch(output, totalBytes)) {
+        errno = savedErrno;
+        return false;
+    }
+    std::vector<char16_t> buffer(totalWords, 0);
+    if (count != 0) {
+        std::memcpy(buffer.data(), source.data(), count * sizeof(char16_t));
+    }
+    buffer[count] = 0;
+    const bool ok = GuestCopyOut_nid_no_patch(output, buffer.data(), totalBytes);
+    errno = savedErrno;
+    return ok;
+}
+
+int ValidateParam(const SceImeBackendParam& param, bool initialTooLong) {
+    if (param.mode == -1 || param.mode == 0xff) return kInvalidMode;
+    if (param.maxLength < 1 || param.maxLength > 0x1b) return kInvalidLength;
+    if (param.type < 0 || param.type > 3) return kInvalidType;
+    if ((param.type & 2) != 0 && initialTooLong) return kInitialStringTooLong;
+    if (param.field18 < 0 || param.field18 > 1) return kInvalidField18;
+    for (const std::uint8_t value : param.reserved) {
+        if (value != 0) return kInvalidReservedField;
+    }
+    return 0;
+}
+
+State* CurrentState() {
+    return g_state.get();
+}
+
+}
 
 extern "C" {
 
@@ -15,33 +130,92 @@ void APS5_VABI sceImeBackendParamInit(void* param) {
     errno = savedErrno;
 }
 
-int APS5_VABI sceImeBackendOpen(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendOpen(const SceImeBackendParam* param, void* reserved) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_state != nullptr) return kAlreadyInitialized;
+    if (param == nullptr) return kNullArgument;
+    if (reserved != nullptr) return kInvalidReservedArgument;
+    SceImeBackendParam localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    errno = savedErrno;
+    std::u16string initialText;
+    bool initialTooLong = false;
+    if ((localParam.type & 2) != 0 && localParam.initialString != nullptr) {
+        if (!CopyInitialString(localParam.initialString, initialText, initialTooLong)) {
+            return kNullArgument;
+        }
+    }
+    const int result = ValidateParam(localParam, initialTooLong);
+    if (result != 0) return result;
+    auto state = std::make_unique<State>();
+    state->maxLength = localParam.maxLength;
+    state->type = localParam.type;
+    if ((localParam.type & 2) != 0 && localParam.initialString != nullptr) {
+        state->text = std::move(initialText);
+    }
+    state->caret = state->text.size();
+    g_state = std::move(state);
     return 0;
 }
 
 int APS5_VABI sceImeBackendClose(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_state == nullptr) return kNotInitialized;
+    g_state.reset();
     return 0;
 }
 
 int APS5_VABI sceImeBackendReset(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    state->text.clear();
+    state->caret = 0;
+    state->convertMode = 0;
+    state->status = 0;
     return 0;
 }
 
 int APS5_VABI sceImeBackendGetStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const State* state = CurrentState();
+    if (state == nullptr) return 0;
+    return state->status < 4 ? state->status + 1 : 0;
 }
 
-int APS5_VABI sceImeBackendEnterCharacter(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendEnterCharacter(std::uint32_t character, char16_t* output) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (output == nullptr) return kNullArgument;
+    if (state->status >= 2) return kInvalidState;
+    if (character > 0x7f) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    }
+    if (state->text.size() >= static_cast<std::size_t>(state->maxLength)) return kNotAvailable;
+    std::u16string nextText = state->text;
+    nextText.insert(nextText.begin() + static_cast<std::ptrdiff_t>(state->caret),
+                    static_cast<char16_t>(character));
+    if (!CopyText(nextText, output, kTextCapacity)) return kNullArgument;
+    state->text = std::move(nextText);
+    ++state->caret;
     return 0;
 }
 
 int APS5_VABI sceImeBackendBackspaceCharacter(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status >= 2) return kInvalidState;
+    if (state->caret == 0) return 0;
+    state->text.erase(state->caret - 1, 1);
+    --state->caret;
+    if (state->caret > state->text.size()) state->caret = state->text.size();
     return 0;
 }
 
@@ -56,7 +230,13 @@ int APS5_VABI sceImeBackendAllConfirm(void) {
 }
 
 int APS5_VABI sceImeBackendAllDeleteConvertString(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status > 3) return kNotAvailable;
+    state->text.clear();
+    state->caret = 0;
+    state->status = 0;
     return 0;
 }
 
@@ -75,53 +255,126 @@ int APS5_VABI sceImeBackendConvertCancel(void) {
     return 0;
 }
 
-int APS5_VABI sceImeBackendGetString(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendGetString(int which, char16_t* output, std::uint16_t capacity) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (output == nullptr) return kNullArgument;
+    if (which != 0 && which != 1) return kInvalidStringSelector;
+    if (!CopyText(state->text, output, capacity)) return kNullArgument;
     return 0;
 }
 
-int APS5_VABI sceImeBackendGetConvertString(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendGetConvertString(char16_t* output) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (output == nullptr) return kNullArgument;
+    if (!CopyText(state->text, output, kTextCapacity)) return kNullArgument;
     return 0;
 }
 
-int APS5_VABI sceImeBackendGetConfirmString(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendGetConfirmString(char16_t* output) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (output == nullptr) return kNullArgument;
+    if (!CopyText(state->text, output, kTextCapacity)) return kNullArgument;
     return 0;
 }
 
 int APS5_VABI sceImeBackendGetCaretIndex(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status >= 2) return kNotAvailable;
+    return static_cast<int>(state->caret);
 }
 
 int APS5_VABI sceImeBackendModeCaretNext(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status >= 2) return kInvalidState;
+    if (state->caret < state->text.size()) ++state->caret;
     return 0;
 }
 
 int APS5_VABI sceImeBackendModeCaretPrevious(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status >= 2) return kInvalidState;
+    if (state->caret != 0) --state->caret;
     return 0;
 }
 
-int APS5_VABI sceImeBackendGetCandidateList(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendGetCandidateList(std::uint16_t* selected, char16_t* output) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (selected == nullptr || output == nullptr) return kNullArgument;
+    if (state->status >= 2) return kNotAvailable;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite writeSel(selected, sizeof(*selected));
+    const GuestArena::HostWrite writeOut(output, sizeof(char16_t));
+    if (!writeSel.Open() || !writeOut.Open() ||
+        !GuestWritable_nid_no_patch(selected, sizeof(*selected)) ||
+        !GuestWritable_nid_no_patch(output, sizeof(char16_t))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    const std::uint16_t zeroSel = 0;
+    const char16_t zeroOut = 0;
+    const bool ok = GuestCopyOut_nid_no_patch(selected, &zeroSel, sizeof(zeroSel)) &&
+                    GuestCopyOut_nid_no_patch(output, &zeroOut, sizeof(zeroOut));
+    errno = savedErrno;
+    if (!ok) return kNullArgument;
     return 0;
 }
 
 int APS5_VABI sceImeBackendGetCandidateListSize(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status >= 2) return kNotAvailable;
     return 0;
 }
 
-int APS5_VABI sceImeBackendGetCandidateSelect(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendGetCandidateSelect(std::uint16_t* selected) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (selected == nullptr) return kNullArgument;
+    if (state->status >= 2) return kNotAvailable;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(selected, sizeof(*selected));
+    if (!write.Open() || !GuestWritable_nid_no_patch(selected, sizeof(*selected))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    const std::uint16_t zeroSel = 0;
+    const bool ok = GuestCopyOut_nid_no_patch(selected, &zeroSel, sizeof(zeroSel));
+    errno = savedErrno;
+    if (!ok) return kNullArgument;
     return 0;
 }
 
-int APS5_VABI sceImeBackendGetConvertMode(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendGetConvertMode(int* mode) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (mode == nullptr) return kNullArgument;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(mode, sizeof(*mode));
+    if (!write.Open() || !GuestWritable_nid_no_patch(mode, sizeof(*mode))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    const int localMode = state->convertMode;
+    const bool ok = GuestCopyOut_nid_no_patch(mode, &localMode, sizeof(localMode));
+    errno = savedErrno;
+    if (!ok) return kNullArgument;
     return 0;
 }
 
@@ -130,17 +383,25 @@ int APS5_VABI sceImeBackendTemporalConfirm(void) {
     return 0;
 }
 
-int APS5_VABI sceImeBackendSetConvertMode(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeBackendSetConvertMode(int mode) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    state->convertMode = mode;
     return 0;
 }
 
 int APS5_VABI sceImeBackendForTestFunction(void) {
-    return ErrorInternal;
+    return kNotAvailable;
 }
 
 int APS5_VABI sceImeBackendDeleteCharacter(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    State* state = CurrentState();
+    if (state == nullptr) return kNotInitialized;
+    if (state->status >= 2) return kInvalidState;
+    if (state->caret >= state->text.size()) return 0;
+    state->text.erase(state->caret, 1);
     return 0;
 }
 

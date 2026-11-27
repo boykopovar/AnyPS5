@@ -150,7 +150,7 @@ void padStatusBinding() {
     }
     require(padStatus == 1, "the pad status has more than one default input");
     require(onF9 == 1, "another default binding uses F9");
-    require(Pad::InputMapping.size() == 44, "the default bindings changed besides the pad status, host volume and reload keys");
+    require(Pad::InputMapping.size() == 45, "the default bindings changed besides the pad status, host volume and reload keys");
     useConfig("ShowPadStatus = KEY:F4\n");
     const auto moved = Pad::LoadInputMapping();
     require(padStatusBindingsOn(moved, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(moved, SDL_SCANCODE_F9) == 0, "the pad status key moves to another key");
@@ -228,6 +228,31 @@ void toggleMuteAction() {
     require(rejects("ToggleMute = KEY:NoSuchKey\n"), "ToggleMute refuses an unknown key name");
     require(rejects("ToggleMute =\n"), "ToggleMute refuses an empty source");
     require(rejects("ToggleMute = F2\n"), "ToggleMute refuses a source without a type");
+}
+
+void toggleBorderlessAction() {
+    useConfig("toggleborderless = KEY:F2\nToggleBorderless = KEY:F3\n");
+    const auto keys = keysFor(Pad::InputControl::ToggleBorderless);
+    require(keys.size() == 2 && hasKey(keys, SDL_SCANCODE_F2) && hasKey(keys, SDL_SCANCODE_F3), "ToggleBorderless takes a first key and an alternate, case-insensitively");
+    useConfig("ToggleBorderless = KEY:F4\nToggleBorderless = KEY:F4\n");
+    const auto duplicated = keysFor(Pad::InputControl::ToggleBorderless);
+    require(duplicated.size() == 1 && duplicated[0] == SDL_SCANCODE_F4, "a duplicate ToggleBorderless line is ignored");
+    require(rejects("ToggleBorderless = MOUSE:Left\n"), "ToggleBorderless refuses a mouse button");
+    require(rejects("ToggleBorderless = MOUSE:X1\n"), "ToggleBorderless refuses another mouse button");
+    require(rejects("ToggleBorderless = WHEEL:Up\n"), "ToggleBorderless refuses the mouse wheel");
+    require(rejects("ToggleBorderless = PAD:Options+R1\n"), "ToggleBorderless refuses a controller chord");
+    require(rejects("ToggleBorderless = KEY:NoSuchKey\n"), "ToggleBorderless refuses an unknown key name");
+    require(rejects("ToggleBorderless =\n"), "ToggleBorderless refuses an empty source");
+    require(rejects("ToggleBorderless = F2\n"), "ToggleBorderless refuses a source without a type");
+}
+
+void toggleBorderlessDefault() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::ToggleBorderless);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F2, "F2 is the only default ToggleBorderless key");
+    useConfig("ToggleBorderless = KEY:F4\n");
+    const auto moved = keysFor(Pad::InputControl::ToggleBorderless);
+    require(moved.size() == 1 && moved[0] == SDL_SCANCODE_F4, "a ToggleBorderless line replaces the built-in key");
 }
 
 void volumeDownDefault() {
@@ -335,6 +360,26 @@ void mouseLookReject() {
     require(rejects("MouseStickTarget = Center\n"), "an invalid stick target is rejected");
     require(rejects("MouseStickTarget =\n"), "an empty mouse stick target is rejected");
     require(rejects("MouseStickTarget = Left\nMouseStickTarget = Right\n"), "a mouse stick target given twice is rejected");
+}
+
+void toggleActionsParse() {
+    useConfig("ToggleActions = R2, L1 ; sticky\nR2 = KEY:Z\n");
+    const auto configuration = Pad::LoadInputMapping();
+    const auto expected = static_cast<std::uint32_t>(Pad::PadButton::R2) | static_cast<std::uint32_t>(Pad::PadButton::L1);
+    require(configuration.toggleButtons == expected, "ToggleActions lists the pad buttons it names");
+    useConfig("toggleactions = square\n");
+    require(Pad::LoadInputMapping().toggleButtons == static_cast<std::uint32_t>(Pad::PadButton::Square), "ToggleActions is read case-insensitively");
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().toggleButtons == 0, "no ToggleActions line leaves every action held");
+}
+
+void toggleActionsReject() {
+    require(rejects("ToggleActions = LeftStickUp\n"), "ToggleActions refuses a stick direction");
+    require(rejects("ToggleActions = ToggleMouse\n"), "ToggleActions refuses an emulator action");
+    require(rejects("ToggleActions = Fly\n"), "ToggleActions refuses an unknown action");
+    require(rejects("ToggleActions =\n"), "an empty ToggleActions is rejected");
+    require(rejects("ToggleActions = R2,,L1\n"), "an empty entry in ToggleActions is rejected");
+    require(rejects("ToggleActions = R2\nToggleActions = L1\n"), "ToggleActions given twice is rejected");
 }
 
 void nonAsciiPaths() {
@@ -721,6 +766,8 @@ int main() try {
     hostVolumeActionNamesAreExact();
     volumeDownAction();
     volumeDownDefault();
+    toggleBorderlessAction();
+    toggleBorderlessDefault();
     volumeUpAction();
     volumeUpDefault();
     mouseLookDefault();
@@ -732,6 +779,8 @@ int main() try {
     profileNames();
     profileOverridesShared();
     toggleMouseDefaults();
+    toggleActionsParse();
+    toggleActionsReject();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();

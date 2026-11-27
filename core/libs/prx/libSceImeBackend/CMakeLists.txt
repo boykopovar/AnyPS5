@@ -1,4 +1,4 @@
-add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libSceImeDialog/src/PadKeyboard.cpp)
 target_include_directories(libSceImeBackend PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceImeBackend)
 
@@ -10,6 +10,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_ime_backend COMMAND guest_ime_backend_tests)
     if(WIN32)
         set_tests_properties(guest_ime_backend PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeBackend>")
+    endif()
+
+    add_test_executable(guest_ime_backend_state_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeBackendState.cpp)
+    target_include_directories(guest_ime_backend_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_backend_state_tests PRIVATE libSceImeBackend libc)
+    configure_windows_unwind(guest_ime_backend_state_tests)
+    add_test(NAME guest_ime_backend_state COMMAND guest_ime_backend_state_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_backend_state PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeBackend>")
     endif()
 endif()

@@ -7,10 +7,12 @@
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <vector>
 
+static constexpr int SCE_OK = 0;
 static constexpr int UMTX_OP_WAIT = 2;
 static constexpr int UMTX_OP_WAKE = 3;
 static constexpr int UMTX_OP_MUTEX_TRYLOCK = 4;
@@ -25,6 +27,7 @@ static constexpr int UMTX_OP_RW_WRLOCK = 13;
 static constexpr int UMTX_OP_RW_UNLOCK = 14;
 static constexpr int UMTX_OP_MUTEX_WAIT = 17;
 static constexpr int UMTX_OP_MUTEX_WAKE = 18;
+static constexpr int UMTX_OP_ROBUST_LISTS = 26;
 static constexpr int UMTX_OP_WAIT_UINT = 11;
 static constexpr int UMTX_OP_WAIT_UINT_PRIVATE = 15;
 static constexpr int UMTX_OP_WAKE_PRIVATE = 16;
@@ -43,10 +46,16 @@ static constexpr int GUEST_EBUSY = 16;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EOPNOTSUPP = 45;
 static constexpr int GUEST_ETIMEDOUT = 60;
+static constexpr int GUEST_ENOTRECOVERABLE = 95;
+static constexpr int GUEST_EOWNERDEAD = 96;
 
 static constexpr std::uint32_t CONTESTED = 0x80000000u;
 static constexpr std::uint32_t PRIO_INHERIT = 0x4;
 static constexpr std::uint32_t PRIO_PROTECT = 0x8;
+static constexpr std::uint32_t ROBUST = 0x10;
+static constexpr std::uint32_t NONCONSISTENT = 0x20;
+static constexpr std::uint32_t RB_OWNERDEAD = CONTESTED | 0x10;
+static constexpr std::uint32_t RB_NOTRECOV = CONTESTED | 0x11;
 static constexpr std::uint32_t WRITE_OWNER = 0x80000000u;
 static constexpr std::uint32_t WRITE_WAITERS = 0x40000000u;
 static constexpr std::uint32_t READ_WAITERS = 0x20000000u;
@@ -54,14 +63,20 @@ static constexpr std::uint32_t PREFER_READER = 0x2;
 static constexpr int UMTX_OP_MUTEX_WAKE2 = 22;
 static constexpr int UMTX_OP_SEM2_WAKE = 24;
 static constexpr int UMTX_OP_SHM = 25;
-static constexpr std::uint32_t ROBUST = 0x10;
 static constexpr std::uint32_t USEM_HAS_WAITERS = 0x80000000u;
 
 struct Umutex {
     std::uint32_t owner = 0;
     std::uint32_t flags = 0;
     std::uint32_t ceilings[2]{};
-    std::uint32_t spare[4]{};
+    std::uintptr_t robustLink = 0;
+    std::uint32_t spare[2]{};
+};
+
+struct RobustListsParams {
+    std::uintptr_t list;
+    std::uintptr_t privateList;
+    std::uintptr_t inactive;
 };
 
 struct Ucond {
@@ -648,6 +663,38 @@ static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter() {
     Require(mutex.owner == 0);
 }
 
+static void MutexLockAndWaitDoNotLoseAWakeupToAUserlandUnlock() {
+    for (const int operation : {UMTX_OP_MUTEX_LOCK, UMTX_OP_MUTEX_WAIT}) {
+        Umutex mutex;
+        std::atomic_ref<std::uint32_t> owner(mutex.owner);
+        std::atomic<int> started{0};
+        std::atomic<bool> stop{false};
+        std::vector<std::thread> holders;
+        for (int index = 0; index < 2; ++index) {
+            holders.emplace_back([&] {
+                const std::uint32_t self = Self();
+                started.fetch_add(1);
+                while (!stop.load()) {
+                    std::uint32_t unowned = 0;
+                    if (!owner.compare_exchange_strong(unowned, self)) continue;
+                    std::uint32_t held = self;
+                    if (!owner.compare_exchange_strong(held, 0)) Require(Umtx(&mutex, UMTX_OP_MUTEX_UNLOCK, 0) == 0);
+                }
+            });
+        }
+        AwaitCount(started, 2);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+        while (std::chrono::steady_clock::now() < until) {
+            KernelTimespec failsafe = FailsafeTimeout();
+            Require(Umtx(&mutex, operation, 0, SizeOf(sizeof(failsafe)), &failsafe) == 0);
+            if (operation == UMTX_OP_MUTEX_LOCK) Require(Umtx(&mutex, UMTX_OP_MUTEX_UNLOCK, 0) == 0);
+        }
+        stop.store(true);
+        for (auto& holder : holders) holder.join();
+        Require(mutex.owner == 0);
+    }
+}
+
 static void ConditionWaitReleasesTheMutexAndWakes() {
     Ucond condition;
     Require(Umtx(&condition, UMTX_OP_CV_SIGNAL, 0) == 0 && condition.hasWaiters == 0);
@@ -775,6 +822,188 @@ static void ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter() {
     Require(condition.hasWaiters == 0);
 }
 
+struct RobustOwner {
+    Umutex* linked[2]{};
+    Umutex* inactive = nullptr;
+    std::uintptr_t listHead = 0;
+    std::uintptr_t privateListHead = 0;
+    std::uintptr_t inactiveMutex = 0;
+    std::atomic<int> state{0};
+    std::uint32_t id = 0;
+};
+
+static void* APS5_VABI LockRobustMutexesAndExit(void* opaque) {
+    auto& owner = *static_cast<RobustOwner*>(opaque);
+    RobustListsParams params{reinterpret_cast<std::uintptr_t>(&owner.listHead), reinterpret_cast<std::uintptr_t>(&owner.privateListHead), reinterpret_cast<std::uintptr_t>(&owner.inactiveMutex)};
+    Require(Umtx(nullptr, UMTX_OP_ROBUST_LISTS, sizeof(params), &params) == 0);
+    for (Umutex* mutex : owner.linked) {
+        if (mutex == nullptr) continue;
+        owner.inactiveMutex = reinterpret_cast<std::uintptr_t>(mutex);
+        Require(Umtx(mutex, UMTX_OP_MUTEX_LOCK, 0) == 0);
+        mutex->robustLink = owner.privateListHead;
+        owner.privateListHead = reinterpret_cast<std::uintptr_t>(mutex);
+        owner.inactiveMutex = 0;
+    }
+    if (owner.inactive != nullptr) {
+        owner.inactiveMutex = reinterpret_cast<std::uintptr_t>(owner.inactive);
+        Require(Umtx(owner.inactive, UMTX_OP_MUTEX_LOCK, 0) == 0);
+    }
+    owner.id = Self();
+    owner.state.store(1);
+    AwaitCount(owner.state, 2);
+    return nullptr;
+}
+
+static void RunRobustOwner(RobustOwner& owner) {
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, LockRobustMutexesAndExit, &owner, "robust-owner") == SCE_OK);
+    AwaitCount(owner.state, 1);
+    owner.state.store(2);
+    void* result = nullptr;
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+}
+
+static void RobustListsRejectsAnOversizedParameterBlock() {
+    RobustListsParams params{};
+    Require(FailsWith(Umtx(nullptr, UMTX_OP_ROBUST_LISTS, sizeof(params) + 1, &params), GUEST_EINVAL));
+    Require(Umtx(nullptr, UMTX_OP_ROBUST_LISTS, 0, nullptr) == 0);
+    Require(Umtx(nullptr, UMTX_OP_ROBUST_LISTS, sizeof(params), &params) == 0);
+}
+
+static void RobustMutexOfAnExitedOwnerIsRecoverable() {
+    Umutex first;
+    first.flags = ROBUST;
+    Umutex second;
+    second.flags = ROBUST;
+    Umutex inactive;
+    inactive.flags = ROBUST;
+    RobustOwner owner;
+    owner.linked[0] = &first;
+    owner.linked[1] = &second;
+    owner.inactive = &inactive;
+    RunRobustOwner(owner);
+    Require(owner.id != Self());
+    Require(first.owner == RB_OWNERDEAD && second.owner == RB_OWNERDEAD && inactive.owner == RB_OWNERDEAD);
+
+    Require(Umtx(&first, UMTX_OP_MUTEX_WAIT, 0) == 0 && first.owner == RB_OWNERDEAD);
+    Require(FailsWith(Umtx(&first, UMTX_OP_MUTEX_LOCK, 0), GUEST_EOWNERDEAD) && first.owner == (CONTESTED | Self()));
+    first.flags |= NONCONSISTENT;
+    first.flags &= ~NONCONSISTENT;
+    Require(Umtx(&first, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && first.owner == 0);
+    Require(Umtx(&first, UMTX_OP_MUTEX_TRYLOCK, 0) == 0 && first.owner == Self());
+    Require(Umtx(&first, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && first.owner == 0);
+
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EOWNERDEAD) && second.owner == (CONTESTED | Self()));
+    second.flags |= NONCONSISTENT;
+    Require(Umtx(&second, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_LOCK, 0), GUEST_ENOTRECOVERABLE) && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_ENOTRECOVERABLE) && second.owner == RB_NOTRECOV);
+    Require(Umtx(&second, UMTX_OP_MUTEX_WAIT, 0) == 0 && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EPERM) && second.owner == RB_NOTRECOV);
+    Require(Umtx(&second, UMTX_OP_MUTEX_WAKE, 0) == 0 && second.owner == RB_NOTRECOV);
+
+    Require(FailsWith(Umtx(&inactive, UMTX_OP_MUTEX_LOCK, 0), GUEST_EOWNERDEAD) && inactive.owner == (CONTESTED | Self()));
+    Require(Umtx(&inactive, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && inactive.owner == 0);
+}
+
+static void RobustMutexWaiterGetsOwnerDeadWhenTheOwnerExits() {
+    Umutex mutex;
+    mutex.flags = ROBUST;
+    RobustOwner owner;
+    owner.linked[0] = &mutex;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, LockRobustMutexesAndExit, &owner, "robust-owner") == SCE_OK);
+    AwaitCount(owner.state, 1);
+    std::atomic<int> state{0};
+    std::uint32_t waiterId = 0;
+    std::thread waiter([&] {
+        waiterId = Self();
+        state.store(1);
+        KernelTimespec failsafe = FailsafeTimeout();
+        Require(FailsWith(Umtx(&mutex, UMTX_OP_MUTEX_LOCK, 0, SizeOf(sizeof(failsafe)), &failsafe), GUEST_EOWNERDEAD));
+        state.store(2);
+    });
+    AwaitCount(state, 1);
+    std::this_thread::sleep_for(SETTLE);
+    Require(state.load() == 1 && std::atomic_ref<std::uint32_t>(mutex.owner).load() == (CONTESTED | owner.id));
+    owner.state.store(2);
+    void* result = nullptr;
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    AwaitCount(state, 2);
+    waiter.join();
+    Require(mutex.owner == (CONTESTED | waiterId));
+}
+
+static void MutexWakeReleasesAWaiterOnAnOwnerDeadMutex() {
+    Umutex mutex;
+    mutex.flags = ROBUST;
+    mutex.owner = 123456;
+    std::atomic<int> state{0};
+    std::thread waiter([&] {
+        state.store(1);
+        KernelTimespec failsafe = FailsafeTimeout();
+        Require(FailsWith(Umtx(&mutex, UMTX_OP_MUTEX_LOCK, 0, SizeOf(sizeof(failsafe)), &failsafe), GUEST_EOWNERDEAD));
+        state.store(2);
+    });
+    AwaitCount(state, 1);
+    std::this_thread::sleep_for(SETTLE);
+    Require(state.load() == 1 && std::atomic_ref<std::uint32_t>(mutex.owner).load() == (CONTESTED | 123456));
+    std::atomic_ref<std::uint32_t>(mutex.owner).store(RB_OWNERDEAD);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE, 0) == 0);
+    AwaitCount(state, 2);
+    waiter.join();
+}
+
+static void ExitDoesNotReleaseANonRobustMutex() {
+    Umutex plain;
+    Umutex robust;
+    robust.flags = ROBUST;
+    RobustOwner owner;
+    owner.linked[0] = &robust;
+    owner.linked[1] = &plain;
+    RunRobustOwner(owner);
+    Require(plain.owner == owner.id && robust.owner == owner.id);
+    Require(FailsWith(Umtx(&plain, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EBUSY) && plain.owner == owner.id);
+    Require(FailsWith(Umtx(&robust, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EBUSY));
+}
+
+struct MisalignedRobustOwner {
+    Umutex robust;
+    alignas(8) unsigned char bytes[sizeof(Umutex) + 1]{};
+    std::uintptr_t listHead = 0;
+    std::uintptr_t privateListHead = 0;
+    std::uintptr_t inactiveMutex = 0;
+    std::uint32_t id = 0;
+};
+
+static void* APS5_VABI ExitWithAMisalignedRobustEntry(void* opaque) {
+    auto& owner = *static_cast<MisalignedRobustOwner*>(opaque);
+    RobustListsParams params{reinterpret_cast<std::uintptr_t>(&owner.listHead), reinterpret_cast<std::uintptr_t>(&owner.privateListHead), reinterpret_cast<std::uintptr_t>(&owner.inactiveMutex)};
+    Require(Umtx(nullptr, UMTX_OP_ROBUST_LISTS, sizeof(params), &params) == 0);
+    Require(Umtx(&owner.robust, UMTX_OP_MUTEX_LOCK, 0) == 0);
+    owner.id = Self();
+    Umutex odd;
+    odd.owner = owner.id;
+    odd.flags = ROBUST;
+    std::memcpy(owner.bytes + 1, &odd, sizeof(odd));
+    owner.robust.robustLink = reinterpret_cast<std::uintptr_t>(owner.bytes + 1);
+    owner.listHead = reinterpret_cast<std::uintptr_t>(&owner.robust);
+    return nullptr;
+}
+
+static void ExitStopsAtAMisalignedRobustEntry() {
+    MisalignedRobustOwner owner;
+    owner.robust.flags = ROBUST;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, ExitWithAMisalignedRobustEntry, &owner, "robust-misaligned") == SCE_OK);
+    void* result = nullptr;
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    Require(owner.robust.owner == RB_OWNERDEAD);
+    Umutex odd;
+    std::memcpy(&odd, owner.bytes + 1, sizeof(odd));
+    Require(odd.owner == owner.id && odd.flags == ROBUST);
+}
+
 int main() {
     ReturnsWhenTheValueDiffers();
     WaitComparesALongAndWaitUintAnInt();
@@ -798,10 +1027,17 @@ int main() {
     MutexLockWaitsForTheOwnerToUnlock();
     MutexWake2LeavesAnUnwaitedMutexAlone();
     MutexWake2RepairsTheContestedBitAndWakesOneWaiter();
+    MutexLockAndWaitDoNotLoseAWakeupToAUserlandUnlock();
     ConditionWaitReleasesTheMutexAndWakes();
     RwlockStateFollowsTheConsole();
     RwlockUnlockWakesTheBlockedWriter();
     RwlockReaderPreferenceFollowsTheConsole();
     RwlockDoesNotLoseAWakeupUnderContention();
     ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter();
+    RobustListsRejectsAnOversizedParameterBlock();
+    RobustMutexOfAnExitedOwnerIsRecoverable();
+    RobustMutexWaiterGetsOwnerDeadWhenTheOwnerExits();
+    MutexWakeReleasesAWaiterOnAnOwnerDeadMutex();
+    ExitDoesNotReleaseANonRobustMutex();
+    ExitStopsAtAMisalignedRobustEntry();
 }

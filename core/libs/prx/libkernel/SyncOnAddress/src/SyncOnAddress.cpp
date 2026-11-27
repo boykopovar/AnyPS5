@@ -34,6 +34,8 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <limits>
 #include <list>
@@ -48,6 +50,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
@@ -76,6 +79,7 @@ constexpr int UMTX_OP_MUTEX_WAKE = 18;
 constexpr int UMTX_OP_SEM_WAIT = 19;
 constexpr int UMTX_OP_SEM_WAKE = 20;
 constexpr int UMTX_OP_NWAKE_PRIVATE = 21;
+constexpr int UMTX_OP_ROBUST_LISTS = 26;
 constexpr int UMTX_OP_MEASURED_NOOP = 27;
 constexpr int UMTX_OP_MAX = 27;
 constexpr std::uint32_t UMTX_ABSTIME = 1;
@@ -83,8 +87,13 @@ constexpr int GUEST_CLOCK_REALTIME = 0;
 
 constexpr std::uint32_t UMUTEX_UNOWNED = 0;
 constexpr std::uint32_t UMUTEX_CONTESTED = 0x80000000u;
+constexpr std::uint32_t UMUTEX_PRIO_INHERIT = 0x4;
 constexpr std::uint32_t UMUTEX_PRIO_PROTECT = 0x8;
 constexpr std::uint32_t UMUTEX_ROBUST = 0x10;
+constexpr std::uint32_t UMUTEX_NONCONSISTENT = 0x20;
+constexpr std::uint32_t UMUTEX_RB_OWNERDEAD = UMUTEX_CONTESTED | 0x10;
+constexpr std::uint32_t UMUTEX_RB_NOTRECOV = UMUTEX_CONTESTED | 0x11;
+constexpr int UMTX_MAX_ROBUST = 1000;
 constexpr std::uint32_t CVWAIT_ABSTIME = 0x2;
 constexpr std::uint32_t CVWAIT_CLOCKID = 0x4;
 constexpr std::uint32_t URWLOCK_PREFER_READER = 0x2;
@@ -95,7 +104,6 @@ constexpr std::uint32_t URWLOCK_MAX_READERS = 0x1fffffffu;
 constexpr int UMTX_OP_MUTEX_WAKE2 = 22;
 constexpr int UMTX_OP_SEM2_WAIT = 23;
 constexpr int UMTX_OP_SEM2_WAKE = 24;
-constexpr std::uint32_t UMUTEX_PRIO_INHERIT = 0x4;
 constexpr std::uint32_t USEM_HAS_WAITERS = 0x80000000u;
 constexpr std::uint32_t USEM_MAX_COUNT = 0x7fffffffu;
 
@@ -106,6 +114,8 @@ constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_EAGAIN = 35;
 constexpr int GUEST_EOPNOTSUPP = 45;
 constexpr int GUEST_ETIMEDOUT = 60;
+constexpr int GUEST_ENOTRECOVERABLE = 95;
+constexpr int GUEST_EOWNERDEAD = 96;
 
 constexpr std::int64_t NANOS_PER_SECOND = 1000000000;
 constexpr std::uint64_t UNBOUNDED_WAIT_NANOS = 1ULL << 62;
@@ -131,8 +141,17 @@ struct UserMutex {
     std::uint32_t owner;
     std::uint32_t flags;
     std::uint32_t ceilings[2];
-    std::uint32_t spare[4];
+    std::uintptr_t robustLink;
+    std::uint32_t spare[2];
 };
+
+struct RobustListsParams {
+    std::uintptr_t list;
+    std::uintptr_t privateList;
+    std::uintptr_t inactive;
+};
+
+constinit thread_local RobustListsParams robustLists{};
 
 struct UserCondition {
     std::uint32_t hasWaiters;
@@ -149,7 +168,8 @@ struct UserRwlock {
     std::uint32_t spare[4];
 };
 
-static_assert(sizeof(UserMutex) == 32 && sizeof(UserCondition) == 16 && sizeof(UserRwlock) == 32);
+static_assert(sizeof(UserMutex) == 32 && offsetof(UserMutex, robustLink) == 16 && sizeof(UserCondition) == 16 && sizeof(UserRwlock) == 32);
+static_assert(sizeof(RobustListsParams) == 24);
 
 struct AddressWaiter {
     TimedWait::SingleWaiterCondition condition;
@@ -306,9 +326,7 @@ int WaitOnAddress(TValue* address, TValue expected, KernelUseconds* timeout, con
     return woken ? SYNC_ON_ADDRESS_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
 }
 
-std::int32_t WakeAddressLocked(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
-    auto& bucket = BucketOf(key);
-    std::lock_guard<std::mutex> lock(bucket.mutex);
+std::int32_t WakeWaiters(WaiterBucket& bucket, std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
     const auto entry = bucket.waiters.find(key);
     if (entry == bucket.waiters.end()) {
         return 0;
@@ -329,7 +347,11 @@ std::int32_t WakeAddressLocked(std::uintptr_t key, std::int32_t count, bool wake
 
 std::int32_t WakeAddress(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
     std::int32_t woken = 0;
-    DeferringDelivery([&] { woken = WakeAddressLocked(key, count, wakesAtLeastOne); });
+    DeferringDelivery([&] {
+        auto& bucket = BucketOf(key);
+        std::lock_guard<std::mutex> lock(bucket.mutex);
+        woken = WakeWaiters(bucket, key, count, wakesAtLeastOne);
+    });
     return woken;
 }
 
@@ -573,9 +595,7 @@ std::uint32_t CurrentOwnerId() {
     return static_cast<std::uint32_t>(scePthreadGetthreadid()) & ~UMUTEX_CONTESTED;
 }
 
-std::size_t WaiterCount(std::uintptr_t key) {
-    auto& bucket = BucketOf(key);
-    std::lock_guard<std::mutex> lock(bucket.mutex);
+std::size_t WaiterCount(const WaiterBucket& bucket, std::uintptr_t key) {
     const auto entry = bucket.waiters.find(key);
     return entry == bucket.waiters.end() ? 0 : entry->second.size();
 }
@@ -588,8 +608,8 @@ int CheckMutex(UserMutex* mutex) {
         APS5_INVALID_ARG_EX;
     }
     const std::uint32_t flags = std::atomic_ref<std::uint32_t>(mutex->flags).load();
-    if ((flags & UMUTEX_ROBUST) != 0) {
-        NotImplemented_nid_no_patch("_umtx_op on a robust umutex");
+    if ((flags & UMUTEX_ROBUST) != 0 && (flags & (UMUTEX_PRIO_INHERIT | UMUTEX_PRIO_PROTECT)) != 0) {
+        NotImplemented_nid_no_patch("_umtx_op on a priority-inheriting or priority-protected robust umutex");
     }
     return 0;
 }
@@ -598,6 +618,17 @@ bool TryAcquireMutex(UserMutex* mutex, std::uint32_t id, int& error) {
     std::atomic_ref<std::uint32_t> owner(mutex->owner);
     std::uint32_t current = owner.load();
     for (;;) {
+        if (current == UMUTEX_RB_OWNERDEAD) {
+            if (owner.compare_exchange_weak(current, id | UMUTEX_CONTESTED)) {
+                error = GUEST_EOWNERDEAD;
+                return true;
+            }
+            continue;
+        }
+        if (current == UMUTEX_RB_NOTRECOV) {
+            error = GUEST_ENOTRECOVERABLE;
+            return true;
+        }
         if (current == UMUTEX_UNOWNED || current == UMUTEX_CONTESTED) {
             if (owner.compare_exchange_weak(current, id | current)) {
                 error = 0;
@@ -614,11 +645,12 @@ bool TryAcquireMutex(UserMutex* mutex, std::uint32_t id, int& error) {
     }
 }
 
-void MarkContested(UserMutex* mutex) {
+bool MarkContested(UserMutex* mutex) {
     std::atomic_ref<std::uint32_t> owner(mutex->owner);
     std::uint32_t current = owner.load();
     while (current != UMUTEX_UNOWNED && (current & UMUTEX_CONTESTED) == 0 && !owner.compare_exchange_weak(current, current | UMUTEX_CONTESTED)) {
     }
+    return (current & ~UMUTEX_CONTESTED) != 0 && current != UMUTEX_RB_OWNERDEAD && current != UMUTEX_RB_NOTRECOV;
 }
 
 int MutexTrylock(UserMutex* mutex) {
@@ -648,21 +680,23 @@ int MutexLock(UserMutex* mutex, bool acquire, const void* sizeArgument, const vo
     const auto key = reinterpret_cast<std::uintptr_t>(&mutex->owner);
     for (;;) {
         bool done = false;
+        bool retry = false;
         int error = 0;
         const bool woken = WaitOnKeyUntil(key, [&] {
             if (acquire) {
                 done = TryAcquireMutex(mutex, id, error);
             } else {
                 const std::uint32_t current = std::atomic_ref<std::uint32_t>(mutex->owner).load();
-                done = current == UMUTEX_UNOWNED || current == UMUTEX_CONTESTED;
+                done = current == UMUTEX_UNOWNED || current == UMUTEX_CONTESTED || current == UMUTEX_RB_OWNERDEAD || current == UMUTEX_RB_NOTRECOV;
             }
-            if (!done) {
-                MarkContested(mutex);
-            }
-            return done;
+            retry = !done && !MarkContested(mutex);
+            return done || retry;
         }, deadline, caller);
         if (done) {
-            return 0;
+            return error;
+        }
+        if (retry) {
+            continue;
         }
         if (!woken) {
             return GUEST_ETIMEDOUT;
@@ -673,11 +707,19 @@ int MutexLock(UserMutex* mutex, bool acquire, const void* sizeArgument, const vo
     }
 }
 
-int MutexUnlock(UserMutex* mutex) {
+std::uint32_t UnlockedOwner(std::uint32_t flags, bool ownerDied) {
+    if (ownerDied) {
+        return UMUTEX_RB_OWNERDEAD;
+    }
+    return (flags & UMUTEX_NONCONSISTENT) != 0 ? UMUTEX_RB_NOTRECOV : UMUTEX_UNOWNED;
+}
+
+int MutexUnlock(UserMutex* mutex, bool ownerDied = false) {
     if (const int error = CheckMutex(mutex); error != 0) {
         return error;
     }
-    if ((std::atomic_ref<std::uint32_t>(mutex->flags).load() & UMUTEX_PRIO_PROTECT) != 0) {
+    const std::uint32_t flags = std::atomic_ref<std::uint32_t>(mutex->flags).load();
+    if ((flags & UMUTEX_PRIO_PROTECT) != 0) {
         NotImplemented_nid_no_patch("_umtx_op unlock of a priority-protected umutex");
     }
     std::atomic_ref<std::uint32_t> owner(mutex->owner);
@@ -685,8 +727,12 @@ int MutexUnlock(UserMutex* mutex) {
         return GUEST_EPERM;
     }
     const auto key = reinterpret_cast<std::uintptr_t>(&mutex->owner);
-    owner.store(WaiterCount(key) > 1 ? UMUTEX_CONTESTED : UMUTEX_UNOWNED);
-    WakeAddress(key, 1, false);
+    DeferringDelivery([&] {
+        auto& bucket = BucketOf(key);
+        std::lock_guard<std::mutex> lock(bucket.mutex);
+        owner.store(UnlockedOwner(flags, ownerDied) | (WaiterCount(bucket, key) > 1 ? UMUTEX_CONTESTED : UMUTEX_UNOWNED));
+        WakeWaiters(bucket, key, 1, false);
+    });
     return 0;
 }
 
@@ -695,15 +741,20 @@ int MutexWake(UserMutex* mutex) {
         return error;
     }
     std::atomic_ref<std::uint32_t> owner(mutex->owner);
-    if ((owner.load() & ~UMUTEX_CONTESTED) != 0) {
+    const std::uint32_t current = owner.load();
+    if ((current & ~UMUTEX_CONTESTED) != 0 && current != UMUTEX_RB_OWNERDEAD && current != UMUTEX_RB_NOTRECOV) {
         return 0;
     }
     const auto key = reinterpret_cast<std::uintptr_t>(&mutex->owner);
-    if (WaiterCount(key) <= 1) {
-        std::uint32_t contested = UMUTEX_CONTESTED;
-        owner.compare_exchange_strong(contested, UMUTEX_UNOWNED);
-    }
-    WakeAddress(key, 1, false);
+    DeferringDelivery([&] {
+        auto& bucket = BucketOf(key);
+        std::lock_guard<std::mutex> lock(bucket.mutex);
+        if (WaiterCount(bucket, key) <= 1) {
+            std::uint32_t contested = UMUTEX_CONTESTED;
+            owner.compare_exchange_strong(contested, UMUTEX_UNOWNED);
+        }
+        WakeWaiters(bucket, key, 1, false);
+    });
     return 0;
 }
 
@@ -922,7 +973,79 @@ int RwlockUnlock(UserRwlock* rwlock) {
     return 0;
 }
 
+int SetRobustLists(std::uint64_t size, const void* parameters) {
+    RobustListsParams lists{};
+    if (size > sizeof(lists)) {
+        return GUEST_EINVAL;
+    }
+    if (size != 0 && !GuestCopyIn_nid_no_patch(&lists, parameters, static_cast<std::size_t>(size))) {
+        return GUEST_EFAULT;
+    }
+    robustLists = lists;
+    return 0;
+}
+
+bool ReadGuestPointer(std::uintptr_t address, std::uintptr_t& value) {
+    return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address), sizeof(value));
+}
+
+int ReleaseRobustMutex(std::uintptr_t address, std::uintptr_t* next, bool inactive) {
+    UserMutex mutex;
+    if (!GuestCopyIn_nid_no_patch(&mutex, reinterpret_cast<const void*>(address), sizeof(mutex))) {
+        return GUEST_EFAULT;
+    }
+    if (next != nullptr) {
+        *next = mutex.robustLink;
+    }
+    if ((mutex.flags & UMUTEX_ROBUST) == 0) {
+        return GUEST_EINVAL;
+    }
+    if ((mutex.owner & ~UMUTEX_CONTESTED) != CurrentOwnerId()) {
+        return inactive ? 0 : GUEST_EINVAL;
+    }
+    if (!IsAlignedAddress<std::uint32_t>(address)) {
+        return GUEST_EINVAL;
+    }
+    return MutexUnlock(reinterpret_cast<UserMutex*>(address), true);
+}
+
+void ReleaseRobustList(std::uintptr_t list, std::uintptr_t& inactive, const char* name) {
+    if (list == 0) {
+        return;
+    }
+    std::uintptr_t entry = 0;
+    int error = ReadGuestPointer(list, entry) ? 0 : GUEST_EFAULT;
+    int index = 0;
+    for (; error == 0 && entry != 0 && index < UMTX_MAX_ROBUST; ++index) {
+        const bool isInactive = entry == inactive;
+        if (isInactive) {
+            inactive = 0;
+        }
+        error = ReleaseRobustMutex(entry, &entry, isInactive);
+    }
+    if (index == UMTX_MAX_ROBUST) {
+        std::fprintf(stderr, "[umtx] thread %u reached umtx %smax rb %d\n", CurrentOwnerId(), name, UMTX_MAX_ROBUST);
+    }
+    if (error != 0) {
+        std::fprintf(stderr, "[umtx] thread %u handling %srb error %d\n", CurrentOwnerId(), name, error);
+    }
+}
+
 }  // namespace
+
+void ThreadLifecycle::ReleaseRobustUmutexes() {
+    const RobustListsParams lists = robustLists;
+    robustLists = {};
+    std::uintptr_t inactive = lists.inactive;
+    if (std::uintptr_t current = 0; inactive != 0 && ReadGuestPointer(inactive, current)) {
+        inactive = current;
+    }
+    ReleaseRobustList(lists.list, inactive, "");
+    ReleaseRobustList(lists.privateList, inactive, "priv ");
+    if (inactive != 0) {
+        ReleaseRobustMutex(inactive, nullptr, true);
+    }
+}
 
 extern "C" {
 
@@ -972,6 +1095,9 @@ int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t va
             break;
         case UMTX_OP_NWAKE_PRIVATE:
             error = UmtxNwakePrivate(object, value);
+            break;
+        case UMTX_OP_ROBUST_LISTS:
+            error = SetRobustLists(value, sizeArgument);
             break;
         case UMTX_OP_SEM_WAIT:
             error = SemWait(static_cast<UserSemaphore*>(object), sizeArgument, timeArgument, caller);

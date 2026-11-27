@@ -2,6 +2,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "mbedtls/bignum.h"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +13,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 struct TestBignum {
     std::uint64_t* d;
@@ -278,7 +287,7 @@ static Bytes StandardKey() {
     return RsaKey(Concat({{0x00}, Hex(CavpModulus)}), CavpExponent);
 }
 
-static LibreSslRsa* Decode(const Bytes& der, long length, long* consumed = nullptr) {
+static LibreSslRsa* Decode(const Bytes& der, std::int64_t length, long* consumed = nullptr) {
     const unsigned char* data = der.data();
     auto* rsa = d2i_RSA_PUBKEY_nid_postfix(nullptr, &data, length);
     if (consumed) *consumed = data - der.data();
@@ -333,6 +342,10 @@ static void TestPublicKeyInfo() {
     Require(Decode(published, 293, &consumed) == nullptr && consumed == 0);
     RequireRefused(Bytes(published.begin(), published.end() - 1));
     Require(Decode(published, 0) == nullptr && Decode(published, -1) == nullptr);
+    constexpr std::int64_t FourGiB = std::int64_t{1} << 32;
+    Require((rsa = Decode(published, FourGiB + 100, &consumed)) != nullptr && consumed == 294);
+    RSA_free_nid_postfix(rsa);
+    Require(Decode(published, FourGiB, &consumed) == nullptr && consumed == 0);
     RequireThrows([&] { d2i_RSA_PUBKEY_nid_postfix(nullptr, nullptr, 294); });
     RequireThrows([&] {
         const unsigned char* none = nullptr;
@@ -487,6 +500,15 @@ static bool Pkcs1Block(const Bytes& block, const Bytes& message) {
     return block[separator] == 0 && Bytes(block.begin() + static_cast<long>(separator) + 1, block.end()) == message;
 }
 
+static bool Sslv23Block(const Bytes& block, const Bytes& message) {
+    if (!Pkcs1Block(block, message)) return false;
+    const std::size_t separator = block.size() - message.size() - 1;
+    if (separator < 10) return false;
+    for (std::size_t index = separator - 8; index < separator; ++index)
+        if (block[index] != 3) return false;
+    return true;
+}
+
 static bool OaepBlock(const Bytes& block, const Bytes& message) {
     if (block[0]) return false;
     const Bytes maskedSeed(block.begin() + 1, block.begin() + 21);
@@ -626,6 +648,28 @@ static void TestPublicEncrypt() {
     for (int padding : {0, PaddingX931, 6, 7}) Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, padding) == -1);
     RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), nullptr, rsa, PaddingPkcs1); });
     RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingPkcs1); });
+    RSA_free_nid_postfix(rsa);
+}
+
+static void TestPublicEncryptSslv23() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto message = Pattern(32, 5);
+    Bytes first(256);
+    Bytes second(256);
+    Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, PaddingSslv23) == 256);
+    Require(RSA_public_encrypt_nid_postfix(32, message.data(), second.data(), rsa, PaddingSslv23) == 256);
+    Require(first != second);
+    Require(Sslv23Block(Recover(first), message) && Sslv23Block(Recover(second), message));
+    const auto longMessage = Pattern(246, 9);
+    Require(RSA_public_encrypt_nid_postfix(245, longMessage.data(), first.data(), rsa, PaddingSslv23) == 256);
+    const auto longest = Recover(first);
+    Require(Sslv23Block(longest, Bytes(longMessage.begin(), longMessage.begin() + 245)) && longest[2] == 3);
+    Require(RSA_public_encrypt_nid_postfix(246, longMessage.data(), first.data(), rsa, PaddingSslv23) == -1);
+    Require(RSA_public_encrypt_nid_postfix(0, nullptr, first.data(), rsa, PaddingSslv23) == 256);
+    Require(Sslv23Block(Recover(first), {}));
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, PaddingSslv23); });
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingSslv23); });
     RSA_free_nid_postfix(rsa);
 }
 
@@ -779,7 +823,31 @@ static void TestVerify() {
     for (const auto& parameter : {Bytes {0x04, 0x00}, Bytes {0x05, 0x01, 0x00}, Bytes {0x30, 0x00}, Bytes {0x80, 0x00}, Bytes {0x01, 0x01, 0x00}, Concat({Null, Null})})
         Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, parameter, digest)), rsa) == 0);
     const auto algorithm = Encode(0x30, Concat({Encode(0x06, sha256), Null}));
-    Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), {0x00}})), rsa) == 0);
+    for (const auto& excess : {Bytes {0x00}, Bytes {0x05, 0x00}, Bytes(8, 0xFF)}) {
+        ERR_clear_error_nid_postfix();
+        Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), excess})), rsa) == 0);
+        Require(ERR_get_error_nid_postfix() == 0x04fff068);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
+    const std::pair<Bytes, std::vector<std::uint64_t>> rejected[] {
+        {{0x30, 0x85, 0x01, 0x00, 0x00, 0x00, 0x00}, {0x0dfff09b, 0x0dfff066, 0x0dfff03a}},
+        {{0x30, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x0dfff07b, 0x0dfff066, 0x0dfff03a}},
+        {{0x31, 0x00}, {0x0dfff0a8, 0x0dfff03a}},
+        {{0x30, 0x00}, {0x0dfff079}},
+        {{0x30, 0x02, 0x00, 0x00}, {0x0dfff09f}},
+        {Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null})), {0x0dfff094}},
+        {DigestInfo(sha256, {0x05}, digest), {0x0dfff07b, 0x0dfff066, 0x0dfff03a, 0x0dfff03a, 0x0dfff03a}},
+        {DigestInfo(sha256, {0x05, 0x01, 0x00}, digest), {0x0dfff090, 0x0dfff03a, 0x0dfff03a}},
+        {DigestInfo(sha256, {0x10, 0x00}, digest), {0x0dfff09c, 0x0dfff03a, 0x0dfff03a}},
+        {DigestInfo(sha256, {0x30, 0x00}, digest), {0x04fff068}},
+        {DigestInfo({0x2A, 0x80}, Null, digest), {0x0dfff0d8, 0x0dfff03a, 0x0dfff03a}},
+    };
+    for (const auto& [encoded, errors] : rejected) {
+        ERR_clear_error_nid_postfix();
+        Require(Verify(DigestSha256, digest, Sign(encoded), rsa) == 0);
+        for (const auto code : errors) Require(ERR_get_error_nid_postfix() == code);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null}))), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, algorithm)), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x03, digest)}))), rsa) == 0);
@@ -856,6 +924,240 @@ static void TestAddedDigestObjects() {
     Require(accepted[1]);
 }
 
+struct Keygens {
+    int calls;
+    LibreSslRsa* rsa;
+    int bits;
+    Bignum* exponent;
+    void* callback;
+};
+
+static Keygens keygens;
+
+static int APS5_VABI RecordKeygen(LibreSslRsa* rsa, int bits, Bignum* exponent, void* callback) {
+    keygens = {keygens.calls + 1, rsa, bits, exponent, callback};
+    return 7;
+}
+
+constexpr std::uint64_t BignumBitsTooSmall = 0x03FFF075;
+constexpr std::uint64_t RsaBignumFailure = 0x04FFF003;
+constexpr std::uint64_t RsaKeySizeTooSmall = 0x04FFF078;
+constexpr std::uint64_t SmallestSievePrime = 17863;
+
+struct MpiNumber {
+    mbedtls_mpi value;
+    MpiNumber() { mbedtls_mpi_init(&value); }
+    explicit MpiNumber(const void* field) : MpiNumber() {
+        const auto* number = static_cast<const TestBignum*>(field);
+        Require(number != nullptr && number->neg == 0 && number->top >= 0);
+        Require(mbedtls_mpi_read_binary_le(&value, reinterpret_cast<const unsigned char*>(number->d), static_cast<std::size_t>(number->top) * 8) == 0);
+    }
+    MpiNumber(const MpiNumber&) = delete;
+    MpiNumber& operator=(const MpiNumber&) = delete;
+    ~MpiNumber() { mbedtls_mpi_free(&value); }
+};
+
+static void RequireErrors(std::initializer_list<std::uint64_t> expected, std::source_location location = std::source_location::current()) {
+    for (const auto code : expected) Require(ERR_get_error_nid_postfix() == code, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void RequireAllFields(const LibreSslRsa* rsa) {
+    for (void* field : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp}) Require(field != nullptr);
+}
+
+static void RequireConsistentKey(const LibreSslRsa* rsa, std::uint64_t exponentValue, int modulusBits) {
+    RequireAllFields(rsa);
+    MpiNumber n(rsa->n), e(rsa->e), d(rsa->d), p(rsa->p), q(rsa->q), dmp1(rsa->dmp1), dmq1(rsa->dmq1), iqmp(rsa->iqmp);
+    MpiNumber product, lessP, lessQ, order, check, divisor, message, cipher, plain;
+    Require(mbedtls_mpi_cmp_int(&e.value, static_cast<mbedtls_mpi_sint>(exponentValue)) == 0);
+    if (modulusBits) Require(mbedtls_mpi_bitlen(&n.value) == static_cast<std::size_t>(modulusBits));
+    Require(mbedtls_mpi_cmp_mpi(&p.value, &q.value) > 0);
+    Require(mbedtls_mpi_mul_mpi(&product.value, &p.value, &q.value) == 0 && mbedtls_mpi_cmp_mpi(&product.value, &n.value) == 0);
+    Require(mbedtls_mpi_is_prime_ext(&p.value, 30, [](void*, unsigned char* out, std::size_t size) { for (std::size_t i = 0; i < size; ++i) out[i] = static_cast<unsigned char>(std::rand()); return 0; }, nullptr) == 0);
+    Require(mbedtls_mpi_is_prime_ext(&q.value, 30, [](void*, unsigned char* out, std::size_t size) { for (std::size_t i = 0; i < size; ++i) out[i] = static_cast<unsigned char>(std::rand()); return 0; }, nullptr) == 0);
+    Require(mbedtls_mpi_sub_int(&lessP.value, &p.value, 1) == 0 && mbedtls_mpi_sub_int(&lessQ.value, &q.value, 1) == 0);
+    Require(mbedtls_mpi_mul_mpi(&order.value, &lessP.value, &lessQ.value) == 0);
+    Require(mbedtls_mpi_cmp_mpi(&d.value, &order.value) < 0);
+    Require(mbedtls_mpi_mul_mpi(&check.value, &d.value, &e.value) == 0 && mbedtls_mpi_mod_mpi(&check.value, &check.value, &order.value) == 0);
+    Require(mbedtls_mpi_cmp_int(&check.value, 1) == 0);
+    Require(mbedtls_mpi_gcd(&divisor.value, &lessP.value, &e.value) == 0 && mbedtls_mpi_cmp_int(&divisor.value, 1) == 0);
+    Require(mbedtls_mpi_mod_mpi(&check.value, &d.value, &lessP.value) == 0 && mbedtls_mpi_cmp_mpi(&check.value, &dmp1.value) == 0);
+    Require(mbedtls_mpi_mod_mpi(&check.value, &d.value, &lessQ.value) == 0 && mbedtls_mpi_cmp_mpi(&check.value, &dmq1.value) == 0);
+    Require(mbedtls_mpi_cmp_mpi(&iqmp.value, &p.value) < 0);
+    Require(mbedtls_mpi_mul_mpi(&check.value, &iqmp.value, &q.value) == 0 && mbedtls_mpi_mod_mpi(&check.value, &check.value, &p.value) == 0);
+    Require(mbedtls_mpi_cmp_int(&check.value, 1) == 0);
+    Require(mbedtls_mpi_lset(&message.value, 0x1234567) == 0);
+    Require(mbedtls_mpi_exp_mod(&cipher.value, &message.value, &e.value, &n.value, nullptr) == 0);
+    Require(mbedtls_mpi_exp_mod(&plain.value, &cipher.value, &d.value, &n.value, nullptr) == 0);
+    Require(mbedtls_mpi_cmp_mpi(&plain.value, &message.value) == 0);
+}
+
+static bool SieveSurvivor(const void* field) {
+    MpiNumber prime(field);
+    if (mbedtls_mpi_cmp_int(&prime.value, static_cast<mbedtls_mpi_sint>(SmallestSievePrime)) <= 0) return false;
+    for (std::uint32_t divisor = 3; divisor <= SmallestSievePrime; divisor += 2) {
+        bool isPrime = true;
+        for (std::uint32_t factor = 3; factor * factor <= divisor; factor += 2)
+            if (divisor % factor == 0) isPrime = false;
+        if (!isPrime) continue;
+        mbedtls_mpi_uint remainder = 0;
+        Require(mbedtls_mpi_mod_int(&remainder, &prime.value, divisor) == 0);
+        if (remainder <= 1) return false;
+    }
+    return true;
+}
+
+static void TestGenerateKey() {
+    TestBignum* exponent = AllocatedBignum(65537);
+    auto* empty = reinterpret_cast<Bignum*>(exponent);
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(nullptr, 512, empty, nullptr); });
+
+    auto* rsa = RSA_new_nid_postfix();
+    const LibreSslRsaMethod* defaultMethod = rsa->meth;
+    LibreSslRsaMethod method = *defaultMethod;
+    method.keygen = reinterpret_cast<void*>(RecordKeygen);
+    rsa->meth = &method;
+    int marker = 0;
+    keygens = {};
+    Require(RSA_generate_key_ex_nid_postfix(rsa, -9, empty, &marker) == 7);
+    Require(keygens.calls == 1 && keygens.rsa == rsa && keygens.bits == -9 && keygens.exponent == empty && keygens.callback == &marker);
+    Require(rsa->n == nullptr && rsa->e == nullptr);
+    rsa->meth = nullptr;
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr); });
+    rsa->meth = defaultMethod;
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, empty, &marker); });
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, nullptr, nullptr); });
+    TestBignum* even = AllocatedBignum(65536);
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, reinterpret_cast<Bignum*>(even), nullptr); });
+    TestBignum zero {nullptr, 0, 0, 0, 0};
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, reinterpret_cast<Bignum*>(&zero), nullptr); });
+    Require(rsa->n == nullptr && rsa->e == nullptr);
+
+    ERR_clear_error_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 2, empty, nullptr) == 0);
+    RequireErrors({BignumBitsTooSmall, RsaBignumFailure});
+    RequireAllFields(rsa);
+    Require(static_cast<TestBignum*>(rsa->e)->top == 1 && static_cast<TestBignum*>(rsa->e)->d[0] == 65537);
+    Require(static_cast<TestBignum*>(rsa->p)->top == 0 && static_cast<TestBignum*>(rsa->n)->top == 0);
+
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 3, empty, nullptr) == 0);
+    RequireErrors({BignumBitsTooSmall, RsaBignumFailure});
+    Require(SieveSurvivor(rsa->p) && static_cast<TestBignum*>(rsa->q)->top == 0);
+    RSA_free_nid_postfix(rsa);
+
+    rsa = RSA_new_nid_postfix();
+    void* first = BN_new_nid_postfix();
+    void* second = BN_new_nid_postfix();
+    rsa->p = first;
+    rsa->q = second;
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr) == 1);
+    RequireErrors({});
+    Require((rsa->p == first && rsa->q == second) || (rsa->p == second && rsa->q == first));
+    RequireConsistentKey(rsa, 65537, 512);
+    RSA_free_nid_postfix(rsa);
+
+    rsa = RSA_new_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 1031, empty, nullptr) == 1);
+    RequireConsistentKey(rsa, 65537, 1031);
+    RSA_free_nid_postfix(rsa);
+
+    TestBignum* one = AllocatedBignum(1);
+    rsa = RSA_new_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 130, reinterpret_cast<Bignum*>(one), nullptr) == 1);
+    RequireConsistentKey(rsa, 1, 130);
+    for (void* field : {rsa->d, rsa->dmp1, rsa->dmq1}) Require(static_cast<TestBignum*>(field)->top == 1 && static_cast<TestBignum*>(field)->d[0] == 1);
+    Require(SieveSurvivor(rsa->p) && SieveSurvivor(rsa->q));
+    RSA_free_nid_postfix(rsa);
+
+    TestBignum* three = AllocatedBignum(3);
+    rsa = RSA_new_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 18, reinterpret_cast<Bignum*>(three), nullptr) == 0);
+    RequireErrors({RsaKeySizeTooSmall});
+    {
+        MpiNumber p(rsa->p), q(rsa->q);
+        Require(SieveSurvivor(rsa->p) && mbedtls_mpi_cmp_mpi(&p.value, &q.value) == 0);
+        Require(static_cast<TestBignum*>(rsa->n)->top == 0 && static_cast<TestBignum*>(rsa->d)->top == 0);
+    }
+    RSA_free_nid_postfix(rsa);
+
+    std::uint64_t words[1] {};
+    TestBignum fixed {words, 0, 1, 0, BignumStaticData};
+    rsa = RSA_new_nid_postfix();
+    rsa->n = &fixed;
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr) == 0);
+    RequireErrors({RsaBignumFailure});
+    Require(rsa->n == &fixed && fixed.top == 0 && fixed.d == words);
+    Require(static_cast<TestBignum*>(rsa->p)->top > 0 && static_cast<TestBignum*>(rsa->q)->top > 0);
+    rsa->n = nullptr;
+    RSA_free_nid_postfix(rsa);
+
+    std::uint64_t exponentWords[1] {};
+    TestBignum fixedExponent {exponentWords, 0, 0, 0, BignumStaticData};
+    rsa = RSA_new_nid_postfix();
+    rsa->e = &fixedExponent;
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr) == 0);
+    RequireErrors({RsaBignumFailure});
+    Require(rsa->e == &fixedExponent && fixedExponent.top == 0 && fixedExponent.d == exponentWords);
+    Require(static_cast<TestBignum*>(rsa->p)->top == 0 && static_cast<TestBignum*>(rsa->q)->top == 0 && static_cast<TestBignum*>(rsa->n)->top == 0);
+    rsa->e = nullptr;
+    RSA_free_nid_postfix(rsa);
+
+    for (TestBignum* number : {exponent, even, one, three}) BN_free_nid_postfix(reinterpret_cast<Bignum*>(number));
+}
+
+template<typename TAction> static bool Rejected(TAction action) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::invalid_argument&) { rejected = true; }
+    return rejected && errno == 71;
+}
+
+static unsigned char* MapReadOnlyPage(const void* contents, std::size_t size) {
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memcpy(page, contents, size);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memcpy(page, contents, size);
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+static void UnmapPage(unsigned char* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+static void TestGenerateKeyGuestPointers() {
+    auto* exponent = reinterpret_cast<Bignum*>(AllocatedBignum(65537));
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(reinterpret_cast<LibreSslRsa*>(std::uintptr_t{0x10}), 512, exponent, nullptr); }));
+
+    auto* rsa = RSA_new_nid_postfix();
+    const LibreSslRsaMethod* defaultMethod = rsa->meth;
+    rsa->meth = reinterpret_cast<const LibreSslRsaMethod*>(std::uintptr_t{0x10});
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, exponent, nullptr); }));
+    rsa->meth = defaultMethod;
+
+    unsigned char* page = MapReadOnlyPage(rsa, sizeof(*rsa));
+    auto* readOnly = reinterpret_cast<LibreSslRsa*>(page);
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(readOnly, 512, exponent, nullptr); }));
+    Require(readOnly->n == nullptr && readOnly->e == nullptr && readOnly->p == nullptr);
+    UnmapPage(page);
+
+    RSA_free_nid_postfix(rsa);
+    BN_free_nid_postfix(exponent);
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -868,8 +1170,11 @@ int main() {
     TestPublicDecrypt();
     TestPublicDecryptX931();
     TestPublicEncrypt();
+    TestPublicEncryptSslv23();
     TestPublicKeyChecks();
     TestVerify();
     TestAddedDigestObjects();
+    TestGenerateKey();
+    TestGenerateKeyGuestPointers();
     std::puts("libSceLibreSsl RSA tests passed");
 }

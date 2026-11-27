@@ -1,10 +1,14 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -53,12 +57,12 @@ TFunction Symbol(void* library, const char* name) {
     return reinterpret_cast<TFunction>(address);
 }
 
-void* Open(const char* path) {
+void* Open(const std::filesystem::path& path) {
 #ifdef _WIN32
-    auto library = LoadLibraryA(path);
-    if (!library) std::fprintf(stderr, "LoadLibrary error %lu: %s\n", GetLastError(), path);
+    auto library = LoadLibraryW(path.c_str());
+    if (!library) std::fprintf(stderr, "LoadLibrary error %lu: %s\n", GetLastError(), path.string().c_str());
 #else
-    auto library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    auto library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "library load");
@@ -108,6 +112,37 @@ void Scalars(Cleanup cleanup) {
     }
 }
 
+void Invalid(Cleanup cleanup) {
+    try {
+        cleanup(nullptr);
+        Require(false, "null metadata record accepted");
+    } catch (const std::invalid_argument&) {}
+    Jxr::MetadataVariant value{};
+    value.type = 1;
+    try {
+        cleanup(&value);
+        Require(false, "unsupported metadata tag accepted");
+    } catch (const std::invalid_argument&) {}
+    errno = 71;
+    try {
+        cleanup(reinterpret_cast<Jxr::MetadataVariant*>(std::uintptr_t{0x10}));
+        Require(false, "unreadable metadata record accepted");
+    } catch (const std::invalid_argument&) {
+        Require(errno == 71, "errno preserved on unreadable metadata record");
+    }
+    static char readOnlyDummy[8] = {'a'};
+    static const Jxr::MetadataVariant readOnly{.type = 30, .value = {.text = readOnlyDummy}};
+    const unsigned count = frees;
+    errno = 71;
+    try {
+        cleanup(const_cast<Jxr::MetadataVariant*>(&readOnly));
+        Require(false, "read-only metadata record accepted");
+    } catch (const std::invalid_argument&) {
+        Require(errno == 71 && frees == count && readOnly.value.text == readOnlyDummy,
+                "read-only metadata rejected before freeing or mutating");
+    }
+}
+
 void Retagged(Cleanup cleanup) {
     Jxr::MetadataVariant value{};
     value.type = 30;
@@ -125,17 +160,18 @@ void Retagged(Cleanup cleanup) {
 
 int main(int argc, char** argv) {
     Require(argc == 4, "expected libc path, JXR path and export name");
-    void* heap = Open(argv[1]);
+    void* heap = Open(ArgumentPath(argv, 1));
     const std::array<void*, 10> callbacks{
         reinterpret_cast<void*>(&Allocate_nid_no_patch), reinterpret_cast<void*>(&Free_nid_no_patch), reinterpret_cast<void*>(&Calloc_nid_no_patch),
         reinterpret_cast<void*>(&Reallocate_nid_no_patch), reinterpret_cast<void*>(&Align_nid_no_patch), reinterpret_cast<void*>(&Realign_nid_no_patch),
         reinterpret_cast<void*>(&PosixAlign_nid_no_patch), nullptr, nullptr, nullptr};
     Symbol<decltype(&ApplicationHeapRegister_nid_no_patch)>(heap, "ApplicationHeapRegister_nid_no_patch")(callbacks.data());
-    void* library = Open(argv[2]);
+    void* library = Open(ArgumentPath(argv, 2));
     const auto cleanup = Symbol<Cleanup>(library, argv[3]);
     try {
         Strings(cleanup);
         Scalars(cleanup);
+        Invalid(cleanup);
         Retagged(cleanup);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

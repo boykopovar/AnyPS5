@@ -8,17 +8,13 @@ namespace {
 
 template <typename T>
 void CopyGuestInPreservingErrno(const void* guestAddress, T& hostValue, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&hostValue, guestAddress, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
 template <typename T>
 void CopyGuestOutPreservingErrno(void* guestAddress, const T& hostValue, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(guestAddress, &hostValue, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
@@ -50,13 +46,14 @@ extern "C" {
 int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(const void* cipher, std::int32_t* algorithmBits) {
     if (!cipher) return 0;
     const auto* bytes = static_cast<const std::byte*>(cipher);
+    std::int32_t strength = 0;
+    CopyGuestInPreservingErrno(bytes + offsetof(Cipher, strengthBits), strength, __func__);
     if (algorithmBits) {
         std::int32_t bits = 0;
         CopyGuestInPreservingErrno(bytes + offsetof(Cipher, algorithmBits), bits, __func__);
         CopyGuestOutPreservingErrno(algorithmBits, bits, __func__);
+        CopyGuestInPreservingErrno(bytes + offsetof(Cipher, strengthBits), strength, __func__);
     }
-    std::int32_t strength = 0;
-    CopyGuestInPreservingErrno(bytes + offsetof(Cipher, strengthBits), strength, __func__);
     return strength;
 }
 

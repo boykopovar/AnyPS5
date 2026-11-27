@@ -370,47 +370,95 @@ private:
         }
     }
 
+    static bool isUtf8Continuation(char ch) {
+        return (static_cast<unsigned char>(ch) & 0xC0) == 0x80;
+    }
+
+    static std::size_t utf8LeadLength(char lead) {
+        const auto u = static_cast<unsigned char>(lead);
+        if (u >= 0xC2 && u <= 0xDF) return 2;
+        if ((u & 0xF0) == 0xE0) return 3;
+        if ((u & 0xF8) == 0xF0) return 4;
+        return 0;
+    }
+
+    static bool brokenUtf8Prefix(const char* s, std::size_t n) {
+        if (n == 0) return false;
+        const std::size_t length = utf8LeadLength(s[0]);
+        for (std::size_t i = 1; i < n && i < length; ++i) {
+            if (!isUtf8Continuation(s[i])) return true;
+        }
+        return false;
+    }
+
+    void dropPending(std::size_t count) {
+        const std::size_t rest = static_cast<std::size_t>(c->pendingLength) - count;
+        std::memmove(c->pending.bytes, c->pending.bytes + count, rest);
+        c->pendingLength = rest;
+        c->pendingNeed = 0;
+    }
+
     DecodedChar readChar(const char* data, std::size_t remaining) {
         DecodedChar out{};
-        if (c->pendingNeed != 0) {
-            const std::size_t take = c->pendingNeed < remaining ? static_cast<std::size_t>(c->pendingNeed) : remaining;
-            std::memcpy(c->pending.bytes + c->pendingLength, data, take);
-            c->pendingLength += take;
-            c->pendingNeed -= take;
-            out.consumed = take;
-            if (c->pendingNeed != 0) return out;
-            const int result = sceNpUtilJsonGetOneChar(out.bytes, JSON_CHAR_SIZE, c->pending.bytes,
-                static_cast<std::size_t>(c->pendingLength), &out.length, &out.raw);
+        if (c->pendingNeed == 0 && c->pendingLength == 0) {
+            const std::size_t window = remaining < JSON_CHAR_WINDOW ? remaining : JSON_CHAR_WINDOW;
+            if (brokenUtf8Prefix(data, window)) {
+                out.complete = true;
+                out.bytes[0] = data[0];
+                out.length = out.raw = out.consumed = 1;
+                return out;
+            }
+            out.consumed = window;
+            const int result = sceNpUtilJsonGetOneChar(out.bytes, JSON_CHAR_SIZE, data, window, &out.length, &out.raw);
             if (result == NP_UTIL_ERROR_BUFFER_TOO_SMALL) {
-                c->pendingNeed = out.raw - c->pendingLength;
+                std::memcpy(c->pending.bytes, data, window);
+                c->pendingLength = window;
+                c->pendingNeed = out.raw - window;
                 return out;
             }
             out.complete = true;
             if (result < 0) {
-                out.bytes[0] = c->pending.bytes[0];
+                out.bytes[0] = data[0];
                 out.length = out.raw = out.consumed = 1;
                 return out;
             }
-            c->pendingNeed = 0;
-            c->pendingLength = 0;
+            out.consumed = out.raw;
             return out;
         }
-        const std::size_t window = remaining < JSON_CHAR_WINDOW ? remaining : JSON_CHAR_WINDOW;
-        out.consumed = window;
-        const int result = sceNpUtilJsonGetOneChar(out.bytes, JSON_CHAR_SIZE, data, window, &out.length, &out.raw);
+        if (c->pendingNeed != 0) {
+            const std::size_t want = c->pendingNeed < remaining ? static_cast<std::size_t>(c->pendingNeed) : remaining;
+            const bool utf8 = utf8LeadLength(c->pending.bytes[0]) != 0;
+            std::size_t fed = 0;
+            while (fed < want && (!utf8 || isUtf8Continuation(data[fed]))) ++fed;
+            std::memcpy(c->pending.bytes + c->pendingLength, data, fed);
+            c->pendingLength += fed;
+            c->pendingNeed -= fed;
+            out.consumed = fed;
+            if (c->pendingNeed != 0) {
+                if (fed == remaining) return out;
+                out.complete = true;
+                out.bytes[0] = c->pending.bytes[0];
+                out.length = out.raw = 1;
+                dropPending(1);
+                return out;
+            }
+        }
+        const int result = sceNpUtilJsonGetOneChar(out.bytes, JSON_CHAR_SIZE, c->pending.bytes,
+            static_cast<std::size_t>(c->pendingLength), &out.length, &out.raw);
         if (result == NP_UTIL_ERROR_BUFFER_TOO_SMALL) {
-            std::memcpy(c->pending.bytes, data, window);
-            c->pendingLength = window;
-            c->pendingNeed = out.raw - window;
+            if (out.raw > c->pendingLength) {
+                c->pendingNeed = out.raw - c->pendingLength;
+            } else {
+                c->pendingLength = 0;
+            }
             return out;
         }
         out.complete = true;
         if (result < 0) {
-            out.bytes[0] = data[0];
-            out.length = out.raw = out.consumed = 1;
-            return out;
+            out.bytes[0] = c->pending.bytes[0];
+            out.length = out.raw = 1;
         }
-        out.consumed = out.raw;
+        dropPending(out.raw);
         return out;
     }
 
@@ -595,6 +643,8 @@ private:
                 const DecodedChar decoded = readChar(data + position, total - position);
                 if (decoded.complete && (c->length + decoded.length >= keySize() || decoded.IsQuote())) {
                     key()[c->length] = '\0';
+                    c->pendingLength = 0;
+                    c->pendingNeed = 0;
                     state = STATE_COLON;
                     break;
                 }

@@ -1,0 +1,5 @@
+# shader
+
+## change [64-bit image atomics]
+
+- [64-bit image atomics](../../../core/shader/recompiler/Translation/src/MemoryInstructions/ImageInstructions.cpp) (`image_atomic_*` with a two-dword data mask) without `VK_EXT_shader_image_atomic_int64` (MoltenVK, Intel's Windows driver) are [emulated](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) through a `Coherent` R32G32_UINT view declared `Rg32ui` under one of 2^20 device-wide lock words hashed from the texel coordinates. MoltenVK needs MSL 3.2 (macOS 15), which lowers device barriers to fences. A swap's write depends on its read: on an Apple M3 Max an independent texture write landed before the preceding read of the same texel. 2,048 contended add and umax on one texel were exact there and on an Intel UHD (`8086:a7a8`, 101.7084); throughput was not measured. Another shader running at the same time does not take the lock. Any other access in the same shader to the image, 64-bit `image_atomic_inc` and `image_atomic_dec`, and the float atomics throw.

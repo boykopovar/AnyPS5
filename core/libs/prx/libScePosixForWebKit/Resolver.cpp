@@ -50,7 +50,6 @@ bool CopyResolverString(const char* source, std::string& destination) {
 
 template<typename TValue>
 void WriteResolverValue(TValue* destination, TValue value) {
-    const SavedErrno savedErrno;
     if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) APS5_INVALID_ARG_EX;
 }
 
@@ -187,7 +186,7 @@ int GuestError(int error) {
     if (error == EAI_BADFLAGS) return 3;
     if (error == EAI_FAMILY) return 5;
     if (error == EAI_MEMORY) return 6;
-    if (error == EAI_NONAME) return 8;
+    if (error == EAI_NONAME || error == EAI_NODATA) return 8;
     if (error == EAI_SERVICE) return 9;
     if (error == EAI_SOCKTYPE) return 10;
 #ifdef _WIN32
@@ -198,6 +197,7 @@ int GuestError(int error) {
         return 11;
     }
     if (error == EAI_OVERFLOW) return 14;
+    if (error == EAI_ADDRFAMILY) return 8;
 #endif
     return 4;
 }
@@ -375,12 +375,14 @@ GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* gue
 }
 
 void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo* first) {
+    const SavedErrno savedErrno;
     while (first) {
-        auto* next = first->next;
-        std::free(first->canonicalName);
-        std::free(first->address);
+        GuestResolver::AddressInfo entry{};
+        if (!GuestCopyIn_nid_no_patch(&entry, first, sizeof(entry))) break;
+        std::free(entry.canonicalName);
+        std::free(entry.address);
         std::free(first);
-        first = next;
+        first = entry.next;
     }
 }
 

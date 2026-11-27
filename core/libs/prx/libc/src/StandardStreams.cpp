@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -35,9 +36,10 @@ std::intptr_t StandardHandle(int descriptor) {
 
 extern "C" void PrepareStandardStreams_nid_no_patch() {
     static const bool ready = [] {
+        const int savedErrno = errno;
         for (int descriptor = 0; descriptor <= 2; ++descriptor) {
             const std::intptr_t handle = StandardHandle(descriptor);
-            if (handle != -1 && handle != NoStreamHandle) continue;
+            if (handle != -1 && handle != NoStreamHandle && handle != 0) continue;
             auto* const stream = __acrt_iob_func(descriptor);
             const int existing = ::_fileno(stream);
             if (existing >= 0) {
@@ -60,6 +62,7 @@ extern "C" void PrepareStandardStreams_nid_no_patch() {
             if (::_wfreopen(L"NUL", descriptor == 0 ? L"rb" : L"wb", stream) != stream || ::_fileno(stream) != descriptor)
                 throw std::runtime_error("cannot attach a standard stream to its NUL descriptor");
         }
+        errno = savedErrno;
         return true;
     }();
     static_cast<void>(ready);
@@ -68,6 +71,7 @@ extern "C" void PrepareStandardStreams_nid_no_patch() {
 namespace {
 #else
 const bool standardDescriptorsOpen = [] {
+    const int savedErrno = errno;
     for (int descriptor = 0; descriptor <= 2; ++descriptor) {
         if (::fcntl(descriptor, F_GETFD) != -1 || errno != EBADF) continue;
         const int opened = ::open("/dev/null", descriptor == 0 ? O_RDONLY : O_WRONLY);
@@ -76,6 +80,7 @@ const bool standardDescriptorsOpen = [] {
             ::close(opened);
         }
     }
+    errno = savedErrno;
     return true;
 }();
 #endif
@@ -155,18 +160,46 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (value == -1) return -1;
-    if (value < 0 || value > 255) {
+    if (value < 0 || value > 0xffff) {
         errno = 86;
         stream->SetError();
         return -1;
     }
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     if (!stream->OpenForReading()) return -1;
-    if (!stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
+    errno = previousError;
+    const char16_t low = value >= 0xd800 && value < 0xdc00 ? stream->TakeLowSurrogate() : 0;
+    const std::uint32_t code = low != 0 ? 0x10000 + ((static_cast<std::uint32_t>(value) & 0x3ff) << 10) + (low & 0x3ffu) : static_cast<std::uint32_t>(value);
+    unsigned char bytes[4];
+    std::size_t count = 0;
+    if (code < 0x80) {
+        bytes[count++] = static_cast<unsigned char>(code);
+    } else if (code < 0x800) {
+        bytes[count++] = static_cast<unsigned char>(0xc0 | (code >> 6));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    } else if (code < 0x10000) {
+        bytes[count++] = static_cast<unsigned char>(0xe0 | (code >> 12));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    } else {
+        bytes[count++] = static_cast<unsigned char>(0xf0 | (code >> 18));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 12) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+        bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+    }
+    const std::size_t total = count;
+    int result = 0;
+    while (count != 0 && result != -1) result = stream->PushBack(bytes[--count]);
     stream->SyncStatus();
-    if (result != -1) stream->NotePushback();
-    return result;
+    if (result == -1) {
+        if (low != 0 && count + 1 == total) stream->SetLowSurrogate(low);
+        return -1;
+    }
+    stream->NotePushback();
+    return value;
 }
 int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
 int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
@@ -215,6 +248,85 @@ char* APS5_VABI gets_nid_postfix(char* buffer) {
         *cursor++ = static_cast<char>(value);
     }
 }
+std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int delimiter, FileStream* stream) {
+    if (lineptr == nullptr || n == nullptr || stream == nullptr) { errno = 22; return -1; }
+    char* buffer = nullptr;
+    std::size_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&buffer, lineptr, sizeof(buffer)) || !GuestCopyIn_nid_no_patch(&capacity, n, sizeof(capacity))) { errno = 14; return -1; }
+    if (capacity == 0) buffer = nullptr;
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    flockfile_nid_postfix(stream);
+
+    struct Unlock {
+        FileStream* stream;
+        ~Unlock() { funlockfile_nid_postfix(stream); }
+    } unlock{stream};
+    const bool failedBefore = ferror_nid_postfix(stream) != 0;
+    const auto stop = static_cast<unsigned char>(delimiter);
+    std::string line;
+    try {
+        for (;;) {
+            const int value = fgetc_nid_postfix(stream);
+            if (value == EOF) break;
+            line.push_back(static_cast<char>(value));
+            if (static_cast<unsigned char>(value) == stop) break;
+        }
+    } catch (const std::bad_alloc&) {
+        errno = 12;
+        return -1;
+    }
+    if (ferror_nid_postfix(stream) != 0 && !failedBefore) return -1;
+    if (line.empty()) {
+        if (buffer == nullptr) {
+            auto* created = static_cast<char*>(realloc_nid_postfix(nullptr, 1));
+            if (created == nullptr) { errno = 12; return -1; }
+            const std::size_t one = 1;
+            if (!GuestCopyOut_nid_no_patch(n, &one, sizeof(one))) {
+                free_nid_postfix(created);
+                errno = 14;
+                return -1;
+            }
+            if (!GuestCopyOut_nid_no_patch(lineptr, &created, sizeof(created))) {
+                GuestCopyOut_nid_no_patch(n, &capacity, sizeof(capacity));
+                free_nid_postfix(created);
+                errno = 14;
+                return -1;
+            }
+            buffer = created;
+        }
+        if (!GuestCopyOut_nid_no_patch(buffer, "", 1)) { errno = 14; return -1; }
+        return -1;
+    }
+
+    const std::size_t needed = line.size() + 1;
+    if (buffer != nullptr && capacity >= needed) {
+        if (!GuestCopyOut_nid_no_patch(buffer, line.c_str(), needed)) { errno = 14; return -1; }
+        return static_cast<std::int64_t>(line.size());
+    }
+    auto* grown = static_cast<char*>(realloc_nid_postfix(nullptr, needed));
+    if (grown == nullptr) { errno = 12; return -1; }
+    if (!GuestCopyOut_nid_no_patch(grown, line.c_str(), needed)) {
+        free_nid_postfix(grown);
+        errno = 14;
+        return -1;
+    }
+    if (!GuestCopyOut_nid_no_patch(n, &needed, sizeof(needed))) {
+        free_nid_postfix(grown);
+        errno = 14;
+        return -1;
+    }
+    if (!GuestCopyOut_nid_no_patch(lineptr, &grown, sizeof(grown))) {
+        GuestCopyOut_nid_no_patch(n, &capacity, sizeof(capacity));
+        free_nid_postfix(grown);
+        errno = 14;
+        return -1;
+    }
+    if (buffer != nullptr) free_nid_postfix(buffer);
+    return static_cast<std::int64_t>(line.size());
+}
+std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, std::size_t* n, FileStream* stream) {
+    return getdelim_nid_postfix(lineptr, n, '\n', stream);
+}
 std::int32_t APS5_VABI getwc_nid_postfix(FileStream* stream) { return fgetwc_nid_postfix(stream); }
 std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
@@ -227,6 +339,7 @@ int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     errno = 0;
     const int result = std::fputc(value, native);
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
@@ -244,6 +357,7 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     const int result = putc_unlocked(value, native);
 #endif
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncUnlockedStatus();
     stream->Orientation(-1);
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
@@ -255,11 +369,18 @@ int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     stream->Orientation(-1);
-    if (value != EOF && !stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    if (value != EOF) {
+        const int previousError = errno;
+        errno = 0;
+        if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
+        errno = previousError;
+    }
+    const bool wasLive = stream->PushbackLive();
+    const int result = stream->PushBack(value);
     stream->SyncStatus();
+    if (result != EOF && stream->IsRegularFile()) stream->NotePushedBackByte(static_cast<char>(result), wasLive);
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
@@ -323,6 +444,7 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (mode < 0 || mode > 2) return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
+    if (native != _IONBF && (size & 0x80000000u) != 0) return -1;
     if (native != _IONBF && size == 0) {
         buffer = nullptr;
         size = BUFSIZ;
@@ -332,6 +454,10 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
     buffer = nullptr;
+    if (native != _IONBF) {
+        if (size > 0x7FFFFFFFu) throw std::length_error("setvbuf: buffer size above the host C library's limit");
+        if (size < 2) size = 2;
+    }
     ::_lock_file(handle);
     const int result = std::setvbuf(handle, buffer, native, size);
     if (result == 0 && native == _IONBF) reinterpret_cast<UcrtStreamState*>(handle)->bufferSize = 1;

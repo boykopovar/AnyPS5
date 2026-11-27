@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -398,6 +399,53 @@ void Http2FlushCookies(int cookieBoxId) {
     if (box != g_cookieBoxes.end()) box->second.cookies.clear();
 }
 
+namespace {
+
+bool ReadCookieTextLoop(const char* cookie, std::size_t length, std::string& host) {
+    constexpr std::size_t Page = 4096;
+    host.clear();
+    for (std::size_t done = 0; done < length;) {
+        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(cookie) + done;
+        const std::size_t step = std::min(Page - (addr & (Page - 1)), length - done);
+        host.resize(done + step);
+        if (Http2Guest::CopyIn(host.data() + done, cookie + done, step)) {
+            if (const void* nul = std::memchr(host.data() + done, '\0', step)) {
+                host.resize(static_cast<const char*>(nul) - host.data());
+                return true;
+            }
+            done += step;
+            continue;
+        }
+        if (step == 1) {
+            host.clear();
+            return false;
+        }
+        for (std::size_t i = 0; i < step; ++i) {
+            char ch = '\0';
+            if (!Http2Guest::CopyIn(&ch, cookie + done + i, 1)) {
+                host.clear();
+                return false;
+            }
+            if (ch == '\0') {
+                host.resize(done + i);
+                return true;
+            }
+            host[done + i] = ch;
+        }
+        done += step;
+    }
+    return true;
+}
+
+bool ReadCookieText(const char* cookie, std::size_t length, std::string& host) {
+    const int savedErrno = errno;
+    const bool ok = ReadCookieTextLoop(cookie, length, host);
+    errno = savedErrno;
+    return ok;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* cookie, std::size_t cookieLength) {
@@ -409,8 +457,8 @@ int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* co
     if (!CopyUrl(url, urlText)) return ERROR_INVALID_VALUE;
     Url parsed{};
     if (const int result = ParseUrl(urlText, parsed); result != 0) return result;
-    std::string cookieText(cookieLength, '\0');
-    if (!Http2Guest::CopyIn(cookieText.data(), cookie, cookieLength)) return ERROR_INVALID_VALUE;
+    std::string cookieText;
+    if (!ReadCookieText(cookie, cookieLength, cookieText)) return ERROR_INVALID_VALUE;
     return StoreCookie(*box, parsed, cookieText, Now());
 }
 

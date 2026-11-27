@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -50,6 +51,12 @@ constexpr std::array<std::uint8_t, 81> LargeGzip{
     0x00};
 
 constexpr std::array<std::uint8_t, 8> Plain{'n', 'o', 't', ' ', 'g', 'z', 'i', 'p'};
+
+constexpr std::array<std::uint8_t, 5> Stored{0x41, 0x00, 0xff, 0xff, 0x00};
+
+constexpr std::array<std::uint8_t, 21> StoredThenInvalid{
+    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x05, 0x00, 0xfa, 0xff, 0x41,
+    0x00, 0xff, 0xff, 0x00, 0x07};
 
 struct Counter {
     int allocations = 0;
@@ -166,6 +173,84 @@ void CheckDecodes(const auto& input) {
     Require(Uncompress(counter, input, output.data(), length) == 0);
     Require(length == TextLength && std::memcmp(output.data(), Text, TextLength) == 0);
     Require(counter.allocations > 0 && counter.allocations == counter.frees);
+}
+
+using Output = std::array<std::uint8_t, 64>;
+
+bool Holds(const Output& output, const void* bytes, std::size_t count) {
+    return std::memcmp(output.data(), bytes, count) == 0 &&
+        std::all_of(output.begin() + static_cast<std::ptrdiff_t>(count), output.end(), [](std::uint8_t byte) { return byte == 0x5a; });
+}
+
+void CheckUncompressOutput() {
+    Counter counter;
+    FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
+    Output untouched{};
+    untouched.fill(0x5a);
+
+    Output output = untouched;
+    std::uint64_t length = output.size();
+    Require(FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), &length, nullptr, Gzip.size()) == 0);
+    Require(length == output.size() && output == untouched);
+    Require(counter.allocations > 0 && counter.allocations == counter.frees);
+    Require(FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), &length, nullptr, 0) == ArrayTooLarge);
+    Require(length == output.size() && output == untouched && counter.allocations == counter.frees);
+    Counter initFails;
+    initFails.limit = 0;
+    FreeType::GuestMemoryRec failing{&initFails, GuestAlloc, GuestFree, GuestRealloc};
+    Require(FT_Gzip_Uncompress_nid_postfix(&failing, output.data(), &length, nullptr, Gzip.size()) == InvalidArgument);
+    Require(length == output.size() && output == untouched && initFails.frees == 0);
+
+    length = TextLength;
+    Require(Uncompress(counter, Gzip, output.data(), length) == 0);
+    Require(length == TextLength && Holds(output, Text, TextLength));
+
+    output = untouched;
+    length = TextLength - 1;
+    Require(Uncompress(counter, Gzip, output.data(), length) == ArrayTooLarge);
+    Require(length == TextLength - 1 && Holds(output, Text, TextLength - 1));
+    Require(counter.allocations == counter.frees);
+
+    output = untouched;
+    length = 0;
+    Require(Uncompress(counter, Gzip, output.data(), length) == ArrayTooLarge);
+    Require(length == 0 && output == untouched && counter.allocations == counter.frees);
+
+    std::array<std::uint8_t, 30> truncated{};
+    std::copy_n(Gzip.begin(), truncated.size(), truncated.begin());
+    length = output.size();
+    Require(Uncompress(counter, truncated, output.data(), length) == ArrayTooLarge);
+    Require(length == output.size() && Holds(output, Text, 21));
+    Require(counter.allocations == counter.frees);
+
+    auto badCheck = Gzip;
+    badCheck[40] ^= 0xff;
+    output = untouched;
+    length = output.size();
+    Require(Uncompress(counter, badCheck, output.data(), length) == InvalidTable);
+    Require(length == output.size() && Holds(output, Text, TextLength));
+    Require(counter.allocations == counter.frees);
+
+    output = untouched;
+    length = output.size();
+    Require(Uncompress(counter, StoredThenInvalid, output.data(), length) == InvalidTable);
+    Require(length == output.size() && Holds(output, Stored.data(), Stored.size()));
+    Require(counter.allocations == counter.frees);
+
+    Counter windowFails;
+    windowFails.limit = 1;
+    output = untouched;
+    length = TextLength - 1;
+    Require(Uncompress(windowFails, Gzip, output.data(), length) == OutOfMemory);
+    Require(length == TextLength - 1 && Holds(output, Text, TextLength - 1));
+    Require(windowFails.allocations == 1 && windowFails.frees == 1);
+
+    auto corrupt = Gzip;
+    corrupt[10] = 0xff;
+    output = untouched;
+    length = output.size();
+    Require(Uncompress(counter, corrupt, output.data(), length) == InvalidTable);
+    Require(length == output.size() && output == untouched && counter.allocations == counter.frees);
 }
 
 std::uint64_t APS5_VABI ReadSource(LegacyFreeType::GuestStreamRec* stream, std::uint64_t offset, unsigned char* buffer, std::uint64_t count) {
@@ -399,6 +484,16 @@ void CheckStreams() {
     Require(counter.allocations == counter.frees);
     Require(FT_Stream_OpenGzip_nid_postfix(nullptr, &source) == FT_Err_Invalid_Stream_Handle);
     Require(FT_Stream_OpenGzip_nid_postfix(&output, nullptr) == FT_Err_Invalid_Stream_Handle);
+    Require(FT_Stream_OpenGzip_nid_postfix(nullptr, nullptr) == FT_Err_Invalid_Stream_Handle);
+    errno = 71;
+    Require(FT_Stream_OpenGzip_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), &source) == FT_Err_Invalid_Stream_Handle);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == FT_Err_Invalid_Stream_Handle);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenGzip_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == FT_Err_Invalid_Stream_Handle);
+    Require(errno == 71);
 }
 
 }
@@ -413,6 +508,7 @@ int main() {
     CheckFailedAllocation();
     CheckSourceReads();
     CheckOverlappingRecords();
+    CheckUncompressOutput();
 
     Counter counter;
     FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
