@@ -118,15 +118,15 @@ void CheckInsertAtCaret() {
 void CheckSingleLineAndMultiline() {
     {
         Session session(u"", 32);
-        Paste("a\r\nb\nc\rd");
+        Paste("a\r\nb\nc\rd\fe\vf");
         Drain();
-        Require(session.Text() == u"abcd", "a single-line session drops line breaks");
+        Require(session.Text() == u"abcdef", "a single-line session drops form feeds and vertical tabs");
     }
     {
         Session session(u"", 32, 0x00000001);
-        Paste("a\r\nb\nc\rd");
+        Paste("a\r\nb\nc\rd\fe\vf");
         Drain();
-        Require(session.Text() == u"a\nb\nc\nd", "a multi-line session keeps line breaks as LF");
+        Require(session.Text() == u"a\nb\nc\nd\ne\nf", "multiline paste preserves form feeds and vertical tabs as line breaks");
     }
 }
 

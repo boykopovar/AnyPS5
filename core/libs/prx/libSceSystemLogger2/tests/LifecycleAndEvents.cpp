@@ -1,5 +1,6 @@
 #include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -7,6 +8,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -30,6 +38,49 @@ void Require(bool value, std::source_location location = std::source_location::c
     std::abort();
 }
 
+unsigned char* MapGuardedPage(std::size_t& pageSize) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* pages = static_cast<unsigned char*>(
+        VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previousProtection;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &previousProtection) != 0);
+#else
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 0);
+    pageSize = static_cast<std::size_t>(page);
+    auto* pages = static_cast<unsigned char*>(
+        mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    return pages + pageSize;
+}
+
+void UnmapGuardedPage(unsigned char* boundary, std::size_t pageSize) {
+    auto* const pages = boundary - pageSize;
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
+}
+
+void CheckTimestampAcrossGuardPage() {
+    std::size_t pageSize = 0;
+    auto* const boundary = MapGuardedPage(pageSize);
+    auto* const output = boundary - 40;
+    std::fill(output, boundary, 0xa5);
+    errno = EDOM;
+    Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(output)) == kInvalidArgument);
+    Require(errno == EDOM);
+    Require(std::all_of(output, boundary, [](unsigned char byte) { return byte == 0xa5; }));
+    UnmapGuardedPage(boundary, pageSize);
+}
+
 void StoreU32(std::uint8_t* record, std::size_t offset, std::uint32_t value) {
     std::memcpy(record + offset, &value, sizeof(value));
 }
@@ -45,6 +96,28 @@ void SetClockSource(std::uint8_t* record, const char* source) {
 void FillName(char* name, std::size_t length) {
     std::memset(name, 'a', length);
     name[length] = '\0';
+}
+
+void CheckEventAcrossGuardPage() {
+    std::size_t pageSize = 0;
+    auto* const boundary = MapGuardedPage(pageSize);
+    auto* const record = boundary - (kEntryOffset + 4);
+    std::fill(record, boundary, 0);
+    SetClockSource(record, "NONE");
+    std::memset(record + kEntryOffset, 'a', 3);
+    std::uint32_t eventStatus = 0xDEADBEEF;
+    Require(sceSystemLogger2SetEventAsync(record) == kNotAvailable);
+    Require(sceSystemLogger2SetEventAsyncInternal(record, &eventStatus) == kNotAvailable);
+    Require(eventStatus == 0);
+
+    record[kEntryOffset + 3] = 'a';
+    eventStatus = 0xDEADBEEF;
+    errno = EDOM;
+    Require(sceSystemLogger2SetEventAsync(record) == kInvalidArgument);
+    Require(sceSystemLogger2SetEventAsyncInternal(record, &eventStatus) == kInvalidArgument);
+    Require(eventStatus == 0xDEADBEEF);
+    Require(errno == EDOM);
+    UnmapGuardedPage(boundary, pageSize);
 }
 
 }
@@ -79,6 +152,8 @@ int main() {
     Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(0x10)) == kInvalidArgument);
     Require(errno == 71);
 
+    CheckTimestampAcrossGuardPage();
+    CheckEventAcrossGuardPage();
     Require(sceSystemLogger2IsAvailableMonitor() == kNotAvailable);
 
     char statusName[0x26] = {};

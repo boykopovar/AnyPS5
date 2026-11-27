@@ -2,11 +2,28 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -19,6 +36,57 @@ void Require(bool condition, const char* message, std::source_location location 
     std::fprintf(stderr, "OCSP_CERTID_free check failed at line %u: %s\n", location.line(), message);
     std::abort();
 }
+
+template<typename TAction>
+void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, "expected std::invalid_argument", location);
+}
+
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial, std::size_t size) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr, "VirtualAlloc");
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0, "VirtualProtect");
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED, "mmap");
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0, "mprotect");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     void* pointer = std::calloc(1, size);
@@ -119,6 +187,28 @@ void Check(unsigned mask, int parameterKind, bool dynamic) {
     Require(released == expected, "reverse SEQUENCE field release order");
 }
 
+void CheckUnreadable() {
+    expected.clear();
+    released.clear();
+    auto* const unmapped = reinterpret_cast<OCSP_CERTID*>(std::uintptr_t{1});
+    errno = EDOM;
+    RequireInvalidArgument([&] { OCSP_CERTID_free_nid_postfix(unmapped); });
+    Require(errno == EDOM, "errno preserved on unreadable cert id");
+    Require(allocations.empty() && released.empty(), "no allocations touched on unreadable cert id");
+
+    Asn1String* serial = String(2);
+    OCSP_CERTID prototype{};
+    prototype.hashAlgorithm = reinterpret_cast<LibreSsl3X509Algor*>(std::uintptr_t{1});
+    prototype.serialNumber = serial;
+    const ReadOnlyPage page(&prototype, sizeof(prototype));
+    errno = EDOM;
+    RequireInvalidArgument([&] { OCSP_CERTID_free_nid_postfix(page.As<OCSP_CERTID>()); });
+    Require(errno == EDOM, "errno preserved on unreadable hash algorithm");
+    Require(released.empty() && allocations.size() == 2, "fields not freed when hash algorithm is unreadable");
+    ASN1_INTEGER_free_nid_postfix(serial);
+    Require(allocations.empty(), "cleanup serial");
+}
+
 } // namespace
 
 int main() {
@@ -130,8 +220,9 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     OCSP_CERTID_free_nid_postfix(nullptr);
     Require(allocations.empty() && released.empty(), "null is a no-op");
+    CheckUnreadable();
     for (unsigned mask = 0; mask < 16; ++mask)
         for (int parameter = 0; parameter < 4; ++parameter)
             for (bool dynamic : {false, true}) Check(mask, parameter, dynamic);
-    std::puts("OCSP_CERTID_free: 128 ownership cases and null passed");
+    std::puts("OCSP_CERTID_free: 128 ownership cases, unreadable, and null passed");
 }

@@ -592,6 +592,35 @@ void CheckGapWalkBranchTargets() {
     Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
 }
 
+void CheckRelativeJumpTablesAtHighBases() {
+    constexpr std::size_t tableOffset = 16;
+    Bytes text(32, 0x90);
+    text[0] = 0x48;
+    text[1] = 0x8d;
+    text[2] = 0x05;
+    const auto displacement = static_cast<std::int32_t>(tableOffset - 7);
+    std::memcpy(text.data() + 3, &displacement, sizeof(displacement));
+    text[7] = 0xff;
+    text[8] = 0xe0;
+    const std::int32_t targets[]{-16, -9};
+    std::memcpy(text.data() + tableOffset, targets, sizeof(targets));
+    for (const VirtualAddress base : {VirtualAddress{0x7ffffffffffffff0}, VirtualAddress{0x8000000000000000}, VirtualAddress{0xffffffffffffff00}}) {
+        const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{base, base + 9}, {base + text.size(), base + text.size() + 8}};
+        const auto tables = Relinker::FindRelativeJumpTables(text, base, functions);
+        Require(tables.size() == 1, "A relative jump table was missed in a segment at a high base address");
+        Require(tables[0].Function == base && tables[0].Begin == base + tableOffset && tables[0].End == base + text.size(), "A relative jump table range changed in a segment at a high base address");
+    }
+
+    Bytes backwardJump(32, 0x90);
+    backwardJump[0] = 0xeb;
+    backwardJump[1] = 0xf0;
+    for (const VirtualAddress base : {VirtualAddress{0x8000000000000000}, VirtualAddress{0xffffffffffffff00}}) {
+        const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{base, base + backwardJump.size()}};
+        Require(Relinker::FindRelativeJumpTables(backwardJump, base, functions).empty(), "A backward branch from a segment at a high base address produced a table");
+        Require(Relinker::FindRelativeJumpTables(backwardJump, base, {}).empty(), "A backward branch from an unmapped-function segment at a high base address produced a table");
+    }
+}
+
 void CheckEmbeddedDataTables() {
     constexpr std::size_t tableOffset = 24;
     Bytes text(48, 0x90);
@@ -923,6 +952,7 @@ int main() {
         CheckAddressOverflow();
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
+        CheckRelativeJumpTablesAtHighBases();
         CheckEmbeddedDataTables();
         CheckSyscallsBeforeLaterPadding();
         CheckDecodedPaddingSuffix();

@@ -625,6 +625,11 @@ int main() {
     Require(sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult) > 0);
     moduleResult = -1;
     Require(sceSysmoduleLoadModuleByNameInternal("libSceNoSuchModule", 0, nullptr, 0, &moduleResult) < 0);
+    int invalidResult = 0x5a5a5a5a;
+    int kernelResult = 0x5a5a5a5a;
+    Require(sceSysmoduleUnloadModuleByNameInternal(0x7fffffff, 0, nullptr, 0, &invalidResult) == sceKernelStopUnloadModule(0x7fffffff, 0, nullptr, 0, nullptr, &kernelResult));
+    Require(invalidResult == kernelResult);
+    Require(sceSysmoduleIsCameraPreloaded() == 0);
     Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
 
     int libcHandle = 0x5a5a5a5a;
