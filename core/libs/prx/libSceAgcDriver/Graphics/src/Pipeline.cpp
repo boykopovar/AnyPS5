@@ -335,6 +335,9 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
             case ShaderRecompiler::DescriptorRole::GuestImages:
                 if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && any(binding.imageWritten, binding.count)) return true;
                 break;
+            case ShaderRecompiler::DescriptorRole::ImageStorageTable:
+                if (any(binding.imageWritten, binding.count)) return true;
+                break;
             case ShaderRecompiler::DescriptorRole::Gds:
                 return true;
             case ShaderRecompiler::DescriptorRole::BdaPagetable:
@@ -344,6 +347,9 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
             case ShaderRecompiler::DescriptorRole::FaultBuffer:
             case ShaderRecompiler::DescriptorRole::FlattenedSrt:
             case ShaderRecompiler::DescriptorRole::ShaderData:
+            case ShaderRecompiler::DescriptorRole::ImageTable:
+            case ShaderRecompiler::DescriptorRole::SamplerTable:
+            case ShaderRecompiler::DescriptorRole::ImageTableMap:
                 break;
             }
         }
