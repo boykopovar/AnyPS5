@@ -25,6 +25,7 @@ public:
     BdaResources(const BdaResources&) = delete;
     BdaResources& operator=(const BdaResources&) = delete;
     VkDescriptorBufferInfo Table() const;
+    std::shared_ptr<Buffer> Retable(const Context& context, const GuestBufferMemory& memory);
     std::span<const std::byte> TableBytes() const;
     bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
@@ -83,6 +84,7 @@ private:
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
+    void takeTable(const Context& context, const GuestBufferMemory& memory);
     void checkFault(const BdaResources& record) const;
     void markWrittenPages(const BdaResources& record) const;
     void collectStorePages() const;

@@ -25,6 +25,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_address_draw_space_reuse_sampled_records agc_driver_address_draw_space_reuse_sampled_records_narrow PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_address_draw_space_reuse_no_rebase COMMAND agc_driver_address_draw_space_reuse_tests)
+    set_tests_properties(agc_driver_address_draw_space_reuse_no_rebase PROPERTIES ENVIRONMENT "APS5_NO_SPACE_REBASE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_no_rebase PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_address_draw_space_reuse_held COMMAND agc_driver_address_draw_space_reuse_tests --held)
     set_tests_properties(agc_driver_address_draw_space_reuse_held PROPERTIES ENVIRONMENT "APS5_RELEASE_ON_UNLOCK=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)

@@ -6459,10 +6459,41 @@ bool GuestBufferMemory::ReleaseCompletedSpace(std::uint64_t recorder, std::uint6
     return true;
 }
 
+static std::uint64_t NextHostImportSerial();
+
+namespace {
+
+std::uint64_t importSerialLocked(const HostImport& import) {
+    if (import.serial == 0) import.serial = NextHostImportSerial();
+    return import.serial;
+}
+
+}
+
+void GuestBufferMemory::noteSpaceOwners() {
+    spaceOwnersNoted = true;
+    spaceOwnersUsable = false;
+    spaceOwners.clear();
+    if (space == nullptr || !lease.empty() || !regions.empty() || !writes.empty()) return;
+    const auto& base = space->base;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    for (const auto& [begin, end] : reads) {
+        const auto found = std::upper_bound(base.begin(), base.end(), begin, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+        if (found == base.begin()) return;
+        const auto& region = *std::prev(found);
+        if (end > region.end) return;
+        if (std::any_of(spaceOwners.begin(), spaceOwners.end(), [&](const SpaceOwner& owner) { return owner.begin == region.begin; })) continue;
+        spaceOwners.push_back({region.begin, region.end, region.bufferEnd, region.direct != nullptr ? importSerialLocked(*region.direct) : 0, region.mirror, region.buffer, region.writable, region.runCut, region.sparse, region.hostBacked});
+    }
+    spaceOwnersUsable = true;
+}
+
 std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseSpace");
     mirrorPublishes.clear();
     if (space == nullptr) return {};
+    if (!spaceOwnersNoted) noteSpaceOwners();
     spaceHeldThrough = 0;
     spaceHeldBy = 0;
     releasedSpace = space;
@@ -6540,9 +6571,39 @@ bool GuestBufferMemory::RetakeSpace() {
     ensureRetention();
     auto kept = releasedSpace.lock();
     if (kept == nullptr) return false;
-    auto& spaces = Spaces();
-    auto current = spaces.current.load();
+    auto current = Spaces().current.load();
     if (current != kept) return false;
+    return takeSpace(std::move(current));
+}
+
+bool GuestBufferMemory::RebaseSpace() {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::RebaseSpace");
+    if (space != nullptr || !spaceOwnersUsable || !lease.empty() || !regions.empty() || !writes.empty()) return false;
+    ensureRetention();
+    auto current = Spaces().current.load();
+    if (current == nullptr || current == releasedSpace.lock() || !current->sparseMirrors.empty() || !current->copied.empty()) return false;
+    const auto& base = current->base;
+    {
+        auto& state = Imports();
+        std::lock_guard lock(state.mutex);
+        if (current->importsEpoch != state.epoch) return false;
+        for (const auto& owner : spaceOwners) {
+            const auto found = std::upper_bound(base.begin(), base.end(), owner.begin, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+            if (found == base.begin()) return false;
+            const auto& region = *std::prev(found);
+            if (region.begin != owner.begin || region.end != owner.end || region.bufferEnd != owner.bufferEnd || region.writable != owner.writable || region.runCut != owner.runCut || region.sparse != owner.sparse || region.hostBacked != owner.hostBacked) return false;
+            if ((region.direct != nullptr ? importSerialLocked(*region.direct) : 0) != owner.directSerial) return false;
+            if (region.mirror != owner.mirror.lock() || region.buffer != owner.buffer.lock()) return false;
+        }
+    }
+    if (!takeSpace(std::move(current))) return false;
+    tableSerial = 0;
+    tableRanges.reset();
+    return true;
+}
+
+bool GuestBufferMemory::takeSpace(std::shared_ptr<const AddressSpace> current) {
+    auto& spaces = Spaces();
     const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     {
         auto& state = Imports();

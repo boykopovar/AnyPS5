@@ -201,6 +201,7 @@ using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t
 AddressDrawReuseCounts AddressDrawReuseCounters();
 const char* AddressDrawReuseName(AddressDrawReuse outcome);
 std::uint64_t AddressDrawReuseVerifications();
+std::uint64_t AddressDrawRebases();
 struct VertexPlanScratchState {
     bool busy = false;
     std::size_t resting = 0;

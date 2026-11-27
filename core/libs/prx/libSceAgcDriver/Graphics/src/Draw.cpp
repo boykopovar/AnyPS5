@@ -871,6 +871,7 @@ struct DrawProfile {
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
     AddressDrawReuseCounts addressSeen{};
+    std::uint64_t rebasesSeen = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
@@ -888,6 +889,18 @@ void countAddressDrawReuse(AddressDrawReuse outcome) {
 std::atomic<std::uint64_t>& addressDrawReuseVerifications() {
     static std::atomic<std::uint64_t> verifications{0};
     return verifications;
+}
+
+std::atomic<std::uint64_t>& addressDrawRebases() {
+    static std::atomic<std::uint64_t> rebases{0};
+    return rebases;
+}
+
+bool rebaseSpace(ShaderResources& resources) {
+    static const bool disabled = std::getenv("APS5_NO_SPACE_REBASE") != nullptr;
+    if (disabled || !resources.RebaseSpace()) return false;
+    addressDrawRebases().fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 void completeSnapshotWrites(std::span<const GuestMemorySnapshot> snapshots) {
@@ -1019,7 +1032,9 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     if (address != profile.addressSeen) {
         char reuse[512];
         const auto seen = [&](AddressDrawReuse outcome) { return static_cast<unsigned long long>(address[static_cast<std::size_t>(outcome)] - profile.addressSeen[static_cast<std::size_t>(outcome)]); };
-        int at = std::snprintf(reuse, sizeof(reuse), "[rescache] address-based draws (10 s): reused %llu, built %llu; refused:", seen(AddressDrawReuse::Reused), seen(AddressDrawReuse::Built));
+        const auto rebases = AddressDrawRebases();
+        int at = std::snprintf(reuse, sizeof(reuse), "[rescache] address-based draws (10 s): reused %llu (rebased onto a new address space %llu), built %llu; refused:", seen(AddressDrawReuse::Reused), static_cast<unsigned long long>(rebases - profile.rebasesSeen), seen(AddressDrawReuse::Built));
+        profile.rebasesSeen = rebases;
         for (auto outcome = static_cast<std::size_t>(AddressDrawReuse::NotReadOnly); outcome < address.size() && at > 0 && static_cast<std::size_t>(at) < sizeof(reuse); ++outcome) {
             at += std::snprintf(reuse + at, sizeof(reuse) - static_cast<std::size_t>(at), "%s %s %llu", outcome == static_cast<std::size_t>(AddressDrawReuse::NotReadOnly) ? "" : ",", AddressDrawReuseNames[outcome], seen(static_cast<AddressDrawReuse>(outcome)));
         }
@@ -2416,7 +2431,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 if (cached->SpaceHeld()) {
                     inUse = true;
                     reuse = AddressDrawReuse::InUse;
-                } else if (!cached->RetakeSpace()) {
+                } else if (!cached->RetakeSpace() && !rebaseSpace(*cached)) {
                     reuse = AddressDrawReuse::SpaceChanged;
                 } else {
                     heldSpace.reset(cached.get());
@@ -5527,6 +5542,10 @@ std::uint64_t TargetMemoHitNanosecondsForTest(const Context& context, const Stat
         if (repeatColors(context, state, proof, targets, views)) ++hits;
     }
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+}
+
+std::uint64_t AddressDrawRebases() {
+    return addressDrawRebases().load(std::memory_order_relaxed);
 }
 
 std::uint64_t AddressDrawReuseVerifications() {

@@ -3092,6 +3092,7 @@ void ShaderResources::buildComplete() {
                         for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
                             const auto index = binding.allocations[element];
                             if (allocations[index].role == ShaderRecompiler::DescriptorRole::FaultBuffer) faultDescriptors.push_back({writes.size(), buffers.size(), static_cast<std::uint32_t>(element)});
+                            if (allocations[index].role == ShaderRecompiler::DescriptorRole::BdaPagetable) tableDescriptors.push_back(buffers.size());
                             buffers.push_back(descriptor(allocations[index]));
                         }
                         break;
@@ -7664,6 +7665,16 @@ void ShaderResources::WriteBackBuffers() {
 
 std::span<const std::byte> ShaderResources::AddressTableBytes() const {
     return bda != nullptr ? bda->TableBytes() : std::span<const std::byte>{};
+}
+
+bool ShaderResources::RebaseSpace() {
+    auto* recorder = Recorder::Active();
+    if (!spaceReuse || bda == nullptr || recorder == nullptr || (_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || tableDescriptors.empty()) return false;
+    if (!guestMemory.RebaseSpace()) return false;
+    recorder->Keep(bda->Retable(context, guestMemory));
+    for (const auto position : tableDescriptors) descriptorBuffers[position] = bda->Table();
+    rebound = true;
+    return true;
 }
 
 bool ShaderResources::AddressTableGuardCurrent() {

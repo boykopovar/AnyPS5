@@ -326,9 +326,13 @@ private:
     AgcDriver::Graphics::AddressDrawReuseCounts before = AgcDriver::Graphics::AddressDrawReuseCounters();
 };
 
+bool Rebasing() {
+    return std::getenv("APS5_NO_SPACE_REBASE") == nullptr;
+}
+
 std::uint64_t Builds() {
     const auto counters = AgcDriver::Graphics::BdaResources::TableCacheCounters();
-    return counters.hits + counters.misses - AgcDriver::Graphics::AddressDrawReuseVerifications();
+    return counters.hits + counters.misses - AgcDriver::Graphics::AddressDrawReuseVerifications() - AgcDriver::Graphics::AddressDrawRebases();
 }
 
 float Level(std::uint8_t value) {
@@ -519,6 +523,63 @@ void IdleFree(Scene& scene) {
     Require(scene.DrawnColor() == 90, "address draw space reuse: the draw after the free did not read the guest constant");
     Require(Builds() == rebuilt + 1, "address draw space reuse: the draw after a free inside its address space did not build its resources again");
     scene.spare.Register(true);
+}
+
+void MappedRead(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    constexpr std::size_t Slot = PointerSlots + 512;
+    scene.Store(scene.constants, 0, 70);
+    scene.PointThrough(Slot, scene.constants.Address());
+    Require(scene.DrawnColor() == 70 && scene.DrawnColor() == 70, "address draw space reuse: the draws through a pointer before the mapping did not read the guest constant");
+    scene.Point(scene.constants.Address());
+    Require(scene.DrawnColor() == 70 && scene.DrawnColor() == 70, "address draw space reuse: the direct draws before the mapping did not read the guest constant");
+    Pages mapped{BlockBytes};
+    scene.Store(mapped, 0, 130);
+    mapped.Register(false);
+    {
+        const Outcomes outcomes;
+        const auto built = Builds();
+        Require(scene.DrawnColor() == 70, "address draw space reuse: the first draw after the mapping did not read the guest constant");
+        Require(outcomes[AddressDrawReuse::SpaceChanged] == 1 && outcomes.Total() == 1 && Builds() == built + 1, "address draw space reuse: the first draw after an allocation was mapped counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one refusal for a space change and a build of the new address space");
+    }
+    scene.PointThrough(Slot, mapped.Address());
+    const Outcomes outcomes;
+    const auto built = Builds();
+    const auto rebased = AgcDriver::Graphics::AddressDrawRebases();
+    const auto color = scene.DrawnColor();
+    Require(color == 130, "address draw space reuse: a cached draw reading through a pointer into an allocation mapped after its build read " + std::to_string(color) + " instead of 130");
+    if (Rebasing()) {
+        Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1 && Builds() == built && AgcDriver::Graphics::AddressDrawRebases() == rebased + 1, "address draw space reuse: a cached draw after another draw built the new address space counted " + outcomes.Text() + ", " + std::to_string(Builds() - built) + " builds and " + std::to_string(AgcDriver::Graphics::AddressDrawRebases() - rebased) + " rebases, expected one reuse rebased onto that space");
+    } else {
+        Require(outcomes[AddressDrawReuse::SpaceChanged] == 1 && outcomes.Total() == 1 && Builds() == built + 1, "address draw space reuse: with APS5_NO_SPACE_REBASE a cached draw after another draw built the new address space counted " + outcomes.Text() + ", expected one refusal for a space change and a build");
+    }
+    Require(scene.DrawnColor() == 130, "address draw space reuse: the repeated draw through the pointer into the mapped allocation did not read it");
+    scene.Point(scene.constants.Address());
+    Require(scene.DrawnColor() == 70, "address draw space reuse: the direct draw after the mapped reads did not read the guest constant");
+    scene.Wait();
+}
+
+void ReplacedRead(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    constexpr std::size_t Slot = PointerSlots + 512;
+    scene.Store(scene.constants, 0, 150);
+    scene.PointThrough(Slot, scene.constants.Address());
+    Require(scene.DrawnColor() == 150 && scene.DrawnColor() == 150, "address draw space reuse: the draws through a pointer before the vertex allocation was replaced did not read the guest constant");
+    scene.Point(scene.constants.Address());
+    Require(scene.DrawnColor() == 150 && scene.DrawnColor() == 150, "address draw space reuse: the direct draws before the vertex allocation was replaced did not read the guest constant");
+    scene.Wait();
+    scene.vertices.Unregister();
+    scene.vertices.Register(false);
+    Require(scene.DrawnColor() == 150, "address draw space reuse: the first draw after its vertex allocation was replaced did not read the guest constant");
+    scene.PointThrough(Slot, scene.constants.Address());
+    const Outcomes outcomes;
+    const auto built = Builds();
+    const auto rebased = AgcDriver::Graphics::AddressDrawRebases();
+    const auto color = scene.DrawnColor();
+    Require(color == 150, "address draw space reuse: the cached draw after its vertex allocation was replaced read " + std::to_string(color) + " instead of 150");
+    Require(outcomes[AddressDrawReuse::SpaceChanged] == 1 && outcomes.Total() == 1 && Builds() == built + 1 && AgcDriver::Graphics::AddressDrawRebases() == rebased, "address draw space reuse: a cached draw whose vertex allocation was removed and registered again counted " + outcomes.Text() + ", " + std::to_string(Builds() - built) + " builds and " + std::to_string(AgcDriver::Graphics::AddressDrawRebases() - rebased) + " rebases, expected one refusal for a space change and a build");
+    scene.Point(scene.constants.Address());
+    scene.Wait();
 }
 
 void NoRecipe(Scene& scene) {
@@ -1058,10 +1119,12 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 15> DefaultCases{{
+constexpr std::array<NamedCase, 17> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
+    {"mapped-read", MappedRead},
+    {"replaced-read", ReplacedRead},
     {"no-recipe", NoRecipe},
     {"moved-vertices", MovedVertices},
     {"fault-per-use", FaultPerUse},
