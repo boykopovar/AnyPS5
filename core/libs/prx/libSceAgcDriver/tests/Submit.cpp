@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
@@ -64,6 +65,16 @@ namespace {
 
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+std::uint32_t* rootCommandBufferToFlush = nullptr;
+std::size_t rootCommandBufferFlushBytes = 0;
+std::size_t rootCommandBufferFlushCalls = 0;
+
+void flushRootCommandBufferForTest(std::uint64_t address, std::size_t bytes) {
+    if (rootCommandBufferToFlush == nullptr || address != reinterpret_cast<std::uintptr_t>(rootCommandBufferToFlush) || bytes != rootCommandBufferFlushBytes) return;
+    ++rootCommandBufferFlushCalls;
+    *rootCommandBufferToFlush = 0xffff1000u;
 }
 
 template<typename TAction>
@@ -215,6 +226,27 @@ void testClearState() {
         check(sceAgcDriverSubmitDcb(&packet) == 0, "CLEAR_STATE submit failed");
     }
     AgcDriverWaitIdle_nid_postfix();
+}
+
+void testSubmissionFlushesRootCommandBuffer() {
+    std::array<std::uint32_t, 1> commands{0x00000001u};
+    auto* const previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    rootCommandBufferToFlush = commands.data();
+    rootCommandBufferFlushBytes = sizeof(commands);
+    rootCommandBufferFlushCalls = 0;
+    AgcDriver::GuestMemory::SetFlushHook(&flushRootCommandBufferForTest);
+    try {
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        check(sceAgcDriverSubmitDcb(&packet) == 0, "root command-buffer submission failed after the flush-hook mutation");
+        AgcDriverWaitIdle_nid_postfix();
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        rootCommandBufferToFlush = nullptr;
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    rootCommandBufferToFlush = nullptr;
+    check(rootCommandBufferFlushCalls == 1, "root command-buffer copy did not flush exactly its submitted guest range");
 }
 
 void testSubmissions() {
@@ -1342,6 +1374,7 @@ int main(int argc, char** argv) {
         testChainedIndirectBuffers();
         testClearState();
         testSubmissions();
+        testSubmissionFlushesRootCommandBuffer();
         testEndOfPipeInterrupts();
         testLabelStoredSinceSubmission();
         testEndOfPipeLabelsWithoutWork();
