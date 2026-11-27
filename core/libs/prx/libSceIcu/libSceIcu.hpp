@@ -37,6 +37,7 @@
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
+#include "Converter.hpp"
 #include "ClassIds.hpp"
 #include "Normalizer2Accessors.hpp"
 #include "CodePoints.hpp"
