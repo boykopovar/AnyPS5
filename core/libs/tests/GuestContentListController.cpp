@@ -1,16 +1,19 @@
 #include "GuardedBuffer.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceContentListController/include/ContentListController.hpp"
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -20,102 +23,6 @@ constexpr int kErrNoCallback = static_cast<int>(0x81a30001u);
 constexpr int kErrInvalidArg = static_cast<int>(0x81a30003u);
 constexpr int kErrDeviceNotFound = static_cast<int>(0x81a30004u);
 constexpr int kErrUnsupportedFormat = static_cast<int>(0x81a30007u);
-
-struct SceCLCEvent {
-    std::uint32_t event;
-    std::uint32_t device;
-};
-
-using SceCLCEventCallback = void (APS5_VABI *)(const SceCLCEvent* event, void* userData);
-
-struct SceCLCUsbStorageCallback {
-    std::int32_t (APS5_VABI *getDeviceList)(std::uint32_t* devices, std::int32_t* count);
-    std::int32_t (APS5_VABI *getDeviceInfo)(std::uint32_t deviceId, UsbStorageDeviceInfo* info);
-    std::int32_t (APS5_VABI *getdentsOpen)(std::uint32_t deviceId, std::int32_t* fd, std::uint64_t* bufferSize);
-    std::int32_t (APS5_VABI *getdentsRead)(std::int32_t fd, void* buffer, std::uint64_t bufferSize, std::uint64_t* bytesRead);
-    std::int32_t (APS5_VABI *getdentsClose)(std::int32_t fd);
-    std::int32_t (APS5_VABI *requestMap)(std::uint32_t deviceId, const char* directory, std::int32_t flags, std::uint64_t volumeSize, char* mountPoint, std::uint64_t* mountId);
-    std::int32_t (APS5_VABI *requestUnmap)(std::uint32_t deviceId, const char* mountPoint);
-    void* reserved;
-    std::int32_t (APS5_VABI *registerCallback)(std::int32_t eventType, UsbStorageCallback callback, void* userData);
-    void* reserved2;
-};
-
-struct SceCLCDeviceInfo {
-    char vendor[256];
-    char product[256];
-    char serial[256];
-};
-
-struct SceCLCListInfo {
-    std::int32_t deviceId;
-    char dir[0x200];
-    std::int32_t folderCount;
-    std::int32_t fileCount;
-};
-
-struct SceCLCTrackListInfo {
-    std::int32_t deviceId;
-    char dir[0x200];
-    std::int32_t reserved;
-    std::int32_t fileCount;
-};
-
-struct SceCLCListEntry {
-    std::int32_t deviceId;
-    char name[0x200];
-    std::int32_t isFile;
-    std::int32_t state;
-};
-
-struct SceCLCListOutput {
-    std::int32_t totalCount;
-    std::int32_t returnedCount;
-    std::int32_t startIndex;
-    std::int32_t pad;
-    SceCLCListEntry* items;
-};
-
-struct SceCLCFileInfo {
-    std::int32_t index;
-    std::uint32_t deviceId;
-    char path[0x200];
-    char title[256];
-    char album[256];
-    char artist[256];
-    char coverArtPath[0x200];
-    std::uint64_t coverArtOffset;
-    std::uint64_t coverArtSize;
-    std::uint64_t duration;
-};
-
-}
-
-extern "C" {
-
-int APS5_VABI sceCLCClearFileList();
-int APS5_VABI sceCLCClearTrackList();
-int APS5_VABI sceCLCGetDeviceInfo(std::uint32_t deviceId, SceCLCDeviceInfo* outInfo);
-int APS5_VABI sceCLCGetDeviceList(std::uint32_t* devices, std::int32_t* count);
-int APS5_VABI sceCLCGetFileInfo(std::uint32_t deviceId, const char* path, SceCLCFileInfo* outInfo);
-int APS5_VABI sceCLCGetFileList(std::uint32_t unused0, std::uint32_t unused1, std::int32_t listMode, std::uint32_t startIndex, std::int32_t maxCount, SceCLCListOutput* outList);
-int APS5_VABI sceCLCGetFileListInfo(SceCLCListInfo* outInfo);
-int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std::uint64_t* outCounts);
-std::uint8_t APS5_VABI sceCLCGetShuffle();
-int APS5_VABI sceCLCGetTrackInfo(std::int32_t trackIndex, SceCLCFileInfo* outInfo);
-int APS5_VABI sceCLCGetTrackList(std::uint32_t startIndex, std::int32_t maxCount, SceCLCListOutput* outList);
-int APS5_VABI sceCLCGetTrackListInfo(SceCLCTrackListInfo* outInfo);
-int APS5_VABI sceCLCGetUsbStorageCallback(SceCLCUsbStorageCallback* callback);
-int APS5_VABI sceCLCRegisterEventCallback(SceCLCEventCallback callback, void* userData);
-int APS5_VABI sceCLCSetPlaybackResult(std::int32_t trackIndex, std::uint32_t result);
-int APS5_VABI sceCLCSetShuffle(std::int32_t enable, std::int32_t currentTrackIndex);
-int APS5_VABI sceCLCSetTrackList();
-int APS5_VABI sceCLCSetUsbStorageCallback(const SceCLCUsbStorageCallback* callback);
-int APS5_VABI libSceContentListControllerUnknown_SoBk_minus_kuNLsE_nid_no_patch(const char* pattern);
-
-}
-
-namespace {
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -146,6 +53,37 @@ std::int32_t APS5_VABI MockGetDeviceList(std::uint32_t* devices, std::int32_t* c
     *count = 1;
     return 0;
 }
+
+std::int32_t APS5_VABI MockTwoDevices(std::uint32_t* devices, std::int32_t* count) {
+    devices[0] = 7;
+    devices[1] = 8;
+    *count = 2;
+    return 0;
+}
+
+std::filesystem::path CreateUniqueTempDir() {
+    const auto base = std::filesystem::temp_directory_path();
+    const auto tick = static_cast<unsigned long long>(std::chrono::steady_clock::now().time_since_epoch().count());
+    const unsigned long long rnd = static_cast<unsigned long long>(std::random_device{}());
+    for (unsigned attempt = 0; attempt < 64; ++attempt) {
+        const auto candidate = base / ("anyps5_clc_test_" + std::to_string(tick) + "_" + std::to_string(rnd) + "_" + std::to_string(attempt));
+        std::error_code ec;
+        if (std::filesystem::create_directory(candidate, ec) && !ec) {
+            return candidate;
+        }
+    }
+    std::abort();
+}
+
+struct TempDirGuard {
+    std::filesystem::path path;
+    ~TempDirGuard() {
+        if (!path.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(path, ec);
+        }
+    }
+};
 
 std::int32_t APS5_VABI MockGetDeviceInfo(std::uint32_t deviceId, UsbStorageDeviceInfo* info) {
     if (deviceId != 7) return static_cast<int>(0x80f40004u);
@@ -572,9 +510,9 @@ int main() {
     Require(static_cast<std::int32_t>(counts & 0xffffffffu) == 1);
     Require(static_cast<std::int32_t>(counts >> 32) == 1);
 
-    g_usbRoot = std::filesystem::temp_directory_path() / "anyps5_clc_test_root";
+    g_usbRoot = CreateUniqueTempDir();
+    TempDirGuard usbRootGuard{g_usbRoot};
     std::error_code ec;
-    std::filesystem::remove_all(g_usbRoot, ec);
     const std::filesystem::path musicDir = g_usbRoot / "music";
     std::filesystem::create_directories(musicDir / "z_album_dir", ec);
     Require(!ec);
@@ -767,6 +705,144 @@ int main() {
     Require(sceCLCGetFileListInfo(&listInfo) == 0);
     Require(listInfo.deviceId == 0 && listInfo.dir[0] == '\0' && listInfo.folderCount == 0 && listInfo.fileCount == 0);
 
-    std::filesystem::remove_all(g_usbRoot, ec);
+    {
+        SceCLCUsbStorageCallback twoCb = fullCb;
+        twoCb.getDeviceList = &MockTwoDevices;
+        Require(sceCLCSetUsbStorageCallback(&twoCb) == 0);
+
+        GuardedBuffer guardedDev;
+        auto* oneDev = guardedDev.At<std::uint32_t>(1);
+        std::int32_t preservedCount = 99;
+        errno = 71;
+        Require(sceCLCGetDeviceList(oneDev, &preservedCount) == kErrInvalidArg && errno == 71);
+        Require(preservedCount == 99);
+        Require(*oneDev == 0xA5A5A5A5u);
+        Require(sceCLCGetDeviceInfo(7, &devInfo) == 0);
+        Require(sceCLCGetDeviceInfo(8, &devInfo) == kErrDeviceNotFound);
+
+        Require(sceCLCSetUsbStorageCallback(&fullCb) == 0);
+        Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
+        Require(deviceCount == 1 && devices[0] == 7);
+    }
+
+    {
+        const auto rootMp3Cover = CreateTestMp3(g_usbRoot / "root.mp3");
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetFileInfo(7, "/root.mp3", &fileInfo) == 0);
+        Require(std::strcmp(fileInfo.path, "/root.mp3") == 0);
+        Require(std::strcmp(fileInfo.title, "MP3 Title") == 0);
+        Require(std::strcmp(fileInfo.coverArtPath, "/root.mp3") == 0);
+        Require(fileInfo.coverArtOffset == rootMp3Cover.first && fileInfo.coverArtSize == rootMp3Cover.second);
+    }
+
+    {
+        const int mountsBefore = g_mountCount;
+        Require(sceCLCGetFileInfo(7, "/music/../secret.mp3", &fileInfo) == kErrInvalidArg);
+        Require(sceCLCGetFileInfo(7, "/../secret.mp3", &fileInfo) == kErrInvalidArg);
+        Require(sceCLCGetFileInfo(7, "/music\\a_track.mp3", &fileInfo) == kErrInvalidArg);
+        Require(sceCLCGetFileInfo(7, "C:/a_track.mp3", &fileInfo) == kErrInvalidArg);
+        Require(sceCLCGetFileInfo(7, "/C:/a_track.mp3", &fileInfo) == kErrInvalidArg);
+        Require(sceCLCGetFolderInfo(7, "/music/../", &counts) == kErrInvalidArg);
+        Require(sceCLCGetFolderInfo(7, "/..", &counts) == kErrInvalidArg);
+        Require(sceCLCGetFolderInfo(7, "/C:/music", &counts) == kErrInvalidArg);
+        Require(g_mountCount == mountsBefore && g_unmountCount == g_mountCount);
+    }
+
+    {
+        std::vector<std::uint8_t> payload = {1, 0xff, 0xfe, 0x3d, 0xd8, 0x00, 0xde, 0x20, 0x00, 'H', 0x00, 'i', 0x00};
+        std::vector<std::uint8_t> frame;
+        frame.insert(frame.end(), {'T', 'I', 'T', '2'});
+        AppendSynchsafe32(frame, static_cast<std::uint32_t>(payload.size()));
+        AppendBe16(frame, 0);
+        frame.insert(frame.end(), payload.begin(), payload.end());
+        std::vector<std::uint8_t> file = {'I', 'D', '3', 4, 0, 0};
+        AppendSynchsafe32(file, static_cast<std::uint32_t>(frame.size()));
+        file.insert(file.end(), frame.begin(), frame.end());
+        WriteBytes(musicDir / "utf16_surrogate.mp3", file);
+
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetFileInfo(7, "/music/utf16_surrogate.mp3", &fileInfo) == 0);
+        Require(std::strcmp(fileInfo.title, "\xf0\x9f\x98\x80 Hi") == 0);
+    }
+
+    {
+        std::vector<std::uint8_t> inner;
+        AppendBe32(inner, 1);
+        inner.insert(inner.end(), {'u', 'd', 't', 'a'});
+        AppendBe32(inner, 0xffffffffu);
+        AppendBe32(inner, 0xffffffffu);
+        std::vector<std::uint8_t> box = std::move(inner);
+        for (int d = 0; d < 40; ++d) {
+            box = MakeBox("moov", box);
+        }
+        WriteBytes(musicDir / "malformed_deep.m4a", box);
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetFileInfo(7, "/music/malformed_deep.m4a", &fileInfo) == 0);
+
+        std::vector<std::uint8_t> badPic1(32, 0);
+        badPic1[4] = 0xff;
+        badPic1[5] = 0xff;
+        badPic1[6] = 0xff;
+        badPic1[7] = 0xff;
+        std::vector<std::uint8_t> badPic2(32, 0);
+        badPic2[8] = 0xff;
+        badPic2[9] = 0xff;
+        badPic2[10] = 0xff;
+        badPic2[11] = 0xec;
+
+        std::vector<std::uint8_t> flac = {'f', 'L', 'a', 'C'};
+        flac.push_back(0x06);
+        AppendBe24(flac, static_cast<std::uint32_t>(badPic1.size()));
+        flac.insert(flac.end(), badPic1.begin(), badPic1.end());
+        flac.push_back(0x86);
+        AppendBe24(flac, static_cast<std::uint32_t>(badPic2.size()));
+        flac.insert(flac.end(), badPic2.begin(), badPic2.end());
+        WriteBytes(musicDir / "malformed_pic.flac", flac);
+
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetFileInfo(7, "/music/malformed_pic.flac", &fileInfo) == 0);
+        Require(fileInfo.coverArtSize == 0 && fileInfo.coverArtPath[0] == '\0');
+    }
+
+    {
+        const std::filesystem::path rescanDir = g_usbRoot / "rescan_dir";
+        std::filesystem::create_directories(rescanDir, ec);
+        Require(!ec);
+        WriteBytes(rescanDir / "a.mp3", {0xff, 0xfb, 0x90, 0x00});
+        WriteBytes(rescanDir / "b.mp3", {0xff, 0xfb, 0x90, 0x00});
+        WriteBytes(rescanDir / "c.mp3", {0xff, 0xfb, 0x90, 0x00});
+
+        Require(sceCLCGetFolderInfo(7, "/rescan_dir", &counts) == 0);
+        Require(static_cast<std::int32_t>(counts >> 32) == 3);
+        Require(sceCLCSetTrackList() == 0);
+        Require(sceCLCSetPlaybackResult(1, 1) == 0);
+
+        WriteBytes(rescanDir / "0_early.mp3", {0xff, 0xfb, 0x90, 0x00});
+        Require(sceCLCGetFolderInfo(7, "/rescan_dir", &counts) == 0);
+        Require(static_cast<std::int32_t>(counts >> 32) == 4);
+        Require(sceCLCGetFileList(0, 0, 1, 0, 10, &listOut) == 0);
+        Require(listOut.returnedCount == 4);
+        Require(std::strcmp(entryBuf[0].name, "/rescan_dir/0_early.mp3") == 0 && entryBuf[0].state == 0);
+        Require(std::strcmp(entryBuf[1].name, "/rescan_dir/a.mp3") == 0 && entryBuf[1].state == 0);
+        Require(std::strcmp(entryBuf[2].name, "/rescan_dir/b.mp3") == 0 && entryBuf[2].state == 1);
+        Require(std::strcmp(entryBuf[3].name, "/rescan_dir/c.mp3") == 0 && entryBuf[3].state == 0);
+    }
+
+    {
+        const std::filesystem::path emptyDir = g_usbRoot / "empty_dir";
+        std::filesystem::create_directories(emptyDir, ec);
+        Require(!ec);
+        Require(sceCLCGetTrackListInfo(&trackInfo) == 0 && trackInfo.fileCount == 3);
+        Require(sceCLCGetFolderInfo(7, "/empty_dir", &counts) == 0);
+        Require(static_cast<std::int32_t>(counts & 0xffffffffu) == 0 && static_cast<std::int32_t>(counts >> 32) == 0);
+        Require(sceCLCSetTrackList() == 0);
+        std::memset(&trackInfo, 0xA5, sizeof(trackInfo));
+        Require(sceCLCGetTrackListInfo(&trackInfo) == 0);
+        Require(trackInfo.deviceId == 0 && trackInfo.dir[0] == '\0' && trackInfo.fileCount == 0);
+        Require(sceCLCGetTrackList(0, 10, &listOut) == 0);
+        Require(listOut.totalCount == 0 && listOut.returnedCount == 0);
+        Require(sceCLCGetTrackInfo(0, &fileInfo) == kErrInvalidArg);
+    }
+
     return 0;
 }

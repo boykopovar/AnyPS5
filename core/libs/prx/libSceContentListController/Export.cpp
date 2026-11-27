@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceContentListController/include/ContentListController.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -13,6 +14,7 @@
 #include <regex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -20,6 +22,19 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -41,86 +56,70 @@ constexpr std::size_t EntryNameSize = 256;
 constexpr std::size_t PathBufferSize = 0x200;
 constexpr std::uint8_t DirentTypeDir = 4;
 constexpr std::uint8_t DirentTypeReg = 8;
+constexpr int MaxMp4Depth = 32;
 
-struct SceCLCEvent {
-    std::uint32_t event;
-    std::uint32_t device;
+struct GuardedDeviceBuffer {
+    std::uint8_t* mapping = nullptr;
+    std::size_t pageSize = 0;
+    std::uint32_t* ptr = nullptr;
+
+    GuardedDeviceBuffer() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        if (pageSize >= MaxDevices * sizeof(std::uint32_t)) {
+            mapping = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+            if (mapping != nullptr) {
+                DWORD prev = 0;
+                if (VirtualProtect(mapping, pageSize, PAGE_READWRITE, &prev) != 0) {
+                    ptr = reinterpret_cast<std::uint32_t*>(mapping + pageSize - MaxDevices * sizeof(std::uint32_t));
+                    std::memset(ptr, 0, MaxDevices * sizeof(std::uint32_t));
+                } else {
+                    VirtualFree(mapping, 0, MEM_RELEASE);
+                    mapping = nullptr;
+                }
+            }
+        }
+#else
+        const long sz = sysconf(_SC_PAGESIZE);
+        if (sz > 0) {
+            pageSize = static_cast<std::size_t>(sz);
+            if (pageSize >= MaxDevices * sizeof(std::uint32_t)) {
+                void* raw = mmap(nullptr, pageSize * 2, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                if (raw != MAP_FAILED) {
+                    mapping = static_cast<std::uint8_t*>(raw);
+                    if (mprotect(mapping, pageSize, PROT_READ | PROT_WRITE) == 0) {
+                        ptr = reinterpret_cast<std::uint32_t*>(mapping + pageSize - MaxDevices * sizeof(std::uint32_t));
+                        std::memset(ptr, 0, MaxDevices * sizeof(std::uint32_t));
+                    } else {
+                        munmap(mapping, pageSize * 2);
+                        mapping = nullptr;
+                    }
+                }
+            }
+        }
+#endif
+    }
+
+    ~GuardedDeviceBuffer() {
+        if (mapping != nullptr) {
+#ifdef _WIN32
+            VirtualFree(mapping, 0, MEM_RELEASE);
+#else
+            munmap(mapping, pageSize * 2);
+#endif
+        }
+    }
+
+    GuardedDeviceBuffer(const GuardedDeviceBuffer&) = delete;
+    GuardedDeviceBuffer& operator=(const GuardedDeviceBuffer&) = delete;
 };
-
-using SceCLCEventCallback = void (APS5_VABI *)(const SceCLCEvent* event, void* userData);
-
-struct SceCLCUsbStorageCallback {
-    std::int32_t (APS5_VABI *getDeviceList)(std::uint32_t* devices, std::int32_t* count);
-    std::int32_t (APS5_VABI *getDeviceInfo)(std::uint32_t deviceId, UsbStorageDeviceInfo* info);
-    std::int32_t (APS5_VABI *getdentsOpen)(std::uint32_t deviceId, std::int32_t* fd, std::uint64_t* bufferSize);
-    std::int32_t (APS5_VABI *getdentsRead)(std::int32_t fd, void* buffer, std::uint64_t bufferSize, std::uint64_t* bytesRead);
-    std::int32_t (APS5_VABI *getdentsClose)(std::int32_t fd);
-    std::int32_t (APS5_VABI *requestMap)(std::uint32_t deviceId, const char* directory, std::int32_t flags, std::uint64_t volumeSize, char* mountPoint, std::uint64_t* mountId);
-    std::int32_t (APS5_VABI *requestUnmap)(std::uint32_t deviceId, const char* mountPoint);
-    void* reserved;
-    std::int32_t (APS5_VABI *registerCallback)(std::int32_t eventType, UsbStorageCallback callback, void* userData);
-    void* reserved2;
-};
-static_assert(sizeof(SceCLCUsbStorageCallback) == 0x50);
-
-struct SceCLCDeviceInfo {
-    char vendor[256];
-    char product[256];
-    char serial[256];
-};
-static_assert(sizeof(SceCLCDeviceInfo) == 0x300);
-
-struct SceCLCListInfo {
-    std::int32_t deviceId;
-    char dir[PathBufferSize];
-    std::int32_t folderCount;
-    std::int32_t fileCount;
-};
-static_assert(sizeof(SceCLCListInfo) == 0x20c);
-
-struct SceCLCTrackListInfo {
-    std::int32_t deviceId;
-    char dir[PathBufferSize];
-    std::int32_t reserved;
-    std::int32_t fileCount;
-};
-static_assert(offsetof(SceCLCTrackListInfo, fileCount) == 0x208);
-static_assert(sizeof(SceCLCTrackListInfo) == 0x20c);
-
-struct SceCLCListEntry {
-    std::int32_t deviceId;
-    char name[PathBufferSize];
-    std::int32_t isFile;
-    std::int32_t state;
-};
-static_assert(sizeof(SceCLCListEntry) == 0x20c);
-
-struct SceCLCListOutput {
-    std::int32_t totalCount;
-    std::int32_t returnedCount;
-    std::int32_t startIndex;
-    std::int32_t pad;
-    SceCLCListEntry* items;
-};
-static_assert(sizeof(SceCLCListOutput) == 0x18);
-
-struct SceCLCFileInfo {
-    std::int32_t index;
-    std::uint32_t deviceId;
-    char path[PathBufferSize];
-    char title[256];
-    char album[256];
-    char artist[256];
-    char coverArtPath[PathBufferSize];
-    std::uint64_t coverArtOffset;
-    std::uint64_t coverArtSize;
-    std::uint64_t duration;
-};
-static_assert(sizeof(SceCLCFileInfo) == 0x720);
 
 struct ControllerState {
     SceCLCUsbStorageCallback callbacks{};
     std::mutex mutex;
+    std::uint64_t providerGeneration = 0;
     std::int32_t deviceCount = 0;
     std::uint32_t deviceIds[MaxDevices]{};
     std::int32_t fileDeviceId = 0;
@@ -211,6 +210,48 @@ bool IsDeviceKnown(const ControllerState& state, std::uint32_t deviceId) {
     return false;
 }
 
+bool IsSafeGuestPath(std::string_view path) {
+    if (path.empty() || path.front() != '/') return false;
+    if (path.find('\\') != std::string_view::npos || path.find(':') != std::string_view::npos) return false;
+    std::size_t pos = 0;
+    while (pos < path.size()) {
+        const std::size_t slash = path.find('/', pos);
+        const std::string_view part = slash == std::string_view::npos ? path.substr(pos) : path.substr(pos, slash - pos);
+        if (part == "." || part == "..") return false;
+        if (slash == std::string_view::npos) break;
+        pos = slash + 1;
+    }
+    return true;
+}
+
+std::size_t BoundedStrlen(const char* s, std::size_t maxLen) {
+    if (s == nullptr || maxLen == 0) return 0;
+    const void* nul = std::memchr(s, '\0', maxLen);
+    return nul != nullptr ? static_cast<std::size_t>(static_cast<const char*>(nul) - s) : maxLen;
+}
+
+bool CombineEntryPath(const char* dir, const char* entry, char* out, std::size_t outSize) {
+    const std::size_t dirLen = BoundedStrlen(dir, PathBufferSize);
+    const std::size_t entryLen = BoundedStrlen(entry, EntryNameSize);
+    if (dirLen + entryLen >= outSize) return false;
+    std::memcpy(out, dir, dirLen);
+    std::memcpy(out + dirLen, entry, entryLen);
+    out[dirLen + entryLen] = '\0';
+    return true;
+}
+
+void ClearTrackListLocked(ControllerState& state) {
+    state.trackDeviceId = 0;
+    std::memset(state.trackDir, 0, sizeof(state.trackDir));
+    state.trackFolderCount = 0;
+    state.trackFileCount = 0;
+    if (state.trackEntries != nullptr) {
+        std::memset(state.trackEntries, 0, MaxEntries * EntryNameSize);
+    }
+    std::memset(state.playbackResults, 0, sizeof(state.playbackResults));
+    std::memset(state.shuffleOrder, 0, sizeof(state.shuffleOrder));
+}
+
 void APS5_VABI UsbStorageTrampoline(const UsbStorageEvent* event, void* userData) {
     auto* state = static_cast<ControllerState*>(userData);
     if (state == nullptr || event == nullptr) return;
@@ -294,7 +335,7 @@ void AppendDirentsFromBuffer(const char* buf, std::size_t bytes, const char* exc
         if (const std::size_t nul = name.find('\0'); nul != std::string_view::npos) {
             name = name.substr(0, nul);
         }
-        if (!name.empty() && name != "." && name != "..") {
+        if (!name.empty() && name != "." && name != ".." && name.size() < EntryNameSize) {
             if (type == DirentTypeDir) {
                 if (name.front() != '.') {
                     ScannedEntry entry{};
@@ -404,20 +445,41 @@ std::string DecodeId3Text(const std::uint8_t* data, std::size_t size) {
                 len -= 2;
             }
         }
+        auto readUnit = [&](std::size_t offset) -> std::uint16_t {
+            return littleEndian
+                ? static_cast<std::uint16_t>(p[offset] | (p[offset + 1] << 8))
+                : static_cast<std::uint16_t>((p[offset] << 8) | p[offset + 1]);
+        };
         for (std::size_t i = 0; i + 1 < len; i += 2) {
-            const std::uint16_t ch = littleEndian
-                ? static_cast<std::uint16_t>(p[i] | (p[i + 1] << 8))
-                : static_cast<std::uint16_t>((p[i] << 8) | p[i + 1]);
+            const std::uint16_t ch = readUnit(i);
             if (ch == 0) break;
-            if (ch < 0x80) {
-                result.push_back(static_cast<char>(ch));
-            } else if (ch < 0x800) {
-                result.push_back(static_cast<char>(0xc0 | (ch >> 6)));
-                result.push_back(static_cast<char>(0x80 | (ch & 0x3f)));
+            std::uint32_t cp = ch;
+            if (ch >= 0xd800u && ch <= 0xdbffu && i + 3 < len) {
+                const std::uint16_t low = readUnit(i + 2);
+                if (low >= 0xdc00u && low <= 0xdfffu) {
+                    cp = 0x10000u + ((static_cast<std::uint32_t>(ch - 0xd800u) << 10) |
+                                    static_cast<std::uint32_t>(low - 0xdc00u));
+                    i += 2;
+                } else {
+                    cp = 0xfffdu;
+                }
+            } else if (ch >= 0xd800u && ch <= 0xdfffu) {
+                cp = 0xfffdu;
+            }
+            if (cp < 0x80u) {
+                result.push_back(static_cast<char>(cp));
+            } else if (cp < 0x800u) {
+                result.push_back(static_cast<char>(0xc0u | (cp >> 6)));
+                result.push_back(static_cast<char>(0x80u | (cp & 0x3fu)));
+            } else if (cp < 0x10000u) {
+                result.push_back(static_cast<char>(0xe0u | (cp >> 12)));
+                result.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3fu)));
+                result.push_back(static_cast<char>(0x80u | (cp & 0x3fu)));
             } else {
-                result.push_back(static_cast<char>(0xe0 | (ch >> 12)));
-                result.push_back(static_cast<char>(0x80 | ((ch >> 6) & 0x3f)));
-                result.push_back(static_cast<char>(0x80 | (ch & 0x3f)));
+                result.push_back(static_cast<char>(0xf0u | (cp >> 18)));
+                result.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3fu)));
+                result.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3fu)));
+                result.push_back(static_cast<char>(0x80u | (cp & 0x3fu)));
             }
         }
         return result;
@@ -468,19 +530,21 @@ std::uint64_t ParseId3v2(int fd, std::int64_t fileSize, const char* guestPath, S
         std::uint8_t ext[4]{};
         if (ReadExactAt(fd, static_cast<std::int64_t>(pos), ext, 4)) {
             const std::uint32_t extSize = major >= 4 ? ReadSynchsafe32(ext) : ReadBe32(ext);
-            pos += major >= 4 ? extSize : (4ULL + extSize);
+            const std::uint64_t extBytes = major >= 4 ? extSize : (4ULL + extSize);
+            if (extBytes > tagEnd - pos) return tagEnd;
+            pos += static_cast<std::size_t>(extBytes);
         }
     }
 
     while (pos < tagEnd) {
         if (major == 2) {
-            if (pos + 6 > tagEnd) break;
+            if (tagEnd - pos < 6) break;
             std::uint8_t fhdr[6]{};
             if (!ReadExactAt(fd, static_cast<std::int64_t>(pos), fhdr, 6)) break;
             if (fhdr[0] == 0) break;
             const std::uint32_t fsize = ReadBe24(fhdr + 3);
             pos += 6;
-            if (fsize == 0 || pos + fsize > tagEnd) break;
+            if (fsize == 0 || fsize > tagEnd - pos) break;
             std::string_view fid(reinterpret_cast<const char*>(fhdr), 3);
             if (fid == "TT2" || fid == "TAL" || fid == "TP1") {
                 std::vector<std::uint8_t> payload(fsize);
@@ -506,13 +570,13 @@ std::uint64_t ParseId3v2(int fd, std::int64_t fileSize, const char* guestPath, S
             }
             pos += fsize;
         } else {
-            if (pos + 10 > tagEnd) break;
+            if (tagEnd - pos < 10) break;
             std::uint8_t fhdr[10]{};
             if (!ReadExactAt(fd, static_cast<std::int64_t>(pos), fhdr, 10)) break;
             if (fhdr[0] == 0) break;
             const std::uint32_t fsize = major >= 4 ? ReadSynchsafe32(fhdr + 4) : ReadBe32(fhdr + 4);
             pos += 10;
-            if (fsize == 0 || pos + fsize > tagEnd) break;
+            if (fsize == 0 || fsize > tagEnd - pos) break;
             std::string_view fid(reinterpret_cast<const char*>(fhdr), 4);
             if (fid == "TIT2" || fid == "TALB" || fid == "TPE1" || fid == "TLEN") {
                 std::vector<std::uint8_t> payload(fsize);
@@ -628,12 +692,12 @@ void ParseMp3Metadata(int fd, std::int64_t fileSize, const char* guestPath, SceC
 
 void ParseMp4IlstBox(int fd, std::uint64_t start, std::uint64_t end, const char* guestPath, SceCLCFileInfo& info) {
     std::uint64_t pos = start;
-    while (pos + 8 <= end) {
+    while (pos <= end && end - pos >= 8) {
         std::uint8_t bhdr[8]{};
         if (!ReadExactAt(fd, static_cast<std::int64_t>(pos), bhdr, 8)) break;
         std::uint64_t boxSize = ReadBe32(bhdr);
         std::uint64_t hdrSize = 8;
-        if (boxSize == 1 && pos + 16 <= end) {
+        if (boxSize == 1 && end - pos >= 16) {
             std::uint8_t ext[8]{};
             if (!ReadExactAt(fd, static_cast<std::int64_t>(pos + 8), ext, 8)) break;
             boxSize = ReadBe64(ext);
@@ -641,15 +705,15 @@ void ParseMp4IlstBox(int fd, std::uint64_t start, std::uint64_t end, const char*
         } else if (boxSize == 0) {
             boxSize = end - pos;
         }
-        if (boxSize < hdrSize || pos + boxSize > end) break;
+        if (boxSize < hdrSize || boxSize > end - pos) break;
 
         std::uint64_t inner = pos + hdrSize;
         const std::uint64_t boxEnd = pos + boxSize;
-        while (inner + 8 <= boxEnd) {
+        while (inner <= boxEnd && boxEnd - inner >= 8) {
             std::uint8_t dhdr[8]{};
             if (!ReadExactAt(fd, static_cast<std::int64_t>(inner), dhdr, 8)) break;
-            std::uint64_t dsize = ReadBe32(dhdr);
-            if (dsize < 8 || inner + dsize > boxEnd) break;
+            const std::uint64_t dsize = ReadBe32(dhdr);
+            if (dsize < 8 || dsize > boxEnd - inner) break;
             if (std::memcmp(dhdr + 4, "data", 4) == 0 && dsize > 16) {
                 const std::uint64_t payloadOff = inner + 16;
                 const std::uint64_t payloadSize = dsize - 16;
@@ -683,14 +747,15 @@ void ParseMp4IlstBox(int fd, std::uint64_t start, std::uint64_t end, const char*
     }
 }
 
-void ParseMp4Container(int fd, std::uint64_t start, std::uint64_t end, const char* guestPath, SceCLCFileInfo& info) {
+void ParseMp4Container(int fd, std::uint64_t start, std::uint64_t end, const char* guestPath, SceCLCFileInfo& info, int depth = 0) {
+    if (depth >= MaxMp4Depth) return;
     std::uint64_t pos = start;
-    while (pos + 8 <= end) {
+    while (pos <= end && end - pos >= 8) {
         std::uint8_t hdr[8]{};
         if (!ReadExactAt(fd, static_cast<std::int64_t>(pos), hdr, 8)) break;
         std::uint64_t boxSize = ReadBe32(hdr);
         std::uint64_t hdrSize = 8;
-        if (boxSize == 1 && pos + 16 <= end) {
+        if (boxSize == 1 && end - pos >= 16) {
             std::uint8_t ext[8]{};
             if (!ReadExactAt(fd, static_cast<std::int64_t>(pos + 8), ext, 8)) break;
             boxSize = ReadBe64(ext);
@@ -698,17 +763,17 @@ void ParseMp4Container(int fd, std::uint64_t start, std::uint64_t end, const cha
         } else if (boxSize == 0) {
             boxSize = end - pos;
         }
-        if (boxSize < hdrSize || pos + boxSize > end) break;
+        if (boxSize < hdrSize || boxSize > end - pos) break;
 
         const std::uint64_t bodyStart = pos + hdrSize;
         const std::uint64_t boxEnd = pos + boxSize;
         if (std::memcmp(hdr + 4, "moov", 4) == 0 || std::memcmp(hdr + 4, "udta", 4) == 0) {
-            ParseMp4Container(fd, bodyStart, boxEnd, guestPath, info);
-        } else if (std::memcmp(hdr + 4, "meta", 4) == 0 && bodyStart + 4 <= boxEnd) {
-            ParseMp4Container(fd, bodyStart + 4, boxEnd, guestPath, info);
+            ParseMp4Container(fd, bodyStart, boxEnd, guestPath, info, depth + 1);
+        } else if (std::memcmp(hdr + 4, "meta", 4) == 0 && boxEnd - bodyStart >= 4) {
+            ParseMp4Container(fd, bodyStart + 4, boxEnd, guestPath, info, depth + 1);
         } else if (std::memcmp(hdr + 4, "ilst", 4) == 0) {
             ParseMp4IlstBox(fd, bodyStart, boxEnd, guestPath, info);
-        } else if (std::memcmp(hdr + 4, "mvhd", 4) == 0 && bodyStart + 20 <= boxEnd) {
+        } else if (std::memcmp(hdr + 4, "mvhd", 4) == 0 && boxEnd - bodyStart >= 20) {
             std::uint8_t mvhd[32]{};
             const std::size_t toRead = static_cast<std::size_t>(std::min<std::uint64_t>(boxEnd - bodyStart, sizeof(mvhd)));
             if (ReadExactAt(fd, static_cast<std::int64_t>(bodyStart), mvhd, toRead)) {
@@ -735,21 +800,22 @@ void ParseMp4Container(int fd, std::uint64_t start, std::uint64_t end, const cha
 }
 
 void ParseFlacMetadata(int fd, std::int64_t fileSize, const char* guestPath, SceCLCFileInfo& info) {
+    const std::uint64_t fileBytes = fileSize > 0 ? static_cast<std::uint64_t>(fileSize) : 0ULL;
     std::uint64_t pos = ParseId3v2(fd, fileSize, guestPath, info);
-    if (pos + 4 > static_cast<std::uint64_t>(fileSize)) return;
+    if (pos > fileBytes || fileBytes - pos < 4) return;
     std::uint8_t magic[4]{};
     if (!ReadExactAt(fd, static_cast<std::int64_t>(pos), magic, 4) || std::memcmp(magic, "fLaC", 4) != 0) {
         return;
     }
     pos += 4;
-    while (pos + 4 <= static_cast<std::uint64_t>(fileSize)) {
+    while (pos <= fileBytes && fileBytes - pos >= 4) {
         std::uint8_t bhdr[4]{};
         if (!ReadExactAt(fd, static_cast<std::int64_t>(pos), bhdr, 4)) break;
         const bool isLast = (bhdr[0] & 0x80) != 0;
         const std::uint8_t blockType = bhdr[0] & 0x7f;
         const std::uint32_t blockSize = ReadBe24(bhdr + 1);
         pos += 4;
-        if (pos + blockSize > static_cast<std::uint64_t>(fileSize)) break;
+        if (blockSize > fileBytes - pos) break;
 
         if (blockType == 0 && blockSize >= 18) {
             std::uint8_t si[18]{};
@@ -767,16 +833,16 @@ void ParseFlacMetadata(int fd, std::int64_t fileSize, const char* guestPath, Sce
             std::vector<std::uint8_t> vc(blockSize);
             if (ReadExactAt(fd, static_cast<std::int64_t>(pos), vc.data(), blockSize)) {
                 std::size_t off = 0;
-                const std::uint32_t vendorLen = ReadLe32(vc.data() + off);
+                const std::size_t vendorLen = static_cast<std::size_t>(ReadLe32(vc.data() + off));
                 off += 4;
-                if (off + vendorLen + 4 <= vc.size()) {
+                if (vendorLen <= vc.size() - off && vc.size() - off - vendorLen >= 4) {
                     off += vendorLen;
                     const std::uint32_t count = ReadLe32(vc.data() + off);
                     off += 4;
-                    for (std::uint32_t i = 0; i < count && off + 4 <= vc.size(); ++i) {
-                        const std::uint32_t clen = ReadLe32(vc.data() + off);
+                    for (std::uint32_t i = 0; i < count && vc.size() - off >= 4; ++i) {
+                        const std::size_t clen = static_cast<std::size_t>(ReadLe32(vc.data() + off));
                         off += 4;
-                        if (off + clen > vc.size()) break;
+                        if (clen > vc.size() - off) break;
                         std::string_view comment(reinterpret_cast<const char*>(vc.data() + off), clen);
                         if (const std::size_t eq = comment.find('='); eq != std::string_view::npos) {
                             const std::string_view key = comment.substr(0, eq);
@@ -792,19 +858,22 @@ void ParseFlacMetadata(int fd, std::int64_t fileSize, const char* guestPath, Sce
         } else if (blockType == 6 && blockSize >= 32) {
             std::uint8_t hdr8[8]{};
             if (ReadExactAt(fd, static_cast<std::int64_t>(pos), hdr8, 8)) {
-                const std::uint32_t mimeLen = ReadBe32(hdr8 + 4);
-                std::size_t off = 8 + mimeLen;
-                if (off + 4 <= blockSize) {
+                const std::size_t blockLen = static_cast<std::size_t>(blockSize);
+                const std::size_t mimeLen = static_cast<std::size_t>(ReadBe32(hdr8 + 4));
+                std::size_t off = 8;
+                if (mimeLen <= blockLen - off && blockLen - off - mimeLen >= 24) {
+                    off += mimeLen;
                     std::uint8_t dlenBuf[4]{};
                     if (ReadExactAt(fd, static_cast<std::int64_t>(pos + off), dlenBuf, 4)) {
-                        const std::uint32_t descLen = ReadBe32(dlenBuf);
-                        off += 4 + descLen + 16;
-                        if (off + 4 <= blockSize) {
+                        const std::size_t descLen = static_cast<std::size_t>(ReadBe32(dlenBuf));
+                        off += 4;
+                        if (descLen <= blockLen - off && blockLen - off - descLen >= 20) {
+                            off += descLen + 16;
                             std::uint8_t picLenBuf[4]{};
                             if (ReadExactAt(fd, static_cast<std::int64_t>(pos + off), picLenBuf, 4)) {
-                                const std::uint32_t picLen = ReadBe32(picLenBuf);
+                                const std::size_t picLen = static_cast<std::size_t>(ReadBe32(picLenBuf));
                                 off += 4;
-                                if (off + picLen <= blockSize) {
+                                if (picLen <= blockLen - off) {
                                     info.coverArtOffset = pos + off;
                                     info.coverArtSize = picLen;
                                     CopyFixedString(info.coverArtPath, sizeof(info.coverArtPath), guestPath, std::strlen(guestPath));
@@ -820,25 +889,46 @@ void ParseFlacMetadata(int fd, std::int64_t fileSize, const char* guestPath, Sce
     }
 }
 
-int GetFileInfoLocked(ControllerState& state, std::uint32_t deviceId, const char* guestPath, SceCLCFileInfo& info) {
+int GetFileInfoUnlocked(const SceCLCUsbStorageCallback& callbacks, std::uint32_t deviceId, const char* guestPath, SceCLCFileInfo& info) {
     const int format = DetectAudioFormat(guestPath);
     if (format == 0) return SceClcErrorUnsupportedFormat;
-    if (guestPath[0] == '\0') return SceClcErrorInvalidArg;
-    const char* secondSlash = std::strchr(guestPath + 1, '/');
-    if (secondSlash == nullptr) return SceClcErrorInvalidArg;
-    if (state.callbacks.requestMap == nullptr || state.callbacks.requestUnmap == nullptr) return SceClcErrorNoCallback;
+    if (!IsSafeGuestPath(guestPath)) return SceClcErrorInvalidArg;
+    if (callbacks.requestMap == nullptr || callbacks.requestUnmap == nullptr) return SceClcErrorNoCallback;
 
+    const char* secondSlash = std::strchr(guestPath + 1, '/');
     char topDir[PathBufferSize]{};
-    const std::size_t topLen = std::min<std::size_t>(static_cast<std::size_t>(secondSlash - guestPath), sizeof(topDir) - 1);
-    std::memcpy(topDir, guestPath, topLen);
+    const char* suffix = nullptr;
+    if (secondSlash == nullptr) {
+        topDir[0] = '/';
+        topDir[1] = '\0';
+        suffix = guestPath;
+    } else {
+        const std::size_t topLen = std::min<std::size_t>(static_cast<std::size_t>(secondSlash - guestPath), sizeof(topDir) - 1);
+        std::memcpy(topDir, guestPath, topLen);
+        topDir[topLen] = '\0';
+        suffix = secondSlash;
+    }
 
     char mountPoint[PathBufferSize]{};
     std::uint64_t mountId = 0;
-    const int mapResult = state.callbacks.requestMap(deviceId, topDir, 3, 0, mountPoint, &mountId);
+    const int mapResult = callbacks.requestMap(deviceId, topDir, 3, 0, mountPoint, &mountId);
     if (mapResult < 0) return mapResult;
 
+    const std::size_t mountLen = BoundedStrlen(mountPoint, sizeof(mountPoint));
+    if (mountLen >= sizeof(mountPoint)) {
+        const int unmapResult = callbacks.requestUnmap(deviceId, mountPoint);
+        return unmapResult < 0 ? unmapResult : SceClcErrorInvalidArg;
+    }
+    if (mountLen > 0 && mountPoint[mountLen - 1] == '/' && suffix[0] == '/') {
+        ++suffix;
+    }
+
     char mountedPath[PathBufferSize * 2]{};
-    std::snprintf(mountedPath, sizeof(mountedPath), "%s%s", mountPoint, secondSlash);
+    const int written = std::snprintf(mountedPath, sizeof(mountedPath), "%s%s", mountPoint, suffix);
+    if (written < 0 || static_cast<std::size_t>(written) >= sizeof(mountedPath)) {
+        const int unmapResult = callbacks.requestUnmap(deviceId, mountPoint);
+        return unmapResult < 0 ? unmapResult : SceClcErrorInvalidArg;
+    }
 
     std::memset(&info, 0, sizeof(info));
     info.index = 0;
@@ -860,7 +950,7 @@ int GetFileInfoLocked(ControllerState& state, std::uint32_t deviceId, const char
         sceKernelClose(fd);
     }
 
-    const int unmapResult = state.callbacks.requestUnmap(deviceId, mountPoint);
+    const int unmapResult = callbacks.requestUnmap(deviceId, mountPoint);
     return unmapResult < 0 ? unmapResult : 0;
 }
 
@@ -877,6 +967,7 @@ int APS5_VABI sceCLCSetUsbStorageCallback(const SceCLCUsbStorageCallback* callba
         std::lock_guard lock(state.mutex);
         g_callbackShadow = local;
         state.callbacks = local;
+        ++state.providerGeneration;
     }
     if (local.registerCallback != nullptr) {
         local.registerCallback(1, &UsbStorageTrampoline, &state);
@@ -899,31 +990,52 @@ int APS5_VABI sceCLCGetUsbStorageCallback(SceCLCUsbStorageCallback* callback) {
 
 int APS5_VABI sceCLCGetDeviceList(std::uint32_t* devices, std::int32_t* count) {
     if (devices == nullptr || count == nullptr) return SceClcErrorInvalidArg;
-    const std::int32_t zero = 0;
-    if (!SafeCopyOut(count, &zero, sizeof(zero))) return SceClcErrorInvalidArg;
-    if (!SafeWritable(devices, sizeof(std::uint32_t))) return SceClcErrorInvalidArg;
+    if (!SafeWritable(count, sizeof(*count)) || !SafeWritable(devices, sizeof(*devices))) {
+        return SceClcErrorInvalidArg;
+    }
 
     auto& state = State();
-    if (state.callbacks.getDeviceList == nullptr) return SceClcErrorNoCallback;
+    std::int32_t (APS5_VABI *getDeviceList)(std::uint32_t*, std::int32_t*) = nullptr;
+    std::uint64_t snapshotGeneration = 0;
+    {
+        std::lock_guard lock(state.mutex);
+        getDeviceList = state.callbacks.getDeviceList;
+        snapshotGeneration = state.providerGeneration;
+    }
 
-    std::uint32_t localDevices[MaxDevices]{};
+    if (getDeviceList == nullptr) {
+        const std::int32_t zero = 0;
+        if (!SafeCopyOut(count, &zero, sizeof(zero))) return SceClcErrorInvalidArg;
+        return SceClcErrorNoCallback;
+    }
+
+    GuardedDeviceBuffer guardedDevices;
+    if (guardedDevices.ptr == nullptr) return SceClcErrorListNotAllocated;
+
     std::int32_t localCount = 0;
-    const int res = state.callbacks.getDeviceList(localDevices, &localCount);
+    const int res = getDeviceList(guardedDevices.ptr, &localCount);
     if (res < 0) return res;
 
     if (localCount < 0) localCount = 0;
     if (localCount > static_cast<std::int32_t>(MaxDevices)) localCount = static_cast<std::int32_t>(MaxDevices);
 
+    if (!SafeWritable(count, sizeof(*count))) return SceClcErrorInvalidArg;
+    if (localCount > 0 && !SafeWritableArray(devices, static_cast<std::size_t>(localCount), sizeof(std::uint32_t))) {
+        return SceClcErrorInvalidArg;
+    }
+
     {
         std::lock_guard lock(state.mutex);
-        state.deviceCount = localCount;
-        std::memset(state.deviceIds, 0, sizeof(state.deviceIds));
-        for (std::int32_t i = 0; i < localCount; ++i) {
-            state.deviceIds[i] = localDevices[i];
+        if (state.providerGeneration == snapshotGeneration) {
+            state.deviceCount = localCount;
+            std::memset(state.deviceIds, 0, sizeof(state.deviceIds));
+            for (std::int32_t i = 0; i < localCount; ++i) {
+                state.deviceIds[i] = guardedDevices.ptr[i];
+            }
         }
     }
 
-    if (localCount > 0 && !SafeCopyOut(devices, localDevices, static_cast<std::size_t>(localCount) * sizeof(std::uint32_t))) {
+    if (localCount > 0 && !SafeCopyOut(devices, guardedDevices.ptr, static_cast<std::size_t>(localCount) * sizeof(std::uint32_t))) {
         return SceClcErrorInvalidArg;
     }
     if (!SafeCopyOut(count, &localCount, sizeof(localCount))) return SceClcErrorInvalidArg;
@@ -935,11 +1047,16 @@ int APS5_VABI sceCLCGetDeviceInfo(std::uint32_t deviceId, SceCLCDeviceInfo* outI
     if (!SafeWritable(outInfo, sizeof(*outInfo))) return SceClcErrorInvalidArg;
 
     auto& state = State();
-    if (!IsDeviceKnown(state, deviceId)) return SceClcErrorDeviceNotFound;
-    if (state.callbacks.getDeviceInfo == nullptr) return SceClcErrorNoCallback;
+    std::int32_t (APS5_VABI *getDeviceInfo)(std::uint32_t, UsbStorageDeviceInfo*) = nullptr;
+    {
+        std::lock_guard lock(state.mutex);
+        if (!IsDeviceKnown(state, deviceId)) return SceClcErrorDeviceNotFound;
+        if (state.callbacks.getDeviceInfo == nullptr) return SceClcErrorNoCallback;
+        getDeviceInfo = state.callbacks.getDeviceInfo;
+    }
 
     UsbStorageDeviceInfo rawInfo{};
-    const int res = state.callbacks.getDeviceInfo(deviceId, &rawInfo);
+    const int res = getDeviceInfo(deviceId, &rawInfo);
     if (res < 0) return res;
 
     SceCLCDeviceInfo formatted{};
@@ -955,17 +1072,10 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
     if (path == nullptr || outCounts == nullptr) return SceClcErrorInvalidArg;
     char localPath[PathBufferSize]{};
     if (!CopyGuestCString(path, localPath, sizeof(localPath))) return SceClcErrorInvalidArg;
-    const std::uint64_t zeroCounts = 0;
-    if (!SafeCopyOut(outCounts, &zeroCounts, sizeof(zeroCounts))) return SceClcErrorInvalidArg;
-
-    auto& state = State();
-    if (!IsDeviceKnown(state, deviceId)) return SceClcErrorDeviceNotFound;
-
-    std::lock_guard lock(state.mutex);
-    if (state.fileEntries == nullptr) return SceClcErrorListNotAllocated;
+    if (!SafeWritable(outCounts, sizeof(*outCounts))) return SceClcErrorInvalidArg;
 
     std::size_t pathLen = std::strlen(localPath);
-    if (pathLen == 0) return SceClcErrorInvalidArg;
+    if (!IsSafeGuestPath(localPath)) return SceClcErrorInvalidArg;
     if (localPath[pathLen - 1] != '/') {
         if (pathLen + 1 >= sizeof(localPath)) return SceClcErrorInvalidArg;
         localPath[pathLen] = '/';
@@ -973,35 +1083,50 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
         ++pathLen;
     }
 
+    const bool isRoot = std::strcmp(localPath, "/") == 0;
+    const char* secondSlash = isRoot ? nullptr : std::strchr(localPath + 1, '/');
+    if (!isRoot && secondSlash == nullptr) return SceClcErrorInvalidArg;
+
+    auto& state = State();
+    SceCLCUsbStorageCallback callbacks{};
+    std::uint64_t snapshotGeneration = 0;
+    char excludePattern[256]{};
+    {
+        std::lock_guard lock(state.mutex);
+        if (!IsDeviceKnown(state, deviceId)) return SceClcErrorDeviceNotFound;
+        if (state.fileEntries == nullptr) return SceClcErrorListNotAllocated;
+        callbacks = state.callbacks;
+        snapshotGeneration = state.providerGeneration;
+        std::memcpy(excludePattern, state.excludePattern, sizeof(excludePattern));
+    }
+
     std::vector<ScannedEntry> scanned;
-    if (std::strcmp(localPath, "/") == 0) {
-        if (state.callbacks.getdentsOpen == nullptr ||
-            state.callbacks.getdentsRead == nullptr ||
-            state.callbacks.getdentsClose == nullptr) {
+    if (isRoot) {
+        if (callbacks.getdentsOpen == nullptr ||
+            callbacks.getdentsRead == nullptr ||
+            callbacks.getdentsClose == nullptr) {
             return SceClcErrorNoCallback;
         }
         std::int32_t fd = -1;
         std::uint64_t bufferSize = 0;
-        const int openRes = state.callbacks.getdentsOpen(deviceId, &fd, &bufferSize);
+        const int openRes = callbacks.getdentsOpen(deviceId, &fd, &bufferSize);
         if (openRes < 0) return openRes;
         if (bufferSize == 0) bufferSize = 0x8000;
         std::vector<char> buffer(static_cast<std::size_t>(bufferSize));
         for (;;) {
             std::uint64_t bytesRead = 0;
-            const int readRes = state.callbacks.getdentsRead(fd, buffer.data(), bufferSize, &bytesRead);
+            const int readRes = callbacks.getdentsRead(fd, buffer.data(), bufferSize, &bytesRead);
             if (readRes < 0) {
-                state.callbacks.getdentsClose(fd);
+                callbacks.getdentsClose(fd);
                 return readRes;
             }
             if (bytesRead == 0) break;
-            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(bytesRead), state.excludePattern, scanned);
+            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(bytesRead), excludePattern, scanned);
             if (scanned.size() >= MaxEntries) break;
         }
-        state.callbacks.getdentsClose(fd);
+        callbacks.getdentsClose(fd);
     } else {
-        const char* secondSlash = std::strchr(localPath + 1, '/');
-        if (secondSlash == nullptr) return SceClcErrorInvalidArg;
-        if (state.callbacks.requestMap == nullptr || state.callbacks.requestUnmap == nullptr) return SceClcErrorNoCallback;
+        if (callbacks.requestMap == nullptr || callbacks.requestUnmap == nullptr) return SceClcErrorNoCallback;
 
         char topDir[PathBufferSize]{};
         const std::size_t topLen = std::min<std::size_t>(static_cast<std::size_t>(secondSlash - localPath), sizeof(topDir) - 1);
@@ -1009,15 +1134,28 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
 
         char mountPoint[PathBufferSize]{};
         std::uint64_t mountId = 0;
-        const int mapRes = state.callbacks.requestMap(deviceId, topDir, 3, 0, mountPoint, &mountId);
+        const int mapRes = callbacks.requestMap(deviceId, topDir, 3, 0, mountPoint, &mountId);
         if (mapRes < 0) return mapRes;
 
+        const std::size_t mountLen = BoundedStrlen(mountPoint, sizeof(mountPoint));
+        if (mountLen >= sizeof(mountPoint)) {
+            const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
+            return unmapRes < 0 ? unmapRes : SceClcErrorInvalidArg;
+        }
+        const char* suffix = (mountLen > 0 && mountPoint[mountLen - 1] == '/' && secondSlash[0] == '/')
+            ? (secondSlash + 1)
+            : secondSlash;
+
         char mountedPath[PathBufferSize * 2]{};
-        std::snprintf(mountedPath, sizeof(mountedPath), "%s%s", mountPoint, secondSlash);
+        const int written = std::snprintf(mountedPath, sizeof(mountedPath), "%s%s", mountPoint, suffix);
+        if (written < 0 || static_cast<std::size_t>(written) >= sizeof(mountedPath)) {
+            const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
+            return unmapRes < 0 ? unmapRes : SceClcErrorInvalidArg;
+        }
 
         const int fd = sceKernelOpen(mountedPath, SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
         if (fd < 0) {
-            const int unmapRes = state.callbacks.requestUnmap(deviceId, mountPoint);
+            const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
             return unmapRes < 0 ? unmapRes : fd;
         }
 
@@ -1031,35 +1169,52 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
             const int readBytes = sceKernelGetdents(fd, buffer.data(), bufSize);
             if (readBytes < 0) {
                 sceKernelClose(fd);
-                const int unmapRes = state.callbacks.requestUnmap(deviceId, mountPoint);
+                const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
                 return unmapRes < 0 ? unmapRes : readBytes;
             }
             if (readBytes == 0) break;
-            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(readBytes), state.excludePattern, scanned);
+            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(readBytes), excludePattern, scanned);
             if (scanned.size() >= MaxEntries) break;
         }
         sceKernelClose(fd);
-        const int unmapRes = state.callbacks.requestUnmap(deviceId, mountPoint);
+        const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
         if (unmapRes < 0) return unmapRes;
     }
 
-    SortScannedEntries(scanned);
-    std::memset(state.fileEntries, 0, MaxEntries * EntryNameSize);
+    std::vector<ScannedEntry> fitted;
+    fitted.reserve(scanned.size());
+    for (const auto& entry : scanned) {
+        const std::size_t entryLen = BoundedStrlen(entry.name, EntryNameSize);
+        if (pathLen + entryLen < PathBufferSize) {
+            fitted.push_back(entry);
+        }
+    }
+    SortScannedEntries(fitted);
+
     std::int32_t folderCount = 0;
     std::int32_t fileCount = 0;
-    for (std::size_t i = 0; i < scanned.size() && i < MaxEntries; ++i) {
-        std::memcpy(state.fileEntries + i * EntryNameSize, scanned[i].name, EntryNameSize);
-        if (scanned[i].isFile) {
+    for (std::size_t i = 0; i < fitted.size() && i < MaxEntries; ++i) {
+        if (fitted[i].isFile) {
             ++fileCount;
         } else {
             ++folderCount;
         }
     }
 
-    state.fileDeviceId = static_cast<std::int32_t>(deviceId);
-    CopyFixedString(state.fileDir, sizeof(state.fileDir), localPath, pathLen);
-    state.fileFolderCount = folderCount;
-    state.fileFileCount = fileCount;
+    {
+        std::lock_guard lock(state.mutex);
+        if (state.fileEntries == nullptr) return SceClcErrorListNotAllocated;
+        if (state.providerGeneration == snapshotGeneration) {
+            std::memset(state.fileEntries, 0, MaxEntries * EntryNameSize);
+            for (std::size_t i = 0; i < fitted.size() && i < MaxEntries; ++i) {
+                std::memcpy(state.fileEntries + i * EntryNameSize, fitted[i].name, EntryNameSize);
+            }
+            state.fileDeviceId = static_cast<std::int32_t>(deviceId);
+            CopyFixedString(state.fileDir, sizeof(state.fileDir), localPath, pathLen);
+            state.fileFolderCount = folderCount;
+            state.fileFileCount = fileCount;
+        }
+    }
 
     const std::uint64_t packedCounts =
         static_cast<std::uint64_t>(static_cast<std::uint32_t>(folderCount)) |
@@ -1130,23 +1285,40 @@ int APS5_VABI sceCLCGetFileList(std::uint32_t, std::uint32_t, std::int32_t listM
         return SceClcErrorInvalidArg;
     }
 
+    for (std::int32_t i = 0; i < plannedCount; ++i) {
+        const std::uint32_t entryIdx = baseOffset + startIndex + static_cast<std::uint32_t>(i);
+        char checkPath[PathBufferSize]{};
+        if (!CombineEntryPath(state.fileDir, state.fileEntries + static_cast<std::size_t>(entryIdx) * EntryNameSize, checkPath, sizeof(checkPath))) {
+            return SceClcErrorInvalidArg;
+        }
+    }
+
     const bool dirMatchesTrack =
         state.fileDeviceId == state.trackDeviceId &&
-        std::strcmp(state.fileDir, state.trackDir) == 0;
+        std::strcmp(state.fileDir, state.trackDir) == 0 &&
+        state.trackEntries != nullptr;
+    std::unordered_map<std::string_view, std::uint8_t> playbackByTrack;
+    if (dirMatchesTrack && listMode != 2 && plannedCount > 0) {
+        for (std::int32_t t = 0; t < state.trackFileCount && t < static_cast<std::int32_t>(MaxEntries); ++t) {
+            const char* tname = state.trackEntries + static_cast<std::size_t>(t) * EntryNameSize;
+            playbackByTrack.emplace(std::string_view(tname, BoundedStrlen(tname, EntryNameSize)), state.playbackResults[t]);
+        }
+    }
 
     std::int32_t count = 0;
     for (std::int32_t i = 0; i < plannedCount; ++i) {
         const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
         const std::uint32_t entryIdx = baseOffset + static_cast<std::uint32_t>(idx);
+        const char* entryName = state.fileEntries + static_cast<std::size_t>(entryIdx) * EntryNameSize;
         SceCLCListEntry item{};
         item.deviceId = state.fileDeviceId;
-        std::snprintf(item.name, sizeof(item.name), "%s%s", state.fileDir, state.fileEntries + static_cast<std::size_t>(entryIdx) * EntryNameSize);
+        CombineEntryPath(state.fileDir, entryName, item.name, sizeof(item.name));
         const bool isFile = static_cast<std::int32_t>(entryIdx) >= state.fileFolderCount;
         item.isFile = isFile ? 1 : 0;
         if (isFile && dirMatchesTrack) {
-            const std::int32_t trackIdx = static_cast<std::int32_t>(entryIdx) - state.fileFolderCount;
-            if (trackIdx >= 0 && trackIdx < static_cast<std::int32_t>(MaxEntries)) {
-                item.state = state.playbackResults[trackIdx];
+            const auto found = playbackByTrack.find(std::string_view(entryName, BoundedStrlen(entryName, EntryNameSize)));
+            if (found != playbackByTrack.end()) {
+                item.state = found->second;
             }
         }
         if (!SafeCopyOut(localList.items + i, &item, sizeof(item))) return SceClcErrorInvalidArg;
@@ -1179,12 +1351,20 @@ int APS5_VABI sceCLCGetTrackList(std::uint32_t startIndex, std::int32_t maxCount
         return SceClcErrorInvalidArg;
     }
 
+    for (std::int32_t i = 0; i < plannedCount; ++i) {
+        const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
+        char checkPath[PathBufferSize]{};
+        if (!CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(idx) * EntryNameSize, checkPath, sizeof(checkPath))) {
+            return SceClcErrorInvalidArg;
+        }
+    }
+
     std::int32_t count = 0;
     for (std::int32_t i = 0; i < plannedCount; ++i) {
         const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
         SceCLCListEntry item{};
         item.deviceId = state.trackDeviceId;
-        std::snprintf(item.name, sizeof(item.name), "%s%s", state.trackDir, state.trackEntries + static_cast<std::size_t>(idx) * EntryNameSize);
+        CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(idx) * EntryNameSize, item.name, sizeof(item.name));
         item.isFile = 1;
         item.state = state.playbackResults[idx];
         if (!SafeCopyOut(localList.items + i, &item, sizeof(item))) return SceClcErrorInvalidArg;
@@ -1214,15 +1394,7 @@ int APS5_VABI sceCLCClearFileList() {
 int APS5_VABI sceCLCClearTrackList() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    state.trackDeviceId = 0;
-    std::memset(state.trackDir, 0, sizeof(state.trackDir));
-    state.trackFolderCount = 0;
-    state.trackFileCount = 0;
-    if (state.trackEntries != nullptr) {
-        std::memset(state.trackEntries, 0, MaxEntries * EntryNameSize);
-    }
-    std::memset(state.playbackResults, 0, sizeof(state.playbackResults));
-    std::memset(state.shuffleOrder, 0, sizeof(state.shuffleOrder));
+    ClearTrackListLocked(state);
     return 0;
 }
 
@@ -1230,7 +1402,10 @@ int APS5_VABI sceCLCSetTrackList() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.fileEntries == nullptr || state.trackEntries == nullptr) return SceClcErrorListNotAllocated;
-    if (state.fileFileCount == 0) return 0;
+    if (state.fileFileCount == 0) {
+        ClearTrackListLocked(state);
+        return 0;
+    }
     if (state.fileDeviceId == state.trackDeviceId && std::strcmp(state.fileDir, state.trackDir) == 0) {
         return 0;
     }
@@ -1314,9 +1489,14 @@ int APS5_VABI sceCLCGetFileInfo(std::uint32_t deviceId, const char* path, SceCLC
     if (!SafeWritable(outInfo, sizeof(*outInfo))) return SceClcErrorInvalidArg;
 
     auto& state = State();
-    std::lock_guard lock(state.mutex);
+    SceCLCUsbStorageCallback callbacks{};
+    {
+        std::lock_guard lock(state.mutex);
+        callbacks = state.callbacks;
+    }
+
     SceCLCFileInfo localInfo{};
-    const int res = GetFileInfoLocked(state, deviceId, localPath, localInfo);
+    const int res = GetFileInfoUnlocked(callbacks, deviceId, localPath, localInfo);
     if (res < 0) return res;
     if (!SafeCopyOut(outInfo, &localInfo, sizeof(localInfo))) return SceClcErrorInvalidArg;
     return 0;
@@ -1327,19 +1507,26 @@ int APS5_VABI sceCLCGetTrackInfo(std::int32_t trackIndex, SceCLCFileInfo* outInf
     if (!SafeWritable(outInfo, sizeof(*outInfo))) return SceClcErrorInvalidArg;
 
     auto& state = State();
-    std::lock_guard lock(state.mutex);
-    if (trackIndex < 0 || trackIndex >= state.trackFileCount || state.trackEntries == nullptr) {
-        return SceClcErrorInvalidArg;
+    SceCLCUsbStorageCallback callbacks{};
+    std::uint32_t deviceId = 0;
+    std::int32_t origIdx = 0;
+    char fullPath[PathBufferSize]{};
+    {
+        std::lock_guard lock(state.mutex);
+        if (trackIndex < 0 || trackIndex >= state.trackFileCount || state.trackEntries == nullptr) {
+            return SceClcErrorInvalidArg;
+        }
+        origIdx = state.shuffleOrder[trackIndex];
+        if (origIdx < 0 || origIdx >= state.trackFileCount) return SceClcErrorInvalidArg;
+        if (!CombineEntryPath(state.trackDir, state.trackEntries + static_cast<std::size_t>(origIdx) * EntryNameSize, fullPath, sizeof(fullPath))) {
+            return SceClcErrorInvalidArg;
+        }
+        deviceId = static_cast<std::uint32_t>(state.trackDeviceId);
+        callbacks = state.callbacks;
     }
 
-    const std::int32_t origIdx = state.shuffleOrder[trackIndex];
-    if (origIdx < 0 || origIdx >= state.trackFileCount) return SceClcErrorInvalidArg;
-
-    char fullPath[PathBufferSize]{};
-    std::snprintf(fullPath, sizeof(fullPath), "%s%s", state.trackDir, state.trackEntries + static_cast<std::size_t>(origIdx) * EntryNameSize);
-
     SceCLCFileInfo localInfo{};
-    const int res = GetFileInfoLocked(state, static_cast<std::uint32_t>(state.trackDeviceId), fullPath, localInfo);
+    const int res = GetFileInfoUnlocked(callbacks, deviceId, fullPath, localInfo);
     if (res < 0) return res;
     localInfo.index = origIdx;
     if (!SafeCopyOut(outInfo, &localInfo, sizeof(localInfo))) return SceClcErrorInvalidArg;
