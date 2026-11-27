@@ -326,9 +326,27 @@ static void GuestPointers() {
     Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(aliasedRaw)); },
         "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
     Require(aliasedSubstring.header.refCount == 4);
+    unsigned char aliasedBefore[sizeof(CustomHeaderFields)]{};
+    std::memcpy(aliasedBefore, aliasedRaw, sizeof(aliasedRaw));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(aliasedRaw), &validSource); },
         "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
     Require(aliasedSubstring.header.refCount == 4);
+    Require(std::memcmp(aliasedBefore, aliasedRaw, sizeof(aliasedRaw)) == 0);
+
+    NKWebKit::WtfAbi::StringImpl invalidFlagsImpl{2, 4, sampleChars, 4u | 16u};
+    NKWebKit::WtfAbi::StringImpl* invalidFlagsBuf = &invalidFlagsImpl;
+    alignas(CustomHeaderFields) unsigned char invalidFlagsRaw[sizeof(CustomHeaderFields)]{};
+    void* invalidFlagsPtr = &invalidFlagsBuf;
+    std::memcpy(invalidFlagsRaw + 16, &invalidFlagsPtr, sizeof(invalidFlagsPtr));
+    std::memcpy(invalidFlagsRaw + 24, &one, sizeof(one));
+    std::memcpy(invalidFlagsRaw + 28, &one, sizeof(one));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(invalidFlagsRaw)); },
+        "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(invalidFlagsImpl.refCount == 2);
+    invalidFlagsImpl.hashAndFlags = 4u | 3u;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(invalidFlagsRaw), &validSource); },
+        "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(invalidFlagsImpl.refCount == 2);
 
     alignas(CustomHeaderFields) unsigned char zeroSizeBadBufRaw[sizeof(CustomHeaderFields)]{};
     std::memcpy(zeroSizeBadBufRaw, &badBuf, sizeof(badBuf));

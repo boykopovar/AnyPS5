@@ -170,6 +170,8 @@ void SimulateRelease(StringImpl* impl, std::vector<PlannedRefState>& states, con
         return;
     }
     state.refCount = 0u;
+    if ((state.hashAndFlags & 48u) != 0u || (state.hashAndFlags & kStringImplBufferOwnershipMask) == 3u)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if ((state.hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
         RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
         StringImpl* owner = nullptr;
