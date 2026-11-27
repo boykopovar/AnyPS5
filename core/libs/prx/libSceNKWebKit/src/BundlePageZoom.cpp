@@ -4,23 +4,21 @@
 extern "C" {
 
 double APS5_VABI WKBundlePageGetPageZoomFactor(const void* pageRef) {
-    return NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->pageZoomFactor;
+    return static_cast<double>(NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->pageZoomFactor);
 }
 
 double APS5_VABI WKBundlePageGetTextZoomFactor(const void* pageRef) {
-    return NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->textZoomFactor;
+    return static_cast<double>(NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->textZoomFactor);
 }
 
 void APS5_VABI WKBundlePageSetPageZoomFactor(const void* pageRef, double zoomFactor) {
     auto* page = NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__);
-    if (zoomFactor <= 0) return;
-    page->pageZoomFactor = zoomFactor;
+    page->pageZoomFactor = static_cast<float>(zoomFactor);
 }
 
 void APS5_VABI WKBundlePageSetTextZoomFactor(const void* pageRef, double zoomFactor) {
     auto* page = NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__);
-    if (zoomFactor <= 0) return;
-    page->textZoomFactor = zoomFactor;
+    page->textZoomFactor = static_cast<float>(zoomFactor);
 }
 
 }

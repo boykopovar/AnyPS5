@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [WKBundlePage zoom factor controls](../../../core/libs/prx/libSceNKWebKit/src/BundlePageZoom.cpp) (libSceNKWebKit) - `WKBundlePageGetPageZoomFactor`, `WKBundlePageGetTextZoomFactor`, `WKBundlePageSetPageZoomFactor` and `WKBundlePageSetTextZoomFactor` query and configure page and text zoom multipliers on the host `BundlePage` object defaulting to 1.0, ignoring non-positive zoom factors, and throwing `std::invalid_argument` on null or invalid references. Unverified on console.
+- [WKBundlePage zoom factor controls](../../../core/libs/prx/libSceNKWebKit/src/BundlePageZoom.cpp) (libSceNKWebKit) - Upstream WebKit ignores setters and returns 1 from getters when the page lacks a main frame or document; the host BundlePage models neither and unconditionally stores zoom factors as float, returning them widened to double. Behavior unmeasured on console.
 
 ## remove `bNfhkICjfEk`
 

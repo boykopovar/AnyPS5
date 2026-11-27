@@ -36,23 +36,23 @@ int main() {
     Require(WKBundlePageGetPageZoomFactor(pageRef) == 1.0);
     Require(WKBundlePageGetTextZoomFactor(pageRef) == 1.0);
 
-    WKBundlePageSetPageZoomFactor(pageRef, 1.5);
-    Require(WKBundlePageGetPageZoomFactor(pageRef) == 1.5);
+    WKBundlePageSetPageZoomFactor(pageRef, 1.1);
+    Require(WKBundlePageGetPageZoomFactor(pageRef) == static_cast<double>(static_cast<float>(1.1)));
 
     WKBundlePageSetTextZoomFactor(pageRef, 2.25);
     Require(WKBundlePageGetTextZoomFactor(pageRef) == 2.25);
 
     WKBundlePageSetPageZoomFactor(pageRef, 0.0);
-    Require(WKBundlePageGetPageZoomFactor(pageRef) == 1.5);
+    Require(WKBundlePageGetPageZoomFactor(pageRef) == 0.0);
 
     WKBundlePageSetPageZoomFactor(pageRef, -1.0);
-    Require(WKBundlePageGetPageZoomFactor(pageRef) == 1.5);
+    Require(WKBundlePageGetPageZoomFactor(pageRef) == -1.0);
 
     WKBundlePageSetTextZoomFactor(pageRef, 0.0);
-    Require(WKBundlePageGetTextZoomFactor(pageRef) == 2.25);
+    Require(WKBundlePageGetTextZoomFactor(pageRef) == 0.0);
 
     WKBundlePageSetTextZoomFactor(pageRef, -0.5);
-    Require(WKBundlePageGetTextZoomFactor(pageRef) == 2.25);
+    Require(WKBundlePageGetTextZoomFactor(pageRef) == -0.5);
 
     WKBundlePageSetPageZoomFactor(pageRef, 0.75);
     Require(WKBundlePageGetPageZoomFactor(pageRef) == 0.75);
