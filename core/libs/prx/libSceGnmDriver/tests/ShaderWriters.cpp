@@ -121,6 +121,25 @@ void TestLs() {
     Require(sceGnmSetLsShader(words.data(), 0x100, Regs, 0x40) == 0 && words[9] == (Regs[2] | 0x40), "the local shader modifier was not merged");
 }
 
+bool Refused(std::uint32_t esgs, std::uint32_t gsvs) {
+    try {
+        sceGnmSetGsRingSizes(esgs, gsvs);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void TestGsRingSizes() {
+    Require(sceGnmSetGsRingSizes(0x400000, 0x800000) == 0, "the 4 MB and 8 MB GS rings were refused");
+    Require(sceGnmSetGsRingSizes(0x600000, 0x500000) == 0, "the 6 MB and 5 MB GS rings were refused");
+    Require(Refused(0x300000, 0x400000), "a 3 MB ES-GS ring was accepted");
+    Require(Refused(0x400000, 0x900000), "a 9 MB GS-VS ring was accepted");
+    Require(Refused(0x480000, 0x400000), "an ES-GS ring that is not 1 MB aligned was accepted");
+    Require(Refused(0x400000, 0x7fffff), "a GS-VS ring that is not 1 MB aligned was accepted");
+    Require(Refused(0, 0), "empty GS rings were accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -132,6 +151,7 @@ int main() {
         TestGs();
         TestHs();
         TestLs();
+        TestGsRingSizes();
         std::puts("gnm shader writer tests passed");
         return 0;
     } catch (const std::exception& error) {

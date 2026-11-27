@@ -58,7 +58,7 @@ std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::
 int APS5_VABI sceGnmMapComputeQueue(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset);
 int APS5_VABI sceGnmRequestFlipAndSubmitDone();
 int APS5_VABI sceGnmRequestMipStatsReportAndReset();
-int APS5_VABI sceGnmSetGsRingSizes();
+int APS5_VABI sceGnmSetGsRingSizes(std::uint32_t esgsRingSize, std::uint32_t gsvsRingSize);
 int APS5_VABI sceGnmSetupMipStatsReport();
 int APS5_VABI sceGnmUnmapComputeQueue(std::uint32_t id);
 int APS5_VABI sceGnmSetEmbeddedPsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t);

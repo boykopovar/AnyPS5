@@ -819,8 +819,13 @@ int APS5_VABI sceGnmRequestMipStatsReportAndReset() {
     return 0;
 }
 
-int APS5_VABI sceGnmSetGsRingSizes() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetGsRingSizes(std::uint32_t esgsRingSize, std::uint32_t gsvsRingSize) {
+    constexpr std::uint32_t MinRingSize = 0x400000;
+    constexpr std::uint32_t MaxRingSize = 0x800000;
+    constexpr std::uint32_t RingAlignment = 0x100000;
+    for (const auto size : {esgsRingSize, gsvsRingSize})
+        if (size < MinRingSize || size > MaxRingSize || size % RingAlignment != 0)
+            NotImplemented_nid_no_patch("sceGnmSetGsRingSizes for an ES-GS or GS-VS ring size below 4 MB, above 8 MB or not 1 MB aligned");
     return 0;
 }
 
