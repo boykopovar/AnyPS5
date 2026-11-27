@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NanSpeculationCounters.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -10,6 +11,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -188,8 +190,17 @@ bool committedWritable(std::uint64_t address, std::uint64_t bytes) {
 }
 
 void commit(const FrameMemoryChunk& chunk) {
-    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
-    const auto bytes = static_cast<std::size_t>(chunk.bytes);
+    auto first = chunk.address;
+    auto last = chunk.address + chunk.bytes;
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::uint64_t windowsPage = system.dwPageSize;
+    first &= ~(windowsPage - 1);
+    last = (last + windowsPage - 1) & ~(windowsPage - 1);
+#endif
+    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(first));
+    const auto bytes = static_cast<std::size_t>(last - first);
 #ifdef __linux__
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto begin = chunk.address & ~(page - 1);
@@ -1755,6 +1766,7 @@ int run(const Options& options) {
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
                 static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
     std::fflush(stdout);
+    AgcDriver::ReportNanSpeculationCounters("replay");
     return replay.unfinished == 0 ? 0 : 3;
 }
 
@@ -1816,8 +1828,9 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "agc_frame_replay: %s\n", error.what());
             if (code == 0) code = 2;
         }
-        if (code == 0) return 0;
     }
+    LibcRunReportFinishExit_nid_no_patch(code);
+    if (!listing && code == 0) return 0;
     std::fflush(stdout);
     std::fflush(stderr);
     std::_Exit(code);

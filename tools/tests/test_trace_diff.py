@@ -87,6 +87,7 @@ class DiffTests(unittest.TestCase):
         self.assertEqual(result["frames"], {"a": 1, "b": 1})
         self.assertEqual(result["windows"], {"a": {"start": 0, "count": 1, "start_ms": 0.0, "end_ms": 20.0},
                                               "b": {"start": 1, "count": 1, "start_ms": 30.0, "end_ms": 50.0}})
+        self.assertEqual(result["event_loss"], {"a": [], "b": []})
         slices = {row["name"]: row for row in result["slices"]}
         self.assertEqual(slices["Driver.Packet"]["delta_ms_per_frame"], 0.0)
         self.assertEqual(slices["crosses boundary"]["b_ms_per_frame"], 5.0)
@@ -113,6 +114,48 @@ class DiffTests(unittest.TestCase):
         self.assertIn("A window: 0:2 (0 to 40 ms in the capture)", rendered)
         self.assertIn("B window: whole capture", rendered)
         self.assertIn("3 events lost", rendered)
+
+    def test_whole_captures_keep_loss_markers_and_warn_for_either_side(self):
+        for a_lost, b_lost in ((3, 0), (0, 300), (3, 300)):
+            with self.subTest(a_lost=a_lost, b_lost=b_lost):
+                captures = []
+                for draw_us, lost in ((10000, a_lost), (5000, b_lost)):
+                    items = events(draw_us)
+                    if lost:
+                        items.append({"name": "trace buffer full", "ph": "i", "ts": 5000,
+                                      "tid": 1, "args": {"events_lost": lost}})
+                    captures.append(items)
+                result = self.diff(*captures)
+                self.assertNotIn("windows", result)
+                rendered = trace_diff.markdown(result)
+                for side, lost in (("a", a_lost), ("b", b_lost)):
+                    self.assertEqual([loss["events_lost"] for loss in result["event_loss"][side]],
+                                     [lost] if lost else [])
+                    if lost:
+                        self.assertIn(f"- {side.upper()} capture:\n  - queue worker 0x0: {lost} events lost; "
+                                      "buffer full at 5 ms in the capture.", rendered)
+                self.assertEqual(rendered.count("Timings describe retained events only."), 1)
+                packet = next(row for row in result["slices"] if row["name"] == "Driver.Packet")
+                self.assertEqual(packet["delta_ms_per_frame"], -5.0)
+
+    def test_whole_capture_cli_reports_loss_in_json_and_markdown(self):
+        a = write_trace(self.tmp.name, "a.json.gz", events(10000))
+        b = write_trace(self.tmp.name, "b.json.gz", events(5000) + [
+            {"name": "trace buffer full", "ph": "i", "ts": 5000, "tid": 1, "args": {"events_lost": 300}}
+        ])
+        for options in ([], ["--json"]):
+            with self.subTest(options=options):
+                done = subprocess.run([sys.executable, trace_diff.__file__, a, b, *options],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                if options:
+                    result = json.loads(done.stdout)
+                    self.assertEqual(result["event_loss"]["a"], [])
+                    self.assertEqual(result["event_loss"]["b"][0]["events_lost"], 300)
+                else:
+                    self.assertIn("B capture:", done.stdout)
+                    self.assertIn("300 events lost", done.stdout)
+                    self.assertIn("Timings describe retained events only.", done.stdout)
 
     def test_window_requires_real_present_bounds(self):
         a = write_trace(self.tmp.name, "a.json.gz", events(10000))
