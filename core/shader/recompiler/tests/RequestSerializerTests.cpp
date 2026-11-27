@@ -202,10 +202,144 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 14u && bytes[4] == 63u);
-    bytes.resize(bytes.size() - 6u);
+    Require(bytes.size() > 14u && bytes[4] == 64u);
+    bytes.resize(bytes.size() - 17u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
+}
+
+constexpr std::uint32_t kReplayTargetOptionCount = 11u;
+
+void SetReplayTargetOptionBits(ShaderRecompiler::SpirvTarget& target, std::uint32_t bits) {
+    target.pixelWave32Subgroups = (bits & (1u << 0u)) != 0u;
+    target.robustBufferAccess2 = (bits & (1u << 1u)) != 0u;
+    target.exactRobustLoads = (bits & (1u << 2u)) != 0u;
+    target.waveLdsMemoryBarriers = (bits & (1u << 3u)) != 0u;
+    target.deviceScopeLdsMemoryBarriers = (bits & (1u << 4u)) != 0u;
+    target.ldsLockFences = (bits & (1u << 5u)) != 0u;
+    target.deviceAtomicWorkgroupMemoryBarriers = (bits & (1u << 6u)) != 0u;
+    target.meshWindowBuffer = (bits & (1u << 7u)) != 0u;
+    target.float16HostNans = (bits & (1u << 8u)) != 0u;
+    target.meshInlineFunctions = (bits & (1u << 9u)) != 0u;
+    target.spannedShuffleThroughMemory = (bits & (1u << 10u)) != 0u;
+}
+
+std::uint32_t ReplayTargetOptionBits(const ShaderRecompiler::SpirvTarget& target) {
+    std::uint32_t bits = 0u;
+    if (target.pixelWave32Subgroups) bits |= 1u << 0u;
+    if (target.robustBufferAccess2) bits |= 1u << 1u;
+    if (target.exactRobustLoads) bits |= 1u << 2u;
+    if (target.waveLdsMemoryBarriers) bits |= 1u << 3u;
+    if (target.deviceScopeLdsMemoryBarriers) bits |= 1u << 4u;
+    if (target.ldsLockFences) bits |= 1u << 5u;
+    if (target.deviceAtomicWorkgroupMemoryBarriers) bits |= 1u << 6u;
+    if (target.meshWindowBuffer) bits |= 1u << 7u;
+    if (target.float16HostNans) bits |= 1u << 8u;
+    if (target.meshInlineFunctions) bits |= 1u << 9u;
+    if (target.spannedShuffleThroughMemory) bits |= 1u << 10u;
+    return bits;
+}
+
+void DropReplayTargetOptions(std::vector<std::uint8_t>& bytes) {
+    Require(bytes.size() > 14u + kReplayTargetOptionCount);
+    bytes.resize(bytes.size() - kReplayTargetOptionCount);
+}
+
+void VerifyReplayTargetOptions() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    for (std::uint32_t bits = 0u; bits < (1u << kReplayTargetOptionCount); ++bits) {
+        ShaderRecompiler::RecompileRequest request{};
+        SetReplayTargetOptionBits(request.target, bits);
+        request.target.spannedAnySubgroup = (bits & 1u) != 0u;
+        request.target.maxImageArrayLayers = bits;
+        const auto encoded = serializer.Serialize(request);
+        const auto bytes = DecodeBase64(encoded);
+        Require(bytes.size() > 14u && bytes[4] == 64u);
+        const auto replay = serializer.Deserialize(encoded);
+        Require(ReplayTargetOptionBits(replay.request.target) == bits);
+        Require(replay.request.target.spannedAnySubgroup == ((bits & 1u) != 0u) && replay.request.target.maxImageArrayLayers == bits);
+        Require(serializer.Serialize(replay.request) == encoded);
+    }
+    const auto baseBytes = DecodeBase64(serializer.Serialize(ShaderRecompiler::RecompileRequest{}));
+    std::vector<std::size_t> positions;
+    for (std::uint32_t index = 0u; index < kReplayTargetOptionCount; ++index) {
+        ShaderRecompiler::RecompileRequest single{};
+        SetReplayTargetOptionBits(single.target, 1u << index);
+        const auto bytes = DecodeBase64(serializer.Serialize(single));
+        Require(bytes.size() == baseBytes.size());
+        std::size_t changed = 0u;
+        std::size_t changedCount = 0u;
+        for (std::size_t at = 0u; at < bytes.size(); ++at) {
+            if (bytes[at] == baseBytes[at]) continue;
+            changed = at;
+            ++changedCount;
+        }
+        Require(changedCount == 1u);
+        positions.push_back(changed);
+    }
+    Require(std::is_sorted(positions.begin(), positions.end()) && std::adjacent_find(positions.begin(), positions.end()) == positions.end());
+    Require(baseBytes.size() - positions.front() == kReplayTargetOptionCount);
+    ShaderRecompiler::RecompileRequest full{};
+    SetReplayTargetOptionBits(full.target, (1u << kReplayTargetOptionCount) - 1u);
+    const auto fullBytes = DecodeBase64(serializer.Serialize(full));
+    for (std::size_t missing = 1u; missing <= kReplayTargetOptionCount; ++missing) {
+        auto truncated = fullBytes;
+        truncated.resize(truncated.size() - missing);
+        bool rejected = false;
+        try {
+            static_cast<void>(serializer.Deserialize(EncodeBase64(truncated)));
+        } catch (const std::runtime_error& error) {
+            rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+        }
+        Require(rejected);
+    }
+    auto clearBarycentrics = fullBytes;
+    clearBarycentrics.push_back(0u);
+    bool clearRejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(clearBarycentrics)));
+    } catch (const std::runtime_error& error) {
+        clearRejected = std::string_view(error.what()) == "RequestSerializer: a written emulated barycentrics flag is clear";
+    }
+    Require(clearRejected);
+    ShaderRecompiler::RecompileRequest trailingRequest{};
+    trailingRequest.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    trailingRequest.graphics->emulateBarycentrics = true;
+    auto trailing = DecodeBase64(serializer.Serialize(trailingRequest));
+    trailing.push_back(0u);
+    bool trailingRejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(trailing)));
+    } catch (const std::runtime_error& error) {
+        trailingRejected = std::string_view(error.what()) == "RequestSerializer: unexpected trailing data";
+    }
+    Require(trailingRejected);
+    for (const std::uint32_t bits : {0u, 0x555u, 0x7ffu}) {
+        ShaderRecompiler::RecompileRequest request{};
+        SetReplayTargetOptionBits(request.target, bits);
+        request.target.spannedAnySubgroup = true;
+        request.target.maxImageArrayLayers = 0xfeedu;
+        request.target.fixedPushSlots = true;
+        auto legacy63 = DecodeBase64(serializer.Serialize(request));
+        DropReplayTargetOptions(legacy63);
+        legacy63[4] = 63u;
+        const auto replay63 = serializer.Deserialize(EncodeBase64(legacy63));
+        Require(ReplayTargetOptionBits(replay63.request.target) == 0u);
+        Require(replay63.request.target.spannedAnySubgroup && replay63.request.target.fixedPushSlots && replay63.request.target.maxImageArrayLayers == 0xfeedu);
+        auto legacy62Bytes = legacy63;
+        legacy62Bytes[4] = 62u;
+        const auto replay62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
+        Require(ReplayTargetOptionBits(replay62.request.target) == 0u && replay62.request.target.spannedAnySubgroup);
+        Require(replay62.request.target.fixedPushSlots && replay62.request.target.maxImageArrayLayers == 0xfeedu);
+    }
+    ShaderRecompiler::RecompileRequest emulated{};
+    emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    emulated.graphics->emulateBarycentrics = true;
+    SetReplayTargetOptionBits(emulated.target, 1u << 1u);
+    const auto emulatedReplay = serializer.Deserialize(serializer.Serialize(emulated));
+    Require(emulatedReplay.request.graphics.has_value() && emulatedReplay.request.graphics->emulateBarycentrics);
+    Require(ReplayTargetOptionBits(emulatedReplay.request.target) == (1u << 1u));
+    Require(serializer.Serialize(emulatedReplay.request) == serializer.Serialize(emulated));
 }
 
 void VerifyTargetOptions() {
@@ -226,7 +360,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -238,6 +372,7 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    bytes.resize(bytes.size() - kReplayTargetOptionCount);
                     auto legacy62Bytes = bytes;
                     legacy62Bytes[4] = 62u;
                     const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
@@ -784,7 +919,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -900,7 +1035,9 @@ int VerifyVersion56Compatibility() {
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
         auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 63u && version62.back() == (spanned ? 1u : 0u));
+        Require(version62[4] == 64u);
+        DropReplayTargetOptions(version62);
+        Require(version62.back() == (spanned ? 1u : 0u));
         version62[4] = 62u;
         Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
         auto version57 = version62;
@@ -1194,7 +1331,7 @@ void VerifySingleSampleVersion63() {
         request.context.pixel->ditheredAlphaSamples = 1u;
         request.context.pixel->singleSampleDither = mode;
         const auto bytes = DecodeBase64(serializer.Serialize(request));
-        Require(bytes[4] == 63u);
+        Require(bytes[4] == 64u);
         const auto replay = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay.request.context.pixel->singleSampleDither == mode && replay.request.context.pixel->ditheredAlphaSamples == 1u);
         Require(replay.request.target.maxImageArrayLayers == 4097u && replay.request.target.fixedPushSlots && replay.request.target.spannedAnySubgroup);
@@ -1227,6 +1364,7 @@ void VerifySingleSampleVersion63() {
             request.context.pixel->ditheredAlphaSamples = samples;
             request.context.pixel->singleSampleDither = ShaderRecompiler::SingleSampleDither::None;
             auto legacy = DecodeBase64(serializer.Serialize(request));
+            DropReplayTargetOptions(legacy);
             legacy[4] = version;
             if (version < 57u) legacy.resize(legacy.size() - 6u);
             else if (version < 62u) legacy.pop_back();
@@ -1235,7 +1373,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{65u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
@@ -1250,6 +1388,7 @@ void VerifySingleSampleVersion63() {
 }
 
 int main() {
+    VerifyReplayTargetOptions();
     VerifySingleSampleVersion63();
     VerifyTargetOptions();
     return VerifyVersion56Compatibility();
