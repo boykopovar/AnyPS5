@@ -80,6 +80,11 @@ std::uint32_t* APS5_VABI FT_Face_GetVariantsOfCharForward_nid_no_patch(FreeType:
 }
 APS5_EXPORT("mGMeRKWGTL4", FT_Face_GetVariantsOfCharForward_nid_no_patch);
 
+std::uint32_t APS5_VABI FT_Face_GetCharVariantIndexForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    return FT_Face_GetCharVariantIndex_nid_postfix(face, charcode, variantSelector);
+}
+APS5_EXPORT("dPcZ76eZb64", FT_Face_GetCharVariantIndexForward_nid_no_patch);
+
 int APS5_VABI FT_Get_CID_From_Glyph_IndexForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, std::uint32_t* cid) {
     return FT_Get_CID_From_Glyph_Index_nid_postfix(face, glyphIndex, cid);
 }
@@ -184,6 +189,11 @@ std::uint32_t APS5_VABI FT_Get_Sfnt_Name_CountForward_nid_no_patch(FreeType::Gue
     return FT_Get_Sfnt_Name_Count_nid_postfix(face);
 }
 APS5_EXPORT("fbRv4M+XzL8", FT_Get_Sfnt_Name_CountForward_nid_no_patch);
+
+void* APS5_VABI FT_Get_Sfnt_TableForward_nid_no_patch(FreeType::GuestFaceRec* face, std::int32_t tag) {
+    return FT_Get_Sfnt_Table_nid_postfix(face, tag);
+}
+APS5_EXPORT("omDz0x8lyHk", FT_Get_Sfnt_TableForward_nid_no_patch);
 
 int APS5_VABI FT_Get_SubGlyph_InfoForward_nid_no_patch(FreeType::GuestGlyphSlotRec* slot, std::uint32_t subIndex, std::int32_t* index, std::uint32_t* flags,
                                                        std::int32_t* arg1, std::int32_t* arg2, FreeType::GuestMatrix* transform) {

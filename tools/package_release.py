@@ -179,6 +179,8 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
     if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
+    if "libSceNKWebKit.prx" in expected:
+        licenses.append((ROOT / "3rdparty/quickjs/LICENSE", "libs/licenses/quickjs.txt"))
     if "libSceNKWebKitRequirements.prx" in expected:
         licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
         licenses.append((ROOT / "3rdparty/libwpe/COPYING", "libs/licenses/libwpe.txt"))

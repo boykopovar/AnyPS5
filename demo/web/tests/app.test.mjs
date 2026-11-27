@@ -878,6 +878,31 @@ test("a visible error follows a language switch", async t => {
   assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
 });
 
+test("expanded failure details stay open across interface updates", async t => {
+  const { get } = await setup(t, "expanded-failure-details", { fetch: async () => ({ ok: false, status: 404 }) });
+  const error = get("error");
+  assert.equal(error.hidden, false);
+  const details = error.children[1];
+  const summary = details.children[0];
+  details.open = true;
+
+  get("locale").onclick();
+  assert.equal(error.children[1], details);
+  assert.equal(details.children[0], summary);
+  assert.equal(details.open, true);
+  assert.equal(summary.textContent, translate("de", "failureDetails"));
+
+  get("save").listeners.get("change")();
+  assert.equal(error.children[1], details);
+  assert.equal(details.open, true);
+
+  get("file").files = [{ name: "readme.txt" }];
+  get("file").onchange();
+  await setImmediate();
+  assert.notEqual(error.children[1], details);
+  assert.equal(Boolean(error.children[1].open), false);
+});
+
 test("a browser that denies direct ZIP writes explains how to continue", async t => {
   const denied = Object.assign(new Error("createWritable blocked"), { name: "NotAllowedError" });
   const { get, workers } = await setup(t, "write-denied", {

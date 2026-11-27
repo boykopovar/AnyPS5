@@ -469,6 +469,8 @@ void testWorkloadStreams() {
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, nullptr, 2) == nullptr, "ACB null workload ids accepted");
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 0, ids, 2) == nullptr, "ACB stream id 0 accepted");
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 32, ids, 2) == nullptr, "ACB stream id 32 accepted");
+    const auto* cursor = registered.buffer.cursor_up;
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x10}), 2) == nullptr && registered.buffer.cursor_up == cursor, "ACB unmapped workload ids accepted");
     check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 64) == nullptr, "ACB workload complete id 64 accepted");
     check(sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr, "ACB null command buffer accepted for active");
     check(sceAgcDcbSetWorkloadStreamInactive(nullptr, 1) == nullptr && sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr &&

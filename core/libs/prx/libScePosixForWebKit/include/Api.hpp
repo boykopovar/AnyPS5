@@ -73,6 +73,7 @@ int APS5_VABI setenv_np(const char* name, const char* value, int overwrite);
 int APS5_VABI scePosixForWebKit_sysinfo(PosixForWebKitSysinfo* info);
 int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags);
 int APS5_VABI mkstemp_nid_postfix(char* pattern);
+int APS5_VABI mkstemps_nid_postfix(char* pattern, int suffixLength);
 char* APS5_VABI mkdtemp_nid_postfix(char* pattern);
 int APS5_VABI isatty_nid_postfix(int descriptor);
 GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name);

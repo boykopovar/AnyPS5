@@ -17,7 +17,7 @@ const module = new Uint8Array(await readFile(path.join(process.argv[3], "module.
 const resource = new Uint8Array(2 * 1024 * 1024).fill(65);
 const originalReceipt = new TextEncoder().encode('{"original":true}');
 
-for (const directory of ["sce_modules", "prx"]) {
+for (const directory of ["sce_modules", "prx", "Media/Modules", "Media/Plugins"]) {
   const archive = new Archive([{path: "app/main.elf", file: new Blob([executable])},
                                {path: `app/${directory}/library.prx`, file: new Blob([module])}]);
   try {
@@ -27,6 +27,20 @@ for (const directory of ["sce_modules", "prx"]) {
       const output = native.Convert(input, () => {});
       assert.equal(output.ok, true, output.error);
       assert.deepEqual(output.modules.map(item => item.name), [`app0/${directory}/library.prx.guest.prx`]);
+      if (directory.startsWith("Media/")) {
+        const archives = [];
+        const libraries = await zip([["libs/provider.prx", new Uint8Array([1])]]);
+        await packageArchive(archive, output, input.outputName, libraries, new WritableStream({ write(chunk) { archives.push(chunk.slice()); } }), () => {});
+        const reader = new ZipReader(new BlobReader(new Blob(archives)));
+        try {
+          const entries = new Map((await reader.getEntries()).map(entry => [entry.filename, entry]));
+          const original = await entries.get(`app0/${directory}/library.prx`).getData(new Uint8ArrayWriter());
+          const converted = await entries.get(output.modules[0].name).getData(new Uint8ArrayWriter());
+          assert.deepEqual(original, module);
+          assert.deepEqual(converted, output.modules[0].bytes);
+          if (target === "windows") assert(Buffer.from(converted).includes(Buffer.from("__aps5_guest_initialize\0")));
+        } finally { await reader.close(); }
+      }
     }
   } finally { await archive.close(); }
 }
@@ -38,13 +52,14 @@ async function zip(entries) {
   return writer.close();
 }
 
-const source = await zip([["title/", null, { directory: true }], ["title/program.dat", executable], ["title/sce_module/library.prx.esbak", module], ["title/sce_module/library.prx", new Uint8Array([79, 21, 61, 29])], ["title/sce_module/library.prx.esbak.guest.prx", new Uint8Array([77, 90, 0, 0])], ["title/sce_sys/param.json", new TextEncoder().encode("{}")], ["title/shaders/example.frag", executable], ["title/content/resource.bin", resource]]);
+const source = await zip([["title/", null, { directory: true }], ["title/program.dat", executable], ["title/sce_module/library.prx.esbak", module], ["title/sce_module/library.prx", new Uint8Array([79, 21, 61, 29])], ["title/sce_module/library.prx.esbak.guest.prx", new Uint8Array([77, 90, 0, 0])], ["title/sce_sys/param.json", new TextEncoder().encode("{}")], ["title/sce_module/assets/helper.elf", executable], ["title/shaders/example.frag", executable], ["title/content/resource.bin", resource]]);
 const folder = [
   { path: "title/program.dat", file: new Blob([executable]) },
   { path: "title/sce_module/library.prx.esbak", file: new Blob([module]) },
   { path: "title/sce_module/library.prx", file: new Blob([new Uint8Array([79, 21, 61, 29])]) },
   { path: "title/sce_module/library.prx.esbak.guest.prx", file: new Blob([new Uint8Array([77, 90, 0, 0])]) },
   { path: "title/sce_sys/param.json", file: new Blob(["{}"]) },
+  { path: "title/sce_module/assets/helper.elf", file: new Blob([executable]) },
   { path: "title/shaders/example.frag", file: new Blob([executable]) },
   { path: "title/content/resource.bin", file: new Blob([resource]) },
   { path: "title/anyps5-conversion.json", file: new Blob([originalReceipt]) }
@@ -109,6 +124,7 @@ for (const target of ["windows", "linux"]) {
   assert.deepEqual(await byName.get("app0/sce_module/library.prx.esbak.guest.prx").getData(new Uint8ArrayWriter(), { checkSignature: true }), converted.modules[0].bytes);
   assert.deepEqual(await byName.get("app0/sce_module/library.prx").getData(new Uint8ArrayWriter(), { checkSignature: true }), new Uint8Array([79, 21, 61, 29]));
   assert.deepEqual(await byName.get("app0/program.dat").getData(new Uint8ArrayWriter(), { checkSignature: true }), executable);
+  assert.deepEqual(await byName.get("app0/sce_module/assets/helper.elf").getData(new Uint8ArrayWriter(), { checkSignature: true }), executable);
   assert.deepEqual(await byName.get("app0/content/resource.bin").getData(new Uint8ArrayWriter(), { checkSignature: true }), resource);
   assert.equal((byName.get(input.outputName).externalFileAttributes >>> 16) & 0o777, 0o755);
   assert(maxChunk < resource.length);
