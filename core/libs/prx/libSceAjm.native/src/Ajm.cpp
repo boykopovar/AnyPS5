@@ -1787,14 +1787,17 @@ bool CopyGuestInChunked(std::vector<std::uint8_t>& destination, const void* sour
     return true;
 }
 
-int RegisterBatch(std::uint32_t context, AjmBatchError* error, std::uint32_t* batch) {
-    if (!batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
+bool PrepareBatchOutputs(AjmBatchError* error, std::uint32_t* batch, std::uint32_t& id) {
+    if (!batch) return false;
     if (error) {
         constexpr AjmBatchError cleared{};
-        if (!CopyGuestOut(error, &cleared, sizeof(cleared))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+        if (!CopyGuestOut(error, &cleared, sizeof(cleared))) return false;
     }
-    const auto id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
-    if (!CopyGuestOut(batch, &id, sizeof(id))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
+    return CopyGuestOut(batch, &id, sizeof(id));
+}
+
+int CommitBatch(std::uint32_t context, std::uint32_t id) {
     std::lock_guard lock(g_batchLock);
     g_batches.emplace(id, context);
     return 0;
@@ -2299,10 +2302,12 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
         remaining -= record.bytes;
         if (remaining != 0) cursor += record.bytes;
     }
+    std::uint32_t id = 0;
+    if (!PrepareBatchOutputs(error, batch, id)) return SCE_AJM_ERROR_INVALID_PARAMETER;
     for (const ParsedJob& entry : jobs) {
         Execute(entry.header, entry.buffers.data(), entry.buffers.data() + entry.header.inputCount);
     }
-    return RegisterBatch(context, error, batch);
+    return CommitBatch(context, id);
 }
 
 int APS5_VABI sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout, AjmBatchError* error) {
@@ -2425,8 +2430,10 @@ int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uin
         }
         return SCE_AJM_ERROR_MALFORMED_BATCH;
     }
+    std::uint32_t id = 0;
+    if (!PrepareBatchOutputs(error, batch_id, id)) return SCE_AJM_ERROR_INVALID_PARAMETER;
     for (const ConsoleJob& job : jobs) Execute(job.header, job.buffers.data(), job.buffers.data() + job.header.inputCount);
-    return RegisterBatch(context, error, batch_id);
+    return CommitBatch(context, id);
 }
 
 }
