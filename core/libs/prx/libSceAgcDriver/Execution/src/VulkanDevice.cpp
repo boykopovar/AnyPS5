@@ -79,6 +79,7 @@
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/RunReportComponent.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GraphicsPipelineLibrary.hpp"
 #ifdef _WIN32
 #include <set>
 #include <windows.h>
@@ -1680,7 +1681,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformQuad);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_CLUSTERED_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformClustered);
     }
-    APS5_LOG_OUT("Selected GPU name=%s vendor=0x%x device=0x%x subgroup=%u", state->properties.deviceName, state->properties.vendorID, state->properties.deviceID, state->subgroup.subgroupSize);
+    APS5_LOG_OUT("Selected GPU name=%s vendor=0x%x device=0x%x driverVersion=%u subgroup=%u", state->properties.deviceName, state->properties.vendorID, state->properties.deviceID, state->properties.driverVersion, state->subgroup.subgroupSize);
     state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(selected, &state->memoryProperties);
     for (std::uint32_t i = 0; i < state->memoryProperties.memoryHeapCount; ++i) APS5_LOG_OUT("Memory heap %u size=%.1f MiB flags=0x%x", i, state->memoryProperties.memoryHeaps[i].size / 1048576.0, state->memoryProperties.memoryHeaps[i].flags);
     for (std::uint32_t i = 0; i < state->memoryProperties.memoryTypeCount; ++i) APS5_LOG_OUT("Memory type %u heap=%u flags=0x%x", i, state->memoryProperties.memoryTypes[i].heapIndex, state->memoryProperties.memoryTypes[i].propertyFlags);
@@ -2134,7 +2135,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         libraryDevice = libraryFeatures.graphicsPipelineLibrary == VK_TRUE && dynamicStateFeatures.extendedDynamicState == VK_TRUE && renderingFeatures.dynamicRendering == VK_TRUE && libraryProperties.graphicsPipelineLibraryFastLinking == VK_TRUE && properties.properties.limits.maxPushConstantsSize >= Graphics::PipelinePushConstantBytes;
         if (libraryDevice) deviceExtensions.insert(deviceExtensions.end(), libraryExtensions.begin(), libraryExtensions.end());
-        state->graphicsPipelineLibrary = libraryDevice && std::getenv("APS5_NO_GPL") == nullptr;
+        state->graphicsPipelineLibrary = libraryDevice && std::getenv("APS5_NO_GPL") == nullptr && GraphicsPipelineLibraryUsable(driverId, state->properties.deviceID, state->properties.driverVersion);
         if (state->graphicsPipelineLibrary && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
             state->pipelineLinkTimeOptimization = PipelineLinkTimeOptimizationUsable(driverId);
         }
