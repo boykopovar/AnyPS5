@@ -122,7 +122,9 @@ void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std:
 extern "C" void NoteExplicitNativeLock_nid_no_patch(std::FILE* native);
 extern "C" bool ForgetExplicitNativeLock_nid_no_patch(std::FILE* native);
 extern "C" void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native);
-extern "C" void DropExplicitNativeLocks_nid_no_patch(std::FILE* native);
+extern "C" std::uint32_t SuspendExplicitNativeLocks_nid_no_patch(std::FILE* native);
+extern "C" void ResumeExplicitNativeLocks_nid_no_patch(std::FILE* native, std::uint32_t held);
+extern "C" void DropIdleExplicitNativeLocks_nid_no_patch(std::FILE* native);
 extern "C" int CloseNativeReleasingExplicitLocks_nid_no_patch(std::FILE* native);
 
 class FileStream {
@@ -502,19 +504,25 @@ public:
                 try {
                     const int source = open(filename, mode);
                     if (source >= 0) {
-                        if (::_wfreopen(L"NUL", resetMode.c_str(), previous) == previous) {
-                            const int moved = ::_dup2(source, replaced);
+                        const auto release = [&] {
                             const int error = errno;
-                            if (moved == 0 && directoryStream) DuplicateDirectoryStream_nid_no_patch(source, replaced);
-                            ::_close(source);
-                            if (moved == 0 && directoryStream) ForgetDirectoryStream_nid_no_patch(source);
-                            if (moved == 0) StoreHandleAtomic_nid_no_patch(previous);
-                            else errno = error;
-                        } else {
-                            const int error = errno;
+                            if (directoryStream) ForgetDirectoryStream_nid_no_patch(source);
                             ::_close(source);
                             errno = error;
+                        };
+                        try {
+                            if (::_wfreopen(L"NUL", resetMode.c_str(), previous) == previous) {
+                                const int moved = ::_dup2(source, replaced);
+                                const int error = errno;
+                                if (moved == 0 && directoryStream) DuplicateDirectoryStream_nid_no_patch(source, replaced);
+                                if (moved == 0) StoreHandleAtomic_nid_no_patch(previous);
+                                else errno = error;
+                            }
+                        } catch (...) {
+                            release();
+                            throw;
                         }
+                        release();
                     }
                 } catch (...) {
                     if (kept >= 0) RestoreHostStandard(previous, kept);
@@ -545,11 +553,12 @@ public:
         const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
         errno = error;
         if (kept >= 0) ::flockfile(previous);
+        const bool standardNative = previous == stdin || previous == stdout || previous == stderr;
+        const std::uint32_t explicitLocks = standardNative ? 0 : SuspendExplicitNativeLocks_nid_no_patch(previous);
         StoreHandleAtomic_nid_no_patch(std::freopen(filename.c_str(), mode, previous));
-        if (!LoadHandleAtomic_nid_no_patch()) {
-            if (previous == stdin || previous == stdout || previous == stderr) ReleaseExplicitNativeLocks_nid_no_patch(previous);
-            else DropExplicitNativeLocks_nid_no_patch(previous);
-        }
+        if (auto* const reopened = LoadHandleAtomic_nid_no_patch()) ResumeExplicitNativeLocks_nid_no_patch(reopened, explicitLocks);
+        else if (standardNative) ReleaseExplicitNativeLocks_nid_no_patch(previous);
+        else DropIdleExplicitNativeLocks_nid_no_patch(previous);
         if (kept >= 0) RestoreHostStandard(previous, kept);
 #endif
         return Adopt(LoadHandleAtomic_nid_no_patch());

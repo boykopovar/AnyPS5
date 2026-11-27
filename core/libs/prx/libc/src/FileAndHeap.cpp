@@ -537,18 +537,17 @@ void DuplicateDirectoryStream_nid_no_patch(int from, int to) {
 static int OpenDirectoryDescriptor(const std::filesystem::path& path, const std::string& = {}) {
     if (!g_openDirectoryDescriptor) throw std::runtime_error("OpenDirectoryDescriptor: libkernel has not registered its directory descriptors");
     const auto filename = HostOpenName(path);
-    if (!filename) { errno = GuestErrnoFromHost_nid_no_patch(errno); return -1; }
-    const int descriptor = g_openDirectoryDescriptor(filename->c_str());
-    if (descriptor < 0) {
-        const int error = GuestErrnoFromHost_nid_no_patch(errno);
-        errno = error == 2 ? NotFoundError_nid_no_patch(path) : error;
-    }
-    return descriptor;
+    if (!filename) return -1;
+    return g_openDirectoryDescriptor(filename->c_str());
 }
 
 static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path) {
     const int descriptor = OpenDirectoryDescriptor(path);
-    if (descriptor < 0) return nullptr;
+    if (descriptor < 0) {
+        const int error = GuestErrnoFromHost_nid_no_patch(errno);
+        errno = error == 2 ? NotFoundError_nid_no_patch(path) : error;
+        return nullptr;
+    }
     auto* native = ::_fdopen(descriptor, "rb");
     if (!native) {
         const int error = GuestErrnoFromHost_nid_no_patch(errno);
@@ -591,7 +590,7 @@ struct ReopenCleanup {
                 if (stream->IsOpen()) static_cast<void>(stream->CloseNativeUnderGate_nid_no_patch());
             } catch (...) {
             }
-            RetireFileStream_nid_no_patch(stream);
+            if (!stream->IsOpen()) RetireFileStream_nid_no_patch(stream);
         }
         CancelFileStreamReopenReservation_nid_no_patch(reservation);
         errno = error;
@@ -971,6 +970,7 @@ void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std:
 void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members) {
     std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
     source->ClearPushback();
+    if (!members) return;
     for (FileStream* cur = FileStreamRegistryHead_nid_no_patch(); cur != nullptr; cur = cur->_nextStream_nid_no_patch) {
         if (cur == source || cur->_retired_nid_no_patch || cur->_gate_nid_no_patch != source->_gate_nid_no_patch
             || cur->RawHandle_nid_no_patch() != members) continue;

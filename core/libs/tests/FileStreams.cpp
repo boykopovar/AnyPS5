@@ -32,6 +32,9 @@
 #include <atomic>
 #include <exception>
 #include <fcntl.h>
+#if defined(__GLIBC__)
+#include <gnu/libc-version.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -1814,9 +1817,30 @@ static void* FailFirstClosingDescriptor(int) {
 
 static void EndFailedClosingDescriptor(void*) {}
 
+static bool DescriptorOpen(int descriptor) {
+#ifdef _WIN32
+    return ::_get_osfhandle(descriptor) != -1;
+#else
+    return ::fcntl(descriptor, F_GETFD) != -1;
+#endif
+}
+
 #ifdef _WIN32
 static int OpenPlaceholderDirectory(const wchar_t*) {
     return ::_open("NUL", _O_RDONLY | _O_BINARY);
+}
+
+static std::atomic<int> g_placeholderDirectory{-1};
+
+static int OpenRecordedPlaceholderDirectory(const wchar_t*) {
+    const int descriptor = ::_open("NUL", _O_RDONLY | _O_BINARY);
+    g_placeholderDirectory = descriptor;
+    return descriptor;
+}
+
+static int FailDirectoryOpenNameTooLong(const wchar_t*) {
+    errno = ENAMETOOLONG;
+    return -1;
 }
 
 static void ForgetPlaceholderDirectory(int) {}
@@ -1857,7 +1881,15 @@ static int FreopenExceptionCleanupChild(const std::string& base) {
         const int persistentError = errno;
         g_failingClosingDescriptors = 0;
         if (persistent != nullptr || persistentError != 12) return 183;
-        if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 184;
+        if (!AcquireFileStreamLease_nid_no_patch(stream).Valid() || !stream->IsOpen()) return 184;
+#ifdef _WIN32
+        const int descriptor = ::_fileno(stream->RawHandle_nid_no_patch());
+#else
+        const int descriptor = ::fileno(stream->RawHandle_nid_no_patch());
+#endif
+        if (!DescriptorOpen(descriptor)) return 260;
+        if (fclose_nid_postfix(stream) != 0) return 261;
+        if (DescriptorOpen(descriptor)) return 262;
     }
 #ifdef _WIN32
     const std::string directoryName = base + ".freopen-exception.dir";
@@ -1872,6 +1904,25 @@ static int FreopenExceptionCleanupChild(const std::string& base) {
     const int directoryError = errno;
     if (directoryFailed != nullptr || directoryError != 12) return 196;
     if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 197;
+    stream = fopen_nid_postfix(path.c_str(), "rb");
+    if (!stream) return 263;
+    LibcRegisterDirectoryStreams_nid_no_patch(&FailDirectoryOpenNameTooLong, &ForgetPlaceholderDirectory, &FailDirectoryDuplicate);
+    errno = 0;
+    FileStream* const longFailed = freopen_nid_postfix(directoryName.c_str(), "rb", stream);
+    const int longError = errno;
+    if (longFailed != nullptr || longError != 63) {
+        std::cerr << "freopen of a directory whose open fails with ENAMETOOLONG set errno " << longError << '\n';
+        return 264;
+    }
+    errno = 0;
+    if (fopen_nid_postfix(directoryName.c_str(), "rb") != nullptr || errno != 63) return 265;
+    LibcRegisterDirectoryStreams_nid_no_patch(&OpenRecordedPlaceholderDirectory, &ForgetPlaceholderDirectory, &FailDirectoryDuplicate);
+    errno = 0;
+    FileStream* const standardFailed = freopen_nid_postfix(directoryName.c_str(), "rb", __stdinp_nid_postfix);
+    const int standardError = errno;
+    if (standardFailed != nullptr || standardError != 12) return 266;
+    if (g_placeholderDirectory < 0) return 267;
+    if (DescriptorOpen(g_placeholderDirectory)) return 268;
     std::filesystem::remove(directoryName, removed);
 #endif
     std::remove(path.c_str());
@@ -1944,6 +1995,17 @@ static int ClosedAliasReopenChild(const std::string& base) {
     if (a.RawHandle_nid_no_patch() == b.RawHandle_nid_no_patch()) return 224;
     if (fputc_nid_postfix('A', &a) != 'A' || fputc_nid_postfix('B', &b) != 'B') return 225;
     if (fclose_nid_postfix(&a) != 0 || fclose_nid_postfix(&b) != 0) return 226;
+    std::FILE* const shared = std::tmpfile();
+    if (!shared) return 269;
+    FileStream source(shared);
+    FileStream closedAlias(shared);
+    if (fclose_nid_postfix(&source) != 0 || closedAlias.IsOpen()) return 270;
+    const std::string third = base + ".closed-alias.third";
+    if (freopen_nid_postfix(third.c_str(), "wb", &source) != &source) return 271;
+    const bool joined = closedAlias.IsOpen();
+    if (fclose_nid_postfix(&source) != 0) return 272;
+    std::remove(third.c_str());
+    if (joined) return 273;
     const auto contents = [](const std::string& path) {
         std::FILE* const read = std::fopen(path.c_str(), "rb");
         if (!read) return std::string();
@@ -2002,8 +2064,22 @@ static int FreopenExhaustedSlotsChild(const std::string& base) {
 }
 
 static int FreopenFailedLockChild(const std::string& base) {
+    std::FILE* const recorded = std::tmpfile();
+    if (!recorded) return 243;
+    NoteExplicitNativeLock_nid_no_patch(recorded);
+    const std::uint32_t suspended = SuspendExplicitNativeLocks_nid_no_patch(recorded);
+    NoteExplicitNativeLock_nid_no_patch(recorded);
+    DropIdleExplicitNativeLocks_nid_no_patch(recorded);
+    const bool kept = ForgetExplicitNativeLock_nid_no_patch(recorded);
+    const bool single = !ForgetExplicitNativeLock_nid_no_patch(recorded);
+    std::fclose(recorded);
+    if (suspended != 1 || !kept || !single) return 244;
 #if defined(__GLIBC__)
-#if !__GLIBC_PREREQ(2, 41)
+    unsigned major = 0;
+    unsigned minor = 0;
+    const bool keepsFailedStream = std::sscanf(::gnu_get_libc_version(), "%u.%u", &major, &minor) == 2
+        && (major < 2 || (major == 2 && minor < 41));
+    if (!keepsFailedStream) return 0;
     const std::string path = base + ".failed-lock";
     const std::string missing = base + ".failed-lock-missing/output";
     FileStream* const stream = fopen_nid_postfix(path.c_str(), "wb");
@@ -2020,7 +2096,6 @@ static int FreopenFailedLockChild(const std::string& base) {
     funlockfile_nid_postfix(stream);
     std::remove(path.c_str());
     return lockedElsewhere != 0 ? 0 : 242;
-#endif
 #endif
     static_cast<void>(base);
     return 0;

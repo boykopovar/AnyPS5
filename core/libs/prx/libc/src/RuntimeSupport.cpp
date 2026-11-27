@@ -219,7 +219,7 @@ bool ForgetExplicitNativeLock_nid_no_patch(std::FILE* native) {
     std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
     auto& locks = ExplicitNativeLocks_nid_no_patch();
     const auto found = locks.find(native);
-    if (found == locks.end()) return false;
+    if (found == locks.end() || found->second == 0) return false;
     if (--found->second == 0) locks.erase(found);
     return true;
 }
@@ -237,9 +237,26 @@ void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native) {
     for (; held > 0; --held) UnlockNative_nid_no_patch(native);
 }
 
-void DropExplicitNativeLocks_nid_no_patch(std::FILE* native) {
+std::uint32_t SuspendExplicitNativeLocks_nid_no_patch(std::FILE* native) {
     std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
-    ExplicitNativeLocks_nid_no_patch().erase(native);
+    auto& locks = ExplicitNativeLocks_nid_no_patch();
+    const auto found = locks.find(native);
+    return found == locks.end() ? 0 : std::exchange(found->second, 0);
+}
+
+void ResumeExplicitNativeLocks_nid_no_patch(std::FILE* native, std::uint32_t held) {
+    if (held == 0) return;
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& count = ExplicitNativeLocks_nid_no_patch()[native];
+    if (count > std::numeric_limits<std::uint32_t>::max() - held) throw std::overflow_error("FileStream: explicit lock count overflow");
+    count += held;
+}
+
+void DropIdleExplicitNativeLocks_nid_no_patch(std::FILE* native) {
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& locks = ExplicitNativeLocks_nid_no_patch();
+    const auto found = locks.find(native);
+    if (found != locks.end() && found->second == 0) locks.erase(found);
 }
 
 int CloseNativeReleasingExplicitLocks_nid_no_patch(std::FILE* native) {
