@@ -33,7 +33,10 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-constexpr std::size_t KeptWords = 512;
+constexpr std::size_t DefaultKeptWords = 512;
+constexpr std::size_t MaximumKeptWords = 65536;
+constexpr std::size_t MaximumRingWords = std::size_t{1} << 22u;
+constexpr int StalePeriods = 4;
 constexpr std::size_t MaximumCapacity = 4096;
 constexpr std::size_t MaximumStallSeconds = 86400;
 constexpr std::size_t PayloadWordsShown = 8;
@@ -76,7 +79,7 @@ struct Entry {
     std::size_t dwords = 0;
     std::size_t kept = 0;
     bool rewindTail = false;
-    std::array<std::uint32_t, KeptWords> words{};
+    const std::uint32_t* words = nullptr;
 };
 
 struct Ring {
@@ -84,6 +87,7 @@ struct Ring {
     std::once_flag allocated;
     std::atomic<std::uint64_t> recorded{0};
     std::unique_ptr<Entry[]> entries;
+    std::unique_ptr<std::uint32_t[]> words;
     std::atomic<std::uint64_t> workSerial{0};
     std::atomic<std::uint64_t> workOffset{0};
     std::atomic<std::uint64_t> workPackets{0};
@@ -115,6 +119,16 @@ std::size_t environmentCount(const char* name, std::size_t fallback, std::size_t
     std::size_t value = 0;
     const auto [last, error] = std::from_chars(text, end, value);
     require(error == std::errc{} && last == end && value <= maximum, reason);
+    return value;
+}
+
+std::size_t keptWords() {
+    static const std::size_t value = [] {
+        const auto words = environmentCount("APS5_PM4_RING_WORDS", DefaultKeptWords, MaximumKeptWords, "APS5_PM4_RING_WORDS must be a number of dwords from 1 to 65536");
+        require(words != 0, "APS5_PM4_RING_WORDS must be a number of dwords from 1 to 65536");
+        require(SubmissionRingCapacity() * words <= MaximumRingWords, "APS5_PM4_RING times APS5_PM4_RING_WORDS must not exceed 4194304 dwords per queue");
+        return words;
+    }();
     return value;
 }
 
@@ -339,7 +353,9 @@ bool StallPromptEnabled() {
 bool ReadSubmissionRingSettings() {
     StallWatchdogPeriod();
     StallPromptEnabled();
-    return SubmissionRingCapacity() != 0;
+    if (SubmissionRingCapacity() == 0) return false;
+    keptWords();
+    return true;
 }
 
 void PrepareSubmissionRing(std::uint32_t queue) {
@@ -348,7 +364,12 @@ void PrepareSubmissionRing(std::uint32_t queue) {
     require(queue < SubmissionQueueEnd, "PM4 ring queue out of range");
     static const Registration registration;
     auto& ring = rings().queues[queue];
-    std::call_once(ring.allocated, [&] { ring.entries = std::make_unique<Entry[]>(capacity); });
+    std::call_once(ring.allocated, [&] {
+        const auto kept = keptWords();
+        ring.words = std::make_unique<std::uint32_t[]>(capacity * kept);
+        ring.entries = std::make_unique<Entry[]>(capacity);
+        for (std::size_t index = 0; index < capacity; ++index) ring.entries[index].words = ring.words.get() + index * kept;
+    });
 }
 
 void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const std::uint32_t> commands, const void* guest, bool rewindTail) {
@@ -365,9 +386,9 @@ void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const
     entry.serial = serial;
     entry.guest = reinterpret_cast<std::uintptr_t>(guest);
     entry.dwords = commands.size();
-    entry.kept = std::min(commands.size(), KeptWords);
+    entry.kept = std::min(commands.size(), keptWords());
     entry.rewindTail = rewindTail;
-    std::copy_n(commands.begin(), entry.kept, entry.words.begin());
+    std::copy_n(commands.begin(), entry.kept, ring.words.get() + (recorded % capacity) * keptWords());
     ring.recorded.store(recorded + 1, std::memory_order_release);
 }
 
@@ -450,6 +471,16 @@ void StallWatch::Check(const char* waiter, std::uint64_t value, std::unique_lock
     if (period.count() == 0) return;
     const auto now = stallClock.load()();
     if (began == std::chrono::steady_clock::time_point{}) began = now;
+    if (progressed && !staleDumped && !dumped && now - began >= period * StalePeriods) {
+        staleDumped = true;
+        char reason[224];
+        std::snprintf(reason, sizeof(reason), "queue 0x%x %s 0x%llx is still waiting after %lld s although other packets keep resetting its watchdog (APS5_STALL_WATCHDOG_SECS)", queue, waiter, static_cast<unsigned long long>(value),
+                      static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(now - began).count()));
+        char detail[128];
+        std::snprintf(detail, sizeof(detail), "this wait began %lld ms ago and last saw progress %lld ms ago", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - began).count()),
+                      static_cast<long long>(since == std::chrono::steady_clock::time_point{} ? 0 : std::chrono::duration_cast<std::chrono::milliseconds>(now - since).count()));
+        DumpSubmissionRings(reason, detail);
+    }
     if (since == std::chrono::steady_clock::time_point{}) {
         since = now;
         return;

@@ -71,7 +71,10 @@ void DescribeUnacceptedSubmit(const UnacceptedSubmit& submit, std::span<char> te
 class StallWatch {
 public:
     explicit StallWatch(std::uint32_t queue) : queue(queue) {}
-    void Progressed() { since = {}; }
+    void Progressed() {
+        since = {};
+        progressed = true;
+    }
     void Check(const char* waiter, std::uint64_t value, std::unique_lock<std::mutex>* held = nullptr);
 
 private:
@@ -79,6 +82,8 @@ private:
     std::chrono::steady_clock::time_point since{};
     std::chrono::steady_clock::time_point began{};
     bool dumped = false;
+    bool progressed = false;
+    bool staleDumped = false;
     bool finished = false;
     int prompts = 0;
 };
