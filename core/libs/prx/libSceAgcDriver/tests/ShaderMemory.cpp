@@ -10984,12 +10984,12 @@ void verifyAnisotropicUnnormalizedSampler() {
     const DescriptorValue volumeDescriptor{{0x00001000u, 0x03800000u, 0x0000c000u, 0xa0000facu, 3u, 0u, 0u, 0u}, 8u};
     const DescriptorValue anisotropic{{0x00008892u, 0x00fff000u, 0x05f00000u, 0u}, 4u};
     const DescriptorValue bilinear{{0x00008092u, 0x00fff000u, 0x05500000u, 0u}, 4u};
-    const auto populate = [&](const ImageResource& image, const DescriptorValue& imageDescriptor, const SamplerResource& use, const DescriptorValue& samplerDescriptor) {
+    const auto populate = [&](const ImageResource& image, const DescriptorValue& imageDescriptor, const SamplerResource& use, const DescriptorValue& samplerDescriptor, std::vector<ImageResource> modes = {}) {
         ShaderInfo info;
         info.images = {image};
         info.samplers = {use};
         info.sampledPairs.push_back({0u, 0u, 0u});
-        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        info.runtimeImageModes.push_back(modes.empty() ? ResourceMaterializer::RuntimeImageModes(image) : modes);
         ResourceSnapshot snapshot;
         snapshot.images = {imageDescriptor};
         snapshot.samplers = {samplerDescriptor};
@@ -11007,6 +11007,11 @@ void verifyAnisotropicUnnormalizedSampler() {
     const auto direct = populate(plane, planeDescriptor, sampler, bilinear);
     require(direct.bindings.back().samplerScaledUnnormalized == std::vector<bool>{false} && direct.bindings.back().samplerUnnormalized == std::vector<bool>{true}, "unnormalized samplers: a bilinear S# was scaled instead of sampled unnormalized");
     expectFailure([&] { static_cast<void>(populate(volume, volumeDescriptor, sampler, anisotropic)); }, "samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized anisotropic samplers: a 3D T# was accepted");
+    auto planeModes = ResourceMaterializer::RuntimeImageModes(plane);
+    auto volumeMode = planeModes.front();
+    volumeMode.dimension = RdnaImageDimension::Dim3D;
+    planeModes.push_back(volumeMode);
+    expectFailure([&] { static_cast<void>(populate(plane, volumeDescriptor, sampler, anisotropic, planeModes)); }, "samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized anisotropic samplers: a 2D image whose runtime mode is 3D was scaled");
 }
 
 void verifyNullVolumeUnnormalizedSampler() {
