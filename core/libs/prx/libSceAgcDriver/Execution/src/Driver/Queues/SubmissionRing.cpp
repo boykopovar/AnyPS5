@@ -1,4 +1,4 @@
-﻿#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libc/include/FailureReport.hpp"
@@ -122,6 +122,7 @@ std::size_t KeptWordCount() {
     static const std::size_t words = environmentCount("APS5_PM4_RING_WORDS", DefaultKeptWords, MaximumKeptWords, "APS5_PM4_RING_WORDS must be a number of dwords from 0 to 65536");
     return words;
 }
+
 bool writeLine(const char* text, std::size_t length) {
 #ifdef _WIN32
     const HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
