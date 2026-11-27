@@ -119,8 +119,10 @@ int main() {
         long double y;
         long double real;
     };
-    for (const Large& large : {Large{1e20L, 1.0L, 1e-20L}, Large{-1e30L, -2.0L, -1e-30L}, Large{1e3000L, 1.0L, 1e-3000L},
-                               Large{1.0L, 1e2000L, 1e-4000L}, Large{1e4900L, 1e4900L, 5e-4901L}}) {
+    for (const Large& large : {Large{1e20L, 1.0L, 1e-20L}, Large{-1e30L, -2.0L, -1e-30L},
+                               Large{std::ldexp(1.0L, LDBL_MAX_EXP * 3 / 4), 1.0L, std::ldexp(1.0L, -LDBL_MAX_EXP * 3 / 4)},
+                               Large{1.0L, std::ldexp(1.0L, LDBL_MAX_EXP / 2 - 100), std::ldexp(1.0L, 200 - LDBL_MAX_EXP)},
+                               Large{std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, 99 - LDBL_MAX_EXP)}}) {
         const __complex__ long double hyperbolic = catanhl_nid_postfix(Make(large.x, large.y));
         Require(Close(__real__ hyperbolic, large.real) && Close(__imag__ hyperbolic, std::copysign(pi / 2, large.y)));
         const __complex__ long double circular = catanl_nid_postfix(Make(large.y, large.x));
