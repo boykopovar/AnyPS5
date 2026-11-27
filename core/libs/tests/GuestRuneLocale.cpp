@@ -1,6 +1,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <cstdint>
@@ -29,7 +31,47 @@ T Field(const unsigned char* locale, std::size_t offset) {
     return value;
 }
 
+void TestRegexNames() {
+    const struct {
+        const char* name;
+        std::uint64_t caseSensitive;
+        std::uint64_t caseInsensitive;
+    } classes[] = {
+        {"alnum", 0x500, 0x500}, {"alpha", 0x100, 0x100}, {"blank", 0x20000, 0x20000},
+        {"cntrl", 0x200, 0x200}, {"d", 0x400, 0x400}, {"digit", 0x400, 0x400},
+        {"graph", 0x2500, 0x2500}, {"lower", 0x1000, 0x1100}, {"print", 0x40000, 0x40000},
+        {"punct", 0x2000, 0x2000}, {"s", 0x4000, 0x4000}, {"space", 0x4000, 0x4000},
+        {"upper", 0x8000, 0x8100}, {"w", 0x9580, 0x9580}, {"xdigit", 0x10000, 0x10000},
+        {"", 0, 0}, {"Alpha", 0, 0}, {"number", 0, 0}, {"xdigits", 0, 0},
+    };
+    for (const auto& entry : classes) {
+        Require(_ZNSt3__115__get_classnameEPKcb_nid_postfix(entry.name, false) == entry.caseSensitive);
+        Require(_ZNSt3__115__get_classnameEPKcb_nid_postfix(entry.name, true) == entry.caseInsensitive);
+    }
+
+    const struct {
+        const char* name;
+        unsigned char size;
+        unsigned char character;
+    } collationNames[] = {
+        {"A", 1, 'A'}, {"a", 1, 'a'}, {"NUL", 1, 0}, {"newline", 1, '\n'},
+        {"left-square-bracket", 1, '['}, {"right-square-bracket", 1, ']'},
+        {"period", 1, '.'}, {"full-stop", 1, '.'}, {"solidus", 1, '/'},
+        {"zero", 1, '0'}, {"0", 0, 0}, {"", 0, 0}, {"nul", 0, 0},
+        {"right-square-brackets", 0, 0}, {"right-square-bracke", 0, 0},
+    };
+    for (const auto& entry : collationNames) {
+        alignas(8) std::array<unsigned char, 26> result;
+        result.fill(0xff);
+        Require(_ZNSt3__120__get_collation_nameEPKc_nid_postfix(result.data(), entry.name) == result.data());
+        Require(result[0] == (entry.size << 1) && result[1] == entry.character);
+        Require(std::all_of(result.begin() + 2, result.begin() + 24, [](unsigned char byte) { return byte == 0; }));
+        Require(result[24] == 0xff && result[25] == 0xff);
+    }
+}
+
 int main() {
+    TestRegexNames();
     const unsigned char* locale = _DefaultRuneLocale_nid_postfix;
     Require(_CurrentRuneLocale_nid_postfix == locale);
     Require(__mb_sb_limit_nid_postfix == 256);

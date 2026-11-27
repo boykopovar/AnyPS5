@@ -514,10 +514,15 @@ bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* va
     if (value == nullptr) return false;
     value = value->Resolve();
     if (const auto found = decided.find(value); found != decided.end()) return found->second;
+    decided.emplace(value, false);
     const auto decides = [&program, &decided, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index), decided); };
     const auto decidable = [&] {
         if (MayEvaluate(program, value)) return true;
         switch (value->Opcode()) {
+            case IrOpcode::Phi: {
+                IrValue* resolved = ResolveInvariantPhi(program, value);
+                return resolved != nullptr && MayDecide(program, resolved, decided);
+            }
             case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
             case IrOpcode::LogicalAnd:
             case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
@@ -526,7 +531,7 @@ bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* va
             default: return false;
         }
     }();
-    decided.emplace(value, decidable);
+    decided[value] = decidable;
     return decidable;
 }
 

@@ -1,0 +1,49 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { uint source[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Destination { uint destination[]; };
+
+layout(push_constant) uniform Push {
+    uint sourceBase;
+    uint destinationBase;
+    uint width;
+    uint pitchBlocks;
+} push;
+
+uvec3 expand565(uint color) {
+    const uvec3 bits = (uvec3(color) >> uvec3(11u, 5u, 0u)) & uvec3(31u, 63u, 31u);
+    return (bits << uvec3(3u, 2u, 3u)) | (bits >> uvec3(2u, 4u, 2u));
+}
+
+uint opaqueRgba(uvec3 color) {
+    return color.r | (color.g << 8u) | (color.b << 16u) | 0xff000000u;
+}
+
+void main() {
+    const uvec2 block = gl_GlobalInvocationID.xy;
+    if (block.x >= push.width) return;
+    const uint encoded = push.sourceBase / 4u + (block.y * push.pitchBlocks + block.x) * 2u;
+    const uint endpoints = source[encoded];
+    const uint selectors = source[encoded + 1u];
+    const uint first = endpoints & 0xffffu;
+    const uint second = endpoints >> 16u;
+    const uvec3 a = expand565(first);
+    const uvec3 b = expand565(second);
+    const bool fourColors = first > second;
+    const uint palette[4] = uint[4](
+        opaqueRgba(a),
+        opaqueRgba(b),
+        opaqueRgba(fourColors ? (43u * a + 21u * b + 32u) >> 6u : (a + b + 1u) >> 1u),
+        fourColors ? opaqueRgba((21u * a + 43u * b + 32u) >> 6u) : 0u
+    );
+    const uint pitch = push.pitchBlocks * 4u;
+    const uint start = push.destinationBase / 4u + block.y * 4u * pitch + block.x * 4u;
+    for (uint y = 0u; y < 4u; ++y) {
+        for (uint x = 0u; x < 4u; ++x) {
+            const uint selector = (selectors >> ((4u * y + x) * 2u)) & 3u;
+            destination[start + y * pitch + x] = palette[selector];
+        }
+    }
+}

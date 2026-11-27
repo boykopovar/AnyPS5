@@ -56,6 +56,7 @@ std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNo
 int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
 int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
 XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name);
+const std::string& DocumentSerialize(const XmlHandle* document, bool declaration);
 int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list);
 
 std::uint32_t GenerationNodeType(const Generation& generation, XmlNodeId id);

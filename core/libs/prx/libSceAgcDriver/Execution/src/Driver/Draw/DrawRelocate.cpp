@@ -208,8 +208,11 @@ void Driver::learnPendingRelocation() {
     drawRelocationPending = {};
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);
-    if (inserted == drawCache.end() || inserted->second->decode == nullptr) return;
-    const auto& entry = *inserted->second;
+    std::shared_ptr<const DrawEntry> learned;
+    if (inserted != drawCache.end() && inserted->second->decode != nullptr) learned = inserted->second;
+    else if (const auto donor = pending.donor.lock(); donor != nullptr && donor->decode != nullptr) learned = donor;
+    if (learned == nullptr) return;
+    const auto& entry = *learned;
     const auto& programs = entry.decode->programs;
     if (entry.stages.size() != programs.size()) return;
     const auto known = drawRelocations.find(pending.identity);
@@ -239,7 +242,7 @@ void Driver::learnPendingRelocation() {
                 word.reads.emplace_back(0, length);
                 word.high = program.userData[index + 1];
             }
-            const auto base = AlignedWord(program.userData[index]);
+            const auto base = (static_cast<std::uint64_t>(word.high) << 32) + AlignedWord(program.userData[index]);
             std::uint32_t position = 0;
             for (std::size_t run = 0; run < variant.runs.size(); ++run) {
                 const auto count = static_cast<std::uint32_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t));
@@ -282,7 +285,7 @@ void Driver::learnPendingRelocation() {
             if (!relocatable && index >= program.hiddenUserWords) mix(program.userData[index]);
         }
         donor.stageKeys[i] = key == 0 ? 1 : key;
-        drawStageDonors[pending.aliases.Key(donor.stageKeys[i], program.userDataBase)] = {variant, program.userData, pending.key, inserted->second};
+        if (inserted != drawCache.end()) drawStageDonors[pending.aliases.Key(donor.stageKeys[i], program.userDataBase)] = {variant, program.userData, pending.key, inserted->second};
     }
     const auto held = drawDecodes.find(pending.aliases.structure);
     if (held != drawDecodes.end() && held->second.stageKeys.size() == donor.stageKeys.size()) {

@@ -19,8 +19,15 @@
 #include <thread>
 #include <vector>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <winioctl.h>
 #include <fcntl.h>
 #include <io.h>
+using AllocateFunction = PVOID (WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+using MapFunction = PVOID (WINAPI*)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
 static int MakePipe(int* ends) { return ::_pipe(ends, 64, _O_BINARY); }
 static int ClosePipe(int end) { return ::_close(end); }
 #else
@@ -154,22 +161,44 @@ static void ConcurrentRecords(const std::filesystem::path& path) {
     for (const auto descriptor : descriptors) Require(sceKernelClose(descriptor) == 0);
 }
 
-#ifndef _WIN32
 static void LargeTransfers(const std::filesystem::path& root) {
     constexpr std::size_t Slot = std::size_t{64} << 20;
     constexpr std::size_t Span = 34 * Slot;
+    constexpr std::size_t Wide = 2 * Span;
     constexpr std::size_t Gib = std::size_t{1} << 30;
     constexpr auto Length = static_cast<std::int64_t>(Span - Slot);
+    constexpr auto Moved = static_cast<std::int64_t>(Gib);
+#ifdef _WIN32
+    const auto kernelBase = ::GetModuleHandleW(L"KernelBase.dll");
+    const auto allocate = reinterpret_cast<AllocateFunction>(::GetProcAddress(kernelBase, "VirtualAlloc2"));
+    const auto map = reinterpret_cast<MapFunction>(::GetProcAddress(kernelBase, "MapViewOfFile3"));
+    Require(allocate != nullptr && map != nullptr);
+    const HANDLE memory = ::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(Slot), nullptr);
+    Require(memory != nullptr);
+    auto* const region = static_cast<char*>(allocate(::GetCurrentProcess(), nullptr, Wide + Gib, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0));
+    Require(region != nullptr);
+    for (std::size_t offset = 0; offset < Wide; offset += Slot) {
+        Require(::VirtualFree(region + offset, Slot, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER));
+        Require(map(memory, ::GetCurrentProcess(), region + offset, 0, Slot, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0) == region + offset);
+    }
+#else
     const auto backing = root / "large-buffer.bin";
     const int memory = ::open(backing.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
     Require(memory >= 0 && ::ftruncate(memory, static_cast<off_t>(Slot)) == 0);
-    auto* const region = static_cast<char*>(::mmap(nullptr, Span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    auto* const region = static_cast<char*>(::mmap(nullptr, Wide + Gib, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     Require(region != MAP_FAILED);
-    for (std::size_t offset = 0; offset < Span; offset += Slot) {
+    for (std::size_t offset = 0; offset < Wide; offset += Slot) {
         Require(::mmap(region + offset, Slot, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, memory, 0) == region + offset);
     }
-    const int file = sceKernelOpen((root / "large.bin").string().c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0644);
-    Require(file >= 0 && sceKernelFtruncate(file, Length) == 0);
+#endif
+    const auto path = (root / "large.bin").string();
+    const int file = sceKernelOpen(path.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0644);
+    Require(file >= 0);
+#ifdef _WIN32
+    DWORD returned = 0;
+    Require(::DeviceIoControl(reinterpret_cast<HANDLE>(::_get_osfhandle(file)), FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr));
+#endif
+    Require(sceKernelFtruncate(file, Length) == 0);
     Require(sceKernelPwrite(file, "abcdefghijklmnop", 16, Gib - 8) == 16);
     Require(sceKernelPwrite(file, "ABCDEFGHIJKLMNOP", 16, 2 * Gib - 8) == 16);
 
@@ -203,21 +232,75 @@ static void LargeTransfers(const std::filesystem::path& root) {
     std::memset(marks, 0, sizeof(marks));
     Require(sceKernelPread(file, marks, 16, Gib - 8) == 16 && sceKernelPread(file, marks + 16, 16, 2 * Gib - 8) == 16);
     Require(std::memcmp(marks, "0123456789ABCDEFghijklmnopqrstuv", sizeof(marks)) == 0);
-    Require(sceKernelFtruncate(file, 0) == 0);
 
+    std::memcpy(region + Gib - 8, "write-whole-span", 16);
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(sceKernelWrite(file, region, Span) == static_cast<std::int64_t>(Span));
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == static_cast<std::int64_t>(Span));
+    std::memset(marks, 0, sizeof(marks));
+    Require(sceKernelPread(file, marks, 16, Gib - 8) == 16 && sceKernelPread(file, marks + 16, 16, 2 * Gib - 8) == 16);
+    Require(std::memcmp(marks, "write-whole-spanwrite-whole-span", sizeof(marks)) == 0);
+    std::memcpy(region + Gib - 16, "pwrite-span-at-8", 16);
+    Require(sceKernelPwrite(file, region, Span, 8) == static_cast<std::int64_t>(Span));
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == static_cast<std::int64_t>(Span));
+    Require(sceKernelLseek(file, 0, SEEK_END) == static_cast<std::int64_t>(Span + 8));
+    std::memset(marks, 0, sizeof(marks));
+    Require(sceKernelPread(file, marks, 16, Gib - 8) == 16 && sceKernelPread(file, marks + 16, 16, 2 * Gib - 8) == 16);
+    Require(std::memcmp(marks, "pwrite-span-at-8pwrite-span-at-8", sizeof(marks)) == 0);
+
+    Require(sceKernelRead(file, region, Span) == 0);
+    Require(sceKernelPread(file, region, Span, static_cast<std::int64_t>(Span + 8)) == 0);
+    char* const tail = region + Wide - Gib;
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(sceKernelRead(file, tail, 2 * Gib) == Moved);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Moved);
+    Require(sceKernelPread(file, tail, 2 * Gib, 0) == Moved);
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(sceKernelWrite(file, tail, 2 * Gib) == Moved);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Moved);
+    Require(sceKernelPwrite(file, tail, 2 * Gib, 0) == Moved);
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == Moved);
+    Require(sceKernelFtruncate(file, static_cast<std::int64_t>(Wide)) == 0);
+    Require(sceKernelLseek(file, 0, SEEK_SET) == 0);
+    Require(sceKernelRead(file, region, Wide) == static_cast<std::int64_t>(Wide));
+    Require(sceKernelLseek(file, 0, SEEK_CUR) == static_cast<std::int64_t>(Wide));
+    Require(sceKernelPread(file, region, Wide, 0) == static_cast<std::int64_t>(Wide));
+    Require(sceKernelFtruncate(file, 0) == 0);
     Require(sceKernelClose(file) == 0);
-    Require(::munmap(region, Span) == 0 && ::close(memory) == 0);
-}
+
+    const int reader = sceKernelOpen(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(reader >= 0);
+    Require(sceKernelWrite(reader, region, Span) == ErrorEbadf);
+    Require(sceKernelPwrite(reader, region, Span, 0) == ErrorEbadf);
+    Require(sceKernelClose(reader) == 0);
+    const int writer = sceKernelOpen(path.c_str(), SCE_KERNEL_O_WRONLY, 0);
+    Require(writer >= 0);
+    Require(sceKernelRead(writer, region, Span) == ErrorEbadf);
+    Require(sceKernelPread(writer, region, Span, 0) == ErrorEbadf);
+    Require(sceKernelClose(writer) == 0);
+
+    const int appender = sceKernelOpen(path.c_str(), SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_APPEND, 0);
+    Require(appender >= 0);
+    Require(sceKernelWrite(appender, "head", 4) == 4);
+    Require(sceKernelWrite(appender, tail, 2 * Gib) == Moved);
+    Require(sceKernelLseek(appender, 0, SEEK_END) == Moved + 4);
+    Require(sceKernelFtruncate(appender, 0) == 0);
+    Require(sceKernelClose(appender) == 0);
+
+#ifdef _WIN32
+    for (std::size_t offset = 0; offset < Wide; offset += Slot) Require(::UnmapViewOfFile(region + offset));
+    Require(::VirtualFree(region + Wide, 0, MEM_RELEASE) && ::CloseHandle(memory));
+#else
+    Require(::munmap(region, Wide + Gib) == 0 && ::close(memory) == 0);
 #endif
+}
 
 int main() {
     const auto root = std::filesystem::path("anyps5-file-vector-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     ConcurrentRecords(root / "concurrent.bin");
-#ifndef _WIN32
     LargeTransfers(root);
-#endif
     const auto path = root / "data.bin";
     { std::ofstream stream(path, std::ios::binary); stream << "0123456789"; }
 

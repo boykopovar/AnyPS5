@@ -1026,6 +1026,8 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
     }
 };
 
+[[nodiscard]] std::uint64_t MetadataBytes(const RecompileResult& result);
+
 [[nodiscard]] std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment);
 
 struct MeshOutputUse {

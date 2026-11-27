@@ -179,6 +179,7 @@ struct DrawRelocationPending {
     std::uint64_t key = 0, identity = 0;
     DrawAliasKeys aliases;
     std::shared_ptr<const DrawRelocation> relocation;
+    std::weak_ptr<const DrawEntry> donor;
 };
 
 struct DrawRelocationTrial {
