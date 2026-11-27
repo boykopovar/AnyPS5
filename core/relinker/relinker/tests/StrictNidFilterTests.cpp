@@ -104,6 +104,24 @@ void explicitEntryInsideLinearSweepPadding() {
     require(alignedResult.IndirectTransfers == 1, "An already decoded root was counted twice");
 }
 
+void trustedRootUsesTextLimitBeyondInferredRegion() {
+    auto input = fixture();
+    emit(input, 0, {0x48, 0xB8, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xBB, 0x00, 0x00, 0xC3, 0x00, 0xC3});
+    input.Entries.push_back(0x1002);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.Instructions.contains(0x1002), "Trusted root was not decoded from its own address");
+    require(result.Instructions.contains(0x1007), "Trusted root was still bounded by another stream's inferred region");
+    require(result.Instructions.contains(0x100C), "Trusted root instruction extending past the inferred region was not decoded");
+}
+
+void untrustedRootWithOutOfCodeBranchFallsBackConservatively() {
+    auto input = fixture();
+    emit(input, 0, {0xB8, 0xEB, 0x7F, 0x90, 0x90, 0xC3});
+    input.Pointers.emplace(0x2000, 0x1001);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.ImportSlots == input.ImportSlots, "An out-of-code branch from an untrusted root did not preserve all imports");
+}
+
 void ud1DeadTail() {
     auto input = fixture();
     emit(input, 0, {0x0F, 0xB9, 0xC0});
@@ -1731,6 +1749,8 @@ int main() {
         defaultFilterExtraLandingPadRoots();
         deadTailAndExplicitEntry();
         explicitEntryInsideLinearSweepPadding();
+        trustedRootUsesTextLimitBeyondInferredRegion();
+        untrustedRootWithOutOfCodeBranchFallsBackConservatively();
         ud1DeadTail();
         conditionalTailCall();
         fallthroughAfterZeroPadding();

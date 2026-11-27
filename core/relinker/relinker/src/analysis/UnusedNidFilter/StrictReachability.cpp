@@ -108,6 +108,17 @@ private:
         return address >= input.TextVaddr && address - input.TextVaddr < input.Text.size();
     }
 
+    VirtualAddress rootLimit(VirtualAddress target) const {
+        const auto next = std::upper_bound(input.Functions.begin(), input.Functions.end(), target,
+            [](VirtualAddress address, const StrictCodeRegion& function) { return address < function.Begin; });
+        if (next != input.Functions.begin()) {
+            const auto& previous = *(next - 1);
+            if (target < previous.End) return previous.End;
+        }
+        if (next != input.Functions.end()) return next->Begin;
+        return input.TextVaddr + input.Text.size();
+    }
+
     Region& owner(VirtualAddress address) {
         if (lastOwner != nullptr && address >= lastOwner->Begin && address < lastOwner->End) return *lastOwner;
         auto position = regions.upper_bound(address);
@@ -171,14 +182,14 @@ private:
         if (isCode(target) || input.ImportSlots.contains(target)) addressTaken.push_back(target);
     }
 
-    void decodeFrom(VirtualAddress begin, Region& region, bool tolerateInvalid) {
-        const auto effectiveEnd = trailingZeroStart(begin, region.End);
+    void decodeFrom(VirtualAddress begin, Region& region, VirtualAddress limit, bool tolerateInvalid) {
+        const auto effectiveEnd = trailingZeroStart(begin, limit);
         Codegen::ControlFlowKind lastFlow = Codegen::ControlFlowKind::Sequential;
         auto address = begin;
         while (address < effectiveEnd) {
             Instruction instruction;
             try {
-                instruction = decode(address, region.End);
+                instruction = decode(address, limit);
             } catch (const RelinkerException&) {
                 if (!tolerateInvalid) throw;
                 region.UnknownSegmentAccess = true;
@@ -190,11 +201,19 @@ private:
             const auto newInstruction = region.Instructions.insert(address).second;
             if (info.SegmentPrefix != 0 && info.HasMemoryOperand) region.UnknownSegmentAccess = true;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-                if ((info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
-                    || (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(info.BranchDisp)))
-                    throw RelinkerException("Strict filter: direct branch leaves code", address);
+                const bool overflows = (info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
+                    || (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(info.BranchDisp));
+                if (overflows) {
+                    if (!tolerateInvalid) throw RelinkerException("Strict filter: direct branch leaves code", address);
+                    region.UnknownSegmentAccess = true;
+                    break;
+                }
                 const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-                if (!isCode(target)) throw RelinkerException("Strict filter: direct branch leaves code", address);
+                if (!isCode(target)) {
+                    if (!tolerateInvalid) throw RelinkerException("Strict filter: direct branch leaves code", address);
+                    region.UnknownSegmentAccess = true;
+                    break;
+                }
                 region.Edges.insert(target);
             }
             if (info.HasRipRelativeDisp) {
@@ -224,14 +243,14 @@ private:
             lastFlow = info.FlowKind;
             address = next;
         }
-        if (address < region.End) lastFlow = Codegen::ControlFlowKind::Sequential;
-        if (!endsFlow(lastFlow) && isCode(region.End)) region.Edges.insert(region.End);
+        if (address < limit) lastFlow = Codegen::ControlFlowKind::Sequential;
+        if (!endsFlow(lastFlow) && isCode(limit)) region.Edges.insert(limit);
     }
 
     void buildEdges() {
         for (auto& [begin, region] : regions) {
             decodedRoots.insert(begin);
-            decodeFrom(begin, region, false);
+            decodeFrom(begin, region, region.End, false);
         }
     }
 
@@ -263,7 +282,8 @@ private:
             if (!decodedRoots.insert(target).second) continue;
             auto& region = owner(target);
             if (region.Instructions.contains(target)) continue;
-            decodeFrom(target, region, !trusted);
+            const auto limit = trusted ? rootLimit(target) : region.End;
+            decodeFrom(target, region, limit, !trusted);
             for (const auto edge : region.Edges) enqueueRoot(edge, true);
             enqueueAddressTaken();
         }
