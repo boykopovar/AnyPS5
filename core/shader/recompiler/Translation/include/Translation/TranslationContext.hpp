@@ -241,6 +241,7 @@ private:
     bool float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand);
     bool float16NativeFma(const RdnaInstruction& inst, bool accumulator);
+    IrU32 fmaF16NanBits(const std::array<IrU32, 3>& sources, bool flushInputs);
     IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
     IrF32 floatUnaryValue(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
