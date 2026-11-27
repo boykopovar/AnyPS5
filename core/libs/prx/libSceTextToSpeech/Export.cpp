@@ -5,7 +5,6 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace {
 
@@ -43,7 +42,6 @@ int APS5_VABI sceTextToSpeechGetStatusImpl(std::uint32_t id, void* status) {
 int APS5_VABI sceTextToSpeechInitImpl(std::uint32_t id, const void* parameter) {
     if (id > 2) return SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID;
     if (parameter == nullptr) return static_cast<int>(0x81490010);
-    if (sceKernelIsPs4Process() != 1) NotImplemented_nid_no_patch(__func__);
     return TextToSpeechServerUnreachable;
 }
 

@@ -61,6 +61,9 @@ int main() {
         Require(sceTextToSpeechInitImpl(3, nullptr) == invalidId);
         Require(sceTextToSpeechInitImpl(0, nullptr) == static_cast<int>(0x81490010u));
         Require(sceTextToSpeechInitImpl(2, nullptr) == static_cast<int>(0x81490010u));
+        Require(sceTextToSpeechInitImpl(0, block) == invalidId);
+        Require(sceTextToSpeechInitImpl(1, block) == invalidId);
+        Require(sceTextToSpeechInitImpl(2, block) == invalidId);
         Require(libSceTextToSpeechUnknown_L_minus_pHC7qtEug_nid_no_patch(0, block) == invalidId);
         Require(libSceTextToSpeechUnknown_L_minus_pHC7qtEug_nid_no_patch(3, block) == invalidId);
         Require(libSceTextToSpeechUnknown_L_minus_pHC7qtEug_nid_no_patch(0xFFFFFFFFu, block) == invalidId);
