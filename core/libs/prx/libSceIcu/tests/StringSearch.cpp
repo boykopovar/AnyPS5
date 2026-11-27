@@ -461,6 +461,10 @@ void Run() {
     Require(collator != nullptr);
     ucol_setStrength_nid_postfix(collator, UCOL_PRIMARY);
     Require(ucol_getStrength_nid_postfix(collator) == UCOL_PRIMARY);
+    usearch_reset_nid_postfix(opened);
+    status = 0;
+    Require(usearch_next_nid_postfix(opened, &status) == 2);
+    Require(status <= 0);
 }
 
 } // namespace UsearchObject

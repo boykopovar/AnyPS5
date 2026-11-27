@@ -48,6 +48,7 @@ struct SearchState {
     void* breakIterator{};
     void* collator{};
     void* collatorHandle{};
+    bool patternValid{true};
     std::vector<char16_t> pattern;
     std::vector<char16_t> text;
     std::vector<std::vector<char16_t>> retainedTexts;
@@ -180,6 +181,10 @@ std::int32_t APS5_VABI usearch_next_nid_postfix(UStringSearch* search, std::int3
     const auto incoming = CopyIn<std::int32_t>(status, __func__);
     const auto state = Find(search, __func__);
     const std::lock_guard lock(state->mutex);
+    if (!state->patternValid) {
+        WriteChangedStatus(status, incoming, Icu::MemoryAllocation, __func__);
+        return Done;
+    }
     auto outgoing = incoming;
     const auto result = Icu::StringSearchHost::Next(state->search, outgoing);
     WriteChangedStatus(status, incoming, outgoing, __func__);
@@ -227,7 +232,7 @@ void APS5_VABI usearch_reset_nid_postfix(UStringSearch* search) {
     if (search == nullptr) return;
     const auto state = Find(search, __func__);
     const std::lock_guard lock(state->mutex);
-    Icu::StringSearchHost::Reset(state->search);
+    state->patternValid = Icu::StringSearchHost::Reset(state->search, !state->patternValid);
 }
 
 void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int32_t attribute, std::int32_t value, std::int32_t* status) {
@@ -286,7 +291,10 @@ void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* search, const char1
     const std::lock_guard lock(state->mutex);
     auto outgoing = incoming;
     Icu::StringSearchHost::SetPattern(state->search, replacement.data(), static_cast<std::int32_t>(replacement.size()), outgoing);
-    if (outgoing <= 0) state->pattern.swap(replacement);
+    if (outgoing <= 0) {
+        state->pattern.swap(replacement);
+        state->patternValid = true;
+    }
     WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
