@@ -1506,7 +1506,13 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (thread == nullptr || !GuestThreadIsLive(thread)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
- if (HoldRaisedException(thread->tid, signum)) return 0;
+ std::int64_t target = 0;
+ {
+  const auto live = LockLiveGuestThread(thread);
+  if (!live.owns_lock()) return SCE_KERNEL_ERROR_ESRCH;
+  target = thread->tid;
+ }
+ if (HoldRaisedException(target, signum)) return 0;
 #ifdef _WIN32
  if (thread->suspended.load(std::memory_order_acquire)) {
   int pending = 0;
