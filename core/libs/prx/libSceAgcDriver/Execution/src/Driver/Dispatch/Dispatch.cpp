@@ -66,6 +66,8 @@ bool DispatchItemsEnabled() {
 }
 
 enum class ItemFallback : std::size_t { Miss, Reads, NoRecipe, Writes, Verify, Count };
+std::atomic<void (*)(std::span<const Graphics::GuestMemorySnapshot>)> dispatchItemHook{nullptr};
+
 constexpr std::array<const char*, static_cast<std::size_t>(ItemFallback::Count)> ItemFallbackNames{"miss", "reads", "no recipe", "writes", "verify"};
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(ItemFallback::Count)> itemFallbacks{};
 std::atomic<std::uint64_t> itemCommits{0};
@@ -121,6 +123,10 @@ bool Driver::capturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> cap
         if (GuestMemory::CompareMapped(captured[index].guestAddress, captured[index].bytes) != GuestMemory::Compare::Equal) return false;
     }
     return true;
+}
+
+void Driver::SetDispatchItemHook(void (*hook)(std::span<const Graphics::GuestMemorySnapshot>)) {
+    dispatchItemHook.store(hook, std::memory_order_release);
 }
 
 bool Driver::pipelineDispatch() {
@@ -892,9 +898,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().EnqueuePooled(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
+        DrawPipeline::Queue0().EnqueuePooled(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask, shaderMemory, registeredShader] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(0x15, queueId);
+            if (const auto hook = dispatchItemHook.load(std::memory_order_acquire)) hook(snapshots);
             const auto& compiledCommit = *result;
             const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
             try {

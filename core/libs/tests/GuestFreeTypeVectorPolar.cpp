@@ -25,8 +25,27 @@ static void Check(bool value, int line) {
 
 static void TestAtan2() {
     for (const std::int64_t x : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) {
-        for (const std::int64_t y : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) Require(FT_Atan2_nid_postfix(x, y) == FT_Atan2(static_cast<FT_Fixed>(x), static_cast<FT_Fixed>(y)));
+        for (const std::int64_t y : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) {
+            const std::int64_t expected = x < 0 && y == 0 ? 180 << 16 : FT_Atan2(static_cast<FT_Fixed>(x), static_cast<FT_Fixed>(y));
+            Require(FT_Atan2_nid_postfix(x, y) == expected);
+        }
     }
+    const struct {
+        std::int64_t x;
+        std::int64_t y;
+        std::int64_t angle;
+    } measured[] = {{0x10000, 0, 0},
+                    {0, 0x10000, 90 << 16},
+                    {-0x10000, 0, 180 << 16},
+                    {0, -0x10000, -90 << 16},
+                    {0x10000, 0x10000, 45 << 16},
+                    {0x10000, -0x10000, -45 << 16},
+                    {-0x10000, 0x10000, 135 << 16},
+                    {-0x10000, -0x10000, -135 << 16},
+                    {0, 0, 0},
+                    {0x7fffffff, 0x7fffffff, 45 << 16},
+                    {-0x7fffffff - 1, 0, 180 << 16}};
+    for (const auto& value : measured) Require(FT_Atan2_nid_postfix(value.x, value.y) == value.angle);
 }
 
 static void TestLength() {

@@ -193,6 +193,9 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp)
     target_include_directories(native_path_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    if(WIN32)
+        target_link_libraries(native_path_tests PRIVATE advapi32)
+    endif()
     add_test(NAME native_path COMMAND native_path_tests)
     set_tests_properties(native_path PROPERTIES TIMEOUT 20)
 
@@ -241,6 +244,9 @@ add_executable(relinker
     ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/NativeModules.cpp)
 target_link_libraries(relinker PRIVATE relinker_core)
+if(WIN32)
+    target_link_libraries(relinker PRIVATE advapi32)
+endif()
 target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
 set_target_properties(relinker PROPERTIES CXX_EXTENSIONS OFF)
 
@@ -547,9 +553,22 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
             ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         )
+        target_link_libraries(windows_file_writer_tests PRIVATE advapi32)
         add_test(NAME windows_file_writer_binary COMMAND windows_file_writer_tests binary)
         add_test(NAME windows_file_writer_text COMMAND windows_file_writer_tests text)
         set_tests_properties(windows_file_writer_binary windows_file_writer_text PROPERTIES TIMEOUT 20)
+        add_test_executable(windows_file_writer_failure_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/WindowsFileWriterFailureTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        )
+        target_include_directories(windows_file_writer_failure_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        )
+        target_link_libraries(windows_file_writer_failure_tests PRIVATE advapi32)
+        add_test(NAME windows_file_writer_failure_binary COMMAND windows_file_writer_failure_tests binary)
+        add_test(NAME windows_file_writer_failure_text COMMAND windows_file_writer_failure_tests text)
+        set_tests_properties(windows_file_writer_failure_binary windows_file_writer_failure_text PROPERTIES TIMEOUT 20)
     endif()
 
     if(UNIX)
@@ -879,6 +898,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_replaced_plt_stubs.py $<TARGET_FILE:relinker>)
         add_test(NAME code_analysis_address_data COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_code_analysis_address_data.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_syscall_route COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_route.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
@@ -1327,6 +1348,9 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    add_test(NAME macos_guest_qualified_imports COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_qualified_imports.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_guest_qualified_imports PROPERTIES TIMEOUT 30 LABELS relinker)
     add_test(NAME macos_code_signature COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)

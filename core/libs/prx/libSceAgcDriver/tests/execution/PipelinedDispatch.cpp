@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -148,6 +149,19 @@ std::vector<std::uint32_t> TableFills(const void* target, std::uint32_t value) {
     return words;
 }
 
+std::vector<std::uint32_t> TableDispatchAt(const void* table, const void* output, std::uint32_t unusedWord) {
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(TableCode.data());
+    const auto tableAddress = reinterpret_cast<std::uintptr_t>(table);
+    const auto outputDescriptor = BufferDescriptor(output, BufferBytes);
+    return {
+        0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u),
+        0xc0037600u, 0x207u, Lanes, 1u, 1u,
+        0xc0017600u, 0x213u, 8u << 1u,
+        0xc0087600u, 0x240u, static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u), unusedWord, 0u, outputDescriptor[0], outputDescriptor[1], outputDescriptor[2], outputDescriptor[3],
+        0xc0031500u, 1u, 1u, 1u, 0x8041u,
+    };
+}
+
 std::vector<std::uint32_t> TableDispatch(const void* code, std::uint32_t unusedWord = 0u) {
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(code);
     const auto tableAddress = reinterpret_cast<std::uintptr_t>(Table);
@@ -245,6 +259,14 @@ Handling SubmitBehindHeldCommitter(std::vector<std::uint32_t>& words, const void
     released->store(true, std::memory_order_release);
     AgcDriverWaitIdle_nid_postfix();
     return handling;
+}
+
+std::atomic<std::uint64_t> stalePromisedSnapshots{0};
+
+void CompareItemSnapshots(std::span<const AgcDriver::Graphics::GuestMemorySnapshot> snapshots) {
+    for (const auto& snapshot : snapshots) {
+        if (std::memcmp(snapshot.bytes.data(), reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.size()) != 0) stalePromisedSnapshots.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 std::string Describe(const Handling& handling) {
@@ -521,6 +543,50 @@ int main(int argc, char** argv) {
             }
             std::printf("pipelined dispatch: missed dispatch round %zu, table under a queued write: %s\n", round, Describe(overlapHandling).c_str());
             check(!overlapHandling.queued && overlapHandling.drains >= 1, "a missed plain dispatch whose table has a queued write did not drain the pipeline: " + Describe(overlapHandling));
+        }
+
+        auto* otherTable = NewBlock();
+        auto* otherOutput = NewBlock();
+        const auto otherDescriptor = BufferDescriptor(TargetB, BufferBytes);
+        std::copy(otherDescriptor.begin(), otherDescriptor.end(), otherTable);
+        const std::array<std::uint32_t, 3> keptValues{0x4c4c0001u, 0x4d4d0002u, 0x4e4e0003u};
+        for (std::size_t round = 0; dispatchMisses && round < keptValues.size(); ++round) {
+            const auto value = keptValues[round];
+            auto targets = TableFills(TargetA, value);
+            const auto otherFill = FillPacket(value ^ 0xffffffffu, TargetB, BufferBytes);
+            targets.insert(targets.end(), otherFill.begin(), otherFill.end());
+            Settle(targets);
+            WaitUntil([] { return DrawPipeline::QueuedItems() == 0; }, "the pipeline to empty before kept capture round " + std::to_string(round));
+            std::atomic<bool> released{false};
+            struct Release {
+                std::atomic<bool>& flag;
+                ~Release() { flag.store(true, std::memory_order_release); }
+            } release{released};
+            DrawPipeline::Queue0().Enqueue([&released] {
+                while (!released.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }, {});
+            stalePromisedSnapshots.store(0, std::memory_order_relaxed);
+            AgcDriver::DriverDetail::Driver::SetDispatchItemHook(&CompareItemSnapshots);
+            auto first = TableDispatchAt(Table, Output, ++missKey);
+            Submit(first);
+            const auto output = reinterpret_cast<std::uintptr_t>(Output);
+            WaitUntil([output] { return DrawPipeline::Queue0().Overlaps(output, BufferBytes); }, "the first missed dispatch to queue in kept capture round " + std::to_string(round));
+            auto second = TableDispatchAt(otherTable, otherOutput, ++missKey);
+            Submit(second);
+            const auto secondOutput = reinterpret_cast<std::uintptr_t>(otherOutput);
+            WaitUntil([secondOutput] { return DrawPipeline::Queue0().Overlaps(secondOutput, BufferBytes); }, "the second missed dispatch to capture and queue behind the first in kept capture round " + std::to_string(round));
+            released.store(true, std::memory_order_release);
+            AgcDriverWaitIdle_nid_postfix();
+            AgcDriver::DriverDetail::Driver::SetDispatchItemHook(nullptr);
+            const auto stale = stalePromisedSnapshots.load(std::memory_order_relaxed);
+            check(stale == 0, "kept capture round " + std::to_string(round) + ": " + std::to_string(stale) + " snapshots of the queued dispatches no longer held the guest words they captured when the committer recorded them");
+            AgcDriver::GuestMemory::FlushGpuWrites(output, BufferBytes);
+            AgcDriver::GuestMemory::FlushGpuWrites(secondOutput, BufferBytes);
+            for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+                check(Output[lane] == value + 1u, "kept capture round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the first output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u));
+                check(otherOutput[lane] == (value ^ 0xffffffffu) + 1u, "kept capture round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the second output is " + std::to_string(otherOutput[lane]) + ", expected " + std::to_string((value ^ 0xffffffffu) + 1u));
+            }
+            std::printf("pipelined dispatch: kept capture round %zu: the first queued missed dispatch kept its captured table while the second captured another\n", round);
         }
 
         Shader htileShader = ComputeShader(HtileMaskCode.data(), sizeof(HtileMaskCode));

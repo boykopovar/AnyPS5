@@ -11,6 +11,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -561,6 +562,26 @@ void testToggleRequests() {
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F12, false), now).screenshot, "releasing F12 asks for nothing");
 }
 
+void testMouseModeShortcut() {
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    check(std::string_view(keyboardMouse.MouseModeShortcut(false)) == "F7", "the default hint names F7");
+    auto custom = defaults();
+    std::erase_if(custom.bindings, [](const Pad::InputBinding& binding) { return binding.control == Pad::InputControl::ToggleMouse; });
+    custom.bindings.push_back({SDL_SCANCODE_UNKNOWN, Pad::MouseButton::Middle, Pad::InputControl::ToggleMouse});
+    keyboardMouse.Replace(custom);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(false)) == "Middle click", "a mouse-only binding names the button");
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)).empty(), "a guest mouse hides the unavailable mouse binding");
+    keyboardMouse.SetMouseMode(true);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)) == "Middle click", "the mouse binding can turn off active capture");
+    custom.bindings.push_back({SDL_SCANCODE_F4, Pad::MouseButton::None, Pad::InputControl::ToggleMouse});
+    keyboardMouse.Replace(custom);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)) == "F4", "a reloaded keyboard binding supplies the hint");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F4, true), Pad::KeyboardMouse::Clock::now()).toggleMouse, "the hint names the actual toggle key");
+    custom.bindings.back().key = SDL_SCANCODE_KP_MULTIPLY;
+    keyboardMouse.Replace(custom);
+    check(std::string_view(keyboardMouse.MouseModeShortcut(true)) == "Keypad multiply", "a key outside the overlay font uses a readable label");
+}
+
 void testShowPadStatus() {
     const auto now = Pad::KeyboardMouse::Clock::now();
     Pad::KeyboardMouse keyboardMouse(defaults());
@@ -767,6 +788,29 @@ void testMouseStickTarget() {
     check(stateLeft.sticks[3] == 90, "mouse must preserve right stick Y when targeting left stick");
 }
 
+void testRestingMouseKeepsControllerStick() {
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    PadInputState controller{};
+    controller.sticks = {40, 75, 255, 0};
+    for (const bool right : {true, false}) {
+        auto configuration = defaults();
+        configuration.settings.mouseControlsRightStick = right;
+        const std::size_t offset = right ? 2 : 0;
+        Pad::KeyboardMouse keyboardMouse(configuration);
+        keyboardMouse.SetMouseMode(true);
+        keyboardMouse.Advance(now);
+        keyboardMouse.Advance(now + std::chrono::milliseconds(10));
+        const auto resting = keyboardMouse.Compose(controller);
+        check(resting.sticks == controller.sticks, "a resting mouse in mouse mode must keep the controller sticks");
+        keyboardMouse.HandleEvent(PadSimulation::MotionEvent(-100, 50), now + std::chrono::milliseconds(10));
+        keyboardMouse.Advance(now + std::chrono::milliseconds(20));
+        const auto moving = keyboardMouse.Compose(controller);
+        check(moving.sticks[offset] < 128 && moving.sticks[offset + 1] > 128, "a moving mouse must drive its target stick");
+        check(moving.sticks[2 - offset] == controller.sticks[2 - offset] && moving.sticks[3 - offset] == controller.sticks[3 - offset],
+            "a moving mouse must keep the other controller stick");
+    }
+}
+
 void testPadChordRequests() {
     auto configuration = defaults();
     configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Screenshot, Pad::PadButton::None, 0, 0,
@@ -879,6 +923,7 @@ int main() {
             {"toggle actions", testToggleActions},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
+            {"mouse mode shortcut", testMouseModeShortcut},
             {"show pad status", testShowPadStatus},
             {"volume up request", testVolumeUpRequest},
             {"volume down request", testVolumeDownRequest},
@@ -889,6 +934,7 @@ int main() {
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
             {"mouse stick target", testMouseStickTarget},
+            {"resting mouse keeps controller stick", testRestingMouseKeepsControllerStick},
             {"pad chord requests", testPadChordRequests}
         };
         for (const auto& [name, test] : tests) {

@@ -230,6 +230,20 @@ class CheckMainSyncHistoryTests(CheckMainSyncFixture):
 
 
 class CheckMainSyncPathTests(CheckMainSyncFixture):
+    def test_worktree_root_keeps_trailing_space_reported_by_git(self):
+        root = str(self.repo.path) + " "
+        original_git = check_main_sync.git
+
+        def git(repo, *args, **kwargs):
+            if args == ("rev-parse", "--show-toplevel"):
+                return types.SimpleNamespace(stdout=root + "\n")
+            self.assertEqual(repo, root)
+            return original_git(self.repo.path, *args, **kwargs)
+
+        with unittest.mock.patch.object(check_main_sync, "git", side_effect=git):
+            result = check_main_sync.report(self.repo.path, "main", "HEAD")
+        self.assertEqual((result["ahead"], result["behind"]), (0, 0))
+
     def test_a_subdirectory_reports_the_same_conflicts_and_pull_requests(self):
         (self.repo.path / "docs").mkdir()
         self.repo.write("docs/notes.txt", "x\n")

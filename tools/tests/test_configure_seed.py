@@ -303,7 +303,7 @@ class ConfigureSeedProject(unittest.TestCase):
         cls.root = Path(cls.directory.name)
         (cls.root / "source").mkdir()
         (cls.root / "source" / "CMakeLists.txt").write_text(PROJECT, encoding="utf-8")
-        cls.compiler = shutil.which("gcc") or shutil.which("cc")
+        cls.compiler = Path(shutil.which("gcc") or shutil.which("cc")).as_posix()
         cls.fresh = cls.configure("fresh")
 
     @classmethod
