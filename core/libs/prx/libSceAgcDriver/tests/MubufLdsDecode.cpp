@@ -19,10 +19,10 @@ int main() {
         std::fprintf(stderr, "buffer_load_dword v1, off, s[4:7], 0: %s\n", error.what());
         ++failures;
     }
-    const std::array<std::uint32_t, 3> ldsLoad{0xe0310000u, 0x80010100u, 0xbf810000u};
+    const std::array<std::uint32_t, 3> ldsLoad{0xe0350000u, 0x80010100u, 0xbf810000u};
     try {
         static_cast<void>(RdnaInstructionDecoder{}.Decode(std::span(ldsLoad)));
-        std::fprintf(stderr, "buffer_load_dword off, s[4:7], 0 lds decodes as a VGPR load\n");
+        std::fprintf(stderr, "buffer_load_dwordx2 off, s[4:7], 0 lds decodes as a VGPR load\n");
         ++failures;
     } catch (const std::runtime_error& error) {
         if (std::string(error.what()).find("unsupported MUBUF lds modifier") == std::string::npos) {

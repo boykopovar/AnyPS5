@@ -57,6 +57,7 @@
 #include "prx/libSceNKWebKit/include/CrossOriginPreflightExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
+#include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstddef>
@@ -145,6 +146,8 @@ String Concatenate(std::initializer_list<StringView> parts) {
     }
     return result;
 }
+
+constexpr unsigned kMaxReferrerLength = 4096;
 
 bool CheckEnabled(const CrossOriginAccessControlCheckDisabler& disabler) {
     if (!disabler.vptr || !disabler.vptr->crossOriginAccessControlCheckEnabled)
@@ -269,6 +272,36 @@ ExpectedVoidString APS5_VABI _ZN7WebCore25validatePreflightResponseERKNS_15Resou
     NKWebKit::PreflightCache::Append(origin, request->url, std::move(result.item));
     if (errorDescription) return ExpectedVoidString(std::move(*errorDescription));
     return ExpectedVoidString();
+}
+
+LegacyResourceRequestBase APS5_VABI _ZN7WebCore35createAccessControlPreflightRequestERKNS_15ResourceRequestERNS_14SecurityOriginERKN3WTF6StringE(
+    const LegacyResourceRequestBase* request, SecurityOrigin* securityOrigin, const String* referrer) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
+    if (!referrer) throw std::invalid_argument("null WTF::String");
+    if (referrer->impl && referrer->impl->length > kMaxReferrerLength)
+        throw std::logic_error("WebCore::createAccessControlPreflightRequest: the origin of a referrer longer than 4096 is not implemented");
+    request->resourceRequestUpdated = true;
+    const String unsafeHeaders =
+        NKWebKit::PreflightCache::UnsafeRequestHeaderNames(reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap&>(request->httpHeaderFields));
+    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
+
+    LegacyResourceRequestBase preflightRequest{};
+    preflightRequest.url = request->url;
+    if (preflightRequest.url.impl) preflightRequest.url.impl->refCount += 2;
+    if (preflightRequest.url.passwordEnd > preflightRequest.url.userStart) _ZN3WTF3URL17removeCredentialsEv(&preflightRequest.url);
+    preflightRequest.httpMethod = Concatenate({Literal("OPTIONS")});
+    preflightRequest.cachePartition = String(NKWebKit::WtfAbi::EmptyStringImpl());
+    preflightRequest.priority = request->priority;
+    preflightRequest.resourceRequestUpdated = true;
+    preflightRequest.resourceRequestBodyUpdated = true;
+    auto& headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap&>(preflightRequest.httpHeaderFields);
+    NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(headers, HTTPHeaderName::Origin, origin, false);
+    NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(headers, HTTPHeaderName::AccessControlRequestMethod, request->httpMethod, false);
+    if (referrer->impl) NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(headers, HTTPHeaderName::Referer, *referrer, false);
+    if (unsafeHeaders.impl && unsafeHeaders.impl->length)
+        NKWebKit::HttpAbi::UpdateCommonHeader_nid_no_patch(headers, HTTPHeaderName::AccessControlRequestHeaders, unsafeHeaders, false);
+    return preflightRequest;
 }
 
 }

@@ -9,6 +9,7 @@
 
 namespace {
 
+constexpr int PAD_ERROR_ALREADY_OPENED = static_cast<int>(0x80920004);
 constexpr int PAD_ERROR_DEVICE_NO_HANDLE = static_cast<int>(0x80920008);
 
 void Require(bool condition, const char* message) {
@@ -65,6 +66,8 @@ void TestStandardUserHandlesAndLifecycle() {
 
     const int handle1 = scePadOpen_nid_postfix(0x10000001, PAD_PORT_TYPE_STANDARD, 0, nullptr);
     Require(handle1 == 2, "open port 1 must return handle 2");
+    Require(scePadOpen_nid_postfix(0x10000001, PAD_PORT_TYPE_STANDARD, 0, nullptr) == PAD_ERROR_ALREADY_OPENED,
+        "opening the same standard pad twice must return ALREADY_OPENED");
 
     const int handle2 = scePadOpen_nid_postfix(0x10000002, PAD_PORT_TYPE_STANDARD, 0, nullptr);
     Require(handle2 == 3, "open port 2 must return handle 3");
@@ -96,6 +99,11 @@ void TestStandardUserHandlesAndLifecycle() {
     Require(scePadClose_nid_postfix(handle1) == PAD_OK, "double close on standard handle must return PAD_OK");
     Require(scePadClose_nid_postfix(handle1) == PAD_OK, "triple close on standard handle must return PAD_OK");
     Require(scePadGetHandle(0x10000001, PAD_PORT_TYPE_STANDARD, 0) == PAD_ERROR_DEVICE_NO_HANDLE, "closed user 1 remains DEVICE_NO_HANDLE");
+
+    const int reopened = scePadOpen_nid_postfix(0x10000001, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+    Require(reopened > 0, "reopening a closed standard pad must succeed");
+    Require(scePadGetHandle(0x10000001, PAD_PORT_TYPE_STANDARD, 0) == reopened, "get reopened handle failed");
+    Require(scePadClose_nid_postfix(reopened) == PAD_OK, "close reopened handle failed");
 
     Require(scePadClose_nid_postfix(handle0) == PAD_OK, "close handle 0 failed");
     Require(scePadClose_nid_postfix(handle2) == PAD_OK, "close handle 2 failed");
