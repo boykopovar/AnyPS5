@@ -68,6 +68,15 @@ void testFingerprints() {
     check(RegisterStateKey(queue, false, true, nullptr, &parts) != beforeRuntimeKey, "runtime-register mutation did not change the key");
     check(parts.userDataRegisters != beforeRuntimeMutation.userDataRegisters && parts.auxiliaryRegisters == beforeRuntimeMutation.auxiliaryRegisters && parts.stableRegisters == beforeRuntimeMutation.stableRegisters, "user-data register change was not isolated");
     queue = QueueState{};
+    queue.shader[0x14b] = 2u << 1u;
+    for (std::uint32_t offset = 0x14cu; offset < 0x15cu; ++offset) {
+        const auto beforeLocalKey = RegisterStateKey(queue, false, true, nullptr, &parts);
+        const auto beforeLocal = parts;
+        queue.shader[offset] = offset;
+        check(RegisterStateKey(queue, false, true, nullptr, &parts) != beforeLocalKey, "a GCN local-stage user data word change did not change the draw register key");
+        check(parts.stableRegisters != beforeLocal.stableRegisters, "a GCN local-stage user data word change was not attributed to the stable registers");
+    }
+    queue = QueueState{};
     auto reference = baselineRegisterStateKey(queue);
     auto tracked = RegisterStateKey(queue);
     const auto compare = [&] {
