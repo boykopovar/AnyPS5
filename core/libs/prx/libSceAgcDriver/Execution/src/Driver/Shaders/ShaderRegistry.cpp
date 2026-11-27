@@ -2693,7 +2693,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         }
         std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
         try {
-            if (!fragment) vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true, 8u - program.firstUserSgpr);
+            if (!fragment) vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true, program.hiddenUserWords);
         } catch (const std::exception& error) {
             if (!deferUnprepared) throw;
             DeferPipelineStage(transaction.Edit(*program.snapshot), *program.snapshot, error.what());
