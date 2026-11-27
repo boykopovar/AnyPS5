@@ -1,6 +1,7 @@
 #include "prx/libSceVideodec2/include/Api.hpp"
 #include "prx/libSceVideodec/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -447,6 +448,7 @@ void testConcurrentDecodeAndDelete() {
         check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "stress decoder creation failed");
         std::atomic<bool> stop{false};
         std::atomic<bool> unexpectedStatus{false};
+        std::array<std::atomic<bool>, 3> workerActive{};
         std::vector<std::thread> workers;
         for (int worker = 0; worker < 3; ++worker) {
             workers.emplace_back([&, worker]() {
@@ -467,14 +469,17 @@ void testConcurrentDecodeAndDelete() {
                         const int resetStatus = sceVideodecReset(&ctrl);
                         if (resetStatus != 0 && resetStatus != ErrorHandle) unexpectedStatus.store(true);
                     }
+                    workerActive[worker].store(true, std::memory_order_release);
                     ++index;
                 }
             });
         }
-        std::this_thread::yield();
+        while (!workerActive[0].load(std::memory_order_acquire) || !workerActive[1].load(std::memory_order_acquire) || !workerActive[2].load(std::memory_order_acquire)) std::this_thread::yield();
         check(sceVideodecDeleteDecoder(&ctrl) == 0, "stress decoder deletion failed");
         stop.store(true);
         for (auto& worker : workers) worker.join();
+        check(workerActive[0].load(std::memory_order_acquire) && workerActive[1].load(std::memory_order_acquire) && workerActive[2].load(std::memory_order_acquire),
+              "worker did not enter concurrent decode/delete loop");
         check(!unexpectedStatus.load(), "concurrent decode/delete produced unexpected status or race");
         check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "deleted stress decoder was deleted twice");
     }
