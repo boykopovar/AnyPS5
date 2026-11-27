@@ -6,6 +6,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace ShaderRecompiler {
 
@@ -112,6 +113,58 @@ BasicBlock& ControlFlowGraph::FindBlockByProgramCounter(std::uint32_t programCou
 bool ControlFlowGraph::Dominates(std::uint32_t dominator, std::uint32_t blockId) const {
     const auto& dominators = FindBlock(blockId).dominators;
     return std::binary_search(dominators.begin(), dominators.end(), dominator);
+}
+
+bool ControlFlowGraph::EveryPathReaches(std::uint32_t targetBlock) const {
+    if (entryBlock == InvalidControlFlowId || blocks.empty() ||
+        std::ranges::none_of(blocks, [&](const BasicBlock& block) { return block.id == targetBlock; })) {
+        return false;
+    }
+    if (entryBlock == targetBlock) return true;
+
+    enum class VisitState : std::uint8_t { Visiting, ReachesTarget, AvoidsTarget };
+    struct PendingBlock {
+        std::uint32_t id;
+        std::size_t nextSuccessor;
+    };
+
+    std::unordered_map<std::uint32_t, VisitState> states;
+    states.reserve(blocks.size());
+    states.emplace(entryBlock, VisitState::Visiting);
+    std::vector<PendingBlock> pending{{entryBlock, 0u}};
+    while (!pending.empty()) {
+        auto& current = pending.back();
+        const auto& block = FindBlock(current.id);
+        if (block.terminator.kind == TerminatorKind::Return || block.terminator.kind == TerminatorKind::Unsupported || block.successors.empty()) {
+            states[current.id] = VisitState::AvoidsTarget;
+            pending.pop_back();
+            continue;
+        }
+        if (current.nextSuccessor == block.successors.size()) {
+            states[current.id] = VisitState::ReachesTarget;
+            pending.pop_back();
+            continue;
+        }
+        const auto successor = block.successors[current.nextSuccessor];
+        if (successor == targetBlock) {
+            ++current.nextSuccessor;
+            continue;
+        }
+        const auto known = states.find(successor);
+        if (known != states.end()) {
+            if (known->second != VisitState::ReachesTarget) {
+                states[current.id] = VisitState::AvoidsTarget;
+                pending.pop_back();
+            } else {
+                ++current.nextSuccessor;
+            }
+            continue;
+        }
+        states.emplace(successor, VisitState::Visiting);
+        pending.push_back({successor, 0u});
+    }
+    const auto result = states.find(entryBlock);
+    return result != states.end() && result->second == VisitState::ReachesTarget;
 }
 
 bool ControlFlowGraph::PostDominates(std::uint32_t postDominator, std::uint32_t blockId) const {
