@@ -86,6 +86,7 @@ constexpr std::uint32_t MaxCommandBufferBytes = 0x3ffffc;
 constexpr std::int16_t EvfiltGraphicsCore = -14;
 
 constexpr int GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT = static_cast<int>(0x80d11000u);
+constexpr int ComputeQueueInvalidPipe = static_cast<int>(0x80d17000u);
 constexpr int GNM_ERROR_VALIDATION_NOT_ENABLED = static_cast<int>(0x80d13fffu);
 constexpr int GNM_ERROR_CAPTURE_RAZOR_NOT_LOADED = static_cast<int>(0x80d15001u);
 constexpr int GNM_ERROR_CAPTURE_FAILED_INTERNAL = static_cast<int>(0x80d1500fu);
@@ -961,9 +962,13 @@ int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset, std::uint32_t priority) {
+    if (pipe >= ComputePipes) return ComputeQueueInvalidPipe;
+    if (queue >= QueuesPerPipe) return ComputeQueueInvalidPipe + 1;
+    if ((ringSizeInDwords & (ringSizeInDwords - 1u)) != 0) return ComputeQueueInvalidPipe + 2;
+    if (reinterpret_cast<std::uintptr_t>(ring) % 256 != 0) return ComputeQueueInvalidPipe + 3;
+    if (reinterpret_cast<std::uintptr_t>(readOffset) % 4 != 0 || priority > 1) return ComputeQueueInvalidPipe + 4;
+    return sceGnmMapComputeQueue(pipe, queue, ring, ringSizeInDwords, readOffset);
 }
 
 int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void) {

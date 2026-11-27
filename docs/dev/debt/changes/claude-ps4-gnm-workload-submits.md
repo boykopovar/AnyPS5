@@ -2,7 +2,7 @@
 
 ## change [NeoMode-only imports]
 
-- [NeoMode-only imports](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the 19 imports inFAMOUS Second Son asks of `libSceGnmDriver` that only `libSceGnmDriverForNeoMode` exported are now exported here too: `sceGnmSetEmbeddedPsShader` and `sceGnmSetEmbeddedVsShader` reuse the same embedded shader producers, `sceGnmSubmitCommandBuffersForWorkload`, `sceGnmSubmitAndFlipCommandBuffersForWorkload` and `sceGnmDingDongForWorkload` run as their versions without a workload (see Workload submissions), and the other 14 throw `NotImplemented_nid_no_patch` until their console behavior is measured (#17581).
+- [NeoMode-only imports](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the 19 imports inFAMOUS Second Son asks of `libSceGnmDriver` that only `libSceGnmDriverForNeoMode` exported are now exported here too: `sceGnmSetEmbeddedPsShader` and `sceGnmSetEmbeddedVsShader` reuse the same embedded shader producers, `sceGnmSubmitCommandBuffersForWorkload`, `sceGnmSubmitAndFlipCommandBuffersForWorkload` and `sceGnmDingDongForWorkload` run as their versions without a workload (see Workload submissions), `sceGnmMapComputeQueueWithPriority` maps a queue as `sceGnmMapComputeQueue` does (see Compute queue priorities), and the other 13 throw `NotImplemented_nid_no_patch` until their console behavior is measured (#17581).
 
 ## add Functional
 
