@@ -24,15 +24,33 @@
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 
 #include <stdexcept>
+#include <type_traits>
+
+#include "prx/libc/include/General.hpp"
+
+namespace {
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+}  // namespace
 
 extern "C" {
 
 WebCore::IntRect APS5_VABI _ZNK7WebCore17TiledBackingStore13mapToContentsERKNS_7IntRectE(const NKWebKit::TiledBackingStoreAbi::TiledBackingStore* self, const WebCore::IntRect* rect) {
     if (!self || !rect) throw std::invalid_argument("WebCore::TiledBackingStore::mapToContents: null argument");
-    const float contentsScale = self->contentsScale;
+    const NKWebKit::TiledBackingStoreAbi::TiledBackingStore store = ReadGuestValue(self, __func__);
+    const WebCore::IntRect input = ReadGuestValue(rect, __func__);
+    const float contentsScale = store.contentsScale;
     return _ZN7WebCore16enclosingIntRectERKNS_9FloatRectE(WebCore::FloatRect{
-        {rect->m_location.m_x / contentsScale, rect->m_location.m_y / contentsScale},
-        {rect->m_size.m_width / contentsScale, rect->m_size.m_height / contentsScale}});
+        {input.m_location.m_x / contentsScale, input.m_location.m_y / contentsScale},
+        {input.m_size.m_width / contentsScale, input.m_size.m_height / contentsScale}});
 }
 
 }
