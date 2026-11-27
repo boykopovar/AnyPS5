@@ -1735,7 +1735,7 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
                 if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
                 userDataStride = 1u << shift;
             }
-            calls.push_back({instruction.programCounter, link, target, descriptor, 0u, load.memoryOffset + lowDword * 4u, userDataStride, std::nullopt, true});
+            calls.push_back({instruction.programCounter, link, target, descriptor, 0u, load.memoryOffset + lowDword * 4u, userDataStride, std::nullopt, 0u, 0u, true});
             continue;
         }
         std::uint32_t descriptorLoad = 0;
@@ -1765,6 +1765,8 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             (tableDescriptor - loaded) % 4u != 0u || tableDescriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
             table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u) continue;
         std::optional<std::uint64_t> constantPointer;
+        std::uint32_t constantPointerLowProgramCounter = 0;
+        std::uint32_t constantPointerHighProgramCounter = 0;
         if (!(userData(pointer) && userData(pointer + 1u) && unchangedUntil(program, pointer, descriptorLoad, swappc.waveSize) && unchangedUntil(program, pointer + 1u, descriptorLoad, swappc.waveSize))) {
             std::uint32_t lowWriter = 0, highWriter = 0, low = 0, high = 0;
             if (!findLastWriter(program, descriptorLoad, {pointer}, lowWriter, swappc.waveSize, reader) || !findLastWriter(program, descriptorLoad, {pointer + 1u}, highWriter, swappc.waveSize, reader) ||
@@ -1774,6 +1776,8 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (lowMove.op != RdnaOpcode::SMovB32 || highMove.op != RdnaOpcode::SMovB32 || !isScalar(lowMove.destination, pointer) || !isScalar(highMove.destination, pointer + 1u) ||
                 !isImmediate(lowMove.source0, low) || !isImmediate(highMove.source0, high)) continue;
             constantPointer = static_cast<std::uint64_t>(high) << 32u | low;
+            constantPointerLowProgramCounter = lowMove.programCounter;
+            constantPointerHighProgramCounter = highMove.programCounter;
         }
         std::uint32_t stride = 0;
         if (load.source1.kind != RdnaOperandKind::Null) {
@@ -1784,9 +1788,32 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (tableDescriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer, false, nestedDescriptorOffset});
+        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (tableDescriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer, constantPointerLowProgramCounter, constantPointerHighProgramCounter, false, nestedDescriptorOffset});
     }
     return calls;
+}
+
+std::optional<std::vector<std::uint32_t>> RetargetTableCallPointer(std::span<const std::uint32_t> code, const RdnaProgram& program, const TableCall& call, std::uint64_t address) {
+    if (!call.constantPointer) return std::nullopt;
+    std::vector<std::uint32_t> patched(code.begin(), code.end());
+    const auto rewrite = [&](std::uint32_t programCounter, std::uint32_t value) {
+        const auto* instruction = FindInstructionAtProgramCounter(program, programCounter);
+        if (instruction == nullptr || instruction->op != RdnaOpcode::SMovB32) return false;
+        const auto word = programCounter / 4u;
+        if (instruction->source0.kind == RdnaOperandKind::LiteralConstant) {
+            if (word + 1u >= patched.size()) return false;
+            patched[word + 1u] = value;
+            return true;
+        }
+        if (instruction->source0.kind == RdnaOperandKind::IntegerInlineConstant && value <= 64u) {
+            patched[word] = (patched[word] & ~0xffu) | (128u + value);
+            return true;
+        }
+        return false;
+    };
+    if (!rewrite(call.constantPointerLowProgramCounter, static_cast<std::uint32_t>(address))) return std::nullopt;
+    if (!rewrite(call.constantPointerHighProgramCounter, static_cast<std::uint32_t>(address >> 32u))) return std::nullopt;
+    return patched;
 }
 
 LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees,
@@ -1913,6 +1940,12 @@ bool splitReadsM0(const RdnaInstruction& instruction) {
         case RdnaOpcode::VMovrelsB32:
         case RdnaOpcode::VMovrelsdB32:
         case RdnaOpcode::VMovrelsd2B32:
+        case RdnaOpcode::VInterpP1F32:
+        case RdnaOpcode::VInterpP2F32:
+        case RdnaOpcode::VInterpMovF32:
+        case RdnaOpcode::VInterpP1llF16:
+        case RdnaOpcode::VInterpP1lvF16:
+        case RdnaOpcode::VInterpP2F16:
         case RdnaOpcode::SSendmsg:
         case RdnaOpcode::SSendmsghalt: return true;
         default: return operandIs(instruction, RdnaOperandKind::M0);

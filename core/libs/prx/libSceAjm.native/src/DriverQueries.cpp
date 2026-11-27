@@ -9,6 +9,11 @@ namespace {
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_INVALID_FLAGS = static_cast<int>(0x8093000C);
 constexpr std::uint64_t ReservedFlags = 0xf0000000ffffc000ull;
+constexpr std::uint32_t MaxBatchLogSize = 5000;
+
+bool InvalidFlags(std::uint64_t flags) {
+    return (flags & 0x380u) >= 0x180u || (flags & 0x2400u) == 0x2000u || (flags & ReservedFlags) != 0;
+}
 
 [[noreturn]] void AjmDriver(const char* function) {
     throw std::runtime_error(std::string(function) + ": the request to the AJM driver");
@@ -19,7 +24,27 @@ constexpr std::uint64_t ReservedFlags = 0xf0000000ffffc000ull;
 extern "C" {
 
 int APS5_VABI sceAjmInstanceGetSize(uint32_t, uint32_t, uint64_t flags) {
-    if ((flags & 0x380u) >= 0x180u || (flags & 0x2400u) == 0x2000u || (flags & ReservedFlags) != 0) return SCE_AJM_ERROR_INVALID_FLAGS;
+    if (InvalidFlags(flags)) return SCE_AJM_ERROR_INVALID_FLAGS;
+    AjmDriver(__func__);
+}
+
+int APS5_VABI sceAjmInstanceExtend(uint32_t, uint32_t, uint64_t flags, uint32_t) {
+    if (InvalidFlags(flags)) return SCE_AJM_ERROR_INVALID_FLAGS;
+    AjmDriver(__func__);
+}
+
+int APS5_VABI sceAjmInstanceSwitch(uint32_t, uint32_t, uint64_t flags, uint32_t) {
+    if (InvalidFlags(flags)) return SCE_AJM_ERROR_INVALID_FLAGS;
+    AjmDriver(__func__);
+}
+
+int APS5_VABI sceAjmInstanceAvailable(uint32_t, uint32_t, uint64_t flags) {
+    if (InvalidFlags(flags)) return SCE_AJM_ERROR_INVALID_FLAGS;
+    AjmDriver(__func__);
+}
+
+int APS5_VABI sceAjmBatchGetLog(uint32_t, uint32_t size, void* buffer, void* out) {
+    if (size > MaxBatchLogSize || buffer == nullptr || out == nullptr) return SCE_AJM_ERROR_INVALID_PARAMETER;
     AjmDriver(__func__);
 }
 

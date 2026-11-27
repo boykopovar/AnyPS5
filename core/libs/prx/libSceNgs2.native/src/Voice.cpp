@@ -1,5 +1,6 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -578,7 +579,7 @@ static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFi
     if (param.type != 0) throw std::runtime_error("NGS2: submixer filter type " + std::to_string(param.type) + " is not implemented");
 }
 
-static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
+static void CheckSubmixerCompressor(const Ngs2SubmixerVoiceCompressorParam& param) {
     const auto flags = param.flags;
     if (PS4_LIBRARY && (flags & 1u) != 0) return;
     if ((flags & ~0x3fu) != 0 || (PS4_LIBRARY ? (flags & 4u) != 0 : ((flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u))) {
@@ -586,7 +587,6 @@ static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVo
     }
     if ((flags & 1u) != 0) return;
     if (!(param.knee >= 0.0f && param.knee <= 2.0f)) throw std::runtime_error("NGS2: a submixer compressor knee outside 0 to 2 is not implemented");
-    if (!PS4_LIBRARY && (flags & 8u) != 0 && voice.rack->maxInputs > 1) throw std::runtime_error("NGS2: a submixer compressor side-chain from a second input is not implemented");
     if (!(param.threshold > 0.0f) || !std::isfinite(param.threshold) || !std::isfinite(param.ratio) || !std::isfinite(param.level) ||
         !(param.attack_time >= 0.0f) || !std::isfinite(param.attack_time) || !(param.release_time >= 0.0f) || !std::isfinite(param.release_time)) {
         throw std::runtime_error("NGS2: submixer compressor values outside the measured range are not implemented");
@@ -695,7 +695,7 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         return CopyParam(param);
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
-        CheckSubmixerCompressor(voice, ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
+        CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
         return CopyParam(param);
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
@@ -757,6 +757,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         voice.userFx[index].controlParam = result.param;
         voice.userFx[index].configured = true;
         return result;
+    }
+    if (Ngs2IsMasteringModuleParam(voice, param.id)) {
+        Ngs2CheckMasteringModuleParam(param);
+        return CopyParam(param);
     }
     throw std::runtime_error("NGS2: this buffered voice parameter is not implemented");
 }
@@ -1130,7 +1134,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
                 const auto& compressor = ParamAs<Ngs2SubmixerVoiceCompressorParam>(param);
-                CheckSubmixerCompressor(voice, compressor);
+                CheckSubmixerCompressor(compressor);
                 SetVoiceCompressor(voice, compressor);
                 return;
             }
@@ -1170,6 +1174,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP) {
                 RejectPs4Channels(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
+                if (std::any_of(voice.customChannelMixer.begin(), voice.customChannelMixer.end(), [](const auto& mixer) { return mixer.configured; })) throw std::runtime_error("NGS2: a mastering setup after a channel mixer is not implemented");
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 return;
             }
@@ -1226,6 +1231,10 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
                 const auto& modules = voice.rack->customModuleIds;
                 const auto index = param->id & 0x1fu;
                 if (index >= modules.size() || modules[index] != ((param->id >> 8) & 0xffu)) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
+            }
+            if (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
+                const int result = Ngs2CheckMasteringParamId(*voice.rack, param->id);
+                if (result != SCE_NGS2_OK) return result;
             }
             if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
                 const auto index = param->id & 0x1fu;
@@ -1377,10 +1386,20 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: {
-            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            Ngs2VoiceState mastering{};
-            mastering.state_flags = voice.stateFlags;
-            if (!WriteGuest(state, mastering)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+            const bool meter = Ngs2HasCustomModule(*voice.rack, SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER);
+            if (state_size != sizeof(Ngs2VoiceState) && !(meter && state_size >= SCE_NGS2_CUSTOM_PEAK_METER_VOICE_STATE_SIZE)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            if (state_size > sizeof(Ngs2VoiceState) && voice.peakMeterMode != 0) throw std::runtime_error("NGS2: the peak meter module state of mode " + std::to_string(voice.peakMeterMode) + " is not implemented");
+            Ngs2VoiceState common{};
+            common.state_flags = voice.stateFlags;
+            if (!WriteGuest(state, common)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+            static constexpr std::array<std::uint8_t, 4096> zeros{};
+            auto* tail = reinterpret_cast<std::uint8_t*>(state) + sizeof(common);
+            for (std::size_t left = state_size - sizeof(common); left != 0;) {
+                const auto chunk = std::min(left, zeros.size());
+                if (!WriteGuestBytes(tail, zeros.data(), chunk)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+                tail += chunk;
+                left -= chunk;
+            }
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice state of rack " + Ngs2Hex(voice.rack->rackId) + " is not implemented");

@@ -18,7 +18,6 @@
 #include <unordered_map>
 #include <vector>
 
-
 namespace {
 
 using String = Asn1String;
@@ -146,6 +145,17 @@ void Integers() {
     }
 }
 
+void ReadsContentLargerThanOneChunk() {
+    std::vector<unsigned char> encoded(70000 + 5, 0x55);
+    encoded[0] = 2;
+    encoded[1] = 0x83;
+    encoded[2] = 0x01;
+    encoded[3] = 0x11;
+    encoded[4] = 0x70;
+    encoded[5] = 0x01;
+    Check(encoded, std::span<const unsigned char>(encoded).subspan(5));
+}
+
 void Ownership() {
     const unsigned char encoded[] = {2, 1, 42};
     const unsigned char* cursor = encoded;
@@ -177,7 +187,6 @@ void Ownership() {
         Release(value);
     }
     Require(allocations.empty());
-
 }
 
 void FaultingArguments() {
@@ -195,6 +204,14 @@ void FaultingArguments() {
     old->length = 0;
     old->data = nullptr;
     Release(old);
+    void* forged = reinterpret_cast<void*>(0x10);
+    cursor = encoded;
+    RequireInvalidArgument([&] { d2i_ASN1_INTEGER_nid_postfix(&forged, &cursor, sizeof(encoded)); });
+    Require(forged == reinterpret_cast<void*>(0x10) && cursor == encoded);
+    const unsigned char* const top = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 4);
+    cursor = top;
+    RequireInvalidArgument([&] { d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, 8); });
+    Require(cursor == top);
     Require(allocations.empty());
 }
 
@@ -270,7 +287,7 @@ void RejectKeepsOutput(std::initializer_list<unsigned char> encoded, std::initia
     RejectKeepsOutput(std::span(encoded.begin(), encoded.size()), static_cast<std::int64_t>(encoded.size()), errors);
 }
 
-void RejectFreesOutput(std::initializer_list<unsigned char> encoded) {
+void RejectKeepsOutputAfterAValidHeader(std::initializer_list<unsigned char> encoded) {
     const std::span bytes(encoded.begin(), encoded.size());
     const unsigned char* cursor = bytes.data();
     Require(d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(bytes.size())) == nullptr);
@@ -278,12 +295,11 @@ void RejectFreesOutput(std::initializer_list<unsigned char> encoded) {
     RequireQueue({LengthMismatchError});
     auto* previous = OwnedInteger();
     void* output = previous;
-    dataToClear = previous->data;
-    clearLength = 1;
     const auto before = freeCalls;
     Require(d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, static_cast<std::int64_t>(bytes.size())) == nullptr);
-    Require(cursor == bytes.data() && output == nullptr && freeCalls == before + 2 && dataToClear == nullptr);
+    Require(cursor == bytes.data() && output == previous && freeCalls == before && previous->data[0] == 42);
     RequireQueue({LengthMismatchError});
+    Release(previous);
 }
 
 void Rejections() {
@@ -309,11 +325,11 @@ void Rejections() {
         RejectKeepsOutput(integer, length, {});
     const unsigned char oversized[] = {2, 0x84, 0x80, 0, 0, 0};
     RejectKeepsOutput(oversized, (std::int64_t{1} << 31) + sizeof(oversized), {});
-    RejectFreesOutput({2, 0});
-    RejectFreesOutput({2, 2, 0, 0x7f});
-    RejectFreesOutput({2, 2, 0xff, 0x80});
-    RejectFreesOutput({2, 2, 0, 0});
-    RejectFreesOutput({2, 3, 0xff, 0xff, 0});
+    RejectKeepsOutputAfterAValidHeader({2, 0});
+    RejectKeepsOutputAfterAValidHeader({2, 2, 0, 0x7f});
+    RejectKeepsOutputAfterAValidHeader({2, 2, 0xff, 0x80});
+    RejectKeepsOutputAfterAValidHeader({2, 2, 0, 0});
+    RejectKeepsOutputAfterAValidHeader({2, 3, 0xff, 0xff, 0});
     Require(allocations.empty());
 }
 
@@ -323,11 +339,13 @@ void AllocationFailures() {
     for (const auto encoded : {std::span<const unsigned char>(positive), std::span<const unsigned char>(negative)}) {
         for (const bool replace : {false, true}) {
             for (const int failure : {0, 1}) {
-                void* output = replace ? OwnedInteger() : nullptr;
+                String* previous = replace ? OwnedInteger() : nullptr;
+                void* output = previous;
                 const unsigned char* cursor = encoded.data();
                 allocationsUntilFailure = failure;
                 Require(d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, static_cast<std::int64_t>(encoded.size())) == nullptr);
-                Require(allocationsUntilFailure == -1 && output == nullptr && cursor == encoded.data());
+                Require(allocationsUntilFailure == -1 && output == previous && cursor == encoded.data());
+                Release(previous);
                 if (failure == 0) RequireQueue({});
                 else RequireQueue({MallocError, MallocError});
                 Require(allocations.empty());
@@ -336,7 +354,7 @@ void AllocationFailures() {
     }
 }
 
-} // namespace
+}
 
 int main() {
     std::array<void*, 10> api{
@@ -346,6 +364,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     Integers();
     BerExtremes();
+    ReadsContentLargerThanOneChunk();
     Ownership();
     FaultingArguments();
     Rejections();
