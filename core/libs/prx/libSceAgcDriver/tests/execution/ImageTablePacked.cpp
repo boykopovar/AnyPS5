@@ -693,21 +693,26 @@ void UnsupportedStores(AgcDriver::VulkanDevice& device) {
     FillTexture(1u, Format{11u, 2u, 1u});
     FillInput(false);
     const auto initial = Texels;
-    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu, 0x76u, 0x77u, 0x79u, 0x7au}) {
+    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) {
         for (const auto table : {false, true}) {
-            const auto dmask = opcode >= 0x76u ? 1u : (opcode & 1u) != 0u ? 15u : 3u;
-            const auto code = Code(opcode, dmask, table);
+            const auto code = Code(opcode, (opcode & 1u) != 0u ? 15u : 3u, table);
             std::string refusal;
             try {
                 Run(device, code, 0u, 1u, false);
             } catch (const std::exception& error) {
                 refusal = error.what();
             }
-            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported BY/PCK store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
-            Require(Texels == initial, "unsupported BY/PCK store compilation modified an image");
+            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported BY store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
+            Require(Texels == initial, "unsupported BY store compilation modified an image");
         }
     }
-    std::cout << "BY stores and unmeasured PCK stores rejected without GPU submission\n";
+    SetEntry(0u, Descriptor(0u, Format{5u, 1u, 1u}));
+    for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) {
+        const auto poisoned = Run(device, Code(opcode, 1u, true), 0u);
+        Require(poisoned.faults != 0u && poisoned.log.find("image table:") != std::string::npos, "PCK store opcode " + std::to_string(opcode) + " through an image table was not poisoned");
+        Require(Texels == initial, "PCK store opcode " + std::to_string(opcode) + " through an image table modified an image");
+    }
+    std::cout << "BY stores rejected without GPU submission and PCK stores through image tables poisoned\n";
 }
 
 struct Rejection {

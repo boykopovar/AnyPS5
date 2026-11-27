@@ -1586,7 +1586,61 @@ std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resourc
     return result;
 }
 
+void EmitPackedByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
+    auto& state = ctx.state;
+    const auto elements = access.mem.imageByElements;
+    if (access.image.dimension != RdnaImageDimension::Dim2D || access.mem.dataDwords != 1u || access.mem.dmask != 1u || access.mem.dataBits != 32u) {
+        ctx.Fail(access.inst, "is a MIMG PCK2/PCK4 store outside the measured 2D, one-dword subset");
+    }
+    const auto info = PackedTexelFormat(ctx, access);
+    std::uint32_t texelBits = 0;
+    for (std::uint32_t component = 0; component < info.componentCount; ++component) texelBits += info.componentBits[component];
+    if (texelBits == 0u || texelBits % 8u != 0u || texelBits * elements > 32u) ctx.Fail(access.inst, "is a MIMG PCK2/PCK4 store whose elements do not fit one dword");
+    const auto groupTexels = 32u / texelBits;
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    EmitIfCondition(state, ctx.Arg(access.inst, 3), [&]() {
+        const auto image = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, ImageType(state, access.image), image, StorageImageDescriptorPointer(state, access.mem.resource));
+        const auto x = AddressU32(ctx, access, 0);
+        const auto y = AddressU32(ctx, access, 1);
+        const auto lod = access.mem.imageHasMip ? LodU32(ctx, access) : ConstantU32(state, 0u);
+        const auto shiftLod = Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), lod, ConstantU32(state, 31u)), ConstantU32(state, 31u), lod);
+        const auto size = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageQuerySize, ImageViewSizeType(state, access.image.dimension), size, image);
+        const auto levelExtent = [&](std::uint32_t axis) {
+            const auto base = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), base, size, axis);
+            const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), base, shiftLod);
+            return Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), shifted, ConstantU32(state, 1)), shifted, ConstantU32(state, 1));
+        };
+        const auto width = levelExtent(0u);
+        const auto height = levelExtent(1u);
+        auto inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpULessThan, TypeBool(state), x, width), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), Binary(state, spv::OpISub, TypeU32(state), width, x), ConstantU32(state, elements)));
+        inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), y, height));
+        const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, groupTexels - 1u));
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ctx.Arg(access.inst, 2), 0u);
+        const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? lod : 0u;
+        for (std::uint32_t element = 0; element < elements; ++element) {
+            const auto enabled = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpIAdd, TypeU32(state), lane, ConstantU32(state, element)), ConstantU32(state, groupTexels)));
+            EmitIfCondition(state, enabled, [&]() {
+                const auto coord = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, Binary(state, spv::OpIAdd, TypeU32(state), x, ConstantU32(state, element)), y);
+                const auto shifted = element == 0u ? word : Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, element * texelBits));
+                const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), shifted, ConstantU32(state, (1u << texelBits) - 1u));
+                const auto source = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), source, bits, ConstantU32(state, 0u), ConstantU32(state, 0u), ConstantU32(state, 0u));
+                EmitStorageImageWrite(state, access.mem.resource, mipLod, coord, PackedStoreTexel(ctx, access, source), ImageSampleIndex(ctx, access));
+            });
+        }
+    });
+}
+
 void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
+    if (access.mem.imagePacked && access.mem.imageByElements != 0u) {
+        EmitPackedByStoreOp(ctx, access);
+        return;
+    }
     auto& state = ctx.state;
     const bool uintImage = access.image.numericClass == IrTextureNumericClass::Uint;
     auto condition = ctx.Arg(access.inst, 3);
