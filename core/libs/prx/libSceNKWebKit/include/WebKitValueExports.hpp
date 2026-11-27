@@ -150,6 +150,7 @@ std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(c
 std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
 const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
+bool APS5_VABI WKBundlePageCanShowMIMEType(const void* pageRef, const void* mimeTypeRef);
 double APS5_VABI WKBundlePageGetBackingScaleFactor(const void* pageRef);
 bool APS5_VABI WKBundlePageIsControlledByAutomation(const void* pageRef);
 bool APS5_VABI WKBundlePageIsSuspended(const void* pageRef);

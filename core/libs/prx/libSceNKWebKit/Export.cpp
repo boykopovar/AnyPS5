@@ -8227,10 +8227,6 @@ int APS5_VABI WKBundlePageCanHandleRequest() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageCanShowMIMEType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageClearApplicationCacheForOrigin() {
     NotImplemented_nid_no_patch(__func__);
 }

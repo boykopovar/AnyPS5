@@ -85,7 +85,6 @@ int APS5_VABI WKBundlePageAddUserScriptInWorld();
 int APS5_VABI WKBundlePageAddUserStyleSheet();
 int APS5_VABI WKBundlePageCallAfterTasksAndTimers();
 int APS5_VABI WKBundlePageCanHandleRequest();
-int APS5_VABI WKBundlePageCanShowMIMEType();
 int APS5_VABI WKBundlePageClearApplicationCacheForOrigin();
 int APS5_VABI WKBundlePageClearApplicationCache();
 int APS5_VABI WKBundlePageClearMainFrameName();
