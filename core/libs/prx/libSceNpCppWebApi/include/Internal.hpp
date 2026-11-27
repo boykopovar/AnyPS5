@@ -8,5 +8,7 @@ extern "C" {
 void* NpCppWebApiContextAllocate(void* libContext, std::size_t size);
 void NpCppWebApiContextDeallocate(void* libContext, void* object);
 void* NpCppWebApiContextMspace(void* libContext);
+void* NpCppWebApiContextReference(void* libContext);
+void NpCppWebApiContextDereference(void* reference);
 
 }

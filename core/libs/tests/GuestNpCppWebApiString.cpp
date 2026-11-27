@@ -1,4 +1,5 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "prx/libSceNpCppWebApi/include/Internal.hpp"
 #include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -667,8 +668,8 @@ void TestVectorCopyFromResolvesDirectBodies() {
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(lastIterator, reinterpret_cast<IntrusivePtr*>(targetBody));
     Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(firstIterator, lastIterator));
 
-    std::free(LoadBody<char*>(directCopied, kBufferOffset));
-    std::free(directCopied);
+    NpCppWebApiContextDeallocate(targetContext.value(), LoadBody<char*>(directCopied, kBufferOffset));
+    NpCppWebApiContextDeallocate(targetContext.value(), directCopied);
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(self);
     std::free(directBuffer);
     std::free(directElements);
