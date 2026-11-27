@@ -20,7 +20,7 @@ def snapshot(directory):
 def main():
     executable = str(Path(sys.argv[1]).resolve())
     mode = sys.argv[2]
-    assert mode in ('plain', 'plain-long', 'extended', 'extended-long', 'device')
+    assert mode in ('plain', 'plain-long', 'extended', 'extended-long', 'device', 'device-long')
     assert os.name == 'nt' or mode in ('plain', 'plain-long')
     sandbox = Path(tempfile.mkdtemp(prefix='aps5-housekeeping-')).resolve()
     temporary = Path(tempfile.gettempdir()).resolve()
@@ -63,6 +63,12 @@ def main():
                 os.utime(folder, (old, old))
         (outside / 'outside.tmp.1').write_bytes(b'not a cache temporary')
         os.utime(outside / 'outside.tmp.1', (old, old))
+        if os.name == 'nt':
+            import _winapi
+            try:
+                _winapi.CreateJunction(str(outside), str(root / siblings[0] / 'outside-link'))
+            except PermissionError:
+                print('junction creation unavailable in this environment')
         for name in ('shader.bin', 'old.tmp.1', 'fresh.tmp.1', 'last-used'):
             (current / name).write_bytes(b'cached bytes')
         for name in ('shader.bin', 'old.tmp.1', 'last-used'):
@@ -70,7 +76,7 @@ def main():
         before = snapshot(outside)
         if mode.startswith('extended'):
             environment['ANYPS5_SHADER_CACHE_DIR'] = str(root)
-        elif mode == 'device':
+        elif mode.startswith('device'):
             environment['ANYPS5_SHADER_CACHE_DIR'] = '\\\\.\\' + str(root)[4:]
         else:
             environment['ANYPS5_SHADER_CACHE_DIR'] = str(root)[4:] if os.name == 'nt' else str(root)
@@ -84,11 +90,10 @@ def main():
         assert result.returncode == 0, result.stdout
         assert 'housekeeping version ' + version in result.stdout, result.stdout
         assert (current / 'last-used').stat().st_mtime >= started - 2, 'active cache stamp was not refreshed'
-        skipped = mode.startswith('extended') or mode == 'device'
         for name in siblings[:2]:
-            assert (root / name).exists() == skipped, 'unexpected stale cache directory eviction'
+            assert not (root / name).exists(), 'stale cache directory was not removed'
         assert (root / siblings[2] / 'sentinel').read_bytes() == b'preserve outside the cache root'
-        assert (current / 'old.tmp.1').exists() == skipped, 'unexpected old temporary removal'
+        assert not (current / 'old.tmp.1').exists(), 'old temporary file was not removed'
         assert (current / 'fresh.tmp.1').read_bytes() == b'cached bytes'
         assert (current / 'shader.bin').read_bytes() == b'cached bytes'
         print(mode + ': returned, active stamp refreshed, outside tree intact, eviction policy verified')
