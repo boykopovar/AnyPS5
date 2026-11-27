@@ -1255,6 +1255,11 @@ static bool PrepareCheckpointMarker(const Context& context) {
     return state.write != nullptr && state.buffer != VK_NULL_HANDLE;
 }
 
+bool BatchBeginTokensEnabled() {
+    static const bool enabled = std::getenv("APS5_GPU_CHECKPOINT_BATCHES") != nullptr && std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    return enabled;
+}
+
 constexpr VkDeviceSize CheckpointMarkerSerialOffset = 0;
 constexpr VkDeviceSize CheckpointMarkerTokenOffset = sizeof(std::uint32_t);
 
@@ -2291,8 +2296,15 @@ void Recorder::ensureOpen() {
         }
         open->predictedSerial = submissions + 1;
         try {
-            if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
-            else WriteCheckpointSentinel(context, open->commands);
+            if (open->queue == 0) {
+                WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
+                if (BatchBeginTokensEnabled()) {
+                    const AgcDriver::FaultToken beginToken = AgcDriver::ClaimBatchBeginToken(AgcDriver::FaultTokenRing::Instance(), open->predictedSerial);
+                    NoteFaultToken(beginToken);
+                    WriteCheckpointMarker(context, open->commands, beginToken, open->queue);
+                    WriteNvCheckpointToken(context, open->commands, beginToken, open->queue);
+                }
+            } else WriteCheckpointSentinel(context, open->commands);
         } catch (...) {
         }
         if (PerformanceTrace::Recording()) {
