@@ -678,26 +678,46 @@ void LookupsSurviveSlotChurn() {
     const auto steady = Handle<VkDevice>(0x4a);
     const auto churned = Handle<VkDevice>(0x4b);
     const auto attached = Attached(steady, table);
-    std::atomic<bool> stop{false};
-    std::atomic<std::uint64_t> looked{0};
+    constexpr int Rounds = 100;
+    std::atomic<bool> held{true};
+    std::atomic<int> requested{0};
+    std::atomic<int> pinned{0};
+    const auto churner = std::this_thread::get_id();
+    CommandEncoder::SetDelayForTesting([&] { held.wait(true, std::memory_order_acquire); });
+    CommandEncoder::SetBlockedHookForTesting([&] {
+        if (std::this_thread::get_id() == churner) return;
+        pinned.fetch_add(1, std::memory_order_release);
+    });
     std::thread lookups([&] {
-        while (!stop.load(std::memory_order_acquire)) {
+        for (int round = 1; round <= Rounds; ++round) {
+            for (auto seen = requested.load(std::memory_order_acquire); seen < round; seen = requested.load(std::memory_order_acquire)) requested.wait(seen, std::memory_order_acquire);
             AgcDriver::Graphics::BeforeCommandLookup(steady);
             AgcDriver::Graphics::BeforeCommandLookup(churned);
-            looked.fetch_add(1, std::memory_order_release);
         }
     });
-    while (looked.load(std::memory_order_acquire) == 0) std::this_thread::yield();
-    for (int round = 0; round < 300; ++round) {
+    bool overlapped = true;
+    for (int round = 1; round <= Rounds && overlapped; ++round) {
         auto other = FakeTable();
         const auto encoder = Attached(churned, other);
         const auto commands = Handle<VkCommandBuffer>(0xd00);
+        held.store(true, std::memory_order_release);
         encoder->Open(commands, RecordingOf(commands));
         other.cmdDraw(commands, 1, 1, 0, 0);
         encoder->Close();
+        requested.store(round, std::memory_order_release);
+        requested.notify_all();
+        overlapped = WaitFor([&] { return pinned.load(std::memory_order_acquire) == round; });
+        held.store(false, std::memory_order_release);
+        held.notify_all();
     }
-    stop.store(true, std::memory_order_release);
+    if (!overlapped) {
+        requested.store(Rounds, std::memory_order_release);
+        requested.notify_all();
+    }
     lookups.join();
+    CommandEncoder::SetBlockedHookForTesting({});
+    CommandEncoder::SetDelayForTesting({});
+    Require(overlapped, "a lookup on another thread did not pin a churned encoder while it still had a queued replay");
 }
 
 void RawCallAfterLookupKeepsOrder() {
