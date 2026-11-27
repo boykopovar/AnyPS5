@@ -95,7 +95,9 @@ std::set<std::string>& DefaultNames() {
 
 const char* SetSystemDefault() {
     const std::string& system = SystemLocaleId();
-    std::string name = Icu::DefaultLocaleId(system.c_str()) ? system : Canonicalize(system.c_str());
+    std::string name = Icu::DefaultLocaleId(system.c_str())
+                           ? Icu::CanonicalLocaleName(system.c_str())
+                           : Canonicalize(system.c_str());
     if (LanguageLength(name) >= LanguageCapacity) name.clear();
     defaultName = DefaultNames().insert(std::move(name)).first->c_str();
     return defaultName;

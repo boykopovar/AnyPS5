@@ -506,16 +506,6 @@ std::string BaseName(const Parts& parts) {
     return result + parts.encoding;
 }
 
-std::string DefaultBaseName(const char* locale) {
-    const std::string_view input(locale);
-    const auto at = input.find('@');
-    const auto dot = input.find('.');
-    std::string name = Icu::DefaultLocaleName();
-    if (dot != std::string_view::npos && (at == std::string_view::npos || dot < at))
-        name.append(input.substr(dot, at == std::string_view::npos ? std::string_view::npos : at - dot));
-    return name;
-}
-
 std::string CanonicalName(const Parts& source) {
     Parts parts = source;
     parts.encoding.clear();
@@ -605,6 +595,12 @@ const char* Icu::DefaultLocaleName() {
     return uloc_getDefault();
 }
 
+std::string Icu::CanonicalLocaleName(const char* locale) {
+    std::int32_t status = 0;
+    const std::string id = FromLanguageTag(locale, &status);
+    return status > 0 ? id : CanonicalName(Parse(id.c_str()));
+}
+
 extern "C" {
 
 std::int32_t APS5_VABI uloc_getLanguage(const char* locale, char* result,
@@ -628,7 +624,12 @@ std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result,
     if (!locale) return Write(BaseName(Parse(Icu::DefaultLocaleName())), result, capacity, status, false);
     const std::string id = FromLanguageTag(locale, status);
     if (*status > 0) return WriteUnconverted(id, result, capacity);
-    if (Icu::DefaultLocaleId(id.c_str())) return Write(DefaultBaseName(id.c_str()), result, capacity, status, false);
+    if (Icu::DefaultLocaleId(id.c_str())) {
+        Parts parts = Parse(Icu::DefaultLocaleName());
+        const Parts input = Parse(id.c_str());
+        if (!input.encoding.empty()) parts.encoding = input.encoding;
+        return Write(BaseName(parts), result, capacity, status, false);
+    }
     return Write(BaseName(Parse(id.c_str())), result, capacity, status, false);
 }
 
@@ -685,9 +686,9 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
     const std::string id = locale ? FromLanguageTag(locale, status) : std::string(Icu::DefaultLocaleName());
     if (*status > 0) return WriteUnconverted(id, result, capacity);
     if (Icu::DefaultLocaleId(id.c_str())) {
-        Parts parts;
-        parts.language = Icu::DefaultLocaleName();
-        if (const char* at = std::strchr(id.c_str(), '@')) parts.keywords = at + 1;
+        Parts parts = Parse(Icu::DefaultLocaleName());
+        const Parts input = Parse(id.c_str());
+        if (!input.keywords.empty()) parts.keywords = input.keywords;
         return Write(CanonicalName(parts), result, capacity, status, false);
     }
     return Write(CanonicalName(Parse(id.c_str())), result, capacity, status, false);

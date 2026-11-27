@@ -7,7 +7,6 @@
 #include <cstring>
 #include <string_view>
 #include <type_traits>
-#include <array>
 #include <cerrno>
 #include <string>
 
@@ -225,6 +224,24 @@ int main(int argc, char** argv) {
         CheckName(uloc_canonicalize, "i-default", "en@x=i-default");
         CheckName(uloc_canonicalize, "i-default_US", "fr_FR");
         CheckName(uloc_canonicalize, "i-default@currency=EUR", "fr_FR@currency=EUR");
+        std::int32_t status = 0;
+        uloc_setDefault_nid_postfix("fr_FR@collation=phonebook", &status);
+        Require(status == 0);
+        CheckName(uloc_getBaseName, "i-default_US", "fr_FR");
+        CheckName(uloc_canonicalize, "i-default_US", "fr_FR@collation=phonebook");
+        CheckName(uloc_canonicalize, "i-default@currency=EUR", "fr_FR@currency=EUR");
+        uloc_setDefault_nid_postfix("en_US.UTF-8", &status);
+        Require(status == 0);
+        CheckName(uloc_getBaseName, "i-default.utf8", "en_US.utf8");
+        CheckName(uloc_canonicalize, "i-default.utf8", "en_US");
+    } else if (scenario == "i-default-sentinel") {
+        SetEnvironment("LANG", "i-default");
+        Check("i-default", "en@x=i-default");
+        CheckName(uloc_getBaseName, "i-default_US", "en");
+        CheckName(uloc_canonicalize, "i-default_US", "en@x=i-default");
+    } else if (scenario == "i-default-tag") {
+        SetEnvironment("LANG", "i-default-extra");
+        Check("i-default-extra", "en@x=i-default-extra");
     } else if (scenario == "i-default-system") {
         SetEnvironment("LANG", "i-default_US");
         Check("i-default_US", "i-default_US");
