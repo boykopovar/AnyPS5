@@ -294,17 +294,22 @@ void run() {
         VertexInputCache live(ctx);
         std::array input{attribute()};
         const auto stored = live.TryGet(100, input);
-        for (const auto records : {0u, 1u, 128u}) {
+        for (const auto records : {1u, 128u}) {
             input[0].resource.fields[2] = records;
-            Require(live.TryGet(100, input) == stored, "record count rebuilt a vertex layout");
+            Require(live.TryGet(100, input) == stored, "a nonempty record count rebuilt a vertex layout");
             Require(VertexBufferReadSize(input[0], 5, 1) == 176u, "record count changed the direct fetch extent");
-            if (records != 0) {
-                Require(VertexBufferExtent(input[0]) == 32u * (records - 1u) + 16u, "cached layout froze the indirect descriptor extent");
-                Require(VertexBufferExtent(input[0]) == VertexBufferReadSize(input[0], records - 1u, 1), "the indirect extent is not the fetch of the last record");
-            } else {
-                fails([&] { VertexBufferExtent(input[0]); });
-            }
+            Require(VertexBufferExtent(input[0]) == 32u * (records - 1u) + 16u, "cached layout froze the indirect descriptor extent");
+            Require(VertexBufferExtent(input[0]) == VertexBufferReadSize(input[0], records - 1u, 1), "the indirect extent is not the fetch of the last record");
         }
+        input[0].resource.fields[2] = 0;
+        Require(live.TryGet(100, input) == nullptr, "a zero-record zero-select descriptor reused a live vertex layout");
+        Require(VertexFetchUsesZeroBuffer(input[0]) && !VertexFetchOutOfRange(input[0]), "a zero-record zero-select descriptor did not select its zero buffer");
+        const auto emptyLayout = BuildVertexInputLayout(ctx, input);
+        Require(emptyLayout.bindings[0].stride == 0 && emptyLayout.attributes[0].format == VK_FORMAT_R32G32B32A32_SFLOAT, "a zero-record zero-select descriptor retained a live host binding");
+        Require(VertexBufferReadSize(input[0], 5, 1) == 176u, "zero-record direct fetch sizing changed");
+        fails([&] { VertexBufferExtent(input[0]); });
+        input[0].resource.fields[3] |= 1u << 28u;
+        Require(!VertexFetchUsesZeroBuffer(input[0]), "OOB_SELECT 1 was treated as an empty zero-select descriptor");
         auto last = attribute();
         last.resource.fields[0] += 16u;
         Require(16u + VertexBufferExtent(last) == 32u * 128u, "the last element of each record was copied past the descriptor's records");
@@ -353,6 +358,17 @@ void run() {
         input[0].resource.fields[2] = 5;
         Require(live.TryGet(104, input) == bounded, "bounded record count rebuilt the layout");
         fails([&] { VertexBufferReadSize(input[0], 5, 1); });
+    }
+    {
+        const std::vector<VertexFetch> unresolvedFetches{
+            {0x1000u, 0x1050u, 32u, 0u, 4u},
+            {0x1010u, 0x10c0u, 32u, 0u, 4u}
+        };
+        const std::vector<std::size_t> validBytes{80u, 176u};
+        Require(PlanVertexCopies(unresolvedFetches).copies.size() == 1u, "overlapping unresolved vertex descriptors did not merge in the planner fixture");
+        Require(SoloZeroPaddedFetchIndices(unresolvedFetches, validBytes).empty(), "the normal known-index path isolated complete fetches");
+        const auto isolated = SoloZeroPaddedFetchIndices(unresolvedFetches, validBytes, true);
+        Require(isolated.size() == 2u && isolated[0] == 0u && isolated[1] == 1u, "unresolved indices did not isolate each descriptor's bounds");
     }
     {
         VertexInputCache thrashing(ctx, 2);
