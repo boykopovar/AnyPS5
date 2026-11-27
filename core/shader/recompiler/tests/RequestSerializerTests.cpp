@@ -244,6 +244,29 @@ std::vector<std::uint8_t> Version63Bytes(std::vector<std::uint8_t> bytes) {
     return bytes;
 }
 
+void VerifyTessellationOnChipWithBarycentrics() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    for (const bool onChip : {false, true}) {
+        ShaderRecompiler::RecompileRequest request{};
+        request.graphics.emplace();
+        request.graphics->tessellation = ShaderRecompiler::TessellationConfiguration{3u, 3u, 1u, 0u, 2u};
+        request.graphics->tessellation->onChip = onChip;
+        request.graphics->emulateBarycentrics = true;
+        const auto encoded = serializer.Serialize(request);
+        const auto replay = serializer.Deserialize(encoded);
+        Require(replay.request.graphics && replay.request.graphics->emulateBarycentrics && replay.request.graphics->tessellation && replay.request.graphics->tessellation->onChip == onChip);
+        Require(serializer.Serialize(replay.request) == encoded);
+        const auto current = DecodeBase64(encoded);
+        const auto older = Version64Bytes(current);
+        Require(older[4] == 64u && older.size() < current.size() && older.back() == 1u);
+        const auto replay64 = serializer.Deserialize(EncodeBase64(older));
+        Require(replay64.request.graphics && replay64.request.graphics->emulateBarycentrics && replay64.request.graphics->tessellation && !replay64.request.graphics->tessellation->onChip);
+        ShaderRecompiler::RecompileRequest plain = request;
+        plain.graphics->tessellation->onChip = false;
+        Require(serializer.Serialize(replay64.request) == serializer.Serialize(plain));
+    }
+}
+
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = Version63Bytes(DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request)));
     Require(bytes.size() > 14u && bytes[4] == 63u);
@@ -1323,6 +1346,7 @@ void VerifySplitState() {
 
 int main() {
     VerifyTessellationOnChip();
+    VerifyTessellationOnChipWithBarycentrics();
     VerifySplitState();
     VerifySingleSampleVersion63();
     VerifyTargetOptions();
