@@ -96,11 +96,21 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     }
     case RdnaOpcode::SGetregB32: {
+        constexpr std::uint32_t HwId1 = 23u;
+        constexpr std::uint32_t HwId2 = 24u;
         const std::uint32_t field = inst.source0.value;
         const std::uint32_t offset = (field >> 6u) & 0x1fu;
         const std::uint32_t size = ((field >> 11u) & 0x1fu) + 1u;
-        if ((field & 0x3fu) != 1u || offset + size > 8u) {
-            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round and denormal fields are modeled");
+        const std::uint32_t hardwareRegister = field & 0x3fu;
+        if (hardwareRegister == HwId1 || hardwareRegister == HwId2) {
+            if (offset + size > 32u) {
+                throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(hardwareRegister) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": past the 32-bit register");
+            }
+            writeRawU32(inst.destination, IrU32(ir.Constant(0u)));
+            return true;
+        }
+        if (hardwareRegister != 1u || offset + size > 8u) {
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(hardwareRegister) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round and denormal fields are modeled");
         }
         const std::uint32_t mask = ((1u << size) - 1u) << offset;
         if ((rounding.unknown & mask) != 0u) {
