@@ -732,5 +732,14 @@ void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDom
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsClearInMemoryAndPersistentStore(const void* dataStore, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsClearInMemoryAndPersistentStoreModifiedSinceHours(const void* dataStore, unsigned hours, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsClearThroughWebsiteDataRemoval(const void* dataStore, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsDeleteCookiesForTesting(const void* dataStore, const void* hostRef, bool includeHttpOnlyCookies, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsHasIsolatedSession(const void* dataStore, const void* hostRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsHasLocalStorage(const void* dataStore, const void* hostRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsProcessStatisticsAndDataRecords(const void* dataStore, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsResetToConsistentState(const void* dataStore, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreStatisticsUpdateCookieBlocking(const void* dataStore, void* context, void (APS5_VABI *callback)(void*));
 
 }
