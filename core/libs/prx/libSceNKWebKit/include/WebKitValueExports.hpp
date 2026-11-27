@@ -728,5 +728,16 @@ void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDom
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreDoesStatisticsDomainIDExistInDatabase(const void* dataStore, std::uint32_t domainID, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreDumpResourceLoadStatistics(const void* dataStore, void* context, void (APS5_VABI *callback)(const void*, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsEphemeral(const void* dataStore, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsGrandfathered(const void* dataStore, const void* hostNameRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsHasHadUserInteraction(const void* dataStore, const void* hostNameRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsOnlyInDatabaseOnce(const void* dataStore, const void* subHostRef, const void* topHostRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsPrevalentResource(const void* dataStore, const void* hostNameRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsRegisteredAsRedirectingTo(const void* dataStore, const void* hostRedirectedFromRef, const void* hostRedirectedToRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsRegisteredAsSubFrameUnder(const void* dataStore, const void* subFrameHostRef, const void* topFrameHostRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsRegisteredAsSubresourceUnder(const void* dataStore, const void* subresourceHostRef, const void* topFrameHostRef, void* context, void (APS5_VABI *callback)(bool, void*));
+void APS5_VABI WKWebsiteDataStoreIsStatisticsVeryPrevalentResource(const void* dataStore, const void* hostNameRef, void* context, void (APS5_VABI *callback)(bool, void*));
 
 }

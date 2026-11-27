@@ -9140,14 +9140,6 @@ int APS5_VABI WKWebsiteDataStoreDisableNetworkProxySettings() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreDoesStatisticsDomainIDExistInDatabase() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreDumpResourceLoadStatistics() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreEnableCustomNetworkProxySettings() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9177,42 +9169,6 @@ int APS5_VABI WKWebsiteDataStoreGetHTTPCookieStore() {
 }
 
 int APS5_VABI WKWebsiteDataStoreGetResourceLoadStatisticsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsEphemeral() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsGrandfathered() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsHasHadUserInteraction() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsOnlyInDatabaseOnce() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsPrevalentResource() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsRegisteredAsRedirectingTo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsRegisteredAsSubFrameUnder() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsRegisteredAsSubresourceUnder() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreIsStatisticsVeryPrevalentResource() {
     NotImplemented_nid_no_patch(__func__);
 }
 
