@@ -27,4 +27,12 @@ bool APS5_VABI WKBundlePageHasComposition(const void* pageRef) {
     return NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->hasComposition;
 }
 
+bool APS5_VABI WKBundlePageIsUsingDarkAppearance(const void* pageRef) {
+    return NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->isUsingDarkAppearance;
+}
+
+void APS5_VABI WKBundlePageSetUseDarkAppearance(const void* pageRef, bool useDarkAppearance) {
+    NKWebKit::Cast<NKWebKit::BundlePage>(pageRef, __func__)->isUsingDarkAppearance = useDarkAppearance;
+}
+
 }
