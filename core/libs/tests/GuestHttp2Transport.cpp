@@ -2084,6 +2084,27 @@ int UnansweredLookup(const char*) {
     return EAI_AGAIN;
 }
 
+struct GatedLookupState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int exited = 0;
+    bool release = false;
+};
+
+GatedLookupState& GatedLookup() {
+    static GatedLookupState state;
+    return state;
+}
+
+int GatedSlowLookup(const char*) {
+    auto& state = GatedLookup();
+    std::unique_lock lock(state.mutex);
+    state.changed.wait(lock, [&] { return state.release; });
+    ++state.exited;
+    state.changed.notify_all();
+    return EAI_AGAIN;
+}
+
 void ResolveTimeouts(int ssl) {
     std::fprintf(stderr, "HTTP2 resolve timeout scenarios\n");
     Http2SetLookupHook_nid_no_patch(SlowLookup);
@@ -2108,6 +2129,39 @@ void ResolveTimeouts(int ssl) {
         Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E2), "an unanswered lookup returns the resolver timeout");
         AfterFailedSend(client, static_cast<int>(0x804101E2));
     }
+    Http2SetLookupHook_nid_no_patch(GatedSlowLookup);
+    auto& state = GatedLookup();
+    int baseExited = 0;
+    {
+        std::lock_guard lock(state.mutex);
+        baseExited = state.exited;
+    }
+    std::chrono::nanoseconds totalElapsed{0};
+    for (int iteration = 0; iteration < 15; ++iteration) {
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, 0) == 0, "no resolve retry for short timeout");
+        client.Create("https://127.0.0.1:1/");
+        Require(sceHttp2SetTimeOut(client.request, 2000) == 0, "2 ms overall timeout");
+        {
+            std::lock_guard lock(state.mutex);
+            state.release = false;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1068), "short DNS timeout returns timed out");
+        totalElapsed += std::chrono::steady_clock::now() - start;
+        {
+            std::unique_lock lock(state.mutex);
+            state.release = true;
+            state.changed.notify_all();
+            state.changed.wait(lock, [&] { return state.exited >= baseExited + iteration + 1; });
+        }
+    }
+    const auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(totalElapsed).count();
+    std::fprintf(stderr, "HTTP2 short DNS timeouts elapsed %lld ms\n", static_cast<long long>(totalMs));
+    Require(totalElapsed >= std::chrono::milliseconds(30), "short DNS timeouts must respect the 2 ms deadline");
+#ifdef _WIN32
+    Require(totalElapsed < std::chrono::milliseconds(160), "short DNS timeouts must not wait for 15.6 ms timer ticks");
+#endif
     Http2SetLookupHook_nid_no_patch(nullptr);
 }
 
