@@ -309,6 +309,11 @@ void Run(Context context, std::uint8_t* block) {
     submit(recorder);
     readBack(*spanningView);
     Require(CountFloats(block + layerPitch, overlapping) == Side * Side, "the layer that only overlaps the depth surface did not hold the guest bytes that were there");
+    auto limited = context;
+    limited.limits.maxImageArrayLayers = 2;
+    auto threeLayers = spanning;
+    threeLayers.depthOrLastArray = 2;
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(limited, {}, threeLayers, 0)); }, "maxImageArrayLayers", "a three-layer view under a two-layer limit was built, so the store back below would not follow a failed construction");
     Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
 }
 
