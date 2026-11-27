@@ -623,9 +623,8 @@ int APS5_VABI _Atthreadexit_nid_postfix(void (APS5_VABI *func)()) {
     return 0;
 }
 
-int APS5_VABI _CStrftime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CStrftime_nid_postfix(char* destination, size_t count, const char* format, const GuestTm* time) {
+    return strftime_nid_postfix(destination, count, format, time);
 }
 
 size_t APS5_VABI _CStrxfrm_nid_postfix(char* destination, const char* source, size_t count) {
