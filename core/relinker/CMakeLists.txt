@@ -1187,6 +1187,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_gnu_hash COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_gnu_hash.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_gnu_hash PROPERTIES TIMEOUT 20)
+        add_test(NAME guest_gnu_hash_import_only COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_gnu_hash.py $<TARGET_FILE:relinker> import-only)
+        set_tests_properties(guest_gnu_hash_import_only PROPERTIES TIMEOUT 20)
         add_test(NAME guest_empty_loads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_empty_loads.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_empty_loads PROPERTIES TIMEOUT 30)
