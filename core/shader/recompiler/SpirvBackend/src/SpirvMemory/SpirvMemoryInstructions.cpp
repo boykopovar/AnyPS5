@@ -934,7 +934,7 @@ std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const Me
             return current;
         });
     };
-    if (mem.kind == ResourceKind::Buffer) return EmitRuntimeBufferAtomic(ctx, inst, 32u, active, apply);
+    if (mem.kind == ResourceKind::Buffer || mem.kind == ResourceKind::ScalarBuffer) return EmitRuntimeBufferAtomic(ctx, inst, 32u, active, apply);
     return EmitValueOrZeroIfCondition(state, active, [&] {
         const auto access = PrepareMemoryElement(ctx, mem, DwordIndex(ctx, inst, mem));
         return EmitValueOrZeroIfCondition(state, EmitMemoryElementInBounds(state, access.resource, access.index), [&] { return EmitLdsAtomic32(state, mem, [&] { return apply(EmitMemoryElementPointer(state, access.resource, access.index)); }); });

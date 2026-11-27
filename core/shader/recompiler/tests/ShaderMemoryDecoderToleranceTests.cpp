@@ -350,6 +350,19 @@ void TestGfx1013OnlyFormsTranslate() {
         program.SetEntryBlock(block);
         TranslationContext context(program, block, 256);
         context.TranslateInstruction(atomic);
+        std::uint32_t written = 0u;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::SetScalarRegister) written++;
+        EXPECT_EQ(written, 0u);
+    }
+    {
+        const std::array<std::uint32_t, 2> words = {smemWord(0x82u, 3u, false), 0x10u};
+        const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(atomic);
         const IrValue* emitted = nullptr;
         for (const auto* value : block.Instructions())
             if (value->Opcode() == IrOpcode::AddressAtomicIAdd32) emitted = value;
