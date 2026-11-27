@@ -290,6 +290,8 @@ struct GuardedPages {
         pageSize = info.dwPageSize;
         base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         Require(base != nullptr);
+        const unsigned meta[4] = {0, 0, 7, 8};
+        std::memcpy(base + pageSize * 2 - kTableMetadataBytes, meta, sizeof(meta));
         DWORD previous = 0;
         Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
         Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
@@ -300,6 +302,8 @@ struct GuardedPages {
         void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapped != MAP_FAILED);
         base = static_cast<unsigned char*>(mapped);
+        const unsigned meta[4] = {0, 0, 7, 8};
+        std::memcpy(base + pageSize * 2 - kTableMetadataBytes, meta, sizeof(meta));
         Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
         Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
 #endif
@@ -435,6 +439,10 @@ void TestGuestPointers() {
         RequireNotImplemented([&] {
             _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
                 pages.ReadOnly(), &readOnlyTargetSrc);
+        }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+                pages.ReadOnly(), reinterpret_cast<const MediaVector*>(pages.ReadOnly() + kMediaVectorOffset));
         }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
 
         StringImpl badElemData{2, 16, pages.Guard(), 4};

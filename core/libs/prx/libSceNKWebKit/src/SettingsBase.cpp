@@ -453,8 +453,8 @@ void APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareS
     if (source.size > source.capacity || (source.size && !source.buffer))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     const void* const targetAddress = static_cast<const unsigned char*>(self) + kMediaContentTypesRequiringHardwareSupportOffset;
-    if (static_cast<const void*>(contentTypes) == targetAddress) return;
     ValidateTargetMediaVector(self, __func__);
+    if (static_cast<const void*>(contentTypes) == targetAddress) return;
     if (source.size) {
         RequireReadableGuestBytes(source.buffer, static_cast<std::size_t>(source.size) * sizeof(ContentType), __func__);
     }
