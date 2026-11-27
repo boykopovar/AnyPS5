@@ -87,6 +87,49 @@ bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
     return false;
 }
 
+template <typename T>
+struct GuestRollbackGuard {
+    T* target;
+    const T& previous;
+    bool committed = false;
+
+    ~GuestRollbackGuard() {
+        if (!committed) static_cast<void>(GuestCopyOut_nid_no_patch(target, &previous, sizeof(T)));
+    }
+};
+
+bool DomainMatchesLoopback(const StringImpl* impl, const char* function) {
+    constexpr std::string_view Localhost = "localhost";
+    constexpr std::string_view Loopback = "127.0.0.1";
+    static_assert(Localhost.size() == Loopback.size());
+    if (!impl) return false;
+    const StringImpl header = ReadGuestValue(impl, function);
+    if (!header.length) return false;
+    if (!header.data) throw std::invalid_argument("WebCore::AdClickAttribution: string with null characters and a nonzero length");
+    const bool is8Bit = (header.hashAndFlags & 4u) != 0;
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (is8Bit ? 1u : sizeof(char16_t));
+    if (!GuestReadable_nid_no_patch(header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (header.length != Localhost.size()) return false;
+    char16_t units[Localhost.size()]{};
+    if (is8Bit) {
+        unsigned char raw[Localhost.size()]{};
+        if (!GuestCopyIn_nid_no_patch(raw, header.data, sizeof(raw)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        for (std::size_t i = 0; i < Localhost.size(); ++i) units[i] = raw[i];
+    } else {
+        if (!GuestCopyIn_nid_no_patch(units, header.data, sizeof(units)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    const auto matches = [&](std::string_view expected) {
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            if (units[i] != static_cast<unsigned char>(expected[i])) return false;
+        }
+        return true;
+    };
+    return matches(Localhost) || matches(Loopback);
+}
+
 struct GuestString {
     std::vector<unsigned char> narrow;
     std::vector<char16_t> wide;
@@ -374,10 +417,10 @@ OptionalSeconds* APS5_VABI _ZN7WebCore18AdClickAttribution31convertAndGetEarlies
     outputResult.engaged = true;
     if (!TryPublishGuestValue(self, updatedSelf, previousSelf))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (!TryPublishGuestValue(result, outputResult, previousResult)) {
-        static_cast<void>(GuestCopyOut_nid_no_patch(self, &previousSelf, sizeof(previousSelf)));
+    GuestRollbackGuard<AdClickAttribution> rollback{self, previousSelf};
+    if (!TryPublishGuestValue(result, outputResult, previousResult))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    }
+    rollback.committed = true;
     return result;
 }
 
@@ -408,8 +451,7 @@ URL APS5_VABI _ZNK7WebCore18AdClickAttribution13urlForTestingERKN3WTF3URLE(const
     const AdClickAttribution attribution = ReadChecked(self, __func__);
     if (!baseURL) throw std::invalid_argument("WebCore::AdClickAttribution::urlForTesting: null base URL");
     const URL base = ReadGuestValue(baseURL, __func__);
-    const GuestString source = ReadGuestString(attribution.source, __func__, "WebCore::AdClickAttribution: string with null characters and a nonzero length");
-    if (!Equals(source, "localhost") && !Equals(source, "127.0.0.1")) return URL{};
+    if (!DomainMatchesLoopback(attribution.source, __func__)) return URL{};
     const Conversion& conversion = RequiredConversion(attribution);
     const GuestString baseWhole = WholeString(base, __func__);
     Builder builder;

@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -464,6 +465,7 @@ void TestToString() {
 }
 
 template<typename TAction> bool ThrowsNotImplemented(TAction action) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
     try {
         action();
     } catch (const std::invalid_argument&) {
@@ -471,7 +473,7 @@ template<typename TAction> bool ThrowsNotImplemented(TAction action) {
     } catch (const std::logic_error&) {
         return false;
     } catch (const std::runtime_error&) {
-        return true;
+        return NotImplementedCalls_nid_no_patch() == before + 1;
     } catch (...) {
         return false;
     }
