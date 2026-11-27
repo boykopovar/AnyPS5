@@ -35,6 +35,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -49,8 +50,17 @@ static_assert(std::is_trivially_copyable_v<StringImpl>);
 
 constexpr unsigned kStringImplFlag8Bit = 4u;
 constexpr unsigned kStringImplBufferOwnershipMask = 3u;
-constexpr unsigned kStringImplBufferSubstring = 1u;
+constexpr unsigned kStringImplBufferSubstring = 2u;
+constexpr unsigned kStringImplBufferOwned = 3u;
+constexpr unsigned kStringImplTerminatingFlagsMask = 48u;
 constexpr std::size_t kSubstringHeaderBytes = 24u + sizeof(StringImpl*);
+
+struct PlannedRelease {
+    const StringImpl* impl{nullptr};
+    unsigned refCount{0};
+    unsigned hashAndFlags{0};
+    bool destroyed{false};
+};
 
 void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
     if (!size) return;
@@ -60,32 +70,46 @@ void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
-    if (!size) return;
-    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    const GuestArena::HostWrite guard(pointer, size);
-    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-}
-
 StringImpl ReadGuestStringImpl(const StringImpl* pointer, const char* function) {
+    RequireReadableGuestBytes(pointer, sizeof(StringImpl), function);
     StringImpl header{};
     if (!GuestCopyIn_nid_no_patch(&header, pointer, sizeof(header)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return header;
 }
 
-void ValidateReleasableString(StringImpl* impl, const char* function, unsigned depth = 0) {
+void ValidateReleasableString(StringImpl* impl, const char* function, std::vector<PlannedRelease>& planned, std::deque<GuestArena::HostWrite>& writeGuards, unsigned depth = 0) {
     if (!impl) return;
     if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    const StringImpl header = ReadGuestStringImpl(impl, function);
-    RequireWritableGuestBytes(impl, sizeof(StringImpl), function);
-    if ((header.refCount & ~1u) == 2u && (header.hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
+    std::size_t index = planned.size();
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+        if (planned[i].impl == impl) {
+            index = i;
+            break;
+        }
+    }
+    if (index == planned.size()) {
+        const StringImpl header = ReadGuestStringImpl(impl, function);
+        auto& guard = writeGuards.emplace_back(impl, sizeof(StringImpl));
+        if (!guard.Open() || !GuestWritable_nid_no_patch(impl, sizeof(StringImpl)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        planned.push_back({impl, header.refCount, header.hashAndFlags, false});
+    }
+    if (planned[index].destroyed) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (planned[index].refCount != 2u) {
+        planned[index].refCount -= 2u;
+        return;
+    }
+    const unsigned flags = planned[index].hashAndFlags;
+    if ((flags & kStringImplTerminatingFlagsMask) != 0u || (flags & kStringImplBufferOwnershipMask) == kStringImplBufferOwned)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    planned[index].destroyed = true;
+    if ((flags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
         RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
         StringImpl* owner = nullptr;
         if (!GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(impl) + 24, sizeof(owner)))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-        if (owner) ValidateReleasableString(owner, function, depth + 1u);
+        if (owner) ValidateReleasableString(owner, function, planned, writeGuards, depth + 1u);
     }
 }
 
@@ -124,6 +148,7 @@ extern "C" {
 
 OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateERKN3WTF6StringE(const String* string) {
     if (!string) throw std::invalid_argument("null WTF::String");
+    RequireReadableGuestBytes(string, sizeof(String), __func__);
     const StringImpl* guestImpl = nullptr;
     if (!GuestCopyIn_nid_no_patch(&guestImpl, string, sizeof(guestImpl)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
@@ -133,11 +158,17 @@ OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateERKN3WTF6StringE(const 
 OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateEON3WTF6StringE(String* string) {
     if (!string) throw std::invalid_argument("null WTF::String");
     RequireReadableGuestBytes(string, sizeof(String), __func__);
-    RequireWritableGuestBytes(string, sizeof(String), __func__);
+    const GuestArena::HostWrite stringWrite(string, sizeof(String));
+    if (!stringWrite.Open() || !GuestWritable_nid_no_patch(string, sizeof(String)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     StringImpl* guestImpl = nullptr;
     if (!GuestCopyIn_nid_no_patch(&guestImpl, string, sizeof(guestImpl)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (guestImpl) ValidateReleasableString(guestImpl, __func__);
+    std::deque<GuestArena::HostWrite> implWrites;
+    if (guestImpl) {
+        std::vector<PlannedRelease> planned;
+        ValidateReleasableString(guestImpl, __func__, planned, implWrites);
+    }
     auto result = CreateFromImpl(guestImpl, __func__);
     StringImpl* const nullImpl = nullptr;
     if (!GuestCopyOut_nid_no_patch(string, &nullImpl, sizeof(nullImpl)))

@@ -134,12 +134,43 @@ static void TestGuestPointers() {
     std::memcpy(badStringRaw, &readOnlyImpl, sizeof(readOnlyImpl));
     Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateEON3WTF6StringE(reinterpret_cast<String*>(badStringRaw))); }, kMoveSymbol));
 
+    unsigned char* splitImpl = pages.Guard() - 8;
+    std::memset(splitImpl, 0, 8);
+    auto* splitImplPtr = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(splitImpl);
+    std::memcpy(badStringRaw, &splitImplPtr, sizeof(splitImplPtr));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateERKN3WTF6StringE(reinterpret_cast<const String*>(badStringRaw))); }, kCopySymbol));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateEON3WTF6StringE(reinterpret_cast<String*>(badStringRaw))); }, kMoveSymbol));
+
     unsigned char* truncatedSub = pages.Guard() - 24;
-    NKWebKit::WtfAbi::StringImpl subHeader{2, 0, nullptr, 5};
+    NKWebKit::WtfAbi::StringImpl subHeader{2, 0, nullptr, 6};
     std::memcpy(truncatedSub, &subHeader, sizeof(subHeader));
     auto* subPtr = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(truncatedSub);
     std::memcpy(badStringRaw, &subPtr, sizeof(subPtr));
     Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateEON3WTF6StringE(reinterpret_cast<String*>(badStringRaw))); }, kMoveSymbol));
+
+    NKWebKit::WtfAbi::StringImpl terminatingFlagsImpl{2, 0, nullptr, 16};
+    auto* terminatingFlagsPtr = &terminatingFlagsImpl;
+    std::memcpy(badStringRaw, &terminatingFlagsPtr, sizeof(terminatingFlagsPtr));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateEON3WTF6StringE(reinterpret_cast<String*>(badStringRaw))); }, kMoveSymbol));
+    std::memcpy(&stillThere, badStringRaw, sizeof(stillThere));
+    Require(stillThere == terminatingFlagsPtr && terminatingFlagsImpl.refCount == 2);
+
+    NKWebKit::WtfAbi::StringImpl ownedImpl{2, 0, nullptr, 3};
+    auto* ownedPtr = &ownedImpl;
+    std::memcpy(badStringRaw, &ownedPtr, sizeof(ownedPtr));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateEON3WTF6StringE(reinterpret_cast<String*>(badStringRaw))); }, kMoveSymbol));
+    std::memcpy(&stillThere, badStringRaw, sizeof(stillThere));
+    Require(stillThere == ownedPtr && ownedImpl.refCount == 2);
+
+    alignas(NKWebKit::WtfAbi::StringImpl) unsigned char cyclicSubRaw[24 + sizeof(NKWebKit::WtfAbi::StringImpl*)]{};
+    NKWebKit::WtfAbi::StringImpl cyclicHeader{2, 0, nullptr, 6};
+    std::memcpy(cyclicSubRaw, &cyclicHeader, sizeof(cyclicHeader));
+    auto* cyclicPtr = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(cyclicSubRaw);
+    std::memcpy(cyclicSubRaw + 24, &cyclicPtr, sizeof(cyclicPtr));
+    std::memcpy(badStringRaw, &cyclicPtr, sizeof(cyclicPtr));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN14OpaqueJSString9tryCreateEON3WTF6StringE(reinterpret_cast<String*>(badStringRaw))); }, kMoveSymbol));
+    std::memcpy(&stillThere, badStringRaw, sizeof(stillThere));
+    Require(stillThere == cyclicPtr);
 }
 
 int main() {
