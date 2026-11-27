@@ -58,6 +58,7 @@ constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr int DynamicObject = 0x01;
 constexpr int DynamicObjectData = 0x08;
 constexpr std::size_t MaximumInt = static_cast<std::size_t>(std::numeric_limits<int>::max());
+constexpr std::size_t MaximumLong = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max());
 
 static_assert(sizeof(Asn1String) == 24);
 static_assert(offsetof(Asn1String, data) == 8);
@@ -160,7 +161,7 @@ bool ReadLength(Reader& input, bool& indefinite, std::size_t& length) {
     if (count == 0x7f) return false;
     while (count-- > 0) {
         if (!input.Byte(value)) return false;
-        if (length > (std::numeric_limits<std::size_t>::max() >> 8)) return false;
+        if (length > (MaximumLong >> 8)) return false;
         length = (length << 8) | value;
     }
     return true;
