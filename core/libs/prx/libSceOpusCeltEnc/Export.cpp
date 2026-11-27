@@ -238,7 +238,7 @@ int createMultistreamEncoder(std::uint32_t contextId, OpusCeltMultistreamEncoder
     entry->coupledStreams = coupledStreams;
     entry->sampleRate = sampleRate;
     int opusError = OPUS_OK;
-    entry->codec.reset(opus_multistream_encoder_create(sampleRate, channels, streams, coupledStreams, mapping.data(), OPUS_APPLICATION_RESTRICTED_CELT, &opusError));
+    entry->codec.reset(opus_multistream_encoder_create(sampleRate, channels, streams, coupledStreams, mapping.data(), OPUS_APPLICATION_RESTRICTED_LOWDELAY, &opusError));
     if (opusError == OPUS_ALLOC_FAIL) {
         std::array<std::uint8_t, multistreamStateSize> cleared{};
         copyOutPreserveErrno(state, cleared.data(), cleared.size(), "OpusCeltEnc: unwritable multistream state");
