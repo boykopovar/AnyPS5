@@ -19,6 +19,7 @@
 namespace {
 
 constexpr std::int32_t UcolDefault = -1;
+constexpr std::int32_t MemoryAllocation = 7;
 constexpr std::size_t LocaleBytes = 4096;
 constexpr std::size_t PageBytes = 4096;
 
@@ -306,7 +307,7 @@ UCollationResult APS5_VABI ucol_strcollUTF8_nid_postfix(const UCollator* coll, c
         left = CopyOperand(source, sourceLength, __func__);
         right = CopyOperand(target, targetLength, __func__);
     } catch (const std::bad_alloc&) {
-        WriteStatus(status, incoming, U_MEMORY_ALLOCATION_ERROR, __func__);
+        WriteStatus(status, incoming, MemoryAllocation, __func__);
         return UCOL_EQUAL;
     }
     auto outgoing = incoming;
