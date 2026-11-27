@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_depth_bias_units_float COMMAND agc_driver_depth_bias_units_tests)
+    set_tests_properties(agc_driver_depth_bias_units_float PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_DEPTH_BIAS_FORCE_UNORM=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_depth_bias_units_without_control COMMAND agc_driver_depth_bias_units_tests)
+    set_tests_properties(agc_driver_depth_bias_units_without_control PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_DEPTH_BIAS_CONTROL=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_bias_units_float agc_driver_depth_bias_units_without_control PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

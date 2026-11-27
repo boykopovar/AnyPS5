@@ -648,6 +648,10 @@ struct VulkanDevice::State {
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
     bool dynamicDepthBiasEnable = false;
+    bool depthBiasControl = false;
+    bool depthBiasForceUnorm = false;
+    bool depthBiasFloat = false;
+    bool depthBiasExact = false;
     bool imageViewMinLod = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
@@ -2167,6 +2171,21 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     dynamicState2Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT};
     dynamicState2Features.extendedDynamicState2 = VK_TRUE;
+    VkPhysicalDeviceDepthBiasControlFeaturesEXT depthBiasControlFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_BIAS_CONTROL_FEATURES_EXT};
+    if (hasExtension(VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME) && std::getenv("APS5_NO_DEPTH_BIAS_CONTROL") == nullptr) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &depthBiasControlFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->depthBiasControl = depthBiasControlFeatures.depthBiasControl == VK_TRUE;
+        state->depthBiasExact = state->depthBiasControl && depthBiasControlFeatures.depthBiasExact == VK_TRUE;
+        state->depthBiasForceUnorm = state->depthBiasExact && depthBiasControlFeatures.leastRepresentableValueForceUnormRepresentation == VK_TRUE && std::getenv("APS5_NO_DEPTH_BIAS_FORCE_UNORM") == nullptr;
+        state->depthBiasFloat = state->depthBiasControl && depthBiasControlFeatures.floatRepresentation == VK_TRUE;
+        if (state->depthBiasControl) deviceExtensions.push_back(VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME);
+    }
+    depthBiasControlFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_BIAS_CONTROL_FEATURES_EXT};
+    depthBiasControlFeatures.depthBiasControl = VK_TRUE;
+    depthBiasControlFeatures.leastRepresentableValueForceUnormRepresentation = state->depthBiasForceUnorm ? VK_TRUE : VK_FALSE;
+    depthBiasControlFeatures.floatRepresentation = state->depthBiasFloat ? VK_TRUE : VK_FALSE;
+    depthBiasControlFeatures.depthBiasExact = state->depthBiasExact ? VK_TRUE : VK_FALSE;
     renderingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR, nullptr, VK_TRUE};
     libraryFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, &dynamicStateFeatures, VK_TRUE};
     dynamicStateFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &renderingFeatures, VK_TRUE};
@@ -2411,6 +2430,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (state->dynamicDepthBiasEnable) {
         dynamicState2Features.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &dynamicState2Features;
+    }
+    if (state->depthBiasControl) {
+        depthBiasControlFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
+        deviceInfo.pNext = &depthBiasControlFeatures;
     }
     if (state->maintenance8) {
         maintenance8Features.pNext = const_cast<void*>(deviceInfo.pNext);
@@ -5097,6 +5120,10 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.pipelineLinkTimeOptimization = state->pipelineLinkTimeOptimization;
     context.dynamicColorWriteMask = state->dynamicColorWriteMask;
     context.dynamicDepthBiasEnable = state->dynamicDepthBiasEnable;
+    context.depthBiasControl = state->depthBiasControl;
+    context.depthBiasForceUnorm = state->depthBiasForceUnorm;
+    context.depthBiasFloat = state->depthBiasFloat;
+    context.depthBiasExact = state->depthBiasExact;
     context.drawInputsInPlace = state->drawInputsInPlace;
     context.drawInputsInPlaceBelow = state->drawInputsInPlaceBelow;
     context.discreteGpu = state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;

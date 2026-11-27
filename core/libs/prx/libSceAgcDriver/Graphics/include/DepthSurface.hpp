@@ -133,7 +133,11 @@ std::shared_ptr<Texture> DepthSurfaceFirstSample(const Context& context, std::sp
 std::size_t DepthPlaneCopyCount();
 VkDeviceSize DepthPlaneCopyBytes();
 VkFormat HostDepthFormat(const Context& context, VkFormat format);
-float HostDepthBiasConstant(const Context& context, VkFormat format, float constant);
+struct DepthBiasConstant {
+    float value;
+    VkDepthBiasRepresentationEXT representation;
+};
+DepthBiasConstant HostDepthBiasConstant(const Context& context, VkFormat format, DepthBiasUnits units, float constant);
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage);
 void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass);

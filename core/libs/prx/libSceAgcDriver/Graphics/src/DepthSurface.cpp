@@ -4133,11 +4133,18 @@ VkFormat HostDepthFormat(const Context& context, VkFormat format) {
     return host;
 }
 
-float HostDepthBiasConstant(const Context& context, VkFormat format, float constant) {
+DepthBiasConstant HostDepthBiasConstant(const Context& context, VkFormat format, DepthBiasUnits units, float constant) {
+    constexpr auto formatUnits = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT;
+    const auto isFloat = [](VkFormat depth) { return depth == VK_FORMAT_D32_SFLOAT || depth == VK_FORMAT_D32_SFLOAT_S8_UINT; };
+    const bool floatUnits = units == DepthBiasUnits::Float || (units == DepthBiasUnits::Target && isFloat(format));
+    if (constant == 0.0f) return {constant, formatUnits};
     const auto host = HostDepthFormat(context, format);
-    if (constant == 0.0f || host == format) return constant;
-    Require(host == VK_FORMAT_D24_UNORM_S8_UINT, "a constant depth bias on a 16-bit depth target with stencil that the device stores as 32-bit float depth is not implemented");
-    return constant * 256.0f;
+    if (!isFloat(host)) return {std::ldexp(constant, (host == VK_FORMAT_D24_UNORM_S8_UINT ? 24 : 16) - (floatUnits ? 24 : 16)), formatUnits};
+    if (floatUnits) return {constant, formatUnits};
+    if (context.depthBiasForceUnorm) return {constant * 256.0f, VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT};
+    if (context.depthBiasFloat) return {std::ldexp(constant, -16), VK_DEPTH_BIAS_REPRESENTATION_FLOAT_EXT};
+    Require(isFloat(format), "a constant depth bias on a 16-bit depth target with stencil that the device stores as 32-bit float depth needs VK_EXT_depth_bias_control's force-unorm or float representation");
+    return {constant * 256.0f, formatUnits};
 }
 
 VkImageView RepeatDepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilWritten) {
