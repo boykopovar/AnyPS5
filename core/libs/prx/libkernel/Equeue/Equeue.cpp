@@ -298,6 +298,17 @@ void KernelEqueuePrivate::WaitForDescriptors(std::unique_lock<std::mutex>& lock,
     }
 }
 
+static void DispatchEvent(KernelEqueueEvent& event) {
+    event.enabled = false;
+    if (event.event.filter == EVFILT_USER && event.filter.resetFunc != nullptr) {
+        event.filter.resetFunc(&event);
+        return;
+    }
+    event.triggered = false;
+    event.event.fflags = 0;
+    event.event.data = 0;
+}
+
 int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
     if (m_reportOncePerWait) {
         return CollectOncePerWait(ev, num);
@@ -322,10 +333,7 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
                 break;
             }
             if ((e.event.flags & EV_DISPATCH) != 0) {
-                e.enabled = false;
-                e.triggered = false;
-                e.event.fflags = 0;
-                e.event.data = 0;
+                DispatchEvent(e);
                 break;
             }
             if (e.filter.resetFunc != nullptr) {
@@ -374,10 +382,7 @@ int KernelEqueuePrivate::CollectOncePerWait(KernelEvent* ev, int num) {
             continue;
         }
         if ((e.event.flags & EV_DISPATCH) != 0) {
-            e.enabled = false;
-            e.triggered = false;
-            e.event.fflags = 0;
-            e.event.data = 0;
+            DispatchEvent(e);
         } else if (e.filter.resetFunc != nullptr) {
             e.filter.resetFunc(&e);
         } else if ((e.event.flags & EV_CLEAR) != 0) {
