@@ -571,6 +571,19 @@ std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input) {
     return bytes;
 }
 
+void filterExtraExportRootInsideLinearSweepPadding() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    std::fill(input.Text.begin() + 1, input.Text.begin() + 16, 0);
+    ripOperand(input, 16, {0xFF, 0x15}, 0x2000);
+    const auto bytes = elfFixture(input);
+    const std::vector<Relinker::NidReference> references = {{"absoluteExport", {}, 6, 0x300, 0x2000, 0}};
+    const auto filtered = Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(
+        references, bytes, input.Text, input.TextVaddr, {0x1010});
+    require(filtered.size() == 1 && filtered[0].RelocationAddress == 0x2000,
+            "Strict ELF filter dropped an import reachable only from an extra export root inside padding");
+}
+
 void filterSegmentRelativeImports() {
     for (const std::uint8_t segment : {0x00, 0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65}) {
         for (const bool address32 : {false, true}) {
@@ -1761,6 +1774,7 @@ int main() {
         defaultFilterExtraLandingPadRoots();
         deadTailAndExplicitEntry();
         explicitEntryInsideLinearSweepPadding();
+        filterExtraExportRootInsideLinearSweepPadding();
         trustedRootUsesTextLimitBeyondInferredRegion();
         untrustedRootWithOutOfCodeBranchFallsBackConservatively();
         ud1DeadTail();
