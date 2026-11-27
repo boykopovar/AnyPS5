@@ -436,7 +436,9 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
             int result = 0;
             std::exception_ptr failure;
             try {
-                result = request->Read(data, size);
+                std::vector<std::uint8_t> staged(std::min<std::size_t>(size, std::size_t{1} << 24u));
+                result = request->Read(staged.data(), staged.size());
+                if (result > 0 && !Http2Guest::CopyOut(data, staged.data(), static_cast<std::size_t>(result))) result = ERROR_NULL_POINTER;
             } catch (...) {
                 failure = std::current_exception();
             }
