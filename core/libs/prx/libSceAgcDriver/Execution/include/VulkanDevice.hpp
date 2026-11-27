@@ -73,6 +73,7 @@ public:
     // replay's hook, on its threads): false when the device already holds a pipeline for the module.
     bool ReplayComputePipeline(const ShaderRecompiler::RecompileResult& shader, bool pushConstants);
     bool HasComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
+    bool ComputePipelineReady(const ShaderRecompiler::RecompileResult& shader) const;
     void PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
     enum class PipelineAhead { Built, Building, Start, Unavailable };
     PipelineAhead ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
@@ -369,6 +370,8 @@ public:
     static void NoteRecipe(RecipeEvent event, RecipeKind kind);
     enum class DrawRecipePrecheck : std::size_t { NoRecipe, Device };
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
+    static std::uint64_t WindowSelectDispatches();
+    static std::uint64_t SplitWaveDispatches();
     using DrawTraceContext = Graphics::DrawTraceContext;
     static std::uint64_t DrawRecipeHits();
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw

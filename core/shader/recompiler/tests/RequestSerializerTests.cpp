@@ -200,7 +200,31 @@ void VerifyTessellationInstancePatches() {
 
 }
 
+std::vector<std::uint8_t> Version65Bytes(std::vector<std::uint8_t> bytes) {
+    Require(bytes.size() > 18u && bytes[4] == 66u);
+    const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
+    const std::size_t barycentrics = replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics ? 1u : 0u;
+    const auto at = bytes.end() - static_cast<std::ptrdiff_t>(1u + barycentrics);
+    Require(*at == (replay.request.target.splitWaveGroups ? 1u : 0u));
+    bytes.erase(at);
+    bytes[4] = 65u;
+    return bytes;
+}
+
+std::vector<std::uint8_t> Version64Bytes(std::vector<std::uint8_t> bytes) {
+    bytes = Version65Bytes(std::move(bytes));
+    Require(bytes.size() > 17u && bytes[4] == 65u);
+    const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
+    const std::size_t barycentrics = replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics ? 1u : 0u;
+    const auto at = bytes.end() - static_cast<std::ptrdiff_t>(1u + barycentrics);
+    Require(*at == (replay.request.target.windowSelects ? 1u : 0u));
+    bytes.erase(at);
+    bytes[4] = 64u;
+    return bytes;
+}
+
 std::vector<std::uint8_t> Version63Bytes(std::vector<std::uint8_t> bytes) {
+    bytes = Version64Bytes(std::move(bytes));
     Require(bytes.size() > 16u && bytes[4] == 64u);
     const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
     Require(replay.request.context.splitState.empty());
@@ -796,7 +820,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 67u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -911,10 +935,27 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        auto version62 = Version63Bytes(DecodeBase64(serializer.Serialize(request)));
+        request.target.windowSelects = !spanned;
+        request.target.splitWaveGroups = spanned;
+        const auto version66 = DecodeBase64(serializer.Serialize(request));
+        Require(version66[4] == 66u && version66.back() == (spanned ? 1u : 0u) && version66[version66.size() - 2u] == (spanned ? 0u : 1u) && version66[version66.size() - 11u] == (spanned ? 1u : 0u));
+        const auto replay66 = serializer.Deserialize(EncodeBase64(version66));
+        Require(replay66.request.target.spannedAnySubgroup == spanned && replay66.request.target.windowSelects == !spanned && replay66.request.target.splitWaveGroups == spanned);
+        const auto version65 = Version65Bytes(version66);
+        const auto replay65 = serializer.Deserialize(EncodeBase64(version65));
+        Require(replay65.request.target.spannedAnySubgroup == spanned && replay65.request.target.windowSelects == !spanned && !replay65.request.target.splitWaveGroups);
+        const auto version64 = Version64Bytes(version66);
+        const auto replay64 = serializer.Deserialize(EncodeBase64(version64));
+        Require(replay64.request.target.spannedAnySubgroup == spanned && !replay64.request.target.windowSelects && !replay64.request.target.splitWaveGroups);
+        auto version62 = Version63Bytes(version66);
         Require(version62[4] == 63u && version62.back() == (spanned ? 1u : 0u));
+        const auto replay63 = serializer.Deserialize(EncodeBase64(version62));
+        Require(replay63.request.target.spannedAnySubgroup == spanned && !replay63.request.target.windowSelects && !replay63.request.target.splitWaveGroups);
         version62[4] = 62u;
-        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
+        const auto replay62 = serializer.Deserialize(EncodeBase64(version62));
+        Require(replay62.request.target.spannedAnySubgroup == spanned && !replay62.request.target.windowSelects);
+        request.target.windowSelects = false;
+        request.target.splitWaveGroups = false;
         auto version57 = version62;
         version57[4] = 57u;
         version57.pop_back();
@@ -1248,7 +1289,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{65u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{67u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
@@ -1269,7 +1310,7 @@ void VerifySplitState() {
     request.context.splitState = state;
     const auto encoded = serializer.Serialize(request);
     auto bytes = DecodeBase64(encoded);
-    Require(bytes[4] == 64u);
+    Require(bytes[4] == 66u);
     const auto replay = serializer.Deserialize(encoded);
     Require(std::ranges::equal(replay.request.context.splitState, state));
     Require(serializer.Serialize(replay.request) == encoded);
@@ -1284,7 +1325,7 @@ void VerifySplitState() {
         }
         Require(rejected);
     }
-    bytes.resize(bytes.size() - 8u - 4u * state.size());
+    bytes.resize(bytes.size() - 10u - 4u * state.size());
     bytes[4] = 63u;
     Require(serializer.Deserialize(EncodeBase64(bytes)).request.context.splitState.empty());
 }

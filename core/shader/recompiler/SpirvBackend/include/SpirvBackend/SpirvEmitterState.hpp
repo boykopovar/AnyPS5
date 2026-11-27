@@ -106,6 +106,7 @@ struct SpirvEmitterState {
     bool spannedWave = false;
     bool spannedAnySubgroup = false;
     bool spannedShuffleThroughMemory = false;
+    std::uint32_t splitWaves = 1;
     std::uint32_t spannedExchangeVariable = 0;
     std::uint32_t spannedBallotVariable = 0;
     std::uint32_t spannedBallotParityVariable = 0;
@@ -254,6 +255,8 @@ struct SpirvEmitterState {
     std::uint32_t scratchPoolReturns = 0;
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
+    bool windowSelectsRequested = false;
+    bool vectorWindowSelects = false;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
     bool meshWindowBuffer = false;
     bool splitState = false;

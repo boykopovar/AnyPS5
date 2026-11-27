@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    set_target_properties(agc_driver_window_selects_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    foreach(agcWindowMode IN ITEMS forms dispatch)
+        add_test(NAME agc_driver_window_selects_${agcWindowMode} COMMAND agc_driver_window_selects_tests --${agcWindowMode})
+        set_tests_properties(agc_driver_window_selects_${agcWindowMode} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_window_selects_${agcWindowMode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()
