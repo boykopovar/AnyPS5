@@ -155,7 +155,7 @@ The runtime evaluates scheduled events at each controller read, including their 
 
 ## Recording and replaying controller input
 
-Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
+Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. Replay replaces port 0's buttons, sticks and analog triggers on normal reads and keeps the last recorded state after the final change. When a system dialog or the IME intercepts input, the title receives the intercepted state. Playback time keeps advancing during interception. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
 
 ```sh
 APS5_PAD_RECORD=/tmp/fight.txt ./app.elf
