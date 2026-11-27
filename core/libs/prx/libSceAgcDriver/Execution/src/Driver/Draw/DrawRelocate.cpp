@@ -204,8 +204,11 @@ void Driver::learnPendingRelocation() {
     drawRelocationPending = {};
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);
-    if (inserted == drawCache.end() || inserted->second->decode == nullptr) return;
-    const auto& entry = *inserted->second;
+    std::shared_ptr<const DrawEntry> learned;
+    if (inserted != drawCache.end() && inserted->second->decode != nullptr) learned = inserted->second;
+    else if (const auto donor = pending.donor.lock(); donor != nullptr && donor->decode != nullptr) learned = donor;
+    if (learned == nullptr) return;
+    const auto& entry = *learned;
     const auto& programs = entry.decode->programs;
     if (entry.stages.size() != programs.size()) return;
     const auto known = drawRelocations.find(pending.identity);
@@ -235,7 +238,7 @@ void Driver::learnPendingRelocation() {
                 word.reads.emplace_back(0, length);
                 word.high = program.userData[index + 1];
             }
-            const auto base = AlignedWord(program.userData[index]);
+            const auto base = (static_cast<std::uint64_t>(word.high) << 32) + AlignedWord(program.userData[index]);
             for (std::size_t run = 0; run < variant.runs.size() && run < variant.runBases.size(); ++run) {
                 if (variant.runBases[run] != static_cast<std::int8_t>(index)) continue;
                 word.reads.emplace_back(static_cast<std::int64_t>(variant.runs[run].first - base), static_cast<std::uint32_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t)));

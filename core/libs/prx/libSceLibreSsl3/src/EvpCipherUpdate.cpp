@@ -114,12 +114,21 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 
+#include "prx/libc/include/General.hpp"
+
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -129,15 +138,146 @@ constexpr int AnyFunction = 0xfff;
 constexpr int BadBlockLength = 136;
 constexpr int TooLarge = 164;
 
-const LibreSslEvpCipher& Checked(const LibreSslEvpCipherCtx* context, const int* written, const char* function) {
-    if (!context) throw std::invalid_argument(std::string(function) + ": null context");
-    if (!context->cipher) throw std::invalid_argument(std::string(function) + ": no cipher set");
-    if (!written) throw std::invalid_argument(std::string(function) + ": null output length");
-    return *context->cipher;
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
+std::size_t HostPageSize() {
+    static const std::size_t size = [] {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        const std::size_t page = info.dwPageSize;
+#else
+        const long raw = sysconf(_SC_PAGESIZE);
+        const std::size_t page = raw > 0 ? static_cast<std::size_t>(raw) : 4096u;
+#endif
+        return page != 0 && (page & (page - 1)) == 0 ? page : 4096u;
+    }();
+    return size;
 }
 
 int Mask(int blockSize) {
     return static_cast<int>(static_cast<unsigned>(blockSize) - 1u);
+}
+
+bool GuestReadableRange(const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - start) return false;
+    const std::size_t pageSize = HostPageSize();
+    const std::uintptr_t end = start + bytes;
+    unsigned char probe = 0;
+    if (!GuestCopyIn_nid_no_patch(&probe, reinterpret_cast<const void*>(start), 1)) return false;
+    std::uintptr_t page = start & ~(static_cast<std::uintptr_t>(pageSize) - 1u);
+    while (end - page > pageSize) {
+        page += pageSize;
+        if (!GuestCopyIn_nid_no_patch(&probe, reinterpret_cast<const void*>(page), 1)) return false;
+    }
+    return true;
+}
+
+bool GuestWritableRange(void* destination, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(destination);
+    if (start == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - start) return false;
+    const std::size_t pageSize = HostPageSize();
+    const std::uintptr_t end = start + bytes;
+    auto probeAt = [](std::uintptr_t address) {
+        unsigned char probe = 0;
+        return GuestCopyInUnsynced_nid_no_patch(&probe, reinterpret_cast<const void*>(address), 1) &&
+               GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), &probe, 1);
+    };
+    if (!probeAt(start)) return false;
+    std::uintptr_t page = start & ~(static_cast<std::uintptr_t>(pageSize) - 1u);
+    while (end - page > pageSize) {
+        page += pageSize;
+        if (!probeAt(page)) return false;
+    }
+    return true;
+}
+
+struct BufferExtents {
+    std::size_t inBytes = 0;
+    std::size_t outBytes = 0;
+    bool allowNullIn = false;
+    bool allowNullOut = false;
+};
+
+BufferExtents ComputeExtents(const LibreSslEvpCipherCtx& context, const LibreSslEvpCipher& cipher, int length, bool decrypt) {
+    const int blockSize = cipher.blockSize;
+    const int blockMask = Mask(blockSize);
+    if ((blockSize & blockMask) != 0 || length < 0) return {};
+    if (length == 0 && (cipher.flags & CipherModeMask) != CipherModeCcm) return {};
+    if (cipher.flags & CipherFlagCustomCipher) {
+        if (length == 0) return {};
+        return {static_cast<std::size_t>(length), static_cast<std::size_t>(length), true, true};
+    }
+    const bool paddedDecrypt = decrypt && !(context.flags & CipherFlagNoPadding);
+    std::size_t outBytes = 0;
+    if (paddedDecrypt) {
+        if (static_cast<std::size_t>(blockSize) > sizeof(context.final)) return {};
+        if (context.finalUsed) {
+            if ((length & ~blockMask) > INT_MAX - blockSize) return {};
+            outBytes = static_cast<std::size_t>(blockSize);
+        }
+    }
+    if (length == 0) return {0, outBytes, false, false};
+    const int partial = context.bufLen;
+    if (partial == 0 && (length & blockMask) == 0) {
+        return {static_cast<std::size_t>(length), outBytes + static_cast<std::size_t>(length), false, false};
+    }
+    if (partial < 0 || partial >= blockSize || static_cast<std::size_t>(blockSize) > sizeof(context.buf)) {
+        return {0, outBytes, false, false};
+    }
+    if (partial > 0) {
+        const int needed = blockSize - partial;
+        if (needed > length) return {static_cast<std::size_t>(length), outBytes, false, false};
+        if (((length - needed) & ~blockMask) > INT_MAX - blockSize) return {0, outBytes, false, false};
+        const std::size_t encryptOut = static_cast<std::size_t>(blockSize) + static_cast<std::size_t>((length - needed) & ~blockMask);
+        return {static_cast<std::size_t>(length), outBytes + encryptOut, false, false};
+    }
+    const std::size_t encryptOut = static_cast<std::size_t>(length & ~blockMask);
+    return {static_cast<std::size_t>(length), outBytes + encryptOut, false, false};
+}
+
+bool Validate(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length, bool useContextMode, bool decrypt, LibreSslEvpCipher& cipher, const char* function) {
+    const ErrnoGuard errnoGuard;
+    if (!context) throw std::invalid_argument(std::string(function) + ": null context");
+    LibreSslEvpCipherCtx guestContext{};
+    if (!GuestCopyIn_nid_no_patch(&guestContext, context, sizeof(guestContext)) ||
+        !GuestCopyOut_nid_no_patch(context, &guestContext, sizeof(guestContext))) {
+        throw std::invalid_argument(std::string(function) + ": invalid context");
+    }
+    if (!guestContext.cipher) throw std::invalid_argument(std::string(function) + ": no cipher set");
+    if (!GuestCopyIn_nid_no_patch(&cipher, guestContext.cipher, sizeof(cipher))) {
+        throw std::invalid_argument(std::string(function) + ": unreadable cipher");
+    }
+    if (!written) throw std::invalid_argument(std::string(function) + ": null output length");
+    const bool effectiveDecrypt = useContextMode ? !guestContext.encrypt : decrypt;
+    const auto extents = ComputeExtents(guestContext, cipher, length, effectiveDecrypt);
+    if (extents.inBytes > 0) {
+        if (!in) {
+            if (!extents.allowNullIn) throw std::invalid_argument(std::string(function) + ": null buffer");
+        } else if (!(in == out && extents.outBytes >= extents.inBytes)) {
+            if (!GuestReadableRange(in, extents.inBytes)) {
+                throw std::invalid_argument(std::string(function) + ": unreadable input");
+            }
+        }
+    }
+    if (extents.outBytes > 0) {
+        if (!out) {
+            if (!extents.allowNullOut) throw std::invalid_argument(std::string(function) + ": null buffer");
+        } else if (!GuestWritableRange(out, extents.outBytes)) {
+            throw std::invalid_argument(std::string(function) + ": unwritable output");
+        }
+    }
+    const int zero = 0;
+    if (!GuestCopyOut_nid_no_patch(written, &zero, sizeof(zero))) {
+        throw std::invalid_argument(std::string(function) + ": unwritable output length");
+    }
+    return effectiveDecrypt;
 }
 
 void Copy(unsigned char* destination, const unsigned char* source, int length, const char* function) {
@@ -146,8 +286,7 @@ void Copy(unsigned char* destination, const unsigned char* source, int length, c
     std::memcpy(destination, source, static_cast<std::size_t>(length));
 }
 
-int Run(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
-    const auto& cipher = *context->cipher;
+int Run(LibreSslEvpCipherCtx* context, const LibreSslEvpCipher& cipher, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
     if (!cipher.doCipher) throw std::invalid_argument(std::string(function) + ": cipher without do_cipher");
     if (cipher.flags & CipherFlagCustomCipher) {
         const int produced = cipher.doCipher(context, out, in, static_cast<std::size_t>(length));
@@ -161,8 +300,7 @@ int Run(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const u
     return 1;
 }
 
-int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
-    const auto& cipher = Checked(context, written, function);
+int Encrypt(LibreSslEvpCipherCtx* context, const LibreSslEvpCipher& cipher, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
     const int blockSize = cipher.blockSize;
     const int blockMask = Mask(blockSize);
     int partial = context->bufLen;
@@ -171,8 +309,8 @@ int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
     if ((blockSize & blockMask) != 0) return 0;
     if (length < 0) return 0;
     if (length == 0 && (cipher.flags & CipherModeMask) != CipherModeCcm) return 1;
-    if (cipher.flags & CipherFlagCustomCipher) return Run(context, out, written, in, length, function);
-    if (partial == 0 && (length & blockMask) == 0) return Run(context, out, written, in, length, function);
+    if (cipher.flags & CipherFlagCustomCipher) return Run(context, cipher, out, written, in, length, function);
+    if (partial == 0 && (length & blockMask) == 0) return Run(context, cipher, out, written, in, length, function);
     if (partial < 0 || partial >= blockSize || static_cast<std::size_t>(blockSize) > sizeof(context->buf)) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, BadBlockLength, __FILE__, __LINE__);
         return 0;
@@ -190,7 +328,7 @@ int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
         }
         Copy(context->buf + partial, in, needed, function);
         int produced = 0;
-        if (!Run(context, out, &produced, context->buf, blockSize, function)) return 0;
+        if (!Run(context, cipher, out, &produced, context->buf, blockSize, function)) return 0;
         total = produced;
         length -= needed;
         in += needed;
@@ -201,7 +339,7 @@ int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
     if (length > 0) {
         if (INT_MAX - length < total) return 0;
         int produced = 0;
-        if (!Run(context, out, &produced, in, length, function)) return 0;
+        if (!Run(context, cipher, out, &produced, in, length, function)) return 0;
         if (INT_MAX - produced < total) return 0;
         total += produced;
     }
@@ -211,8 +349,7 @@ int Encrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
     return 1;
 }
 
-int Decrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
-    const auto& cipher = Checked(context, written, function);
+int Decrypt(LibreSslEvpCipherCtx* context, const LibreSslEvpCipher& cipher, unsigned char* out, int* written, const unsigned char* in, int length, const char* function) {
     const int blockSize = cipher.blockSize;
     const int blockMask = Mask(blockSize);
     int total = 0;
@@ -220,8 +357,8 @@ int Decrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
     if ((blockSize & blockMask) != 0) return 0;
     if (length < 0) return 0;
     if (length == 0 && (cipher.flags & CipherModeMask) != CipherModeCcm) return 1;
-    if (cipher.flags & CipherFlagCustomCipher) return Run(context, out, written, in, length, function);
-    if (context->flags & CipherFlagNoPadding) return Encrypt(context, out, written, in, length, function);
+    if (cipher.flags & CipherFlagCustomCipher) return Run(context, cipher, out, written, in, length, function);
+    if (context->flags & CipherFlagNoPadding) return Encrypt(context, cipher, out, written, in, length, function);
     if (static_cast<std::size_t>(blockSize) > sizeof(context->final)) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, BadBlockLength, __FILE__, __LINE__);
         return 0;
@@ -237,7 +374,7 @@ int Decrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
     }
     context->finalUsed = 0;
     int produced = 0;
-    if (!Encrypt(context, out, &produced, in, length, function)) return 0;
+    if (!Encrypt(context, cipher, out, &produced, in, length, function)) return 0;
     if (blockSize > 1 && context->bufLen == 0) {
         if (produced < blockSize) return 0;
         produced -= blockSize;
@@ -255,16 +392,21 @@ int Decrypt(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, con
 extern "C" {
 
 int APS5_VABI EVP_EncryptUpdate_nid_disambig1_nid_postfix(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length) {
-    return Encrypt(context, out, written, in, length, __func__);
+    LibreSslEvpCipher cipher{};
+    Validate(context, out, written, in, length, false, false, cipher, __func__);
+    return Encrypt(context, cipher, out, written, in, length, __func__);
 }
 
 int APS5_VABI EVP_DecryptUpdate_nid_disambig1_nid_postfix(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length) {
-    return Decrypt(context, out, written, in, length, __func__);
+    LibreSslEvpCipher cipher{};
+    Validate(context, out, written, in, length, false, true, cipher, __func__);
+    return Decrypt(context, cipher, out, written, in, length, __func__);
 }
 
 int APS5_VABI EVP_CipherUpdate_nid_disambig1_nid_postfix(LibreSslEvpCipherCtx* context, unsigned char* out, int* written, const unsigned char* in, int length) {
-    if (!context) throw std::invalid_argument(std::string(__func__) + ": null context");
-    return context->encrypt ? Encrypt(context, out, written, in, length, __func__) : Decrypt(context, out, written, in, length, __func__);
+    LibreSslEvpCipher cipher{};
+    const bool decrypt = Validate(context, out, written, in, length, true, false, cipher, __func__);
+    return decrypt ? Decrypt(context, cipher, out, written, in, length, __func__) : Encrypt(context, cipher, out, written, in, length, __func__);
 }
 
 }

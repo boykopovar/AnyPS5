@@ -190,7 +190,7 @@ template <class T> T RealPartReciprocal(T x, T y) {
     const int iy = Exponent(y);
     if (ix - iy >= Cutoff<T> || std::isinf(x)) return 1 / x;
     if (iy - ix >= Cutoff<T>) return x / y / y;
-    if (ix <= MaxExponent<T> / 2 - Cutoff<T>) return x / (x * x + y * y);
+    if (ix <= MaxExponent<T> / 2 - Cutoff<T> && iy <= MaxExponent<T> / 2 - Cutoff<T>) return x / (x * x + y * y);
     const T scale = std::ldexp(T(1), 1 - ix);
     x *= scale;
     y *= scale;

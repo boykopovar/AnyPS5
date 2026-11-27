@@ -105,7 +105,8 @@ int main() {
         double real;
     };
     for (const Large& large : {Large{1e20, 1.0, 1e-20}, Large{-1e30, -2.0, -1e-30}, Large{-8.048749835924716e+49, -1.0, -1.2424289739216509e-50},
-                               Large{1e300, 1.0, 1e-300}, Large{1.0, 1e150, 1e-300}, Large{1e300, 1e300, 5e-301}}) {
+                               Large{1e300, 1.0, 1e-300}, Large{1.0, 1e150, 1e-300}, Large{1e300, 1e300, 5e-301},
+                               Large{0x1.fffffffffffffp+485, 0x1.fffffffffffffp+511, 1.1113793747425386e-162}}) {
         const __complex__ double hyperbolic = catanh_nid_postfix(Make(large.x, large.y));
         Require(Close(__real__ hyperbolic, large.real) && Close(__imag__ hyperbolic, std::copysign(pi / 2, large.y)));
         const __complex__ double circular = catan_nid_postfix(Make(large.y, large.x));

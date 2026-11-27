@@ -26,9 +26,9 @@ agcbuild_AcbSetFlip_c	diff	the console returns null and writes nothing for these
 agcbuild_AcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
-agcbuild_CbBranch_a	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_CbBranch_b	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_CbBranch_c	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbCondWrite_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbCondWrite_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbCondWrite_c	diff	more than six arguments; the console's stack arguments are not known

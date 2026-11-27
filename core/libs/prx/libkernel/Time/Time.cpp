@@ -558,7 +558,20 @@ static bool ProcessCpuTimeNanos(bool countSystem, std::uint64_t* nanos) {
 
 static constexpr int SLOW_CLOCK_ID = 20;
 
+#ifdef APS5_MQUEUE_TESTING
+static std::atomic<RealtimeClockHookForTesting> g_realtimeClockHookForTesting{nullptr};
+
+void SetRealtimeClockHookForTesting(RealtimeClockHookForTesting hook) {
+    g_realtimeClockHookForTesting.store(hook, std::memory_order_release);
+}
+#endif
+
 static int ReadClock(int clockId, KernelTimespec* tp) {
+#ifdef APS5_MQUEUE_TESTING
+    if (clockId == 0) {
+        if (const auto hook = g_realtimeClockHookForTesting.load(std::memory_order_acquire)) return hook(tp);
+    }
+#endif
     if (clockId == 21) {
         if (ReadClock(2, tp) != 0) return -1;
         tp->tv_nsec -= tp->tv_nsec % 1000;

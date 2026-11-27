@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -32,13 +33,13 @@ void Submit(std::vector<std::uint32_t>& words) {
 }
 
 struct Gate {
-    std::atomic<bool> release{false};
-    ~Gate() { release.store(true, std::memory_order_release); }
+    std::shared_ptr<std::atomic<bool>> release = std::make_shared<std::atomic<bool>>(false);
+    ~Gate() { release->store(true, std::memory_order_release); }
 };
 
 void Hold(Gate& gate, std::uint64_t address, std::size_t bytes) {
-    DrawPipeline::Queue0().Enqueue([&gate] {
-        while (!gate.release.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    DrawPipeline::Queue0().Enqueue([release = gate.release] {
+        while (!release->load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }, {{address, address + bytes}});
 }
 
@@ -79,7 +80,7 @@ int main() {
             std::thread releaser([&] {
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
                 while (DrawPipeline::DrainRequestsByOpcode(0x40) == before && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                gate.release.store(true, std::memory_order_release);
+                gate.release->store(true, std::memory_order_release);
             });
             std::vector<std::uint32_t> words;
             const auto packet = ClockCopy(held);

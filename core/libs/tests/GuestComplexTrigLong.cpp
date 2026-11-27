@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cfloat>
 #include <cmath>
 #include <cstdlib>
 
@@ -17,7 +18,7 @@ __complex__ long double Make(long double real, long double imaginary) {
 }
 
 bool Close(long double value, long double expected) {
-    return std::fabs(value - expected) <= 1e-17L * std::fabs(expected);
+    return std::fabs(value - expected) <= 64 * LDBL_EPSILON * std::fabs(expected);
 }
 
 bool CloseTo(long double value, long double expected, long double tolerance) {
@@ -90,7 +91,7 @@ int main() {
             Require(Close(__imag__ mirrored, std::sinh(2 * x) / denominator));
         }
     }
-    for (const long double x : {6000.0L, 11357.0L, 1e5L, 1e4000L}) {
+    for (const long double x : {6000.0L, 11357.0L, 1e5L, LDBL_MAX}) {
         const __complex__ long double positive = ctanhl_nid_postfix(Make(x, 1.0L));
         Require(__real__ positive == 1.0L && __imag__ positive == 0.0L && !std::signbit(__imag__ positive));
         const __complex__ long double negativeReal = ctanhl_nid_postfix(Make(-x, -1.0L));
@@ -122,8 +123,13 @@ int main() {
         long double y;
         long double real;
     };
-    for (const Large& large : {Large{1e20L, 1.0L, 1e-20L}, Large{-1e30L, -2.0L, -1e-30L}, Large{1e3000L, 1.0L, 1e-3000L},
-                               Large{1.0L, 1e2000L, 1e-4000L}, Large{1e4900L, 1e4900L, 5e-4901L}}) {
+    const long double belowSquareLimit = std::ldexp(1 - LDBL_EPSILON / 2, LDBL_MAX_EXP / 2 - LDBL_MANT_DIG / 2);
+    const long double nearSquareLimit = std::ldexp(1 - LDBL_EPSILON / 2, LDBL_MAX_EXP / 2);
+    for (const Large& large : {Large{1e20L, 1.0L, 1e-20L}, Large{-1e30L, -2.0L, -1e-30L},
+                               Large{belowSquareLimit, nearSquareLimit, belowSquareLimit / nearSquareLimit / nearSquareLimit},
+                               Large{std::ldexp(1.0L, LDBL_MAX_EXP * 3 / 4), 1.0L, std::ldexp(1.0L, -LDBL_MAX_EXP * 3 / 4)},
+                               Large{1.0L, std::ldexp(1.0L, LDBL_MAX_EXP / 2 - 100), std::ldexp(1.0L, 200 - LDBL_MAX_EXP)},
+                               Large{std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, 99 - LDBL_MAX_EXP)}}) {
         const __complex__ long double hyperbolic = catanhl_nid_postfix(Make(large.x, large.y));
         Require(Close(__real__ hyperbolic, large.real) && Close(__imag__ hyperbolic, std::copysign(pi / 2, large.y)));
         const __complex__ long double circular = catanl_nid_postfix(Make(large.y, large.x));
@@ -160,15 +166,17 @@ int main() {
     }
     const __complex__ long double tinyArcsine = casinl_nid_postfix(Make(-0.0L, 1.6822750314810844e-09L));
     Require(__real__ tinyArcsine == 0.0L && std::signbit(__real__ tinyArcsine) && CloseTo(__imag__ tinyArcsine, 1.6822750314810844e-09L, 1e-15L));
-    const long double big = 1e3000L;
+    const long double big = std::ldexp(1.0L, LDBL_MAX_EXP * 3 / 5);
+    const long double huge = std::ldexp(1.0L, LDBL_MAX_EXP * 4 / 5);
+    const long double nearMax = std::ldexp(1.0L, LDBL_MAX_EXP - 100);
     const __complex__ long double largeHyperbolic = casinhl_nid_postfix(Make(big, -big));
     Require(Close(__real__ largeHyperbolic, std::log(2.0L) + std::log(std::hypot(big, big))) && Close(__imag__ largeHyperbolic, -pi / 4));
-    const __complex__ long double largeCosine = cacosl_nid_postfix(Make(0.0L, 1e4000L));
-    Require(Close(__real__ largeCosine, pi / 2) && Close(__imag__ largeCosine, -(std::log(2.0L) + std::log(1e4000L))));
-    const __complex__ long double largeSine = casinl_nid_postfix(Make(-1e4900L, 1.0L));
-    Require(Close(__real__ largeSine, -pi / 2) && Close(__imag__ largeSine, std::log(2.0L) + std::log(1e4900L)));
-    const __complex__ long double largeHyperbolicCosine = cacoshl_nid_postfix(Make(-1e4900L, -1e4900L));
-    Require(Close(__real__ largeHyperbolicCosine, std::log(2.0L) + std::log(std::hypot(1e4900L, 1e4900L))) && Close(__imag__ largeHyperbolicCosine, -3 * pi / 4));
+    const __complex__ long double largeCosine = cacosl_nid_postfix(Make(0.0L, huge));
+    Require(Close(__real__ largeCosine, pi / 2) && Close(__imag__ largeCosine, -(std::log(2.0L) + std::log(huge))));
+    const __complex__ long double largeSine = casinl_nid_postfix(Make(-nearMax, 1.0L));
+    Require(Close(__real__ largeSine, -pi / 2) && Close(__imag__ largeSine, std::log(2.0L) + std::log(nearMax)));
+    const __complex__ long double largeHyperbolicCosine = cacoshl_nid_postfix(Make(-nearMax, -nearMax));
+    Require(Close(__real__ largeHyperbolicCosine, std::log(2.0L) + std::log(std::hypot(nearMax, nearMax))) && Close(__imag__ largeHyperbolicCosine, -3 * pi / 4));
     const __complex__ long double cosineAtOne = cacosl_nid_postfix(Make(1.0L, -0.0L));
     Require(__real__ cosineAtOne == 0.0L && __imag__ cosineAtOne == 0.0L && !std::signbit(__imag__ cosineAtOne));
     const __complex__ long double cosineNan = cacosl_nid_postfix(Make(infinity, nan));

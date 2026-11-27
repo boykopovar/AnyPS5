@@ -148,7 +148,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         return sorted({target["name"] for target in selected} | set(load_test), key=str.casefold)
     return [
         target["name"] for target in selected
-        if changed & host_only.target_reached_sources(target, targets, source_root)
+        if changed & host_only.target_reached_sources(target, targets, source_root, include_product_libraries=True)
     ] + load_test
 
 

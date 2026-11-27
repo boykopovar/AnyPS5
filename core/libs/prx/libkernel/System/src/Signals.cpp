@@ -7,6 +7,7 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/System/include/FaultSignals.hpp"
 #include "prx/libkernel/System/include/TimerSignals.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -44,6 +46,8 @@ constexpr int GuestSigkill = 9;
 constexpr int GuestSigstop = 17;
 constexpr std::uint32_t UnblockableSignals = (1u << (GuestSigkill - 1)) | (1u << (GuestSigstop - 1));
 constexpr int GuestSigalrm = 14;
+constexpr int GuestSigbus = 10;
+constexpr int GuestSigsegv = 11;
 constexpr int GuestSigcont = 19;
 constexpr int SaRestart = 0x2;
 constexpr int SaResethand = 0x4;
@@ -54,6 +58,7 @@ std::atomic<GuestHandler> handlers[MaxSignal + 1]{};
 std::atomic<std::uint32_t> handlerMasks[MaxSignal + 1][4]{};
 std::atomic<int> handlerFlags[MaxSignal + 1]{};
 std::atomic<bool> handlerReset[MaxSignal + 1]{};
+std::atomic<std::uintptr_t> siginfoHandlers[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
 struct ThreadSignals {
     std::atomic<std::uint32_t> blocked[4]{};
@@ -165,6 +170,21 @@ struct QueuedSignal {
     std::int32_t error = 0;
     std::uint64_t ticket = 0;
 };
+
+GuestSiginfo SiginfoOf(int guest, const QueuedSignal& entry) {
+    GuestSiginfo info{};
+    info.signo = guest;
+    info.code = entry.code;
+    info.pid = info.code == GuestSiKernel || info.code == GuestSiTimer || info.code == GuestSiAsyncio ? 0 : getpid_nid_postfix();
+    if (info.code == GuestSiAsyncio) info.value = entry.value;
+    if (info.code == GuestSiTimer) {
+        info.error = entry.error;
+        info.value = entry.value;
+        info.timerid = entry.timer;
+        info.overrun = entry.overrun;
+    }
+    return info;
+}
 
 struct TimerOverrun {
     std::int32_t overrun = 0;
@@ -292,14 +312,43 @@ int NativeSignal(int guest) {
 void ResetToDefault(int guest) {
     handlerReset[guest].store(true);
     handlers[guest].store(nullptr);
+    siginfoHandlers[guest].store(0);
     if (const int native = NativeSignal(guest)) {
         std::signal(native, SIG_DFL);
         if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
     }
 }
-void RunHandler(int guest, GuestHandler handler) {
+constexpr int SsDisable = 4;
+thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
+using GuestInfoHandler = void (APS5_VABI *)(int, void*, UserUcontext*);
+
+GuestSignalSet ContextMask(const UserUcontext& context) {
+    return GuestSignalSet{{context.sigmask[0], context.sigmask[1], context.sigmask[2], context.sigmask[3]}};
+}
+
+enum class InfoReturn { Unchanged, Mask, Context, DeliveryFrame, Uncaptured };
+
+InfoReturn RunInfoHandler(int guest, GuestHandler handler, const QueuedSignal& entry, const GuestSignalSet& interrupted, UserUcontext& context) {
+    GuestSiginfo info = SiginfoOf(guest, entry);
+    volatile bool returned = false;
+    const int captured = getcontext_nid_postfix(&context);
+    if (returned) return InfoReturn::Mask;
+    returned = true;
+    if (captured != 0) return InfoReturn::Uncaptured;
+    std::memcpy(context.sigmask, interrupted.bits, sizeof(context.sigmask));
+    context.stackPointer = alternateStack.sp;
+    context.stackSize = alternateStack.size;
+    context.stackFlags = alternateStack.flags;
+    const UserMcontext delivered = context.mcontext;
+    reinterpret_cast<GuestInfoHandler>(handler)(guest, &info, &context);
+    if (std::memcmp(&context.mcontext, &delivered, sizeof(delivered)) != 0)
+        return context.mcontext.rip == delivered.rip || context.mcontext.rsp == delivered.rsp ? InfoReturn::DeliveryFrame : InfoReturn::Context;
+    return std::memcmp(context.sigmask, interrupted.bits, sizeof(context.sigmask)) == 0 ? InfoReturn::Unchanged : InfoReturn::Mask;
+}
+
+template <typename Call>
+auto HoldDuring(int guest, int flags, Call&& call) {
     auto& self = CurrentSignals();
-    const int flags = handlerFlags[guest].load();
     std::uint32_t mask[4];
     for (int word = 0; word < 4; ++word) mask[word] = handlerMasks[guest][word].load();
     if ((flags & SaNodefer) == 0) mask[SignalWord(guest)] |= SignalBit(guest);
@@ -314,7 +363,7 @@ void RunHandler(int guest, GuestHandler handler) {
         releases[held] = holdReleases[held];
         epochs[held] = static_cast<std::uint32_t>(self.holds[held].fetch_add(1) >> 32);
     }
-    handler(guest);
+    const auto returned = call();
     std::uint32_t replaced[4]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;
@@ -327,6 +376,27 @@ void RunHandler(int guest, GuestHandler handler) {
         target.fetch_and(~(replaced[word] & ~before[word]));
         target.fetch_or(replaced[word] & before[word]);
     }
+    return returned;
+}
+
+std::optional<GuestSignalSet> RunHandler(int guest, GuestHandler handler, int flags, const QueuedSignal& entry = {}, const GuestSignalSet* returnMask = nullptr) {
+    auto& self = CurrentSignals();
+    GuestSignalSet interrupted{};
+    for (int word = 0; word < 4; ++word) interrupted.bits[word] = returnMask != nullptr ? returnMask->bits[word] : BlockedWord(self, word);
+    UserUcontext context{};
+    const InfoReturn returned = HoldDuring(guest, flags, [&] {
+        if ((flags & SaSiginfo) != 0) return RunInfoHandler(guest, handler, entry, interrupted, context);
+        handler(guest);
+        return InfoReturn::Unchanged;
+    });
+    if (returned == InfoReturn::Uncaptured) throw std::runtime_error("signal: capturing the context of an SA_SIGINFO delivery failed");
+    if (returned == InfoReturn::DeliveryFrame) NotImplemented_nid_no_patch("sigreturn: an SA_SIGINFO handler changed uc_mcontext but kept the %rip or %rsp of the delivery point, whose registers are libkernel's and not those of the system call");
+    if (returned == InfoReturn::Context) {
+        SigreturnContext_nid_no_patch(&context);
+        NotImplemented_nid_no_patch("sigreturn: an SA_SIGINFO handler left a context that sigreturn rejects, where FreeBSD's signal trampoline faults on hlt");
+    }
+    if (returned == InfoReturn::Unchanged) return std::nullopt;
+    return ContextMask(context);
 }
 void Dispatch(int native) {
     int guest = 0;
@@ -342,15 +412,25 @@ void Dispatch(int native) {
         return;
     }
     const auto callback = handlers[guest].load();
-    if (reinterpret_cast<std::uintptr_t>(callback) > 1) RunHandler(guest, callback);
+    if (reinterpret_cast<std::uintptr_t>(callback) > 1) RunHandler(guest, callback, handlerFlags[guest].load() & ~SaSiginfo);
+}
+bool CaughtWithInfo(const GuestSigaction& action) {
+    return action.handler > 1 && (action.flags & SaSiginfo) != 0;
 }
 bool Delivered(const GuestSigaction& action) {
-    return action.handler > 1 && (action.flags & SaSiginfo) == 0;
+    return action.handler > 1 && !CaughtWithInfo(action);
 }
 bool Install(int guest, const GuestSigaction& action) {
     handlerReset[guest].store(false);
     for (int word = 0; word < 4; ++word) handlerMasks[guest][word].store(action.mask.bits[word]);
     handlerFlags[guest].store(action.flags);
+    const bool siginfo = action.handler > 1 && (action.flags & SaSiginfo) != 0;
+    siginfoHandlers[guest].store(siginfo ? action.handler : 0);
+    if (siginfo && (guest == GuestSigbus || guest == GuestSigsegv)) {
+        handlers[guest].store(nullptr);
+        InstallSiginfoFaultDelivery();
+        return true;
+    }
     const int native = NativeSignal(guest);
     if (!native) return true;
     const auto previous = handlers[guest].exchange(Delivered(action) ? reinterpret_cast<GuestHandler>(action.handler) : nullptr);
@@ -396,28 +476,29 @@ bool Deliverable(int guest) {
     return NativeSignal(guest) != 0 || CaughtByGuest(guest) || TerminatesWithoutHandler(guest);
 }
 
-bool TakePendingUnblocked(int* guest) {
+bool TakePendingUnblocked(int* guest, QueuedSignal* taken) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
         if (SignalBlocked(candidate) || !Deliverable(candidate)) continue;
-        if (!TakePendingLocked(candidate)) continue;
+        if (!TakePendingLocked(candidate, taken)) continue;
         *guest = candidate;
         return true;
     }
     return false;
 }
 
-bool DeliverPendingSignal(int guest) {
+bool DeliverPendingSignal(int guest, const QueuedSignal& entry, const GuestSignalSet* returnMask = nullptr, std::optional<GuestSignalSet>* contextMask = nullptr) {
     const GuestSigaction action = Disposition(guest);
     if (action.handler == 1) return false;
-    if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("signal: SA_SIGINFO handlers are not delivered");
     if (guest == GuestSigalrm && action.handler == 0) TerminateBySigalrm("a pending SIGALRM was unblocked");
     const int native = NativeSignal(guest);
-    if (native != 0) {
+    if (native != 0 && !CaughtWithInfo(action)) {
         if (std::raise(native) != 0) throw std::runtime_error("signal: delivering the signal to the host failed");
         return action.handler > 1;
     }
     if (action.handler > 1) {
-        RunHandler(guest, reinterpret_cast<GuestHandler>(action.handler));
+        const auto restored = RunHandler(guest, reinterpret_cast<GuestHandler>(action.handler), action.flags, entry, returnMask);
+        if (contextMask != nullptr) *contextMask = restored;
+        else if (restored) sigprocmask_nid_postfix(GuestSigsetmask, &*restored, nullptr);
         return true;
     }
     return false;
@@ -426,8 +507,9 @@ bool DeliverPendingSignal(int guest) {
 bool DeliverUnblockedPending() {
     bool caught = false;
     for (int guest = 1; guest <= MaxSignal; ++guest) {
-        while (!SignalBlocked(guest) && Deliverable(guest) && TakePending(guest)) {
-            if (DeliverPendingSignal(guest)) caught = true;
+        QueuedSignal entry{};
+        while (!SignalBlocked(guest) && Deliverable(guest) && TakePending(guest, &entry)) {
+            if (DeliverPendingSignal(guest, entry)) caught = true;
         }
     }
     return caught;
@@ -456,32 +538,23 @@ int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const Kerne
 }
 
 bool FillSiginfo(GuestSiginfo* info, int guest, const QueuedSignal& entry) {
-    GuestSiginfo local{};
-    local.signo = guest;
-    local.code = entry.code;
-    local.pid = local.code == GuestSiKernel || local.code == GuestSiTimer || local.code == GuestSiAsyncio ? 0 : getpid_nid_postfix();
-    if (local.code == GuestSiAsyncio) local.value = entry.value;
-    if (local.code == GuestSiTimer) {
-        local.error = entry.error;
-        local.value = entry.value;
-        local.timerid = entry.timer;
-        local.overrun = entry.overrun;
-    }
+    const GuestSiginfo local = SiginfoOf(guest, entry);
     return GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
 }
 
-void WaitForDeliverableSignal() {
+void WaitForDeliverableSignal(const GuestSignalSet* returnMask = nullptr, std::optional<GuestSignalSet>* contextMask = nullptr) {
     auto& pending = Pending();
     for (;;) {
         int guest = 0;
+        QueuedSignal entry{};
         {
             std::unique_lock lock(pending.lock);
-            if (!TakePendingUnblocked(&guest)) {
+            if (!TakePendingUnblocked(&guest, &entry)) {
                 pending.changed.Wait(lock);
                 continue;
             }
         }
-        if (DeliverPendingSignal(guest)) return;
+        if (DeliverPendingSignal(guest, entry, returnMask, contextMask)) return;
     }
 }
 
@@ -837,9 +910,7 @@ extern "C" void TakeValueSignal_nid_no_patch(int guest, std::uint64_t ticket) {
 
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);
 namespace {
-constexpr int SsDisable = 4;
 constexpr std::size_t MinSignalStackSize = 2048;
-thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
 }
 
 namespace {
@@ -888,6 +959,33 @@ int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previo
 
 }
 
+bool SiginfoFaultHandlerInstalled(int guest) {
+    return guest >= 1 && guest <= MaxSignal && siginfoHandlers[guest].load() > 1 && !SignalBlocked(guest);
+}
+
+void RunSiginfoFaultHandler(int guest, std::int32_t code, std::uintptr_t address, std::uint32_t trap, void* ucontext) {
+    using SiginfoHandler = void (APS5_VABI *)(int, GuestSiginfo*, void*);
+    const auto handler = reinterpret_cast<SiginfoHandler>(siginfoHandlers[guest].load());
+    if (reinterpret_cast<std::uintptr_t>(handler) <= 1) return;
+    GuestSiginfo info{};
+    info.signo = guest;
+    info.code = code;
+    info.address = address;
+    info.timerid = static_cast<std::int32_t>(trap);
+    auto& context = *static_cast<UserUcontext*>(ucontext);
+    auto& self = CurrentSignals();
+    GuestSignalSet interrupted{};
+    for (int word = 0; word < 4; ++word) interrupted.bits[word] = BlockedWord(self, word);
+    std::memcpy(context.sigmask, interrupted.bits, sizeof(context.sigmask));
+    HoldDuring(guest, handlerFlags[guest].load(), [&] {
+        handler(guest, &info, ucontext);
+        return 0;
+    });
+    if (std::memcmp(context.sigmask, interrupted.bits, sizeof(context.sigmask)) == 0) return;
+    const GuestSignalSet restored = ContextMask(context);
+    sigprocmask_nid_postfix(GuestSigsetmask, &restored, nullptr);
+}
+
 extern "C" int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet) {
     bool caught = false;
     ChangeBlockedMask(GuestSigsetmask, set, previousSet, true, &caught);
@@ -934,7 +1032,6 @@ static int RaiseWithCode(int guest, std::int32_t code) {
     if (guest == 0) return 0;
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
-    if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
     KqueueSignalSent(guest);
     if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
     if (SignalBlocked(guest)) {
@@ -943,14 +1040,14 @@ static int RaiseWithCode(int guest, std::int32_t code) {
     }
     if (action.handler == 0 && IgnoredByDefault(guest)) return 0;
     const int native = NativeSignal(guest);
-    if (native != 0) {
+    if (native != 0 && !CaughtWithInfo(action)) {
         const int result = std::raise(native);
         if (result) { *__error_nid_postfix() = 22; return -1; }
         DeliverUnblockedPending();
         return 0;
     }
     if (!CaughtByGuest(guest)) { *__error_nid_postfix() = 22; return -1; }
-    DeliverPendingSignal(guest);
+    DeliverPendingSignal(guest, QueuedSignal{code});
     DeliverUnblockedPending();
     return 0;
 }
@@ -1094,15 +1191,25 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
         return -1;
     }
     GuestSignalSet previous{{0, 0, 0, 0}};
+    GuestSignalSet interrupted{};
+    auto& self = CurrentSignals();
     {
-        auto& self = CurrentSignals();
         RegisterSignalThread(self);
         std::lock_guard lock(registration);
         previous.bits[0] = self.blocked[0].exchange(requested.bits[0] & ~UnblockableSignals);
         for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(requested.bits[word]);
+        for (int word = 0; word < 4; ++word) interrupted.bits[word] = previous.bits[word] | HeldWord(self, word);
     }
-    WaitForDeliverableSignal();
-    ChangeBlockedMask(GuestSigsetmask, &previous, nullptr, false);
+    std::optional<GuestSignalSet> contextMask;
+    try {
+        WaitForDeliverableSignal(&interrupted, &contextMask);
+    } catch (...) {
+        std::lock_guard lock(registration);
+        for (int word = 0; word < 4; ++word) self.blocked[word].store(previous.bits[word]);
+        throw;
+    }
+    if (contextMask) sigprocmask_nid_postfix(GuestSigsetmask, &*contextMask, nullptr);
+    else ChangeBlockedMask(GuestSigsetmask, &previous, nullptr, false);
 
     *__error_nid_postfix() = GuestEintr;
     return -1;

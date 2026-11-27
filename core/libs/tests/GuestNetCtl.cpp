@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
 #include <windows.h>
 #else
 #include <arpa/inet.h>
@@ -375,6 +376,9 @@ TestSocket OpenTestUdpSocket(sockaddr_in& bound) {
     local.sin_port = 0;
     Require(bind(descriptor, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == 0);
 #ifdef _WIN32
+    BOOL reportUnreachable = FALSE;
+    DWORD returned = 0;
+    Require(WSAIoctl(descriptor, SIO_UDP_CONNRESET, &reportUnreachable, sizeof(reportUnreachable), nullptr, 0, &returned, nullptr, nullptr) == 0);
     int length = sizeof(bound);
 #else
     socklen_t length = sizeof(bound);

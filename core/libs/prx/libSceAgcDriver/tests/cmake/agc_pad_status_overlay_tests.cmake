@@ -64,6 +64,8 @@ set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/PerformanceOverlay.cpp APP
 if(BUILD_TESTING)
     set_target_properties(agc_performance_overlay_statistics_tests agc_keyboard_overlay_tests agc_pad_status_overlay_tests agc_performance_overlay_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_performance_overlay_statistics COMMAND agc_performance_overlay_statistics_tests)
+    add_test(NAME agc_performance_overlay_statistics_configured_trace_count COMMAND agc_performance_overlay_statistics_tests configured-trace-count)
+    set_tests_properties(agc_performance_overlay_statistics_configured_trace_count PROPERTIES ENVIRONMENT "APS5_TRACE_SUMMARY_EVERY=3600" TIMEOUT 30)
     add_test(NAME agc_keyboard_overlay COMMAND agc_keyboard_overlay_tests)
     add_test(NAME agc_pad_status_overlay COMMAND agc_pad_status_overlay_tests)
     add_test(NAME agc_pad_status_overlay_shared COMMAND agc_pad_status_overlay_tests default)
@@ -88,7 +90,7 @@ if(BUILD_TESTING)
         set_tests_properties(agc_performance_overlay PROPERTIES TIMEOUT 120)
     endif()
     if(WIN32)
-        set_tests_properties(agc_performance_overlay_statistics agc_keyboard_overlay agc_pad_status_overlay agc_performance_overlay agc_performance_overlay_device_selection agc_performance_overlay_device_selection_cpu PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_performance_overlay_statistics agc_performance_overlay_statistics_configured_trace_count agc_keyboard_overlay agc_pad_status_overlay agc_performance_overlay agc_performance_overlay_device_selection agc_performance_overlay_device_selection_cpu PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

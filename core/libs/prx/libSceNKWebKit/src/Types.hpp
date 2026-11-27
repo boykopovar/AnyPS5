@@ -257,6 +257,7 @@ public:
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
     std::uint8_t htmlInputElementAutoFillButtonType = 0;
     std::uint8_t htmlInputElementLastAutoFillButtonType = 0;
+    RectValue elementBounds{{0.0, 0.0}, {0.0, 0.0}};
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
