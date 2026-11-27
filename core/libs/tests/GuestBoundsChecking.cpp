@@ -306,6 +306,24 @@ void CheckWcstok() {
         return wcstok_s_nid_postfix(writableText.data(), &writableRemaining, delimiters.c_str(), roContext);
     }, "wcstok_s accepted a read-only context pointer");
     Require(writableText[2] == ',' && writableRemaining == writableText.size() + 1, "wcstok_s modified string or remaining on read-only context failure");
+
+    pages.ProtectReadWrite();
+    *roRemaining = 2;
+    pages.ProtectReadOnly();
+    auto missingDelimText = Wide("abcd");
+    writableContext = nullptr;
+    checkBadPointer([&] {
+        return wcstok_s_nid_postfix(missingDelimText.data(), roRemaining, delimiters.c_str(), &writableContext);
+    }, "wcstok_s accepted a read-only remaining pointer on missing delimiter");
+    Require(writableContext == nullptr && *roRemaining == 2, "wcstok_s mutated state on read-only missing-delimiter failure");
+
+    auto duplicateText = Wide("ab,c;d");
+    const auto repeatedDelims = Wide((std::string(200, ',') + std::string(100, ';')).c_str());
+    writableRemaining = duplicateText.size() + 1;
+    writableContext = nullptr;
+    token = wcstok_s_nid_postfix(duplicateText.data(), &writableRemaining, repeatedDelims.c_str(), &writableContext);
+    Require(token == duplicateText.data() && token[0] == 'a' && token[1] == 'b' && token[2] == 0 && writableRemaining == 4 && writableContext == duplicateText.data() + 3,
+        "wcstok_s failed with repeated duplicate delimiters");
 }
 
 void CheckMemset() {

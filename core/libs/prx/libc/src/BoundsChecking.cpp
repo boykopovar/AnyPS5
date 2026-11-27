@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstddef>
@@ -10,6 +11,7 @@
 
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
@@ -58,7 +60,11 @@ bool CopyGuestOutBytes(void* destination, const void* source, std::size_t bytes)
 
 bool GuestMemoryWritable(void* address, std::size_t bytes) {
     const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(address, bytes);
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(address, bytes);
+        ok = guard.Open() && GuestWritable_nid_no_patch(address, bytes);
+    }
     errno = savedErrno;
     return ok;
 }
@@ -118,17 +124,15 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
         violation("wcstok_s: missing token", guestEinval);
         return nullptr;
     }
-    std::vector<std::uint16_t> delimiterSet;
+    std::array<std::uint64_t, 1024> delimiterBits{};
     for (std::size_t index = 0;; ++index) {
         std::uint16_t ch = 0;
         if (!CopyGuestInBytes(&ch, delimiters + index, sizeof(ch))) return badArgument();
         if (ch == 0) break;
-        delimiterSet.push_back(ch);
+        delimiterBits[ch >> 6] |= std::uint64_t{1} << (ch & 63);
     }
     const auto isDelimiter = [&](std::uint16_t value) {
-        for (const std::uint16_t delimiter : delimiterSet)
-            if (delimiter == value) return true;
-        return false;
+        return (delimiterBits[value >> 6] & (std::uint64_t{1} << (value & 63))) != 0;
     };
     std::size_t skipped = 0;
     std::uint16_t current = 0;
@@ -150,6 +154,7 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
     std::size_t length = 0;
     while (current != 0 && !isDelimiter(current)) {
         if (++length == left) {
+            if (!GuestMemoryWritable(remaining, sizeof(*remaining))) return badArgument();
             if (!CopyGuestOutBytes(remaining, &left, sizeof(left))) return badArgument();
             violation("wcstok_s: missing delimiter", guestEinval);
             return nullptr;
