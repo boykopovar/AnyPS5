@@ -714,10 +714,10 @@ Which milestones a run records depends on the system:
 | System | `loaded`, `started` | `firstDraw`, `firstPresent` | `stage`, frames, frame rate |
 |---|---|---|---|
 | Linux | not recorded | recorded | recorded |
-| Windows | not recorded | recorded | recorded |
+| Windows | recorded with a recent relinker and a runtime that supports the report hook | recorded | recorded |
 | macOS | recorded | recorded | recorded |
 
-A milestone that is missing from the report is either one the run did not reach or one this system does not record: on Linux and Windows `loaded` and `started` are never recorded, so their absence says nothing, and `stage` and `framesPresented` say how far the run was seen to get. The Windows and macOS code has not been run.
+A missing milestone can mean the run ended earlier or that the system or conversion lacks support for it. Linux and older Windows conversions can reach `first-draw` or `presents` with no `loaded` or `started`. Use `stage` and `framesPresented` to see how far the run was observed to get.
 
 To share a run, attach `anyps5-report.json` to the title's discussion. The runtime filters user names, home folders, host names, addresses and account numbers out of the report and never writes save data. That is a filter, not a guarantee, so read the file before you share it.
 
