@@ -1,4 +1,5 @@
 import copy
+import errno
 import gzip
 import hashlib
 import json
@@ -73,6 +74,31 @@ class WindowParsing(unittest.TestCase):
 
 
 class CaptureEnvironment(unittest.TestCase):
+    def test_pad_recording_is_removed_while_replay_is_retained(self):
+        for inherited, recipe in (({"APS5_PAD_RECORD": "out.pad"}, {}), ({}, {"aps5_pad_record": "out.pad"})):
+            with self.subTest(inherited=inherited, recipe=recipe):
+                child, removed = performance_capture.clean_environment(
+                    inherited, {**recipe, "APS5_PAD_REPLAY": "scene.pad"}, ".", "seconds", (0, 3))
+                self.assertEqual(set(removed), set(inherited) | set(recipe))
+                self.assertTrue(child.keys().isdisjoint(removed))
+                self.assertEqual(child["APS5_PAD_REPLAY"], "scene.pad")
+
+    def test_logging_overrides_are_removed_from_inherited_and_recipe_settings(self):
+        base = {"APS5_LOG_SYNC": "0", "APS5_SAVEDATA_TRACE": "1"}
+        recipe = {"aps5_log_timestamps": "1", "aps5_log_sync": "1"}
+        environment, removed = performance_capture.clean_environment(base, recipe, ".", "seconds", (30, 10))
+        self.assertEqual(set(removed), set(base) | set(recipe))
+        self.assertTrue(environment.keys().isdisjoint(removed))
+        self.assertEqual(environment["APS5_TRACE_SECONDS"], "30:10")
+
+    def test_videoout_telemetry_is_removed_from_inherited_and_recipe_settings(self):
+        base = {"APS5_VIDEOOUT_TELEMETRY_DIR": "diagnostics"}
+        recipe = {"aps5_videoout_flip_timing": "601:600"}
+        environment, removed = performance_capture.clean_environment(base, recipe, ".", "seconds", (30, 10))
+        self.assertEqual(set(removed), set(base) | set(recipe))
+        self.assertTrue(environment.keys().isdisjoint(removed))
+        self.assertEqual(environment["APS5_TRACE_SECONDS"], "30:10")
+
     def test_environment_isolated(self):
         base = {"PATH": "runtime", "APS5_PROFILE_GPU": "0", "APS5_TRACE_SECONDS": "1:2",
                 "APS5_DUMP_FRAMES": "0", "APS5_SAMPLE_WORKER": "1", "aps5_trace_events": "100",
@@ -105,6 +131,32 @@ class CaptureEnvironment(unittest.TestCase):
 
 
 class CompletedCapture(CaptureFixture):
+    def test_scripted_pad_performance_phase_accepts_launcher_recording(self):
+        import title_run
+
+        child, _ = performance_capture.clean_environment({}, {}, self.directory, "frames", (3, 2))
+        session = mock.Mock()
+        session.process.pid = 42
+        session.images = {}
+        session.exit_code.return_value = 0
+        session.alive.side_effect = [True, False]
+        pad = {"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}
+
+        def launch(command, work, env, *args, **kwargs):
+            recording = Path(env["APS5_PAD_RECORD"])
+            self.assertEqual(recording, self.directory / "pad-record.txt")
+            recording.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+            self.summary["env"].update(env)
+            self.write_summary()
+            self.write_trace()
+            return session
+
+        capture = (self.directory, "frames", (3, 2), "PPSA00001", "01.000.000")
+        with mock.patch.object(title_run, "Session", side_effect=launch):
+            result = title_run.performance_phase(self.directory / "app", self.directory, child, mock.Mock(), 5, pad, capture)
+        self.assertEqual(result["state"], "complete", result)
+        self.assertIsNotNone(result["pad_queued_s"])
+
     def test_missing_and_partial_pending(self):
         self.assertEqual(self.capture_fixture()["state"], "pending")
         raw = self.write_summary()
@@ -170,13 +222,18 @@ class CompletedCapture(CaptureFixture):
 class InvalidSummaries(CaptureFixture):
     def test_instrumentation_rejected(self):
         self.write_trace()
-        for name in ("APS5_PROFILE_GPU", "APS5_TRACE_BENCH", "APS5_TRACE_SUMMARY_EVERY", "APS5_DUMP_FRAMES",
-                     "APS5_SAMPLE_WORKER", "APS5_FRAME_CAPTURE", "APS5_PIPELINE_STATS", "ANYPS5_LOG_FILE"):
+        for name, value in (("APS5_PROFILE_GPU", "0"), ("APS5_TRACE_BENCH", "0"), ("APS5_TRACE_SUMMARY_EVERY", "0"),
+                            ("APS5_DUMP_FRAMES", "0"), ("APS5_SAMPLE_WORKER", "0"), ("APS5_FRAME_CAPTURE", "0"),
+                            ("APS5_PIPELINE_STATS", "0"), ("ANYPS5_LOG_FILE", "0"),
+                            ("APS5_LOG_SYNC", "0"), ("APS5_LOG_TIMESTAMPS", "1"), ("APS5_SAVEDATA_TRACE", "1"),
+                            ("APS5_VIDEOOUT_TELEMETRY_DIR", "<path>"), ("APS5_VIDEOOUT_FLIP_TIMING", "601:600")):
             with self.subTest(name=name):
                 summary = copy.deepcopy(self.summary)
-                summary["env"][name] = "0"
+                summary["env"][name] = value
                 self.write_summary(summary)
-                self.assertEqual(self.capture_fixture()["state"], "invalid")
+                result = self.capture_fixture()
+                self.assertEqual(result["state"], "invalid")
+                self.assertIn(name, result["reason"])
 
     def test_invalid_summary(self):
         self.write_trace()
@@ -257,6 +314,10 @@ class BoundsAndLinks(CaptureFixture):
         self.write_trace()
         original = self.directory / "original"
         original.write_bytes(self.trace_path.read_bytes())
+        unsupported = {
+            getattr(errno, name, None)
+            for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+        } - {None}
         for symbolic in (False, True):
             with self.subTest(symbolic=symbolic):
                 self.trace_path.unlink(missing_ok=True)
@@ -265,8 +326,8 @@ class BoundsAndLinks(CaptureFixture):
                         self.trace_path.symlink_to(original)
                     else:
                         os.link(original, self.trace_path)
-                except (NotImplementedError, OSError):
-                    if symbolic:
+                except (NotImplementedError, OSError) as error:
+                    if symbolic or isinstance(error, NotImplementedError) or error.errno in unsupported or getattr(error, "winerror", None) in (1, 5):
                         continue
                     raise
                 self.assertEqual(self.capture_fixture()["state"], "invalid")
@@ -294,6 +355,21 @@ class LossEvidence(CaptureFixture):
                     expected = {"events": "unknown", "totals": "unknown"}
                 self.assertEqual(result["completeness"], expected)
                 self.assertTrue(result["warnings"])
+
+    def test_loss_counts_agree_for_threads_with_the_same_name(self):
+        self.trace["traceEvents"].append({"name": "thread_name", "ph": "M", "ts": 0, "pid": 42, "tid": 2,
+                                          "args": {"name": "presenter"}})
+        for tid, lost in ((1, 2), (2, 3)):
+            self.trace["traceEvents"].append({"name": "trace buffer full", "ph": "i", "ts": 10000,
+                                              "pid": 42, "tid": tid, "args": {"events_lost": lost}})
+        self.write_trace(self.trace)
+        self.summary["trace_dropped"] = True
+        for name, count, expected in (("presenter", 5, "complete"), ("presenter", 2, "invalid"),
+                                      ("worker", 5, "invalid"), ("presenter", 0, "invalid")):
+            with self.subTest(name=name, count=count):
+                self.summary["trace_dropped_threads"] = {name: {"events_lost": count, "totals_full": False}}
+                self.write_summary(self.summary)
+                self.assertEqual(self.capture_fixture()["state"], expected)
 
 
 if __name__ == "__main__":

@@ -131,7 +131,7 @@ void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std:
         if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && address >= header.MappedAddress && address - header.MappedAddress < header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress))
             return;
     const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
-    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : (flags & PF_W) != 0 ? "a writable" : "a") + " PT_LOAD segment");
 }
 
 std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, const std::size_t entry) {
@@ -193,7 +193,7 @@ std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vecto
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
         const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
-        if (load.FileSize == 0 || (congruent && prefix == 0))
+        if ((load.FileSize == 0 || congruent) && prefix == 0)
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -210,15 +210,17 @@ std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vecto
         const auto mapped = load.Offset - prefix;
         bool differs = !congruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
-            differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
+            differs = covered[index] && (buf[static_cast<std::size_t>(mapped) + index] != image[index] || (load.FileSize == 0 && image[index] != 0));
         if (!differs)
             continue;
         Io::AlignBuffer(buf, static_cast<std::size_t>(kDefaultLoadAlignment));
         buf.insert(buf.end(), image.begin(), image.end());
         const auto offset = static_cast<std::uint64_t>(buf.size());
-        buf.resize(static_cast<std::size_t>(offset + load.FileSize));
+        const auto fileSize = load.FileSize == 0 ? std::min(load.MemorySize, kDefaultLoadAlignment - prefix) : load.FileSize;
+        buf.resize(static_cast<std::size_t>(offset + fileSize));
         std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
         load.Offset = offset;
+        load.FileSize = fileSize;
         if (load.Alignment > kDefaultLoadAlignment && (load.Alignment & (load.Alignment - 1)) == 0)
             lowered = std::max(lowered, load.Alignment);
         load.Alignment = std::min(load.Alignment, kDefaultLoadAlignment);
@@ -450,9 +452,9 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
     for (const auto& [relocationTable, name] : {std::pair{&dynSection.RelaData, "RELA r_offset"}, std::pair{&dynSection.RelaPltData, "JMPREL r_offset"}})
         for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize)
-            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), 0, name);
+            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), PF_W, name);
     if (!dynSection.RelaPltData.empty())
-        RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, 0, "DT_PLTGOT");
+        RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, lazyBinding ? PF_W : 0U, "DT_PLTGOT");
     const auto traced = _traceImports ? TracedImports(dynSection) : std::vector<TracedImport>{};
     const std::uint64_t base = _fixedBase.value_or(0);
     const auto address = [this, base](const std::uint64_t vaddr) {
@@ -522,6 +524,47 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
     const auto dynSymOff = static_cast<std::uint64_t>(buf.size());
     auto symbols = table(dynSection.DynSymData, false);
+    RequireWholeEntries(symbols, kSymEntrySize, "Dynamic symbol table");
+    if ((_traceImports || mainStackEntry) && symbols.empty())
+        symbols.resize(kSymEntrySize, 0);
+    const auto inputSymbolCount = static_cast<std::uint32_t>(symbols.size() / kSymEntrySize);
+    std::vector<std::uint32_t> definedSymbols;
+    for (std::uint32_t index = 1; index < inputSymbolCount; ++index) {
+        if (Io::ReadU16(symbols, static_cast<std::size_t>(index) * kSymEntrySize + 6) != SHN_UNDEF)
+            definedSymbols.push_back(index);
+    }
+    const auto numDefined = static_cast<std::uint32_t>(definedSymbols.size());
+    const std::uint32_t firstDefined = definedSymbols.empty() ? inputSymbolCount : definedSymbols.front();
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> symHashes;
+    std::vector<std::uint8_t> sortedSymbols;
+    if (!definedSymbols.empty() && firstDefined + numDefined != inputSymbolCount)
+        throw Domain::RelinkerException("Defined dynamic symbols are not contiguous");
+    for (const auto* relocationTable : {&dynSection.RelaData, &dynSection.RelaPltData}) {
+        for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize) {
+            const auto r_sym = Io::ReadU64(*relocationTable, entry + 8) >> 32;
+            if (r_sym != 0 && r_sym >= inputSymbolCount)
+                throw Domain::RelinkerException("Invalid import symbol index", Io::ReadU64(*relocationTable, entry));
+            if (r_sym >= firstDefined && r_sym < firstDefined + numDefined)
+                throw Domain::RelinkerException("Relocation references a defined dynamic symbol");
+        }
+    }
+    if (!definedSymbols.empty()) {
+        symHashes.reserve(numDefined);
+        for (const std::uint32_t symIdx : definedSymbols) {
+            const auto offset = Io::ReadU32(symbols, static_cast<std::size_t>(symIdx) * kSymEntrySize);
+            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
+            symHashes.emplace_back(symIdx, GnuHash(name));
+        }
+        std::stable_sort(symHashes.begin(), symHashes.end(), [numDefined](const auto& a, const auto& b) {
+            return (a.second % numDefined) < (b.second % numDefined);
+        });
+        sortedSymbols.reserve(static_cast<std::size_t>(numDefined) * kSymEntrySize);
+        for (const auto& [origIdx, hash] : symHashes) {
+            const auto* src = symbols.data() + static_cast<std::size_t>(origIdx) * kSymEntrySize;
+            sortedSymbols.insert(sortedSymbols.end(), src, src + kSymEntrySize);
+        }
+        symbols.resize(static_cast<std::size_t>(firstDefined) * kSymEntrySize);
+    }
     const auto traceSymbol = symbols.size() / kSymEntrySize;
     if (_traceImports) {
         Io::AppendU32(symbols, static_cast<std::uint32_t>(traceSymbolStrOff));
@@ -533,59 +576,20 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     }
     std::uint64_t mainStackSymbol = 0;
     if (mainStackEntry) {
-        RequireWholeEntries(symbols, kSymEntrySize, "Dynamic symbol table");
-        if (symbols.empty())
-            symbols.resize(kSymEntrySize, 0);
         mainStackSymbol = symbols.size() / kSymEntrySize;
         const auto mainStackSymbolOff = symbols.size();
         symbols.resize(symbols.size() + kSymEntrySize, 0);
         Io::WriteU32(symbols, mainStackSymbolOff, static_cast<std::uint32_t>(mainStackNameOff));
         symbols[mainStackSymbolOff + 4] = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
     }
+    const auto symoffset = static_cast<std::uint32_t>(symbols.size() / kSymEntrySize);
+    symbols.insert(symbols.end(), sortedSymbols.begin(), sortedSymbols.end());
     for (std::uint8_t b : symbols)
         buf.push_back(b);
     alignBuf(buf, kDynSymAlignment);
 
     const auto hashOff = static_cast<std::uint64_t>(buf.size());
     const auto symbolCount = static_cast<std::uint32_t>(symbols.size() / kSymEntrySize);
-    std::vector<std::uint32_t> definedSymbols;
-    for (std::uint32_t index = 1; index < symbolCount; ++index) {
-        if (Io::ReadU16(symbols, index * kSymEntrySize + 6) != SHN_UNDEF)
-            definedSymbols.push_back(index);
-    }
-    const auto numDefined = static_cast<std::uint32_t>(definedSymbols.size());
-    const std::uint32_t symoffset = definedSymbols.empty() ? symbolCount : definedSymbols.front();
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> symHashes;
-    if (!definedSymbols.empty()) {
-        for (std::size_t i = 1; i < definedSymbols.size(); ++i) {
-            if (definedSymbols[i] != definedSymbols[i - 1] + 1)
-                throw Domain::RelinkerException("Defined dynamic symbols are not contiguous");
-        }
-        for (const auto* relocationTable : {&dynSection.RelaData, &dynSection.RelaPltData}) {
-            for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize) {
-                const auto r_sym = static_cast<std::uint32_t>(Io::ReadU64(*relocationTable, entry + 8) >> 32);
-                if (r_sym >= symoffset && r_sym < symoffset + numDefined)
-                    throw Domain::RelinkerException("Relocation references a defined dynamic symbol");
-            }
-        }
-        symHashes.reserve(numDefined);
-        for (const std::uint32_t symIdx : definedSymbols) {
-            const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
-            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
-            symHashes.emplace_back(symIdx, GnuHash(name));
-        }
-        std::stable_sort(symHashes.begin(), symHashes.end(), [numDefined](const auto& a, const auto& b) {
-            return (a.second % numDefined) < (b.second % numDefined);
-        });
-        std::vector<std::uint8_t> sortedSymbols;
-        sortedSymbols.reserve(numDefined * kSymEntrySize);
-        for (const auto& [origIdx, hash] : symHashes) {
-            const auto* src = symbols.data() + origIdx * kSymEntrySize;
-            sortedSymbols.insert(sortedSymbols.end(), src, src + kSymEntrySize);
-        }
-        std::copy(sortedSymbols.begin(), sortedSymbols.end(), symbols.begin() + static_cast<std::ptrdiff_t>(symoffset * kSymEntrySize));
-        std::copy(sortedSymbols.begin(), sortedSymbols.end(), buf.begin() + static_cast<std::ptrdiff_t>(dynSymOff + symoffset * kSymEntrySize));
-    }
     if (definedSymbols.empty()) {
         Io::AppendU32(buf, 1);
         Io::AppendU32(buf, symbolCount);

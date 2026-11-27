@@ -1,9 +1,20 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -124,10 +135,82 @@ void TestAriaRoleToWebCoreRole() {
     Require(RoleFromUtf16(u"b\u00fctton") == AccessibilityRole::Unknown);
 }
 
+bool Rejected(const NKWebKit::WtfAbi::String* value) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        (void)_ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreRoleERKN3WTF6StringE(value);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    return rejected && errno == 71;
+}
+
+unsigned char* MapGuardedPage() {
+#ifdef _WIN32
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + 4096, 4096, PAGE_NOACCESS, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* pages = static_cast<unsigned char*>(mapped);
+    Require(mprotect(pages + 4096, 4096, PROT_NONE) == 0);
+#endif
+    return pages;
+}
+
+void UnmapGuardedPage(unsigned char* pages) {
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 8192) == 0);
+#endif
+}
+
+void TestGuestPointers() {
+    Require(Rejected(reinterpret_cast<const NKWebKit::WtfAbi::String*>(std::uintptr_t{0x10})));
+    {
+        NKWebKit::WtfAbi::String unmapped(reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(std::uintptr_t{0x10}));
+        Require(Rejected(&unmapped));
+        unmapped.impl = nullptr;
+    }
+    StackString str{INT32_MAX, reinterpret_cast<const void*>(std::uintptr_t{0x10}), kIs8BitFlag};
+    Require(Rejected(&str.value));
+    str.impl.hashAndFlags = 0;
+    Require(Rejected(&str.value));
+
+    unsigned char* pages = MapGuardedPage();
+    std::memset(pages, ' ', 4096);
+    str.impl.data = pages;
+    str.impl.length = 8192;
+    str.impl.hashAndFlags = kIs8BitFlag;
+    Require(Rejected(&str.value));
+
+    std::memcpy(pages + 4096 - 7, "button ", 7);
+    str.impl.data = pages + 4096 - 7;
+    str.impl.length = 100;
+    Require(_ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreRoleERKN3WTF6StringE(&str.value) == AccessibilityRole::Button);
+    const char16_t wide[] = u"menu ";
+    std::memcpy(pages + 4096 - 10, wide, 10);
+    str.impl.data = pages + 4096 - 10;
+    str.impl.hashAndFlags = 0;
+    Require(_ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreRoleERKN3WTF6StringE(&str.value) == AccessibilityRole::Menu);
+    UnmapGuardedPage(pages);
+
+    const std::string longToken = std::string(5000, 'a') + " treeitem";
+    Require(RoleFromAscii(longToken) == AccessibilityRole::TreeItem);
+    const std::u16string longWide = std::u16string(5000, u'b') + u"button" + std::u16string(5000, u' ') + u"tree";
+    Require(RoleFromUtf16(longWide) == AccessibilityRole::Tree);
+    std::puts("ariaRoleToWebCoreRole: unreadable strings throw and keep errno, reads stop at the first role");
+}
+
 }  // namespace
 
 int main() {
     TestIsARIAInputAndControl();
     TestAriaRoleToWebCoreRole();
+    TestGuestPointers();
     return 0;
 }

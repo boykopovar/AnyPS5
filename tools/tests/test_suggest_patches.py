@@ -127,6 +127,39 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_not_called()
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_same_target_is_hashed_once_per_run(self, run):
+        self.write_index([self.entry, self.entry])
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        with patch.object(suggest_patches, "sha256", wraps=suggest_patches.sha256) as hashing:
+            self.assertEqual(self.advise("--list-verified"), 0)
+            self.assertEqual(hashing.call_count, 1)
+            self.assertEqual(self.advise("--list-verified"), 0)
+            self.assertEqual(hashing.call_count, 2)
+        self.assertEqual(run.call_count, 4)
+
+    def test_changed_target_invalidates_cached_hash(self):
+        cache = {}
+        first = suggest_patches.cached_sha256(self.module, cache)
+        stamp = self.module.stat().st_mtime_ns
+        self.module.write_bytes(b"module version two")
+        os.utime(self.module, ns=(stamp + 1000000000, stamp + 1000000000))
+        second = suggest_patches.cached_sha256(self.module, cache)
+        self.assertNotEqual(first, second)
+        self.assertEqual(second, hashlib.sha256(self.module.read_bytes()).hexdigest())
+
+    def test_target_changed_during_hash_is_rejected(self):
+        def changing_hash(path):
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            stamp = path.stat().st_mtime_ns
+            path.write_bytes(b"module version two")
+            os.utime(path, ns=(stamp + 1000000000, stamp + 1000000000))
+            return digest
+
+        with patch.object(suggest_patches, "sha256", side_effect=changing_hash):
+            with self.assertRaisesRegex(ValueError, "file changed during hashing"):
+                suggest_patches.cached_sha256(self.module, {})
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_relinker_rejection_is_not_a_recommendation(self, run):
         run.return_value.returncode = 1
         run.return_value.stdout = "Mismatch: patch\nVerified 1 patches: 0 ok, 0 not-checked, 1 mismatch\n"
@@ -267,6 +300,24 @@ class PatchAdvisorTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), "")
                 self.assertIn("duplicate JSON key", errors.getvalue())
                 run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_param_json(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        self.param.write_text('{"titleId": "TEST00001", "contentVersion": "01.000.000"}', encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_catalog_index(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        (self.catalog / "index.json").write_text(json.dumps({"format": 1, "entries": [self.entry]}), encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_byte_order_mark_is_accepted_in_patch_file(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        (self.catalog / "patch.toml").write_text('format = 1\n[[patch]]\ntarget = "Media/Modules/module.prx"\nva = 0x1000\nexpected = "00"\nvalue = "01"\n', encoding="utf-8-sig")
+        self.assertEqual(self.advise(), 0)
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
@@ -804,7 +855,7 @@ class ValidateMetadataTests(unittest.TestCase):
 class ValidateEntryTests(unittest.TestCase):
     DIGEST = "A" * 64
 
-    def setup(self, directory, patch_text='[[patch]]\ntarget = "eboot.bin"\n'):
+    def setup(self, directory, patch_text='format = 1\n[[patch]]\ntarget = "eboot.bin"\n'):
         (Path(directory) / "p.toml").write_text(patch_text, encoding="utf-8")
         return {"titleId": "PPSA00001", "contentVersion": "01.00", "patch": "p.toml", "targets": {"eboot.bin": self.DIGEST}}
 
@@ -816,6 +867,13 @@ class ValidateEntryTests(unittest.TestCase):
             self.assertEqual(patch, (Path(directory) / "p.toml").resolve())
             self.assertEqual(targets, {"eboot.bin": "a" * 64})
             self.assertEqual(metadata, {"name": "Name"})
+
+    def test_patch_format_is_checked_before_relinker_verification(self):
+        for prefix in ("", "format = 2\n", "format = true\n"):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as directory:
+                entry = self.setup(directory, prefix + '[[patch]]\ntarget = "eboot.bin"\n')
+                with self.assertRaisesRegex(ValueError, "patch file must have format 1"):
+                    suggest_patches.validate_entry(Path(directory), entry)
 
     def test_missing_or_unknown_fields_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

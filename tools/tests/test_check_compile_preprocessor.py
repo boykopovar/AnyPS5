@@ -79,7 +79,10 @@ class CheckCompilePreprocessorTests(unittest.TestCase):
         source = Path("unit.c").resolve()
         for flag, expected in (("-Wp,-DNAME=value,-MD,unit.d,-I,include files", "-Wp,-DNAME=value,-I,include files"),
                                ("-Wp,-include,-MD,-MMD,unit.d", "-Wp,-include,-MD"),
-                               ("-Wp,--include,-MD,--write-dependencies,unit.d", "-Wp,--include,-MD")):
+                               ("-Wp,--include,-MD,--write-dependencies,unit.d", "-Wp,--include,-MD"),
+                               ("-Wp,-iprefix,prefix,-iwithprefix,include", "-Wp,-iprefix,prefix,-iwithprefix,include"),
+                               ("-Wp,-isystem,-E,-iframework,Frameworks", "-Wp,-isystem,-E,-iframework,Frameworks"),
+                               ("-Wp,--define-macro,VALUE=1,--undefine-macro,VALUE", "-Wp,--define-macro,VALUE=1,--undefine-macro,VALUE")):
             with self.subTest(flag=flag):
                 self.assertEqual(check_compile.syntax_arguments(["cc", flag, str(source)], Path.cwd(), source),
                                  ["cc", "-fsyntax-only", expected, str(source)])

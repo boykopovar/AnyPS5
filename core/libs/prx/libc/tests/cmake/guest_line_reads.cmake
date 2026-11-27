@@ -1,0 +1,10 @@
+add_test_executable(guest_line_reads_tests ${LIBS_INCLUDE_DIR}/tests/GuestLineReads.cpp)
+target_include_directories(guest_line_reads_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_line_reads_tests PRIVATE libc)
+configure_windows_unwind(guest_line_reads_tests)
+add_test(NAME guest_line_reads COMMAND guest_line_reads_tests guest_line_reads.tmp)
+set_tests_properties(guest_line_reads PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_line_reads PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

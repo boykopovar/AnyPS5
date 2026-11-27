@@ -31,13 +31,15 @@ struct CapturedSubmission {
     std::vector<std::pair<std::size_t, std::size_t>> conditionalRanges;
     bool heldKnown = true;
     bool conditionalKnown = true;
+    bool gcn = false;
 };
 
 class SubmissionCapture {
 public:
     static constexpr std::string_view IndexName = "index.txt";
     static constexpr std::string_view Magic = "aps5-submissions 1";
-    static constexpr std::string_view Columns = "ordinal queue type serial time_us dwords kind file held conditional";
+    static constexpr std::string_view Columns = "ordinal queue type serial time_us dwords kind file held conditional forms";
+    static constexpr std::string_view ColumnsWithoutForms = "ordinal queue type serial time_us dwords kind file held conditional";
     static constexpr std::string_view ColumnsWithoutHeld = "ordinal queue type serial time_us dwords kind file";
 
     explicit SubmissionCapture(const std::filesystem::path& directory);

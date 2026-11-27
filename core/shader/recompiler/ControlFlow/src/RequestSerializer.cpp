@@ -923,11 +923,10 @@ GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGr
 }
 
 std::string RequestSerializer::Serialize(const RecompileRequest& request) const {
-    if (!request.context.splitState.empty()) throw std::invalid_argument("RequestSerializer: a request that splits its state is built by the driver from another request and is not serialized");
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(65u);
+    writer.WriteU32(66u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -981,6 +980,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
     writer.WriteBool(request.target.spannedAnySubgroup);
+    writer.WriteU32Span(request.context.splitState);
     if (request.graphics && request.graphics->tessellation) writer.WriteBool(request.graphics->tessellation->onChip);
     if (request.graphics && request.graphics->tessellation) {
         const auto& constants = request.graphics->tessellationConstants;
@@ -998,7 +998,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 65u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 66u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1074,8 +1074,12 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
-    if (version >= 64u && result.request.graphics && result.request.graphics->tessellation) result.request.graphics->tessellation->onChip = reader.ReadBool();
-    if (version >= 65u && result.request.graphics && result.request.graphics->tessellation && reader.ReadBool()) {
+    if (version >= 64u) {
+        result.splitState = reader.ReadU32Vector();
+        result.request.context.splitState = result.splitState;
+    }
+    if (version >= 65u && result.request.graphics && result.request.graphics->tessellation) result.request.graphics->tessellation->onChip = reader.ReadBool();
+    if (version >= 66u && result.request.graphics && result.request.graphics->tessellation && reader.ReadBool()) {
         auto& constants = result.request.graphics->tessellationConstants.emplace();
         for (auto& word : constants) word = reader.ReadU32();
     }
