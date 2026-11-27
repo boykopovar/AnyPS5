@@ -875,7 +875,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     auto& verifyHit = tail.verifyHit;
     const bool stageEntries = tail.stageEntries;
     const bool patchedStages = tail.patchedStages;
-    std::uint64_t stageDataVerified = 0;
+    std::uint64_t stageDataVerified = 0, bufferDataVerified = 0;
     const Submission& submission = *tail.submission;
     std::string& rejected = tail.rejected != nullptr ? *tail.rejected : tail.ownRejected;
     static const QueueState noQueue{};
@@ -981,6 +981,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
         const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patchedPush ? "push constants" : !sameBindings ? "bindings" : nullptr;
         ++stageDataVerified;
+        if (hit.bufferWords) ++bufferDataVerified;
         if (what == nullptr) return;
         char message[256];
         std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a stage data hit differs from its full build in its %s (%zu data positions refreshed)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.dataPositions.size());
@@ -1062,6 +1063,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     if (stageDataVerified != 0) {
         std::lock_guard cacheLock(drawCacheMutex);
         drawEntryCounters.stageDataVerified += stageDataVerified;
+        drawEntryCounters.bufferDataVerified += bufferDataVerified;
     }
     if (dataEntry != nullptr) {
         std::lock_guard cacheLock(drawCacheMutex);

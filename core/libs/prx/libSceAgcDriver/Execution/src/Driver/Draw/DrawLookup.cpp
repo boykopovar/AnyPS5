@@ -187,6 +187,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                                 auto& hit = stageData[i];
                                 hit.words = variant->words;
                                 hit.compiled = variant->compiled;
+                                hit.bufferWords = true;
                                 regions.clear();
                                 appendEntryRegions(*variant, regions);
                             }

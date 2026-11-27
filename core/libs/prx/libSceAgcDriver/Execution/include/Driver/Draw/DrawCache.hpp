@@ -87,6 +87,7 @@ using DrawDataCandidates = std::vector<std::vector<std::pair<std::shared_ptr<Dis
 struct StageDataHit {
     std::vector<std::uint32_t> words;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
+    bool bufferWords = false;
 };
 
 enum class DrawMiss : std::size_t { FrontDiffering, FragmentDiffering, OtherDiffering, QueuedStores, Layout, Gate, Stages, Count };
@@ -103,7 +104,7 @@ struct DrawEntryCounters {
     std::array<std::uint64_t, 6> registerKeyMissChanges{};
     std::uint64_t differingSameRuns = 0, differingWords = 0, differingRunsChanged = 0;
     std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
-    std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
+    std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0, bufferDataVerified = 0;
     std::uint64_t recordWordsForwarded = 0, recordStagesRecompiled = 0, recordWordsRefused = 0, recordWordsVerified = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };

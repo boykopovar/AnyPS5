@@ -133,7 +133,7 @@ void MovedBufferHitsTheCache(bool libraries) {
     Require(first.lookups == 2 && first.hits == 0 && first.inserts == 1, mode + ": the second sight of the draw made " + std::to_string(first.hits) + " hits and " + std::to_string(first.inserts) + " inserts, expected 0 and 1");
     const auto moved = draw({Moved.data()});
     Require(moved.lookups == 3 && moved.hits == 1, mode + ": a draw whose buffer moved did not reuse the cached stages (" + std::to_string(moved.hits) + " hits)");
-    if (verify) Require(moved.stageDataVerified > first.stageDataVerified, mode + ": verify mode did not compare the rebuilt buffer-word stage");
+    if (verify) Require(moved.bufferDataVerified > first.bufferDataVerified, mode + ": verify mode did not compare a rebuilt buffer-word stage");
     const auto other = draw({Other.data()});
     Require(other.lookups == 4 && other.hits == 2, mode + ": a draw whose moved buffer holds other data did not reuse the cached stages (" + std::to_string(other.hits) + " hits)");
     const auto again = draw({First.data()});
