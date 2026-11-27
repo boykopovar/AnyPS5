@@ -1,0 +1,9 @@
+# libSceNpFriendListDialog
+
+## change [sceNpFriendListDialogGetResult and sceNpFriendListDialogOpen]
+
+- [sceNpFriendListDialogGetResult and sceNpFriendListDialogOpen](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) (libSceNpFriendListDialog) - take the same arguments as the `A` variants and run their path here. In firmware 13.42 ([reading](https://github.com/boykopovar/AnyPS5/issues/21842#issuecomment-6939202888), disassembly only, not run on a console) each is the same code as its `A` variant with the same checks in the same order; they differ only in the record layouts: `Open`'s mode-2 user array has 0x20-byte entries instead of 0x18, and `GetResult`'s record ends 0x10 bytes earlier, its mode-2 entries being 20 bytes instead of 32. Neither layout is read or written here beyond what the `A` variants do
+
+## add Unknown function info
+
+- [sceNpFriendListDialogOpen, sceNpFriendListDialogOpenA, sceNpFriendListDialogGetResult and sceNpFriendListDialogGetResultA](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) (libSceNpFriendListDialog) - the shared bodies differ from the [13.42 reading](https://github.com/boykopovar/AnyPS5/issues/21842#issuecomment-6939202888) in three ways. Not-initialized (`0x80B80003`) is answered before a null argument (`0x80B8000D`); the reading checks the argument first and the dialog object after the parameter checks. Open accepts any readable record, where the reading refuses, with `0x80B8000A`, a 64-bit `+0x30` other than `0xb0`, a base parameter `afLdI6i0lQw` refuses, a mode `+0x38` other than 1 or 2, and that mode's string, count and array checks; one step, on `+0x80` and the user id, isn't reduced to a rule. GetResult writes only `+0x00`, where the reading also refuses non-zero reserved bytes (`0x80B8000A`) and fills `+0x04` and the mode's fields from the dialog.

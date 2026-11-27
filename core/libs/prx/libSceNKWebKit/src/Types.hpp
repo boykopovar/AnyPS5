@@ -87,6 +87,9 @@ public:
     std::vector<std::uint8_t> data;
 };
 
+class CertificateInfo final : public ObjectOf<ObjectType::CertificateInfo> {
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -169,14 +172,65 @@ public:
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
+    std::uint64_t clearedWrappersCount = 0;
+    bool allShadowRootsOpen = false;
+    bool overrideBuiltinsDisabled = false;
     static BundleScriptWorld* NormalWorld() {
         static auto world = Make<BundleScriptWorld>();
         return world.Get();
     }
 };
 
+struct OpaqueJSContext;
+
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+    ~Bundle() override;
+
+    OpaqueJSContext* context = nullptr;
+    std::size_t javaScriptObjectsCount = 0;
+    std::uint32_t memoryReleaseCount = 0;
+    bool historyClearedForTesting = false;
+    bool resourceLoadStatisticsCleared = false;
+    std::uint32_t resourceLoadStatisticsNotifyCount = 0;
+
+    struct OriginAccessEntry {
+        std::string sourceOrigin;
+        std::string destinationProtocol;
+        std::string destinationHost;
+        bool allowDestinationSubdomains = false;
+
+        bool operator==(const OriginAccessEntry&) const = default;
+    };
+
+    std::vector<OriginAccessEntry> originAccessAllowList;
+};
+
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
+    RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBoundsExcludingScrollbars{{0.0, 0.0}, {0.0, 0.0}};
+    SizeValue scrollOffset{0.0, 0.0};
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
+    int numberOfPages = 1;
+    std::vector<bool> pageBoxVisibility;
+    bool containsAnyFormElements = false;
+    bool containsAnyFormControls = false;
+    bool isFocused = false;
+    bool hasOpener = false;
+    bool allowsFollowingLink = true;
+    bool shouldCloseOnWebView = true;
+    std::optional<std::u16string> accessibleName;
+    std::optional<std::u16string> textDirection;
+    Retained<String> counterValue;
+    Retained<String> innerText;
+    Retained<String> layerTreeAsText;
+    Retained<String> mimeTypeForResource;
+    Retained<String> suggestedFilenameForResource;
+    bool hasDocumentBackgroundColor = false;
+    double documentBackgroundColor[4] = {0.0, 0.0, 0.0, 0.0};
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -189,8 +243,36 @@ public:
     Retained<BundleScriptWorld> scriptWorld;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+    Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFillAvailable = false;
+    bool htmlInputElementAutoFilled = false;
+    bool htmlInputElementAutoFilledAndViewable = false;
+    bool htmlInputElementSpellcheckEnabled = true;
+    bool htmlInputElementLastChangeWasUserEdit = false;
+    bool htmlTextAreaElementLastChangeWasUserEdit = false;
+    std::uint8_t htmlInputElementAutoFillButtonType = 0;
+    std::uint8_t htmlInputElementLastAutoFillButtonType = 0;
+    RectValue elementBounds{{0.0, 0.0}, {0.0, 0.0}};
+};
+
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width = 0, int height = 0) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
+    Retained<BundleFrame> frame;
+    Retained<BundleFrame> targetFrame;
+    Retained<Image> image;
     Retained<URL> absoluteImageURL;
     Retained<URL> absoluteLinkURL;
     Retained<URL> absoluteMediaURL;
@@ -198,6 +280,9 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
@@ -205,18 +290,36 @@ public:
     std::uint32_t mediaType = 0;
 };
 
-class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
 public:
-    Retained<BundleNodeHandle> document;
-    Retained<BundleFrame> documentFrame;
-    Retained<BundleFrame> htmlIFrameElementContentFrame;
+    bool isVisible = false;
+    bool isProfilingPage = false;
+    std::vector<std::string> evaluatedScriptsForTest;
+};
+
+class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
+public:
+    mutable Retained<BundleInspector> inspector;
+    double backingScaleFactor = 1.0;
+    bool isControlledByAutomation = false;
+    bool isSuspended = false;
+    bool usesEphemeralSession = false;
+    std::uint64_t renderTreeSize = 0;
+    bool isFullScreen = false;
+    bool hasComposition = false;
+    Retained<Object> topOverhangImage;
+    Retained<Object> bottomOverhangImage;
+    std::uint64_t paintedObjectsCounterThreshold = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
     Retained<Object> originatingPage;
-    bool wasUserInitiated = false;
+    std::uint64_t id = 0;
+    Retained<Data> resumeData;
+    Retained<Array> redirectChain;
+    bool wasUserInitiated = true;
     bool isCancelled = false;
 };
 
@@ -226,6 +329,16 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+    std::uint32_t role = 0;
+    std::uint32_t buttonState = 0;
+};
+
+class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
+public:
+    Retained<String> title;
+    Retained<String> album;
+    Retained<String> artist;
+    Retained<URL> artworkURL;
 };
 
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
@@ -315,6 +428,41 @@ public:
     bool clientConfigured = false;
 };
 
+class MessageListener final : public ObjectOf<ObjectType::MessageListener> {
+public:
+    bool replied = false;
+    Retained<Object> reply;
+
+    void SendReply(Retained<Object> replyObj) {
+        replied = true;
+        reply = std::move(replyObj);
+    }
+};
+
+class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
+public:
+    std::map<std::string, std::string> pageURLToIconURL;
+    std::map<std::string, std::vector<std::uint8_t>> iconURLToData;
+    std::map<std::string, std::uint32_t> iconRetainCounts;
+    bool checkIntegrityBeforeOpening = false;
+    bool closed = false;
+    bool cleanupEnabled = false;
+    const void* client = nullptr;
+};
+
+class UserMediaPermissionCheck final : public ObjectOf<ObjectType::UserMediaPermissionCheck> {
+public:
+    bool completed = false;
+    Retained<String> userMediaID;
+    bool allowed = false;
+
+    void SetUserMediaAccessInfo(Retained<String> id, bool isAllowed) {
+        completed = true;
+        userMediaID = std::move(id);
+        allowed = isAllowed;
+    }
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -331,6 +479,10 @@ public:
     }
 };
 
+enum class NotificationDirection : std::uint8_t { Auto, Ltr, Rtl };
+
+std::uint64_t GenerateNotificationIdentifier();
+
 class Notification final : public ObjectOf<ObjectType::Notification> {
 public:
     std::u16string title;
@@ -338,8 +490,8 @@ public:
     std::u16string iconURL;
     std::u16string tag;
     std::u16string lang;
-    std::u16string dir;
-    std::uint64_t notificationID = 0;
+    NotificationDirection dir = NotificationDirection::Auto;
+    std::uint64_t notificationID = GenerateNotificationIdentifier();
 };
 
 class Frame final : public ObjectOf<ObjectType::Frame> {
@@ -347,14 +499,14 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
-};
-
-class Image final : public ObjectOf<ObjectType::Image> {
-public:
-    explicit Image(int width, int height) : width(width), height(height) {}
-
-    int width = 0;
-    int height = 0;
+    bool isFrameSet = false;
+    std::uint64_t frameID = 0;
+    std::uint32_t loadState = 2;
+    Retained<URL> url;
+    Retained<String> title;
+    Retained<String> mimeType;
+    Retained<URL> provisionalURL;
+    Retained<URL> unreachableURL;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
@@ -384,13 +536,76 @@ public:
 
 class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
 public:
-    std::string requestURL;
-    Retained<AuthenticationDecisionListener> decisionListener;
+    std::optional<std::string> requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener = Make<AuthenticationDecisionListener>();
     int previousFailureCount = 0;
-    Retained<Object> proposedCredential;
-    Retained<Object> protectionSpace;
+    mutable Retained<Object> proposedCredential;
+    mutable Retained<Object> protectionSpace;
     bool isForMainResource = false;
     bool isInMainFrame = false;
+};
+
+class SecurityOrigin final : public ObjectOf<ObjectType::SecurityOrigin> {
+public:
+    SecurityOrigin() = default;
+    SecurityOrigin(const String& protocol, const String& host, std::optional<std::uint16_t> port)
+        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
+
+    std::u16string protocol;
+    std::u16string host;
+    std::optional<std::uint16_t> port;
+    bool protocolNull = false;
+    bool hostNull = false;
+};
+
+class ResourceCacheManager final : public ObjectOf<ObjectType::CacheManager> {
+public:
+    std::uint32_t lastCachesCleared = 0;
+    bool clearedAll = false;
+    std::vector<std::string> origins;
+
+    void ClearAll(std::uint32_t cachesToClear) {
+        lastCachesCleared = cachesToClear;
+        clearedAll = true;
+        origins.clear();
+    }
+
+    void ClearForOrigin(const std::string& origin, std::uint32_t cachesToClear) {
+        lastCachesCleared = cachesToClear;
+        std::erase(origins, origin);
+    }
+};
+
+class View final : public ObjectOf<ObjectType::View> {
+public:
+    double pageScaleFactor = 1.0;
+    double viewScaleFactor = 1.0;
+    bool drawsBackground = true;
+    bool isFullScreen = false;
+    bool isActive = false;
+    bool isFocused = false;
+    bool isVisible = false;
+    SizeValue size{ 0.0, 0.0 };
+};
+
+class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
+public:
+    std::u16string path;
+    std::map<std::u16string, Retained<Object>> filters;
+};
+
+class FramePolicyListener final : public ObjectOf<ObjectType::FramePolicyListener> {
+public:
+    enum class Decision { None, Use, UseInNewProcess, Download, Ignore };
+
+    Decision decision = Decision::None;
+    Retained<Object> policies;
+};
+
+class FormSubmissionListener final : public ObjectOf<ObjectType::FormSubmissionListener> {
+public:
+    std::function<void()> completionHandler;
+    bool continued = false;
 };
 
 }  // namespace NKWebKit

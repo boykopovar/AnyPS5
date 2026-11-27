@@ -7,18 +7,18 @@
 | Name | NID |
 | --- | --- |
 | `Unknown` | `1YXygubV1Gc` |
-| `Unknown` | `3LNwlXW4f54` |
+| `scePadInternalSetAssignLed` | `3LNwlXW4f54` |
 | `Unknown` | `7xA+hFtvBCA` |
 | `Unknown` | `KY0hSB+Uyfo` |
 | `Unknown` | `Ql4q5ePNaw0` |
-| `Unknown` | `UeUUvNOgXKU` |
+| `scePadIsChargingCableConnected` | `UeUUvNOgXKU` |
 | `Unknown` | `XFqNcPu1meI` |
 | `Unknown` | `eqldkyw7GAo` |
 | `Unknown` | `ickjfjk9okM` |
 | `Unknown` | `qJgegDoE0g8` |
-| `Unknown` | `r2S7Nuicg8s` |
-| `Unknown` | `wMvV6XbeFd0` |
-| `Unknown` | `ybhL4IoyGZA` |
+| `scePadSetVibrationRawStrength` | `r2S7Nuicg8s` |
+| `scePadVirtualDeviceInsertTriggerState` | `wMvV6XbeFd0` |
+| `scePadAstonGetDeviceInformation` | `ybhL4IoyGZA` |
 
 - [Later callable exports](../../../core/libs/prx/libScePad/InventoryExports.cpp) - 8 function exports of the primary logical library observed only in the 13.60-labelled image of the [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscepad-190bd602e9.jsonl); they are absent from the older inventory and the pinned public 3.20 catalogue. The label does not authenticate retail firmware. `scePadIsInitialUserHandle` is not in the pinned public symbol database; the name comes from the inventory's `verified-name-map.jsonl` and hashes to its NID. The other seven have no known name and use literal NID aliases. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
 
@@ -42,6 +42,7 @@
 
 ### Unknown function info
 - [scePadDeviceClassGetExtendedInformation](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returning `PAD_ERROR_INVALID_ARG` with caller `errno` preserved for an unwritable `info` pointer via `GuestCopyOut_nid_no_patch` is a host-safety fallback with console behavior unmeasured.
+- [scePadRead](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - the samples are read into a host buffer and copied out with one GuestCopyOut_nid_no_patch; returning `PAD_ERROR_INVALID_ARG` with caller `errno` preserved for an unwritable non-null `data` is a host-safety fallback with console behavior unmeasured, and the samples read for that call are dropped.
 - [scePadGetAccessibilityControllerState](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returning `PAD_ERROR_INVALID_ARG` with caller `errno` preserved for an unwritable `state` pointer via `GuestCopyOut_nid_no_patch` is a host-safety fallback with console behavior unmeasured.
 - [scePadBondUpdate exports](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - firmware 13.42's libScePad.sprx (module disassembly and an emulated run with the ioctl recorded, not a console) shows no family flag: all eight exports return NOT_INITIALIZED while scePadInit has not run, Init and Term then send one bond-update ioctl and return its result, and every call that reaches the driver returns what ioctl returns. No export checks a handle or device id. The queries and Start return INVALID_ARG for a null output or parameter, SendData refuses a data block whose first 64-bit value is not 0x8000 with INVALID_ARG, and the queries copy the 32-bit driver value to the output even on an ioctl error. The wrapper follows that ladder and throws where the driver would answer, because no driver answer has been verified
 

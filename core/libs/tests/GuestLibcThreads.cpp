@@ -13,6 +13,12 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -617,6 +623,65 @@ static void ThreadHelpers() {
     other.join();
 }
 
+static void CurrentOwnsAnswersForEverySlotState() {
+    void* mutex = CreateMutex(tryable);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    std::thread([&] { Require(_Mtx_current_owns_nid_postfix(&mutex) == 1); }).join();
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    void* unused = nullptr;
+    Require(_Mtx_current_owns_nid_postfix(&unused) == 1);
+    _Mtx_destroy_nid_postfix(&mutex);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+}
+
+static void** ReadOnlyHandleSlot(void* value) {
+#ifdef _WIN32
+    auto* page = static_cast<void**>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    *page = value;
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    const auto size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* page = static_cast<void**>(mapping);
+    *page = value;
+    Require(mprotect(page, size, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+static void UnusableHandlePointers() {
+    auto** const unmapped = reinterpret_cast<void**>(std::uintptr_t{0x10});
+    auto** const readOnlyNull = ReadOnlyHandleSlot(nullptr);
+    RequireThrows<std::invalid_argument>([&] { _Mtx_init_nid_postfix(unmapped, plain); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_init_nid_postfix(readOnlyNull, plain); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_init_with_name_nid_postfix(unmapped, plain, "unmapped"); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_init_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_init_nid_postfix(readOnlyNull); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_init_with_default_name_override_nid_postfix(readOnlyNull, "read-only"); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_destroy_nid_postfix(unmapped); });
+    RequireThrows<std::invalid_argument>([&] { _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(unmapped, plain, "unmapped"); });
+    RequireThrows<std::invalid_argument>([&] { _ZNSt8__sce_v29_Mtx_initEPP13pthread_mutexi_nid_postfix(readOnlyNull, plain); });
+    Require(*static_cast<void* volatile*>(readOnlyNull) == nullptr);
+    _Cnd_destroy_nid_postfix(readOnlyNull);
+
+    void* condition = nullptr;
+    Require(_Cnd_init_nid_postfix(&condition) == success && condition != nullptr);
+    auto** const readOnlyCondition = ReadOnlyHandleSlot(condition);
+    RequireThrows<std::invalid_argument>([&] { _Cnd_destroy_nid_postfix(readOnlyCondition); });
+    Require(*static_cast<void* volatile*>(readOnlyCondition) == condition);
+    Require(_Cnd_signal_nid_postfix(&condition) == success);
+    _Cnd_destroy_nid_postfix(&condition);
+    Require(condition == nullptr);
+}
+
 int main() {
     ThreadExitLifecycle();
     KernelKeys();
@@ -624,6 +689,7 @@ int main() {
     ForwardedCalls();
     MutexBasics();
     DefaultNameOverrideMutex();
+    CurrentOwnsAnswersForEverySlotState();
     RecursiveMutex();
     TimedMutex();
     MutualExclusion();
@@ -633,4 +699,5 @@ int main() {
     PadLaunchWithAttributes();
     PadDetach();
     ThreadHelpers();
+    UnusableHandlePointers();
 }

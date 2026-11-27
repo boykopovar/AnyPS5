@@ -59,6 +59,8 @@ struct Memory {
     alignas(256) volatile std::uint64_t releasedWide;
     alignas(256) volatile std::uint32_t afterPrefetch;
     alignas(256) volatile std::uint32_t refused;
+    alignas(256) volatile std::uint32_t predicated;
+    alignas(256) volatile std::uint32_t workload;
 };
 
 class GuestBlock {
@@ -214,6 +216,24 @@ void TestComputeQueues() {
     Require(sceGnmUnmapComputeQueue(again) == 0, "sceGnmUnmapComputeQueue of the remapped ring failed");
 }
 
+void TestWorkloadDingDong() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    const int queue = sceGnmMapComputeQueue(0, 0, memory.ringA, RingWords, &memory.readA);
+    Require(queue > 0, "sceGnmMapComputeQueue did not return a queue id");
+    std::vector<std::uint32_t> words;
+    WriteData(words, &memory.workload, 3);
+    const auto offset = Put(memory.ringA, 0, words);
+    Require(sceGnmDingDongForWorkload_nid_disambig1(0, offset, 1) == 0, "sceGnmDingDongForWorkload for queue 0 failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.workload == 0 && memory.readA == 0, "sceGnmDingDongForWorkload for queue 0 rang a queue");
+    Require(sceGnmDingDongForWorkload_nid_disambig1(static_cast<std::uint32_t>(queue), offset, 1) == 0, "sceGnmDingDongForWorkload failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.workload == 3 && memory.readA == offset, "sceGnmDingDongForWorkload did not run the ring's new packets and move its read offset");
+    Require(ExpectFailure([&] { sceGnmDingDongForWorkload_nid_disambig1(0x7fffffffu, 0, 1); }).find("not mapped") != std::string::npos, "sceGnmDingDongForWorkload for an unknown queue id did not throw as sceGnmDingDong does");
+    Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
+}
+
 std::vector<std::uint32_t> Call(const std::uint32_t* target, std::size_t words) {
     return {Type3(0x3f, 3), Low(target), High(target) & 0xffffu, static_cast<std::uint32_t>(words)};
 }
@@ -263,8 +283,25 @@ void TestCalledBuffers() {
     Fill(memory.outer, {Type3(0x49, 7) | 2u, 0x62fu, 0x23000000u, Low(&memory.refused), High(&memory.refused), 3u, 0u, 0u});
     offset = Put(memory.ringA, 0, Call(memory.outer, 8));
     Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("invalid RELEASE_MEM size") != std::string::npos, "a RELEASE_MEM of eight dwords in a PS4 command buffer did not throw");
+    Fill(memory.outer, {Type3(0x59, 1), 0u});
+    offset = Put(memory.ringA, 0, Call(memory.outer, 2));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("a REWIND packet in a command buffer a compute ring calls") != std::string::npos, "a REWIND packet in a called command buffer did not throw");
+    const auto* unmapped = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x1000u});
+    offset = Put(memory.ringA, 0, Call(unmapped, 4));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("not readable") != std::string::npos, "an unreadable called command buffer did not throw");
     AgcDriverWaitIdle_nid_postfix();
     Require(memory.refused == 0, "a refused submission ran in part");
+
+    const auto nopWords = Fill(memory.inner, {Type3(OpNop, 2), 0u, 0u});
+    auto predicatedCall = Call(memory.inner, nopWords);
+    predicatedCall[0] |= 1u;
+    std::vector<std::uint32_t> ring(predicatedCall);
+    WriteData(ring, &memory.predicated, 4);
+    offset = Put(memory.ringA, 0, ring);
+    Require(sceGnmDingDong(queue, offset) == 0, "a predicated indirect buffer call failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.predicated == 4, "the packet after a predicated indirect buffer call did not run");
+    Require(memory.readA == offset, "the read offset was not moved past the predicated call");
     Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
 }
 
@@ -277,6 +314,7 @@ int main() {
         device.reset();
         TestComputeQueues();
         TestCalledBuffers();
+        TestWorkloadDingDong();
         std::puts("GnmDriver compute queue tests passed");
         return 0;
     } catch (const std::exception& error) {

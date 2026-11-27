@@ -1,5 +1,7 @@
 #pragma once
 
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
 #include <array>
@@ -34,7 +36,7 @@ struct FloatSize {
     float m_height{0.0f};
 
     float aspectRatio() const {
-        return m_height != 0.0f ? (m_width / m_height) : 0.0f;
+        return m_width / m_height;
     }
 };
 
@@ -118,6 +120,10 @@ struct LayoutRect {
     LayoutSize m_size;
 };
 
+enum class ScrollBehaviorForFixedElements : bool { StickToDocumentBounds, StickToViewportBounds };
+
+enum class LayoutViewportConstraint : std::int32_t { ConstrainedToDocumentRect, Unconstrained };
+
 struct RoundedRect {
     struct Radii {
         LayoutSize m_topLeft;
@@ -127,6 +133,18 @@ struct RoundedRect {
     };
     LayoutRect m_rect;
     Radii m_radii;
+};
+
+struct FourCC {
+    std::uint32_t value{0};
+
+    constexpr FourCC() = default;
+
+    template<std::size_t N>
+    constexpr FourCC(const char (&data)[N]) {
+        static_assert(N - 1 == 4);
+        value = static_cast<std::uint32_t>(data[0]) << 24 | static_cast<std::uint32_t>(data[1]) << 16 | static_cast<std::uint32_t>(data[2]) << 8 | static_cast<std::uint32_t>(data[3]);
+    }
 };
 
 struct AffineTransform {
@@ -256,12 +274,116 @@ struct ViewportArguments {
     bool widthWasExplicit{false};
 };
 
+enum ViewportErrorCode : int {
+    UnrecognizedViewportArgumentKeyError,
+    UnrecognizedViewportArgumentValueError,
+    TruncatedViewportArgumentValueError,
+    MaximumScaleTooLargeError
+};
+
+struct ViewportErrorCallableWrapper;
+
+struct ViewportErrorCallableWrapperVtable {
+    void (APS5_VABI* completeDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* deletingDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* call)(ViewportErrorCallableWrapper* self, ViewportErrorCode errorCode, const NKWebKit::WtfAbi::String& message);
+};
+
+struct ViewportErrorCallableWrapper {
+    const ViewportErrorCallableWrapperVtable* vtable;
+};
+
+struct ViewportErrorHandler {
+    ViewportErrorCallableWrapper* callableWrapper;
+};
+
+struct ProtectionSpaceBase {
+    NKWebKit::WtfAbi::StringImpl* m_host;
+    NKWebKit::WtfAbi::StringImpl* m_realm;
+    int m_port;
+    std::uint8_t m_serverType;
+    std::uint8_t m_authenticationScheme;
+    bool m_isHashTableDeletedValue;
+};
+
+enum class AutofillFieldName {
+    None,
+    Name,
+    HonorificPrefix,
+    GivenName,
+    AdditionalName,
+    FamilyName,
+    HonorificSuffix,
+    Nickname,
+    Username,
+    NewPassword,
+    CurrentPassword,
+    OrganizationTitle,
+    Organization,
+    StreetAddress,
+    AddressLine1,
+    AddressLine2,
+    AddressLine3,
+    AddressLevel4,
+    AddressLevel3,
+    AddressLevel2,
+    AddressLevel1,
+    Country,
+    CountryName,
+    PostalCode,
+    CcName,
+    CcGivenName,
+    CcAdditionalName,
+    CcFamilyName,
+    CcNumber,
+    CcExp,
+    CcExpMonth,
+    CcExpYear,
+    CcCsc,
+    CcType,
+    TransactionCurrency,
+    TransactionAmount,
+    Language,
+    Bday,
+    BdayDay,
+    BdayMonth,
+    BdayYear,
+    Sex,
+    URL,
+    Photo,
+    Tel,
+    TelCountryCode,
+    TelNational,
+    TelAreaCode,
+    TelLocal,
+    TelLocalPrefix,
+    TelLocalSuffix,
+    TelExtension,
+    Email,
+    Impp,
+    WebAuthn
+};
+
+struct TextureMapper {
+    enum ExposedEdges {
+        NoEdges = 0,
+        LeftEdge = 1 << 0,
+        RightEdge = 1 << 1,
+        TopEdge = 1 << 2,
+        BottomEdge = 1 << 3,
+        AllEdges = LeftEdge | RightEdge | TopEdge | BottomEdge,
+    };
+};
+
 static_assert(sizeof(IntPoint) == 8);
 static_assert(sizeof(IntSize) == 8);
 static_assert(sizeof(IntRect) == 16);
 static_assert(sizeof(FloatPoint) == 8);
 static_assert(sizeof(FloatSize) == 8);
 static_assert(sizeof(FloatRect) == 16);
+static_assert(sizeof(AutofillFieldName) == 4);
+static_assert(static_cast<int>(AutofillFieldName::Email) == 52);
+static_assert(static_cast<int>(AutofillFieldName::WebAuthn) == 54);
 static_assert(sizeof(FloatQuad) == 32);
 static_assert(sizeof(FloatRoundedRect) == 48);
 static_assert(sizeof(VelocityData) == 24);
@@ -279,7 +401,13 @@ static_assert(sizeof(LayoutUnit) == 4);
 static_assert(sizeof(LayoutPoint) == 8);
 static_assert(sizeof(LayoutSize) == 8);
 static_assert(sizeof(LayoutRect) == 16);
+static_assert(sizeof(ScrollBehaviorForFixedElements) == 1);
+static_assert(sizeof(LayoutViewportConstraint) == 4);
+static_assert(static_cast<std::int32_t>(LayoutViewportConstraint::ConstrainedToDocumentRect) == 0);
 static_assert(sizeof(RoundedRect) == 48);
+static_assert(sizeof(FourCC) == 4);
+static_assert(alignof(FourCC) == 4);
+static_assert(std::is_trivially_copyable_v<FourCC>);
 static_assert(sizeof(AffineTransform) == 48);
 static_assert(sizeof(OptionalAffineTransform) == 56);
 static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
@@ -317,5 +445,15 @@ static_assert(sizeof(ViewportArguments) == 56);
 static_assert(offsetof(ViewportArguments, width) == 4);
 static_assert(offsetof(ViewportArguments, viewportFit) == 52);
 static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ViewportErrorCode) == 4);
+static_assert(offsetof(ViewportErrorCallableWrapperVtable, call) == 16);
+static_assert(sizeof(ViewportErrorHandler) == 8);
+static_assert(sizeof(ProtectionSpaceBase) == 24);
+static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
+static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);
+static_assert(offsetof(ProtectionSpaceBase, m_port) == 16);
+static_assert(offsetof(ProtectionSpaceBase, m_serverType) == 20);
+static_assert(offsetof(ProtectionSpaceBase, m_authenticationScheme) == 21);
+static_assert(offsetof(ProtectionSpaceBase, m_isHashTableDeletedValue) == 22);
 
 }  // namespace WebCore

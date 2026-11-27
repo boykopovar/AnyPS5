@@ -1,4 +1,5 @@
 #include "prx/libSceNpParty/libSceNpParty.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <cerrno>
@@ -10,6 +11,10 @@
 #include <vector>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int kAlreadyInitialized = static_cast<int>(0x80552502u);
 constexpr int kNotInitialized = static_cast<int>(0x80552503u);
@@ -182,11 +187,30 @@ bool offlinePartyTests() {
     const std::uint64_t data = reinterpret_cast<std::uint64_t>(payload);
     bool ok = true;
 
+    errno = 71;
+    ok = check(sceNpPartyCreate(1, reinterpret_cast<const NpPartyCreateParam*>(0x10)) == kInvalidArgument && errno == 71, "create preserved errno on unmapped parameter") && ok;
     NpPartyCreateParam create{};
     ok = check(sceNpPartyCreate(-1, &create) == kInvalidArgument, "create refused user -1") && ok;
-    ok = check(sceNpPartyCreate(1, &create) == kNotInParty, "create did not report NOT_IN_PARTY") && ok;
+    errno = 71;
+    ok = check(sceNpPartyCreate(1, &create) == kNotInParty && errno == 71, "create did not report NOT_IN_PARTY") && ok;
     create.data[0x2DA] = 1;
     ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument, "create accepted a nonzero reserved tail") && ok;
+    create = {};
+    create.data[0x2CA] = 1;
+    ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument, "create accepted a nonzero reserved byte at 0x2CA") && ok;
+    create = {};
+    create.data[0x2CF] = 1;
+    ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument, "create accepted a nonzero reserved byte at 0x2CF") && ok;
+    create = {};
+    SetField(create, 0x2D0, static_cast<std::uint64_t>(0x10));
+    SetField(create, 0x2D8, static_cast<std::uint16_t>(8));
+    errno = 71;
+    ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument && errno == 71, "create preserved errno on unmapped blob with count zero") && ok;
+    create = {};
+    SetField(create, 0x2D0, data);
+    SetField(create, 0x2D8, static_cast<std::uint16_t>(8));
+    errno = 71;
+    ok = check(sceNpPartyCreate(1, &create) == kNotInParty && errno == 71, "create with valid blob and count zero did not report NOT_IN_PARTY") && ok;
     create = {};
     create.data[0x2D8] = 0x01;
     create.data[0x2D9] = 0x08;
@@ -235,8 +259,14 @@ bool offlinePartyTests() {
     ok = check(sceNpPartyLeave(1, &leave) == kInvalidArgument, "leave accepted an oversized blob") && ok;
     leave.size = 8;
     ok = check(sceNpPartyLeave(1, &leave) == kNotInParty, "leave with a null blob did not report NOT_IN_PARTY") && ok;
+    errno = 71;
+    ok = check(sceNpPartyLeave(1, reinterpret_cast<const NpPartyLeaveParam*>(0x10)) == kInvalidArgument && errno == 71, "leave preserved errno on unmapped parameter") && ok;
     leave.data = payload;
-    ok = check(sceNpPartyLeave(1, &leave) == kNotInParty, "leave with a blob did not report NOT_IN_PARTY") && ok;
+    errno = 71;
+    ok = check(sceNpPartyLeave(1, &leave) == kNotInParty && errno == 71, "leave with a blob did not report NOT_IN_PARTY") && ok;
+    leave.data = reinterpret_cast<void*>(0x10);
+    errno = 71;
+    ok = check(sceNpPartyLeave(1, &leave) == kInvalidArgument && errno == 71, "leave preserved errno on unmapped blob") && ok;
 
     std::uint16_t state = 0xa5a5;
     ok = check(sceNpPartyGetStateAsUser(0, &state) == kInvalidArgument, "get user state accepted user 0") && ok;
@@ -308,15 +338,50 @@ bool notInPartyTests() {
     return ok;
 }
 
+bool legacyVersionTests() {
+    if (!check(sceNpPartyTerminate() == 0, "terminate before legacy version checks failed")) return false;
+    std::uint64_t legacyParam[4] = {};
+    legacyParam[0] = 0x1000000;
+    if (!check(sceNpPartyInitialize(legacyParam) == 0, "legacy version initialize failed")) return false;
+    bool ok = true;
+    NpPartyCreateParam create{};
+    create.data[0xCA] = 1;
+    ok = check(sceNpPartyCreate(1, &create) == kNotInParty, "legacy create rejected nonzero byte at 0xCA") && ok;
+    create = {};
+    create.data[0x2CA] = 1;
+    ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument, "legacy create accepted nonzero reserved byte at 0x2CA") && ok;
+    create = {};
+    std::uint8_t legacyEntries[2][0x14] = {};
+    legacyEntries[0][0] = 1;
+    legacyEntries[1][0] = 2;
+    SetField(create, 0x2C0, reinterpret_cast<std::uint64_t>(legacyEntries));
+    create.data[0x2C8] = 2;
+    ok = check(sceNpPartyCreate(1, &create) == kNotInParty, "legacy create with nonzero count and null data was rejected") && ok;
+    create = {};
+    SetField(create, 0x2D0, static_cast<std::uint64_t>(0x10));
+    SetField(create, 0x2D8, static_cast<std::uint16_t>(8));
+    errno = 71;
+    ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument && errno == 71, "legacy create preserved errno on unmapped blob") && ok;
+    ok = check(sceNpPartyTerminate() == 0, "terminate after legacy version checks failed") && ok;
+    std::uint64_t modernParam[4] = {};
+    modernParam[0] = 0x6000000;
+    ok = check(sceNpPartyInitialize(modernParam) == 0, "reinitialize after legacy version checks failed") && ok;
+    return ok;
+}
+
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::uint64_t param[4] = {};
     param[0] = 0x6000000;
     if (!uninitializedTests() || !lifecycleTests() || !handlerContentionTests()) return 1;
     if (!check(sceNpPartyInitialize(param) == 0, "initialize for the state checks failed")) return 1;
-    if (!stateTests() || !priorityTests() || !offlinePartyTests() || !notInPartyTests()) return 1;
+    if (!stateTests() || !priorityTests() || !offlinePartyTests() || !notInPartyTests() || !legacyVersionTests()) return 1;
     if (!check(sceNpPartyTerminate() == 0, "terminate after the state checks failed") || !uninitializedTests()) return 1;
     std::puts("NpParty tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

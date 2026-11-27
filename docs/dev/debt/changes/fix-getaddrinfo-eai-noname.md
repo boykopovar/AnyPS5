@@ -1,0 +1,5 @@
+# libScePosixForWebKit
+
+## change [Resolver host failures]
+
+- [Resolver host failures](../../../core/libs/prx/libScePosixForWebKit/Resolver.cpp) remain unverified on PS5. A host `EAI_SYSTEM` in `getaddrinfo` or `getnameinfo` returns 11, the FreeBSD 11.4 [`EAI_SYSTEM`](https://github.com/freebsd/freebsd-src/blob/releng/11.4/include/netdb.h). A host `EAI_NODATA` (`WSANO_DATA` on Windows, not run by a test there) or `EAI_ADDRFAMILY` returns 8, `EAI_NONAME`, which FreeBSD 11.4, having neither code, returns for a numeric host of another family with `AI_NUMERICHOST` and for a name with no address of the requested family ([getaddrinfo.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/net/getaddrinfo.c#L562-L565), `explore_fqdn`). A legacy `gethostbyname` failure retains its resolver error. System `errno` follows the existing libc and socket error mappings; unrecognized errors become `EIO`. Host resolver policy and failure causes can differ from the console.

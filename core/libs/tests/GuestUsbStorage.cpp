@@ -327,6 +327,14 @@ void TestNoDevice() {
     Require(info.volumeSize == 0x5a5a5a5a5a5a5a5aull && info.flags == 0x5a5a5a5a5a5a5a5aull, "device info was written");
     Require(sceUsbStorageGetDeviceInfo(0, nullptr) == UsbStorage::InvalidArgument, "get device info without an info buffer");
 
+    char mountPoint[UsbStorage::MountPointSize];
+    std::memset(mountPoint, 0x5a, sizeof(mountPoint));
+    Require(sceUsbStorageGetMountPointOfShellCore(static_cast<std::uint32_t>(UsbStorage::MaxDevices), mountPoint) == UsbStorage::DeviceNotFound,
+            "get the mount point of the first id past the last slot");
+    Require(sceUsbStorageGetMountPointOfShellCore(0xffffffffu, mountPoint) == UsbStorage::DeviceNotFound, "get the mount point of the highest device id");
+    Require(mountPoint[0] == static_cast<char>(0x5a), "the mount point of an absent device was written");
+    Require(sceUsbStorageGetMountPointOfShellCore(0xffffffffu, nullptr) == UsbStorage::InvalidArgument, "get the mount point without a buffer");
+
     std::uint8_t exists = 1;
     Require(sceUsbStorageIsExist(0, "/mnt/usb0", &exists) == true && exists == 0, "device 0 does not exist");
     errno = 71;
@@ -491,6 +499,21 @@ void TestDeviceMaps(const FakeHost& host) {
     Require(sceUsbStorageRequestMapWSB(0, nullptr, 0, 0, mountPoint, &status) == 0, "map the root through the WSB request");
     Require(std::string_view(mountPoint) == "/mnt/usb0" && status == 0, "the WSB request mapped the root at the mount point");
     Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0") == 0, "unmap the WSB root");
+
+    char* const unmappedText = reinterpret_cast<char*>(0x10);
+    errno = 71;
+    Require(sceUsbStorageGetMountPointOfShellCore(0, unmappedText) == UsbStorage::InvalidArgument, "unwritable shell-core mount point");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, unmappedText, nullptr) == UsbStorage::InvalidArgument, "unwritable map mount point");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, reinterpret_cast<std::uint64_t*>(0x10)) == UsbStorage::InvalidArgument,
+            "unwritable map id");
+    Require(sceUsbStorageRequestMapWSB(0, "Music", 0, 0, unmappedText, nullptr) == UsbStorage::InvalidArgument, "unwritable WSB mount path");
+    Require(sceUsbStorageRequestMapWSB(0, "Music", 0, 0, mountPoint, reinterpret_cast<std::int32_t*>(0x10)) == UsbStorage::InvalidArgument,
+            "unwritable WSB status");
+    Require(errno == 71, "errno preserved");
+    mountId = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, &mountId) == 0, "a failed map request left no map behind");
+    Require(std::string_view(mountPoint) == "/mnt/usb0/Music" && mountId == 0, "the directory is mapped after the failed requests");
+    Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0/Music") == 0, "unmap the directory after the failed requests");
 }
 
 void TestMapAvailability(const FakeHost& host) {
@@ -785,6 +808,42 @@ void TestUnregisterDuringDispatch(const FakeHost& host) {
     Require(sceUsbStorageTerm() == 0, "terminate after unregistrations during dispatch");
 }
 
+void TestUnmappedOutputs(const FakeHost& host) {
+    Inject(host, true, false);
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for unmapped output checks");
+    auto* const badDevices = reinterpret_cast<std::uint32_t*>(0x10);
+    auto* const badCount = reinterpret_cast<std::int32_t*>(0x10);
+    auto* const badFd = reinterpret_cast<std::int32_t*>(0x10);
+    auto* const badSize = reinterpret_cast<std::uint64_t*>(0x10);
+    auto* const badBuffer = reinterpret_cast<void*>(0x10);
+    auto* const badBytesRead = reinterpret_cast<std::uint64_t*>(0x10);
+    std::uint32_t devices[UsbStorage::MaxDevices]{};
+    std::int32_t count = -1;
+    errno = 71;
+    Require(sceUsbStorageGetDeviceList(badDevices, &count) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped devices buffer in sceUsbStorageGetDeviceList without clobbering errno");
+    Require(sceUsbStorageGetDeviceList(devices, badCount) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped count pointer in sceUsbStorageGetDeviceList without clobbering errno");
+    std::int32_t fd = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, badFd, &bufferSize) == UsbStorage::InvalidArgument,
+            "reject unmapped fd pointer in sceUsbStorageGetdentsOpen");
+    Require(sceUsbStorageGetdentsOpen(0, &fd, badSize) == UsbStorage::InvalidArgument,
+            "reject unmapped bufferSize pointer in sceUsbStorageGetdentsOpen");
+    Require(sceUsbStorageGetdentsOpen(0, &fd, &bufferSize) == 0, "open getdents scan for unmapped read checks");
+    std::uint64_t bytesRead = 0;
+    std::vector<std::uint8_t> buffer(bufferSize, 0);
+    errno = 71;
+    Require(sceUsbStorageGetdentsRead(fd, badBuffer, bufferSize, &bytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped buffer in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsRead(fd, buffer.data(), buffer.size(), badBytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped bytesRead in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsRead(-999, buffer.data(), buffer.size(), badBytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped bytesRead on missing fd in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsClose(fd) == 0, "close getdents scan after unmapped read checks");
+    Require(sceUsbStorageTerm() == 0, "terminate after unmapped output checks");
+}
+
 void TestSysfsScan(const FakeHost& host) {
     WriteMounts(host, FirstLine(host) + SecondLine(host) + MountLine("8_1", "/", host.root / "media" / "efi", "rw", "vfat") +
                           MountLine("8_49", "/", host.root / "media", "rw", "ext4") + MountLine("8_17", "/Music", host.root / "media" / "bound", "rw", "vfat"));
@@ -822,6 +881,7 @@ int main() {
     TestPassthroughOff(host);
     SetPassthrough(true);
     TestDevices(host);
+    TestUnmappedOutputs(host);
     TestHotplug(host);
     TestRootChange(host);
     TestUnregisterDuringDispatch(host);

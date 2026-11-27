@@ -2,6 +2,9 @@
 
 ### Functional
 
+- [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp) - Matrix constructors, transforms and multiplication check guest pointer reads and writes before reaching pinned Cairo 1.18.0; invalid or unwritable pointers throw rather than crash the host. The console's error response to these pointers is unmeasured. Both coordinate outputs are checked before either is written, though changes in page protection during a call cannot be made atomic.
+
+- [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp), [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp), [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp), [Png.cpp](../../../core/libs/prx/libcairo/Png.cpp) and [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) - Sony's three Cairo patches ([source](https://www.playstation.com/en-us/oss/ps5/cairo/)) are not applied to the Cairo 1.18.0 these exports run, with the image backend only, as on PS5 system software 9.00 and later. The patch that changes behaviour adds `CAIRO_STATUS_NULL_SURFACE_IMAGE` where a surface pattern's image cannot be acquired; no export reaches that path while `cairo_set_source_surface` is a stub. Sony publishes no pixman or libpng source, so their console versions are unknown; this build uses pixman 0.42.2, the newest when Cairo 1.18.0 came out, and libpng 1.6.59.
 - [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp), [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp), [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp), [Png.cpp](../../../core/libs/prx/libcairo/Png.cpp) and [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) - Sony's three Cairo patches ([source](https://www.playstation.com/en-us/oss/ps5/cairo/)) are not applied to the Cairo 1.18.0 these exports run, with the image backend only (PS5 system software 9.00 and later). The patch that changes behaviour returns an unstored `CAIRO_STATUS_NULL_SURFACE_IMAGE` when pixman cannot create a surface source's image, so the console skips that draw; here the context keeps `CAIRO_STATUS_NO_MEMORY`. Sources from `cairo_set_source_surface` and `cairo_pop_group_to_source` reach it only if that allocation fails. Sony publishes no pixman or libpng source, so console versions are unknown; this build uses pixman 0.42.2, the newest when Cairo 1.18.0 came out, and libpng 1.6.59.
 
 - [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp) - a null region or rectangle, which Cairo dereferences, returns `CAIRO_STATUS_NULL_POINTER` from `cairo_region_union_rectangle`, 0 from `cairo_region_num_rectangles` and leaves `cairo_region_get_rectangle` without effect; an `nth` outside the region, which Cairo reads past the array for, returns an empty rectangle. Negative sizes and coordinate overflow are not separately validated; pixman can reject an invalid box or wrap its endpoints. A merged box wider or taller than `INT32_MAX` overflows a signed subtraction in `cairo_region_get_rectangle`; the result is undefined. Console behaviour is unmeasured.
@@ -30,6 +33,10 @@
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
 
+- [FreeType font faces](../../../core/libs/prx/libcairo/FontFace.cpp) follow Cairo 1.18.0 for lifetime only: `cairo_ft_font_face_create_for_ft_face` returns the cached face for the same guest `FT_Face`, `face_index` and load flags with one more reference, the face does not reference the `FT_Face`, and user data is released in reverse order after the face leaves the cache. Cairo's "zombie" face, kept while a scaled font still holds the unscaled font, is not modelled because scaled fonts throw. A null face or font face throws because Cairo dereferences it, and setting user data on a font face from its own finalizer, or destroying it there without a reference of the finalizer's own, throws because Cairo then modifies or frees what it is finalizing. The PS5 prototypes are unverified.
+
+- [FreeType font faces from patterns](../../../core/libs/prx/libcairo/src/FtFontFace.cpp) follow Cairo 1.18.0 [cairo-ft-font.c](https://gitlab.freedesktop.org/cairo/cairo/-/blob/1.18.0/src/cairo-ft-font.c) through the guest Fontconfig and `access` exports. A pattern's `ftface`, else a readable `file` and its `index`, together with the load flags and options Cairo derives from the pattern, look up the face cache `cairo_ft_font_face_create_for_ft_face` also uses; an unreadable file gives the file-not-found nil face. A pattern with neither keeps a copy and gets a new face on each call; Cairo matches that copy through Fontconfig only when a scaled font is created, which throws here. No guest export can store an `FT_Face` in a pattern yet, so the `ftface` branch is untested; a null pattern or null `ftface` throws because Cairo dereferences it. Console behaviour is unmeasured.
+
 ### Functional toy-font text
 
 - [ToyText.cpp](../../../core/libs/prx/libcairo/ToyText.cpp) implements `cairo_select_font_face`, `cairo_set_font_size` and `cairo_show_text` as guest-ABI thunks to the pinned Cairo 1.18.0 image backend. The public C prototypes use an opaque context pointer, optional NUL-terminated family name, 32-bit slant/weight enums, a double font size and UTF-8 text. Non-null guest strings are copied through `CopyGuestString_nid_no_patch`, with a 1 MiB limit; unreadable, oversized or unterminated strings use the existing `NotImplemented_nid_no_patch` guest failure path instead of crashing native Cairo, and the caller's errno is preserved. A null family or text is forwarded unchanged; font-face or text errors on otherwise valid inputs are Cairo's own. Other invalid context pointers still follow native Cairo's undefined behavior. Console behavior is unmeasured. Source-linked tests compare raster pixels and text advances with independent calls to the pinned backend.
@@ -41,7 +48,6 @@
 | Name | NID |
 | --- | --- |
 | `cairo_scaled_font_get_font_face` | `+BL3-h8zGDo` |
-| `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
@@ -49,10 +55,8 @@
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
-| `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
-| `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
@@ -60,14 +64,10 @@
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
-| `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
-| `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
 | `cairo_pattern_destroy` | `eZpt6dzI9oo` |
 | `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
-| `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
-| `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
@@ -75,3 +75,7 @@
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
+
+### FreeType font-option substitution
+
+- [FreeType font-option substitution](../../../core/libs/prx/libcairo/src/FtFontOptions.cpp) follows Cairo 1.18.0 [cairo-ft-font.c](https://gitlab.freedesktop.org/cairo/cairo/-/blob/1.18.0/src/cairo-ft-font.c), `_cairo_ft_font_options_substitute` and its public wrapper, through the guest Fontconfig exports. PS5 behavior is unmeasured. The existing four-field font-options state has no internal LCD filter; its Cairo default leaves `lcdfilter` untouched. Hint metrics are unused by upstream substitution. Allocation failure stops substitution without rolling back earlier properties, as in the void upstream wrapper.

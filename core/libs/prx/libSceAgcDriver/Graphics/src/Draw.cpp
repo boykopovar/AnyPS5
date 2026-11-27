@@ -1,3 +1,5 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libc/include/RunReport.hpp"
@@ -12,6 +14,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -20,7 +23,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
@@ -33,6 +38,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -48,6 +54,7 @@
 #include <new>
 #include <set>
 #include <unordered_map>
+#include <type_traits>
 #include <utility>
 
 namespace AgcDriver::Graphics {
@@ -459,8 +466,9 @@ std::optional<std::uint8_t> overwrittenStencil(const State& state) {
 }
 
 std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
-    if (color.mipCount != 1 || color.depth != 1 || !color.dccPipeAligned) return DccKeyBytes(bytes);
-    return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+    if (color.mipCount == 1 && color.depth == 1 && color.dccPipeAligned) return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+    if (color.mipCount > 1 && color.depth == 1 && color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX) return DccMipKeySlice(color.extent.width, color.extent.height, color.elementBytes);
+    return DccKeyBytes(bytes);
 }
 
 std::array<std::byte, 16> clearTexel(const ColorTarget& color, DccKeys keys) {
@@ -1255,9 +1263,9 @@ bool MovableBuffers() {
     return enabled;
 }
 
-ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
-    ResourceCache::Key key;
-    key.reserve(256);
+void FillDrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges, ResourceCache::Key& key) {
+    key.clear();
+    if (key.capacity() < 256) key.reserve(256);
     key.push_back(0xffffffffu);
     const auto append64 = [&](std::uint64_t value) {
         key.push_back(static_cast<std::uint32_t>(value));
@@ -1268,12 +1276,28 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     for (const auto& shader : shaders) {
         const auto sizeAt = key.size();
         key.push_back(0u);
-        auto& memo = shader.program->drawKeyMemo.words;
-        if (auto words = memo.load(std::memory_order_acquire); words != nullptr) {
+        auto& memo = shader.program->drawKeyMemo;
+        const auto* seenOnce = reinterpret_cast<const std::vector<std::uint32_t>*>(std::uintptr_t{1});
+        const auto* raw = memo.raw.load(std::memory_order_acquire);
+        if (raw != nullptr && raw != seenOnce) {
+            key.insert(key.end(), raw->begin(), raw->end());
+        } else if (auto words = memo.words.load(std::memory_order_acquire); words != nullptr) {
+            memo.raw.store(words.get(), std::memory_order_release);
             key.insert(key.end(), words->begin(), words->end());
         } else {
             ShaderResources::AppendContentKey(shader, true, MovableBuffers(), key);
-            memo.store(std::make_shared<const std::vector<std::uint32_t>>(key.begin() + static_cast<std::ptrdiff_t>(sizeAt + 1u), key.end()), std::memory_order_release);
+            if (raw == nullptr) {
+                const std::vector<std::uint32_t>* expectedRaw = nullptr;
+                static_cast<void>(memo.raw.compare_exchange_strong(expectedRaw, seenOnce, std::memory_order_acq_rel));
+            } else {
+                auto created = std::make_shared<const std::vector<std::uint32_t>>(key.begin() + static_cast<std::ptrdiff_t>(sizeAt + 1u), key.end());
+                std::shared_ptr<const std::vector<std::uint32_t>> expected;
+                if (memo.words.compare_exchange_strong(expected, created, std::memory_order_acq_rel)) {
+                    memo.raw.store(created.get(), std::memory_order_release);
+                } else if (expected != nullptr) {
+                    memo.raw.store(expected.get(), std::memory_order_release);
+                }
+            }
         }
         key[sizeAt] = static_cast<std::uint32_t>(key.size() - sizeAt - 1u);
     }
@@ -1284,6 +1308,11 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
         append64(indexAddress);
         append64(indexBytes);
     }
+}
+
+ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
+    ResourceCache::Key key;
+    FillDrawResourceKey(context, shaders, target, colorAttachments, indexAddress, indexBytes, ranges, key);
     return key;
 }
 
@@ -1328,7 +1357,14 @@ MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecom
     const auto inputSize = mesh.inputPrimitive == 1 ? 1u : mesh.inputPrimitive == 2 ? 2u : 3u;
     const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
     Require(mesh.primitivesPerGroup != 0, "mesh pipeline groups no primitive (zero primitives per group)");
-    return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.meshLimits.maxMeshWorkGroupCount[0], context.meshLimits.maxMeshWorkGroupCount[1], context.meshLimits.maxMeshWorkGroupTotalCount};
+    return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.meshLimits.maxMeshWorkGroupCount[0], context.meshLimits.maxMeshWorkGroupCount[1], context.meshLimits.maxMeshWorkGroupTotalCount, 0u};
+}
+
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw) {
+    if (draw.indexed) return MeshArgumentRulesFor(context, mesh, draw.indexCount);
+    auto rules = MeshArgumentRulesFor(context, mesh, std::numeric_limits<std::uint32_t>::max());
+    rules.firstIgnored = 1u;
+    return rules;
 }
 
 std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances) {
@@ -1342,7 +1378,7 @@ std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups
 }
 
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules) {
-    const auto first = record.firstVertexOrIndex;
+    const auto first = rules.firstIgnored != 0u ? 0u : record.firstVertexOrIndex;
     const auto effective = first < rules.indexCount ? std::min(record.count, rules.indexCount - first) : 0u;
     std::uint32_t groups = 0;
     if (effective >= rules.inputSize && record.instances != 0) {
@@ -1433,7 +1469,7 @@ struct DrawTimer {
     bool profile;
     std::chrono::steady_clock::time_point phaseStart;
     std::array<double, PhaseCount> us{};
-    explicit DrawTimer(bool profile) : profile(profile), phaseStart(std::chrono::steady_clock::now()) {}
+    explicit DrawTimer(bool profile) : profile(profile), phaseStart(profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
     void phase(DrawPhase which) {
         if (!profile) return;
         const auto now = std::chrono::steady_clock::now();
@@ -1468,13 +1504,48 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
     reportDraw(timer.us, built, outcome);
 }
 
+bool vertexCopyTailReadable(const Recorder& recorder, std::uint64_t address, std::size_t bytes, std::size_t grown) {
+    const auto tail = address + bytes;
+    const auto extra = grown - bytes;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), grown) || recorder.GuestWritesPendingIn(tail, extra)) return false;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{tail, tail + extra}}};
+    if (StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(range) || ResidentDepthGuardOverlaps_nid_no_patch(tail, extra)) return false;
+    return HostOnlySampleRanges(tail, extra).empty();
 }
 
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from) {
+}
+
+std::size_t GrownVertexCopyBytes(std::size_t bytes, std::size_t growLimit) {
+    if (growLimit <= bytes) return bytes;
+    const auto grown = bytes + std::min(bytes / 4u, growLimit - bytes);
+    return grown <= Recorder::DrawInputBudget ? grown : bytes;
+}
+
+std::uint64_t VertexCopyGrowEnd(const State& state, std::uint64_t end, std::uint64_t limit) {
+    limit = std::max(limit, end);
+    const auto cut = [&](std::uint64_t target) {
+        if (target >= end && target < limit) limit = target;
+    };
+    if (state.hasColorTarget) cut(state.color.MemoryAddress());
+    for (const auto& color : state.colors) cut(color.MemoryAddress());
+    if (state.depth) {
+        cut(state.depth->address);
+        cut(state.depth->stencilAddress);
+        cut(state.depth->htileAddress);
+    }
+    return limit;
+}
+
+bool BindsIndexCopy(const State& state) {
+    return !state.stages.mesh;
+}
+
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from, bool hostOnly, std::size_t growLimit) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     Require(from == 0 || (use == Recorder::SnapshotUse::Vertex && from < bytes), "only a vertex input starts past its address");
     DrawInputCopy copy;
     copy.from = from;
+    std::size_t copied = bytes;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
 #ifdef _WIN32
@@ -1489,18 +1560,25 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         }
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
-        if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest);
+        if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest, !hostOnly);
         else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
         }
+        if (const auto grown = GrownVertexCopyBytes(bytes, growLimit); copy.generation != 0 && use == Recorder::SnapshotUse::Vertex && grown > bytes && recorder->ShorterDrawSnapshotKept(address, bytes, use) && vertexCopyTailReadable(*recorder, address, bytes, grown)) {
+            if (const auto generation = GuestMemory::CollectWrites(address, grown); generation != 0) {
+                copy.generation = generation;
+                copied = grown;
+            }
+        }
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    copy.buffer = std::make_shared<Buffer>(context, copied, (use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     static const bool poisonPrefix = std::getenv("APS5_POISON_VERTEX_PREFIX") != nullptr;
     const auto held = copy.buffer->Bytes();
     if (poisonPrefix) std::fill(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(from), std::byte{0x7f});
-    GuestMemory::Read(address + from, held.subspan(from), alignment);
+    GuestMemory::Read(address + from, held.subspan(from, bytes - from), alignment);
+    if (copied > bytes) GuestMemory::CopyGuestBytes(held.data() + bytes, reinterpret_cast<const void*>(address + bytes), copied - bytes);
     return copy;
 }
 
@@ -1544,9 +1622,16 @@ void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCop
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived, copy.from, lowest);
 }
 
-const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite) {
+const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite, std::size_t fetched, std::uint64_t reads) {
     auto* recorder = context.recorder;
-    if (recorder == nullptr || bytes == 0 || !context.drawInputsInPlace) return nullptr;
+    static const bool copyBehindGpuWrite = std::getenv("APS5_NO_BEHIND_INPUTS_IN_PLACE") != nullptr || std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") != nullptr;
+    const bool small = std::min(fetched, bytes) <= context.drawInputsInPlaceBelow && reads <= InPlaceDrawInputMaxReads;
+    static const std::size_t largeInput = [] {
+        const char* value = std::getenv("APS5_LARGE_INPUT_IN_PLACE_MIB");
+        return static_cast<std::size_t>(value != nullptr ? std::strtoull(value, nullptr, 10) : 8u) << 20u;
+    }();
+    const bool large = behindGpuWrite != nullptr && largeInput != 0 && bytes >= largeInput;
+    if (recorder == nullptr || bytes == 0 || (!context.drawInputsInPlace && !small && !large && (behindGpuWrite == nullptr || copyBehindGpuWrite))) return nullptr;
     bool behind = false;
     if (behindGpuWrite == nullptr) {
         GuestMemory::FlushGpuWrites(address, bytes);
@@ -1554,6 +1639,7 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     } else {
         StorageTexture::FlushPending(address, bytes, nullptr, "in-place vertex input");
         behind = recorder->PendingWriteOverlaps(address, bytes);
+        if (!behind && !context.drawInputsInPlace && !small && !large) return nullptr;
     }
     if (recorder->PendingLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes)) return nullptr;
     const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(address, bytes); };
@@ -1565,6 +1651,79 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     recorder->NotePendingRead(address, bytes, Recorder::ReadKind::DrawInput);
     if (behindGpuWrite != nullptr && behind) *behindGpuWrite = true;
     return import;
+}
+
+namespace {
+
+constexpr std::array<const char*, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterNames{
+    "taken", "off", "no writer", "index limit", "mesh stage", "primitive restart", "vertex offset",
+    "unit shadow", "pending storage", "label or store", "copied writer", "no import", "refused"
+};
+
+std::array<ProfileCounter, static_cast<std::size_t>(IndexBehindWriter::Count)>& indexBehindWriterEvents() {
+    static std::array<ProfileCounter, static_cast<std::size_t>(IndexBehindWriter::Count)> events;
+    return events;
+}
+
+const bool indexBehindWriterProfiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+
+void reportIndexBehindWriter() {
+    using Clock = std::chrono::steady_clock;
+    static std::atomic<std::int64_t> reported{Clock::now().time_since_epoch().count()};
+    static std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> previous{};
+    const auto now = Clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (Clock::duration(now - last) < std::chrono::seconds(10) || !reported.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    std::string line;
+    for (std::size_t index = 0; index < previous.size(); ++index) {
+        const auto total = indexBehindWriterEvents()[index].Sum();
+        const auto count = total - previous[index];
+        previous[index] = total;
+        if (count == 0) continue;
+        line += (line.empty() ? " " : ", ") + std::string(IndexBehindWriterNames[index]) + " " + std::to_string(count);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[index-behind-writer] (10 s, all threads, index ranges behind a pending GPU writer):%s\n", line.empty() ? " none" : line.c_str());
+}
+
+}
+
+std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterCounts() {
+    std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> counts{};
+    for (std::size_t index = 0; index < counts.size(); ++index) counts[index] = indexBehindWriterEvents()[index].Sum();
+    return counts;
+}
+
+const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome) {
+    const bool enabled = RuntimeSwitches::Set(RuntimeSwitch::IndexInPlaceBehindWriter);
+    const auto leave = [&](IndexBehindWriter result, const HostImport* import) {
+        if (outcome != nullptr) *outcome = result;
+        if (enabled) {
+            indexBehindWriterEvents()[static_cast<std::size_t>(result)].Add(1);
+            if (indexBehindWriterProfiled) reportIndexBehindWriter();
+        }
+        return import;
+    };
+    auto* recorder = context.recorder;
+    if (!enabled || recorder == nullptr || (indexSize != 2 && indexSize != 4) || bytes < indexSize) return leave(IndexBehindWriter::Off, nullptr);
+    if (!recorder->PendingWriteOverlaps(address, bytes)) return leave(IndexBehindWriter::NoWriter, nullptr);
+    if (context.limits.maxDrawIndexedIndexValue != std::numeric_limits<std::uint32_t>::max()) return leave(IndexBehindWriter::IndexLimit, nullptr);
+    if (meshStage) return leave(IndexBehindWriter::MeshStage, nullptr);
+    if (primitiveRestart) return leave(IndexBehindWriter::PrimitiveRestart, nullptr);
+    const std::uint32_t largestIndex = indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+    if (firstVertex > std::numeric_limits<std::uint32_t>::max() - largestIndex) return leave(IndexBehindWriter::VertexOffset, nullptr);
+    if (AnyShadowedOverlaps(address, bytes)) return leave(IndexBehindWriter::UnitShadow, nullptr);
+    if (PendingStorageOverlaps(address, bytes, nullptr)) return leave(IndexBehindWriter::PendingStorage, nullptr);
+    if (recorder->PendingLabelIn(address, bytes) || recorder->CompletionLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes)) return leave(IndexBehindWriter::LabelOrStore, nullptr);
+    const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(address, bytes); };
+    const auto drawWriters = DrawCopiedWriters();
+    if ((context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) || std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return leave(IndexBehindWriter::CopiedWriter, nullptr);
+    const auto* existing = ExistingHostImportFor(context, address, bytes);
+    if (existing == nullptr || HostImportOffset(*existing, address) % indexSize != 0) return leave(IndexBehindWriter::NoImport, nullptr);
+    auto inPlace = context;
+    inPlace.drawInputsInPlace = true;
+    bool behind = false;
+    const auto* import = InPlaceDrawInput(inPlace, address, bytes, indexSize, &behind);
+    return leave(import != nullptr ? IndexBehindWriter::Taken : IndexBehindWriter::Refused, import);
 }
 
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart) {
@@ -1615,6 +1774,7 @@ struct DrawInputs {
     std::vector<VkDeviceSize> vertexOffsets;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
     bool vertexInputBehindGpuWrite = false;
+    bool indexInputBehindGpuWrite = false;
     std::uint32_t fragmentOutputs = 0;
     VkPipelineStageFlags shaderStages = 0;
     std::uint32_t meshGroups = 0;
@@ -1650,11 +1810,26 @@ struct DrawPlan {
     std::shared_ptr<const VertexInputLayout> retainedVertexInput;
     bool candidate = false;
     bool keyed = false;
-    ResourceCache::Key contentKey;
+    const ResourceCache::Key* contentKey = nullptr;
     const VertexInputLayout& VertexLayout() const { return retainedVertexInput != nullptr ? *retainedVertexInput : vertexInput; }
 };
 
-DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer) {
+ResourceCache::Key& threadPlanContentKey() {
+    thread_local ResourceCache::Key* slot = nullptr;
+    return ShaderRecompiler::ThreadOwned(slot);
+}
+
+bool EarlyDrawKeys() {
+    static const bool enabled = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
+    return enabled;
+}
+
+bool KeyForDevice(const std::vector<std::uint32_t>& key, VkDevice device) {
+    const auto handle = reinterpret_cast<std::uint64_t>(device);
+    return key.size() >= 3 && key[0] == 0xffffffffu && key[1] == static_cast<std::uint32_t>(handle) && key[2] == static_cast<std::uint32_t>(handle >> 32u);
+}
+
+DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer, const std::vector<std::uint32_t>* earlyKey = nullptr, ResourceCache::Key* scratchKey = nullptr) {
     DrawPlan plan;
     APS5_LOG_OUT_DEBUG("Draw indices=%u instances=%u indexSize=%u flags=%u indexAddress=0x%llx", draw.indexCount, draw.instanceCount, draw.indexSize, draw.flags, static_cast<unsigned long long>(draw.indexAddress));
     APS5_LOG_OUT_DEBUG("State colorTarget=%u render=%ux%u colorAddress=0x%llx colorBytes=%llu colorExtent=%ux%u", state.hasColorTarget ? 1u : 0u, state.renderExtent.width, state.renderExtent.height, static_cast<unsigned long long>(state.color.address), static_cast<unsigned long long>(state.color.bytes), state.color.extent.width, state.color.extent.height);
@@ -1680,7 +1855,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
             plan.nothing = true;
             return plan;
         }
-    } else Require((!state.stages.mesh || draw.indexed) && !state.stages.tessellation && !state.quadList, "indirect draw on a non-vertex path must be resolved by the driver");
+    } else Require(!state.stages.tessellation && !state.quadList, "indirect draw on a non-vertex path must be resolved by the driver");
     plan.indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
     const auto indexBytes = plan.indexBytes;
     APS5_LOG_OUT_DEBUG("Index buffer bytes=%llu", static_cast<unsigned long long>(indexBytes));
@@ -1721,6 +1896,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     }
     if (state.stages.tessellation) Require(draw.indexCount % state.stages.tessellation->inputControlPoints == 0, "incomplete tessellation patch");
     ValidateViewport(context, state.viewport);
+    for (const auto& viewport : state.extraViewports) ValidateViewport(context, viewport);
     ValidateDepthBounds(context, state);
     ValidateSampleMask(context, state, shaders);
     timer.phase(PhaseValidate);
@@ -1740,7 +1916,15 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     plan.keyed = plan.candidate && !ShaderResources::NeverReusable(shaders);
     if (plan.keyed) {
         const auto keyStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        plan.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        if (earlyKey != nullptr && KeyForDevice(*earlyKey, context.device)) {
+            plan.contentKey = earlyKey;
+            static const bool verify = std::getenv("APS5_VERIFY_EARLY_DRAW_KEY") != nullptr;
+            if (verify) Require(*plan.contentKey == DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey), "the draw resource key made before the commit differs from the commit's");
+        } else {
+            auto& targetKey = scratchKey != nullptr ? *scratchKey : threadPlanContentKey();
+            FillDrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey, targetKey);
+            plan.contentKey = &targetKey;
+        }
         timer.charge(PhaseLookup, keyStart);
     }
     return plan;
@@ -1754,16 +1938,19 @@ bool VerifyDrawPlan() {
 void requireDrawPlanRepeats(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan) {
     DrawOutcome scratch;
     DrawTimer scratchTimer(false);
-    const auto again = planDraw(context, state, draw, shaders, nullptr, scratch, scratchTimer);
+    ResourceCache::Key againKey;
+    const auto again = planDraw(context, state, draw, shaders, nullptr, scratch, scratchTimer, nullptr, &againKey);
     const auto sameBinding = [](const VkVertexInputBindingDescription& a, const VkVertexInputBindingDescription& b) { return a.binding == b.binding && a.stride == b.stride && a.inputRate == b.inputRate; };
     const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
     const auto& layout = plan.VertexLayout();
     const auto& repeated = again.VertexLayout();
-    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && again.contentKey == plan.contentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
+    const bool sameContentKey = (again.contentKey == nullptr && plan.contentKey == nullptr) || (again.contentKey != nullptr && plan.contentKey != nullptr && *again.contentKey == *plan.contentKey);
+    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && sameContentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
 }
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
     DrawInputs inputs;
+    const auto reads = draw.indirect ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(draw.indexCount) * draw.instanceCount;
     inputs.indexBytes = drawPlan.indexBytes;
     inputs.fragmentOutputs = drawPlan.fragmentOutputs;
     inputs.shaderStages = drawPlan.shaderStages;
@@ -1776,7 +1963,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto indexBytes = inputs.indexBytes;
     if (draw.indexed) GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
     APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
-    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read");
+    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read", DepthReadCause::Reuse);
     if (state.pixelKill && !state.pixelEarlyZ && std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0; })) {
         const auto* recorder = Recorder::Active();
         Require(recorder == nullptr || !recorder->CountingSamples(), "a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests cannot use while occlusion queries count samples: the early tests would count the pixels it kills");
@@ -1866,8 +2053,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.indexOffset = 0;
         inputs.expandedIndexCount = outputIndexCount;
         inputs.indices = std::move(indexCopy);
-    } else if (draw.indexed && state.primitiveRestart && !context.primitiveListRestart && (state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)) {
-        Require(!state.stages.mesh, "AGC graphics: primitive restart in a mesh list draw needs VK_EXT_primitive_topology_list_restart");
+    } else if (draw.indexed && state.primitiveRestart && !context.primitiveListRestart && !state.stages.mesh && (state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)) {
         if (indexBytes == 0) {
             inputs.nothing = true;
             return inputs;
@@ -1900,18 +2086,29 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.indexOffset = 0;
     } else if (draw.indexed) {
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart);
+        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart || state.stages.mesh);
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
-        const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
+        const bool restartTable = skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6);
+        const auto* behindWriter = InPlaceIndexBehindWriter(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, static_cast<bool>(state.stages.mesh), skipRestart, draw.firstVertex);
+        const auto* import = behindWriter != nullptr ? behindWriter : InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, nullptr, static_cast<std::size_t>(indexBytes), reads);
         DrawInputCopy copy;
-        if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
+        if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use, 0, !BindsIndexCopy(state));
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
         std::optional<std::uint32_t> highest;
         std::uint32_t lowest = 0;
-        if (import != nullptr) {
-            const auto range = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart);
-            highest = range.highest;
-            lowest = range.lowest;
+        if (behindWriter != nullptr) {
+            highest = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+            inputs.indexInputBehindGpuWrite = true;
+        } else if (import != nullptr) {
+            const std::uint32_t largestIndex = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+            if (shaders.front().program->vertexAttributes.empty() && !skipRestart && !state.stages.mesh && draw.indexCount != 0 && largestIndex <= context.limits.maxDrawIndexedIndexValue && draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - largestIndex) {
+                highest = largestIndex;
+                lowest = 0u;
+            } else {
+                const auto range = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart);
+                highest = range.highest;
+                lowest = range.lowest;
+            }
         } else if (!copy.reused) {
             if (const auto bounds = DrawIndexRange(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart)) {
                 highest = bounds->highest;
@@ -1950,7 +2147,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.maxIndex = *highest;
         inputs.minIndex = lowest;
-        if (skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6)) {
+        if (restartTable) {
             const auto indexSpan = import != nullptr ? std::span<const std::byte>(reinterpret_cast<const std::byte*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)) : copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
             inputs.restartTable = MeshRestartTable(indexSpan, draw.indexSize);
         }
@@ -1966,6 +2163,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     APS5_LOG_CHARS_OUT_DEBUG("Index validation OK");
     timing.Mark("index_upload");
     const auto& attributes = shaders.front().program->vertexAttributes;
+    const bool wholeRange = args != nullptr || inputs.indexInputBehindGpuWrite;
     inputs.vertexOffsets.assign(attributes.size(), 0);
     inputs.vertexHandles.reserve(attributes.size());
     // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
@@ -1979,8 +2177,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     auto& fetchValid = planLease->fetchValid;
     auto& fetchOf = planLease->fetchOf;
     auto& zeroed = planLease->zeroed;
+    auto& fetchLimit = planLease->fetchLimit;
     fetches.reserve(attributes.size());
     fetchValid.reserve(attributes.size());
+    fetchLimit.reserve(attributes.size());
     fetchOf.assign(attributes.size(), 0);
     zeroed.resize(attributes.size());
     const auto& layout = inputs.VertexLayout();
@@ -1988,23 +2188,28 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& attribute = attributes[i];
         const auto described = std::find_if(layout.attributes.begin(), layout.attributes.end(), [&](const auto& entry) { return entry.location == attribute.location; });
         Require(described != layout.attributes.end(), "vertex attribute missing from its input layout");
+        if (VertexFetchOutOfRange(attribute)) {
+            zeroed[i] = zeroVertexBuffer(context, ZeroVertexFormat(attribute).bytes);
+            continue;
+        }
         const auto narrow = DecodeVertexFormat(attribute);
         const std::size_t widened = described->format == narrow.format ? 0u : VertexReadBytes(attribute, described->format) - narrow.bytes;
-        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
+        if (NullVertexDescriptor(attribute)) {
             zeroed[i] = zeroVertexBuffer(context, narrow.bytes + widened);
             continue;
         }
         // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
-        const auto bytes = (args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance)) + widened;
+        const auto bytes = (wholeRange ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance)) + widened;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
-        const auto firstByte = args == nullptr ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
+        const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
         Require(!state.hasColorTarget || address + bytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
         const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
-        fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
+        fetchValid.push_back(!wholeRange && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
+        fetchLimit.push_back(args == nullptr ? std::max<std::uint64_t>(VertexDescriptorEnd(attribute, widened), address + bytes) : address + bytes);
     }
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
     auto& isSolo = planLease->isSolo;
@@ -2020,7 +2225,12 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         plannedFetches.push_back(fetches[f]);
     }
     const auto plan = PlanVertexCopies(plannedFetches);
-    const auto rangeFrom = args == nullptr && !state.stages.mesh ? VertexCopyStarts(plan, plannedFetches, inputs.minIndex, draw.firstInstance) : std::vector<std::size_t>(plan.copies.size(), 0);
+    const auto rangeFrom = !wholeRange && !state.stages.mesh ? VertexCopyStarts(plan, plannedFetches, inputs.minIndex, draw.firstInstance) : std::vector<std::size_t>(plan.copies.size(), 0);
+    auto& rangeLimit = planLease->rangeLimit;
+    rangeLimit.assign(plan.copies.size(), std::numeric_limits<std::uint64_t>::max());
+    for (std::size_t f = 0; f < fetches.size(); ++f) {
+        if (!isSolo[f]) rangeLimit[plan.copyOf[plannedOf[f]]] = std::min(rangeLimit[plan.copyOf[plannedOf[f]]], fetchLimit[f]);
+    }
     auto& rangeHandles = planLease->rangeHandles;
     auto& rangeOffsets = planLease->rangeOffsets;
     rangeHandles.reserve(plan.copies.size());
@@ -2029,14 +2239,15 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
-        RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read");
-        if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite)) {
+        RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read", DepthReadCause::Reuse);
+        if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads)) {
             rangeHandles.push_back(import->buffer);
             rangeOffsets.push_back(HostImportOffset(*import, begin));
             inputs.inPlaceReads.emplace_back(begin, end);
             continue;
         }
-        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range]);
+        const auto limit = VertexCopyGrowEnd(state, end, rangeLimit[range]);
+        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range], false, static_cast<std::size_t>(limit - begin));
         KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
         rangeHandles.push_back(copy.buffer->Handle());
         rangeOffsets.push_back(0);
@@ -2076,8 +2287,37 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 // over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
 // [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
 // the stored object instead.
-std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
-    const auto lookupStart = std::chrono::steady_clock::now();
+bool materializeMipClear(const Context& context, const ColorTarget& color, std::shared_ptr<StorageTexture>& resident) {
+    if (color.dccAddress == 0 || color.mipCount <= 1 || color.mipTail) return false;
+    const auto keyCount = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
+    const auto landed = LandedDccKeys(color.dccAddress, color.bytes, keyCount);
+    DccKeys keys;
+    bool verified;
+    if (landed == DccKeys::Unreadable) {
+        keys = CurrentDccKeys(color.dccAddress, color.bytes, keyCount);
+        verified = false;
+    } else {
+        keys = landed;
+        verified = true;
+    }
+    if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return false;
+    const auto texel = clearTexel(color, keys);
+    if (resident != nullptr) {
+        const char* refusal = nullptr;
+        if (resident->ClearMip(texel, color.mip, verified, refusal)) {
+            MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
+            return true;
+        }
+        MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
+    }
+    StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
+    writeTexels(color, texel);
+    return true;
+}
+
+template<typename TLookup>
+std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const TLookup& lookup) {
+    const auto lookupStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
     std::shared_ptr<StorageTexture> resident;
     try {
@@ -2091,6 +2331,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
     }
     if (resident != nullptr) materializeCmaskClear(context, color, resident);
+    if (resident != nullptr) materializeMipClear(context, color, resident);
     if (profile) {
         const auto lookupUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - lookupStart).count();
         ++outcome.targetLookups;
@@ -2111,7 +2352,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
 struct ResolvedResources {
     std::shared_ptr<ShaderResources> resources;
     std::vector<ShaderResources::MovedBuffer> moved;
-    ResourceCache::Key contentKey;
+    const ResourceCache::Key* contentKey = nullptr;
     bool cacheable = false;
     const ShaderResources::BuildTiming* built = nullptr;
 };
@@ -2192,7 +2433,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     else if (address == AddressStages::ReadOnly && !resolved.cacheable) reuse = AddressDrawReuse::NotSpaceOnly;
     if (resolved.cacheable) {
         resolved.contentKey = plan.contentKey;
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
+        if (auto cached = SharedResourceCache().Find(*resolved.contentKey)) {
             const auto releaseSpace = [](ShaderResources* resources) { static_cast<void>(resources->ReleaseSpace()); };
             std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(nullptr, releaseSpace);
             const bool counted = address == AddressStages::ReadOnly && cached->SpaceReuse();
@@ -2245,7 +2486,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
-                SharedResourceCache().Remove(resolved.contentKey);
+                SharedResourceCache().Remove(*resolved.contentKey);
                 countCache(&DrawProfile::cacheInvalidated);
             }
         }
@@ -2490,10 +2731,10 @@ std::shared_ptr<Buffer> directMeshArguments(const Context& context, const Pm4::D
 
 std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::span<const std::uint32_t> restartTable) {
     const auto* args = indirect.args;
-    const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw.indexCount);
+    const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw);
     auto arguments = meshArgumentBuffer(context, restartTable);
     if (indirect.path == IndirectDrawPath::Gpu && recorder != nullptr && indirect.argumentImport->address != 0) {
-        const std::array<std::uint32_t, 7> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal};
+        const std::array<std::uint32_t, 8> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal, rules.firstIgnored};
         if (recorder->RecordMeshArguments(commands, indirect.argumentImport->address + (args->arguments - indirect.argumentImport->base), arguments->DeviceAddress(), words)) {
             countBarrier(2);
             if (recorded) recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
@@ -2547,41 +2788,26 @@ std::shared_ptr<std::shared_ptr<const void>> reserveSpaceKeep(Recorder& recorder
     return slot;
 }
 
-// Everything a recorded draw uses lives until its batch completes.
-struct Kept {
-    std::shared_ptr<ShaderResources> resources;
-    std::shared_ptr<Pipeline> pipeline;
-    std::shared_ptr<Framebuffer> framebuffer;
-    std::shared_ptr<Buffer> indices;
-    std::vector<std::shared_ptr<Buffer>> vertexBuffers;
-    std::vector<std::shared_ptr<StorageTexture>> targets;
-    std::unique_ptr<DeviceBuffer> scratch;
-};
-
-// The completion side of a recorded draw: the kept objects, the record check, the lease outcome,
-// the GPU write notes, the copied-buffer write-back (listed in DrawCopiedWriters or run as a
-// completion action) and the targets marked dirty.
-void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep) {
-    auto kept = std::make_shared<Kept>();
-    kept->resources = resources;
-    kept->pipeline = std::move(pipeline);
-    kept->framebuffer = std::move(framebuffer);
-    kept->indices = std::move(inputs.indices);
-    kept->vertexBuffers = std::move(inputs.vertexBuffers);
-    kept->scratch = std::move(scratch);
-    kept->targets = std::move(targets);
-    const auto& residents = kept->targets;
+void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, const std::shared_ptr<Pipeline>& pipeline, const std::shared_ptr<Framebuffer>& framebuffer, DrawInputs& inputs, std::span<const std::shared_ptr<StorageTexture>> residents, std::span<const std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep) {
+    std::shared_ptr<DeviceBuffer> scratchOwner(std::move(scratch));
+    recorder.ReserveRetention(4 + inputs.vertexBuffers.size() + residents.size() + (scratchOwner != nullptr ? 1u : 0u));
     resources->KeepStorageImageBytes(recorder);
     for (const auto& target : residents) {
         if (target != nullptr && !target->Cached()) recorder.KeepBytes(target.get(), static_cast<std::size_t>(target->BudgetBytes()));
     }
-    recorder.Keep(kept);
+    recorder.Retain(resources);
+    recorder.Retain(pipeline);
+    recorder.Retain(framebuffer);
+    recorder.Retain(inputs.indices);
+    for (const auto& buffer : inputs.vertexBuffers) recorder.Retain(buffer);
+    if (scratchOwner != nullptr) recorder.Keep(std::move(scratchOwner));
+    for (const auto& target : residents) recorder.Retain(target);
     if (resources != nullptr) recorder.KeepBytes(resources.get(), resources->CopiedBytes());
     if (checkRecords) recorder.OnComplete(std::move(checkRecords));
     // Counted for the [address-sync] line: a lease released by the completion (the pin waiter
     // finishes the recorder up to the open batch, which holds the kept resources and gets the
     // next serial), or waited for by the caller (any wait releases it at once).
-    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
+    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1, !resources->BdaReadOnly());
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
     if (spaceKeep != nullptr) *spaceKeep = resources->ReleaseSpace();
@@ -2596,6 +2822,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
             writers->erase(std::remove(writers->begin(), writers->end(), resources), writers->end());
             resources->WriteBackBuffers();
         });
+        recorder.OnDiscard([resources, writers] { writers->erase(std::remove(writers->begin(), writers->end(), resources), writers->end()); });
         writers->push_back(resources);
         GuestMemory::BreakProofs();
     } else if (completion) {
@@ -2603,7 +2830,9 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         else if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
         else recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
     }
-    std::vector<bool> storeNow(residents.size(), false);
+    InlineList<std::uint8_t, 8> storeFlags;
+    for (std::size_t index = 0; index < residents.size(); ++index) storeFlags.EmplaceBack(0);
+    auto storeNow = storeFlags.Span();
     for (std::size_t index = 0; index < residents.size(); ++index) {
         if (residents[index] == nullptr) continue;
         if (residents[index]->Descriptor().tileMode == TextureTileMode::kLinear) storeNow[index] = !residents[index]->MarkDrawn(index < slices.size() ? slices[index].first : 0u, index < slices.size() ? slices[index].second : 0u, scissor) || !residents[index]->Cached();
@@ -2627,15 +2856,20 @@ struct StagedWrite {
     VkRect2D area{};
 };
 
-struct RecordedDraw {
+struct BorrowedDraw {
+    BorrowedDraw(const std::shared_ptr<ShaderResources>& resources, const std::shared_ptr<Pipeline>& pipeline, const std::shared_ptr<Framebuffer>& framebuffer) : resources(resources), pipeline(pipeline), framebuffer(framebuffer) {}
+    BorrowedDraw(const BorrowedDraw&) = delete;
+    BorrowedDraw(BorrowedDraw&&) = delete;
+    BorrowedDraw& operator=(const BorrowedDraw&) = delete;
+    BorrowedDraw& operator=(BorrowedDraw&&) = delete;
+    const std::shared_ptr<ShaderResources>& resources;
+    const std::shared_ptr<Pipeline>& pipeline;
+    const std::shared_ptr<Framebuffer>& framebuffer;
     Recorder* recorder = nullptr;
     const State* masked = nullptr;
-    std::shared_ptr<ShaderResources> resources;
-    std::shared_ptr<Pipeline> pipeline;
-    std::shared_ptr<Framebuffer> framebuffer;
     std::span<const VkImageView> targetViews;
-    std::vector<std::shared_ptr<StorageTexture>> targets;
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> targetSlices;
+    std::span<const std::shared_ptr<StorageTexture>> targets;
+    std::span<const std::pair<std::uint32_t, std::uint32_t>> targetSlices;
     std::vector<std::shared_ptr<void>> multisampleTargets;
     std::vector<std::shared_ptr<StorageTexture>> proxies;
     std::vector<VkImage> multisampleImages;
@@ -2663,7 +2897,47 @@ void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
-void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
+VkFrontFace FlippedFrontFace(VkFrontFace face) {
+    return face == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+}
+
+bool StencilReplayStrip(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
+    const auto same = [](const VkStencilOpState& left, const VkStencilOpState& right) {
+        return left.failOp == right.failOp && left.passOp == right.passOp && left.depthFailOp == right.depthFailOp && left.compareOp == right.compareOp && left.compareMask == right.compareMask && left.writeMask == right.writeMask && left.reference == right.reference;
+    };
+    return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (state.cullMode == VK_CULL_MODE_NONE || context.graphicsPipelineLibrary) && same(state.stencilFront, state.stencilBack) &&
+        std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::none_of(shader.program->fragmentParameters, [](const ShaderRecompiler::FragmentParameter& parameter) { return parameter.flat || parameter.perVertex || parameter.flatP10 || parameter.flatP20 || parameter.vertexOrder; }); });
+}
+
+struct StencilReplayPass {
+    std::uint32_t word;
+    std::uint32_t reference;
+    std::uint32_t stencilBits;
+    bool colorAndDepth;
+};
+
+std::vector<StencilReplayPass> StencilReplayPasses(const State& state, const Pipeline& pipeline, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, bool& bitwise) {
+    std::uint32_t bits = 0;
+    for (const auto& [reference, unused] : replay) bits |= reference;
+    bits &= (state.stencilFront.writeMask | state.stencilBack.writeMask) & 0xffu;
+    const auto replaces = [&](const VkStencilOpState& face) { return face.compareOp == VK_COMPARE_OP_ALWAYS && face.passOp == VK_STENCIL_OP_REPLACE && (face.depthFailOp == VK_STENCIL_OP_KEEP || !state.depthTest); };
+    bitwise = state.stencilTest && replaces(state.stencilFront) && replaces(state.stencilBack) && pipeline.MasksStencilReplayPasses(state) && 2u + static_cast<std::size_t>(std::popcount(bits)) < replay.size();
+    std::vector<StencilReplayPass> passes;
+    if (!bitwise) {
+        for (const auto& [reference, unused] : replay) passes.push_back({reference, reference, 0xffu, true});
+        return passes;
+    }
+    passes.push_back({0xff00u, 0u, 0xffu, false});
+    for (std::uint32_t bit = 1u; bit <= 0x80u; bit <<= 1u) {
+        if ((bits & bit) != 0u) passes.push_back({bit | ((~bit & 0xffu) << 8u), 0xffu, bit, false});
+    }
+    passes.push_back({0xff00u, 0u, 0u, true});
+    static std::once_flag logged;
+    std::call_once(logged, [&] { APS5_LOG_OUT("Stencil replay: a draw writes its exported stencil one bit per pass, recording %zu passes per triangle and instance in place of %zu", passes.size(), replay.size()); });
+    return passes;
+}
+
+void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const State* masked, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     const auto commands = recording.Commands();
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
@@ -2676,33 +2950,44 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
     const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
-    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex) {
+    const bool faceDynamic = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE;
+    Require(!replay.empty(), "stencil replay has no reference values");
+    const auto& pipeline = *replay.front().second;
+    bool bitwise = false;
+    const auto passes = StencilReplayPasses(state, pipeline, replay, bitwise);
+    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex, bool reversed) {
         std::uint32_t unusedSubdraw = 0;
-        for (const auto& [reference, pipeline] : replay) {
-            selected.stencilReplayReference = reference;
-            selected.stencilFront.reference = reference;
-            selected.stencilBack.reference = reference;
-            recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
-            std::memcpy(block.data() + referenceOffset, &reference, sizeof(reference));
-            pipeline->PushConstants(commands, stages, block);
+        for (const auto& pass : passes) {
+            selected.stencilReplayReference = pass.reference;
+            if (faceDynamic) recording.SetFrontFace(context, reversed ? FlippedFrontFace(state.frontFace) : state.frontFace);
+            if (bitwise) pipeline.SetStencilReplayMasks(recording, state, masked, pass.colorAndDepth, pass.stencilBits);
+            selected.stencilFront.reference = pass.reference;
+            selected.stencilBack.reference = pass.reference;
+            recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, pass.reference);
+            std::memcpy(block.data() + referenceOffset, &pass.word, sizeof(pass.word));
+            pipeline.PushConstants(commands, stages, block);
             recordDrawCommands(context, commands, selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex);
         }
     };
-    if (replay.size() == 1u) {
-        run(draw, std::nullopt);
+    if (passes.size() == 1u) {
+        run(draw, std::nullopt, false);
         return;
     }
     const auto indexCount = draw.indexed ? inputs.indexCount.value_or(draw.indexCount) : draw.indexCount;
+    const bool strip = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    const std::uint32_t triangles = strip ? (indexCount >= 3u ? indexCount - 2u : 0u) : indexCount / 3u;
     for (std::uint32_t instance = 0; instance < draw.instanceCount; ++instance) {
-        for (std::uint32_t first = 0; first < indexCount - indexCount % 3u; first += 3u) {
+        for (std::uint32_t triangle = 0; triangle < triangles; ++triangle) {
+            const std::uint32_t first = strip ? triangle : triangle * 3u;
             auto piece = draw;
             piece.instanceCount = 1u;
             piece.firstInstance = draw.firstInstance + instance;
             piece.indexCount = 3u;
             if (!draw.indexed) piece.firstVertex += first;
-            run(piece, draw.indexed ? first : 0u);
+            run(piece, draw.indexed ? first : 0u, strip && (triangle & 1u) != 0u);
         }
     }
+    if (bitwise) pipeline.SetStencilReplayMasks(recording, state, masked, true, 0xffu);
 }
 
 void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes, VkShaderStageFlags stages, VkDeviceAddress meshArguments = 0, bool restartTable = false, std::uint32_t meshLayerStride = 0) {
@@ -2830,7 +3115,15 @@ bool WriteOnlyPasses() {
     return enabled;
 }
 
-void recordDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawInputs& inputs, RecordedDraw& record, DrawOutcome& outcome, DrawTimer& timer, double& ownWaitedMs, const DrawTraceContext* trace = nullptr) {
+bool ParallelAtlasEnabled() {
+    static const bool enabled = [] {
+        const char* text = std::getenv("APS5_PARALLEL_ATLAS");
+        return text != nullptr && text[0] != '\0' && text[0] != '0' && std::getenv("APS5_PROFILE_GPU_DRAWS") == nullptr;
+    }();
+    return enabled;
+}
+
+void recordDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawInputs& inputs, BorrowedDraw& record, DrawOutcome& outcome, DrawTimer& timer, double& ownWaitedMs, const DrawTraceContext* trace = nullptr) {
     std::uint32_t subdraw = 0;
     auto* recorder = record.recorder;
     auto& resources = *record.resources;
@@ -2881,13 +3174,23 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         const auto begin = entry.address - entry.adjustment;
         passReads.emplace_back(begin, begin + GuestBufferMemory::ViewBytes(entry.size, entry.adjustment));
     }
-    const auto passImages = resources.StorageImages();
-    std::vector<std::pair<VkImage, bool>> passAttachments;
-    passAttachments.reserve(record.targets.size());
-    for (const auto& target : record.targets) {
-        if (target != nullptr) passAttachments.emplace_back(target->Image(), true);
+    thread_local std::vector<std::pair<VkImage, bool>>* passImagesSlot = nullptr;
+    auto& passImages = ShaderRecompiler::ThreadOwned(passImagesSlot);
+    resources.StorageImages(passImages);
+    InlineList<PassAttachment, 16> passAttachments;
+    for (std::size_t index = 0; index < record.targets.size(); ++index) {
+        const auto& target = record.targets[index];
+        if (target == nullptr) continue;
+        if (index < state.colors.size()) {
+            const auto& color = state.colors[index];
+            const std::uint32_t firstSlice = target->ImageDepth() > 1u ? color.depthSlice : color.arraySlice;
+            const std::uint32_t sliceCount = target->ImageDepth() > 1u || color.arrayLastSlice != 0u ? color.layers : 1u;
+            passAttachments.EmplaceBack(PassAttachment{target->Image(), true, color.mip, firstSlice, sliceCount});
+        } else {
+            passAttachments.EmplaceBack(PassAttachment{target->Image(), true, 0u, 0u, 0u});
+        }
     }
-    for (const auto image : record.multisampleImages) passAttachments.emplace_back(image, true);
+    for (const auto image : record.multisampleImages) passAttachments.EmplaceBack(PassAttachment{image, true, 0u, 0u, 0u});
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)); }, unknownMemory));
     const auto drawUse = resources.BeginDrawUse(*recorder);
@@ -2918,11 +3221,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         passWrites = hazardWrites;
         passWriteOnly = writeOnly;
     }
-    const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
+    const PassAccess passAccess{passReads, passWrites, passImages, passAttachments.Span(), unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    const bool parallelThis = ParallelAtlasEnabled() && !DrawFaultTokens() && state.depth.has_value() && !state.hasColorTarget && state.samples == 1u && !state.rasterizerDiscard && record.pipeline->DynamicRendering() && !record.pipeline->BindsColor() && !recorder->CountingSamples() && !gpuIndirect && !meshIndirect && !captured;
+    const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess, parallelThis);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
@@ -2959,59 +3263,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
-    if (continued) {
-        record.pipeline->Continue(recording, state, record.masked);
-    } else {
-        for (const auto& proxy : record.proxies) {
-            proxy->RecordAttachmentProxyLoad(commands, VK_IMAGE_LAYOUT_GENERAL);
-            countBarrier(2);
-        }
-        if (start.barrier) {
-            const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
-            context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
-            countBarrier(1);
-        }
-        APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
-        if (inputs.vertexInputBehindGpuWrite) {
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
-            countBarrier(1);
-        }
-        const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
-        if (pixelLdsSubgroup != 0u) PreparePixelFunctionLds(context, commands, pixelLdsSubgroup);
-        if (captured) {
-            recordCaptureBarrier(context, commands);
-            countBarrier(1);
-            meshArguments = state.tessellationCapture->header;
-            argumentBuffer = meshArguments->Handle();
-        } else if (meshIndirect) {
-            meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
-            argumentBuffer = meshArguments->Handle();
-        } else if (gpuIndirect) {
-            rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
-        }
-        // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
-        // layout, which a lean draw renders in: no transitions.
-        if (!record.reordered.empty()) {
-            std::vector<std::shared_ptr<void>> kept;
-            RecordSampleOrder(context, recording, record.reorderPass, record.reordered, true, kept);
-            for (auto& object : kept) recorder->Keep(std::move(object));
-        }
-        for (const auto& write : record.staged) RecordStagedClear(context, commands, *write.temporary);
-        APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
-        record.pipeline->Begin(recording, *record.framebuffer, state.renderExtent, state, record.masked);
-    }
-    APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
-    if (drawBindings != nullptr) {
-        const auto set = drawBindings->allocation.set;
-        const auto fragmentSet = drawBindings->fragmentAllocation.set;
-        if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
-        if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
-    } else {
-        resources.BindDrawUse(commands, record.pipeline->Layout(), drawUse.get());
-    }
-    if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
-    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
-    APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
+    static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
+    auto eachDrawTiming = Recorder::NoTiming;
     std::array<std::byte, PipelinePushConstantBytes> movedPush;
     const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
     VkShaderStageFlags pushStages = record.pushStages;
@@ -3023,31 +3276,118 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             pushBytes = &movedPush;
         }
     }
-    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
-    APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
-    static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
-    auto eachDrawTiming = Recorder::NoTiming;
-    if (timeEachDraw) {
-        std::uint64_t key = 0;
-        for (const auto& shader : shaders) {
-            if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+    const auto recordPassOpen = [&](CommandState& rec, bool secondaryContents) {
+    const auto cb = rec.Commands();
+    if (continued) {
+        record.pipeline->Continue(rec, state, record.masked);
+    } else {
+        for (const auto& proxy : record.proxies) {
+            proxy->RecordAttachmentProxyLoad(cb, VK_IMAGE_LAYOUT_GENERAL);
+            countBarrier(2);
         }
-        eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
+        if (start.barrier) {
+            const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
+            context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+            countBarrier(1);
+        }
+        APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
+        if (inputs.vertexInputBehindGpuWrite || inputs.indexInputBehindGpuWrite) {
+            RecordMemoryBarrier(context, cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, (inputs.vertexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT} : VkAccessFlags{0}) | (inputs.indexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_INDEX_READ_BIT} : VkAccessFlags{0}));
+            countBarrier(1);
+        }
+        const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
+        if (pixelLdsSubgroup != 0u) PreparePixelFunctionLds(context, cb, pixelLdsSubgroup);
+        if (captured) {
+            recordCaptureBarrier(context, cb);
+            countBarrier(1);
+            meshArguments = state.tessellationCapture->header;
+            argumentBuffer = meshArguments->Handle();
+        } else if (meshIndirect) {
+            meshArguments = recordMeshArguments(context, cb, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
+            argumentBuffer = meshArguments->Handle();
+        } else if (gpuIndirect) {
+            rewritten = recordIndirectArguments(context, cb, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
+        }
+        // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
+        // layout, which a lean draw renders in: no transitions.
+        if (!record.reordered.empty()) {
+            std::vector<std::shared_ptr<void>> kept;
+            RecordSampleOrder(context, rec, record.reorderPass, record.reordered, true, kept);
+            for (auto& object : kept) recorder->Keep(std::move(object));
+        }
+        for (const auto& write : record.staged) RecordStagedClear(context, cb, *write.temporary);
+        APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
+        record.pipeline->Begin(rec, *record.framebuffer, state.renderExtent, state, record.masked, secondaryContents);
     }
-    noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
-    if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+    };
+    const auto recordBody = [&](CommandState& rec) {
+    const auto cb = rec.Commands();
+    APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
+    if (drawBindings != nullptr) {
+        const auto set = drawBindings->allocation.set;
+        const auto fragmentSet = drawBindings->fragmentAllocation.set;
+        if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
+        if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
+    } else {
+        resources.BindDrawUse(cb, record.pipeline->Layout(), drawUse.get());
+    }
+    if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, cb, record.pipeline->Layout());
+    if (UsesMeshWindow(shaders)) BindMeshWindow(context, cb, record.pipeline->Layout());
+    APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
+    pushDrawConstants(*record.pipeline, cb, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
+    APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
+    if (timeEachDraw && Recorder::GpuTimingEnabled()) {
+        if (Recorder::DrawStageTimingEnabled()) {
+            std::vector<std::pair<std::uint32_t, std::uint64_t>> stages;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr) stages.emplace_back(static_cast<std::uint32_t>(shader.stage), shader.program->variantId);
+            }
+            eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawStageTimingKey(stages));
+        } else {
+            std::uint64_t key = 0;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+            }
+            eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
+        }
+    }
+    noteDrawFaultToken(context, *recorder, cb, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
+    if (record.stencilReplay.empty()) recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
+        recordStencilReplay(context, rec, state, record.masked, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
-        record.pipeline->ContinueBackFaces(recording, state, record.masked);
-        recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+        record.pipeline->ContinueBackFaces(rec, state, record.masked);
+        recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
     if (record.pipeline->SplitsSecondChannel()) {
-        record.pipeline->ContinueSecondChannel(recording, state, record.masked);
-        recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+        record.pipeline->ContinueSecondChannel(rec, state, record.masked);
+        recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
+    };
+    if (parallelThis) {
+        if (!continued) recordPassOpen(recording, true);
+        auto& pool = DeviceRecordingPool(context);
+        const auto depthFormat = record.pipeline->DepthFormat();
+        const RecordingPool::Inheritance inheritance{depthFormat, HasStencil(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, record.pipeline->ColorSlotCount()};
+        OrderedAssembly<RecordingPool::Result> assembly;
+        const auto sequence = assembly.Reserve();
+        pool.Record(assembly, sequence, inheritance, [&](VkCommandBuffer cb) {
+            CommandState pooled;
+            pooled.Begin(cb);
+            record.pipeline->Continue(pooled, state, record.masked);
+            recordBody(pooled);
+        });
+        auto result = assembly.Take(sequence);
+        if (result.error != nullptr) std::rethrow_exception(result.error);
+        recording.ExecuteCommands(context, 1, &result.commands);
+        recorder->Keep(std::move(result.release));
+    } else {
+        recordPassOpen(recording, false);
+        recordBody(recording);
+    }
+
     recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
     if (argumentSnapshot != nullptr) recorder->Keep(argumentSnapshot);
@@ -3078,9 +3418,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             }
         };
     }
-    recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
+    recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies), parallelThis);
     timer.phase(PhaseRecord);
-    keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr);
+    keepRecordedDraw(*recorder, record.resources, record.pipeline, record.framebuffer, inputs, record.targets, record.targetSlices, state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr);
     timer.phase(PhaseKeep);
     if (!record.staged.empty()) {
         const auto merged = recorder->Commands();
@@ -3183,6 +3523,9 @@ struct PreparedDraw {
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
     std::uint64_t shape = 0;
+    const std::vector<std::uint32_t>* contentKey = nullptr;
+    bool passAttachments = false;
+    bool attachmentsFromMemo = false;
     std::vector<std::uint32_t> stencilReferences;
     std::optional<PerformanceTimer> timing;
     DrawTimer timer;
@@ -3304,7 +3647,7 @@ std::shared_ptr<Pipeline> shapePipeline(const Context& context, std::uint64_t sh
     for (const auto& choice : entry->choices) {
         if (!sameChoice(choice, input, layouts, shaders, attachmentLayout, fragmentOutputs)) continue;
         const auto hash = choice.hash;
-        const auto expected = choice.pipeline;
+        const auto& expected = choice.pipeline;
         return TouchCachedPipeline(context, hash, expected);
     }
     return nullptr;
@@ -3353,8 +3696,481 @@ void rememberShape(const Context& context, std::uint64_t shape, std::span<const 
     choices.insert(choices.begin(), std::move(choice));
 }
 
+bool sameColorTarget(const ColorTarget& a, const ColorTarget& b) {
+    return a.address == b.address && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && a.bytes == b.bytes && a.componentMapping == b.componentMapping && a.tileMode == b.tileMode && a.elementBytes == b.elementBytes && a.packing == b.packing && a.dccAddress == b.dccAddress && a.chainDccAddress == b.chainDccAddress && a.dccAlphaOnMsb == b.dccAlphaOnMsb && a.dccPipeAligned == b.dccPipeAligned && a.cmaskAddress == b.cmaskAddress && a.cmaskBytes == b.cmaskBytes && a.cmaskFastClear == b.cmaskFastClear && a.eqaaFragments == b.eqaaFragments && a.surfaceAddress == b.surfaceAddress && a.surfaceExtent.width == b.surfaceExtent.width && a.surfaceExtent.height == b.surfaceExtent.height && a.mipCount == b.mipCount && a.mip == b.mip && a.mipTail == b.mipTail && a.clearWords == b.clearWords && a.slot == b.slot && a.depth == b.depth && a.depthSlice == b.depthSlice && a.arrayAddress == b.arrayAddress && a.arrayLastSlice == b.arrayLastSlice && a.arraySlice == b.arraySlice && a.layers == b.layers && a.exportIndex == b.exportIndex && a.uintExport == b.uintExport && a.volume == b.volume && a.pipeBankXor == b.pipeBankXor && a.samples == b.samples && a.coverageSamples == b.coverageSamples && a.dccControl == b.dccControl && a.fmaskAddress == b.fmaskAddress && a.fmaskPipeBankXor == b.fmaskPipeBankXor && a.partialWriteMask == b.partialWriteMask && a.staged == b.staged && a.stagedMask == b.stagedMask && a.stagedFormat == b.stagedFormat;
+}
+
+bool sameDepthTarget(const DepthTarget& a, const DepthTarget& b) {
+    return a.address == b.address && a.stencilAddress == b.stencilAddress && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && std::bit_cast<std::uint32_t>(a.clearDepth) == std::bit_cast<std::uint32_t>(b.clearDepth) && a.clearStencil == b.clearStencil && a.htileAddress == b.htileAddress && a.htileStencil == b.htileStencil && a.samples == b.samples && a.depthSwizzle == b.depthSwizzle && a.pipeBankXor == b.pipeBankXor && a.firstSlice == b.firstSlice && a.lastSlice == b.lastSlice && a.iterate256 == b.iterate256 && a.htilePipeAligned == b.htilePipeAligned && a.htileVrsEncoding == b.htileVrsEncoding && a.htileDepthOnly == b.htileDepthOnly && a.gcn == b.gcn;
+}
+
+struct AttachmentMemo {
+    bool valid = false;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t recorder = 0;
+    std::uint64_t generation = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t proof = 0;
+    std::uint64_t pending = 0;
+    std::uint64_t depthSerial = 0;
+    std::uint64_t depthReleased = 0;
+    std::vector<ColorTarget> colors;
+    std::vector<std::weak_ptr<StorageTexture>> residents;
+    std::vector<std::uint64_t> versions;
+    std::vector<bool> gpuTiling;
+    std::vector<bool> proxied;
+    std::vector<VkImageView> views;
+    std::optional<DepthTarget> depth;
+    bool depthWrite = false;
+    bool stencilTest = false;
+    bool stencilWritten = false;
+    VkImageView depthView = VK_NULL_HANDLE;
+};
+
+struct AttachmentMemoStorage {};
+
+AttachmentMemo& attachmentMemo() {
+    return HostThreadLocal<AttachmentMemo, AttachmentMemoStorage>();
+}
+
+bool PassAttachmentMemoEnabled() {
+    return !RuntimeSwitches::Set(RuntimeSwitch::NoPassAttachmentMemo) && ShaderResources::EpochProofs();
+}
+
+bool VerifyPassAttachments() {
+    static const bool verify = std::getenv("APS5_VERIFY_PASS_ATTACHMENTS") != nullptr;
+    return verify;
+}
+
+enum class AttachmentEvent : std::size_t { Hit, NoMemo, Pass, Serials, Targets, Images, Depth, Stored, Ineligible, Verified, Mismatch, Count };
+
+void noteAttachments(AttachmentEvent event) {
+    static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr || std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!stats) return;
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AttachmentEvent::Count)> counts{};
+    static std::atomic<std::int64_t> reportedAt{0};
+    counts[static_cast<std::size_t>(event)].fetch_add(1, std::memory_order_relaxed);
+    const auto tenSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (reportedAt.exchange(tenSeconds, std::memory_order_relaxed) == tenSeconds) return;
+    std::array<unsigned long long, static_cast<std::size_t>(AttachmentEvent::Count)> taken{};
+    for (std::size_t index = 0; index < taken.size(); ++index) taken[index] = counts[index].exchange(0, std::memory_order_relaxed);
+    AgcDriver::ProfilePrint_nid_no_patch("[pass-attachments] 10 s: %llu hits; misses: %llu no memo, %llu pass, %llu serials, %llu targets, %llu images, %llu depth; %llu stored, %llu ineligible; verify %llu checked, %llu differed\n", taken[0], taken[1], taken[2], taken[3], taken[4], taken[5], taken[6], taken[7], taken[8], taken[9], taken[10]);
+}
+
+bool matchAttachmentMemo(const Context& context, const State& state, InlineList<std::shared_ptr<StorageTexture>, 8>& residents, std::span<const VkImageView> expectedViews) {
+    const auto& memo = attachmentMemo();
+    const auto miss = [](AttachmentEvent why) { noteAttachments(why); return false; };
+    if (!memo.valid || memo.device != context.device) return miss(AttachmentEvent::NoMemo);
+    const auto* recorder = Recorder::Active();
+    if (recorder == nullptr || recorder->Id() != memo.recorder || !recorder->RenderPassOpen() || recorder->RenderPassGeneration() != memo.generation) return miss(AttachmentEvent::Pass);
+    if (GuestMemory::CollectEpoch() != memo.epoch || GuestMemory::ProofSerial() != memo.proof || StorageTexture::PendingSerial() != memo.pending) return miss(AttachmentEvent::Serials);
+    if (state.colors.size() != memo.colors.size()) return miss(AttachmentEvent::Targets);
+    for (std::size_t index = 0; index < state.colors.size(); ++index) {
+        if (!sameColorTarget(state.colors[index], memo.colors[index])) return miss(AttachmentEvent::Targets);
+    }
+    if (state.depth.has_value() != memo.depth.has_value()) return miss(AttachmentEvent::Depth);
+    if (state.depth && overwrittenStencil(state)) return miss(AttachmentEvent::Depth);
+    if (state.depth) {
+        if (!sameDepthTarget(*state.depth, *memo.depth) || state.depthWrite != memo.depthWrite || state.stencilTest != memo.stencilTest || writesStencilTarget(state) != memo.stencilWritten || DepthSurfacesSerial() != memo.depthSerial || DepthSurfacesReleased() != memo.depthReleased) return miss(AttachmentEvent::Depth);
+    }
+    if (!expectedViews.empty()) {
+        if (expectedViews.size() != memo.views.size() + (state.depth ? 1u : 0u)) return miss(AttachmentEvent::Targets);
+        for (std::size_t index = 0; index < memo.views.size(); ++index) {
+            if (expectedViews[index] != memo.views[index]) return miss(AttachmentEvent::Targets);
+        }
+        if (state.depth && expectedViews.back() != memo.depthView) return miss(AttachmentEvent::Depth);
+    }
+    for (std::size_t index = 0; index < memo.residents.size(); ++index) {
+        auto resident = memo.residents[index].lock();
+        if (resident == nullptr || resident->Version() != memo.versions[index] || !StorageImageCached(context, resident.get()) || !StorageImageServesKeys(*resident, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(AttachmentEvent::Images);
+        residents.EmplaceBack(std::move(resident));
+    }
+    return true;
+}
+
+bool memoAttachments(const Context& context, const State& state, PreparedDraw& prepared, bool fill) {
+    InlineList<std::shared_ptr<StorageTexture>, 8> residents;
+    if (!matchAttachmentMemo(context, state, residents, {})) return false;
+    if (!fill) return true;
+    const auto& memo = attachmentMemo();
+    noteAttachments(AttachmentEvent::Hit);
+    auto& targets = prepared.targets;
+    auto& targetViews = prepared.targetViews;
+    auto matched = residents.Span();
+    for (std::size_t index = 0; index < state.colors.size(); ++index) {
+        auto& binding = targets[index];
+        binding.resident = std::move(matched[index]);
+        binding.color = state.colors[index];
+        binding.gpuTiling = memo.gpuTiling[index];
+        binding.proxied = memo.proxied[index];
+        targetViews.push_back(memo.views[index]);
+    }
+    if (state.depth) targetViews.push_back(memo.depthView);
+    return true;
+}
+
+void checkAttachmentViews(const State& state, std::span<const VkImageView> views, const auto& residentAt) {
+    const auto& memo = attachmentMemo();
+    bool same = views.size() == memo.views.size() + (memo.depth ? 1u : 0u);
+    for (std::size_t index = 0; same && index < memo.views.size(); ++index) same = residentAt(index) == memo.residents[index].lock() && views[index] == memo.views[index];
+    if (same && state.depth) same = views.back() == memo.depthView;
+    noteAttachments(same ? AttachmentEvent::Verified : AttachmentEvent::Mismatch);
+    if (!same) {
+        static std::atomic<int> reports{0};
+        if (reports.fetch_add(1, std::memory_order_relaxed) < 20) std::fprintf(stderr, "[pass-attachments] verify: the memo's attachments differ from the full lookup (target 0x%llx, depth 0x%llx)\n", static_cast<unsigned long long>(state.hasColorTarget ? state.color.address : 0), static_cast<unsigned long long>(state.depth ? state.depth->address : 0));
+    }
+}
+
+void checkAttachments(const State& state, const PreparedDraw& prepared) {
+    checkAttachmentViews(state, prepared.targetViews, [&](std::size_t index) { return prepared.targets[index].resident; });
+}
+
+void storeAttachmentMemoHeader(AttachmentMemo& memo, const Context& context, const State& state, const Recorder& recorder, std::uint64_t epoch, std::span<const VkImageView> views) {
+    memo.valid = true;
+    memo.device = context.device;
+    memo.recorder = recorder.Id();
+    memo.generation = recorder.RenderPassGeneration();
+    memo.epoch = epoch;
+    memo.proof = GuestMemory::ProofSerial();
+    memo.pending = StorageTexture::PendingSerial();
+    memo.depthSerial = DepthSurfacesSerial();
+    memo.depthReleased = DepthSurfacesReleased();
+    memo.colors.assign(state.colors.begin(), state.colors.end());
+    memo.residents.clear();
+    memo.versions.clear();
+    memo.gpuTiling.clear();
+    memo.proxied.clear();
+    memo.views.clear();
+    memo.depth = state.depth;
+    memo.depthWrite = state.depthWrite;
+    memo.stencilTest = state.stencilTest;
+    memo.stencilWritten = state.depth ? writesStencilTarget(state) : false;
+    memo.depthView = state.depth ? views.back() : VK_NULL_HANDLE;
+}
+
+void rememberAttachments(const Context& context, const State& state, const PreparedDraw& prepared) {
+    auto& memo = attachmentMemo();
+    const auto* recorder = prepared.recorder;
+    const auto epoch = GuestMemory::CollectEpoch();
+    const bool eligible = epoch != 0 && recorder != nullptr && recorder->RenderPassOpen() && prepared.dumpLimit == 0 && (!state.depth || state.depth->samples == 1u) && prepared.targetViews.size() == prepared.targets.size() + (state.depth ? 1u : 0u) && std::ranges::all_of(prepared.targets, [](const TargetBinding& binding) { return !binding.multisampled && binding.resident != nullptr && binding.target == nullptr && binding.stagedTemporary == nullptr && binding.dump == nullptr && !binding.color.staged && binding.color.partialWriteMask == 0; });
+    if (!eligible) {
+        memo.valid = false;
+        noteAttachments(AttachmentEvent::Ineligible);
+        return;
+    }
+    storeAttachmentMemoHeader(memo, context, state, *recorder, epoch, prepared.targetViews);
+    for (std::size_t index = 0; index < prepared.targets.size(); ++index) {
+        const auto& binding = prepared.targets[index];
+        memo.residents.emplace_back(binding.resident);
+        memo.versions.push_back(binding.resident->Version());
+        memo.gpuTiling.push_back(binding.gpuTiling);
+        memo.proxied.push_back(binding.proxied);
+        memo.views.push_back(prepared.targetViews[index]);
+    }
+    noteAttachments(AttachmentEvent::Stored);
+}
+
+void rememberRecipeAttachments(const Context& context, const State& state, const Recorder* recorder, std::span<const std::shared_ptr<StorageTexture>> residents, std::span<const VkImageView> views) {
+    auto& memo = attachmentMemo();
+    const auto epoch = GuestMemory::CollectEpoch();
+    const bool eligible = epoch != 0 && recorder != nullptr && recorder->RenderPassOpen() && (!state.depth || state.depth->samples == 1u) && views.size() == residents.size() + (state.depth ? 1u : 0u) && std::ranges::all_of(residents, [](const std::shared_ptr<StorageTexture>& resident) { return resident != nullptr; }) && std::ranges::all_of(state.colors, [](const ColorTarget& color) { return color.samples == 1u && !color.staged && color.partialWriteMask == 0; });
+    if (!eligible) {
+        memo.valid = false;
+        noteAttachments(AttachmentEvent::Ineligible);
+        return;
+    }
+    storeAttachmentMemoHeader(memo, context, state, *recorder, epoch, views);
+    for (std::size_t index = 0; index < residents.size(); ++index) {
+        memo.residents.emplace_back(residents[index]);
+        memo.versions.push_back(residents[index]->Version());
+        memo.gpuTiling.push_back(state.colors[index].tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr);
+        memo.proxied.push_back(false);
+        memo.views.push_back(views[index]);
+    }
+    noteAttachments(AttachmentEvent::Stored);
+}
+
 bool storesIntoResident(const ShaderResources& resources, const StorageTexture& resident) {
     return std::ranges::any_of(resources.StorageImages(), [&](const std::pair<VkImage, bool>& image) { return image.first == resident.Image() && image.second; });
+}
+
+bool VerifyTargetMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr;
+    return verify;
+}
+
+bool TargetMemoEnabled() {
+    static const bool cached = std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr;
+    return cached && !RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemo) && ShaderResources::EpochProofs();
+}
+
+struct TargetProof {
+    std::uint64_t epoch = 0;
+    std::uint64_t proofs = 0;
+    std::uint64_t pending = 0;
+    std::uint64_t unwatch = 0;
+    std::uint64_t allocations = 0;
+    std::uint64_t surfaces = 0;
+    std::uint64_t released = 0;
+    std::uint64_t claims = 0;
+    const Recorder* recorder = nullptr;
+    VkDevice device = VK_NULL_HANDLE;
+    bool operator==(const TargetProof&) const = default;
+    const char* MovedBefore(const TargetProof& after) const {
+        if (epoch != after.epoch) return "epoch";
+        if (surfaces != after.surfaces) return "surfaces";
+        return released != after.released ? "released" : nullptr;
+    }
+};
+
+TargetProof currentTargetProof(const Context& context) {
+    return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), GuestMemory::UnwatchSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), DepthSurfacesSerial(), DepthSurfacesReleased(), MultisampleClaimSerial(), Recorder::Active(), context.device};
+}
+
+
+struct DepthFootprint {
+    std::uint64_t address = 0;
+    std::uint64_t stencilAddress = 0;
+    std::uint64_t htileAddress = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t samples = 0;
+    bool d16 = false;
+    bool sliced = false;
+    bool operator==(const DepthFootprint&) const = default;
+};
+
+std::optional<DepthFootprint> depthFootprint(const std::optional<DepthTarget>& depth) {
+    if (!depth) return std::nullopt;
+    return DepthFootprint{depth->address, depth->stencilAddress, depth->htileAddress, depth->extent.width, depth->extent.height, depth->samples,
+        depth->format == VK_FORMAT_D16_UNORM || depth->format == VK_FORMAT_D16_UNORM_S8_UINT, depth->firstSlice != 0u || depth->lastSlice != 0u};
+}
+
+struct ColorMemo {
+    struct Attachment {
+        std::weak_ptr<StorageTexture> resident;
+        bool proxied = false;
+        VkImageView view = VK_NULL_HANDLE;
+    };
+    bool valid = false;
+    TargetProof proof;
+    std::vector<ColorTarget> descriptors;
+    std::vector<Attachment> attachments;
+    std::optional<DepthFootprint> clearOfDepth;
+};
+
+struct DepthMemo {
+    bool valid = false;
+    TargetProof proof;
+    std::optional<DepthTarget> descriptor;
+};
+
+struct TargetMemo {
+    ColorMemo colors;
+    DepthMemo depth;
+    void Invalidate() {
+        colors.valid = false;
+        depth.valid = false;
+    }
+};
+
+struct TargetMemoStorage {};
+TargetMemo& ThreadTargetMemo() {
+    return HostThreadLocal<TargetMemo, TargetMemoStorage>();
+}
+thread_local std::uint64_t targetMemoBuilds = 0;
+std::atomic<const TargetMemo*> targetMemoOwner{nullptr};
+
+constexpr std::array<const char*, static_cast<std::size_t>(TargetMemoEvent::Count)> TargetMemoEventNames{
+    "lookup", "hit", "overlap cached", "overlap computed", "accept", "accept without depth", "depth hit", "avoided refresh lookups",
+    "invalid", "thread changed", "descriptor", "resident gone", "resident evicted", "depth overlap", "metadata",
+    "epoch", "proofs", "pending", "unwatch", "allocations", "surfaces", "released", "claims", "recorder", "device",
+    "post-depth invalidated", "depth fallback", "admission", "recipe invalidated", "build", "verify checked"
+};
+
+std::array<ProfileCounter, static_cast<std::size_t>(TargetMemoEvent::Count)>& targetMemoEvents() {
+    static std::array<ProfileCounter, static_cast<std::size_t>(TargetMemoEvent::Count)> events;
+    return events;
+}
+
+const bool targetMemoProfiled = std::getenv("APS5_PROFILE_TARGET_MEMO") != nullptr || std::getenv("APS5_PROFILE_DRAW") != nullptr;
+
+void noteTargetMemo(TargetMemoEvent event, std::uint64_t count = 1) {
+    if (targetMemoProfiled) targetMemoEvents()[static_cast<std::size_t>(event)].Add(count);
+#ifdef TRACY_ENABLE
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(TargetMemoEvent::Count)> counts{};
+    const auto index = static_cast<std::size_t>(event);
+    TracyCPlotI(TargetMemoEventNames[index], static_cast<std::int64_t>(counts[index].fetch_add(count, std::memory_order_relaxed) + count));
+#endif
+}
+
+void reportTargetMemo() {
+    using Clock = std::chrono::steady_clock;
+    static std::atomic<std::int64_t> reported{Clock::now().time_since_epoch().count()};
+    static std::array<std::uint64_t, static_cast<std::size_t>(TargetMemoEvent::Count)> previous{};
+    const auto now = Clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (Clock::duration(now - last) < std::chrono::seconds(10) || !reported.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    std::string line;
+    for (std::size_t index = 0; index < previous.size(); ++index) {
+        const auto total = targetMemoEvents()[index].Sum();
+        const auto count = total - previous[index];
+        previous[index] = total;
+        if (count == 0) continue;
+        line += (line.empty() ? " " : ", ") + std::string(TargetMemoEventNames[index]) + " " + std::to_string(count);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[target-memo] (10 s, all threads):%s\n", line.empty() ? " none" : line.c_str());
+}
+
+bool colorProofMatches(const TargetProof& before, const TargetProof& after) {
+    if (before == after) return true;
+    const auto note = [&](bool changed, TargetMemoEvent event) { if (changed) noteTargetMemo(event); };
+    note(before.epoch != after.epoch, TargetMemoEvent::Epoch);
+    note(before.proofs != after.proofs, TargetMemoEvent::Proofs);
+    note(before.pending != after.pending, TargetMemoEvent::Pending);
+    note(before.unwatch != after.unwatch, TargetMemoEvent::Unwatch);
+    note(before.allocations != after.allocations, TargetMemoEvent::Allocations);
+    note(before.surfaces != after.surfaces, TargetMemoEvent::Surfaces);
+    note(before.released != after.released, TargetMemoEvent::Released);
+    note(before.claims != after.claims, TargetMemoEvent::Claims);
+    note(before.recorder != after.recorder, TargetMemoEvent::Recorder);
+    note(before.device != after.device, TargetMemoEvent::Device);
+    return false;
+}
+
+
+bool ownsTargetMemo(TargetMemo& memo) {
+    if (targetMemoOwner.load(std::memory_order_relaxed) == &memo) return true;
+    targetMemoOwner.store(&memo, std::memory_order_relaxed);
+    if (memo.colors.valid || memo.depth.valid) noteTargetMemo(TargetMemoEvent::ThreadChanged);
+    memo.Invalidate();
+    return false;
+}
+
+void dropTargetMemo() {
+    if (targetMemoOwner.load(std::memory_order_relaxed) == nullptr) return;
+    ThreadTargetMemo().Invalidate();
+    targetMemoOwner.store(nullptr, std::memory_order_relaxed);
+}
+
+bool colorOverlapsDepth(const State& state, const TargetBinding& binding) {
+    if (!state.depth) return false;
+    const auto& color = binding.color;
+    const auto& resident = *binding.resident;
+    const auto& descriptor = resident.Descriptor();
+    return DepthTargetOverlaps(*state.depth, resident.Descriptor().baseAddress, resident.GuestBytes()) ||
+        (descriptor.dccAddress != 0 && DepthTargetOverlaps(*state.depth, descriptor.dccAddress, std::max<std::uint64_t>(resident.GuestBytes() / 256u, 1u))) ||
+        (color.dccAddress != 0 && DepthTargetOverlaps(*state.depth, color.dccAddress, std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u))) ||
+        (color.chainDccAddress != 0 && DepthTargetOverlaps(*state.depth, color.chainDccAddress, std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u))) ||
+        (color.cmaskAddress != 0 && DepthTargetOverlaps(*state.depth, color.cmaskAddress, color.cmaskBytes));
+}
+
+bool metadataProved(const ColorTarget& color) {
+    const auto keys = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
+    const bool proved = (color.dccAddress == 0 || GuestMemory::CollectWrites(color.dccAddress, keys) != 0) &&
+        (color.chainDccAddress == 0 || GuestMemory::CollectWrites(color.chainDccAddress, keys) != 0) &&
+        (color.cmaskAddress == 0 || cmaskProved(color.cmaskAddress, color.cmaskBytes));
+    if (!proved) noteTargetMemo(TargetMemoEvent::Metadata);
+    return proved;
+}
+
+void rememberTargets(const State& state, std::span<const TargetBinding> targets, std::span<const VkImageView> views, const TargetProof& proof) {
+    ++targetMemoBuilds;
+    noteTargetMemo(TargetMemoEvent::Build);
+    auto& colors = ThreadTargetMemo().colors;
+    auto& depth = ThreadTargetMemo().depth;
+    const bool enabled = TargetMemoEnabled() && proof.epoch != 0;
+    colors.valid = enabled && !targets.empty() && std::ranges::all_of(targets, [&](const TargetBinding& binding) {
+        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !binding.resident->OtherPendingOverlaps() && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
+    });
+    if (colors.valid) {
+        colors.proof = proof;
+        colors.clearOfDepth = depthFootprint(state.depth);
+        colors.descriptors.assign(state.colors.begin(), state.colors.end());
+        colors.attachments.resize(targets.size());
+        for (std::size_t index = 0; index < targets.size(); ++index) colors.attachments[index] = {targets[index].resident, targets[index].proxied, views[index]};
+    }
+    depth.valid = enabled && (!state.depth || state.depth->samples == 1u);
+    if (depth.valid) {
+        depth.proof = proof;
+        depth.descriptor = state.depth;
+    }
+}
+
+bool sameColorTargetSurface(const ColorTarget& a, const ColorTarget& b) {
+    if (a == b) return true;
+    if (a.arrayLastSlice != 0 || b.arrayLastSlice != 0 || !(a.volume || a.depth > 1) || !(b.volume || b.depth > 1)) return false;
+    auto adjusted = b;
+    adjusted.depthSlice = a.depthSlice;
+    adjusted.layers = a.layers;
+    return a == adjusted;
+}
+
+bool repeatColors(const Context& context, const State& state, const TargetProof& proof, std::vector<TargetBinding>& targets, std::vector<VkImageView>& views) {
+    auto& memo = ThreadTargetMemo().colors;
+    thread_local std::uint32_t lookups = 0;
+    if (targetMemoProfiled && (++lookups & 4095u) == 0u) reportTargetMemo();
+    if (state.colors.empty()) return false;
+    noteTargetMemo(TargetMemoEvent::Lookup);
+    if (!memo.valid || !TargetMemoEnabled()) {
+        noteTargetMemo(TargetMemoEvent::Invalid);
+        return false;
+    }
+    if (!colorProofMatches(memo.proof, proof)) return false;
+    if (memo.descriptors.size() != state.colors.size()) {
+        noteTargetMemo(TargetMemoEvent::Descriptor);
+        return false;
+    }
+    for (std::size_t index = 0; index < state.colors.size(); ++index) {
+        if (!sameColorTargetSurface(memo.descriptors[index], state.colors[index]) || (memo.descriptors[index] != state.colors[index] && memo.attachments[index].proxied)) {
+            noteTargetMemo(TargetMemoEvent::Descriptor);
+            return false;
+        }
+    }
+    const auto footprint = depthFootprint(state.depth);
+    const bool overlapKnown = footprint == memo.clearOfDepth && !RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemoOverlapCache);
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        auto& binding = targets[index];
+        binding.resident = memo.attachments[index].resident.lock();
+        if (binding.resident == nullptr || !binding.resident->Cached()) {
+            noteTargetMemo(binding.resident == nullptr ? TargetMemoEvent::ResidentGone : TargetMemoEvent::ResidentEvicted);
+            return false;
+        }
+        binding.color = state.colors[index];
+        if (VerifyTargetMemo()) Require(overlapKnown ? !colorOverlapsDepth(state, binding) : true, "APS5_VERIFY_TARGET_MEMO: a cached depth overlap differs from its computation");
+        if (!overlapKnown && colorOverlapsDepth(state, binding)) {
+            noteTargetMemo(TargetMemoEvent::DepthOverlap);
+            return false;
+        }
+        binding.gpuTiling = binding.color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr;
+        binding.proxied = memo.attachments[index].proxied;
+        const bool exact = memo.descriptors[index] == binding.color;
+        views.push_back(exact ? memo.attachments[index].view : binding.resident->AttachmentView(binding.color.format, binding.color.mip, binding.color.depthSlice, binding.color.layers, binding.color.arraySlice));
+    }
+    noteTargetMemo(TargetMemoEvent::Hit);
+    noteTargetMemo(overlapKnown ? TargetMemoEvent::OverlapCached : TargetMemoEvent::OverlapComputed);
+    if (!overlapKnown) memo.clearOfDepth = footprint;
+    return true;
+}
+
+VkImageView repeatDepth(const Context& context, const State& state, const TargetProof* proof) {
+    const auto& memo = ThreadTargetMemo().depth;
+    if (!state.depth || !memo.valid || !TargetMemoEnabled() || targetMemoOwner.load(std::memory_order_relaxed) != &ThreadTargetMemo() || memo.proof != (proof != nullptr ? *proof : currentTargetProof(context)) || !memo.descriptor) return VK_NULL_HANDLE;
+    if (*memo.descriptor != *state.depth) return VK_NULL_HANDLE;
+    return RepeatDepthSurfaceView(context, *state.depth, state.depthWrite, writesStencilTarget(state));
+}
+
+const char* targetObligation(const Context& context, const State& state, std::span<const TargetBinding> targets, bool repeatedDepth) {
+    for (const auto& binding : targets) {
+        const auto& color = binding.color;
+        const auto layers = color.arrayLastSlice != 0 ? color.layers : 0u;
+        if (const auto* owed = binding.resident->RefreshObligation(layers != 0 ? color.arraySlice : 0u, layers)) return owed;
+        if (const auto* owed = DepthPlanesObligation(context.device, color.MemoryAddress(), color.bytes)) return owed;
+        if (color.cmaskAddress == 0 || cmaskProved(color.cmaskAddress, color.cmaskBytes)) continue;
+        std::vector<std::uint32_t> cleared;
+        if (readCmask(color, CmaskLayout(color.extent.width, color.extent.height), cleared) != CmaskState::Expanded) return "a CMASK clear";
+    }
+    return repeatedDepth ? DepthTargetObligation(context, *state.depth, state.depthWrite) : nullptr;
 }
 
 bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
@@ -3367,19 +4183,19 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
     }
     if (!stencilReferences.empty()) {
-        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, "stencil replay supports direct triangle lists without restart, mesh or tessellation");
+        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || StencilReplayStrip(context, state, shaders)), "stencil replay supports direct triangle lists, and triangle strips whose triangles share one face state and have no flat parameters, without restart, mesh or tessellation");
         Require(!state.depthBiasPerFace && !ShadersWriteMemory(shaders), "stencil replay refuses face splits and shader memory writes");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe && (shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Fragment); }), "stencil replay refuses stages with side effects, clocks, subgroup dependencies or primitive ID inputs");
         if (stencilReferences.size() == 256u) {
             static std::once_flag unbounded;
-            std::call_once(unbounded, [] { APS5_LOG_CHARS_OUT("Stencil replay: a draw replays all 256 stencil reference values because its pixel shader's export is not bounded, recording 256 passes per triangle and instance"); });
+            std::call_once(unbounded, [] { APS5_LOG_CHARS_OUT("Stencil replay: a draw replays all 256 stencil reference values because its pixel shader's export is not bounded"); });
         }
         for (const auto& shader : shaders) {
             if (shader.stage != ShaderRecompiler::ShaderStage::Vertex) continue;
             Require((shader.program->hostSubgroupSize == 1u || shader.program->hostSubgroupSize == context.subgroup.subgroupSize) && shader.program->spirv.size() >= 5u && shader.program->spirv[1] >= 0x00010000u && shader.program->spirv[1] < 0x00010600u, "stencil replay vertex subgroup contract differs from the physical device");
         }
         Require(static_cast<std::uint64_t>(draw.firstInstance) + draw.instanceCount <= 0x100000000ull && (draw.indexed || static_cast<std::uint64_t>(draw.firstVertex) + draw.indexCount <= 0x100000000ull), "stencil replay draw indices overflow");
-        Require(state.samples == 1u && (!state.depth || HasStencil(state.depth->format)), "stencil replay requires single-sample rendering and an eight-bit stencil format");
+        Require(!state.depth || HasStencil(state.depth->format), "stencil replay requires an eight-bit stencil format");
         recipeOut = nullptr;
     }
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
@@ -3403,7 +4219,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& ownWaitedMs = prepared.ownWaitedMs;
     const auto report = [&](const char* suffix) { reportDrawEnd(state, timer, built, outcome, waitedBefore, ownWaitedMs, suffix); };
     auto& inputs = prepared.inputs;
-    const auto plan = planDraw(context, state, draw, shaders, nullptr, outcome, timer);
+    const auto plan = planDraw(context, state, draw, shaders, nullptr, outcome, timer, prepared.contentKey);
     if (plan.nothing) return false;
     inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
     if (inputs.nothing) {
@@ -3416,136 +4232,225 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& targets = prepared.targets;
     targets.resize(state.colors.size());
     auto& targetViews = prepared.targetViews;
-    for (std::size_t index = 0; index < state.colors.size(); ++index) {
-        auto& binding = targets[index];
-        binding.color = state.colors[index];
-        const auto& color = binding.color;
-        binding.gpuTiling = color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr;
-        if (color.samples > 1) {
-            binding.multisampled = true;
-            timer.phase(PhaseSetup);
-            if (color.staged) {
-                const auto packed = StagedMergeTarget(color);
-                binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
-                PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
-                static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
-                binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
-                Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
-                targetViews.push_back(binding.stagedTemporary->View());
+    const bool verifyAttachments = prepared.passAttachments && VerifyPassAttachments() && memoAttachments(context, state, prepared, false);
+    prepared.attachmentsFromMemo = prepared.passAttachments && !VerifyPassAttachments() && memoAttachments(context, state, prepared, true);
+    const bool memoActive = TargetMemoEnabled();
+    if (!memoActive) dropTargetMemo();
+    const bool memoConsulted = memoActive && !prepared.attachmentsFromMemo;
+    const bool memoServes = memoConsulted && (!verifyAttachments || VerifyTargetMemo());
+    bool targetsUsed = false;
+    TargetProof targetProof;
+    TargetProof admissionProof;
+    bool repeatedColors = false;
+    if (memoConsulted) {
+        static_cast<void>(ownsTargetMemo(ThreadTargetMemo()));
+        targetProof = currentTargetProof(context);
+        admissionProof = targetProof;
+    }
+    if (memoServes) {
+        targetsUsed = true;
+        repeatedColors = repeatColors(context, state, targetProof, targets, targetViews);
+    }
+    const auto prepareColors = [&] {
+        if (targetsUsed) {
+            targets.clear();
+            targets.resize(state.colors.size());
+        }
+        targetsUsed = true;
+        targetViews.clear();
+        for (std::size_t index = 0; index < state.colors.size(); ++index) {
+            auto& binding = targets[index];
+            binding.color = state.colors[index];
+            const auto& color = binding.color;
+            binding.gpuTiling = color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr;
+            if (color.samples > 1) {
+                binding.multisampled = true;
+                timer.phase(PhaseSetup);
+                if (color.staged) {
+                    const auto packed = StagedMergeTarget(color);
+                    binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
+                    PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
+                    static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
+                    binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
+                    Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
+                    targetViews.push_back(binding.stagedTemporary->View());
+                    timer.phase(PhaseReadTarget);
+                    continue;
+                }
+                PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
+                targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
                 timer.phase(PhaseReadTarget);
                 continue;
             }
-            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
-            targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
-            timer.phase(PhaseReadTarget);
-            continue;
-        }
-        APS5_LOG_OUT_DEBUG("Creating color target %zu address=0x%llx bytes=%llu extent=%ux%u", index, static_cast<unsigned long long>(color.address), static_cast<unsigned long long>(color.bytes), color.extent.width, color.extent.height);
-        const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
-        static_cast<void>(FlushDepthPlanes(color.address, colorLayout.Bytes(), DepthPlaneScope::Whole));
-        RetireDepthSurfaces(context.device, color.address, colorLayout.Bytes());
-        ClaimMultisampleTargetMemory(color.address, colorLayout.Bytes());
-        if (color.fmaskAddress != 0) GuardOneFragmentFmask(context, color);
-        constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        timer.phase(PhaseSetup);
-        // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
-        static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
-        static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
-        const bool linearResident = residentLinear && residentTargets && context.detiler != nullptr && color.tileMode == ColorTileMode::Linear && (ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr || (GuestMemory::Watched(color.address, colorLayout.Bytes()) && HostImportFor(context, color.address, colorLayout.Bytes(), ImportRequester::ColorTarget) != nullptr));
-        if ((binding.gpuTiling || ((!ColorTileModeIsLinear(color.tileMode) || linearResident) && context.detiler != nullptr)) && residentTargets) {
-            // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
-            // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
-            // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
-            // (GuestMemory::BumpCollectEpoch: ordering points of the queue, or every packet under
-            // APS5_PACKET_EPOCH=1); the key scan runs on every lookup regardless. Lookups of a
-            // millisecond or more are counted apart; the [texture] line says how many uploaded.
-            binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] {
-                if (color.arrayLastSlice != 0) {
-                    Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
-                    const auto array = ArraySurfaceForTarget(color);
-                    // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
-                    const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
-                    const auto geometry = DescribeSurface(array);
-                    for (std::uint32_t slice = 0; slice <= color.arrayLastSlice; ++slice) Require(geometry.GuestLayerOffset(slice) == slice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
-                    Require(color.surfaceAddress == color.arrayAddress + color.arraySlice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
-                    auto resident = CachedStorageLayers(context, array, color.arraySlice, color.layers);
+            APS5_LOG_OUT_DEBUG("Creating color target %zu address=0x%llx bytes=%llu extent=%ux%u", index, static_cast<unsigned long long>(color.address), static_cast<unsigned long long>(color.bytes), color.extent.width, color.extent.height);
+            const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+            static_cast<void>(FlushDepthPlanes(color.address, colorLayout.Bytes(), DepthPlaneScope::Whole));
+            RetireDepthSurfaces(context.device, color.address, colorLayout.Bytes());
+            ClaimMultisampleTargetMemory(color.address, colorLayout.Bytes());
+            if (color.fmaskAddress != 0) GuardOneFragmentFmask(context, color);
+            constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            timer.phase(PhaseSetup);
+            // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
+            static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
+            static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
+            const bool linearResident = residentLinear && residentTargets && context.detiler != nullptr && color.tileMode == ColorTileMode::Linear && (ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr || (GuestMemory::Watched(color.address, colorLayout.Bytes()) && HostImportFor(context, color.address, colorLayout.Bytes(), ImportRequester::ColorTarget) != nullptr));
+            if ((binding.gpuTiling || ((!ColorTileModeIsLinear(color.tileMode) || linearResident) && context.detiler != nullptr)) && residentTargets) {
+                // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
+                // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
+                // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
+                // (GuestMemory::BumpCollectEpoch: ordering points of the queue, or every packet under
+                // APS5_PACKET_EPOCH=1); the key scan runs on every lookup regardless. Lookups of a
+                // millisecond or more are counted apart; the [texture] line says how many uploaded.
+                binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] {
+                    if (color.arrayLastSlice != 0) {
+                        Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
+                        const auto array = ArraySurfaceForTarget(color);
+                        // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
+                        const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+                        const auto geometry = DescribeSurface(array);
+                        for (std::uint32_t slice = 0; slice <= color.arrayLastSlice; ++slice) Require(geometry.GuestLayerOffset(slice) == slice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
+                        Require(color.surfaceAddress == color.arrayAddress + color.arraySlice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
+                        auto resident = CachedStorageLayers(context, array, color.arraySlice, color.layers);
+                        Require(resident->Attachable(), "storage format cannot be a color attachment");
+                        return resident;
+                    }
+                    const auto surface = SurfaceForTarget(color);
+                    auto resident = RepeatStorageSurface(context, surface, shapeTarget(context, prepared.shape, index));
+                    if (resident != nullptr && VerifyShapeMemo()) {
+                        Require(CachedStorageSurface(context, surface) == resident, "APS5_VERIFY_SHAPE_MEMO: the shape memo's resident target differs from the storage cache's");
+                        noteShapeMemoVerified(false);
+                    }
+                    if (resident == nullptr) resident = CachedStorageSurface(context, surface);
                     Require(resident->Attachable(), "storage format cannot be a color attachment");
+                    Require(color.volume || color.mipCount > 1 || color.depth > 1 || resident->GuestBytes() == colorLayout.Bytes(), "resident image layout differs from the color layout");
                     return resident;
-                }
-                const auto surface = SurfaceForTarget(color);
-                auto resident = RepeatStorageSurface(context, surface, shapeTarget(context, prepared.shape, index));
-                if (resident != nullptr && VerifyShapeMemo()) {
-                    Require(CachedStorageSurface(context, surface) == resident, "APS5_VERIFY_SHAPE_MEMO: the shape memo's resident target differs from the storage cache's");
-                    noteShapeMemoVerified(false);
-                }
-                if (resident == nullptr) resident = CachedStorageSurface(context, surface);
-                Require(resident->Attachable(), "storage format cannot be a color attachment");
-                Require(color.volume || color.mipCount > 1 || color.depth > 1 || resident->GuestBytes() == colorLayout.Bytes(), "resident image layout differs from the color layout");
-                return resident;
-            });
-        }
-        if (binding.resident != nullptr) {
-            timer.phase(PhaseReadTarget);
-            binding.proxied = AttachmentProxyFormat(context, color.format) != VK_FORMAT_UNDEFINED;
-            targetViews.push_back(binding.proxied ? binding.resident->AttachmentProxyView() : binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice));
-            continue;
-        }
-        materializeCmaskClear(context, color, nullptr);
-        Require(!color.mipTail || binding.gpuTiling, "rendering into a packed mip tail requires the GPU tiled fallback");
-        Require(color.depth == 1 && (!color.volume || (color.mipCount == 1 && color.tileMode == ColorTileMode::Linear)), "rendering into a 3D color target needs the resident image of its surface");
-        Require(color.layers == 1, "layered rendering into a 2D array color target needs the resident image of its array");
-        Require(color.arraySlice == 0 || !ColorTileModeIsXor(color.tileMode), "rendering into a slice of a 2D array color target with an XOR tile mode needs the resident image of its array");
-        if (binding.gpuTiling) {
-            binding.mip = color.mipTail ? ComputeColorTargetMipLayout(color.tileMode, color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount, color.mip) : ColorTargetMip(color, colorLayout);
-            binding.tiled = std::make_unique<Buffer>(context, colorLayout.Bytes(), copies);
-            binding.tiledDevice = std::make_unique<DeviceBuffer>(context, colorLayout.Bytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            binding.linearDevice = std::make_unique<DeviceBuffer>(context, colorLayout.LinearBytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            binding.original.resize(colorLayout.Bytes());
-            GuestMemory::Read(color.address, binding.original, colorLayout.Alignment());
-            std::memcpy(binding.tiled->Bytes().data(), binding.original.data(), binding.original.size());
-        } else {
-            const auto x0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.x, 0));
-            const auto y0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.y, 0));
-            const auto x1 = std::min<std::uint32_t>(x0 + state.scissor.extent.width, color.extent.width);
-            const auto y1 = std::min<std::uint32_t>(y0 + state.scissor.extent.height, color.extent.height);
-            binding.banded = color.tileMode == ColorTileMode::Linear && color.dccAddress == 0 && x0 < x1 && y0 < y1 && (x1 - x0 < color.extent.width || y1 - y0 < color.extent.height);
-            if (binding.banded) {
-                binding.band = {{static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)}, {x1 - x0, y1 - y0}};
-                binding.bandOffset = colorLayout.Offset(x0, y0);
-                binding.bandPitch = static_cast<std::uint32_t>(colorLayout.Bytes() / (std::size_t{color.extent.height} * color.elementBytes));
-                const auto bandBytes = colorLayout.Offset(x1 - 1, y1 - 1) + color.elementBytes - binding.bandOffset;
-                binding.transfer = std::make_unique<Buffer>(context, bandBytes, copies);
-                binding.original.resize(bandBytes);
-                GuestMemory::Read(color.address + binding.bandOffset, binding.original, color.elementBytes);
-                std::memcpy(binding.transfer->Bytes().data(), binding.original.data(), bandBytes);
+                });
+            }
+            if (binding.resident != nullptr) {
+                timer.phase(PhaseReadTarget);
+                binding.proxied = AttachmentProxyFormat(context, color.format) != VK_FORMAT_UNDEFINED;
+                targetViews.push_back(binding.proxied ? binding.resident->AttachmentProxyView() : binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice));
+                continue;
+            }
+            materializeCmaskClear(context, color, nullptr);
+            Require(!color.mipTail || binding.gpuTiling, "rendering into a packed mip tail requires the GPU tiled fallback");
+            Require(color.depth == 1 && (!color.volume || (color.mipCount == 1 && color.tileMode == ColorTileMode::Linear)), "rendering into a 3D color target needs the resident image of its surface");
+            Require(color.layers == 1, "layered rendering into a 2D array color target needs the resident image of its array");
+            Require(color.arraySlice == 0 || !ColorTileModeIsXor(color.tileMode), "rendering into a slice of a 2D array color target with an XOR tile mode needs the resident image of its array");
+            if (binding.gpuTiling) {
+                binding.mip = color.mipTail ? ComputeColorTargetMipLayout(color.tileMode, color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount, color.mip) : ColorTargetMip(color, colorLayout);
+                binding.tiled = std::make_unique<Buffer>(context, colorLayout.Bytes(), copies);
+                binding.tiledDevice = std::make_unique<DeviceBuffer>(context, colorLayout.Bytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                binding.linearDevice = std::make_unique<DeviceBuffer>(context, colorLayout.LinearBytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                binding.original.resize(colorLayout.Bytes());
+                GuestMemory::Read(color.address, binding.original, colorLayout.Alignment());
+                std::memcpy(binding.tiled->Bytes().data(), binding.original.data(), binding.original.size());
             } else {
-                binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
-                ReadColorTarget(color, binding.transfer->Bytes());
-            }
-        }
-        // A fast-cleared DCC target holds its clear value wherever the draw does not write.
-        if (color.dccAddress != 0) {
-            const auto keys = CurrentDccKeys(color.dccAddress, colorLayout.Bytes());
-            if (IsDccClear(keys)) {
-                const auto pixels = binding.gpuTiling ? binding.tiled->Bytes() : binding.transfer->Bytes();
-                if (keys == DccKeys::ClearRegister) {
-                    const auto texel = clearTexel(color, keys);
-                    for (std::size_t offset = 0; offset + color.elementBytes <= pixels.size(); offset += color.elementBytes) std::memcpy(pixels.data() + offset, texel.data(), color.elementBytes);
-                } else if (!FillDccClear(color.format, keys, color.dccAlphaOnMsb, pixels)) {
-                    static std::set<std::pair<std::uint64_t, int>> reported;
-                    if (reported.size() < 32 && reported.insert({color.address, static_cast<int>(keys)}).second) std::fprintf(stderr, "[gpu] color target 0x%llx (VkFormat %d) has %s DCC keys; its stored texels are used\n", static_cast<unsigned long long>(color.address), static_cast<int>(color.format), DccKeysName(keys));
-                    if (binding.gpuTiling) std::memcpy(pixels.data(), binding.original.data(), binding.original.size());
-                    else ReadColorTarget(color, pixels);
+                const auto x0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.x, 0));
+                const auto y0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.y, 0));
+                const auto x1 = std::min<std::uint32_t>(x0 + state.scissor.extent.width, color.extent.width);
+                const auto y1 = std::min<std::uint32_t>(y0 + state.scissor.extent.height, color.extent.height);
+                binding.banded = color.tileMode == ColorTileMode::Linear && color.dccAddress == 0 && x0 < x1 && y0 < y1 && (x1 - x0 < color.extent.width || y1 - y0 < color.extent.height);
+                if (binding.banded) {
+                    binding.band = {{static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)}, {x1 - x0, y1 - y0}};
+                    binding.bandOffset = colorLayout.Offset(x0, y0);
+                    binding.bandPitch = static_cast<std::uint32_t>(colorLayout.Bytes() / (std::size_t{color.extent.height} * color.elementBytes));
+                    const auto bandBytes = colorLayout.Offset(x1 - 1, y1 - 1) + color.elementBytes - binding.bandOffset;
+                    binding.transfer = std::make_unique<Buffer>(context, bandBytes, copies);
+                    binding.original.resize(bandBytes);
+                    GuestMemory::Read(color.address + binding.bandOffset, binding.original, color.elementBytes);
+                    std::memcpy(binding.transfer->Bytes().data(), binding.original.data(), bandBytes);
+                } else {
+                    binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
+                    ReadColorTarget(color, binding.transfer->Bytes());
                 }
             }
+            // A fast-cleared DCC target holds its clear value wherever the draw does not write.
+            if (color.dccAddress != 0) {
+                const auto keys = CurrentDccKeys(color.dccAddress, colorLayout.Bytes());
+                if (IsDccClear(keys)) {
+                    const auto pixels = binding.gpuTiling ? binding.tiled->Bytes() : binding.transfer->Bytes();
+                    if (keys == DccKeys::ClearRegister) {
+                        const auto texel = clearTexel(color, keys);
+                        for (std::size_t offset = 0; offset + color.elementBytes <= pixels.size(); offset += color.elementBytes) std::memcpy(pixels.data() + offset, texel.data(), color.elementBytes);
+                    } else if (!FillDccClear(color.format, keys, color.dccAlphaOnMsb, pixels)) {
+                        static std::set<std::pair<std::uint64_t, int>> reported;
+                        if (reported.size() < 32 && reported.insert({color.address, static_cast<int>(keys)}).second) std::fprintf(stderr, "[gpu] color target 0x%llx (VkFormat %d) has %s DCC keys; its stored texels are used\n", static_cast<unsigned long long>(color.address), static_cast<int>(color.format), DccKeysName(keys));
+                        if (binding.gpuTiling) std::memcpy(pixels.data(), binding.original.data(), binding.original.size());
+                        else ReadColorTarget(color, pixels);
+                    }
+                }
+            }
+            timer.phase(PhaseReadTarget);
+            binding.target = std::make_unique<RenderTarget>(context, color, state.blends.at(color.exportIndex).blendEnable != 0);
+            targetViews.push_back(binding.target->View());
         }
-        timer.phase(PhaseReadTarget);
-        binding.target = std::make_unique<RenderTarget>(context, color, state.blends.at(color.exportIndex).blendEnable != 0);
-        targetViews.push_back(binding.target->View());
+    };
+    if (!repeatedColors && !prepared.attachmentsFromMemo) prepareColors();
+    const auto prepareDepth = [&] {
+        noteTargetMemo(TargetMemoEvent::DepthFallback);
+        return DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
+    };
+    auto depthView = memoServes ? repeatDepth(context, state, repeatedColors ? &targetProof : nullptr) : VkImageView{VK_NULL_HANDLE};
+    bool repeatedDepth = state.depth && depthView != VK_NULL_HANDLE;
+    if (repeatedDepth) noteTargetMemo(TargetMemoEvent::DepthHit);
+    if (state.depth && !repeatedDepth && !prepared.attachmentsFromMemo) depthView = prepareDepth();
+    if (repeatedColors && (targetMemoOwner.load(std::memory_order_relaxed) != &ThreadTargetMemo() || !colorProofMatches(targetProof, currentTargetProof(context)) || !std::ranges::all_of(targets, [](const TargetBinding& binding) { return binding.resident->Cached(); }))) {
+        noteTargetMemo(TargetMemoEvent::PostDepthInvalidated);
+        repeatedColors = false;
+        admissionProof = currentTargetProof(context);
+        prepareColors();
+        if (state.depth) depthView = prepareDepth();
+        repeatedDepth = false;
     }
-    if (state.depth) {
-        targetViews.push_back(DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state)));
+    if (repeatedColors) {
+        for (const auto& binding : targets) {
+            binding.resident->NoteProved();
+            binding.resident->NoteUsed();
+        }
+        noteTargetMemo(TargetMemoEvent::Accept);
+        if (state.depth && !repeatedDepth) noteTargetMemo(TargetMemoEvent::AcceptWithDepthMiss);
+        if (!VerifyTargetMemo()) noteTargetMemo(TargetMemoEvent::AvoidedRefreshLookups, targets.size());
     }
+    if ((repeatedColors || repeatedDepth) && VerifyTargetMemo()) {
+        noteTargetMemo(TargetMemoEvent::VerifyChecked);
+        const auto verifyProof = currentTargetProof(context);
+        const auto ownProofBreaks = GuestMemory::OwnProofBreaks();
+        const auto ownPendingMoves = StorageTexture::OwnPendingMoves();
+        const auto ownRefreshWork = StorageTexture::OwnRefreshWork();
+        const auto* owed = targetObligation(context, state, repeatedColors ? std::span<const TargetBinding>(targets) : std::span<const TargetBinding>{}, repeatedDepth);
+        Require(owed == nullptr, std::string("APS5_VERIFY_TARGET_MEMO: a repeated target skipped ") + (owed != nullptr ? owed : ""));
+        if (repeatedColors) {
+            const auto repeatedViews = targetViews;
+            std::vector<std::shared_ptr<StorageTexture>> repeatedResidents;
+            for (const auto& binding : targets) repeatedResidents.push_back(binding.resident);
+            prepareColors();
+            Require(repeatedViews == targetViews && std::ranges::equal(repeatedResidents, targets, {}, {}, &TargetBinding::resident), "APS5_VERIFY_TARGET_MEMO: a repeated color differs from its lookup");
+        }
+        if (repeatedDepth) {
+            const auto fullDepth = prepareDepth();
+            Require(fullDepth == depthView, "APS5_VERIFY_TARGET_MEMO: a repeated depth differs from its lookup");
+        }
+        const auto* moved = StorageTexture::OwnRefreshWork() != ownRefreshWork ? "image content" : GuestMemory::OwnProofBreaks() != ownProofBreaks ? "proofs" : StorageTexture::OwnPendingMoves() != ownPendingMoves ? "pending" : verifyProof.MovedBefore(currentTargetProof(context));
+        Require(moved == nullptr, std::string("APS5_VERIFY_TARGET_MEMO: a repeated target's lookup moved ") + (moved != nullptr ? moved : ""));
+    }
+    if (state.depth && !prepared.attachmentsFromMemo) targetViews.push_back(depthView);
+    if (memoConsulted) {
+        const bool retainedOwner = ownsTargetMemo(ThreadTargetMemo());
+        const auto preparedProof = currentTargetProof(context);
+        const bool unchangedDepth = (ThreadTargetMemo().depth.valid && ThreadTargetMemo().depth.proof == preparedProof &&
+            (repeatedDepth || (!state.depth && !ThreadTargetMemo().depth.descriptor))) ||
+            (state.depth && state.depth->samples != 1u && !ThreadTargetMemo().depth.valid);
+        const bool unchanged = retainedOwner && repeatedColors && ThreadTargetMemo().colors.valid &&
+            ThreadTargetMemo().colors.proof == preparedProof && unchangedDepth;
+        if (admissionProof == preparedProof) {
+            if (!unchanged) rememberTargets(state, targets, targetViews, preparedProof);
+        } else {
+            noteTargetMemo(TargetMemoEvent::Admission);
+            ThreadTargetMemo().Invalidate();
+        }
+    }
+    if (verifyAttachments) checkAttachments(state, prepared);
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
     auto* recorder = prepared.recorder = Recorder::Active();
@@ -3577,8 +4482,18 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require(!imageRead && !resources->ReadsImage(target.resident.get()) && !resources->ReadsOverlap(target.color.MemoryAddress(), static_cast<std::size_t>(target.color.bytes)) && !inputOverlaps(target.color.MemoryAddress(), target.color.bytes), "stencil replay refuses attachment feedback reads");
         }
         if (state.depth) {
-            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u;
-            Require(!resources->ReadsOverlap(state.depth->address, bytes) && !resources->ReadsOverlap(state.depth->stencilAddress, bytes) && !inputOverlaps(state.depth->address, bytes) && !inputOverlaps(state.depth->stencilAddress, bytes), "stencil replay refuses depth or stencil feedback reads");
+            const bool d16 = state.depth->format == VK_FORMAT_D16_UNORM || state.depth->format == VK_FORMAT_D16_UNORM_S8_UINT;
+            const auto planeBytes = [&](std::uint32_t bytesPerTexel) {
+                return static_cast<std::size_t>(state.depth->samples > 1u ? MultisampledDepthBytes_nid_no_patch(state.depth->extent, bytesPerTexel, state.depth->samples) : DepthSliceBytes(state.depth->extent, bytesPerTexel));
+            };
+            const auto depthBytes = planeBytes(d16 ? 2u : 4u);
+            const auto stencilBytes = state.depth->stencilAddress != 0u ? planeBytes(1u) : std::size_t{0};
+            const auto planeRead = [&](std::uint64_t plane, std::size_t length) { return length != 0u && (resources->ReadsOverlap(plane, length) || inputOverlaps(plane, length)); };
+            Require(!planeRead(state.depth->address, depthBytes) && !planeRead(state.depth->stencilAddress, stencilBytes), "stencil replay refuses depth or stencil feedback reads");
+            const auto boundPlane = [&](std::uint64_t address, std::uint64_t length) {
+                const auto overlaps = [&](std::uint64_t plane, std::uint64_t planeLength) { return plane != 0u && planeLength != 0u && address < plane + planeLength && plane < address + length; };
+                return overlaps(state.depth->address, depthBytes) || overlaps(state.depth->stencilAddress, stencilBytes);
+            };
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
@@ -3586,7 +4501,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(offset, 8u);
                         if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
                         const auto texture = DecodeTextureResource(words);
-                        Require(!DepthSurfaceAt(context, words, texture), "stencil replay refuses sampled depth-surface feedback");
+                        if (!DepthSurfaceAt(context, words, texture)) continue;
+                        const auto sampledBytes = static_cast<std::uint64_t>(texture.width) * texture.height * 4u * std::max(texture.samples, 1u) * (static_cast<std::uint64_t>(texture.depthOrLastArray) + 1u);
+                        Require(!boundPlane(texture.baseAddress, sampledBytes), "stencil replay refuses sampled depth-surface feedback");
                     }
                 }
             }
@@ -3643,11 +4560,12 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (indirect.path != IndirectDrawPath::Gpu) {
             // The reads wait for the producing batch through the flush hook, as the driver's
             // resolve did for every indirect dispatch before its GPU path.
-            const auto readStart = std::chrono::steady_clock::now();
+            const auto readStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            FinishLeaseWrites();
             const auto count = std::min(args->countIndirect ? Pm4::ReadDrawCount(*args) : args->count, args->count);
             records.reserve(count);
             for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(*args, record));
-            indirect.readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count();
+            if (profile) indirect.readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count();
             if (inputs.listRestartPrimitive != 0) CompactIndirectListRestart(context, draw, inputs, records);
             indirect.records = records;
             if (std::none_of(records.begin(), records.end(), [](const Pm4::DrawArguments& record) { return record.count != 0 && record.instances != 0; })) {
@@ -3699,7 +4617,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     // A build this recorded draw can share with later identical ones goes into the cache (a cache
     // hit is reusable by construction, so `recorded` holds for it; one with completion work is
     // never reusable).
-    if (cacheable && built != nullptr && recorded && resources->Reusable()) SharedResourceCache().Insert(contentKey, resources);
+    if (cacheable && built != nullptr && recorded && resources->Reusable() && contentKey != nullptr) SharedResourceCache().Insert(*contentKey, resources);
     // A recorded draw renders into its resident targets in the general layout (recordDraw). Debug
     // aid: APS5_DRAW_TRANSITIONS=1 keeps the per-draw upload and download barriers, the layout
     // transitions of every target and one pass per draw, as before.
@@ -3728,7 +4646,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     // The state is copied only when a mask must change.
     auto& masked = prepared.masked;
     masked = maskedState(state, inputs.fragmentOutputs);
-    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
+    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; })) recipeOut = nullptr;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
@@ -3766,7 +4684,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             noteShapeMemoVerified(true);
         }
         const bool repeated = pipeline != nullptr;
-        if (!repeated) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
+        if (!repeated && DefersPipelineBuild(shaders)) {
+            pipeline = ResidentPipelineOrDeferredBuild(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, &storeHash);
+            if (pipeline == nullptr) {
+                report(" pipeline building in the background");
+                return false;
+            }
+        }
+        if (!repeated && pipeline == nullptr) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
         if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
     }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
@@ -3837,16 +4762,15 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     const auto& reordered = prepared.reordered;
     const auto& reorderPass = prepared.reorderPass;
     const auto& depthLocations = prepared.depthLocations;
+    InlineList<std::pair<std::uint32_t, std::uint32_t>, 8> slices;
+    for (const auto& binding : targets) slices.EmplaceBack(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
     if (lean) {
-        RecordedDraw record;
+        BorrowedDraw record{resources, pipeline, framebuffer};
         record.recorder = recorder;
-        record.resources = resources;
         record.moved = resolved.moved;
-        record.pipeline = pipeline;
-        record.framebuffer = framebuffer;
         record.targetViews = targetViews;
         record.targets = owners;
-        for (const auto& binding : targets) record.targetSlices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
+        record.targetSlices = slices.Span();
         for (const auto& binding : targets) {
             if (binding.proxied) record.proxies.push_back(binding.resident);
             if (binding.multisampled) {
@@ -3877,15 +4801,16 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         record.spaceKeep = &prepared.spaceKeep;
         record.masked = prepared.masked.has_value() ? &*prepared.masked : nullptr;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, prepared.trace);
+        if (prepared.passAttachments) rememberAttachments(context, state, prepared);
         // The recipe for the caller's draw-cache entry (design_cpu_final M8, rule R3 for draws):
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples()) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && contentKey != nullptr && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples()) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
-            recipe->key = contentKey;
+            recipe->key = *contentKey;
             recipe->pipeline = pipeline;
             recipe->framebuffer = framebuffer;
             for (const auto& owner : owners) recipe->targets.emplace_back(owner);
@@ -3907,6 +4832,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         report(outcome.waited ? (outcome.reason == SyncLease ? " recorded then waited (lease)" : " recorded then waited (copied writes)") : completion ? " recorded with completion" : " recorded");
         return;
     }
+    if (prepared.passAttachments) attachmentMemo().valid = false;
     const bool gpuIndirect = args != nullptr && indirect.path == IndirectDrawPath::Gpu;
     const auto touches = [&](std::uint64_t begin, std::uint64_t end) {
         const auto bytes = static_cast<std::size_t>(end - begin);
@@ -3968,8 +4894,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         countBarrier();
     }
     APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
-    if (inputs.vertexInputBehindGpuWrite) {
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    if (inputs.vertexInputBehindGpuWrite || inputs.indexInputBehindGpuWrite) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, (inputs.vertexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT} : VkAccessFlags{0}) | (inputs.indexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_INDEX_READ_BIT} : VkAccessFlags{0}));
         countBarrier();
     }
     const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
@@ -4037,7 +4963,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, draw, inputs, stencilReplay, shaders, *resources);
+        recordStencilReplay(context, recording, state, masked.has_value() ? &*masked : nullptr, draw, inputs, stencilReplay, shaders, *resources);
         if (recorded) for (const auto& [reference, selectedPipeline] : stencilReplay) recorder->Keep(selectedPipeline);
     }
     if (pipeline->SplitsFaces()) {
@@ -4126,7 +5052,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);
     if (recorded) {
-        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::pair<std::uint32_t, std::uint32_t>> slices; for (const auto& binding : targets) slices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u); return slices; }(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
+        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, slices.Span(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
             // The wait the dispatch path makes for such work (source 3, "address-based"): the
@@ -4262,7 +5188,14 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Draw(context, meshed, captured, second, snapshots, nullptr, trace);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape) {
+std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
+    if (!EarlyDrawKeys() || shaders.empty() || std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program == nullptr; })) return {};
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    const auto indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
+    return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+}
+
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
@@ -4273,7 +5206,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
         if (recipeOut != nullptr) recipeOut->reset();
-        for (std::uint32_t base = 0; base < state.renderLayers;) {
+        const auto makeWindow = [&](std::uint32_t base) {
             auto window = state;
             window.renderLayers = std::min(limit, state.renderLayers - base);
             window.meshLayerBase = base;
@@ -4285,8 +5218,76 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                 color.layers = window.renderLayers;
             }
             if (!window.colors.empty()) window.color = window.colors.front();
-            Draw(context, window, draw, shaders, snapshots, nullptr, trace);
-            base += window.renderLayers;
+            return window;
+        };
+        auto firstWindow = makeWindow(0u);
+        static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        PreparedDraw prepared(profile);
+        prepared.trace = trace;
+        prepared.contentKey = contentKey;
+        prepared.passAttachments = PassAttachmentMemoEnabled();
+        const struct HeldSpace {
+            PreparedDraw& prepared;
+            ~HeldSpace() {
+                const auto& resources = prepared.resolved.resources;
+                if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
+                if (prepared.spaceKeep != nullptr) *prepared.spaceKeep = resources->ReleaseSpace();
+                else if (prepared.recorder != nullptr) resources->HoldSpaceThrough(prepared.recorder->Id(), prepared.recorder->OpenSerial());
+                else static_cast<void>(resources->ReleaseSpace());
+            }
+        } heldSpace{prepared};
+        bool sharePrepared = false;
+        try {
+            if (!prepareDraw(context, firstWindow, draw, shaders, snapshots, prepared)) {
+                keepHeldSpace(prepared);
+                return;
+            }
+            sharePrepared = !draw.indirect && prepared.lean && !prepared.multisampled && prepared.stencilReplay.empty() && prepared.resolved.resources != nullptr && !prepared.resolved.resources->SpaceReuse() && !prepared.targets.empty() && std::none_of(prepared.targets.begin(), prepared.targets.end(), [](const TargetBinding& binding) { return binding.resident == nullptr || binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; });
+            const bool finalCompletion = prepared.completion;
+            const bool finalWaited = prepared.outcome.waited;
+            if (sharePrepared) {
+                prepared.completion = false;
+                prepared.outcome.waited = false;
+            }
+            recordPreparedDraw(context, firstWindow, draw, shaders, prepared);
+            if (sharePrepared) {
+                for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
+                    auto window = makeWindow(base);
+                    if (base + window.renderLayers >= state.renderLayers) {
+                        prepared.completion = finalCompletion;
+                        prepared.outcome.waited = finalWaited;
+                    }
+                    for (std::size_t index = 0; index < window.colors.size(); ++index) {
+                        const auto& color = window.colors[index];
+                        prepared.targets[index].color = color;
+                        prepared.targetViews[index] = prepared.targets[index].resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
+                    }
+                    if (prepared.masked.has_value()) {
+                        prepared.masked->renderLayers = window.renderLayers;
+                        prepared.masked->meshLayerBase = window.meshLayerBase;
+                        prepared.masked->meshLayerCount = window.meshLayerCount;
+                        prepared.masked->colors = window.colors;
+                        prepared.masked->color = window.color;
+                    }
+                    const auto& pipelineState = prepared.masked.has_value() ? *prepared.masked : window;
+                    prepared.pipeline = CachedPipeline(context, pipelineState, prepared.inputs.VertexLayout(), prepared.resolved.resources->SetLayouts(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+                    prepared.framebuffer = prepared.pipeline->AcquireFramebuffer(prepared.targetViews, prepared.framebufferOwners, window.renderExtent, window.renderLayers);
+                    recordPreparedDraw(context, window, draw, shaders, prepared);
+                    base += window.renderLayers;
+                }
+            }
+        } catch (...) {
+            ThreadTargetMemo().Invalidate();
+            keepHeldSpace(prepared);
+            throw;
+        }
+        keepHeldSpace(prepared);
+        if (!sharePrepared) {
+            for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
+                auto window = makeWindow(base);
+                Draw(context, window, draw, shaders, snapshots, nullptr, trace);
+                base += window.renderLayers;
+            }
         }
         return;
     }
@@ -4295,6 +5296,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
     prepared.shape = shape;
+    prepared.contentKey = contentKey;
+    prepared.passAttachments = PassAttachmentMemoEnabled();
     const struct HeldSpace {
         PreparedDraw& prepared;
         ~HeldSpace() {
@@ -4308,6 +5311,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     try {
         if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
     } catch (...) {
+        ThreadTargetMemo().Invalidate();
         keepHeldSpace(prepared);
         throw;
     }
@@ -4339,6 +5343,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     auto* recorder = Recorder::Active();
     if (state.quadList || StripPatches(state, shaders) || !RecordDraws() || recorder == nullptr || DumpTargetLimit() != 0) return miss(DrawRecipeMiss::NotRecordable);
     if (recipe.hasDepth != state.depth.has_value()) return miss(DrawRecipeMiss::TargetGone);
+    if (!ZeroVertexLayoutMatches(recipe.vertexInput, shaders.front().program->vertexAttributes)) return miss(DrawRecipeMiss::Proof);
     const std::size_t expectedViews = state.colors.size() + (recipe.hasDepth ? 1u : 0u);
     Require(recipe.targets.size() == state.colors.size() && recipe.targetViews.size() == expectedViews, "draw recipe targets do not match the state");
     const auto plan = planDraw(context, state, draw, shaders, &recipe, outcome, timer);
@@ -4355,27 +5360,46 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     // what the lookup would return, and Refresh brings it up to date exactly as the lookup's does
     // (FlushPending, the whole-surface collect and UnchangedSince, the key scan). An image gone
     // from the cache is a miss: the ordinary path looks up anew.
-    std::vector<std::shared_ptr<StorageTexture>> targets;
-    targets.reserve(recipe.targets.size());
-    for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
-        timer.phase(PhaseSetup);
-        if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
-        auto stored = recipe.targets[index].lock();
-        if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
-        auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
-            if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, state.colors[index].layers);
-            else stored->Refresh();
-            return stored;
-        });
-        timer.phase(PhaseReadTarget);
-        if (resident == nullptr) return miss(DrawRecipeMiss::TargetGone);
-        targets.push_back(std::move(resident));
-    }
-    if (recipe.hasDepth) {
-        timer.phase(PhaseSetup);
-        const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
-        timer.phase(PhaseReadTarget);
-        if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
+    auto& memo = ThreadTargetMemo();
+    if (ownsTargetMemo(memo) && (memo.colors.valid || memo.depth.valid)) noteTargetMemo(TargetMemoEvent::RecipeInvalidated);
+    memo.Invalidate();
+    const bool passAttachments = PassAttachmentMemoEnabled();
+    const bool verifyAttachments = passAttachments && VerifyPassAttachments() && [&] {
+        InlineList<std::shared_ptr<StorageTexture>, 8> ignored;
+        return matchAttachmentMemo(context, state, ignored, recipe.targetViews);
+    }();
+    InlineList<std::shared_ptr<StorageTexture>, 8> targets;
+    const bool attachmentsFromMemo = passAttachments && !VerifyPassAttachments() && matchAttachmentMemo(context, state, targets, recipe.targetViews);
+    if (attachmentsFromMemo) {
+        noteAttachments(AttachmentEvent::Hit);
+        for (std::size_t index = 0; index < state.colors.size(); ++index) {
+            if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
+        }
+    } else {
+        for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
+            timer.phase(PhaseSetup);
+            if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
+            auto stored = recipe.targets[index].lock();
+            if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
+            auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
+                if (state.colors[index].arrayLastSlice != 0) stored->RefreshLayers(state.colors[index].arraySlice, state.colors[index].layers);
+                else stored->Refresh();
+                return stored;
+            });
+            timer.phase(PhaseReadTarget);
+            if (resident == nullptr) return miss(DrawRecipeMiss::TargetGone);
+            targets.EmplaceBack(std::move(resident));
+        }
+        if (recipe.hasDepth) {
+            timer.phase(PhaseSetup);
+            const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state), overwrittenStencil(state));
+            timer.phase(PhaseReadTarget);
+            if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
+        }
+        if (verifyAttachments) {
+            const auto matchedTargets = targets.Span();
+            checkAttachmentViews(state, recipe.targetViews, [&](std::size_t index) { return matchedTargets[index]; });
+        }
     }
     timer.phase(PhasePrepare);
     // The template's proof (rules R6/R7): ProveCurrent, T1 included, the alias checks the trimmed
@@ -4412,22 +5436,22 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (pipeline == nullptr) return miss(DrawRecipeMiss::ObjectsGone);
     auto framebuffer = recipe.framebuffer.lock();
     if (framebuffer == nullptr) {
-        const std::vector<std::shared_ptr<void>> framebufferOwners(targets.begin(), targets.end());
+        const auto stored = targets.Span();
+        const std::vector<std::shared_ptr<void>> framebufferOwners(stored.begin(), stored.end());
         framebuffer = pipeline->AcquireFramebuffer(recipe.targetViews, framebufferOwners, state.renderExtent, state.renderLayers);
     }
     timer.phase(PhasePipeline);
     const auto recordStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    RecordedDraw record;
+    BorrowedDraw record{resources, pipeline, framebuffer};
     record.recorder = recorder;
     record.masked = recipe.masked.has_value() ? &*recipe.masked : nullptr;
     record.completion = outcome.completion;
-    record.resources = std::move(resources);
     record.moved = *moved;
-    record.pipeline = std::move(pipeline);
-    record.framebuffer = std::move(framebuffer);
     record.targetViews = recipe.targetViews;
-    record.targets = std::move(targets);
-    for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
+    record.targets = targets.Span();
+    InlineList<std::pair<std::uint32_t, std::uint32_t>, 8> slices;
+    for (const auto& color : state.colors) slices.EmplaceBack(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
+    record.targetSlices = slices.Span();
     auto pushBytes = recipe.pushBytes;
     if (recipe.pushStages != 0) {
         pushBytes = AssemblePushConstants(shaders);
@@ -4437,6 +5461,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, trace);
+    if (passAttachments) rememberRecipeAttachments(context, state, recorder, targets.Span(), recipe.targetViews);
     if (profile) {
         result.recordUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - recordStart).count();
         auto& stats = Profile();
@@ -4486,7 +5511,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         Require(!ColorTileModeIsLinear(destination.tileMode) && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
         const auto resident = CachedStorageSurface(context, SurfaceForTarget(destination));
         Require(resident->Attachable(), "storage format cannot be a color attachment");
-        ResolveMultisampleTarget(context, *pass.source, *resident, resident->AttachmentView(destination.format, destination.mip));
+        ResolveMultisampleTarget(context, *pass.source, *resident, destination.format, destination.mip);
         return;
     }
     if (pass.mode == ColorMetadataPass::Mode::FmaskDecompress) {
@@ -4494,6 +5519,11 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         return;
     }
     for (const auto& color : pass.targets) {
+        if (color.samples != 1u) {
+            MaterializeMultisampleTargetClear(context, color);
+            continue;
+        }
+        ClaimMultisampleTargetMemory(color.MemoryAddress(), color.bytes);
         if (color.cmaskAddress != 0) {
             const auto resident = metadataPassResident(context, color);
             if (materializeCmaskClear(context, color, resident) && resident != nullptr) resident->MarkDirty();
@@ -4519,6 +5549,10 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
                 continue;
             }
         }
+        if (color.mipCount > 1 && resident == nullptr) {
+            std::shared_ptr<StorageTexture> chain = CachedStorageSurface(context, SurfaceForTarget(color));
+            if (materializeMipClear(context, color, chain)) continue;
+        }
         storeClearTexels(context, color, texel);
     }
 }
@@ -4540,6 +5574,33 @@ void SetSpaceKeepFailuresForTest(std::uint32_t count) {
 
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop) {
     stopAfterResolve.store(static_cast<int>(stop), std::memory_order_relaxed);
+}
+
+std::uint64_t TargetMemoEvents(TargetMemoEvent event) {
+    return targetMemoEvents()[static_cast<std::size_t>(event)].Sum();
+}
+
+const char* TargetMemoEventName(TargetMemoEvent event) {
+    return static_cast<std::size_t>(event) < TargetMemoEventNames.size() ? TargetMemoEventNames[static_cast<std::size_t>(event)] : "?";
+}
+
+std::uint64_t TargetMemoBuildsForTest() {
+    return targetMemoBuilds;
+}
+
+std::uint64_t TargetMemoHitNanosecondsForTest(const Context& context, const State& state, std::size_t repeats, std::size_t& hits) {
+    std::vector<TargetBinding> targets;
+    std::vector<VkImageView> views;
+    const auto proof = currentTargetProof(context);
+    hits = 0;
+    const auto start = std::chrono::steady_clock::now();
+    for (std::size_t repeat = 0; repeat < repeats; ++repeat) {
+        targets.clear();
+        targets.resize(state.colors.size());
+        views.clear();
+        if (repeatColors(context, state, proof, targets, views)) ++hits;
+    }
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
 std::uint64_t AddressDrawReuseVerifications() {

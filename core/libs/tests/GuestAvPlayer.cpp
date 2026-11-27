@@ -30,6 +30,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 
 namespace {
@@ -910,6 +911,49 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
     Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
 }
 
+void WritePs4ParamSfo() {
+    std::filesystem::create_directories("app0/sce_sys");
+    struct Entry { std::uint16_t key, format; std::uint32_t length, maximum, offset; };
+    const std::uint32_t header[5] = {0x46535000, 0x0101, 52, 72, 2};
+    const Entry entries[2] = {{0, 0x0204, 8, 8, 0}, {6, 0x0204, 10, 12, 8}};
+    std::ofstream file("app0/sce_sys/param.sfo", std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(entries), sizeof(entries));
+    file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
+    Check(static_cast<bool>(file), "cannot write the PS4 param.sfo");
+}
+
+void TestPs4StreamTypes() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "PS4 init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 add source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "PS4 ready event missing");
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        const std::uint32_t expected = index == VideoStream ? 0 : 1;
+        AvPlayerStreamInfo info{};
+        Check(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "PS4 stream info failed");
+        Check(info.type == expected, "a PS4 process reports video as type 0 and audio as type 1");
+        AvPlayerStreamInfoEx extended{};
+        extended.this_size = sizeof(extended);
+        Check(sceAvPlayerGetStreamInfoEx(player, index, &extended) == 0, "PS4 extended stream info failed");
+        Check(extended.type == expected, "a PS4 process reports extended video as type 0 and audio as type 1");
+    }
+    Check(sceAvPlayerClose(player) == 0, "PS4 close failed");
+
+    AvPlayerInitData autoInit = InitData(nullptr);
+    player = sceAvPlayerInit(&autoInit);
+    Check(player != nullptr, "PS4 auto start init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 auto start source failed");
+    AvPlayerFrameInfo frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "PS4 auto start never produced a video frame");
+    AvPlayerFrameInfo sound{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "PS4 auto start did not enable the audio stream");
+    CheckEnglishAudio(sound);
+    Check(sceAvPlayerClose(player) == 0, "PS4 auto start close failed");
+}
+
 void TestPlayback() {
     Events events;
     AvPlayerInitData init = InitData(&events);
@@ -980,7 +1024,7 @@ void TestPlayback() {
         return frames >= 2 && sounds >= 2;
     }), "playback stalled");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED, "zero trick speed did not return NOT_SUPPORTED");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
 
     Check(sceAvPlayerPause(player) == 0, "pause failed");
@@ -1010,8 +1054,8 @@ void TestPlayback() {
 
     events.Clear();
     const auto forward = sceAvPlayerCurrentTime(player);
-    Check(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Check(sceAvPlayerSetTrickSpeed(player, -400) == 0, "reverse trick speed rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
     const auto rewound = sceAvPlayerCurrentTime(player);
     Check(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));
@@ -1286,10 +1330,16 @@ void TestOptionalVideoBuffersRespectMemoryLimit() {
     run(2, 2, false);
     run(5, 2, false);
     run(6, 6, false);
-    run(14, 6, false);
+    run(9, 6, false);
+    run(10, 10, false);
+    run(14, 10, false);
     run(5, 2, true);
-    run(13, 6, true);
+    run(9, 6, true);
+    run(10, 10, true);
+    run(13, 10, true);
     run(14, 14, true);
+    run(17, 14, true);
+    run(18, 18, true);
     SetTextureLimit(std::nullopt);
 }
 
@@ -1307,11 +1357,9 @@ void TestFileReplacementAutoStart() {
     Check(!file.stream.is_open(), "replaced file left open");
 }
 
-void TestHandedOutFramesStayIntact() {
-    constexpr int Buffers = 6;
-    constexpr int Retained = Buffers - 2;
+void CheckHandedOutFramesStayIntact(int buffers, std::size_t retained) {
     AvPlayerInitData init = InitData(nullptr);
-    init.num_output_video_framebuffers = Buffers;
+    init.num_output_video_framebuffers = buffers;
     auto* player = sceAvPlayerInit(&init);
     Check(player != nullptr, "init failed");
     Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
@@ -1326,15 +1374,20 @@ void TestHandedOutFramesStayIntact() {
         Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame for round " + std::to_string(round));
         CheckVideoFrame(frame);
         taken.push_back({static_cast<const std::uint8_t*>(frame.p_data), FrameIndex(frame.timestamp)});
-        if (taken.size() > Retained) taken.pop_front();
+        if (taken.size() > retained) taken.pop_front();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         for (std::size_t k = 0; k < taken.size(); ++k) {
-            for (std::size_t other = k + 1; other < taken.size(); ++other) Check(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(Retained) + " frames");
+            for (std::size_t other = k + 1; other < taken.size(); ++other) Check(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(retained) + " frames");
             const int index = taken[k].index;
             Check(std::abs(taken[k].luma[30 * Pitch + 10] - LumaFor(index)) <= 6, "frame " + std::to_string(index) + " was overwritten " + std::to_string(taken.size() - 1 - k) + " frames after it was handed out");
         }
     }
     Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
+void TestHandedOutFramesStayIntact() {
+    CheckHandedOutFramesStayIntact(6, 5);
+    CheckHandedOutFramesStayIntact(2, 5);
 }
 
 void TestPs5ExtendedInitLayout() {
@@ -1344,6 +1397,7 @@ void TestPs5ExtendedInitLayout() {
     constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
     constexpr std::int32_t Buffers = 3;
     constexpr int DecodeAheadBuffers = 4;
+    constexpr int HeldFrameBuffers = 4;
     static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
     const auto run = [&](bool autoStart) {
         Events events;
@@ -1384,7 +1438,7 @@ void TestPs5ExtendedInitLayout() {
             Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
             Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
         }
-        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
+        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers + HeldFrameBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
         AvPlayerFrameInfoEx videoFrame{};
         Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &videoFrame) != 0; }), "PS5 playback did not deliver video");
         std::memcpy(&frameRate, reinterpret_cast<const std::uint8_t*>(&videoFrame) + 0x48, sizeof(frameRate));
@@ -1896,6 +1950,125 @@ void TestVideoSyncTolerance() {
     Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
 }
 
+std::mutex bufferWaitMutex;
+std::vector<std::uint64_t> bufferWaitSamples;
+std::atomic<bool> wrongBufferWaitPeriod = false;
+
+void ObserveBufferWait(std::uint64_t period, std::uint64_t elapsed) {
+    if (period != 1000 / FrameRate) wrongBufferWaitPeriod.store(true, std::memory_order_relaxed);
+    std::lock_guard lock(bufferWaitMutex);
+    if (bufferWaitSamples.size() < 32) bufferWaitSamples.push_back(elapsed);
+}
+
+void TestBufferWaitAccuracy() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "wait accuracy init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "wait accuracy source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "wait accuracy ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "wait accuracy video failed");
+    AvPlayer::SetAvPlayerBufferWaitObserverForTest_nid_no_patch(ObserveBufferWait);
+    Check(sceAvPlayerStart(player) == 0, "wait accuracy start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "wait accuracy first frame missing");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(frame.timestamp));
+    const bool collected = WaitFor([] {
+        std::lock_guard lock(bufferWaitMutex);
+        return bufferWaitSamples.size() == 32;
+    }, 5000);
+    Check(sceAvPlayerClose(player) == 0, "wait accuracy close failed");
+    AvPlayer::SetAvPlayerBufferWaitObserverForTest_nid_no_patch(nullptr);
+    Check(collected, "wait accuracy did not collect 32 expired waits");
+    Check(!wrongBufferWaitPeriod.load(), "wait accuracy fixture did not request 33 ms");
+    std::lock_guard lock(bufferWaitMutex);
+    std::sort(bufferWaitSamples.begin(), bufferWaitSamples.end());
+    const auto median = bufferWaitSamples[bufferWaitSamples.size() / 2];
+    const auto requested = std::uint64_t{1000 / FrameRate} * 1000000;
+    std::printf("buffer wait: 32 expirations, requested %llu ns, min / median / max %llu / %llu / %llu ns\n",
+                static_cast<unsigned long long>(requested), static_cast<unsigned long long>(bufferWaitSamples.front()),
+                static_cast<unsigned long long>(median), static_cast<unsigned long long>(bufferWaitSamples.back()));
+    Check(bufferWaitSamples.front() >= requested, "buffer wait expired before its frame-duration deadline");
+#ifdef _WIN32
+    constexpr std::uint64_t tolerance = 5000000;
+#else
+    constexpr std::uint64_t tolerance = 10000000;
+#endif
+    Check(median <= requested + tolerance, "buffer wait median exceeded its frame-duration deadline tolerance");
+}
+
+void TestSyncedVideoFollowsClockWithSlowConsumer() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "slow consumer init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "slow consumer source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "slow consumer ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "slow consumer video failed");
+    Check(sceAvPlayerStart(player) == 0, "slow consumer start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "slow consumer first frame missing");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = static_cast<std::int64_t>(frame.timestamp);
+    std::int64_t worst = 0;
+    for (int poll = 1; poll <= 2; ++poll) {
+        std::this_thread::sleep_until(start + std::chrono::milliseconds(400 * poll));
+        Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, "slow consumer frame " + std::to_string(poll) + " missing");
+        CheckVideoFrame(frame);
+        const auto elapsed = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        worst = std::max(worst, first + elapsed - static_cast<std::int64_t>(frame.timestamp));
+    }
+    Check(worst <= 150, "the picture handed out fell " + std::to_string(worst) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "slow consumer close failed");
+}
+
+std::int64_t VideoLagBehindClock(AvPlayerInternal* player, const std::string& what) {
+    AvPlayerFrameInfoEx frame{};
+    Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, what + " frame missing");
+    CheckVideoFrame(frame);
+    return static_cast<std::int64_t>(sceAvPlayerCurrentTime(player)) - static_cast<std::int64_t>(frame.timestamp);
+}
+
+void TestSyncedVideoCatchesUpAfterResume() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "resume catch-up init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "resume catch-up source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "resume catch-up ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "resume catch-up video failed");
+    Check(sceAvPlayerStart(player) == 0, "resume catch-up start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "resume catch-up first frame missing");
+    Check(sceAvPlayerPause(player) == 0, "resume catch-up pause failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Check(sceAvPlayerResume(player) == 0, "resume catch-up resume failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const auto lag = VideoLagBehindClock(player, "resume catch-up");
+    Check(lag <= 150, "after resume the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "resume catch-up close failed");
+}
+
+void TestVideoCatchesUpAfterSwitchToSyncedMode() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "sync switch init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync switch source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync switch ready missing");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync switch no-sync mode rejected");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync switch video failed");
+    Check(sceAvPlayerStart(player) == 0, "sync switch start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync switch first frame missing");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Check(sceAvPlayerSetAvSyncMode(player, 0) == 0, "sync switch default mode rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const auto lag = VideoLagBehindClock(player, "sync switch");
+    Check(lag <= 150, "after switching to default sync the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "sync switch close failed");
+}
+
 void TestAudioClockDriftGating() {
     const auto open = [](Events& events) {
         AvPlayerInitData init = InitData(&events);
@@ -2392,6 +2565,193 @@ void TestHttpSources(const std::string& base) {
     Check(allocations.blocks.empty(), "HTTP playback allocations leaked");
 }
 
+void TestSourceTypePaths() {
+    HostFile file;
+    auto init = InitData(nullptr);
+    init.file_replacement = {&file, OpenFile, CloseFile, ReadFile, FileSize};
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "source-type test init failed");
+    for (const auto* path : {
+        "https://media.example.test/live.m3u8/segment",
+        "https://media.example.test/clip.mp4/noext",
+        "https://origin.m3u8/path",
+        "https://origin.m3u8?token=123",
+        "app0/live.m3u8/segment",
+    }) {
+        Check(sceAvPlayerAddSource(player, path) == OperationFailed, std::string("parent path was misidentified as HLS: ") + path);
+    }
+    for (const auto* path : {
+        "https://media.example.test/live.M3U8?token=123",
+        "https://media.example.test/clip.mp4/segment.m3u8#part",
+    }) {
+        bool rejected = false;
+        try { sceAvPlayerAddSource(player, path); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Check(rejected, std::string("HLS filename was not rejected: ") + path);
+    }
+    Check(sceAvPlayerAddSource(player, "/app0/replaced.mp4") == 0, "MP4 source was not accepted after rejected paths");
+    Check(sceAvPlayerClose(player) == 0, "source-type test close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "source-type test allocations leaked");
+}
+
+}
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+namespace {
+
+void ClobberSourceReadErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
+class SourceGuardedPage {
+public:
+    SourceGuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = static_cast<std::size_t>(info.dwPageSize);
+        base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Check(base != nullptr, "allocate guarded page");
+        DWORD previous = 0;
+        Check(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "protect guard page");
+#else
+        const long configured = sysconf(_SC_PAGESIZE);
+        Check(configured > 0, "query page size");
+        pageSize = static_cast<std::size_t>(configured);
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapping != MAP_FAILED, "allocate guarded page");
+        base = static_cast<char*>(mapping);
+        Check(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+    }
+
+    ~SourceGuardedPage() {
+        if (base == nullptr) return;
+#ifdef _WIN32
+        if (VirtualFree(base, 0, MEM_RELEASE) == 0) std::abort();
+#else
+        if (munmap(base, pageSize * 2) != 0) std::abort();
+#endif
+    }
+
+    SourceGuardedPage(const SourceGuardedPage&) = delete;
+    SourceGuardedPage& operator=(const SourceGuardedPage&) = delete;
+
+    char* GuardStart() const {
+        return base + pageSize;
+    }
+
+private:
+    char* base = nullptr;
+    std::size_t pageSize = 0;
+};
+
+struct SourceReadHookGuard {
+    ~SourceReadHookGuard() { GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr); }
+};
+
+void TestAddSourceGuestBounds() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberSourceReadErrno);
+    const SourceReadHookGuard hookGuard;
+
+    AvPlayerInitData init{};
+    init.num_output_video_framebuffers = 2;
+    AvPlayerInternal* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init player for AddSource bounds test");
+
+    constexpr int savedErrno = 71;
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(nullptr, "/app0/missing.mp4") == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "null handle preserves errno");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, nullptr) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "null filename preserves errno");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, reinterpret_cast<const char*>(std::uintptr_t{0x10})) ==
+                  AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "unmapped filename returns invalid params without mutating errno");
+
+    SourceGuardedPage guarded;
+    char* const unterminated = guarded.GuardStart() - 16;
+    std::memset(unterminated, 'a', 16);
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, unterminated) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "unterminated filename hitting guard page returns invalid params without mutating errno");
+
+    const char* const missing = "/app0/missing.mp4";
+    const std::size_t missingSize = std::strlen(missing) + 1;
+    char* const validAtBoundary = guarded.GuardStart() - missingSize;
+    std::memcpy(validAtBoundary, missing, missingSize);
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, validAtBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "terminated filename before guard page reaches AddSource cleanly");
+
+    const std::string oversized(65537, 'a');
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, oversized.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "oversized filename returns invalid params without mutating errno");
+
+    const std::string maxAllowed(65536, 'a');
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, maxAllowed.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "maximum length filename passes copy step");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, "") == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "empty filename fails as operation failed without mutating errno");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(guarded.GuardStart() - 4)) ==
+                  AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "guard-page-straddling source details return invalid params without mutating errno");
+
+    AvPlayerSourceDetails guardUri{};
+    guardUri.uri.name = unterminated;
+    guardUri.uri.length = 32;
+    errno = savedErrno;
+    Check(sceAvPlayerAddSourceEx(player, 0, &guardUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "guard-page-straddling sourceDetails URI returns invalid params without mutating errno");
+
+    const std::size_t unterminatedLength = std::strlen(missing);
+    char* const boundaryBytes = guarded.GuardStart() - unterminatedLength;
+    std::memcpy(boundaryBytes, missing, unterminatedLength);
+    AvPlayerSourceDetails exactBoundary{};
+    exactBoundary.uri.name = boundaryBytes;
+    exactBoundary.uri.length = static_cast<uint32_t>(unterminatedLength);
+    errno = savedErrno;
+    Check(sceAvPlayerAddSourceEx(player, 0, &exactBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "bounded sourceDetails URI right before guard page reaches AddSource cleanly");
+
+    Check(sceAvPlayerClose(player) == AvPlayer::SCE_OK, "close player after AddSource bounds test");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2409,6 +2769,13 @@ int main(int argc, char** argv) {
             std::puts("AvPlayer callback close tests passed");
             return 0;
         }
+        if (argc == 2 && std::strcmp(argv[1], "--ps4-process") == 0) {
+            WritePs4ParamSfo();
+            WriteMovie();
+            TestPs4StreamTypes();
+            std::puts("AvPlayer PS4 process tests passed");
+            return 0;
+        }
         if (argc == 2 && std::strcmp(argv[1], "--paused-first-video") == 0) {
             WriteMovie();
             TestPausedPreparationAfterAudioStarts(0);
@@ -2416,8 +2783,15 @@ int main(int argc, char** argv) {
             std::puts("AvPlayer paused first video tests passed");
             return 0;
         }
+        if (argc == 2 && std::strcmp(argv[1], "--buffer-wait-accuracy") == 0) {
+            WriteMovie();
+            TestBufferWaitAccuracy();
+            std::puts("AvPlayer buffer wait accuracy tests passed");
+            return 0;
+        }
         Check(argc == 1, "unknown AvPlayer test arguments");
         WriteMovie();
+        TestSourceTypePaths();
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
         TestLoopWarningSharedByStreams();
@@ -2441,6 +2815,9 @@ int main(int argc, char** argv) {
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
         TestVideoSyncTolerance();
+        TestSyncedVideoFollowsClockWithSlowConsumer();
+        TestSyncedVideoCatchesUpAfterResume();
+        TestVideoCatchesUpAfterSwitchToSyncedMode();
         TestAudioClockDriftGating();
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
@@ -2478,6 +2855,7 @@ int main(int argc, char** argv) {
                   "oversized source URI length must fail without allocating");
             Check(sceAvPlayerClose(player) == 0, "close player");
         }
+        TestAddSourceGuestBounds();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

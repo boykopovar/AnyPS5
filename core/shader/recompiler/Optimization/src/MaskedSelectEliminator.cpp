@@ -67,6 +67,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::FPAdd16x2:
         case IrOpcode::FPMul16x2:
         case IrOpcode::FPFma16x2:
+        case IrOpcode::SplatLowU16x2:
         case IrOpcode::IAdd16x2:
         case IrOpcode::ISub16x2:
         case IrOpcode::IMul16x2:
@@ -150,6 +151,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::FPAbs32:
         case IrOpcode::FPNeg32:
         case IrOpcode::FPSaturate32:
+        case IrOpcode::NanPropagateF32:
         case IrOpcode::FPAdd32:
         case IrOpcode::FPSub32:
         case IrOpcode::FPFma32:

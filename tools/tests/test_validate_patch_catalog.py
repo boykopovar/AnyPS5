@@ -53,6 +53,12 @@ class CatalogValidatorTests(unittest.TestCase):
     def test_empty_catalog_is_valid(self):
         self.assertEqual(self.run_validator([]), (0, "Catalog validation: 0 entries valid.\n", ""))
 
+    def test_byte_order_mark_is_accepted(self):
+        (self.catalog / "index.json").write_text(json.dumps({"format": 1, "entries": [self.entry]}), encoding="utf-8-sig")
+        self.patch.write_text('format = 1\n[[patch]]\ntarget = "module.prx"\nva = 0x1000\nexpected = "00"\nvalue = "01"\n', encoding="utf-8-sig")
+        result, output, errors = self.run_validator()
+        self.assertEqual((result, output, errors), (0, "Catalog validation: 1 entries valid.\n", ""))
+
     def test_invalid_entries_are_all_reported_even_for_unrelated_titles(self):
         missing = dict(self.entry, titleId="OTHER0001", patch="missing.toml")
         malformed = dict(self.entry, titleId="THIRD0001", category="not-a-category")
@@ -176,6 +182,15 @@ class CatalogValidatorTests(unittest.TestCase):
         self.assertIn("Catalog validation:", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertTrue(loop.is_symlink())
+
+
+class UniqueKeyTests(unittest.TestCase):
+    def test_unique_json_keys_keeps_distinct_names(self):
+        self.assertEqual(validate_patch_catalog.unique_json_keys([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+    def test_unique_json_keys_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'duplicate JSON key'):
+            validate_patch_catalog.unique_json_keys([('a', 1), ('a', 2)])
 
 
 if __name__ == "__main__":

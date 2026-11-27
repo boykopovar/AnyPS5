@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/AppMetadata/include/ParamSfoParser.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -6,8 +7,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace {
 alignas(16) std::array<std::byte, 0x40> process{};
@@ -29,6 +36,196 @@ bool Throws(TAttach attach, const char* function) {
     try { attach(); }
     catch (const std::runtime_error& error) { return std::strstr(error.what(), function) != nullptr; }
     return false;
+}
+
+struct SfoEntrySpec {
+    std::string key;
+    std::uint16_t format;
+    std::vector<std::uint8_t> data;
+    std::uint32_t dataMaxLen;
+};
+
+void WriteU16Le(std::vector<std::uint8_t>& out, std::size_t offset, std::uint16_t value) {
+    std::memcpy(out.data() + offset, &value, sizeof(value));
+}
+
+void WriteU32Le(std::vector<std::uint8_t>& out, std::size_t offset, std::uint32_t value) {
+    std::memcpy(out.data() + offset, &value, sizeof(value));
+}
+
+SfoEntrySpec Utf8Entry(std::string key, const std::string& value) {
+    std::vector<std::uint8_t> data(value.begin(), value.end());
+    data.push_back(0);
+    return SfoEntrySpec{std::move(key), 0x0204u, data, static_cast<std::uint32_t>(data.size())};
+}
+
+SfoEntrySpec IntEntry(std::string key, std::int32_t value) {
+    std::vector<std::uint8_t> data(4);
+    std::memcpy(data.data(), &value, sizeof(value));
+    return SfoEntrySpec{std::move(key), 0x0404u, std::move(data), 4u};
+}
+
+std::vector<std::uint8_t> BuildParamSfo(const std::vector<SfoEntrySpec>& entries) {
+    constexpr std::size_t HeaderSize = 20;
+    constexpr std::size_t EntrySize = 16;
+    const std::size_t indexTableEnd = HeaderSize + entries.size() * EntrySize;
+    std::vector<std::uint8_t> keyBytes;
+    std::vector<std::uint8_t> dataBytes;
+    std::vector<std::uint16_t> keyOffsets;
+    std::vector<std::uint32_t> dataOffsets;
+    for (const auto& entry : entries) {
+        keyOffsets.push_back(static_cast<std::uint16_t>(keyBytes.size()));
+        keyBytes.insert(keyBytes.end(), entry.key.begin(), entry.key.end());
+        keyBytes.push_back(0);
+        dataOffsets.push_back(static_cast<std::uint32_t>(dataBytes.size()));
+        dataBytes.insert(dataBytes.end(), entry.data.begin(), entry.data.end());
+    }
+    const std::uint32_t keyTable = static_cast<std::uint32_t>(indexTableEnd);
+    const std::uint32_t dataTable = static_cast<std::uint32_t>(indexTableEnd + keyBytes.size());
+    std::vector<std::uint8_t> bytes(dataTable + dataBytes.size(), 0);
+    bytes[0] = 0;
+    bytes[1] = 'P';
+    bytes[2] = 'S';
+    bytes[3] = 'F';
+    WriteU32Le(bytes, 4, 0x00000101u);
+    WriteU32Le(bytes, 8, keyTable);
+    WriteU32Le(bytes, 12, dataTable);
+    WriteU32Le(bytes, 16, static_cast<std::uint32_t>(entries.size()));
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const std::size_t base = HeaderSize + i * EntrySize;
+        WriteU16Le(bytes, base, keyOffsets[i]);
+        WriteU16Le(bytes, base + 2, entries[i].format);
+        WriteU32Le(bytes, base + 4, static_cast<std::uint32_t>(entries[i].data.size()));
+        WriteU32Le(bytes, base + 8, entries[i].dataMaxLen);
+        WriteU32Le(bytes, base + 12, dataOffsets[i]);
+    }
+    std::memcpy(bytes.data() + keyTable, keyBytes.data(), keyBytes.size());
+    std::memcpy(bytes.data() + dataTable, dataBytes.data(), dataBytes.size());
+    return bytes;
+}
+
+struct TempParamSfoFile {
+    std::filesystem::path path;
+    explicit TempParamSfoFile(const std::string& name, const std::vector<std::uint8_t>& bytes)
+        : path(std::filesystem::temp_directory_path() / name) {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        Require(out.is_open());
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        Require(out.good());
+    }
+    ~TempParamSfoFile() {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
+
+void ExpectParamSfoThrows(const std::string& name, const std::vector<std::uint8_t>& bytes) {
+    bool threw = false;
+    {
+        const TempParamSfoFile file(name, bytes);
+        try {
+            (void)parseParamSfo(file.path);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+    }
+    Require(threw);
+}
+
+void VerifyParamSfoParser() {
+    {
+        const auto bytes = BuildParamSfo({
+            IntEntry("ATTRIBUTE", 0x12345678),
+            IntEntry("DOWNLOAD_DATA_SIZE", 64),
+            Utf8Entry("TITLE", "Test Title"),
+            Utf8Entry("TITLE_ID", "TEST12345"),
+            IntEntry("USER_DEFINED_PARAM_1", 11),
+            IntEntry("USER_DEFINED_PARAM_2", 22),
+            IntEntry("USER_DEFINED_PARAM_3", 33),
+            IntEntry("USER_DEFINED_PARAM_4", 44),
+        });
+        const auto parsed = [&] {
+            const TempParamSfoFile file("anyps5_paramsfo_valid.sfo", bytes);
+            return parseParamSfo(file.path);
+        }();
+        Require(parsed.title == "Test Title");
+        Require(parsed.titleId == "TEST12345");
+        Require(parsed.downloadDataSizeMiB == 64u);
+        Require(parsed.paramSfoAttribute == 0x12345678u);
+        Require(parsed.userDefinedParams[0] == 11);
+        Require(parsed.userDefinedParams[1] == 22);
+        Require(parsed.userDefinedParams[2] == 33);
+        Require(parsed.userDefinedParams[3] == 44);
+    }
+    {
+        auto bytes = BuildParamSfo({Utf8Entry("TITLE", "Test Title"), Utf8Entry("TITLE_ID", "TEST12345")});
+        WriteU32Le(bytes, 8, 20u);
+        WriteU16Le(bytes, 20, 32u);
+        WriteU16Le(bytes, 36, 38u);
+        ExpectParamSfoThrows("anyps5_paramsfo_key_before_index.sfo", bytes);
+    }
+    {
+        std::vector<std::uint8_t> bytes(52 + 21 + 15, 0);
+        bytes[0] = 0;
+        bytes[1] = 'P';
+        bytes[2] = 'S';
+        bytes[3] = 'F';
+        WriteU32Le(bytes, 4, 0x00000101u);
+        WriteU32Le(bytes, 8, 73u);
+        WriteU32Le(bytes, 12, 52u);
+        WriteU32Le(bytes, 16, 2u);
+        WriteU16Le(bytes, 20, 0u);
+        WriteU16Le(bytes, 22, 0x0204u);
+        WriteU32Le(bytes, 24, 11u);
+        WriteU32Le(bytes, 28, 11u);
+        WriteU32Le(bytes, 32, 0u);
+        WriteU16Le(bytes, 36, 6u);
+        WriteU16Le(bytes, 38, 0x0204u);
+        WriteU32Le(bytes, 40, 10u);
+        WriteU32Le(bytes, 44, 10u);
+        WriteU32Le(bytes, 48, 11u);
+        const char data[] = "Test Title\0TEST12345\0";
+        const char keys[] = "TITLE\0TITLE_ID\0";
+        std::memcpy(bytes.data() + 52, data, 21);
+        std::memcpy(bytes.data() + 73, keys, 15);
+        ExpectParamSfoThrows("anyps5_paramsfo_key_after_data.sfo", bytes);
+    }
+    {
+        std::vector<std::uint8_t> bytes(52 + 14 + 22, 0);
+        bytes[0] = 0;
+        bytes[1] = 'P';
+        bytes[2] = 'S';
+        bytes[3] = 'F';
+        WriteU32Le(bytes, 4, 0x00000101u);
+        WriteU32Le(bytes, 8, 52u);
+        WriteU32Le(bytes, 12, 66u);
+        WriteU32Le(bytes, 16, 2u);
+        WriteU16Le(bytes, 20, 0u);
+        WriteU16Le(bytes, 22, 0x0204u);
+        WriteU32Le(bytes, 24, 11u);
+        WriteU32Le(bytes, 28, 11u);
+        WriteU32Le(bytes, 32, 1u);
+        WriteU16Le(bytes, 36, 6u);
+        WriteU16Le(bytes, 38, 0x0204u);
+        WriteU32Le(bytes, 40, 10u);
+        WriteU32Le(bytes, 44, 10u);
+        WriteU32Le(bytes, 48, 12u);
+        const char keys[] = "TITLE\0TITLE_ID";
+        const char data[] = "\0Test Title\0TEST12345\0";
+        std::memcpy(bytes.data() + 52, keys, 14);
+        std::memcpy(bytes.data() + 66, data, 22);
+        ExpectParamSfoThrows("anyps5_paramsfo_unterminated_key.sfo", bytes);
+    }
+    {
+        auto bytes = BuildParamSfo({Utf8Entry("TITLE", "Test Title"), Utf8Entry("TITLE_ID", "TEST12345")});
+        WriteU32Le(bytes, 28, 4u);
+        ExpectParamSfoThrows("anyps5_paramsfo_len_gt_maxlen.sfo", bytes);
+    }
+    {
+        auto bytes = BuildParamSfo({Utf8Entry("TITLE", "Test Title"), Utf8Entry("TITLE_ID", "TEST12345")});
+        WriteU32Le(bytes, 44, 64u);
+        ExpectParamSfoThrows("anyps5_paramsfo_maxlen_past_eof.sfo", bytes);
+    }
 }
 }
 
@@ -113,5 +310,6 @@ int main() {
     Require(region == original);
     Require(sceCoredumpConfigDumpMode(1) == 0);
     for (const int mode : {0, 2, -1}) Require(sceCoredumpConfigDumpMode(mode) == InvalidArgument);
+    VerifyParamSfoParser();
     return 0;
 }

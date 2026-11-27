@@ -1,11 +1,12 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/MqueueWait.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include <cerrno>
-#include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -34,6 +35,7 @@ constexpr int GuestEagain = 35;
 constexpr int GuestEmsgsize = 40;
 constexpr int GuestEtimedout = 60;
 constexpr int GuestEnametoolong = 63;
+constexpr int GuestClockRealtime = 0;
 constexpr int GuestOAccmode = 0x0003;
 constexpr int GuestOWronly = 0x0001;
 constexpr int GuestORdwr = 0x0002;
@@ -55,8 +57,8 @@ struct Message {
 
 struct Queue {
     std::mutex lock;
-    std::condition_variable readable;
-    std::condition_variable writable;
+    TimedWait::Condition readable;
+    TimedWait::Condition writable;
     std::int64_t maxmsg = DefaultMessages;
     std::int64_t msgsize = DefaultMessageSize;
     std::vector<Message> messages;
@@ -110,25 +112,30 @@ int CheckName(const char* path, std::string& name) {
     return 0;
 }
 
-std::chrono::system_clock::time_point Deadline(const GuestTimespec* abstime) {
-    using Clock = std::chrono::system_clock;
-    const std::int64_t maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(Clock::duration::max()).count();
-    if (abstime->seconds >= maxSeconds) return Clock::time_point::max();
-    if (abstime->seconds <= -maxSeconds) return Clock::time_point::min();
-    return Clock::time_point(std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(abstime->seconds)) +
-                            std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(abstime->nanoseconds)));
+std::uint64_t MonotonicDeadline(const GuestTimespec* abstime) {
+    KernelTimespec realtime{};
+    clock_gettime_nid_postfix(GuestClockRealtime, &realtime);
+    return MqueueWait::MonotonicDeadline(abstime->seconds, abstime->nanoseconds, realtime.tv_sec, realtime.tv_nsec,
+                                         TimedWait::NowNanos());
 }
 
 template <typename Ready>
-int WaitFor(const Open& open, std::unique_lock<std::mutex>& lock, std::condition_variable& signal, const GuestTimespec* abstime, Ready ready) {
+int WaitFor(const Open& open, std::unique_lock<std::mutex>& lock, TimedWait::Condition& signal, const GuestTimespec* abstime, Ready ready) {
     if (ready()) return 0;
     if (open.nonblocking) return GuestEagain;
     if (abstime == nullptr) {
-        signal.wait(lock, ready);
+        signal.Wait(lock, ready);
         return 0;
     }
     if (abstime->nanoseconds < 0 || abstime->nanoseconds >= 1000000000) return GuestEinval;
-    return signal.wait_until(lock, Deadline(abstime), ready) ? 0 : GuestEtimedout;
+    const std::uint64_t deadline = MonotonicDeadline(abstime);
+    return MqueueWait::WaitUntilMonotonic(
+               deadline, ready, [] { return TimedWait::NowNanos(); },
+               [&](std::uint64_t waitDeadline, const auto& predicate) {
+                   return signal.WaitUntil(lock, waitDeadline, predicate);
+               })
+               ? 0
+               : GuestEtimedout;
 }
 
 }
@@ -139,9 +146,14 @@ int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mod
     (void)mode;
     if ((flags & GuestOAccmode) == GuestOAccmode || (flags & GuestOExec) != 0) return Fail(GuestEinval);
     const bool create = (flags & GuestOCreat) != 0;
+    GuestMqAttr localAttr{};
     if (create && attr != nullptr) {
-        if (attr->maxmsg <= 0 || attr->maxmsg > MaxMessages) return Fail(GuestEinval);
-        if (attr->msgsize <= 0 || attr->msgsize > MaxMessageSize) return Fail(GuestEinval);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
+        if (localAttr.maxmsg <= 0 || localAttr.maxmsg > MaxMessages) return Fail(GuestEinval);
+        if (localAttr.msgsize <= 0 || localAttr.msgsize > MaxMessageSize) return Fail(GuestEinval);
     }
     std::string name;
     if (const int error = CheckName(path, name)) return Fail(error);
@@ -152,8 +164,8 @@ int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mod
         if (!create) return Fail(GuestEnoent);
         queue = std::make_shared<Queue>();
         if (attr != nullptr) {
-            queue->maxmsg = attr->maxmsg;
-            queue->msgsize = attr->msgsize;
+            queue->maxmsg = localAttr.maxmsg;
+            queue->msgsize = localAttr.msgsize;
         }
     } else {
         if ((flags & (GuestOCreat | GuestOExcl)) == (GuestOCreat | GuestOExcl)) return Fail(GuestEexist);
@@ -179,15 +191,26 @@ int APS5_VABI kmq_unlink_nid_postfix(const char* path) {
 }
 
 int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, GuestMqAttr* oattr) {
-    if (attr != nullptr && (attr->flags & ~static_cast<std::int64_t>(GuestONonblock)) != 0) return Fail(GuestEinval);
+    GuestMqAttr localAttr{};
+    if (attr != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
+        if ((localAttr.flags & ~static_cast<std::int64_t>(GuestONonblock)) != 0) return Fail(GuestEinval);
+    }
     const auto open = Find(descriptor);
     if (!open) return Fail(GuestEbadf);
     std::lock_guard lock(open->queue->lock);
     if (oattr != nullptr) {
-        *oattr = GuestMqAttr{open->nonblocking ? GuestONonblock : 0, open->queue->maxmsg, open->queue->msgsize,
-                             static_cast<std::int64_t>(open->queue->messages.size()), {}};
+        const GuestMqAttr previous{open->nonblocking ? GuestONonblock : 0, open->queue->maxmsg, open->queue->msgsize,
+                                   static_cast<std::int64_t>(open->queue->messages.size()), {}};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(oattr, &previous, sizeof(previous));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
     }
-    if (attr != nullptr) open->nonblocking = (attr->flags & GuestONonblock) != 0;
+    if (attr != nullptr) open->nonblocking = (localAttr.flags & GuestONonblock) != 0;
     return 0;
 }
 
@@ -205,7 +228,7 @@ int APS5_VABI kmq_timedsend_nid_postfix(int descriptor, const char* message, std
     auto position = queue.messages.begin();
     while (position != queue.messages.end() && position->priority >= priority) ++position;
     queue.messages.insert(position, std::move(entry));
-    queue.readable.notify_one();
+    queue.readable.NotifyOne();
     return 0;
 }
 
@@ -220,10 +243,10 @@ std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer
     if (const int error = WaitFor(*open, lock, queue.readable, abstime, available)) return Fail(error);
     Message entry = std::move(queue.messages.front());
     queue.messages.erase(queue.messages.begin());
-    queue.writable.notify_one();
+    queue.writable.NotifyOne();
     lock.unlock();
-    if (!entry.bytes.empty()) std::memcpy(buffer, entry.bytes.data(), entry.bytes.size());
-    if (priority != nullptr) *priority = entry.priority;
+    if (!entry.bytes.empty() && !GuestCopyOut_nid_no_patch(buffer, entry.bytes.data(), entry.bytes.size())) return Fail(GuestEfault);
+    if (priority != nullptr && !GuestCopyOut_nid_no_patch(priority, &entry.priority, sizeof(entry.priority))) return Fail(GuestEfault);
     return static_cast<std::int64_t>(entry.bytes.size());
 }
 

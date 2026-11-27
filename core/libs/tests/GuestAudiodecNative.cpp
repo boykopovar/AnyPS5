@@ -1,11 +1,18 @@
 #include "prx/libSceAudiodec.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
+#include "prx/libSceAjmi/include/InventoryExports.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include <algorithm>
+#include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/ExportLookup.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <type_traits>
 
@@ -33,6 +40,29 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "GuestAudiodecNative: %s\n", message);
     std::abort();
+}
+
+void CheckDecoderRelease(void* context, std::uint32_t ajmi, std::uint32_t ajm) {
+    for (std::uint32_t codec : {0u, 1u, 2u, 24u, 3u, 4u, 12u, 23u}) {
+        const bool native = codec == 0 || codec == 1 || codec == 2 || codec == 24;
+        const std::uint32_t owner = native ? ajm : ajmi;
+        Require(sceAjmModuleRegister(owner, codec, 0) == 0, "register decoder codec");
+        std::uint32_t instance = 0;
+        const int created = native ? sceAjmInstanceCreate(owner, codec, 0, &instance) :
+                                     sceAjmiInstanceCreate(owner, codec, 0, &instance);
+        Require(created == 0 && sceAjmInstanceCodecType(instance) == codec, "live decoder");
+        std::uint32_t swapped[] = {ajm, ajmi};
+        Require(sceAudiodecDeleteDecoderEx(swapped, instance) == static_cast<int>(0x807f000fu),
+                "wrong owner preserves live decoder");
+        Require(sceAudiodecDeleteDecoderEx(context, instance) == 0, "delete using selected service");
+        Require(sceAjmInstanceDestroy(owner, instance) == static_cast<int>(0x80930003u), "backend released decoder");
+        Require(sceAudiodecDeleteDecoderEx(context, instance) == static_cast<int>(0x807f000fu), "map missing instance");
+    }
+    for (std::uint32_t codec : {6u, 9u, 20u, 25u, 0x3ffffu}) {
+        std::uint32_t onlyAjm[] = {0, ajm};
+        Require(sceAudiodecDeleteDecoderEx(onlyAjm, codec << 14) == static_cast<int>(0x80930002u),
+                "other codec ids select the Ajmi context");
+    }
 }
 
 }
@@ -75,25 +105,38 @@ int main(int argc, char** argv) {
     std::memset(context, 0, sizeof(context));
 
     Require(sceAudiodecGetContext(nullptr) == ErrorArgument, "GetContext null out");
-    unsigned char outContext[32];
-    std::memset(outContext, 0xAA, sizeof(outContext));
-    bool getContextCaught = false;
-    try {
-        sceAudiodecGetContext(outContext);
-    } catch (const std::runtime_error&) {
-        getContextCaught = true;
+    std::array<unsigned char, 32> reference{};
+    Require(sceAudiodecGetContext(reference.data()) == 0, "module context");
+    for (unsigned displacement = 0; displacement < 8; ++displacement) {
+        alignas(8) std::array<unsigned char, 48> output;
+        output.fill(0xa5);
+        auto* snapshot = output.data() + displacement;
+        Require(sceAudiodecGetContext(snapshot) == 0 && std::memcmp(reference.data(), snapshot, 32) == 0,
+                "stable 32-byte snapshot at every alignment");
+        Require(std::all_of(output.data(), snapshot, [](auto b) { return b == 0xa5; }) &&
+                std::all_of(snapshot + 32, output.data() + output.size(), [](auto b) { return b == 0xa5; }),
+                "copy preserves surrounding bytes");
     }
-    Require(getContextCaught, "GetContext reaches service");
+    std::uint32_t moduleAjmi = 0, moduleAjm = 0;
+    Require(sceAudiodecGetAjmContext(reference.data(), &moduleAjmi, &moduleAjm) == 0 &&
+            moduleAjmi && moduleAjm && moduleAjmi != moduleAjm, "module service ids");
+    PthreadRwlock moduleLock = nullptr;
+    std::memcpy(&moduleLock, reference.data() + 12, sizeof(moduleLock));
+    Require(moduleLock && scePthreadRwlockTryrdlock(&moduleLock) == 0 && scePthreadRwlockUnlock(&moduleLock) == 0,
+            "module lock lies at firmware offset");
+    Require(std::all_of(reference.begin() + 20, reference.end(), [](auto b) { return b == 0; }),
+            "module flags and trailing bytes");
+    CheckDecoderRelease(reference.data(), moduleAjmi, moduleAjm);
 
     Require(sceAudiodecInitialize(nullptr) == ErrorArgument, "Initialize null context");
 
     bool termNullCaught = false;
     try {
-        sceAudiodecTerminate(nullptr);
+        static_cast<void>(sceAudiodecTerminate(nullptr));
     } catch (const std::runtime_error&) {
         termNullCaught = true;
     }
-    Require(termNullCaught, "Terminate null context reaches service");
+    Require(!termNullCaught, "Terminate null context returns before service");
 
     Require(sceAudiodecRegisterCodec(nullptr, 1) == ErrorArgument, "RegisterCodec null context");
     for (std::uint32_t invalidType : {0u, 5u, 7u, 8u, 9u, 13u, 100u}) {
@@ -130,9 +173,20 @@ int main(int argc, char** argv) {
 
     Require(sceAudiodecCreateDecoderEx(nullptr, &ctrl, 1) == ErrorArgument, "CreateDecoderEx null context");
     Require(sceAudiodecCreateDecoderEx(context, nullptr, 1) == ErrorInvalidCtrlPointer, "CreateDecoderEx null ctrl");
+    errno = 71;
+    Require(sceAudiodecCreateDecoderEx(context, reinterpret_cast<AudiodecCtrl*>(0x10), 1) == ErrorInvalidCtrlPointer && errno == 71, "CreateDecoderEx unreadable ctrl");
     Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidParamPointer, "CreateDecoderEx null param");
+    ctrl.pParam = reinterpret_cast<void*>(0x10);
+    ctrl.pBsiInfo = bsiInfoBuffer;
+    errno = 71;
+    Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidParamPointer && errno == 71, "CreateDecoderEx unreadable param");
     ctrl.pParam = paramBuffer;
+    ctrl.pBsiInfo = nullptr;
     Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidBsiInfoPointer, "CreateDecoderEx null bsi");
+    ctrl.pBsiInfo = reinterpret_cast<void*>(0x10);
+    paramBuffer[0] = 0xC;
+    errno = 71;
+    Require(sceAudiodecCreateDecoderEx(context, &ctrl, 1) == ErrorInvalidBsiInfoPointer && errno == 71, "CreateDecoderEx unreadable bsi");
     ctrl.pBsiInfo = bsiInfoBuffer;
     for (std::uint32_t invalidType : {0u, 5u, 7u, 8u, 9u, 13u, 20u}) {
         Require(sceAudiodecCreateDecoderEx(context, &ctrl, invalidType) == ErrorInvalidType, "CreateDecoderEx invalid type");
@@ -261,13 +315,8 @@ int main(int argc, char** argv) {
     }
     Require(clearCaught, "ClearContextEx reaches service");
 
-    bool deleteCaught = false;
-    try {
-        sceAudiodecDeleteDecoderEx(context, 1);
-    } catch (const std::runtime_error&) {
-        deleteCaught = true;
-    }
-    Require(deleteCaught, "DeleteDecoderEx reaches service");
+    std::uint32_t noServices[2]{};
+    Require(sceAudiodecDeleteDecoderEx(noServices, 1) == static_cast<int>(0x80930002u), "propagate invalid service context");
 
     paramBuffer[0] = 0xC;
     bsiInfoBuffer[0] = 0x24;

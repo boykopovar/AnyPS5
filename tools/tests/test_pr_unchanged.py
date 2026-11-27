@@ -210,6 +210,32 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("boom", err)
 
+    def test_open_pages_reject_invalid_next_cursors_without_restarting(self):
+        for cursor in (None, "", 17, []):
+            with self.subTest(cursor=cursor):
+                calls = []
+                def fake(*args, **kwargs):
+                    calls.append(kwargs)
+                    if len(calls) > 2:
+                        raise ValueError("fixture read budget exceeded")
+                    return page([node(same=False)], True, cursor)["data"]
+                with patch.object(pr_unchanged, "graphql", fake), self.assertRaisesRegex(ValueError, "no cursor"):
+                    pr_unchanged.fetch("o/r")
+                self.assertEqual(len(calls), 1)
+
+    def test_open_page_cursors_must_advance(self):
+        for cursors in (("repeat", "repeat"), ("first", "second", "first")):
+            with self.subTest(cursors=cursors):
+                calls = []
+                def fake(*args, **kwargs):
+                    calls.append(kwargs)
+                    if len(calls) > len(cursors):
+                        raise ValueError("fixture read budget exceeded")
+                    return page([node(same=False)], True, cursors[len(calls) - 1])["data"]
+                with patch.object(pr_unchanged, "graphql", fake), self.assertRaisesRegex(ValueError, "did not advance"):
+                    pr_unchanged.fetch("o/r")
+                self.assertEqual(len(calls), len(cursors))
+
     def test_pages_are_followed(self):
         api = Api([])
         api.pages = [page([node(number=1, same=False)], True, "c1"), page([node(number=2, same=False)])]
@@ -217,6 +243,28 @@ class MainTests(unittest.TestCase):
             head, prs = pr_unchanged.fetch("o/r")
         self.assertEqual([pr["number"] for pr in prs], [1, 2])
         self.assertEqual(head, MAIN)
+
+
+class PaginationTests(unittest.TestCase):
+    def test_pagination_cursor_returns_each_new_cursor_once(self):
+        seen = set()
+        self.assertEqual(pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x'), 'c1')
+        with self.assertRaisesRegex(ValueError, 'did not advance'):
+            pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x')
+        with self.assertRaisesRegex(ValueError, 'has no cursor'):
+            pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': ''}}, set(), 'x')
+
+    def test_listed_returns_nodes_and_refuses_other_shapes(self):
+        self.assertEqual(pr_unchanged.listed({'nodes': [1, 2]}), [1, 2])
+        with self.assertRaisesRegex(ValueError, 'expected a connection'):
+            pr_unchanged.listed([])
+class CommentTextTests(unittest.TestCase):
+    def test_comment_starts_with_the_marker_and_names_the_base(self):
+        base = 'a' * 40
+        text = pr_unchanged.comment(base)
+        self.assertTrue(text.startswith(pr_unchanged.MARKER))
+        self.assertIn('at ' + 'a' * 10, text)
+        self.assertIn('Nothing is closed automatically', text)
 
 
 if __name__ == "__main__":

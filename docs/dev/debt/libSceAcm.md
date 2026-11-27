@@ -11,7 +11,8 @@
 
 ### Unknown function info
 
-- [sceAcmBatchStartBuffer, sceAcmBatchStartBuffers and sceAcmContextCreate](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - returning `0x81940006` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
+- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) - in Firmware 13.42, sceAcmBatchStartBuffers requires batch_error to be null returning SCE_ACM_ERROR_BAD_POINTER when non-null (sceAcmBatchStartBuffer has no checks of its own and passes batch_error unchanged to the same combined test), and stores directly through context and batch pointers after null checks (read from disassembly, not measured on a console), so the console faults on an inaccessible non-null pointer; AnyPS5 returns SCE_ACM_ERROR_BAD_POINTER instead.
+
 - [Additional ACM exports](../../../core/libs/prx/libSceAcm/Export.cpp) - the eleven name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`. No audio-chain, reverb or telemetry behaviour is implemented.
 
 | Name | NID |
@@ -39,7 +40,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceAcm/Export.cpp) - 4 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Unnamed firmware 13.42 exports](../../../core/libs/prx/libSceAcm/Export.cpp) - 44 function NIDs that firmware 13.42's `system/common/lib/libSceAcm.sprx` exports (read from its export table) are import-resolution declarations only. The [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl) lists the same NIDs as defined function exports with no name, and none is in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Names, parameter lists, return types and behavior are unknown; parameterless `int` declarations are placeholders, not verified ABI contracts, and every entry throws through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -50,7 +51,6 @@
 
 - [Unknown NID `9+f3tPdeyP0`](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - its name and the structure it advances are unknown; the parameter and result types come from the body, not a prototype, and nothing is claimed about the object beyond the fields used. Firmware 13.42 `libSceAcm.sprx` (`0x8190`, disassembly only, not run on a console) returns null for a null argument. Otherwise it reads a base pointer at `+0` and 32-bit fields at `+8`, `+0xc` and `+0x10`, raises `+0xc` to at most `+8`, moves `+0x10` to the next slot (0 after an empty state, 0 again at `+8`) and returns the base plus 1024 bytes per slot, with the slot shifted by 8 in 32 bits. Only null is checked; a bad pointer faults there too.
 
-- [Unnamed firmware 13.42 exports](../../../core/libs/prx/libSceAcm/Export.cpp) - 44 function NIDs that firmware 13.42's `system/common/lib/libSceAcm.sprx` exports (read from its export table) are import-resolution declarations only. The [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl) lists the same NIDs as defined function exports with no name, and none is in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Names, parameter lists, return types and behavior are unknown; parameterless `int` declarations are placeholders, not verified ABI contracts, and every entry throws through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |

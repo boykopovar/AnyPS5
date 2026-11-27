@@ -13,32 +13,32 @@
 | `Unknown` | `-3HTIXaIx7U` |
 | `Unknown` | `0Oz9yG27ovw` |
 | `Unknown` | `1pWftEwJg6w` |
-| `Unknown` | `4Ac+2ezx1lY` |
-| `Unknown` | `6hw5LpQh6-M` |
+| `sceAudioOut2GetLoContextParam` | `4Ac+2ezx1lY` |
+| `sceAudioOut2LoPortGetParam` | `6hw5LpQh6-M` |
 | `Unknown` | `87IcZgIbuxQ` |
 | `Unknown` | `8qn2ceJ4HVg` |
-| `Unknown` | `96EqlBA6q4I` |
-| `Unknown` | `B88xqT6vI88` |
+| `sceAudioOut2GetLoContextHandle` | `96EqlBA6q4I` |
+| `sceAudioOut2SetDebugAudioMode` | `B88xqT6vI88` |
 | `Unknown` | `DEpjrJh-flc` |
 | `Unknown` | `GIcJie+rjvM` |
 | `Unknown` | `KeHpCnAvtGw` |
-| `Unknown` | `Oqn65W-w8bo` |
+| `sceAudioOut2GetMainUserHandle` | `Oqn65W-w8bo` |
 | `Unknown` | `PNeVjMfwq1M` |
 | `Unknown` | `PSg2qlLNCqM` |
 | `Unknown` | `UAk5DtTuUMo` |
 | `Unknown` | `WKpJvbBdcbU` |
 | `Unknown` | `WOfIge9NmBA` |
 | `Unknown` | `YSm2BXd3gfE` |
-| `Unknown` | `Zk1Cn7Z2tVs` |
+| `sceAudioOut2GetDebugMemoryInfo` | `Zk1Cn7Z2tVs` |
 | `Unknown` | `bd5H255vnsk` |
 | `Unknown` | `f3xQNbru2m8` |
-| `Unknown` | `g33sQzMRRmQ` |
+| `sceAudioOut2EnableTVVirtual` | `g33sQzMRRmQ` |
 | `Unknown` | `gaUU6uC15vs` |
 | `Unknown` | `jEcHKuQ4k8I` |
 | `Unknown` | `lyHeaetMYXg` |
-| `Unknown` | `r5LqvBxfG+0` |
+| `sceAudioOutSysGetLastOutputTime` | `r5LqvBxfG+0` |
 | `Unknown` | `rSyeebu6wWI` |
-| `Unknown` | `rzjbvXzvDtE` |
+| `sceAudioOut2AssignHRTF` | `rzjbvXzvDtE` |
 | `Unknown` | `spvw78DsDzU` |
 | `Unknown` | `tqTyWw6NgyU` |
 | `Unknown` | `tvPlXmc4MHs` |
@@ -81,7 +81,7 @@
 - [sceAudioOut2LoTerminate](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) - returns 0, as the PS5 13.60 module (0x248d0) does whether or not the low-latency service runs. The module disconnects from the audio server and clears the service tables; here `sceAudioOut2LoInit` starts no service and open contexts and ports are left as they are
 - [sceAudioOutMasteringTerm](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - returns 0 once and clears the state `sceAudioOutMasteringInit(0)` set; a Term without a matching Init returns `0x80260203`, as on a PS5 (firmware 11.60, payload process, after `sceAudioOutInit`). There is no mastering stage to tear down
 - [sceAudioOutSetMainOutput](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) (libSceAudioOut) - returns 0 and does nothing, as the console function does on firmware 12.70: [PS5-Audio-Passthrough-Research](https://github.com/sainsaji/PS5-Audio-Passthrough-Research/blob/cf3c921d79bf00db4847f31b68a7bd95a8037cd7/docs/FINDINGS.md#L25) reads that export as `xor eax,eax; ret`. The export reads no argument, so its parameters stay unknown; other firmware versions are unverified
-- [sceAudioOut2ContextSetAttributes](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - for a valid context and attribute list, returns 0 and ignores every attribute (an invalid context gives `INVALID_HANDLE`, a null list with a nonzero count `INVALID_ARGUMENT`); what a context attribute changes on a console is unknown. PPSA25286 01.000.568 sets attribute 2 to a 4-byte 1 at start-up, and PPSA02225 passes two attributes from an object at its single call.
+- [sceAudioOut2ContextSetAttributes](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - for a valid context and a non-null attribute list, returns 0 and ignores every attribute (an invalid context gives `INVALID_HANDLE`, a null list 0x80268001); what a context attribute changes on a console is unknown. A PS5 (firmware 11.60, payload process; a title process may differ) accepted ids 1 and 2 with a 4-byte value 1 and refused with 0x80268001 a null list with count 0 or 1, as this library does, and ids 0, 3, 4, 0x100 and 0xffffffff, a null value and size 0 for id 2, which it still accepts; it answered 0 for context 0, which this library refuses; ids above 4 other than 0x100 are not measured. PPSA25286 01.000.568 sets attribute 2 to a 4-byte 1 at start-up, and PPSA02225 passes two attributes from an object at its single call.
 
 ### Unknown function info
 
@@ -106,6 +106,7 @@
 - [AudioOut2 user guest outputs](../../../core/libs/prx/libSceAudioOut/src/AudioOut2User.cpp) - the console's behavior for a non-null but unwritable user-handle or attribute output is unmeasured. AnyPS5 returns its existing invalid-argument codes as a host-safety fallback, keeps the next handle available if creation cannot write it, and preserves host `errno`. When only the second attribute output is unwritable, the first output has already been written.
 - [sceAudioOutExOpen, sceAudioOutExConfigureOutput, sceAudioOutExClose](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) (libSceAudioOut) - the HDMI bitstream calls follow [PS5-Audio-Passthrough-Research](https://github.com/sainsaji/PS5-Audio-Passthrough-Research/blob/cf3c921d79bf00db4847f31b68a7bd95a8037cd7/docs/FINDINGS.md#L31-L80), which disassembles firmware 12.70's libSceAudioOut and logs the calls on a console. `sceAudioOutExOpen(user, mode)` returns `0x80260015` for a mode above 10 or outside mask `0x61F`; otherwise it opens a port of internal type 6 in S16 stereo, 256 frames at 48000 Hz for modes 0, 1, 2 and 9 and 1024 frames at 192000 Hz for modes 3, 4 and 10. `sceAudioOutExConfigureOutput(control, flags, mode, target, option)` returns `0x80268009` when `control` is not 0, takes modes 0 to 10 and 0xFF and targets 1 to 3 and 0xFF, and returned 0 on the console; `sceAudioOutExClose` returned 0. The argument registers match [Jelly5](https://github.com/02dnot/Jelly5/blob/552b866d89b2a58b27f7f7b0484dc743ce235526/app/src/jelly5_bitstream.cpp#L26-L28) and PPSA99051's [bitstream_out.cpp](https://github.com/sainsaji/PS5-Audio-Passthrough-Research/blob/cf3c921d79bf00db4847f31b68a7bd95a8037cd7/sample-app/src/platform/ps5/bitstream_out.cpp#L29-L32). Audio reaches the host through SDL as PCM and the host has no HDMI bitstream output, so an Ex port has no host device: `sceAudioOutOutput` paces it at its own rate and drops its IEC 61937 bursts, and `sceAudioOutExConfigureOutput` changes nothing. Nonzero `flags` or `option`, other modes or targets, `sceAudioOutExClose` of a handle that is not an Ex port, and `sceAudioOutGetPortState` on an Ex port throw, since the console's answers are unknown
 - [sceAudioOutExGetMonitorInfo](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) - native validation requires first argument zero, a non-null buffer and exactly 1024 bytes, in that order (errors 0x80260003/04/06); the second argument is ignored. The host still reports no audio descriptors by zeroing the record. Native content comes from monitor/device services and system audio configuration, which the SDL backend does not reproduce.
+- [sceAudioOutExGetMonitorInfo guest output](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) (libSceAudioOut) - the empty monitor info is written with GuestCopyOut_nid_no_patch and errno preserved; returning `0x80260004` (the invalid-pointer error it returns for a null info) for an unwritable info is a host-safety fallback, and console behaviour on unmapped memory is unmeasured.
 - [sceAudioOut2Set3DLatency](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) (libSceAudioOut) - the two 32-bit arguments and selector validation match the system library: selector 0 accepts outputs 0 through 2; selector 255 accepts outputs 1 and 2. No third latency argument exists. The host has no system 3D rendering stage, so the call still does not apply latency and does not reproduce the system initialization and output-availability checks.
 - [sceAudioOut2MasteringInit and sceAudioOut2MasteringInitEx](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - the initialized flag and the flag checks follow the PS5 13.60 module (0x22360): a repeated initialization returns 0, other flags return `0x80268201`, and InitEx also accepts bit 31, which the console passes to the audio server as a mastering mode. Nothing is sent to an audio server. A PS5 (firmware 11.60, payload process) confirmed the repeat, the flag check and its order: flags 2 returned 0 while mastering was initialized and `0x80268201` otherwise, and InitEx(0) returned 0. PPSA01289 calls Init twice before Term twice; by the module its second Term gets `0x80268203`, and the title only logs a non-zero result
 - [sceAudioOut2MasteringGetState and sceAudioOut2MasteringSetParam](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - a PS5 (firmware 11.60, payload process) confirmed the states ids 1 and 2 (other ids `0x80268204`), `0x80268203` from both calls before initialization and `0x80268201` from SetParam for a null parameter. The state layout and the descriptor ids `0x01010001`, `0x01020001` and `0x01010003` follow [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/df5b9b92be7dfd463b47756b707d6d356a9f0550/src/libs/libAudio2.cpp), not a console measurement. GetState zeroes the states and writes the two descriptors; the PS5 wrote the same number of non-zero bytes, 8 (default) and 9 (V2), but left 28 bytes unwritten. SetParam accepts any parameter set and records nothing. Unmeasured, from the PS5 13.60 module: GetState returns `0x8026800C` for a null state and SetParam `0x80268205` for flags above 1; the console's checks of `output` and `user` are not reproduced
@@ -147,13 +148,14 @@
 - [sceAudioOut2LoPortSetAttributesEx](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Port.cpp) (libSceAudioOut) - the PS5 4.03 module takes the same three arguments as `sceAudioOut2LoPortSetAttributes` and passes an internal flag into the shared core, which widens the writable attribute-id mask (`0x200000603` vs `0x603`). The host forwards to `sceAudioOut2PortSetAttributes`; the extra writable id's semantics are unverified.
 - [sceAudioOut2PortSetAttributesEx](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Port.cpp) (libSceAudioOut) - forwards to `sceAudioOut2PortSetAttributes`. In firmware 13.42's `libSceAudioOut.sprx` ([disassembly](https://github.com/boykopovar/AnyPS5/issues/15133#issuecomment-6755377424)) the export sets one flag and jumps into the routine `sceAudioOut2PortSetAttributes` also enters, with the same `(port, attributes, count)`. The flag reaches only the attribute checker, where it adds ids 0x37 to 0x39 to the accepted ones. The host runs that checker for neither call, and what the three ids do is unread.
 - [sceAudioOut2GetAmbisonicsEncodeCoefficients](../../../core/libs/prx/libSceAudioOut/src/AudioOut2SpeakerArray.cpp) (libSceAudioOut) - `(params, out, direction)`, `params` a kind and an order, the direction three floats by value: from runs of firmware 13.42's export under Unicorn ([findings](https://github.com/boykopovar/AnyPS5/issues/15133#issuecomment-6760251082)), not a console. Kind 0 writes ACN/SN3D orders 0 to 5, kind 1 FuMa orders 0 to 3, for the normalised direction with X = z, Y = -x, Z = y. Kind 0 returned 0 and wrote nothing for orders 6, 7, 8, 10, -1 and -2, as every order outside 0 to 5 does here; the instruction deciding that was not found. A zero direction clears the (n + 1)² floats, the length taken from the channel count, and writes the first. A negative kind-1 order, which passes the signed check into unread code, and a zero direction with a kind-0 order outside 0 to 5 throw.
+- [sceAudioOut2GetAmbisonicsEncodeCoefficients guest pointers](../../../core/libs/prx/libSceAudioOut/src/AudioOut2SpeakerArray.cpp) (libSceAudioOut) - the parameters are copied in and the coefficients built on the host and copied out with errno preserved; returning `0x80268001` (the invalid-parameter error it returns for null pointers) for unreadable parameters or an unwritable output is a host-safety fallback, and console behaviour on unmapped memory is unmeasured.
 - [sceAudioOut2LoPortGetStateEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - absent from the PS5 4.03 module's export table (a later-firmware addition); its signature and behavior remain unverified and the export still throws through `NotImplemented_nid_no_patch`.
 - [sceAudioOutOpenEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetSystemDebugState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetSimulatedHandleStatusInfo2](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutChangeAppModuleState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutGetSimulatedHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature; the body returns the fixed value 0x809B00FF without throwing, which AnyPS5's test in `tests/AudioOutInfo.cpp` expects as "not supported". The console's return is not measured.
+- [sceAudioOutGetSimulatedHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature; the body returns the fixed value 0x809B00FF without throwing, which AnyPS5's test in `core/libs/prx/libSceAudioOut/tests/AudioOutInfo.cpp` expects as "not supported". The console's return is not measured.
 - [sceAudioOutGetSimulatedBusUsableStatusByBusType](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutAttachToApplicationByPid](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutDetachFromApplicationByPid](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "libatrac9.h"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
@@ -520,22 +521,6 @@ static int ParseWaveform(const RiffChunks& chunks, std::size_t size, Ngs2Wavefor
     return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
 }
 
-template <typename T>
-static bool ReadGuest(const T* guest, T& local) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&local, guest, sizeof(local));
-    errno = savedErrno;
-    return copied;
-}
-
-template <typename T>
-static bool WriteGuest(T* guest, const T& local) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(guest, &local, sizeof(local));
-    errno = savedErrno;
-    return copied;
-}
-
 #pragma GCC visibility push(default)
 
 extern "C" {
@@ -563,16 +548,27 @@ int APS5_VABI sceNgs2ParseWaveformFile(const char* path, uint32_t offset, Ngs2Wa
     Ngs2WaveformInfo local{};
     if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (path == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
-    const auto host = ResolvePath_nid_no_patch(path);
-    std::ifstream file(host, std::ios::binary | std::ios::ate);
-    if (!file) throw std::runtime_error(std::string(__func__) + ": cannot open " + host.string());
-    const auto fileSize = static_cast<std::uint64_t>(file.tellg());
+    const auto host = ResolveArchivedPath_nid_no_patch(path);
+    AppArchiveNode archived{};
+    const bool fromArchive = AppArchiveOnly_nid_no_patch(host);
+    if (fromArchive && !AppArchiveLookup_nid_no_patch(host, &archived)) throw std::logic_error(std::string(__func__) + ": " + host.string() + " left app0.zar while opening");
+    if (fromArchive && archived.Directory) throw std::runtime_error(std::string(__func__) + ": cannot open " + host.string());
+    std::ifstream file;
+    if (!fromArchive) {
+        file.open(host, std::ios::binary | std::ios::ate);
+        if (!file) throw std::runtime_error(std::string(__func__) + ": cannot open " + host.string());
+    }
+    const auto fileSize = fromArchive ? archived.Size : static_cast<std::uint64_t>(file.tellg());
     if (offset > fileSize) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto length = static_cast<std::size_t>(fileSize - offset);
     const std::string function = __func__;
     std::vector<std::vector<std::uint8_t>> pieces;
     const auto readBytes = [&](std::size_t at, std::size_t count) {
         auto& piece = pieces.emplace_back(std::max<std::size_t>(count, 1));
+        if (fromArchive) {
+            if (AppArchiveRead_nid_no_patch(archived.Handle, offset + at, piece.data(), count) != count) throw std::runtime_error(function + ": read failed for " + host.string());
+            return static_cast<const std::uint8_t*>(piece.data());
+        }
         file.seekg(static_cast<std::streamoff>(offset + at));
         if (!file.read(reinterpret_cast<char*>(piece.data()), static_cast<std::streamsize>(count))) throw std::runtime_error(function + ": read failed for " + host.string());
         return static_cast<const std::uint8_t*>(piece.data());

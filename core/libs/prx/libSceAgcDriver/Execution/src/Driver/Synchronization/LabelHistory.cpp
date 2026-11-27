@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -8,14 +9,17 @@
 
 namespace AgcDriver::DriverDetail {
 
-void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
+void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool ordered) {
     if (!KeepsLabelStore(address, bytes.size())) return;
+    const auto generation = GuestMemory::TrackerGeneration();
     std::lock_guard lock(labelStoresMutex);
     for (std::size_t offset = 0; offset < bytes.size(); offset += 4) {
         auto& history = labelStores[address + offset];
         std::shift_right(history.begin(), history.end(), 1);
         history[0].stamp = stamp;
         history[0].queue = queue;
+        history[0].generation = generation;
+        history[0].ordered = ordered;
         std::memcpy(&history[0].value, bytes.data() + offset, 4);
     }
 }
@@ -101,6 +105,35 @@ bool Driver::findWaitProducer(std::uint64_t address, std::size_t bytes, std::uin
     return found;
 }
 
+std::uint64_t Driver::storeOrderingSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue) {
+    if (!GuestMemory::CollectWalksShared()) return 0;
+    std::uint32_t writer = queue;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard lock(labelStoresMutex);
+        const auto low = labelStores.find(address);
+        if (low == labelStores.end()) return 0;
+        const auto high = bytes == 8 ? labelStores.find(address + 4) : labelStores.end();
+        if (bytes == 8 && high == labelStores.end()) return 0;
+        const LabelStore* matched = nullptr;
+        for (std::size_t index = 0; index < low->second.size(); ++index) {
+            const auto& store = low->second[index];
+            if (store.stamp <= received || !store.ordered || store.generation == 0) return 0;
+            if (bytes == 8 && high->second[index].stamp != store.stamp) return 0;
+            const std::uint64_t value = store.value | (bytes == 8 ? static_cast<std::uint64_t>(high->second[index].value) << 32u : 0u);
+            if (Pm4::WaitComparesValue(packet, value)) {
+                matched = &store;
+                break;
+            }
+        }
+        if (matched == nullptr) return 0;
+        writer = matched->queue;
+        generation = matched->generation;
+    }
+    if (!GuestMemory::UnchangedSinceCollected(address, bytes, generation)) return 0;
+    return writer == queue ? GuestMemory::CollectSince() : queueEpochSince(writer);
+}
+
 bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {
     std::lock_guard lock(labelStoresMutex);
     const auto low = labelStores.find(address);
@@ -138,6 +171,18 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     else if ((opcode == 0x3c || opcode == 0x93) && packet.size() >= 7) { target = (packet[2] & (Pm4::WaitAwaitedBytes(packet) == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u); kind = "WAIT_REG_MEM"; }
     else if (opcode == 0x40 && packet.size() >= 6) { target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u); kind = "COPY_DATA"; }
     std::uint64_t length = 4;
+    std::uint64_t value = 0;
+    bool valued = false;
+    if (opcode == 0x49 || opcode == 0x37) {
+        if (const auto label = Pm4::DecodeLabelWrite(packet)) {
+            length = label->Bytes().size();
+            const bool clocked = opcode == 0x49 && packet.size() >= 3 && ((packet[2] >> 29u) & 7u) >= 3u;
+            if (length <= sizeof(value) && !clocked) {
+                std::memcpy(&value, label->Bytes().data(), length);
+                valued = true;
+            }
+        }
+    }
     if (opcode == 0x50 && packet.size() >= 7) {
         target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
         length = packet[6] & 0x3ffffffu;
@@ -146,8 +191,9 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     if (kind == nullptr) return;
     if (std::string_view(kind) != "WAIT_REG_MEM") {
         std::lock_guard lock(writeHistoryMutex());
-        auto& entry = writeHistory()[writeCursor()++ % writeHistory().size()];
-        entry = {target, length, queue, opcode};
+        const auto order = writeCursor()++;
+        auto& entry = writeHistory()[order % writeHistory().size()];
+        entry = {target, length, queue, opcode, order, value, valued};
     }
     if (watched == 0 || target + length + 0x100 < watched || target > watched + 0x100) return;
     std::fprintf(stderr, "[label] %lld ms queue 0x%x %s 0x%llx:", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()), queue, kind, static_cast<unsigned long long>(target));

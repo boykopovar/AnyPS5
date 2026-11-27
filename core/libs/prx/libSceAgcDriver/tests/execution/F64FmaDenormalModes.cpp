@@ -272,7 +272,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
-            std::puts("skipped f64 fma denormal mode tests, the device has no shaderFloat64");
+            std::puts("f64 fma denormal mode tests skipped, the device has no shaderFloat64");
             return VulkanTestSkipped;
         }
         const Case cases[] = {

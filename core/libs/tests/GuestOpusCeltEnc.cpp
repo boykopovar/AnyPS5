@@ -1,4 +1,5 @@
 #include "prx/libSceOpusCeltEnc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -13,6 +14,10 @@
 #include <opus.h>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
@@ -164,7 +169,12 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncDestroy(ToState(live)) == 0);
 
     Require(sceOpusCeltEncCtl(nullptr, 4000) == EncoderError(0x01));
+    errno = 71;
     Require(sceOpusCeltEncCtl(ToState(blank), 4000) == EncoderError(0x16));
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusCeltEncCtl(reinterpret_cast<OpusCeltEncoder*>(0x10), 4000); });
+    Require(errno == 71);
     Require(sceOpusCeltEncCtl(ToState(wideMarker), 4000) == EncoderError(0x16));
     for (const int request : std::array<int, 6>{0, 3999, 4048, -3, 2147483647, -2147483647 - 1})
         Require(sceOpusCeltEncCtl(ToState(marked), request) == EncoderError(0x08));
@@ -175,6 +185,12 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 0, packet.data(), 1500, 50) == EncoderError(0x03));
     Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(blank), floatPcm.data(), 960, nullptr, 0, 0) == EncoderError(0x16));
     Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(wideMarker), floatPcm.data(), 960, packet.data(), 1500, 50) == EncoderError(0x16));
+    Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 960, nullptr, 0, 0) == EncoderError(0x04));
+    Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 960, packet.data(), 0, 0) == EncoderError(0x05));
+    for (const std::uint32_t priority : std::array<std::uint32_t, 5>{0u, 19u, 101u, 0x80000000u, 0xFFFFFFFFu})
+        Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), 7, packet.data(), 1500, priority) == EncoderError(0x15));
+    for (const int frameSize : std::array<int, 3>{39, 41, 1920})
+        Require(sceOpusCeltEncEncodeFloatWithPriority(ToState(marked), floatPcm.data(), frameSize, packet.data(), 1500, 50) == EncoderError(0x03));
 
     std::uint32_t ajmContext = 0x12345678u;
     Require(sceOpusCeltEncGetAjmContext(nullptr, &ajmContext) == EncoderError(0x01));
@@ -240,11 +256,138 @@ void RequireEarlyAnswers(int callerApplication) {
         Require(sceOpusCeltMultistreamEncCreateEx(&context, ToMultistreamState(blank), 48000, 2, 1, reversed.data(), application) == EncoderError(0x11));
         Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 12, 0, identity.data(), application) == EncoderError(0x11));
     }
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, identity.data(), OPUS_APPLICATION_VOIP) == EncoderError(0x11));
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, reinterpret_cast<const std::uint8_t*>(0x10), lowDelay); });
+    Require(errno == 71);
+}
+
+using State = OpusCeltEncoder;
+
+constexpr int CtlLastRequest = 4047;
+constexpr std::uint32_t CtlRequestError = 0x08u;
+constexpr std::uint32_t CtlMarkerError = 0x16u;
+constexpr std::uint32_t CtlOrphanInstance = 0xFFFFFFF0u;
+constexpr std::array<int, 10> CtlUnsupportedRequests{4018, 4026, 4030, OPUS_GET_PITCH_REQUEST, OPUS_SET_GAIN_REQUEST, OPUS_GET_LAST_PACKET_DURATION_REQUEST, 4044, OPUS_GET_GAIN_REQUEST, -1, -2};
+
+template <typename... TArguments>
+int CtlCall(State* state, int request, TArguments... arguments) {
+    return sceOpusCeltEncCtl(state, request, arguments...);
+}
+
+int CreateCall(State* state, int rate, int channels, int application) {
+    return sceOpusCeltEncCreate(state, rate, channels, application);
+}
+
+int EncodeCall(State* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes) {
+    return sceOpusCeltEncEncode(state, samples, frameSize, data, maxDataBytes);
+}
+
+int DestroyCall(State* state) {
+    return sceOpusCeltEncDestroy(state);
+}
+
+struct CtlSetting {
+    int request;
+    int value;
+};
+
+constexpr std::array<int, 18> CtlGetRequests{OPUS_GET_BITRATE_REQUEST, OPUS_GET_MAX_BANDWIDTH_REQUEST, OPUS_GET_VBR_REQUEST, OPUS_GET_BANDWIDTH_REQUEST,
+                                              OPUS_GET_COMPLEXITY_REQUEST, OPUS_GET_INBAND_FEC_REQUEST, OPUS_GET_PACKET_LOSS_PERC_REQUEST, OPUS_GET_DTX_REQUEST,
+                                              OPUS_GET_VBR_CONSTRAINT_REQUEST, OPUS_GET_FORCE_CHANNELS_REQUEST, OPUS_GET_SIGNAL_REQUEST, OPUS_GET_LOOKAHEAD_REQUEST,
+                                              OPUS_GET_SAMPLE_RATE_REQUEST, OPUS_GET_FINAL_RANGE_REQUEST, OPUS_GET_LSB_DEPTH_REQUEST, OPUS_GET_EXPERT_FRAME_DURATION_REQUEST,
+                                              OPUS_GET_PREDICTION_DISABLED_REQUEST, OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST};
+
+constexpr std::array<CtlSetting, 17> CtlSettings{{{OPUS_SET_BITRATE_REQUEST, 32000}, {OPUS_SET_COMPLEXITY_REQUEST, 3}, {OPUS_SET_VBR_REQUEST, 0},
+                                                  {OPUS_SET_VBR_CONSTRAINT_REQUEST, 0}, {OPUS_SET_MAX_BANDWIDTH_REQUEST, OPUS_BANDWIDTH_WIDEBAND},
+                                                  {OPUS_SET_BANDWIDTH_REQUEST, OPUS_BANDWIDTH_NARROWBAND}, {OPUS_SET_PACKET_LOSS_PERC_REQUEST, 12},
+                                                  {OPUS_SET_INBAND_FEC_REQUEST, 1}, {OPUS_SET_DTX_REQUEST, 1}, {OPUS_SET_FORCE_CHANNELS_REQUEST, 1},
+                                                  {OPUS_SET_SIGNAL_REQUEST, OPUS_SIGNAL_VOICE}, {OPUS_SET_LSB_DEPTH_REQUEST, 16},
+                                                  {OPUS_SET_EXPERT_FRAME_DURATION_REQUEST, OPUS_FRAMESIZE_20_MS}, {OPUS_SET_PREDICTION_DISABLED_REQUEST, 1},
+                                                  {OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST, 1}, {OPUS_SET_COMPLEXITY_REQUEST, 11}, {OPUS_SET_BITRATE_REQUEST, -5}}};
+
+void RequireGetsThrow(State* state) {
+    for (const int request : CtlGetRequests) {
+        if (request > CtlLastRequest) continue;
+        std::uint32_t output = 0xA5A5A5A5u;
+        RequireThrows([&] { CtlCall(state, request, reinterpret_cast<std::int32_t*>(&output)); });
+        Require(output == 0xA5A5A5A5u);
+    }
+}
+
+void RequireSamePackets(State* state, OpusEncoder* reference, int rate, int channels, int position) {
+    std::array<std::int16_t, 5760> pcm{};
+    const int frameSize = rate / 50;
+    for (int frame = 0; frame < 3; ++frame) {
+        FillSine(pcm.data(), frameSize, channels, rate, position + frame * frameSize);
+        std::array<std::uint8_t, 1500> packet{};
+        std::array<std::uint8_t, 1500> expected{};
+        const int bytes = EncodeCall(state, pcm.data(), frameSize, packet.data(), static_cast<int>(packet.size()));
+        const int expectedBytes = opus_encode(reference, pcm.data(), frameSize, expected.data(), static_cast<int>(expected.size()));
+        Require(bytes > 0 && bytes == expectedBytes && std::equal(packet.begin(), packet.begin() + bytes, expected.begin()));
+    }
+}
+
+void RequireCtl(int callerApplication, int codecApplication) {
+    constexpr int rate = 48000;
+    constexpr int channels = 2;
+    std::array<std::uint8_t, 1024> live{};
+    Require(CreateCall(ToState(live), rate, channels, callerApplication) == 0);
+    int opusError = OPUS_OK;
+    auto* reference = opus_encoder_create(rate, channels, codecApplication, &opusError);
+    Require(reference && opusError == OPUS_OK);
+
+    RequireGetsThrow(ToState(live));
+    RequireSamePackets(ToState(live), reference, rate, channels, 0);
+    int position = 3 * rate / 50;
+    int accepted = 0;
+
+    for (const CtlSetting& setting : CtlSettings) {
+        if (setting.request > CtlLastRequest) {
+            Require(CtlCall(ToState(live), setting.request, setting.value) == EncoderError(CtlRequestError));
+            continue;
+        }
+        if (opus_encoder_ctl(reference, setting.request, static_cast<opus_int32>(setting.value)) == OPUS_OK) {
+            errno = 71;
+            Require(CtlCall(ToState(live), setting.request, setting.value) == 0);
+            Require(errno == 71);
+            ++accepted;
+        } else {
+            RequireThrows([&] { CtlCall(ToState(live), setting.request, setting.value); });
+        }
+        RequireSamePackets(ToState(live), reference, rate, channels, position);
+        position += 3 * rate / 50;
+    }
+    Require(accepted >= 10);
+    RequireGetsThrow(ToState(live));
+
+    Require(opus_encoder_ctl(reference, OPUS_RESET_STATE) == OPUS_OK);
+    Require(CtlCall(ToState(live), OPUS_RESET_STATE) == 0);
+    RequireSamePackets(ToState(live), reference, rate, channels, 0);
+
+    std::int32_t output = 0;
+    RequireThrows([&] { CtlCall(ToState(live), OPUS_SET_APPLICATION_REQUEST, OPUS_APPLICATION_AUDIO); });
+    RequireThrows([&] { CtlCall(ToState(live), OPUS_GET_APPLICATION_REQUEST, &output); });
+    for (const int request : CtlUnsupportedRequests) RequireThrows([&] { CtlCall(ToState(live), request, &output); });
+    Require(output == 0);
+
+    std::array<std::uint8_t, 1024> orphan = live;
+    std::memcpy(orphan.data(), &CtlOrphanInstance, sizeof CtlOrphanInstance);
+    RequireThrows([&] { CtlCall(ToState(orphan), OPUS_SET_BITRATE_REQUEST, 32000); });
+
+    Require(DestroyCall(ToState(live)) == 0);
+    Require(CtlCall(ToState(live), OPUS_SET_BITRATE_REQUEST, 32000) == EncoderError(CtlMarkerError));
+    Require(CtlCall(ToState(live), OPUS_RESET_STATE) == EncoderError(CtlMarkerError));
+    opus_encoder_destroy(reference);
 }
 
 } // namespace
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::uint32_t errorBase = 0x813F0000u;
     constexpr std::size_t stateSize = 728;
     constexpr int callerApplication = OPUS_APPLICATION_RESTRICTED_LOWDELAY;
@@ -331,7 +474,8 @@ int main() {
             const int frameSize = rate / 50;
             for (int frame = 0; frame < 4; ++frame) {
                 FillSine(samples.data(), frameSize, channels, rate, frame * frameSize);
-                const int bytes = sceOpusCeltEncEncode(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet));
+                const int bytes = frame % 2 == 0 ? sceOpusCeltEncEncode(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet))
+                                                 : sceOpusCeltEncEncodeWithPriority(ToState(matrixState), samples.data(), frameSize, packet, sizeof(packet), frame == 1 ? 20u : 100u);
                 Require(bytes > 2 && static_cast<int>(packet[0]) >> 3 >= 16);
                 std::array<std::uint8_t, 1024> expected{};
                 const int expectedBytes = opus_encode(reference, samples.data(), frameSize, expected.data(), sizeof(expected));
@@ -394,6 +538,10 @@ int main() {
     std::array<std::uint8_t, 1024> floatExpected{};
     const int floatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
     Require(floatExpectedBytes == floatResult && std::equal(packet, packet + floatResult, floatExpected.begin()));
+    const int priorityFloatResult = sceOpusCeltEncEncodeFloatWithPriority(ToState(floatState), floatSamples.data(), 960, packet, static_cast<int>(sizeof(packet)), 20u);
+    Require(priorityFloatResult > 2 && static_cast<int>(packet[0]) >> 3 >= 16);
+    const int priorityFloatExpectedBytes = opus_encode_float(floatReference, floatSamples.data(), 960, floatExpected.data(), sizeof(floatExpected));
+    Require(priorityFloatExpectedBytes == priorityFloatResult && std::equal(packet, packet + priorityFloatResult, floatExpected.begin()));
     opus_encoder_destroy(floatReference);
     Require(sceOpusCeltEncDestroy(ToState(floatState)) == 0);
 
@@ -409,5 +557,8 @@ int main() {
     Require(sceOpusCeltEncCreate(ToState(liveState), 48000, 2, callerApplication) == 0);
     ++instanceId;
     Require(sceOpusCeltEncDestroy(ToState(liveState)) == 0);
+    RequireCtl(callerApplication, codecApplication);
     RequireEarlyAnswers(callerApplication);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
