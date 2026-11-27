@@ -1364,11 +1364,34 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     }
     rejected.xx = std::numeric_limits<std::int64_t>::max();
     rejectedDelta.x = std::numeric_limits<std::int64_t>::min();
+    const GuestMatrix baseline{65536, 16384, -8192, 65536};
+    const GuestVector baselineDelta{64, -128};
+    FT_Matrix baselineNative{static_cast<FT_Fixed>(baseline.xx), static_cast<FT_Fixed>(baseline.xy),
+                                    static_cast<FT_Fixed>(baseline.yx), static_cast<FT_Fixed>(baseline.yy)};
+    FT_Vector baselineTranslation{static_cast<FT_Pos>(baselineDelta.x), static_cast<FT_Pos>(baselineDelta.y)};
+    const auto setBaseline = [&] {
+        FT_Set_Transform_nid_postfix(face, &baseline, &baselineDelta);
+        FT_Set_Transform(host, &baselineNative, &baselineTranslation);
+    };
+    setBaseline();
     errno = 111;
     FT_Set_Transform_nid_postfix(face, reinterpret_cast<FreeType::GuestMatrix*>(0x10), nullptr);
     Require(errno == 111);
+    loadUnchanged();
+
+    setBaseline();
+    errno = 111;
     FT_Set_Transform_nid_postfix(face, nullptr, reinterpret_cast<FreeType::GuestVector*>(0x10));
     Require(errno == 111);
+    loadUnchanged();
+
+    const GuestMatrix different{0, -65536, 65536, 0};
+    setBaseline();
+    errno = 111;
+    FT_Set_Transform_nid_postfix(face, &different, reinterpret_cast<FreeType::GuestVector*>(0x10));
+    Require(errno == 111);
+    loadUnchanged();
+
     FT_Set_Transform_nid_postfix(nullptr, &rejected, &rejectedDelta);
     FT_Set_Transform_nid_postfix(nullptr, nullptr, nullptr);
 
