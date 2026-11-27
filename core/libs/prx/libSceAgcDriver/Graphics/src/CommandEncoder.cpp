@@ -55,6 +55,7 @@ struct SlotState {
     std::atomic<CommandEncoder*> encoder{nullptr};
     std::atomic<unsigned> lookups{0};
     DeviceFunctions real;
+    const DeviceFunctions* table = nullptr;
     VkDevice device = VK_NULL_HANDLE;
     bool claimed = false;
 };
@@ -460,18 +461,20 @@ bool CommandEncoder::Enabled() {
     return enabled;
 }
 
-std::size_t CommandEncoder::claim() {
+std::size_t CommandEncoder::claim(const DeviceFunctions& table) {
     std::lock_guard lock(slotMutex());
+    if (std::ranges::any_of(slots(), [&](const SlotState& state) { return state.claimed && state.table == &table; })) throw std::logic_error("AGC graphics: a second command encoder was attached to a device table another encoder already patches");
     for (std::size_t index = 0; index < Slots; ++index) {
         if (slots()[index].claimed) continue;
         slots()[index].claimed = true;
+        slots()[index].table = &table;
         return index;
     }
     return Slots;
 }
 
 std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFunctions& table, DeviceDispatch* dispatch) {
-    const auto slot = claim();
+    const auto slot = claim(table);
     if (slot == Slots) return nullptr;
     try {
         return std::unique_ptr<CommandEncoder>(new CommandEncoder(device, table, slot, dispatch != nullptr && dispatch->patched == &table ? dispatch : nullptr));
@@ -506,7 +509,7 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::siz
     slots()[slot].device = device;
     if (dispatch != nullptr) {
         std::lock_guard dispatchLock(dispatch->mutex);
-        if (dispatch->encoders++ == 0) dispatch->original = real;
+        dispatch->original = real;
         dispatch->active.store(dispatch->patched, std::memory_order_release);
     }
     installAt(slot, table, std::make_index_sequence<Slots>{});
@@ -530,7 +533,6 @@ CommandEncoder::~CommandEncoder() {
     freeChunks(spare);
     if (dispatch != nullptr) {
         std::lock_guard dispatchLock(dispatch->mutex);
-        --dispatch->encoders;
         dispatch->active.store(dispatch->patched, std::memory_order_release);
     }
     std::lock_guard lock(slotMutex());
@@ -694,7 +696,6 @@ void CommandEncoder::StartSpan() noexcept {
 void CommandEncoder::useTable(bool original) noexcept {
     if (dispatch == nullptr || usingOriginal == original) return;
     std::lock_guard lock(dispatch->mutex);
-    if (original && dispatch->encoders != 1) return;
     dispatch->active.store(original ? &dispatch->original : dispatch->patched, std::memory_order_release);
     usingOriginal = original;
     swapCount.fetch_add(1, std::memory_order_relaxed);

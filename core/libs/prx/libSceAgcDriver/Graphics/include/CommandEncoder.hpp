@@ -254,7 +254,7 @@ private:
     };
     CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot, DeviceDispatch* dispatch);
     void useTable(bool original) noexcept;
-    static std::size_t claim();
+    static std::size_t claim(const DeviceFunctions& table);
     bool post() noexcept;
     std::byte* reserve(Run run, std::size_t bytes);
     template<typename T>

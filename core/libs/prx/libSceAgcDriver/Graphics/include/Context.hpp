@@ -208,7 +208,6 @@ struct DeviceDispatch {
     std::atomic<const DeviceFunctions*> active;
     DeviceFunctions original;
     std::mutex mutex;
-    unsigned encoders = 0;
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).

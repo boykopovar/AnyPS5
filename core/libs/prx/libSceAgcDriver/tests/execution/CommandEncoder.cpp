@@ -1576,7 +1576,7 @@ void InlineSpansRunOnTheOriginalTable() {
         Require(counts.swaps == 119, "119 changes between inline and encoded windows swapped the device table " + std::to_string(counts.swaps) + " times");
     }
     CommandEncoder::SetDelayForTesting({});
-    Require(dispatch.active.load() == &table && dispatch.encoders == 0, "the device kept the original table after its encoder was destroyed");
+    Require(dispatch.active.load() == &table, "the device kept the original table after its encoder was destroyed");
 }
 
 void SwitchFlipEndsTheInlineSpan() {
@@ -1631,22 +1631,27 @@ void UnwindAfterASpanStillSettles() {
     Require(recordedAtCatch == 2, "a guard made during an inline span skipped the unwind drain after an encoded window: " + std::to_string(recordedAtCatch) + " of 2 commands recorded");
 }
 
-void SharedTableKeepsTheEncoderEntries() {
+void SecondEncoderOnATableIsRefused() {
     Reset();
     auto table = FakeTable();
     AgcDriver::Graphics::DeviceDispatch dispatch{&table};
     auto first = CommandEncoder::Attach(Handle<VkDevice>(0x49), table, &dispatch);
-    {
-        const auto second = CommandEncoder::Attach(Handle<VkDevice>(0x49), table, &dispatch);
-        Require(first != nullptr && second != nullptr, "no command encoder slot was free");
-        Require(!first->Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
-        first->EndInline();
-        Require(dispatch.active.load() == &table && first->Counts().swaps == 0, "an encoder swapped a device table another encoder also patches");
+    Require(first != nullptr, "no command encoder slot was free");
+    const auto patched = table.cmdDraw;
+    bool refused = false;
+    try {
+        static_cast<void>(CommandEncoder::Attach(Handle<VkDevice>(0x49), table, &dispatch));
+    } catch (const std::logic_error&) {
+        refused = true;
     }
+    Require(refused, "a second encoder was attached to a device table another encoder already patches");
+    Require(table.cmdDraw == patched && dispatch.original.cmdDraw == &FakeDraw, "a refused attach changed the device table or its original entries");
     Require(!first->Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
     first->EndInline();
-    Require(dispatch.active.load() == &dispatch.original, "the last encoder on a device table did not swap it for an inline window");
-    Require(dispatch.original.cmdDraw == &FakeDraw, "the original table holds an encoder entry");
+    Require(dispatch.active.load() == &dispatch.original, "the table's encoder did not swap it for an inline window after a refused attach");
+    first.reset();
+    Require(table.cmdDraw == &FakeDraw && dispatch.active.load() == &table, "the table's encoder did not restore it after a refused attach");
+    Require(CommandEncoder::Attach(Handle<VkDevice>(0x49), table, &dispatch) != nullptr, "a device table whose encoder was destroyed did not take a new one");
 }
 
 void ForeignCallsDuringSwaps() {
@@ -1739,7 +1744,7 @@ int main(int argc, char** argv) {
         InlineSpansRunOnTheOriginalTable();
         SwitchFlipEndsTheInlineSpan();
         UnwindAfterASpanStillSettles();
-        SharedTableKeepsTheEncoderEntries();
+        SecondEncoderOnATableIsRefused();
         ForeignCallsDuringSwaps();
         std::cout << "command encoder tests passed\n";
         return 0;
