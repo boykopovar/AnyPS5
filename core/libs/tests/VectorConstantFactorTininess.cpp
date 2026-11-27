@@ -128,7 +128,9 @@ int main() {
         Check("v_mul_f32 v5, v6, v7 rounding toward +infinity", {0x100a0f06u}, RdnaOpcode::VMulF32, Tininess::Full, 0xc1u);
         Check("v_mul_f32 v5, 0.5, v7 rounding toward zero", {0x100a0ef0u}, RdnaOpcode::VMulF32, Tininess::ExponentsOnly, 0xc3u);
         Check("v_fma_f32 v5, v6, -|0.5|, v7 rounding toward -infinity", {0xd54b0205u, 0x441de106u}, RdnaOpcode::VFmaF32, Tininess::ExponentsOnly, 0xc2u);
-        Check("v_mad_legacy_f32 v5, v6, v7, v8", {0xd5400005u, 0x04220f06u}, RdnaOpcode::VMadLegacyF32, Tininess::Full);
+        Check("v_mad_legacy_f32 v5, v6, v7, v8", {0xd5400005u, 0x04220f06u}, RdnaOpcode::VMadLegacyF32, Tininess::Rounded);
+        Check("v_mac_legacy_f32 v5, v6, v7", {0x0c0a0f06u}, RdnaOpcode::VMacLegacyF32, Tininess::Rounded);
+        Check("v_mad_legacy_f32 v5, v6, v7, v8 rounding toward +infinity", {0xd5400005u, 0x04220f06u}, RdnaOpcode::VMadLegacyF32, Tininess::Full, 0xc1u);
         Check("v_mul_f32 v5, 2.0, v7 with f32 denormals kept", {0x100a0ef4u}, RdnaOpcode::VMulF32, Tininess::None, 0xf0u);
         Check("v_mul_f32 v5, v6, v7 with f32 denormals kept", {0x100a0f06u}, RdnaOpcode::VMulF32, Tininess::None, 0xf0u);
         CheckFlushSize("v_mul_f32 v5, v6, v7", {0x100a0f06u}, RdnaOpcode::VMulF32, 0xc0u, 12u);

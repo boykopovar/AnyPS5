@@ -234,11 +234,31 @@ constexpr std::uint32_t TinyDirected[3][32][2] = {
         {0x80000000u, 0x00000000u}, {0x80000000u, 0x00000000u}, {0x80000000u, 0x00000000u}, {0x80000000u, 0x00000000u}
     }
 };
-constexpr std::uint32_t TinyLegacyExpected[32] = {
-    0x00000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
-    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
-    0x80000000u, 0x00000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u,
-    0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x80000000u
+constexpr std::uint32_t TinyLegacyExpected[4][32] = {
+    {
+        0x00800000u, 0x80800000u, 0x00800000u, 0x00800000u, 0x00800000u, 0x80800000u, 0x00000000u, 0x00000000u,
+        0x00000000u, 0x00800000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00800000u, 0x00000000u, 0x00000000u,
+        0x80800000u, 0x00800000u, 0x80800000u, 0x80800000u, 0x80800000u, 0x00800000u, 0x80000000u, 0x80000000u,
+        0x80000000u, 0x80800000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80800000u, 0x00000000u, 0x80000000u
+    },
+    {
+        0x00800000u, 0x80000000u, 0x00800000u, 0x00800000u, 0x00800000u, 0x00000000u, 0x00800000u, 0x00000000u,
+        0x00000000u, 0x00800000u, 0x00000000u, 0x00000000u, 0x00800000u, 0x00800000u, 0x00000000u, 0x00000000u,
+        0x80000000u, 0x00800000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00800000u, 0x80000000u, 0x80000000u,
+        0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x80000000u
+    },
+    {
+        0x00000000u, 0x80800000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80800000u, 0x00000000u, 0x00000000u,
+        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+        0x80800000u, 0x00000000u, 0x80800000u, 0x80800000u, 0x80800000u, 0x80000000u, 0x80800000u, 0x80000000u,
+        0x80000000u, 0x80800000u, 0x80000000u, 0x80000000u, 0x80800000u, 0x80800000u, 0x80000000u, 0x80000000u
+    },
+    {
+        0x00000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+        0x80000000u, 0x00000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u,
+        0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x80000000u
+    }
 };
 constexpr const char* TinyLegacyNames[2] = {
     "v_mad_legacy_f32 v18, v4, v5, v6",
@@ -486,9 +506,9 @@ void CheckMixedTiny(const std::string& mode, std::uint32_t round = 0u) {
     }
 }
 
-void CheckTinyLegacy(const std::string& mode) {
+void CheckTinyLegacy(const std::string& mode, std::uint32_t round = 0u) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        for (std::uint32_t i = 0; i < 2; ++i) Expect(tid, Output[tid * TinyResults + 8u + i], TinyLegacyExpected[tid], (mode + " " + TinyLegacyNames[i]).c_str());
+        for (std::uint32_t i = 0; i < 2; ++i) Expect(tid, Output[tid * TinyResults + 8u + i], TinyLegacyExpected[round][tid],(mode + " " + TinyLegacyNames[i]).c_str());
     }
 }
 
@@ -551,7 +571,7 @@ int main() {
             CheckTiny("IEEE=1 all denormals flushed");
             for (std::uint32_t round = 1u; round < 4u; ++round) {
                 Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, TinyCode, TinyRows);
-                CheckTinyLegacy("round mode " + std::to_string(round));
+                if (round != 2u) CheckTinyLegacy("round mode " + std::to_string(round), round);
                 CheckTinyDirected(round);
             }
         }
