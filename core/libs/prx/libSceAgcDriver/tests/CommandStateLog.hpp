@@ -8,6 +8,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -60,7 +61,12 @@ inline VKAPI_ATTR void VKAPI_CALL stateStencilOp(VkCommandBuffer, VkStencilFaceF
 inline VKAPI_ATTR void VKAPI_CALL stateCompareMask(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t mask) { stateNote("comparemask", static_cast<std::uint32_t>(faces), mask); }
 inline VKAPI_ATTR void VKAPI_CALL stateWriteMask(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t mask) { stateNote("writemask", static_cast<std::uint32_t>(faces), mask); }
 inline VKAPI_ATTR void VKAPI_CALL stateReference(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t reference) { stateNote("reference", static_cast<std::uint32_t>(faces), reference); }
-inline VKAPI_ATTR void VKAPI_CALL stateExecute(VkCommandBuffer, std::uint32_t count, const VkCommandBuffer*) { stateNote("execute", count); }
+inline std::weak_ptr<void> stateExecuteRelease;
+inline bool stateExecuteReleaseHeld = false;
+inline VKAPI_ATTR void VKAPI_CALL stateExecute(VkCommandBuffer, std::uint32_t count, const VkCommandBuffer*) {
+    stateExecuteReleaseHeld = !stateExecuteRelease.expired();
+    stateNote("execute", count);
+}
 
 inline VKAPI_ATTR void VKAPI_CALL stateColorWriteMask(VkCommandBuffer, std::uint32_t first, std::uint32_t count, const VkColorComponentFlags* masks) {
     auto line = stateLine("colormask", first, count);

@@ -3381,8 +3381,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         });
         auto result = assembly.Take(sequence);
         if (result.error != nullptr) std::rethrow_exception(result.error);
-        recording.ExecuteCommands(context, 1, &result.commands);
-        recorder->Keep(std::move(result.release));
+        recorder->ExecuteSecondary(result.commands, std::move(result.release));
     } else {
         recordPassOpen(recording, false);
         recordBody(recording);
