@@ -110,6 +110,11 @@ struct ExceptionObject { const void* vtable; const char* message; };
 
 struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
 
+struct BaseTypeRecord { const TypeRecord* type; std::int64_t offsetFlags; };
+
+template<std::size_t TCount>
+struct MultipleTypeRecord { const void* const* vtable; const char* name; std::uint32_t flags; std::uint32_t baseCount; BaseTypeRecord bases[TCount]; };
+
 struct ExceptionVtable {
     std::ptrdiff_t offset;
     const TypeRecord* type;
@@ -2054,6 +2059,20 @@ int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv_nid_postfix(c
 int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE5do_inERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext, char* to, char* toEnd, char** toNext);
 int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE6do_outERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext, char* to, char* toEnd, char** toNext);
 int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m_nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, std::size_t max);
+void APS5_VABI _ZNSt3__17codecvtIcc11__mbstate_tED2Ev_nid_postfix(GuestLocale::LibcxxFacet* self);
+extern const LibcException::MultipleTypeRecord<2> _ZTINSt3__17codecvtIcc11__mbstate_tEE_nid_postfix;
+void APS5_VABI _ZNSt3__16locale5facetD2Ev_nid_postfix(GuestLocale::LibcxxFacet* self);
+void APS5_VABI _ZNSt3__16locale5facet16__on_zero_sharedEv_nid_postfix(GuestLocale::LibcxxFacet* self);
+extern const LibcException::TypeRecord _ZTINSt3__16locale5facetE_nid_postfix;
+std::int64_t APS5_VABI _ZNSt3__16locale2id5__getEv_nid_postfix(GuestLocale::LibcxxLocaleId* self);
+extern GuestLocale::LibcxxLocaleId _ZNSt3__15ctypeIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__17codecvtIcc11__mbstate_tE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__17codecvtIDic11__mbstate_tE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__17collateIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18messagesIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18numpunctIcE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18numpunctIwE2idE_nid_postfix;
+extern GuestLocale::LibcxxLocaleId _ZNSt3__18time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix;
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];
