@@ -55,8 +55,12 @@ endforeach()
 file(GLOB_RECURSE icu_data_inputs CONFIGURE_DEPENDS ${ICU_SOURCE_DIR}/data/* ${ICU_SOURCE_DIR}/python/*.py)
 if(CMAKE_HOST_WIN32)
     set(icu_data_mode windows-exec)
+    set(icu_data_icupkg ${icu_data_tools}/icupkg/host/icupkg.exe)
+    set(icu_data_genccode ${icu_data_tools}/genccode/host/genccode.exe)
 else()
     set(icu_data_mode unix-exec)
+    set(icu_data_icupkg ${icu_data_tools}/icupkg)
+    set(icu_data_genccode ${icu_data_tools}/genccode)
 endif()
 add_custom_command(OUTPUT ${icu_data_dir}/icudt78l_dat.c
     COMMAND ${CMAKE_COMMAND} -E make_directory ${icu_data_dir}/icudt78l ${icu_data_dir}/tmp
@@ -65,9 +69,9 @@ add_custom_command(OUTPUT ${icu_data_dir}/icudt78l_dat.c
         --mode=${icu_data_mode} --tool_cfg=host --tool_dir=${icu_data_tools}
         --src_dir=${icu_data_source} --out_dir=./icudt78l --tmp_dir=./tmp
         --filter_file=${CMAKE_SOURCE_DIR}/cmake/IcuDataFilter.json --verbose
-    COMMAND ${icu_host_icupkg} -tl -a ${icu_data_dir}/tmp/icudata.lst
+    COMMAND ${icu_data_icupkg} -tl -a ${icu_data_dir}/tmp/icudata.lst
         -s ${icu_data_dir}/icudt78l new ${icu_data_dir}/icudt78l.dat
-    COMMAND ${icu_host_genccode} -e icudt78 -d ${icu_data_dir} ${icu_data_dir}/icudt78l.dat
+    COMMAND ${icu_data_genccode} -e icudt78 -d ${icu_data_dir} ${icu_data_dir}/icudt78l.dat
     DEPENDS icu_host_tools ${icu_host_outputs} ${icu_data_inputs} ${CMAKE_SOURCE_DIR}/cmake/IcuDataBuilder.py
         ${CMAKE_SOURCE_DIR}/cmake/IcuDataFilter.json
     WORKING_DIRECTORY ${icu_data_dir}
