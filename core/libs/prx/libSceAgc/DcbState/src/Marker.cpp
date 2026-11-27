@@ -18,29 +18,44 @@ constexpr std::uint32_t CustomPopMarker = 0x0c;
 constexpr std::uint32_t MarkerTagRegister = 0x342;
 constexpr std::uint32_t PopMarkerTag = 0xc2000000;
 
+std::uint32_t* emitMarkerSpan(CommandBuffer* buf, const char* str, std::uint32_t length, bool appendPop, const char* function) {
+    Agc::Command::Require(buf != nullptr, function, "null command buffer");
+    Agc::Command::Require(str != nullptr || length == 0, function, "null marker text");
+    Agc::Command::Require(length < 0x10000u, function, "marker text too long");
+    const std::size_t bytes = std::size_t{length} + 1;
+    const auto payload = static_cast<std::uint32_t>((bytes + 3) / 4);
+    Agc::Command::Require(payload <= 0x4000u, function, "marker text too long");
+    const std::uint32_t pushWords = payload + 1u;
+    const std::uint32_t totalWords = appendPop ? payload + 3u : pushWords;
+    auto* packet = Agc::Command::Allocate(buf, totalWords, function);
+    packet[0] = Agc::Command::Header(OpcodeNop, pushWords, CustomPushMarker << 2);
+    std::memset(packet + 1, 0, payload * sizeof(std::uint32_t));
+    if (length != 0) std::memcpy(packet + 1, str, length);
+    if (appendPop) {
+        packet[pushWords] = Agc::Command::Header(OpcodeNop, 2, CustomPopMarker << 2);
+        packet[pushWords + 1] = 0;
+    }
+    return packet;
+}
+
+std::uint32_t* emitMarker(CommandBuffer* buf, const char* str, bool appendPop, const char* function) {
+    Agc::Command::Require(buf != nullptr, function, "null command buffer");
+    const char* text = str ? str : "";
+    const std::size_t length = std::strlen(text);
+    Agc::Command::Require(length < 0x10000u, function, "marker text too long");
+    return emitMarkerSpan(buf, text, static_cast<std::uint32_t>(length), appendPop, function);
+}
+
 }
 
 namespace Agc::Marker {
 
 std::uint32_t* Push(CommandBuffer* buf, const char* str, const char* function) {
-    Agc::Command::Require(buf != nullptr, function, "null command buffer");
-    const char* text = str ? str : "";
-    const std::size_t length = std::strlen(text);
-    Agc::Command::Require(length < 0x10000u, function, "marker text too long");
-    return PushSpan(buf, text, static_cast<std::uint32_t>(length), function);
+    return emitMarker(buf, str, false, function);
 }
 
 std::uint32_t* PushSpan(CommandBuffer* buf, const char* str, std::uint32_t length, const char* function) {
-    Agc::Command::Require(buf != nullptr, function, "null command buffer");
-    Agc::Command::Require(str != nullptr || length == 0, function, "null marker text");
-    const std::size_t bytes = std::size_t{length} + 1;
-    const auto payload = static_cast<std::uint32_t>((bytes + 3) / 4);
-    Agc::Command::Require(payload <= 0x4000u, function, "marker text too long");
-    auto* packet = Agc::Command::Allocate(buf, payload + 1, function);
-    packet[0] = Agc::Command::Header(OpcodeNop, payload + 1, CustomPushMarker << 2);
-    std::memset(packet + 1, 0, payload * sizeof(std::uint32_t));
-    if (length != 0) std::memcpy(packet + 1, str, length);
-    return packet;
+    return emitMarkerSpan(buf, str, length, false, function);
 }
 
 std::uint32_t* Pop(CommandBuffer* buf, const char* function) {
@@ -66,9 +81,7 @@ extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
     (void)color;
-    auto* packet = Agc::Marker::Push(buf, str, __func__);
-    Agc::Marker::Pop(buf, __func__);
-    return packet;
+    return emitMarker(buf, str, true, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf) {
@@ -87,9 +100,7 @@ uint32_t* APS5_VABI sceAgcDcbPushMarkerSpan(CommandBuffer* buf, const char* str,
 
 uint32_t* APS5_VABI sceAgcDcbSetMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
     (void)color;
-    auto* packet = Agc::Marker::PushSpan(buf, str, length, __func__);
-    Agc::Marker::Pop(buf, __func__);
-    return packet;
+    return emitMarkerSpan(buf, str, length, true, __func__);
 }
 
 }
