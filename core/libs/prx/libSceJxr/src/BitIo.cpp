@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <stdexcept>
@@ -107,8 +108,9 @@ std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* st
     Require(copiedStream && guestStream.getPosition != nullptr, __func__, "missing stream position callback");
     const auto address = reinterpret_cast<std::uintptr_t>(io);
     Require(address >= 8192, __func__, "bit state address underflows the packet buffer");
+    const GuestArena::HostWrite ioWrite(io, sizeof(Jxr::BitIo));
     const int ioWritableErrno = errno;
-    const bool writableIo = GuestWritable_nid_no_patch(io, sizeof(*io));
+    const bool writableIo = ioWrite.Open() && GuestWritable_nid_no_patch(io, sizeof(*io));
     errno = ioWritableErrno;
     Require(writableIo, __func__, "unwritable bit state");
     auto* referenceOffset = reinterpret_cast<std::size_t*>(address + offsetof(Jxr::BitIo, referenceOffset));

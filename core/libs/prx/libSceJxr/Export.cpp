@@ -196,31 +196,18 @@ std::int64_t APS5_VABI writeIS_nid_postfix(void*, Jxr::BitIo* io) {
 
 std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
-    const int savedErrno = errno;
-    AllocationGuard guard{};
-    const auto result = WMPAlloc_nid_postfix(&guard.pointer, sizeof(Jxr::Stream));
-    if (result < 0) {
-        Jxr::Stream* const none = nullptr;
-        GuestCopyOut_nid_no_patch(stream, &none, sizeof(none));
-        errno = savedErrno;
-        return result;
-    }
-    Jxr::Stream local{};
-    local.state[MemoryBuffer] = reinterpret_cast<std::uintptr_t>(buffer);
-    local.state[MemorySize] = size;
-    local.state[MemoryPosition] = 0;
-    local.close = CloseWS_Memory_nid_no_patch;
-    local.end = EOSWS_Memory_nid_postfix;
-    local.read = ReadWS_Memory_nid_postfix;
-    local.write = WriteWS_Memory_nid_postfix;
-    local.setPosition = SetPosWS_Memory_nid_postfix;
-    local.getPosition = GetPosWS_Memory_nid_postfix;
-    auto* created = static_cast<Jxr::Stream*>(guard.pointer);
-    const bool wroteNode = GuestCopyOut_nid_no_patch(created, &local, sizeof(local));
-    const bool wroteOut = wroteNode && GuestCopyOut_nid_no_patch(stream, &created, sizeof(created));
-    errno = savedErrno;
-    if (!wroteOut) APS5_INVALID_ARG_EX;
-    guard.Release();
+    const auto result = WMPAlloc_nid_postfix(reinterpret_cast<void**>(stream), sizeof(Jxr::Stream));
+    if (result < 0) return result;
+    auto* created = *stream;
+    created->state[MemoryBuffer] = reinterpret_cast<std::uintptr_t>(buffer);
+    created->state[MemorySize] = size;
+    created->state[MemoryPosition] = 0;
+    created->close = CloseWS_Memory_nid_no_patch;
+    created->end = EOSWS_Memory_nid_postfix;
+    created->read = ReadWS_Memory_nid_postfix;
+    created->write = WriteWS_Memory_nid_postfix;
+    created->setPosition = SetPosWS_Memory_nid_postfix;
+    created->getPosition = GetPosWS_Memory_nid_postfix;
     return WmpErrSuccess;
 }
 
