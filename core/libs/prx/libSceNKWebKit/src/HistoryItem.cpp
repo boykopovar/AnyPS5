@@ -26,48 +26,208 @@
  */
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <deque>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace {
 
+using NKWebKit::WebCoreAbi::CachedPage;
 using NKWebKit::WebCoreAbi::HistoryItem;
 using NKWebKit::WebCoreAbi::HistoryItemVectorStorage;
-using NKWebKit::WebCoreAbi::CachedPage;
 using NKWebKit::WebCoreAbi::historyItemChangedHook;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
 using WebCore::IntPoint;
 
-HistoryItem& Checked(HistoryItem* self) {
-    if (!self) throw std::invalid_argument("null WebCore::HistoryItem");
-    return *self;
-}
+constexpr unsigned kStringImplFlag8Bit = 4u;
+constexpr unsigned kStringImplBufferOwnershipMask = 3u;
+constexpr unsigned kStringImplBufferSubstring = 2u;
+constexpr unsigned kStringImplBufferOwned = 3u;
+constexpr unsigned kStringImplTerminatingFlagsMask = 48u;
+constexpr std::size_t kSubstringHeaderBytes = 24u + sizeof(StringImpl*);
 
-const HistoryItem& Checked(const HistoryItem* self) {
-    if (!self) throw std::invalid_argument("null WebCore::HistoryItem");
-    return *self;
+struct PlannedStringState {
+    StringImpl* impl{nullptr};
+    unsigned originalRefCount{0};
+    unsigned refCount{0};
+    unsigned hashAndFlags{0};
+    bool destroyed{false};
+};
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 template <typename T>
-const T& Checked(const T* value, const char* name) {
-    if (!value) throw std::invalid_argument(name);
-    return *value;
+T ReadGuestValue(const void* pointer, const char* function) {
+    RequireReadableGuestBytes(pointer, sizeof(T), function);
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
 }
 
-void Assign(String& target, const String& source) {
-    String copy(source);
-    std::swap(target.impl, copy.impl);
+template <typename T>
+T ReadGuestField(const void* base, std::size_t offset, const char* function) {
+    return ReadGuestValue<T>(reinterpret_cast<const unsigned char*>(base) + offset, function);
 }
 
-void InitString(String& target, const String& source) {
-    target.impl = source.impl;
-    if (target.impl) target.impl->refCount += 2;
+template <typename T>
+void WriteRawField(std::array<unsigned char, sizeof(HistoryItem)>& raw, std::size_t offset, const T& value) {
+    std::memcpy(raw.data() + offset, &value, sizeof(T));
+}
+
+const HistoryItem* RequireReadableHistoryItem(const HistoryItem* self, const char* function) {
+    if (!self) throw std::invalid_argument("null WebCore::HistoryItem");
+    RequireReadableGuestBytes(self, sizeof(HistoryItem), function);
+    return self;
+}
+
+HistoryItem* RequireNonNullHistoryItem(HistoryItem* self) {
+    if (!self) throw std::invalid_argument("null WebCore::HistoryItem");
+    return self;
+}
+
+struct WritableHistoryItem {
+    HistoryItem* item{nullptr};
+    GuestArena::HostWrite writeGuard;
+
+    WritableHistoryItem(HistoryItem* self, const char* function, bool requireReadable)
+        : item(RequireNonNullHistoryItem(self)), writeGuard(item, sizeof(HistoryItem)) {
+        if (requireReadable) RequireReadableGuestBytes(item, sizeof(HistoryItem), function);
+        if (!writeGuard.Open() || !GuestWritable_nid_no_patch(item, sizeof(HistoryItem)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+};
+
+void ValidateReadableStringImpl(const StringImpl* impl, const char* function) {
+    if (!impl) return;
+    const StringImpl header = ReadGuestValue<StringImpl>(impl, function);
+    if (!header.length) return;
+    if (!header.data) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t unitSize = (header.hashAndFlags & kStringImplFlag8Bit) != 0 ? 1u : sizeof(std::uint16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(header.data, static_cast<std::size_t>(header.length) * unitSize, function);
+}
+
+std::size_t EnsurePlannedString(StringImpl* impl, const char* function, std::vector<PlannedStringState>& planned, std::deque<GuestArena::HostWrite>& writeGuards) {
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+        if (planned[i].impl == impl) return i;
+    }
+    const StringImpl header = ReadGuestValue<StringImpl>(impl, function);
+    auto& guard = writeGuards.emplace_back(impl, sizeof(StringImpl));
+    if (!guard.Open() || !GuestWritable_nid_no_patch(impl, sizeof(StringImpl)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    planned.push_back({impl, header.refCount, header.refCount, header.hashAndFlags, false});
+    return planned.size() - 1;
+}
+
+void PlanRetain(StringImpl* impl, const char* function, std::vector<PlannedStringState>& planned, std::deque<GuestArena::HostWrite>& writeGuards) {
+    if (!impl) return;
+    const std::size_t index = EnsurePlannedString(impl, function, planned, writeGuards);
+    if (planned[index].destroyed || planned[index].refCount > std::numeric_limits<unsigned>::max() - 2u)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    planned[index].refCount += 2u;
+}
+
+void PlanRelease(StringImpl* impl, const char* function, std::vector<PlannedStringState>& planned, std::deque<GuestArena::HostWrite>& writeGuards, unsigned depth = 0) {
+    if (!impl) return;
+    if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t index = EnsurePlannedString(impl, function, planned, writeGuards);
+    if (planned[index].destroyed) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (planned[index].refCount != 2u) {
+        planned[index].refCount -= 2u;
+        return;
+    }
+    const unsigned flags = planned[index].hashAndFlags;
+    if ((flags & kStringImplTerminatingFlagsMask) != 0u || (flags & kStringImplBufferOwnershipMask) == kStringImplBufferOwned)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    planned[index].destroyed = true;
+    if ((flags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
+        RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
+        auto* owner = ReadGuestField<StringImpl*>(impl, 24, function);
+        if (owner) PlanRelease(owner, function, planned, writeGuards, depth + 1u);
+    }
+}
+
+void RollbackRetains(const std::vector<std::pair<StringImpl*, unsigned>>& retained) {
+    for (std::size_t i = retained.size(); i > 0; --i) {
+        const auto& [impl, originalRefCount] = retained[i - 1];
+        GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(impl) + offsetof(StringImpl, refCount), &originalRefCount, sizeof(originalRefCount));
+    }
+}
+
+void ApplyRetains(const std::vector<StringImpl*>& toRetain, const std::vector<PlannedStringState>& planned, std::vector<std::pair<StringImpl*, unsigned>>& retained, const char* function) {
+    std::vector<std::pair<StringImpl*, unsigned>> counts;
+    for (StringImpl* impl : toRetain) {
+        if (!impl) continue;
+        bool found = false;
+        for (auto& entry : counts) {
+            if (entry.first == impl) {
+                entry.second += 2u;
+                found = true;
+                break;
+            }
+        }
+        if (!found) counts.emplace_back(impl, 2u);
+    }
+    retained.reserve(counts.size());
+    for (const auto& [impl, delta] : counts) {
+        unsigned originalRefCount = 0;
+        for (const auto& state : planned) {
+            if (state.impl == impl) {
+                originalRefCount = state.originalRefCount;
+                break;
+            }
+        }
+        const unsigned updatedRefCount = originalRefCount + delta;
+        retained.emplace_back(impl, originalRefCount);
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(impl) + offsetof(StringImpl, refCount), &updatedRefCount, sizeof(updatedRefCount))) {
+            retained.pop_back();
+            RollbackRetains(retained);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+    }
+}
+
+void AssignFieldString(HistoryItem* self, std::size_t fieldOffset, const String* value, bool notify, const char* function) {
+    RequireNonNullHistoryItem(self);
+    if (!value) throw std::invalid_argument("null WTF::String");
+    const WritableHistoryItem writable(self, function, true);
+    auto* const sourceImpl = ReadGuestValue<StringImpl*>(value, function);
+    auto* const targetImpl = ReadGuestField<StringImpl*>(self, fieldOffset, function);
+    if (targetImpl != sourceImpl) {
+        std::vector<PlannedStringState> planned;
+        std::deque<GuestArena::HostWrite> stringWrites;
+        PlanRetain(sourceImpl, function, planned, stringWrites);
+        PlanRelease(targetImpl, function, planned, stringWrites);
+        std::vector<std::pair<StringImpl*, unsigned>> retained;
+        ApplyRetains({sourceImpl}, planned, retained, function);
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + fieldOffset, &sourceImpl, sizeof(sourceImpl))) {
+            RollbackRetains(retained);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        NKWebKit::WtfAbi::Release(targetImpl);
+    }
+    if (notify) historyItemChangedHook(self);
 }
 
 void HistoryItemChangedNoOp(HistoryItem*) {
@@ -83,86 +243,228 @@ std::int64_t GenerateSequenceNumber() {
     return ++sequenceNumberNext;
 }
 
-void Construct(HistoryItem& item, const String* urlString, const String* title, const String* alternateTitle, const NKWebKit::WebCoreAbi::BackForwardItemIdentifier& identifier) {
-    const String& url = Checked(urlString, "null WTF::String");
-    const String& itemTitle = Checked(title, "null WTF::String");
-    const String& itemAlternateTitle = Checked(alternateTitle, "null WTF::String");
-    item.refCount = 1;
-    InitString(item.urlString, url);
-    InitString(item.originalURLString, url);
-    item.referrer.impl = nullptr;
-    item.target.impl = nullptr;
-    InitString(item.title, itemTitle);
-    InitString(item.displayTitle, itemAlternateTitle);
-    item.scrollPosition = IntPoint{};
-    item.pageScaleFactor = 0;
-    item.documentState = {};
-    item.shouldOpenExternalURLsPolicy = 0;
-    item.children = {};
-    item.lastVisitWasFailure = false;
-    item.isTargetItem = false;
-    item.wasRestoredFromSession = false;
-    item.wasCreatedByJSWithoutUserInteraction = false;
-    item.shouldRestoreScrollPosition = true;
-    item.itemSequenceNumber = GenerateSequenceNumber();
-    item.documentSequenceNumber = GenerateSequenceNumber();
-    item.stateObject = nullptr;
-    item.formData = nullptr;
-    item.formContentType.impl = nullptr;
-    item.cachedPage = nullptr;
-    item.pruningReason = 0;
-    item.identifier = identifier;
-    item.policyContainer.engaged = 0;
+void Construct(HistoryItem* self, const String* urlString, const String* title, const String* alternateTitle, const NKWebKit::WebCoreAbi::BackForwardItemIdentifier& identifier, const char* function) {
+    if (!self) throw std::invalid_argument("null WebCore::HistoryItem");
+    if (!urlString) throw std::invalid_argument("null WTF::String");
+    if (!title) throw std::invalid_argument("null WTF::String");
+    if (!alternateTitle) throw std::invalid_argument("null WTF::String");
+    const WritableHistoryItem writable(self, function, false);
+    auto* const urlImpl = ReadGuestValue<StringImpl*>(urlString, function);
+    auto* const titleImpl = ReadGuestValue<StringImpl*>(title, function);
+    auto* const altImpl = ReadGuestValue<StringImpl*>(alternateTitle, function);
+
+    std::vector<PlannedStringState> planned;
+    std::deque<GuestArena::HostWrite> stringWrites;
+    PlanRetain(urlImpl, function, planned, stringWrites);
+    PlanRetain(urlImpl, function, planned, stringWrites);
+    PlanRetain(titleImpl, function, planned, stringWrites);
+    PlanRetain(altImpl, function, planned, stringWrites);
+
+    std::array<unsigned char, sizeof(HistoryItem)> raw{};
+    const unsigned refCount = 1u;
+    const bool restoreScroll = true;
+    const std::int64_t itemSeq = GenerateSequenceNumber();
+    const std::int64_t docSeq = GenerateSequenceNumber();
+    WriteRawField(raw, offsetof(HistoryItem, refCount), refCount);
+    WriteRawField(raw, offsetof(HistoryItem, urlString), urlImpl);
+    WriteRawField(raw, offsetof(HistoryItem, originalURLString), urlImpl);
+    WriteRawField(raw, offsetof(HistoryItem, title), titleImpl);
+    WriteRawField(raw, offsetof(HistoryItem, displayTitle), altImpl);
+    WriteRawField(raw, offsetof(HistoryItem, shouldRestoreScrollPosition), restoreScroll);
+    WriteRawField(raw, offsetof(HistoryItem, itemSequenceNumber), itemSeq);
+    WriteRawField(raw, offsetof(HistoryItem, documentSequenceNumber), docSeq);
+    WriteRawField(raw, offsetof(HistoryItem, identifier), identifier);
+
+    std::vector<std::pair<StringImpl*, unsigned>> retained;
+    ApplyRetains({urlImpl, urlImpl, titleImpl, altImpl}, planned, retained, function);
+    if (!GuestCopyOut_nid_no_patch(self, raw.data(), raw.size())) {
+        RollbackRetains(retained);
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
 }
 
-void AssignDocumentState(HistoryItemVectorStorage& target, const HistoryItemVectorStorage& source) {
-    if (&target == &source) return;
-    auto* targetElements = static_cast<String*>(target.buffer);
-    const String* sourceElements = static_cast<const String*>(source.buffer);
-    if (target.size > source.size) {
-        for (unsigned i = source.size; i < target.size; ++i) Release(targetElements[i].impl);
-        target.size = source.size;
-    } else if (source.size > target.capacity) {
-        for (unsigned i = 0; i < target.size; ++i) Release(targetElements[i].impl);
+void AssignDocumentState(HistoryItem* self, const HistoryItemVectorStorage* state, const char* function) {
+    RequireNonNullHistoryItem(self);
+    if (!state) throw std::invalid_argument("null WTF::Vector");
+    const WritableHistoryItem writable(self, function, true);
+    if (reinterpret_cast<const unsigned char*>(state) == reinterpret_cast<const unsigned char*>(self) + offsetof(HistoryItem, documentState))
+        return;
+
+    const auto source = ReadGuestValue<HistoryItemVectorStorage>(state, function);
+    const auto target = ReadGuestField<HistoryItemVectorStorage>(self, offsetof(HistoryItem, documentState), function);
+    if (source.size > source.capacity || target.size > target.capacity)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (source.size > 0 && !source.buffer)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if ((target.size > 0 || target.capacity > 0) && !target.buffer)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (source.size > std::numeric_limits<std::size_t>::max() / sizeof(String) ||
+        target.capacity > std::numeric_limits<std::size_t>::max() / sizeof(String))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    std::vector<StringImpl*> sourceImpls(source.size, nullptr);
+    if (source.size > 0) {
+        const std::size_t sourceBytes = static_cast<std::size_t>(source.size) * sizeof(StringImpl*);
+        RequireReadableGuestBytes(source.buffer, sourceBytes, function);
+        if (!GuestCopyIn_nid_no_patch(sourceImpls.data(), source.buffer, sourceBytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+
+    std::vector<StringImpl*> targetImpls(target.size, nullptr);
+    if (target.size > 0) {
+        const std::size_t targetBytes = static_cast<std::size_t>(target.size) * sizeof(StringImpl*);
+        RequireReadableGuestBytes(target.buffer, targetBytes, function);
+        if (!GuestCopyIn_nid_no_patch(targetImpls.data(), target.buffer, targetBytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+
+    std::vector<PlannedStringState> planned;
+    std::deque<GuestArena::HostWrite> stringWrites;
+    for (StringImpl* impl : sourceImpls) PlanRetain(impl, function, planned, stringWrites);
+    for (StringImpl* impl : targetImpls) PlanRelease(impl, function, planned, stringWrites);
+
+    const bool reallocate = source.size > target.capacity;
+    if (reallocate) {
+        void* const newBuffer = _ZN3WTF10fastMallocEm(static_cast<std::size_t>(source.size) * sizeof(StringImpl*));
+        if (!newBuffer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        std::memcpy(newBuffer, sourceImpls.data(), static_cast<std::size_t>(source.size) * sizeof(StringImpl*));
+        std::vector<std::pair<StringImpl*, unsigned>> retained;
+        try {
+            ApplyRetains(sourceImpls, planned, retained, function);
+        } catch (...) {
+            _ZN3WTF8fastFreeEPv(newBuffer);
+            throw;
+        }
+        const HistoryItemVectorStorage updated{newBuffer, source.size, source.size};
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, documentState), &updated, sizeof(updated))) {
+            RollbackRetains(retained);
+            _ZN3WTF8fastFreeEPv(newBuffer);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        for (StringImpl* impl : targetImpls) NKWebKit::WtfAbi::Release(impl);
         if (target.buffer) _ZN3WTF8fastFreeEPv(target.buffer);
-        target.buffer = nullptr;
-        target.capacity = 0;
-        target.size = 0;
-        if (source.size > 0) {
-            target.buffer = _ZN3WTF10fastMallocEm(static_cast<std::size_t>(source.size) * sizeof(String));
-            target.capacity = source.size;
+        return;
+    }
+
+    const std::size_t writeBytes = static_cast<std::size_t>(source.size) * sizeof(StringImpl*);
+    std::deque<GuestArena::HostWrite> bufferWrite;
+    if (writeBytes > 0) {
+        auto& guard = bufferWrite.emplace_back(target.buffer, writeBytes);
+        if (!guard.Open() || !GuestWritable_nid_no_patch(target.buffer, writeBytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    std::vector<std::pair<StringImpl*, unsigned>> retained;
+    ApplyRetains(sourceImpls, planned, retained, function);
+    if (writeBytes > 0 && !GuestCopyOut_nid_no_patch(target.buffer, sourceImpls.data(), writeBytes)) {
+        RollbackRetains(retained);
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    const HistoryItemVectorStorage updated{target.buffer, target.capacity, source.size};
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, documentState), &updated, sizeof(updated))) {
+        if (target.size > 0) {
+            const std::size_t restoreCount = std::min(target.size, source.size);
+            if (restoreCount > 0)
+                GuestCopyOut_nid_no_patch(target.buffer, targetImpls.data(), static_cast<std::size_t>(restoreCount) * sizeof(StringImpl*));
         }
-        targetElements = static_cast<String*>(target.buffer);
+        RollbackRetains(retained);
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
-    unsigned common = target.size;
-    for (unsigned i = 0; i < common; ++i) {
-        if (sourceElements[i].impl) sourceElements[i].impl->refCount += 2;
-        Release(targetElements[i].impl);
-        targetElements[i].impl = sourceElements[i].impl;
-    }
-    for (unsigned i = common; i < source.size; ++i) {
-        if (sourceElements[i].impl) sourceElements[i].impl->refCount += 2;
-        targetElements[i].impl = sourceElements[i].impl;
-    }
-    target.size = source.size;
+    for (StringImpl* impl : targetImpls) NKWebKit::WtfAbi::Release(impl);
 }
 
-void AppendChild(HistoryItemVectorStorage& children, HistoryItem** refSlot) {
+void AppendChild(HistoryItem* self, HistoryItem** refSlot, const char* function) {
+    RequireNonNullHistoryItem(self);
+    if (!refSlot) throw std::invalid_argument("null WTF::Ref");
+    const WritableHistoryItem writable(self, function, true);
+    RequireReadableGuestBytes(refSlot, sizeof(HistoryItem*), function);
+    const GuestArena::HostWrite slotWrite(refSlot, sizeof(HistoryItem*));
+    if (!slotWrite.Open() || !GuestWritable_nid_no_patch(refSlot, sizeof(HistoryItem*)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    auto* const childPtr = ReadGuestValue<HistoryItem*>(refSlot, function);
+    const auto children = ReadGuestField<HistoryItemVectorStorage>(self, offsetof(HistoryItem, children), function);
+    if (children.size > children.capacity || children.size == std::numeric_limits<unsigned>::max())
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if ((children.size > 0 || children.capacity > 0) && !children.buffer)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    HistoryItem* const nullChild = nullptr;
     if (children.size == children.capacity) {
-        std::size_t newMinCapacity = static_cast<std::size_t>(children.size) + 1;
-        std::size_t growth = static_cast<std::size_t>(children.capacity) + children.capacity / 4 + 1;
-        std::size_t newCapacity = std::max(newMinCapacity, std::max<std::size_t>(16, growth));
-        auto* newBuffer = static_cast<HistoryItem**>(_ZN3WTF10fastMallocEm(newCapacity * sizeof(HistoryItem*)));
-        if (children.buffer) {
-            std::memcpy(newBuffer, children.buffer, static_cast<std::size_t>(children.size) * sizeof(HistoryItem*));
-            _ZN3WTF8fastFreeEPv(children.buffer);
+        const std::size_t newMinCapacity = static_cast<std::size_t>(children.size) + 1;
+        const std::size_t growth = static_cast<std::size_t>(children.capacity) + children.capacity / 4 + 1;
+        const std::size_t newCapacity = std::max(newMinCapacity, std::max<std::size_t>(16, growth));
+        if (newCapacity > std::numeric_limits<unsigned>::max() ||
+            newCapacity > std::numeric_limits<std::size_t>::max() / sizeof(HistoryItem*))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        const std::size_t existingBytes = static_cast<std::size_t>(children.size) * sizeof(HistoryItem*);
+        if (existingBytes > 0) RequireReadableGuestBytes(children.buffer, existingBytes, function);
+        auto* const newBuffer = static_cast<HistoryItem**>(_ZN3WTF10fastMallocEm(newCapacity * sizeof(HistoryItem*)));
+        if (!newBuffer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        if (existingBytes > 0 && !GuestCopyIn_nid_no_patch(newBuffer, children.buffer, existingBytes)) {
+            _ZN3WTF8fastFreeEPv(newBuffer);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         }
-        children.buffer = newBuffer;
-        children.capacity = static_cast<unsigned>(newCapacity);
+        newBuffer[children.size] = childPtr;
+        const HistoryItemVectorStorage updated{newBuffer, static_cast<unsigned>(newCapacity), children.size + 1};
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, children), &updated, sizeof(updated))) {
+            _ZN3WTF8fastFreeEPv(newBuffer);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        if (!GuestCopyOut_nid_no_patch(refSlot, &nullChild, sizeof(nullChild))) {
+            GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, children), &children, sizeof(children));
+            _ZN3WTF8fastFreeEPv(newBuffer);
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        if (children.buffer) _ZN3WTF8fastFreeEPv(children.buffer);
+        return;
     }
-    static_cast<HistoryItem**>(children.buffer)[children.size] = *refSlot;
-    *refSlot = nullptr;
-    ++children.size;
+
+    auto* const destSlot = reinterpret_cast<unsigned char*>(children.buffer) + static_cast<std::size_t>(children.size) * sizeof(HistoryItem*);
+    const GuestArena::HostWrite destWrite(destSlot, sizeof(HistoryItem*));
+    if (!destWrite.Open() || !GuestWritable_nid_no_patch(destSlot, sizeof(HistoryItem*)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(destSlot, &childPtr, sizeof(childPtr)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const HistoryItemVectorStorage updated{children.buffer, children.capacity, children.size + 1};
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, children), &updated, sizeof(updated)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(refSlot, &nullChild, sizeof(nullChild))) {
+        GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, children), &children, sizeof(children));
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+}
+
+void AssignUniquePointerField(HistoryItem* self, std::size_t fieldOffset, void** source, bool notify, const char* function) {
+    RequireNonNullHistoryItem(self);
+    if (!source) throw std::invalid_argument("null WTF::RefPtr");
+    const WritableHistoryItem writable(self, function, true);
+    RequireReadableGuestBytes(source, sizeof(void*), function);
+    const GuestArena::HostWrite sourceWrite(source, sizeof(void*));
+    if (!sourceWrite.Open() || !GuestWritable_nid_no_patch(source, sizeof(void*)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+
+    void* const current = ReadGuestField<void*>(self, fieldOffset, function);
+    void* const incoming = ReadGuestValue<void*>(source, function);
+    if (current && incoming != current) NotImplemented_nid_no_patch(function);
+    unsigned char* const targetAddress = reinterpret_cast<unsigned char*>(self) + fieldOffset;
+    if (reinterpret_cast<unsigned char*>(source) != targetAddress) {
+        if (!GuestCopyOut_nid_no_patch(targetAddress, &incoming, sizeof(incoming)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        void* const nullPtr = nullptr;
+        if (!GuestCopyOut_nid_no_patch(source, &nullPtr, sizeof(nullPtr))) {
+            GuestCopyOut_nid_no_patch(targetAddress, &current, sizeof(current));
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+    }
+    if (notify) historyItemChangedHook(self);
+}
+
+template <typename T>
+void WriteScalarField(HistoryItem* self, std::size_t fieldOffset, const T& value, bool notify, const char* function) {
+    const WritableHistoryItem writable(self, function, false);
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + fieldOffset, &value, sizeof(value)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (notify) historyItemChangedHook(self);
 }
 
 }
@@ -176,186 +478,190 @@ HistoryItemChangedHook historyItemChangedHook = &HistoryItemChangedNoOp;
 extern "C" {
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem9urlStringEv(const HistoryItem* self) {
-    return Checked(self).urlString;
+    return RequireReadableHistoryItem(self, __func__)->urlString;
 }
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem17originalURLStringEv(const HistoryItem* self) {
-    return Checked(self).originalURLString;
+    return RequireReadableHistoryItem(self, __func__)->originalURLString;
 }
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem5titleEv(const HistoryItem* self) {
-    return Checked(self).title;
+    return RequireReadableHistoryItem(self, __func__)->title;
 }
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem14alternateTitleEv(const HistoryItem* self) {
-    return Checked(self).displayTitle;
+    return RequireReadableHistoryItem(self, __func__)->displayTitle;
 }
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem8referrerEv(const HistoryItem* self) {
-    return Checked(self).referrer;
+    return RequireReadableHistoryItem(self, __func__)->referrer;
 }
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem6targetEv(const HistoryItem* self) {
-    return Checked(self).target;
+    return RequireReadableHistoryItem(self, __func__)->target;
 }
 
 const IntPoint& APS5_VABI _ZNK7WebCore11HistoryItem14scrollPositionEv(const HistoryItem* self) {
-    return Checked(self).scrollPosition;
+    return RequireReadableHistoryItem(self, __func__)->scrollPosition;
 }
 
 float APS5_VABI _ZNK7WebCore11HistoryItem15pageScaleFactorEv(const HistoryItem* self) {
-    return Checked(self).pageScaleFactor;
+    RequireReadableHistoryItem(self, __func__);
+    return ReadGuestField<float>(self, offsetof(HistoryItem, pageScaleFactor), __func__);
 }
 
 bool APS5_VABI _ZNK7WebCore11HistoryItem12isTargetItemEv(const HistoryItem* self) {
-    return Checked(self).isTargetItem;
+    RequireReadableHistoryItem(self, __func__);
+    return ReadGuestField<bool>(self, offsetof(HistoryItem, isTargetItem), __func__);
 }
 
 bool APS5_VABI _ZNK7WebCore11HistoryItem27shouldRestoreScrollPositionEv(const HistoryItem* self) {
-    return Checked(self).shouldRestoreScrollPosition;
+    RequireReadableHistoryItem(self, __func__);
+    return ReadGuestField<bool>(self, offsetof(HistoryItem, shouldRestoreScrollPosition), __func__);
 }
 
 std::uint8_t APS5_VABI _ZNK7WebCore11HistoryItem28shouldOpenExternalURLsPolicyEv(const HistoryItem* self) {
-    return Checked(self).shouldOpenExternalURLsPolicy;
+    RequireReadableHistoryItem(self, __func__);
+    return ReadGuestField<std::uint8_t>(self, offsetof(HistoryItem, shouldOpenExternalURLsPolicy), __func__);
 }
 
 const HistoryItemVectorStorage& APS5_VABI _ZNK7WebCore11HistoryItem13documentStateEv(const HistoryItem* self) {
-    return Checked(self).documentState;
+    return RequireReadableHistoryItem(self, __func__)->documentState;
 }
 
 const HistoryItemVectorStorage& APS5_VABI _ZNK7WebCore11HistoryItem8childrenEv(const HistoryItem* self) {
-    return Checked(self).children;
+    return RequireReadableHistoryItem(self, __func__)->children;
 }
 
 String APS5_VABI _ZNK7WebCore11HistoryItem15formContentTypeEv(const HistoryItem* self) {
-    return Checked(self).formContentType;
+    RequireReadableHistoryItem(self, __func__);
+    auto* const impl = ReadGuestField<StringImpl*>(self, offsetof(HistoryItem, formContentType), __func__);
+    if (!impl) return String();
+    std::vector<PlannedStringState> planned;
+    std::deque<GuestArena::HostWrite> stringWrites;
+    PlanRetain(impl, __func__, planned, stringWrites);
+    std::vector<std::pair<StringImpl*, unsigned>> retained;
+    ApplyRetains({impl}, planned, retained, __func__);
+    return String(impl);
 }
 
 bool APS5_VABI _ZNK7WebCore11HistoryItem11hasChildrenEv(const HistoryItem* self) {
-    return Checked(self).children.size != 0;
+    RequireReadableHistoryItem(self, __func__);
+    return ReadGuestField<HistoryItemVectorStorage>(self, offsetof(HistoryItem, children), __func__).size != 0;
 }
 
 bool APS5_VABI _ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(const HistoryItem* self) {
-    const auto* cachedPage = static_cast<const CachedPage*>(Checked(self).cachedPage);
+    RequireReadableHistoryItem(self, __func__);
+    const void* const cachedPage = ReadGuestField<void*>(self, offsetof(HistoryItem, cachedPage), __func__);
     if (!cachedPage) return false;
-    return _ZN3WTF13MonotonicTime3nowEv().m_value > cachedPage->expirationTime;
+    const auto page = ReadGuestValue<CachedPage>(cachedPage, __func__);
+    return _ZN3WTF13MonotonicTime3nowEv().m_value > page.expirationTime;
 }
 
 void* APS5_VABI _ZN7WebCore11HistoryItem8formDataEv(HistoryItem* self) {
-    return Checked(self).formData;
+    RequireReadableHistoryItem(self, __func__);
+    return ReadGuestField<void*>(self, offsetof(HistoryItem, formData), __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem17setAlternateTitleERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.displayTitle, Checked(value, "null WTF::String"));
-    historyItemChangedHook(&item);
+    AssignFieldString(self, offsetof(HistoryItem, displayTitle), value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.urlString, Checked(value, "null WTF::String"));
-    historyItemChangedHook(&item);
+    AssignFieldString(self, offsetof(HistoryItem, urlString), value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem20setOriginalURLStringERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.originalURLString, Checked(value, "null WTF::String"));
-    historyItemChangedHook(&item);
+    AssignFieldString(self, offsetof(HistoryItem, originalURLString), value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem11setReferrerERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.referrer, Checked(value, "null WTF::String"));
-    historyItemChangedHook(&item);
+    AssignFieldString(self, offsetof(HistoryItem, referrer), value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem8setTitleERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.title, Checked(value, "null WTF::String"));
-    historyItemChangedHook(&item);
+    AssignFieldString(self, offsetof(HistoryItem, title), value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem18setFormContentTypeERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.formContentType, Checked(value, "null WTF::String"));
+    AssignFieldString(self, offsetof(HistoryItem, formContentType), value, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE(HistoryItem* self, const IntPoint* value) {
-    auto& item = Checked(self);
-    item.scrollPosition = Checked(value, "null WebCore::IntPoint");
+    RequireNonNullHistoryItem(self);
+    if (!value) throw std::invalid_argument("null WebCore::IntPoint");
+    const WritableHistoryItem writable(self, __func__, false);
+    const auto point = ReadGuestValue<IntPoint>(value, __func__);
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, scrollPosition), &point, sizeof(point)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem18setPageScaleFactorEf(HistoryItem* self, float value) {
-    Checked(self).pageScaleFactor = value;
+    WriteScalarField(self, offsetof(HistoryItem, pageScaleFactor), value, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem15setIsTargetItemEb(HistoryItem* self, bool value) {
-    Checked(self).isTargetItem = value;
+    WriteScalarField(self, offsetof(HistoryItem, isTargetItem), value, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(HistoryItem* self, bool value) {
-    auto& item = Checked(self);
-    item.shouldRestoreScrollPosition = value;
-    historyItemChangedHook(&item);
+    WriteScalarField(self, offsetof(HistoryItem, shouldRestoreScrollPosition), value, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(HistoryItem* self, std::uint8_t value) {
-    Checked(self).shouldOpenExternalURLsPolicy = value;
+    WriteScalarField(self, offsetof(HistoryItem, shouldOpenExternalURLsPolicy), value, false, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(HistoryItem* self, const String* value) {
-    auto& item = Checked(self);
-    Assign(item.target, Checked(value, "null WTF::String"));
-    historyItemChangedHook(&item);
+    AssignFieldString(self, offsetof(HistoryItem, target), value, true, __func__);
 }
 
 HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(HistoryItem* self, const String* target) {
-    auto& item = Checked(self);
-    const String& key = Checked(target, "null WTF::String");
-    auto** children = static_cast<HistoryItem**>(item.children.buffer);
-    for (unsigned index = 0; index < item.children.size; ++index) {
-        HistoryItem* child = children[index];
-        if (child && _ZN3WTF5equalEPKNS_10StringImplES2_(child->target.impl, key.impl)) return child;
+    RequireReadableHistoryItem(self, __func__);
+    if (!target) throw std::invalid_argument("null WTF::String");
+    auto* const keyImpl = ReadGuestValue<StringImpl*>(target, __func__);
+    ValidateReadableStringImpl(keyImpl, __func__);
+    const auto children = ReadGuestField<HistoryItemVectorStorage>(self, offsetof(HistoryItem, children), __func__);
+    if (!children.size) return nullptr;
+    if (!children.buffer || children.size > std::numeric_limits<std::size_t>::max() / sizeof(HistoryItem*))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const std::size_t bytes = static_cast<std::size_t>(children.size) * sizeof(HistoryItem*);
+    RequireReadableGuestBytes(children.buffer, bytes, __func__);
+    std::vector<HistoryItem*> childPointers(children.size, nullptr);
+    if (!GuestCopyIn_nid_no_patch(childPointers.data(), children.buffer, bytes))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    for (HistoryItem* child : childPointers) {
+        if (!child) continue;
+        RequireReadableGuestBytes(child, sizeof(HistoryItem), __func__);
+        auto* const childTargetImpl = ReadGuestField<StringImpl*>(child, offsetof(HistoryItem, target), __func__);
+        ValidateReadableStringImpl(childTargetImpl, __func__);
+        if (_ZN3WTF5equalEPKNS_10StringImplES2_(childTargetImpl, keyImpl)) return child;
     }
     return nullptr;
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(HistoryItem* self, const String* urlString, const String* title, const String* alternateTitle, NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier) {
-    Construct(Checked(self), urlString, title, alternateTitle, identifier);
+    Construct(self, urlString, title, alternateTitle, identifier, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(HistoryItem* self, const String* urlString, const String* title, const String* alternateTitle, NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier) {
-    Construct(Checked(self), urlString, title, alternateTitle, identifier);
+    Construct(self, urlString, title, alternateTitle, identifier, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(HistoryItem* self, const HistoryItemVectorStorage* state) {
-    AssignDocumentState(Checked(self).documentState, Checked(state, "null WTF::Vector"));
+    AssignDocumentState(self, state, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(HistoryItem* self, HistoryItem** child) {
-    if (!child) throw std::invalid_argument("null WTF::Ref");
-    AppendChild(Checked(self).children, child);
+    AppendChild(self, child, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE(HistoryItem* self, void** object) {
-    auto& item = Checked(self);
-    if (!object) throw std::invalid_argument("null WTF::RefPtr");
-    if (item.stateObject && *object != item.stateObject) NotImplemented_nid_no_patch(__func__);
-    if (object != &item.stateObject) {
-        item.stateObject = *object;
-        *object = nullptr;
-    }
-    historyItemChangedHook(&item);
+    AssignUniquePointerField(self, offsetof(HistoryItem, stateObject), object, true, __func__);
 }
 
 void APS5_VABI _ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(HistoryItem* self, void** formData) {
-    auto& item = Checked(self);
-    if (!formData) throw std::invalid_argument("null WTF::RefPtr");
-    if (item.formData && *formData != item.formData) NotImplemented_nid_no_patch(__func__);
-    if (formData != &item.formData) {
-        item.formData = *formData;
-        *formData = nullptr;
-    }
+    AssignUniquePointerField(self, offsetof(HistoryItem, formData), formData, false, __func__);
 }
 
 }
