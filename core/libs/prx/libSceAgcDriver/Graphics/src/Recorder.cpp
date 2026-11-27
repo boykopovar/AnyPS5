@@ -3948,7 +3948,11 @@ std::shared_ptr<Buffer> Recorder::ReusableOwnedDrawInput(std::uint64_t address, 
     static const bool verify = std::getenv("APS5_VERIFY_OWNED_DRAW_INPUTS") != nullptr;
     if (verify) {
         const auto held = found->second.from;
-        const bool equal = GuestMemory::EqualsCommittedUnsynced(address + held, found->second.buffer->Bytes().subspan(held));
+        if (held > bytes || found->second.buffer == nullptr || found->second.buffer->Bytes().size() < bytes) {
+            eraseDrawSnapshot(found);
+            return {};
+        }
+        const bool equal = GuestMemory::EqualsCommittedUnsynced(address + held, found->second.buffer->Bytes().subspan(held, bytes - held));
         if (!ownedDrawInputHolds(address, bytes, found->second.owned)) {
             eraseDrawSnapshot(found);
             return {};
@@ -3965,7 +3969,7 @@ std::shared_ptr<Buffer> Recorder::ReusableOwnedDrawInput(std::uint64_t address, 
 
 void Recorder::KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, std::size_t from, std::uint32_t lowest) {
     Require(use != SnapshotUse::Storage, "an owned draw input is a vertex or index buffer");
-    if (buffer == nullptr || buffer->Bytes().size() != bytes || !ownedDrawInputHolds(address, bytes, proof)) return;
+    if (buffer == nullptr || buffer->Bytes().size() < bytes || from > bytes || !ownedDrawInputHolds(address, bytes, proof)) return;
     auto kept = proof;
     KeepDrawSnapshot(address, bytes, proof.since, proof.registry, std::move(buffer), use, derived, from, lowest, true);
     if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) {
