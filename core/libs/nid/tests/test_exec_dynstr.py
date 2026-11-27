@@ -245,6 +245,7 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertEqual(dynamic[5], 3 * 16)
         self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
         self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
+
     def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_out_of_bounds(self):
         original = bytearray(executable("sce"))
         struct.pack_into("<Q", original, SHOFF + 4 * 64 + 24, len(original) + 1)
