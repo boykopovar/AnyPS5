@@ -125,9 +125,88 @@ def deleted_line_numbers(root, base, tip):
             old_line += 1
     return deleted
 
-def prefix_suffix_overlap(pattern, sequence):
+def changed_line_ranges(root, base, tip):
+    ranges = collections.defaultdict(list)
+    new_path = None
+    in_hunk = False
+    diff = git(root, "diff", "-U0", "--inter-hunk-context=0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/",
+               "--output-indicator-new=+", "--output-indicator-old=-", "--output-indicator-context= ",
+               base, tip, "--", raw=True)
+    for line in diff.decode("utf-8", "surrogateescape").split("\n"):
+        if line.startswith("diff --git "):
+            new_path = None
+            in_hunk = False
+        elif not in_hunk and line.startswith("+++ "):
+            new_path = patch_path(line, "b/")
+        elif line.startswith("@@") and new_path is not None:
+            in_hunk = True
+            old_token, new_token = line.split()[1:3]
+            old_start, old_separator, old_count = old_token[1:].partition(",")
+            _, new_separator, new_count = new_token[1:].partition(",")
+            ranges[new_path].append((int(old_start), int(old_count) if old_separator else 1,
+                                     int(new_count) if new_separator else 1))
+    return ranges
+
+
+def line_after_diff(line_number, ranges):
+    offset = 0
+    for old_start, old_count, new_count in ranges:
+        if old_count == 0:
+            if line_number > old_start:
+                offset += new_count
+        elif line_number < old_start:
+            break
+        elif line_number < old_start + old_count:
+            return None
+        else:
+            offset += new_count - old_count
+    return line_number + offset
+
+
+def addition_order_differences(root, old_base, old, new_base, new, expected_added, new_added, credited_order):
+    if not credited_order:
+        return []
+    original, original_positions = added_hunks(root, old_base, old)
+    rebased, rebased_positions = added_hunks(root, new_base, new)
+    line_ranges = changed_line_ranges(root, new_base, new)
+    problems = []
+    for path, credits in credited_order.items():
+        if expected_added.get(path, collections.Counter()) != new_added.get(path, collections.Counter()):
+            continue
+        rebased_by_text = collections.defaultdict(collections.deque)
+        for old_range, lines in rebased.get(path, {}).items():
+            for text, position in zip(lines, rebased_positions[path][old_range]):
+                rebased_by_text[text].append(position)
+        tokens = []
+        valid = True
+        for old_range, lines in original.get(path, {}).items():
+            for text, branch_position in zip(lines, original_positions[path][old_range]):
+                if branch_position in credits:
+                    position = line_after_diff(credits[branch_position], line_ranges.get(path, ()))
+                    if position is None:
+                        valid = False
+                        break
+                else:
+                    positions = rebased_by_text.get(text)
+                    if not positions:
+                        valid = False
+                        break
+                    position = positions.popleft()
+                tokens.append((branch_position, position))
+            if not valid:
+                break
+        if not valid:
+            continue
+        tokens.sort()
+        if any(before[1] >= after[1] for before, after in zip(tokens, tokens[1:])):
+            problems.append(f"{path}: branch-added lines are out of order after upstream credit")
+    return problems
+
+
+def prefix_suffix_overlaps(pattern, sequence):
     if not pattern:
-        return 0
+        return []
     prefix = [0] * len(pattern)
     for index in range(1, len(pattern)):
         matched = prefix[index - 1]
@@ -140,9 +219,13 @@ def prefix_suffix_overlap(pattern, sequence):
     for value in sequence:
         while matched and (matched == len(pattern) or pattern[matched] != value):
             matched = prefix[matched - 1]
-        if matched < len(pattern) and pattern[matched] == value:
+        if pattern[matched] == value:
             matched += 1
-    return matched
+    overlaps = []
+    while matched:
+        overlaps.append(matched)
+        matched = prefix[matched - 1]
+    return overlaps
 
 
 def find_subsequence(sequence, pattern):
@@ -180,92 +263,98 @@ def contiguous_block_match(first, second):
 
 def additions_satisfied_upstream(root, old_base, old, new_base):
     if old_base == new_base:
-        return {}, {}
-    original, _ = added_hunks(root, old_base, old)
+        return {}, {}, {}
+    original, original_positions = added_hunks(root, old_base, old)
     upstream, upstream_positions = added_hunks(root, old_base, new_base)
     satisfied = collections.defaultdict(collections.Counter)
     credited = collections.defaultdict(set)
-
+    credited_order = collections.defaultdict(dict)
     for path, hunks in original.items():
         upstream_hunks = upstream.get(path, {})
         if not upstream_hunks:
             continue
         used_upstream = set()
+        upstream_by_start = collections.defaultdict(list)
+        upstream_by_end = collections.defaultdict(list)
+        for upstream_range, upstream_lines in upstream_hunks.items():
+            upstream_start, upstream_count = upstream_range
+            if upstream_count:
+                upstream_by_start[upstream_start].append((upstream_range, upstream_lines))
+                upstream_by_end[upstream_start + upstream_count - 1].append((upstream_range, upstream_lines))
 
-        def credit(old_range, lines, branch_start, upstream_start, length):
-            positions = upstream_positions[path][old_range]
+        def credit(branch_range, upstream_range, lines, branch_start, upstream_start, length):
+            branch_line_positions = original_positions[path][branch_range]
+            upstream_line_positions = upstream_positions[path][upstream_range]
             for offset in range(length):
                 branch_index = branch_start + offset
                 upstream_index = upstream_start + offset
-                occurrence = (old_range, upstream_index)
+                occurrence = (upstream_range, upstream_index)
                 if occurrence in used_upstream:
                     continue
                 satisfied[path][lines[branch_index]] += 1
-                credited[path].add(positions[upstream_index])
+                upstream_position = upstream_line_positions[upstream_index]
+                credited[path].add(upstream_position)
+                credited_order[path][branch_line_positions[branch_index]] = upstream_position
                 used_upstream.add(occurrence)
 
         ordered_hunks = sorted(hunks.items())
-        for old_range, lines in ordered_hunks:
-            upstream_lines = upstream_hunks.get(old_range)
+        for branch_range, lines in ordered_hunks:
+            upstream_lines = upstream_hunks.get(branch_range)
             if upstream_lines is None:
                 continue
             match = contiguous_block_match(lines, upstream_lines)
-            if match is None:
-                continue
-            branch_start, upstream_start, length = match
-            credit(old_range, lines, branch_start, upstream_start, length)
+            if match is not None:
+                branch_start, upstream_start, length = match
+                credit(branch_range, branch_range, lines, branch_start, upstream_start, length)
 
-        for old_range, lines in ordered_hunks:
-            if old_range in upstream_hunks:
+        for branch_range, lines in ordered_hunks:
+            if branch_range in upstream_hunks:
                 continue
-            start, count = old_range
+            start, count = branch_range
             if count:
                 continue
-
             preceding = []
             following = []
-            for upstream_range, upstream_lines in upstream_hunks.items():
-                upstream_start, upstream_count = upstream_range
-                if not upstream_count:
-                    continue
-                upstream_end = upstream_start + upstream_count - 1
-                if upstream_start == start + 1:
-                    overlap = prefix_suffix_overlap(upstream_lines, lines)
-                    if overlap:
-                        following.append((upstream_range, len(lines) - overlap, 0, overlap))
-                if upstream_end == start:
-                    overlap = prefix_suffix_overlap(lines, upstream_lines)
-                    if overlap:
-                        preceding.append((upstream_range, 0, len(upstream_lines) - overlap, overlap))
+            for upstream_range, upstream_lines in upstream_by_start.get(start + 1, ()):
+                for overlap in prefix_suffix_overlaps(upstream_lines, lines):
+                    following.append((upstream_range, len(lines) - overlap, 0, overlap))
+            for upstream_range, upstream_lines in upstream_by_end.get(start, ()):
+                for overlap in prefix_suffix_overlaps(lines, upstream_lines):
+                    preceding.append((upstream_range, 0, len(upstream_lines) - overlap, overlap))
 
             def available(candidate):
                 upstream_range, _, upstream_start, length = candidate
-                return all(
-                    (upstream_range, index) not in used_upstream
-                    for index in range(upstream_start, upstream_start + length)
-                )
+                return all((upstream_range, index) not in used_upstream
+                           for index in range(upstream_start, upstream_start + length))
 
             preceding = [candidate for candidate in preceding if available(candidate)]
             following = [candidate for candidate in following if available(candidate)]
-            preceding.sort(key=lambda item: (-item[3], item[0]))
-            following.sort(key=lambda item: (-item[3], item[0]))
-
+            preceding.sort(key=lambda item: (-item[3], item[0], item[2]))
+            following.sort(key=lambda item: (-item[3], item[0], item[2]))
             chosen = []
-            if preceding and following:
-                before = preceding[0]
-                after = following[0]
-                if before[3] + after[3] == len(lines):
-                    chosen = [before, after]
-            if not chosen:
+            pairs = []
+            for before in preceding:
+                for after in following:
+                    if before[3] + after[3] != len(lines):
+                        continue
+                    if before[0] == after[0]:
+                        before_indices = set(range(before[2], before[2] + before[3]))
+                        after_indices = set(range(after[2], after[2] + after[3]))
+                        if before_indices & after_indices:
+                            continue
+                    pairs.append((before, after))
+            if pairs:
+                pairs.sort(key=lambda pair: (-pair[0][3], -pair[1][3], pair[0][0], pair[1][0]))
+                chosen = [pairs[0][0], pairs[0][1]]
+            else:
                 candidates = preceding + following
                 if candidates:
-                    candidates.sort(key=lambda item: (-item[3], item[0]))
+                    candidates.sort(key=lambda item: (-item[3], item[0], item[2]))
                     chosen = [candidates[0]]
-
             for upstream_range, branch_start, upstream_start, length in chosen:
-                credit(upstream_range, lines, branch_start, upstream_start, length)
+                credit(branch_range, upstream_range, lines, branch_start, upstream_start, length)
+    return satisfied, credited, credited_order
 
-    return satisfied, credited
 
 def differences(old, new, deleted=False):
     problems = []
@@ -390,12 +479,13 @@ def verify(root, old, new, onto):
     old_added, old_deleted = changed_lines(root, old_base, old)
     new_added, new_deleted = changed_lines(root, new_base, new)
     upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_added or old_deleted else ({}, {})
-    satisfied_added, credited_upstream = additions_satisfied_upstream(root, old_base, old, new_base) if old_added else ({}, {})
+    satisfied_added, credited_upstream, credited_order = additions_satisfied_upstream(root, old_base, old, new_base) if old_added else ({}, {}, {})
     expected_added = {
         path: lines - satisfied_added.get(path, collections.Counter())
         for path, lines in old_added.items()
     }
     problems += differences(expected_added, new_added)
+    problems += addition_order_differences(root, old_base, old, new_base, new, expected_added, new_added, credited_order)
     if credited_upstream:
         removed_upstream = deleted_line_numbers(root, new_base, new)
         for path, line_numbers in credited_upstream.items():

@@ -416,6 +416,34 @@ class RebaseVerifyTests(unittest.TestCase):
         self.prepare_reordered_block_rebase(True)
         self.assertEqual(self.verify(), [])
 
+    def prepare_partially_credited_block_rebase(self, preserve_branch_order):
+        base = "start\nend\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add partial-credit order fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "start\nlock();\nuse();\nend\n")
+        self.git("commit", "-q", "-am", "feat(tools): add ordered lock block")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "start\nuse();\nend\n")
+        self.git("commit", "-q", "-am", "docs(tools): add the shared use line upstream")
+        resolved = ("start\nlock();\nuse();\nend\n" if preserve_branch_order
+                    else "start\nuse();\nlock();\nend\n")
+        new_commit = self.commit_tree_file("main", "f.txt", resolved.encode("utf-8"),
+                                           "feat(tools): add ordered lock block")
+        self.git("update-ref", "refs/heads/new", new_commit)
+
+    def test_partially_credited_upstream_line_cannot_reorder_branch_additions(self):
+        self.prepare_partially_credited_block_rebase(False)
+        problems = self.verify()
+        self.assertTrue(any("out of order after upstream credit" in problem for problem in problems), problems)
+
+    def test_partially_credited_upstream_line_keeps_branch_addition_order(self):
+        self.prepare_partially_credited_block_rebase(True)
+        self.assertEqual(self.verify(), [])
+
     def prepare_if_block_rebase(self, preserve_branch_block):
         base = "start\nend\n"
         self.git("checkout", "-q", "main")
@@ -470,6 +498,27 @@ class RebaseVerifyTests(unittest.TestCase):
 
     def test_a_contiguous_upstream_block_satisfies_the_branch_block(self):
         self.prepare_contained_block_rebase()
+        self.assertEqual(self.verify(), [])
+
+    def prepare_shorter_overlap_rebase(self):
+        base = "a\npivot\nb\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add repeated overlap fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "a\nX\npivot\nX\nX\nb\n")
+        self.git("commit", "-q", "-am", "feat(tools): add repeated boundary lines")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "a\nX\nX\nb\n")
+        self.git("commit", "-q", "-am", "docs(tools): replace pivot with repeated lines")
+        new_commit = self.commit_tree_file("main", "f.txt", "a\nX\nX\nX\nb\n".encode("utf-8"),
+                                           "feat(tools): add repeated boundary lines")
+        self.git("update-ref", "refs/heads/new", new_commit)
+
+    def test_shorter_available_overlap_is_used_when_longest_was_consumed(self):
+        self.prepare_shorter_overlap_rebase()
         self.assertEqual(self.verify(), [])
 
     def prepare_separated_shared_line_rebase(self):
