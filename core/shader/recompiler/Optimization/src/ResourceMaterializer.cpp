@@ -2484,7 +2484,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             cube.cube = true;
             modes.push_back(cube);
         }
-        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.dimension == RdnaImageDimension::Dim1D) {
+        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim2D)) {
             auto view = mode;
             view.dimension = RdnaImageDimension::Dim2DMsaa;
             modes.push_back(view);

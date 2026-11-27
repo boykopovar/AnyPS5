@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -37,11 +38,6 @@ alignas(256) constexpr std::array<std::uint32_t, 17> Code{
     0xe0701000u, 0x80000106u,
     0xbf810000u,
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
 
 std::uint32_t Expected(std::uint32_t lane) {
     std::uint32_t value = lane < 13u ? lane + 64u : 0u;

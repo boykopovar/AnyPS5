@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -52,12 +53,6 @@ alignas(256) constexpr auto ProductCode = [] {
     return code;
 }();
 
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 std::uint32_t PitchBytes(std::uint32_t format, std::size_t storage) {
     const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format, Size, Size, 1u);
     Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= storage, "image sample shared sampler: a texture does not fit its storage");
@@ -85,11 +80,6 @@ void Fill() {
             color[3] = 255u;
         }
     }
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t format, std::uint32_t swizzle) {
