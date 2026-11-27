@@ -19317,6 +19317,117 @@ void hostBarrier(const Context& context, VkCommandBuffer commands) {
 
 }
 
+void bandedDetileTests(Device& device) {
+    using namespace SmallElementDetileTest;
+    const auto& context = device.GetContext();
+    const auto fillBandedPattern = [](std::span<std::byte> bytes, std::uint32_t seed) {
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(((i * 37u) ^ (i >> 8u) ^ (i >> 16u) ^ seed) & 0xffu);
+    };
+    struct Case {
+        TextureTileMode mode;
+        const char* name;
+        std::uint32_t elementBytes;
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t rowsPerBand;
+        std::uint32_t pitch = 0;
+    };
+    const std::array<Case, 9> cases{{
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 4, 600, 400, 1},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 8, 200, 300, 2},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 16, 130, 200, 1},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 1, 700, 600, 1},
+        {TextureTileMode::kStandard64KB, "SW_64KB_S", 2, 300, 600, 1},
+        {TextureTileMode::kStandard4KB, "SW_4KB_S", 1, 300, 200, 3},
+        {TextureTileMode::kLinear, "linear", 4, 37, 50, 7},
+        {TextureTileMode::kLinear, "linear R8", 1, 257, 12, 1, 257},
+        {TextureTileMode::kLinear, "linear", 2, 300, 9, 2},
+    }};
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    for (const auto& testCase : cases) {
+        const auto elementBytes = testCase.elementBytes;
+        const auto layouts = testCase.pitch != 0 ? ComputeMipLayout(testCase.mode, 1u, testCase.width, testCase.height, 1, testCase.pitch) : ComputeElementMipLayout(testCase.mode, elementBytes, testCase.width, testCase.height, 1);
+        const auto& mip = layouts[0];
+        const bool linearMode = testCase.mode == TextureTileMode::kLinear;
+        const auto block = linearMode ? std::array<std::uint32_t, 3>{0u, 0u, 1u} : ThinBlockLayout(testCase.mode, elementBytes);
+        const std::uint64_t tiledPerRow = linearMode ? mip.pitchBytes : static_cast<std::uint64_t>(mip.blocksPerRow) * block[0];
+        const std::uint64_t linearPerRow = static_cast<std::uint64_t>(block[2]) * mip.pitchBytes;
+        auto limited = context;
+        limited.limits.maxStorageBufferRange = static_cast<std::uint32_t>(testCase.rowsPerBand * std::max(tiledPerRow, linearPerRow) + alignment + 8u);
+        const auto what = std::string(testCase.name) + " " + std::to_string(elementBytes) + "B " + std::to_string(mip.width) + "x" + std::to_string(mip.height) + " under a " + std::to_string(limited.limits.maxStorageBufferRange) + "-byte storage buffer range";
+        Require(mip.tiledSize > limited.limits.maxStorageBufferRange && mip.linearSize > limited.limits.maxStorageBufferRange, what + ": the mip fits the lowered range, so no band is tested");
+        DetileWindow window{};
+        if (testCase.mode == TextureTileMode::kR64KBX) window.pipeBankXor = 0x100u;
+        TextureDetiler detiler(limited);
+        const auto tiledBytes = static_cast<std::size_t>(mip.tiledSize);
+        const auto linearBytes = static_cast<std::size_t>(mip.linearSize);
+        Buffer linear(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer tiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer retiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer detiled(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        fillBandedPattern(linear.Bytes(), 13u);
+        fillBandedPattern(tiled.Bytes(), 31u);
+        fillSentinel(retiled.Bytes());
+        fillSentinel(detiled.Bytes());
+        std::vector<std::byte> expectedRetile(tiledBytes, std::byte{0xa5});
+        std::vector<std::byte> expectedDetile(linearBytes, std::byte{0xa5});
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y) ^ window.pipeBankXor;
+                const auto linearOffset = y * mip.pitchBytes + x * elementBytes;
+                for (std::uint32_t byte = 0; byte < elementBytes; ++byte) {
+                    expectedRetile[offset + byte] = linear.Bytes()[linearOffset + byte];
+                    expectedDetile[linearOffset + byte] = tiled.Bytes()[offset + byte];
+                }
+            }
+        }
+        detiler.BeginBatch();
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        detiler.Dispatch(commands, testCase.mode, elementBytes, linear.Handle(), 0, retiled.Handle(), 0, mip, true, 0, false, window);
+        detiler.Dispatch(commands, testCase.mode, elementBytes, tiled.Handle(), 0, detiled.Handle(), 0, mip, false, 0, false, window);
+        hostBarrier(context, commands);
+        batch.SubmitAndWait();
+        requireBytes(retiled.Bytes(), expectedRetile, what + ", buffer retile");
+        requireBytes(detiled.Bytes(), expectedDetile, what + ", buffer detile");
+        const auto format = TextureDetiler::ImageElementFormat(elementBytes);
+        VkFormatProperties properties{};
+        context.formatProperties(context.physical, format, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) continue;
+        StorageImage image(context, format, mip.width, mip.height);
+        Buffer imageRetiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        fillSentinel(imageRetiled.Bytes());
+        std::vector<std::byte> expectedImage(tiledBytes, std::byte{0xa5});
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y) ^ window.pipeBankXor;
+                for (std::uint32_t byte = 0; byte < elementBytes; ++byte) expectedImage[offset + byte] = tiled.Bytes()[offset + byte];
+            }
+        }
+        detiler.BeginBatch();
+        CommandBatch imageBatch(context);
+        const auto imageCommands = imageBatch.Handle();
+        VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.image = image.Image();
+        toGeneral.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+        RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, tiled.Handle(), 0, image.View(), mip, false, 0, window);
+        RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, imageRetiled.Handle(), 0, image.View(), mip, true, 0, window);
+        hostBarrier(context, imageCommands);
+        imageBatch.SubmitAndWait();
+        requireBytes(imageRetiled.Bytes(), expectedImage, what + ", image round trip");
+    }
+    std::cout << "oversized detile band tests passed\n";
+}
+
 void smallElementDetileTests(Device& device) {
     using namespace SmallElementDetileTest;
     const auto& context = device.GetContext();
@@ -19630,6 +19741,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-stress-only") return mapGateStressTests(device) ? 0 : 77;
         std::unique_lock gpu(GpuMutex());
+        if (argc == 2 && std::string_view(argv[1]) == "--banded-detile-only") {
+            bandedDetileTests(device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--small-element-detile-only") {
             smallElementDetileTests(device);
             return 0;

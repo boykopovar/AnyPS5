@@ -125,6 +125,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_detile_small_elements PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_detile_oversized_bands COMMAND agc_driver_recorder_tests --banded-detile-only)
+    set_tests_properties(agc_detile_oversized_bands PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(agc_detile_oversized_bands PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_import_watch COMMAND agc_driver_recorder_tests --import-watch-only)
     set_tests_properties(agc_import_watch PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_import_settle_initial_dcc COMMAND agc_driver_recorder_tests --settle-initial-dcc-only)
