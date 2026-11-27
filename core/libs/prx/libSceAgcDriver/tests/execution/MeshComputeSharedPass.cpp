@@ -229,6 +229,10 @@ int main() {
             std::puts("skipped, the device runs mesh-path draws in its mesh stage");
             return VulkanTestSkipped;
         }
+        if (device->Target().subgroupSize != 32u && device->Target().subgroupSize != 64u) {
+            std::puts("skipped, mesh execution requires a supported 32- or 64-lane host subgroup layout");
+            return VulkanTestSkipped;
+        }
         const AgcDriver::Pm4::DrawParameters draw{0, 3, 0, 1, 0, false};
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         const auto left = Compile(*device, LeftVertices, draw);
