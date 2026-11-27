@@ -1584,6 +1584,32 @@ void gnuHashSymbolBounds() {
     require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
             "Valid GNU hash table was rejected by strict filter");
 
+    auto emptyHash = bytes;
+    write<std::uint32_t>(emptyHash, 0x378, 0);
+    write<std::uint64_t>(emptyHash, 40, 0x800);
+    write<std::uint16_t>(emptyHash, 58, 64);
+    write<std::uint16_t>(emptyHash, 60, 4);
+    write<std::uint32_t>(emptyHash, 0x844, 1);
+    write<std::uint64_t>(emptyHash, 0x858, 0x200);
+    write<std::uint64_t>(emptyHash, 0x860, input.Text.size());
+    write<std::uint32_t>(emptyHash, 0x884, 11);
+    write<std::uint64_t>(emptyHash, 0x898, 0x600);
+    write<std::uint64_t>(emptyHash, 0x8A0, 48);
+    write<std::uint32_t>(emptyHash, 0x8A8, 3);
+    write<std::uint32_t>(emptyHash, 0x8AC, 1);
+    write<std::uint64_t>(emptyHash, 0x8B8, 24);
+    write<std::uint32_t>(emptyHash, 0x8C4, 3);
+    write<std::uint64_t>(emptyHash, 0x8D8, 0x630);
+    write<std::uint64_t>(emptyHash, 0x8E0, 1);
+    const auto filter = Relinker::MakeStrictUnusedNidFilter(testProgress);
+    require(filter->Filter(references, emptyHash, input.Text, input.TextVaddr).size() == 1,
+            "Empty GNU hash lost the import reached through a dynamic symbol");
+
+    write<std::uint64_t>(emptyHash, 40, emptyHash.size());
+    requireFailureMessage([&] {
+        filter->Filter(references, emptyHash, input.Text, input.TextVaddr);
+    }, "Section header table out of bounds", "Empty GNU hash accepted a truncated section table");
+
     auto badHeader = bytes;
     write<std::uint32_t>(badHeader, 0x360, 0);
     requireFailureMessage([&] {
