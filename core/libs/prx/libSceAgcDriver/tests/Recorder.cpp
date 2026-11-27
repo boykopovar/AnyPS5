@@ -9847,6 +9847,131 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool pendingDueUnitTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: results pending over a unit whose upload copy is due not tested\n";
+        return false;
+    }
+    constexpr std::size_t unit = 65536;
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = static_cast<std::size_t>(side) * side * 4;
+    constexpr std::size_t units = surfaceBytes / unit;
+    constexpr std::size_t lastUnit = units - 1;
+    const auto decided = PrepareImportWatch(base);
+    SetImportWatch(base, ImportWatch::Watch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{base, decided};
+    for (const bool matching : {false, true}) {
+        const std::string what = matching ? "a unit outside the watch holding the bytes of its previous upload copy" : "a unit outside the watch holding the bytes of the previous store";
+        void* block = AllocateWatched(surfaceBytes, unit);
+        if (block == nullptr) {
+            std::cout << "no write watching: results pending over a unit whose upload copy is due not tested\n";
+            return false;
+        }
+        auto* memory = static_cast<std::uint8_t*>(block);
+        std::memset(memory, 0x5a, surfaceBytes);
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, surfaceBytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* block;
+            std::uint64_t address;
+            std::size_t surfaceBytes;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, address, surfaceBytes);
+                ReleaseWatched(block, surfaceBytes);
+            }
+        } unregister{base, block, address, surfaceBytes};
+        AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(d) unexpected surface size");
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            recorder.Keep(image);
+            if (!AgcDriver::GuestMemory::Watched(address, surfaceBytes) || HostImportFor(context, address, surfaceBytes) == nullptr) {
+                std::cout << "the image's host import left its memory unwatched: results pending over a unit whose upload copy is due not tested\n";
+                return false;
+            }
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const auto clear = [&](const VkClearColorValue& value) {
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                image->MarkDirty();
+            };
+            const auto store = [&] {
+                image->WriteBack();
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+            };
+            clear(VkClearColorValue{{1.0f, 0.0f, 0.0f, 1.0f}});
+            store();
+            std::vector<std::byte> first(unit);
+            AgcDriver::GuestMemory::Read(address + lastUnit * unit, first);
+            Require(std::none_of(first.begin(), first.end(), [](std::byte byte) { return byte == std::byte{0x5a}; }), "(d) " + what + ": the first store did not reach the last unit");
+            {
+                struct Rehook {
+                    ~Rehook() { AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch); }
+                } rehook;
+                AgcDriver::GuestMemory::SetUnwatchHook(nullptr);
+                AgcDriver::GuestMemory::Unwatch(address + lastUnit * unit, unit);
+            }
+            Require(!AgcDriver::GuestMemory::Watched(address + lastUnit * unit, unit) && AgcDriver::GuestMemory::Watched(address, lastUnit * unit), "(d) " + what + ": the last block did not leave the watch alone");
+            if (matching) std::memset(memory + lastUnit * unit, 0x5a, unit);
+            Require(image->ChangedOutsideWatch(), "(d) " + what + ": the unit whose upload copy is due is not reported changed outside the watch");
+            const std::vector<std::uint8_t> before(memory + lastUnit * unit, memory + surfaceBytes);
+            clear(VkClearColorValue{{0.0f, 1.0f, 0.0f, 1.0f}});
+            std::string refusal;
+            try {
+                store();
+            } catch (const std::exception& error) {
+                try {
+                    recorder.Submit();
+                    device.WaitQueue();
+                    recorder.Sync();
+                } catch (...) {
+                }
+                refusal = error.what();
+                static_cast<void>(StorageTexture::DiscardPendingInside(address, surfaceBytes));
+            }
+            const std::string cause = "(unit " + std::to_string(lastUnit) + " of " + std::to_string(units) + ": no copy of its bytes was taken at its upload)";
+            Require(!refusal.empty(), "(d) " + what + ": results stored over a unit whose upload copy was due were not refused");
+            Require(refusal.find(cause) != std::string::npos, "(d) " + what + ": the refusal does not name the cause '" + cause + "': " + refusal);
+            Require(std::equal(before.begin(), before.end(), memory + lastUnit * unit), "(d) " + what + ": the refused store changed the unit's bytes");
+        }
+        recorder.Sync();
+    }
+    std::cout << "results pending over a unit whose upload copy is due: ok\n";
+    return true;
+}
+
 struct GateBlock {
     void* block = nullptr;
     std::size_t bytes = 0;
@@ -19396,6 +19521,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--gpu-only-storage-writeback-only") return gpuOnlyStorageWriteBackTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--pending-after-unwatch-only") return pendingAfterLeavingWatchTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--refresh-after-unwatched-cpu-write-only") return refreshAfterUnwatchedCpuWriteTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-due-unit-only") return pendingDueUnitTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--unwatch-lock-order-only") return unwatchHookLockOrderTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-publication-only") return mapGatePublicationTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-pending-only") return mapGatePendingTests(device, recorder) ? 0 : 77;

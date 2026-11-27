@@ -3367,6 +3367,7 @@ const char* StorageTexture::BaselineMissText(BaselineMiss miss) {
 
 StorageTexture::BaselineMiss StorageTexture::baselineMiss(std::uint32_t unit) const {
     if (generationBaseline.size() == guestBytes) {
+        if (baselineDue[unit]) return BaselineMiss::NoUploadCopy;
         const auto offset = static_cast<std::size_t>(layerBegin(unit) - descriptor.baseAddress);
         return GuestMemory::EqualsCommittedUnsynced(layerBegin(unit), std::span<const std::byte>(generationBaseline).subspan(offset, static_cast<std::size_t>(layerBytes(unit)))) ? BaselineMiss::None : BaselineMiss::UploadCopyDiffers;
     }
