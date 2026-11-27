@@ -474,7 +474,8 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             if ((bytes[offset + 4] & 15) == 2 && section != 0) {
                 const auto address = Io::ReadU64(bytes, offset + 8);
                 const auto size = Io::ReadU64(bytes, offset + 16);
-                const auto extent = functionSymbolRoots ? 1 : std::max<std::uint64_t>(size, 1);
+                const auto extent = section == Elfpatcher::SHN_ABS || !functionSymbolRoots
+                    ? std::max<std::uint64_t>(size, 1) : 1;
                 if (section == Elfpatcher::SHN_ABS && (!isCode(address) || !isFileBackedCodeRange(address, extent))) continue;
                 if (functionSymbolRoots && !isCode(address))
                     throw Domain::RelinkerException("Code analysis: function entry is not executable and file-backed", address);
