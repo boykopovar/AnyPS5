@@ -47,6 +47,7 @@ struct SearchState {
     void* breakIterator{};
     std::vector<char16_t> pattern;
     std::vector<char16_t> text;
+    std::vector<std::vector<char16_t>> retainedTexts;
 
     ~SearchState() {
         Icu::StringSearchHost::Close(search);
@@ -284,9 +285,12 @@ void APS5_VABI usearch_setText_nid_postfix(UStringSearch* search, const char16_t
     const auto incoming = CopyIn<std::int32_t>(status, __func__);
     const auto state = Find(search, __func__);
     const std::lock_guard lock(state->mutex);
-    auto outgoing = incoming;
-    Icu::StringSearchHost::SetText(state->search, replacement.data(), static_cast<std::int32_t>(replacement.size()), outgoing);
+    state->retainedTexts.emplace_back();
+    state->retainedTexts.back().swap(state->text);
     state->text.swap(replacement);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetText(state->search, state->text.data(), static_cast<std::int32_t>(state->text.size()), outgoing);
+    if (outgoing <= 0) state->retainedTexts.clear();
     WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
