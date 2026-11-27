@@ -21,6 +21,7 @@ namespace {
 constexpr int InvalidArgument = static_cast<int>(0x80550003u);
 constexpr int SignedOut = static_cast<int>(0x80550006u);
 constexpr int InvalidSize = static_cast<int>(0x80550011u);
+constexpr int RequestMax = static_cast<int>(0x80550013u);
 constexpr int UserNotFound = static_cast<int>(0x80550007u);
 constexpr int AlreadyRegistered = static_cast<int>(0x80550008u);
 constexpr int NotRegistered = static_cast<int>(0x80550009u);
@@ -283,6 +284,32 @@ void CheckToolkitStateCallback() {
     Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "the toolkit callback did not unregister itself");
 }
 
+NpCreateAsyncRequestParameter AsyncRequestParameter(std::uint64_t size = 0x18) {
+    NpCreateAsyncRequestParameter param{};
+    std::memcpy(&param, &size, sizeof(size));
+    return param;
+}
+
+void CheckRequestIds() {
+    Require(sceNpCreateAsyncRequest(nullptr) == InvalidArgument, "sceNpCreateAsyncRequest must refuse a null parameter");
+    const NpCreateAsyncRequestParameter wrongSize = AsyncRequestParameter(0x40);
+    Require(sceNpCreateAsyncRequest(&wrongSize) == InvalidSize, "sceNpCreateAsyncRequest must refuse a size other than 0x18");
+    int ids[33]{};
+    int count = 0;
+    for (; count < 33; ++count) {
+        ids[count] = sceNpCreateRequest();
+        if (ids[count] < 0) break;
+        Require(ids[count] >= 0x20000001 && ids[count] <= 0x20000020, "request ids must start at 0x20000001");
+    }
+    Require(count == 32 && ids[32] == RequestMax, "a 33rd live request must be refused");
+    Require(ids[0] == 0x20000001 && ids[31] == 0x20000020, "request ids must be handed out in order");
+    Require(sceNpDeleteRequest(ids[5]) == 0, "delete one request");
+    Require(sceNpCreateRequest() == ids[5], "the lowest free request id must be reused");
+    for (int index = 0; index < 32; ++index) Require(sceNpDeleteRequest(ids[index]) == 0, "delete every request");
+    Require(sceNpCreateRequest() == 0x20000001, "ids must start over once every request is deleted");
+    Require(sceNpDeleteRequest(0x20000001) == 0, "delete the last request");
+}
+
 void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(0x7fffffff, 2, 0, 0, 0, 0) == RequestNotFound, "never created request");
     Require(sceNpSetTimeout(0x7fffffff, 0, 0, 0, 0, 0) == InvalidArgument, "arguments checked before the request");
@@ -301,7 +328,7 @@ void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(requestId, 0, 0, 0, 0, 1) == InvalidArgument, "receive timeout below 10 s");
     Require(sceNpDeleteRequest(requestId) == 0, "sceNpDeleteRequest failed");
     Require(sceNpSetTimeout(requestId, 2, 0, 0, 0, 0) == RequestNotFound, "deleted request");
-    NpCreateAsyncRequestParameter param{};
+    const NpCreateAsyncRequestParameter param = AsyncRequestParameter();
     const int asyncId = sceNpCreateAsyncRequest(&param);
     Require(asyncId > 0, "sceNpCreateAsyncRequest must return a positive request id");
     Require(sceNpSetTimeout(asyncId, 2, 0, 0, 0, 0) == 0, "async request");
@@ -310,14 +337,20 @@ void CheckRequestTimeouts() {
 }
 
 void CheckAsyncRequestLifecycle() {
-    NpCreateAsyncRequestParameter param{};
+    const NpCreateAsyncRequestParameter param = AsyncRequestParameter();
     const int unusedAsyncResult = sceNpCreateAsyncRequest(&param);
     Require(unusedAsyncResult > 0, "sceNpCreateAsyncRequest must return a positive request id");
     const int deletedId = sceNpCreateAsyncRequest(&param);
     Require(sceNpDeleteRequest(deletedId) == 0, "initial delete");
 
     constexpr int resultSentinel = 0x5a5a5a5a;
-    const int unknownIds[] = {0, -1, 0x7fffffff, deletedId};
+    for (const int id : {0, -1}) {
+        int result = resultSentinel;
+        Require(sceNpPollAsync(id, &result) == InvalidArgument && result == resultSentinel, "poll must refuse a request id of 0 or less");
+        Require(sceNpAbortRequest(id) == InvalidArgument, "abort must refuse a request id of 0 or less");
+        Require(sceNpDeleteRequest(id) == InvalidArgument, "delete must refuse a request id of 0 or less");
+    }
+    const int unknownIds[] = {0x20000000, 0x7fffffff, deletedId};
     for (const int id : unknownIds) {
         int result = resultSentinel;
         Require(sceNpPollAsync(id, &result) == RequestNotFound, "poll must reject an absent or deleted id");
@@ -339,7 +372,7 @@ void CheckAsyncRequestLifecycle() {
 }
 
 void CheckWaitAsync() {
-    NpCreateAsyncRequestParameter param{};
+    const NpCreateAsyncRequestParameter param = AsyncRequestParameter();
     const int liveId = sceNpCreateAsyncRequest(&param);
     Require(liveId > 0, "sceNpCreateAsyncRequest must return a positive request id");
     const int deletedId = sceNpCreateAsyncRequest(&param);
@@ -347,7 +380,12 @@ void CheckWaitAsync() {
     Require(sceNpDeleteRequest(deletedId) == 0, "initial delete");
 
     constexpr int resultSentinel = 0x5a5a5a5a;
-    for (const int id : {0, -1, 0x7fffffff, deletedId}) {
+    for (const int id : {0, -1}) {
+        int result = resultSentinel;
+        Require(sceNpWaitAsync(id, &result) == InvalidArgument && result == resultSentinel, "wait must refuse a request id of 0 or less");
+        Require(sceNpWaitAsync(id, nullptr) == InvalidArgument, "wait must refuse a null result");
+    }
+    for (const int id : {0x20000000, 0x7fffffff, deletedId}) {
         int result = resultSentinel;
         Require(sceNpWaitAsync(id, &result) == RequestNotFound, "wait must reject an absent or deleted id");
         Require(result == resultSentinel, "wait must not touch the result for an absent or deleted id");
@@ -772,7 +810,7 @@ void CheckUserIdQueries() {
         Require(sceNpGetAccountDateOfBirthA(userId, output) == SignedOut, "sceNpGetAccountDateOfBirthA must report the user as signed out");
         Require(sceNpSetGamePresenceOnlineA(request, userId, 0) == SignedOut, "sceNpSetGamePresenceOnlineA must report NP as signed out");
     }
-    NpCreateAsyncRequestParameter asyncParam{};
+    const NpCreateAsyncRequestParameter asyncParam = AsyncRequestParameter();
     const int asyncRequest = sceNpCreateAsyncRequest(&asyncParam);
     Require(asyncRequest > 0, "sceNpCreateAsyncRequest must return a positive request id");
     Require(sceNpSetGamePresenceOnlineA(asyncRequest, InitialUserId, 0) == SignedOut, "sceNpSetGamePresenceOnlineA must report NP as signed out");
@@ -915,6 +953,8 @@ void CheckValueClasses() {
     constexpr int AccountIdMissing = static_cast<int>(0x80559E2Bu);
     constexpr int GuestUser = 0x20000000;
 
+    Require(sceUserServiceInitialize(nullptr) == 0, "the value classes need an initialized user service");
+
     NpOnlineIdObject onlineId;
     _ZN3sce2np10NpOnlineIdC1Ev(&onlineId);
     Require(_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a default online id must be empty");
@@ -929,6 +969,11 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, reinterpret_cast<const char*>(0x10)) == InvalidArgument
             && std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0,
         "an unreadable online id text must be refused and leave the text untouched");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(nullptr, "player") == InvalidArgument && errno == 71,
+        "a null online id object must be refused");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(reinterpret_cast<NpOnlineIdObject*>(0x10), "player") == InvalidArgument && errno == 71,
+        "an unwritable online id object must be refused");
 
     NpOnlineIdObject onlineIdCopy;
     _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
@@ -986,6 +1031,11 @@ void CheckValueClasses() {
     Require(!_ZN3sce2npneERKNS0_4UserERKi(&userCopy, &guestId), "a user must not differ from its id");
     _ZN3sce2np4User5ClearEv(&userCopy);
     Require(_ZNK3sce2np4User7IsEmptyEv(&userCopy), "a cleared user must be empty");
+    errno = 71;
+    _ZN3sce2np4User5ClearEv(nullptr);
+    Require(errno == 71, "User::Clear must preserve errno for a null object");
+    _ZN3sce2np4User5ClearEv(reinterpret_cast<UserObject*>(0x10));
+    Require(errno == 71, "User::Clear must preserve errno for an unmapped object");
 
     UserObject initialUser;
     _ZN3sce2np4UserC1Ei(&initialUser, USER_SERVICE_INITIAL_USER_ID);
@@ -1024,6 +1074,10 @@ void CheckValueClasses() {
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
     Require(_ZNK3sce2np12NpTitleToken6GetStrEv(&titleToken) == titleToken.data, "GetStr must point at the token storage");
     Require(titleToken.data[0] == '\0' && titleToken.data[0x40f] == '\0', "a default title token must be empty");
+    errno = 71;
+    Require(_ZNK3sce2np12NpTitleToken6GetStrEv(nullptr) == nullptr && errno == 71, "GetStr must return null for a null token");
+    Require(_ZNK3sce2np12NpTitleToken6GetStrEv(reinterpret_cast<const NpTitleTokenObject*>(0x10)) == nullptr && errno == 71,
+        "GetStr must return null for an unmapped token");
     NpTitleTokenObject titleTokenCopy;
     _ZN3sce2np12NpTitleTokenC1ERKS1_(&titleTokenCopy, &titleToken);
     Require(std::memcmp(titleTokenCopy.data, titleToken.data, sizeof(titleToken.data)) == 0, "a title token must copy the full block");
@@ -1262,6 +1316,7 @@ void CheckSilentStubs() {
 
 int main() {
     CheckNpOfflineGetters();
+    CheckRequestIds();
     CheckAsmLifecycle();
     CheckAsmCallsBeforeInitialization();
     CheckEmptyDestructors();

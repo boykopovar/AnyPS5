@@ -1,5 +1,6 @@
 #pragma once
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "prx/libSceIcu/include/StringPiece.hpp"
 #include "ConstrainedFieldPosition.hpp"
 #include "TerminateBuffer.hpp"
 #include "Mutex.hpp"
@@ -36,6 +37,7 @@
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
+#include "ClassIds.hpp"
 #include "Normalizer2Accessors.hpp"
 #include "CodePoints.hpp"
 #include "Identified.hpp"

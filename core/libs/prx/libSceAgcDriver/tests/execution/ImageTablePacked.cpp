@@ -424,9 +424,9 @@ void CheckStored(const Format& format, std::uint32_t selected, std::uint32_t dma
 
 void PackedStores(AgcDriver::VulkanDevice& device) {
     constexpr std::array formats{
-        Format{5u, 1u, 1u}, Format{11u, 2u, 1u}, Format{18u, 2u, 2u},
+        Format{5u, 1u, 1u}, Format{11u, 2u, 1u}, Format{12u, 2u, 1u}, Format{18u, 2u, 2u}, Format{19u, 2u, 2u},
         Format{20u, 4u, 1u}, Format{21u, 4u, 1u}, Format{22u, 4u, 1u, true},
-        Format{27u, 4u, 2u}, Format{60u, 4u, 4u}, Format{62u, 8u, 2u},
+        Format{27u, 4u, 2u}, Format{28u, 4u, 2u}, Format{60u, 4u, 4u}, Format{62u, 8u, 2u},
         Format{63u, 8u, 2u}, Format{64u, 8u, 2u, true}, Format{69u, 8u, 4u},
         Format{75u, 16u, 4u}, Format{76u, 16u, 4u}, Format{77u, 16u, 4u, true}};
     for (const auto dmask : {1u, 5u, 10u, 15u}) {
@@ -693,21 +693,26 @@ void UnsupportedStores(AgcDriver::VulkanDevice& device) {
     FillTexture(1u, Format{11u, 2u, 1u});
     FillInput(false);
     const auto initial = Texels;
-    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu, 0x76u, 0x77u, 0x79u, 0x7au}) {
+    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) {
         for (const auto table : {false, true}) {
-            const auto dmask = opcode >= 0x76u ? 1u : (opcode & 1u) != 0u ? 15u : 3u;
-            const auto code = Code(opcode, dmask, table);
+            const auto code = Code(opcode, (opcode & 1u) != 0u ? 15u : 3u, table);
             std::string refusal;
             try {
                 Run(device, code, 0u, 1u, false);
             } catch (const std::exception& error) {
                 refusal = error.what();
             }
-            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported BY/PCK store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
-            Require(Texels == initial, "unsupported BY/PCK store compilation modified an image");
+            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported BY store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
+            Require(Texels == initial, "unsupported BY store compilation modified an image");
         }
     }
-    std::cout << "BY stores and unmeasured PCK stores rejected without GPU submission\n";
+    SetEntry(0u, Descriptor(0u, Format{5u, 1u, 1u}));
+    for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) {
+        const auto poisoned = Run(device, Code(opcode, 1u, true), 0u);
+        Require(poisoned.faults != 0u && poisoned.log.find("image table:") != std::string::npos, "PCK store opcode " + std::to_string(opcode) + " through an image table was not poisoned");
+        Require(Texels == initial, "PCK store opcode " + std::to_string(opcode) + " through an image table modified an image");
+    }
+    std::cout << "BY stores rejected without GPU submission and PCK stores through image tables poisoned\n";
 }
 
 struct Rejection {
@@ -736,7 +741,7 @@ void RejectedEntries(AgcDriver::VulkanDevice& device) {
         Rejection{0x70u, 1u, {5u, 1u, 1u}, 0xf2eu},
         Rejection{10u, 1u, {1u, 1u, 1u}, Identity},
         Rejection{10u, 1u, {6u, 1u, 1u}, Identity},
-        Rejection{10u, 1u, {12u, 2u, 1u}, Identity},
+        Rejection{10u, 1u, {61u, 4u, 4u}, Identity},
         Rejection{10u, 1u, {13u, 2u, 1u}, Identity},
         Rejection{10u, 1u, {56u, 4u, 4u}, Identity},
         Rejection{10u, 1u, {72u, 12u, 3u}, Identity},
