@@ -207,13 +207,20 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertEqual(phdr[2], phoff)
         self.assertEqual(phdr[5], phnum * phentsize)
         dynlib = next(header for header in headers if header[0] == PT_SCE_DYNLIBDATA)
+        dynamic = next(header for header in headers if header[0] == 2)
+        self.assertEqual(dynamic[2], dynlib[2] + DYNAMIC_OFFSET - original_dynlib[2])
+        self.assertLessEqual(dynlib[2], dynamic[2])
+        self.assertLessEqual(dynamic[2] + dynamic[5], dynlib[2] + dynlib[5])
+        dynamic_section = next(section for section in symbols.sections(after) if section[1] == 6)
+        self.assertEqual(dynamic_section[4], dynamic[2])
+        self.assertEqual(dynamic_section[3], dynamic[3])
         self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
         self.assertGreaterEqual(dynlib[2], len(original))
         self.assertEqual(tags[DT_OS_STRTAB], original_dynlib[5])
         self.assertEqual(dynlib[5], original_dynlib[5] + dynstr[5])
         self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
         self.assertEqual(dynlib[2] + dynlib[5], len(after))
-        copied_dynamic_offset = dynlib[2] + DYNAMIC_OFFSET - original_dynlib[2]
+        copied_dynamic_offset = dynamic[2]
         copied_dynamic = []
         for index in range(16):
             entry = struct.unpack_from("<qQ", after, copied_dynamic_offset + index * 16)
