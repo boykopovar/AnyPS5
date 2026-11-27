@@ -378,7 +378,8 @@ int APS5_VABI sceKernelEnableDmemAliasing(void) {
 
 int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
- (void)alignment;
+ constexpr int MapFixed = 0x10;
+ if ((flags & MapFixed) != 0) alignment = PS5_PAGE_SIZE;
  void* hint = nullptr;
  if (const int error = ReadMapSlot(addr, hint)) return error;
  const int result = DoMapDirect(addr ? &hint : nullptr, len, prot, flags, direct_memory_start, alignment);

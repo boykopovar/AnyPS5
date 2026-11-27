@@ -186,6 +186,28 @@ int main(int argc, char** argv) {
         checkBudget(before - length);
         Require(sceKernelReleaseFlexibleMemory(full, length) == 0);
         Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+        {
+            constexpr std::size_t bigAlign = 2 * 1024 * 1024;
+            std::int64_t phys = -1;
+            Require(sceKernelAllocateDirectMemory(0, sceKernelGetDirectMemorySize(), page, page, 0, &phys) == 0);
+            void* region = nullptr;
+            Require(sceKernelMapFlexibleMemory(&region, page * 4, 3, 0) == 0);
+            auto* base = static_cast<unsigned char*>(region);
+            void* target = base + page;
+            if ((reinterpret_cast<std::uintptr_t>(target) & (bigAlign - 1)) == 0) target = base + page * 2;
+            Require((reinterpret_cast<std::uintptr_t>(target) & (page - 1)) == 0);
+            Require((reinterpret_cast<std::uintptr_t>(target) & (bigAlign - 1)) != 0);
+            void* fixed = target;
+            Require(sceKernelMapDirectMemory(&target, page, 3, 0x10, phys, bigAlign) == 0 && target == fixed);
+            static_cast<volatile unsigned char*>(target)[0] = 51;
+            static_cast<volatile unsigned char*>(target)[page - 1] = 53;
+            Require(static_cast<volatile unsigned char*>(target)[0] == 51 && static_cast<volatile unsigned char*>(target)[page - 1] == 53);
+            VirtualQueryInfo info{};
+            Require(sceKernelVirtualQuery(target, 0, &info, sizeof(info)) == 0 && info.is_direct && !info.is_flexible);
+            Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+            Require(sceKernelReleaseFlexibleMemory(region, page * 4) == 0);
+            Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+        }
         for (int api = 0; api < 4; ++api) {
             constexpr auto directPage = PS5_PAGE_SIZE;
             const auto checkDirectBudget = [&](std::size_t expected) {
