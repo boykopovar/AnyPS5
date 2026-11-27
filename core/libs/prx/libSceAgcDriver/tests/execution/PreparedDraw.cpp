@@ -141,6 +141,19 @@ void BadPlansOnEarlyReturnsAreCaught(AgcDriver::VulkanDevice& device, Scene& sce
     static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
 }
 
+void PlansKeepTheirOwnContentKey(AgcDriver::VulkanDevice& device, Scene& scene) {
+    static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+    auto first = device.PrepareDraw(scene.state, scene.draw, scene.shaders, true);
+    auto moved = scene.state;
+    moved.color.address += 4096u;
+    moved.colors = {moved.color};
+    auto second = device.PrepareDraw(moved, scene.draw, scene.shaders, true);
+    Require(first != nullptr && second != nullptr, "prepared draw: the draws for the content key check were not prepared");
+    scene.Draw(first.get(), scene.draw, true, "a draw whose plan was prepared before another one on the same thread");
+    const auto counts = AgcDriver::Graphics::TakePreparedDrawCounts();
+    Require(counts.planned == 2 && counts.used == 1 && counts.inlinePlans == 0, "prepared draw: the content key check did not take the first plan (" + Counts(counts) + ")");
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     Scene scene(device);
     static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
@@ -193,6 +206,8 @@ void Run(AgcDriver::VulkanDevice& device) {
         Require(counts.planned == 1 && counts.used == 1 && counts.inlinePlans == 0, "prepared draw: the wrongly empty plan was not the one the committer took (" + Counts(counts) + ")");
         BadPlansOnEarlyReturnsAreCaught(device, scene);
     }
+
+    if (std::getenv("APS5_VERIFY_DRAW_PLAN") != nullptr && std::getenv("APS5_NO_DRAW_KEY_TRIM") != nullptr) PlansKeepTheirOwnContentKey(device, scene);
 
     auto modified = scene.draw;
     modified.flags = 1u;

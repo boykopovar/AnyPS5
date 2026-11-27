@@ -1935,6 +1935,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
 struct PreparedDraw {
     VkDevice device = VK_NULL_HANDLE;
     std::vector<std::uint32_t> contentKey;
+    ResourceCache::Key planKey;
     std::optional<DrawPlan> plan;
     bool validateMemoized = false;
     bool validateHit = false;
@@ -2014,7 +2015,7 @@ PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm
         DrawOutcome outcome;
         DrawTimer timer(false);
         try {
-            prepared->plan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer));
+            prepared->plan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer, nullptr, &prepared->planKey));
             prepared->validateMemoized = outcome.validateMemoized;
             prepared->validateHit = outcome.validateHit;
             counters.planned.Add();
