@@ -1,14 +1,18 @@
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -136,8 +140,44 @@ void TestErrors() {
     const std::vector<std::int16_t> block(frames, 256);
     const int handle = Open(portTypeMain);
     const std::uint64_t time = OutputAndCheck(handle, block);
+    AudioOutOutputParam validParam{handle, block.data()};
+    Require(sceAudioOutOutputs(nullptr, 1) == invalidPointer, "a null parameter array must be rejected");
+    Require(sceAudioOutOutputs(&validParam, 0) == invalidPointer, "a zero parameter count must be rejected");
+    Require(sceAudioOutOutputs(&validParam, 257) == invalidPointer, "an oversized parameter count must be rejected");
+    Pause();
+    errno = 37;
+    Require(sceAudioOutOutputs(reinterpret_cast<AudioOutOutputParam*>(std::uintptr_t{0x10}), 1) == invalidPointer,
+        "an unreadable non-null parameter array must be rejected");
+    Require(errno == 37, "a failed guest parameter probe must preserve errno");
+    constexpr std::size_t page = 16384;
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &physical) == 0,
+        "direct memory allocation for fault probe must succeed");
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page * 2, 3, 0, physical, 0) == 0,
+        "direct memory mapping for fault probe must succeed");
+    auto* boundary = static_cast<std::uint8_t*>(mapping) + page;
+    auto* partial = reinterpret_cast<AudioOutOutputParam*>(boundary - sizeof(AudioOutOutputParam));
+    *partial = validParam;
+    Require(sceKernelMprotect(boundary, page, 0) == 0, "guard page protection must succeed");
+    errno = 41;
+    Require(sceAudioOutOutputs(reinterpret_cast<AudioOutOutputParam*>(boundary), 1) == invalidPointer,
+        "a protected parameter array must be rejected");
+    Require(errno == 41, "a protected parameter array probe must preserve errno");
+    errno = 43;
+    Require(sceAudioOutOutputs(partial, 2) == invalidPointer,
+        "a partially mapped parameter array must be rejected");
+    Require(errno == 43, "a partially mapped parameter array probe must preserve errno");
+    Require(sceKernelMprotect(boundary, page, 3) == 0, "guard page restoration must succeed");
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page * 2) == 0, "fault probe unmap must succeed");
+    Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0, "direct memory release must succeed");
     Require(sceAudioOutGetLastOutputTime(handle, nullptr) == invalidPointer, "a null destination must be rejected");
     Require(LastOutputTime(handle) == time, "a rejected call must not move the time");
+    AudioOutOutputParam waitParam{handle, nullptr};
+    errno = 53;
+    Require(sceAudioOutOutputs(&waitParam, 1) == static_cast<int>(frames), "valid outputs call must succeed");
+    Require(errno == 53, "a successful outputs call must preserve errno");
+    Require(LastOutputTime(handle) == time, "waiting outputs call must not move the time");
 
     std::uint64_t destination = untouched;
     Require(sceAudioOutGetLastOutputTime(0, &destination) == invalidPort, "handle 0 must be rejected");
