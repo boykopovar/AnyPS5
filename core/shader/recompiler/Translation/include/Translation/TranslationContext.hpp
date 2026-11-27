@@ -50,6 +50,7 @@ public:
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void SetFloat64(bool enabled) { float64 = enabled; }
+    void SetTableLiterals(std::span<const std::uint32_t> literals) { tableLiterals = literals; }
     void SetSharedVectorRegisters(std::uint32_t base, std::uint32_t count) { sharedVectorBase = base; sharedVectorCount = count; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void SetVectorWindowActive(bool active) { ir.SetVectorWindowActive(active); }
@@ -85,6 +86,7 @@ private:
     IrU32 readScalarCode(std::uint32_t code);
     IrU32 applyBitSourceModifiers(const RdnaOperand& operand, IrU32 value);
     IrValue* readOperand(const RdnaOperand& operand, IrType type);
+    IrValue* readScalarCompareOperand(const RdnaInstruction& inst, const RdnaOperand& operand, IrType type);
     IrU1 threadBit(const std::array<IrU32, 2>& mask);
     void writeRawU32(const RdnaOperand& operand, IrU32 value);
     bool sharedVectorRegister(std::uint32_t reg) const { return reg >= sharedVectorBase && reg - sharedVectorBase < sharedVectorCount; }
@@ -444,6 +446,7 @@ private:
     bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
     bool float64 = false;
+    std::span<const std::uint32_t> tableLiterals;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
     std::uint32_t sharedVectorBase = 0;

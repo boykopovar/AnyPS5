@@ -207,7 +207,7 @@ static ControlFlowGraph BuildCode(std::span<const std::uint32_t> code, const Swa
     return GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(code), &swappc);
 }
 
-static IrProgram TranslateCode(std::span<const std::uint32_t> code, const SwappcInfo& swappc) {
+static IrProgram TranslateCode(std::span<const std::uint32_t> code, const SwappcInfo& swappc, std::span<const std::uint32_t> tableLiterals = {}) {
     const auto program = RdnaInstructionDecoder{}.Decode(code);
     const auto cfg = GraphBuilder{}.Build(program, &swappc);
     ShaderComputeInputInfo computeInfo{};
@@ -215,6 +215,7 @@ static IrProgram TranslateCode(std::span<const std::uint32_t> code, const Swappc
     options.stage = ShaderStageKind::Compute;
     options.inputInfo.compute = &computeInfo;
     options.userDataCount = swappc.userDataCount;
+    options.tableLiterals = tableLiterals;
     return InstructionTranslator{}.Translate(program, cfg, options);
 }
 
@@ -285,6 +286,48 @@ static void CheckUserDataDescriptorTableCall() {
     const std::vector<std::uint32_t> looped{
         0xf4280502u, 0xfa000000u, 0xbf8cc07fu, 0xbe920314u, 0xbe930315u, 0xbe940316u, 0xbe950317u, 0xbe922112u, 0xbf82fffau, 0xbf810000u};
     Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(looped), swappc).empty());
+
+    const auto program = RdnaInstructionDecoder{}.Decode(caller);
+    const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe802012u};
+    const std::vector<std::uint32_t> second{0x4a0202c0u, 0xbf068001u, 0xbe802012u};
+    const std::vector<std::vector<TableCallee>> boot{{{0x2011223340ull, first, 0x10u}, {0x2055667780ull, second, 0x40u}}};
+    const std::vector<std::vector<TableCallee>> moved{{{0x2111223340ull, first, 0x10u}, {0x2155667780ull, second, 0x40u}}};
+    const auto linked = LinkCalls(program, {}, {}, calls, boot);
+    const auto relinked = LinkCalls(program, {}, {}, calls, moved);
+    Require(linked.code == relinked.code && linked.tableLiterals == relinked.tableLiterals && linked.fallbacks == relinked.fallbacks);
+    Require(linked.tableLiterals.size() == 8u * TableLiteralWords);
+    for (std::size_t index = 0; index < linked.tableLiterals.size(); index += TableLiteralWords) {
+        const auto word = linked.tableLiterals[index];
+        Require(word > 0u && word < linked.code.size() && linked.code[word] == 0u && (linked.code[word - 1u] & 0xffffff00u) == 0xbf07ff00u);
+        Require(linked.tableLiterals[index + 1u] == static_cast<std::uint32_t>(TableLiteralSource::UserDataDescriptor) && linked.tableLiterals[index + 2u] == 4u && linked.tableLiterals[index + 4u] == NoNestedDescriptor);
+        const auto entry = linked.tableLiterals[index + 7u];
+        Require(entry == 0x10u || entry == 0x14u || entry == 0x40u || entry == 0x44u);
+        Require((entry & 4u) == 0u ? linked.code[word - 1u] == 0xbf07ff12u : linked.code[word - 1u] == 0xbf07ff13u);
+    }
+    auto pointerCall = calls;
+    pointerCall[0].descriptorInUserData = false;
+    pointerCall[0].descriptorOffset = 0x30u;
+    pointerCall[0].nestedDescriptorOffset = 0x20u;
+    const auto pointerLinked = LinkCalls(program, {}, {}, pointerCall, boot);
+    Require(pointerLinked.code == LinkCalls(program, {}, {}, pointerCall, moved).code && pointerLinked.tableLiterals.size() == 8u * TableLiteralWords);
+    Require(pointerLinked.tableLiterals[1] == static_cast<std::uint32_t>(TableLiteralSource::UserDataPointer) && pointerLinked.tableLiterals[3] == 0x30u && pointerLinked.tableLiterals[4] == 0x20u);
+    const std::vector<std::vector<TableCallee>> addressed{{{0x2011223340ull, first}, {0x2055667780ull, second}}};
+    const auto legacy = LinkCalls(program, {}, {}, calls, addressed);
+    Require(legacy.tableLiterals.empty() && std::ranges::find(legacy.code, 0x11223340u) != legacy.code.end());
+    SwappcInfo linkedSwappc = swappc;
+    linkedSwappc.linkedCallFallbacks = linked.fallbacks;
+    const auto tableReads = [](const std::string& text) {
+        std::size_t reads = 0;
+        for (auto at = text.find("ReadConstBuffer"); at != std::string::npos; at = text.find("ReadConstBuffer", at + 1u)) ++reads;
+        return reads;
+    };
+    const auto fromTable = ProgramToString(TranslateCode(linked.code, linkedSwappc, linked.tableLiterals));
+    const auto plain = ProgramToString(TranslateCode(linked.code, linkedSwappc));
+    Require(tableReads(fromTable) == tableReads(plain) + 8u);
+    const auto pointerText = ProgramToString(TranslateCode(pointerLinked.code, linkedSwappc, pointerLinked.tableLiterals));
+    std::size_t addressReads = 0;
+    for (auto at = pointerText.find("LoadAddressU32"); at != std::string::npos; at = pointerText.find("LoadAddressU32", at + 1u)) ++addressReads;
+    Require(addressReads >= 8u * 4u && tableReads(pointerText) >= tableReads(plain) + 8u * 5u);
 }
 
 static void CheckTableCalls() {

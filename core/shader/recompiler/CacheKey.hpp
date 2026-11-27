@@ -115,6 +115,8 @@ private:
     static void appendFallbacks(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
         append(key, request.context.linkedCallFallbacks.size());
         for (const auto programCounter : request.context.linkedCallFallbacks) append(key, programCounter);
+        append(key, request.context.linkedTableLiterals.size());
+        for (const auto word : request.context.linkedTableLiterals) append(key, word);
         append(key, request.context.splitState.size());
         for (const auto word : request.context.splitState) append(key, word);
     }

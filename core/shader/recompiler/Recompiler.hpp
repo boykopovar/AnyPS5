@@ -317,6 +317,7 @@ struct GuestContext {
     MemoryRegionView memory;
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
+    std::span<const std::uint32_t> linkedTableLiterals;
     std::span<const std::uint32_t> splitState;
     bool convertedSamples = false;
     bool layerRowSamples = false;

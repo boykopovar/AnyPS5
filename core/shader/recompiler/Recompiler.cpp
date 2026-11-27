@@ -272,6 +272,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     TranslateOptions translateOptions {};
     translateOptions.stage = stageKind;
     translateOptions.shaderHash = request.shader.codeAddress;
+    translateOptions.tableLiterals = request.context.linkedTableLiterals;
     translateOptions.waveSize = request.context.waveSize;
     translateOptions.userDataBaseRegister = request.context.userDataBaseRegister;
     translateOptions.gcnLegacyVertexInputs = GcnGuestShaders() && request.context.userDataBaseRegister == 0u;
@@ -480,6 +481,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     // points into a registration the driver may replace while the entry lives on.
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> linkedCallFallbacks;
+    std::vector<std::uint32_t> linkedTableLiterals;
     std::vector<std::uint32_t> splitState;
     std::shared_ptr<const IrResourcePlan> plan;
     std::vector<std::byte> planKey;
@@ -719,6 +721,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
             source = std::make_shared<SourceEntry>();
             source->code.assign(request.shader.code.begin(), request.shader.code.end());
             source->linkedCallFallbacks.assign(request.context.linkedCallFallbacks.begin(), request.context.linkedCallFallbacks.end());
+            source->linkedTableLiterals.assign(request.context.linkedTableLiterals.begin(), request.context.linkedTableLiterals.end());
             source->splitState.assign(request.context.splitState.begin(), request.context.splitState.end());
             auto& bucket = sources[key];
             if (!bucket.empty()) {
@@ -2692,6 +2695,7 @@ std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle) {
 
 PreparedShaderInvocation::PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) : request(request), handle(handle) {
     this->request.context.linkedCallFallbacks = handle->source->linkedCallFallbacks;
+    this->request.context.linkedTableLiterals = handle->source->linkedTableLiterals;
     this->request.context.splitState = handle->source->splitState;
 }
 

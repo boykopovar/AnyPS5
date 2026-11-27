@@ -36,6 +36,7 @@ struct TranslateOptions {
     std::uint32_t sharedVectorCount = 0;
     std::uint32_t sharedMemoryBytes = 0;
     std::uint64_t shaderHash = 0;
+    std::span<const std::uint32_t> tableLiterals;
     bool fragmentShaderBarycentricEnabled = false;
     bool interpolationFunctions = false;
     bool nativeFloat16 = false;

@@ -1,4 +1,5 @@
 #include "Translation/TranslationContext.hpp"
+#include "ControlFlow/GraphBuilder.hpp"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -95,9 +96,58 @@ void TranslationContext::emitCompareConstant(const RdnaInstruction& inst, bool v
     emitCompareResult(inst, IrU1(ir.ConstantBool(value)), scalar, cmpx);
 }
 
+IrValue* TranslationContext::readScalarCompareOperand(const RdnaInstruction& inst, const RdnaOperand& operand, IrType type) {
+    if (operand.kind != RdnaOperandKind::LiteralConstant || inst.family != RdnaInstructionFamily::SOPC || type != IrType::U32) return readOperand(operand, type);
+    const auto word = inst.programCounter / 4u + 1u;
+    for (std::size_t index = 0; index + TableLiteralWords <= tableLiterals.size(); index += TableLiteralWords) {
+        if (tableLiterals[index] != word) continue;
+        const auto source = static_cast<TableLiteralSource>(tableLiterals[index + 1u]);
+        const auto reg = tableLiterals[index + 2u];
+        const auto descriptorOffset = tableLiterals[index + 3u];
+        const auto nested = tableLiterals[index + 4u];
+        const auto bufferRead = [&](IrValue* resource, std::uint32_t offset) -> IrValue* {
+            MemoryInfo memory;
+            memory.kind = ResourceKind::ScalarBuffer;
+            memory.resource = reg / 4u;
+            memory.offset = offset;
+            memory.dataDwords = 1u;
+            memory.componentCount = 1u;
+            return &ir.Emit(IrOpcode::ReadConstBuffer, IrOpcodeType(IrOpcode::ReadConstBuffer), {resource, &ir.Constant(0u)}, addMemoryInfo(memory, inst.programCounter));
+        };
+        const auto bufferResource = [&](const std::array<IrValue*, 4>& dwords) {
+            return &ir.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource), {dwords[0], dwords[1], dwords[2], dwords[3]});
+        };
+        std::array<IrValue*, 4> dwords{};
+        if (source == TableLiteralSource::UserDataDescriptor) {
+            for (std::uint32_t dword = 0; dword < 4u; ++dword) dwords[dword] = &ir.GetUserData(static_cast<ScalarReg>(reg + dword));
+        } else {
+            IrValue* low = source == TableLiteralSource::ConstantPointer ? &ir.Constant(tableLiterals[index + 5u]) : &ir.GetUserData(static_cast<ScalarReg>(reg));
+            IrValue* high = source == TableLiteralSource::ConstantPointer ? &ir.Constant(tableLiterals[index + 6u]) : &ir.GetUserData(static_cast<ScalarReg>(reg + 1u));
+            IrValue* pointer = getAddressResource(low, high);
+            for (std::uint32_t dword = 0; dword < 4u; ++dword) {
+                MemoryInfo memory;
+                memory.kind = ResourceKind::ScalarAddress;
+                memory.offset = descriptorOffset + dword * 4u;
+                memory.dataDwords = 1u;
+                memory.componentCount = 4u;
+                memory.componentIndex = dword;
+                dwords[dword] = &ir.Emit(IrOpcode::LoadAddressU32, IrOpcodeType(IrOpcode::LoadAddressU32), {pointer, &ir.Constant(0u), &ir.Constant(0u), &ir.ConstantBool(true)}, addMemoryInfo(memory, inst.programCounter));
+            }
+        }
+        IrValue* table = bufferResource(dwords);
+        if (nested != NoNestedDescriptor) {
+            std::array<IrValue*, 4> inner{};
+            for (std::uint32_t dword = 0; dword < 4u; ++dword) inner[dword] = bufferRead(table, nested + dword * 4u);
+            table = bufferResource(inner);
+        }
+        return bufferRead(table, tableLiterals[index + 7u]);
+    }
+    return readOperand(operand, type);
+}
+
 void TranslationContext::emitIntegerCompare(const RdnaInstruction& inst, IrOpcode opcode, IrType type, bool scalar, bool cmpx) {
-    IrValue* lhs = readOperand(sourceAt(inst, 0u), type);
-    IrValue* rhs = readOperand(sourceAt(inst, 1u), type);
+    IrValue* lhs = scalar ? readScalarCompareOperand(inst, sourceAt(inst, 0u), type) : readOperand(sourceAt(inst, 0u), type);
+    IrValue* rhs = scalar ? readScalarCompareOperand(inst, sourceAt(inst, 1u), type) : readOperand(sourceAt(inst, 1u), type);
     emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {lhs, rhs})), scalar, cmpx);
 }
 

@@ -378,6 +378,7 @@ struct OwnedRecompileRequest {
     std::vector<std::byte> header;
     std::vector<std::uint32_t> userData;
     std::vector<std::uint32_t> fallbacks;
+    std::vector<std::uint32_t> tableLiterals;
     std::vector<std::uint32_t> splitState;
     std::vector<std::vector<std::byte>> regionBytes;
     std::vector<ShaderRecompiler::MemoryRegion> regions;

@@ -208,6 +208,20 @@ std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request
     return EncodeBase64(bytes);
 }
 
+void VerifyLinkedTableLiterals() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    ShaderRecompiler::RecompileRequest request{};
+    const std::array<std::uint32_t, 6> literals{13u, 4u, 0x10u, 16u, 4u, 0x14u};
+    request.context.linkedTableLiterals = literals;
+    const auto encoded = serializer.Serialize(request);
+    Require(DecodeBase64(encoded)[4] == 64u);
+    const auto replay = serializer.Deserialize(encoded);
+    Require(std::ranges::equal(replay.request.context.linkedTableLiterals, literals) && replay.linkedTableLiterals.size() == literals.size());
+    Require(serializer.Serialize(replay.request) == encoded);
+    request.context.linkedTableLiterals = {};
+    Require(DecodeBase64(serializer.Serialize(request))[4] == 63u);
+}
+
 void VerifyTargetOptions() {
     const ShaderRecompiler::RequestSerializer serializer;
     for (const bool fixed : {true, false}) {
@@ -784,7 +798,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -1252,5 +1266,6 @@ void VerifySingleSampleVersion63() {
 int main() {
     VerifySingleSampleVersion63();
     VerifyTargetOptions();
+    VerifyLinkedTableLiterals();
     return VerifyVersion56Compatibility();
 }

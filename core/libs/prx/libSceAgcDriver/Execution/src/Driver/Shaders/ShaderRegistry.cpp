@@ -1095,7 +1095,7 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
     const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table", dependencies, false);
     auto dependency = std::make_shared<ShaderRecompiler::SrtGuestWords>();
-    std::set<std::uint64_t> targets;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> targets;
     for (std::uint64_t offset = call.entryOffset; offset + 8u <= bytes; offset += call.entryStride) {
         std::uint64_t target = 0;
         std::memcpy(&target, table.data() + offset, sizeof(target));
@@ -1106,7 +1106,7 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
         } else {
             dependency->runs.emplace_back(address, 2u);
         }
-        if (target != 0u) targets.insert(target);
+        if (target != 0u && std::ranges::none_of(targets, [&](const auto& known) { return known.first == target; })) targets.emplace_back(target, static_cast<std::uint32_t>(offset));
         if (call.entryStride == 0u) break;
     }
     for (const auto& [address, count] : dependency->runs) {
@@ -1118,7 +1118,7 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     if (split && targets.size() > splitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(splitCallees) + " are split");
     if (!split && targets.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(limitCallees) + " are linked");
     std::vector<ShaderRecompiler::TableCallee> callees;
-    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister, dependencies, true)});
+    for (const auto& [target, offset] : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister, dependencies, true), offset});
     return callees;
 }
 
@@ -1340,6 +1340,8 @@ std::shared_ptr<OwnedRecompileRequest> OwnRecompileRequest(const ShaderRecompile
     owned->request.context.userData = owned->userData;
     owned->fallbacks.assign(source.context.linkedCallFallbacks.begin(), source.context.linkedCallFallbacks.end());
     owned->request.context.linkedCallFallbacks = owned->fallbacks;
+    owned->tableLiterals.assign(source.context.linkedTableLiterals.begin(), source.context.linkedTableLiterals.end());
+    owned->request.context.linkedTableLiterals = owned->tableLiterals;
     owned->regionBytes.reserve(memory.size());
     owned->regions.reserve(memory.size());
     for (const auto& region : memory) {
@@ -1517,6 +1519,7 @@ ShaderRecompiler::PreparedShaderInvocation SplitTableCallPartInvocation(SplitTab
     source.shader.code = parts.programs[part].code;
     source.context.splitState = parts.programs[part].plan;
     source.context.linkedCallFallbacks = {};
+    source.context.linkedTableLiterals = {};
     std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
     {
         std::lock_guard lock(parts.mutex);
@@ -1733,6 +1736,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     if (!linked.code.empty()) {
         source.shader.code = linked.code;
         source.context.linkedCallFallbacks = linked.fallbacks;
+        source.context.linkedTableLiterals = linked.tableLiterals;
     }
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
