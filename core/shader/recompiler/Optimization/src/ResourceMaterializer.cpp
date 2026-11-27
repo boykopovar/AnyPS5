@@ -2410,6 +2410,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                 offer(declaredArray ? RdnaImageDimension::Dim1DArray : RdnaImageDimension::Dim3D);
             }
             if (declaredArray) offer(RdnaImageDimension::Dim2D);
+            if (!declaredArray && !table && image.read && image.fmaskCompatible && image.cubeFaceCompatible) offer(RdnaImageDimension::Dim2DMsaa);
             auto cube = mode;
             cube.dimension = RdnaImageDimension::Dim2DArray;
             cube.cube = true;
@@ -2483,7 +2484,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             cube.cube = true;
             modes.push_back(cube);
         }
-        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.dimension == RdnaImageDimension::Dim1D) {
+        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim2D)) {
             auto view = mode;
             view.dimension = RdnaImageDimension::Dim2DMsaa;
             modes.push_back(view);

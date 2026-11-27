@@ -12,6 +12,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -775,7 +776,15 @@ int runPrebuiltLoadingProcess() {
     return 0;
 }
 
-void verifyPrebuiltAcrossProcesses(const char* self, const std::filesystem::path& directory) {
+int RunSelf(const std::filesystem::path& self, const char* mode) {
+#ifdef _WIN32
+    return _wsystem((L"\"" + self.native() + L"\" " + std::filesystem::path(mode).native()).c_str());
+#else
+    return std::system(("\"" + self.string() + "\" " + mode).c_str());
+#endif
+}
+
+void verifyPrebuiltAcrossProcesses(const std::filesystem::path& self, const std::filesystem::path& directory) {
     using namespace ShaderRecompiler::ShaderDiskCache;
     SampleRequest sample = prebuiltSample();
     const auto prebuilt = directory / "prebuilt";
@@ -790,8 +799,7 @@ void verifyPrebuiltAcrossProcesses(const char* self, const std::filesystem::path
     auto corruptEntry = EncodeEntry(corruptKey, sampleVariant());
     corruptEntry.resize(corruptEntry.size() / 2);
     require(WriteFileAtomically(prebuilt / EntryName(corruptKey), corruptEntry), "cannot write the corrupt loose prebuilt entry");
-    const std::string command = "\"" + std::string(self) + "\" --load-prebuilt";
-    require(std::system(command.c_str()) == 0, "the prebuilt loading process failed");
+    require(RunSelf(self, "--load-prebuilt") == 0, "the prebuilt loading process failed");
 }
 
 void verifyPrebuiltDiscovery(std::string_view layout, bool seed) {
@@ -1467,7 +1475,7 @@ int runLoadingProcess() {
 }
 
 template<class Request>
-void verifyAcrossProcesses(const char* self, const char* mode) {
+void verifyAcrossProcesses(const std::filesystem::path& self, const char* mode) {
     Request request(true);
     const auto before = ShaderDiskCache::Totals();
     const auto compiled = Recompile(request.request);
@@ -1476,8 +1484,7 @@ void verifyAcrossProcesses(const char* self, const char* mode) {
     require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
     if constexpr (std::is_same_v<Request, BufferTableRequest>) require(!compiled.bufferBaseSlots.empty(), "the cold invocation has no buffer-base patch slots");
-    const std::string command = "\"" + std::string(self) + "\" " + mode;
-    require(std::system(command.c_str()) == 0, "the loading process failed");
+    require(RunSelf(self, mode) == 0, "the loading process failed");
 }
 
 struct ClockRequest {
@@ -1567,10 +1574,9 @@ int runWithoutFailureMemo() {
     return 0;
 }
 
-void verifyFailureMemoSwitch(const char* self) {
+void verifyFailureMemoSwitch(const std::filesystem::path& self) {
     setEnvironment("APS5_NO_FAILURE_MEMO", "1");
-    const std::string command = "\"" + std::string(self) + "\" --no-failure-memo";
-    require(std::system(command.c_str()) == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
+    require(RunSelf(self, "--no-failure-memo") == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
 }
 
 void verifyInvocationIsolation() {
@@ -3045,7 +3051,7 @@ int runPlanLoadingProcess(std::string_view mode) {
     return 0;
 }
 
-void verifyPlanAcrossProcesses(const char* self) {
+void verifyPlanAcrossProcesses(const std::filesystem::path& self) {
     auto fixtures = planFixtures();
     const auto builds = FrontEndBuilds();
     const auto before = ShaderDiskCache::Totals();
@@ -3070,8 +3076,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     for (auto& fixture : fixtures) planBytes += std::filesystem::file_size(planEntryPath(fixture));
     std::cout << fixtures.size() << " plan entries, " << planBytes / fixtures.size() << " bytes per entry on average\n";
     const auto run = [&](const char* mode) {
-        const std::string command = "\"" + std::string(self) + "\" " + mode;
-        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+        require(RunSelf(self, mode) == 0, std::string("the process ") + mode + " failed");
     };
     run("--load-plan");
     run("--load-plan-off");
@@ -3090,7 +3095,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     run("--load-plan-switch");
 }
 
-void verifyDefaultDirectory(const char* self) {
+void verifyDefaultDirectory(const std::filesystem::path& self) {
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", "");
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "1");
     require(ShaderRecompiler::ShaderCacheDirectory().empty(), "ANYPS5_NO_SHADER_CACHE=1 did not disable the cache");
@@ -3181,7 +3186,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
-        verifyDefaultDirectory(argv[0]);
+        verifyDefaultDirectory(ArgumentPath(argv, 0));
         setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
         setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
         verifyNanSpeculationKey();
@@ -3203,12 +3208,12 @@ int main(int argc, char** argv) {
         verifySpecializedSwitch(argv[0]);
         verifyPersist();
         verifyReleaseMapped();
-        verifyAcrossProcesses<ComputeRequest>(argv[0], "--load");
-        verifyAcrossProcesses<BufferTableRequest>(argv[0], "--load-buffer-table");
-        verifyPrebuiltAcrossProcesses(argv[0], directory);
-        verifyPlanAcrossProcesses(argv[0]);
+        verifyAcrossProcesses<ComputeRequest>(ArgumentPath(argv, 0), "--load");
+        verifyAcrossProcesses<BufferTableRequest>(ArgumentPath(argv, 0), "--load-buffer-table");
+        verifyPrebuiltAcrossProcesses(ArgumentPath(argv, 0), directory);
+        verifyPlanAcrossProcesses(ArgumentPath(argv, 0));
         verifyEmissionFailureMemo();
-        verifyFailureMemoSwitch(argv[0]);
+        verifyFailureMemoSwitch(ArgumentPath(argv, 0));
         verifyInvocationIsolation();
         verifyBufferAlignmentSpecialization();
         verifyBindingPlanSelection();

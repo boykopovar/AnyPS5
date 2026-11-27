@@ -7747,13 +7747,18 @@ bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) con
     return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
 }
 
-void ShaderResources::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const {
+void ShaderResources::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out, bool dataWritten) const {
     out.clear();
     guestMemory.RunAccesses(out);
     if (usesBda) out.push_back({0, std::numeric_limits<std::uint64_t>::max(), Recorder::RunAccessWritten});
     for (const auto& [image, written] : StorageImages()) {
         const auto handle = reinterpret_cast<std::uint64_t>(image);
         out.push_back({handle, handle + 1, Recorder::RunAccessImage | (written ? Recorder::RunAccessWritten : 0u)});
+    }
+    for (const auto& allocation : allocations) {
+        if (allocation.guest || allocation.buffer == nullptr) continue;
+        const auto handle = reinterpret_cast<std::uint64_t>(allocation.buffer->Handle());
+        out.push_back({handle, handle + 1, Recorder::RunAccessBuffer | (dataWritten ? Recorder::RunAccessWritten : 0u)});
     }
 }
 

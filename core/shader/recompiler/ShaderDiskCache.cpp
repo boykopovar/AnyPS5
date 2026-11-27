@@ -1699,16 +1699,7 @@ private:
                 if (extension == ".pack") packPaths.push_back(entry);
                 if (extension == ".bin" && entry.stem().string().size() == 32) loose = true;
             };
-#ifdef _WIN32
-            WIN32_FIND_DATAW data{};
-            const auto handle = FindFirstFileW((path / L"*").c_str(), &data);
-            if (handle != INVALID_HANDLE_VALUE) {
-                struct Search { HANDLE handle; ~Search() { FindClose(handle); } } search{handle};
-                do { collect(path / data.cFileName); } while (FindNextFileW(handle, &data));
-            }
-#else
-            for (std::filesystem::directory_iterator it(path, error), end; !error && it != end; it.increment(error)) collect(it->path());
-#endif
+            File::ForEachDirectoryEntry(path, error, collect);
             std::sort(packPaths.begin(), packPaths.end());
             for (const auto& item : packPaths) addPack(item);
             if (loose) looseDirectories.push_back(path);
@@ -1895,35 +1886,43 @@ private:
 
     void housekeeping() {
         std::error_code error;
-        std::filesystem::create_directories(directory, error);
-        const auto stamp = directory / "last-used";
+#ifdef _WIN32
+        const auto cacheRoot = NativeCachePath_nid_no_patch(root, error);
+        if (error) return;
+#else
+        const auto& cacheRoot = root;
+#endif
+        const auto active = cacheRoot / directory.filename();
+        std::filesystem::create_directories(active, error);
+#ifdef _WIN32
+        const auto attributes = GetFileAttributesW(active.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return;
+#endif
+        const auto stamp = active / "last-used";
         std::ofstream(stamp, std::ios::binary | std::ios::trunc).close();
         refreshWriteTime(stamp);
-#ifdef _WIN32
-        auto nativeRoot = root;
-        nativeRoot.make_preferred();
-        if (nativeRoot.native().starts_with(L"\\\\?\\") || nativeRoot.native().starts_with(L"\\\\.\\")) return;
-#endif
         const auto now = std::chrono::system_clock::now();
-        for (std::filesystem::directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {
-            const auto name = it->path().filename().string();
-            if (it->path() == directory || name.size() != 16 || name.find_first_not_of("0123456789abcdef") != std::string::npos || !it->is_directory(error)) continue;
-            auto used = lastWriteTime(it->path() / "last-used");
-            if (!used) used = lastWriteTime(it->path());
+        const auto hexDigits = std::filesystem::path("0123456789abcdef").native();
+        File::ForEachDirectoryEntry(cacheRoot, error, [&](const auto& entry) {
+            const auto name = entry.filename().native();
+            std::error_code entryError;
+            if (entry == active || name.size() != 16 || name.find_first_not_of(hexDigits) != name.npos ||
+                !std::filesystem::is_directory(entry, entryError)) return;
+            auto used = lastWriteTime(entry / "last-used");
+            if (!used) used = lastWriteTime(entry);
             if (used && now - *used > std::chrono::hours(24 * 14)) {
-                std::error_code removeError;
-                RemoveTree(it->path(), removeError);
+                RemoveTree(entry, entryError);
             }
-        }
-        error.clear();
-        for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error)) {
-            if (it->path().filename().string().find(".tmp.") == std::string::npos) continue;
-            const auto written = lastWriteTime(it->path());
+        });
+        const auto temporaryMarker = std::filesystem::path(".tmp.").native();
+        File::ForEachDirectoryEntry(active, error, [&](const auto& entry) {
+            if (entry.filename().native().find(temporaryMarker) == std::filesystem::path::string_type::npos) return;
+            const auto written = lastWriteTime(entry);
             if (written && now - *written > std::chrono::hours(1)) {
                 std::error_code removeError;
-                std::filesystem::remove(it->path(), removeError);
+                std::filesystem::remove(entry, removeError);
             }
-        }
+        });
     }
 
     void report(bool force) {

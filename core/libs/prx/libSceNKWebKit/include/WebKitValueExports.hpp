@@ -563,6 +563,8 @@ const void* APS5_VABI WKSecurityOriginCopyHost(const void* value);
 std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* value);
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* value);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
+const void* APS5_VABI WKSecurityOriginCopyDatabaseIdentifier(const void* origin);
+const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* databaseIdentifier);
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
 const void* APS5_VABI WKSerializedScriptValueCreate(NKWebKit::JSContextRef context, NKWebKit::JSValueRef value, NKWebKit::JSValueRef* exception);
 NKWebKit::JSValueRef APS5_VABI WKSerializedScriptValueDeserialize(const void* serializedScriptValueRef, NKWebKit::JSContextRef context, NKWebKit::JSValueRef* exception);

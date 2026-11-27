@@ -1,5 +1,7 @@
 #include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 #include "FreeTypeFontFixture.hpp"
+#include "Type1Fixture.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "FontFixture.hpp"
 #include "Type1Fixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
@@ -470,6 +472,54 @@ int APS5_VABI GuestCubic(const GuestVector* first, const GuestVector* second, co
     return Add(user, 4, *first, *second, *to);
 }
 
+struct TrackKerningExports {
+    decltype(&FT_Get_Track_Kerning_nid_postfix) query;
+    decltype(&FT_Init_FreeType_nid_postfix) init;
+    decltype(&FT_Done_FreeType_nid_postfix) finish;
+    decltype(&FT_New_Memory_Face_nid_postfix) newMemoryFace;
+    decltype(&FT_Done_Face_nid_postfix) doneFace;
+};
+
+void TrackKerning(const TrackKerningExports& api) {
+    const auto font = Type1Fixture::Font();
+    FreeType::GuestLibrary* library = nullptr;
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(api.init(&library) == 0, "initialize guest track kerning library");
+    Require(api.newMemoryFace(library, font.data(), font.size(), 0, &face) == 0, "open guest Type 1 face");
+
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(FT_Init_FreeType(&nativeLibrary) == 0, "initialize native track kerning library");
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0,
+            "open native Type 1 face");
+
+    std::string afm = Type1Fixture::Afm();
+    afm.insert(afm.find("StartKernPairs"), "StartTrackKern 1\nTrackKern -1 8 -2 16 2\nEndTrackKern\n");
+    FT_Open_Args args{};
+    args.flags = FT_OPEN_MEMORY;
+    args.memory_base = reinterpret_cast<const FT_Byte*>(afm.data());
+    args.memory_size = static_cast<FT_Long>(afm.size());
+    Require(FT_Attach_Stream(static_cast<FreeType::GuestFace*>(face->internal)->host, &args) == 0, "attach guest AFM track");
+    Require(FT_Attach_Stream(nativeFace, &args) == 0, "attach native AFM track");
+
+    constexpr std::int64_t sentinel = 0x123456789a;
+    for (const FT_Fixed pointSize : {6L << 16, 10L << 16, 12L << 16, 18L << 16}) {
+        FT_Fixed expected = 37;
+        std::int64_t actual = sentinel;
+        Require(FT_Get_Track_Kerning(nativeFace, pointSize, -1, &expected) == 0 && expected != 37, "compute native track kerning");
+        Require(api.query(face, pointSize, -1, &actual) == 0 && actual == expected, "match native track kerning");
+    }
+    FT_Fixed nativeMissing = 37;
+    std::int64_t guestMissing = sentinel;
+    Require(FT_Get_Track_Kerning(nativeFace, 12 << 16, 1, &nativeMissing) == 0 && nativeMissing == 37, "native missing track preserves output");
+    Require(api.query(face, 12 << 16, 1, &guestMissing) == 0 && guestMissing == sentinel, "guest missing track preserves output");
+    Require(api.query(nullptr, 12 << 16, -1, &guestMissing) == FT_Err_Invalid_Face_Handle && guestMissing == sentinel,
+            "invalid face preserves output");
+
+    Require(api.doneFace(face) == 0 && api.finish(library) == 0, "release guest track kerning library");
+    Require(FT_Done_Face(nativeFace) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release native track kerning library");
+}
+
 void Trigonometry() {
     std::mt19937 random(0x0F7u);
     std::uniform_int_distribution<std::int32_t> angles(INT32_MIN, INT32_MAX);
@@ -892,6 +942,19 @@ int main(int argc, char** argv) {
     for (auto setter : {variations.mmBlend, variations.mmDesign, variations.varBlend, variations.varDesign})
         Require(setter(nullptr, 0, nullptr) == FT_Err_Invalid_Face_Handle, "reject missing variation face");
     if (forwards) Variations();
+    TrackKerningExports track{};
+#ifdef _WIN32
+    constexpr const char* trackSymbol = "FT_Get_Track_KerningForward_nid_no_patch";
+#else
+    constexpr const char* trackSymbol = "FT_Get_Track_Kerning_nid_postfix";
+#endif
+    Require(dependency != nullptr, "locate the guest FreeType dependency for track kerning");
+    Resolve(track.query, library, patched, "e2KoMPOAdZg", trackSymbol);
+    Resolve(track.init, dependency, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
+    Resolve(track.finish, dependency, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
+    Resolve(track.newMemoryFace, dependency, patched, "40Wa2neSLM0", "FT_New_Memory_Face_nid_postfix");
+    Resolve(track.doneFace, dependency, patched, "OgFczHko0w8", "FT_Done_Face_nid_postfix");
+    TrackKerning(track);
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");

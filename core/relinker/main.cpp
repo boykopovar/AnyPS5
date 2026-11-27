@@ -485,7 +485,10 @@ int Run(const int argc, char* argv[]) {
             return 0;
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        if (args.windowsDiagnostics) {
+            if (!guestArtifacts.empty()) std::filesystem::create_directories(outputDirectory);
+            fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        }
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;
@@ -526,7 +529,8 @@ int Run(const int argc, char* argv[]) {
             std::replace(relative.begin(), relative.end(), '\\', '/');
             modulePaths.push_back(std::move(relative));
         }
-        Cli::RuntimeLayout::Print(std::cout, Io::Utf8Path(Io::NativePath(absPath).filename()), modulePaths, extraPaths);
+        const bool includeBundledLibraries = Cli::RuntimeLayout::IncludesBundledLibraries(args.runPath, args.toWindows);
+        Cli::RuntimeLayout::Print(std::cout, Io::Utf8Path(Io::NativePath(absPath).filename()), modulePaths, extraPaths, includeBundledLibraries);
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);
