@@ -1,6 +1,6 @@
 # Run report
 
-`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](../run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](../run-report-fixtures/) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
+`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](https://github.com/boykopovar/AnyPS5/blob/main/docs/run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](https://github.com/boykopovar/AnyPS5/tree/main/docs/run-report-fixtures) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
 
 Print a readable summary of a report with:
 
@@ -10,6 +10,8 @@ python3 tools/run_report_summary.py path/to/anyps5-report.json
 
 The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The tool writes UTF-8 to stdout. It reads the local report and does not upload it.
 
+The command exits with 0 when it prints a summary, even if the run recorded in the report failed. It exits with 2 when it cannot read or interpret the report. Use the summary's `Result` line or the JSON report's `run.exit` field to check how the game ended.
+
 Windows PowerShell 5.1 writes UTF-16LE by default when you redirect a command with `>`. To save the summary as UTF-8, let `cmd` redirect the output.
 
 ```powershell
@@ -17,6 +19,20 @@ cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > sum
 ```
 
 The file stays on your machine. Nothing is uploaded unless you share it.
+
+## Triage multiple reports
+
+Pass the report files to `--triage` to print a JSON overview without starting a game:
+
+```sh
+python3 tools/run_report_summary.py --triage run-a/anyps5-report.json run-b/anyps5-report.json
+```
+
+The version 1 `anyps5-run-triage` output includes the input count, unique runs, duplicate reports, and groups by title ID, game content version, build commit, release and modification state. An unknown value stays `null`. These groups describe the supplied reports. They do not establish that the runs used identical hardware or settings.
+
+Each group counts recorded exit types, stages and stop reasons. Its missing-function list counts the runs that observed each function and the total recorded calls. Missing-function coverage separates complete lists, partial lists and runs that did not collect the data. A recovered or incomplete run, or a run that omitted missing functions, has partial coverage when collection was on. Only a complete empty list is counted in `complete_without_observations`. An absent report contributes no evidence.
+
+Copies with the same run ID and matching triage data count once. If two reports disagree about the triage data for a run, the command exits with 2 and identifies the conflicting input by its position. A report it cannot read or interpret also causes exit 2 without a partial summary. The overview omits run IDs, file paths, system details and free-form stop messages.
 
 ## Switching it off
 
@@ -36,7 +52,7 @@ The report is written once, when the run ends through the guest's `exit` or `_ex
 
 ## What `anyps5.modified` means
 
-`false` means the build's git tree had no change to tracked files, no untracked files that git does not ignore, and no change inside a submodule. `true` means any of those. `null` means the build did not come from a git checkout. A mixed set of libraries from different builds is not detected.
+`true` means the build's Git tree had tracked changes, unignored untracked files, or a modified submodule. A registered library built from a different commit or a modified tree also makes it `true` when library provenance is checked. `false` means the build and all checked libraries were clean and matched. The value is `null` when the build's Git state is unknown, or when an otherwise clean build can't verify a required library.
 
 ## Unknown is null
 
@@ -51,11 +67,11 @@ Every text value in the report goes through the same filter for user names, host
 | Field | Meaning |
 |---|---|
 | `stage` | The furthest milestone the runtime observed. `unknown` is the starting value. The runtime never claims `converts`: conversion happens in the converter. |
-| `loads` | The runtime reached the game's entry point. This does not prove every import resolved, because imports can load later. |
-| `starts` | Game code was entered on its thread. |
+| `loads` | The entry bridge reached its startup handoff. On Windows this is after loading the startup libraries and resolving required eager imports. Imports can still load later. |
+| `starts` | The entry bridge reached the call to the game's main entry point. |
 | `first-draw` | A real game draw or dispatch was submitted to the GPU. |
 | `presents` | The GPU accepted a game frame for display. This does not prove the frame was visible or not black. |
-| `milestones` | Seconds since start. Milestones not reached are left out. |
+| `milestones` | Seconds since start for each observed milestone. |
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
@@ -64,9 +80,9 @@ Every text value in the report goes through the same filter for user names, host
 
 ## Run recipe
 
-Next to `anyps5-report.json` the runtime writes `anyps5-recipe.json`, a small JSON file that records how the run was started, so a report can be reproduced. It holds `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), `environment` (only the `ANYPS5_*` variables that are set), and `configFiles` (the file names of configuration files the run was given, for example the input mapping, without their folders).
+After writing `anyps5-report.json`, the runtime tries to write `anyps5-recipe.json` beside it. The recipe records `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), and `environment` (set `ANYPS5_*` variables that pass the name filter). `configFiles` records the filename from `ANYPS5_INPUT_CONFIG` when supplied. The runtime does not discover default input mappings or per-title profiles for this list.
 
-Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. The recipe is written only when the report is written; the same rules about killed and crashed runs apply.
+Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. If writing the recipe fails, the report is still available.
 
 ## Stop
 
@@ -81,14 +97,14 @@ Values pass through the same text filter as the report, so a path or a user name
 | System | `loaded`, `started` | `firstDraw`, `firstPresent` | `stage`, `framesPresented`, frame rate |
 |---|---|---|---|
 | Linux | never recorded | recorded | recorded |
-| Windows | never recorded | recorded | recorded |
+| Windows | recorded with a recent relinker and a runtime that supports the report hook | recorded | recorded |
 | macOS | recorded | recorded | recorded |
 
-`coverage.milestones` is true on every system; it means the stage, the milestones the system records and the frame counts were collected. Read a missing `loaded` or `started` on Linux or Windows as "this system does not record it", never as "not reached": a report with `stage: first-draw` and no `loaded` is a run that drew. The report says only what was observed: any other milestone that is missing may mean the run did not reach it, and it may mean the system does not record it, so read the table before you read a gap. `firstDraw` in particular is not set by compute work that is submitted and waited for on its own.
+`coverage.milestones` is true on every system; it means the stage, the milestones the system records and the frame counts were collected. A missing milestone can mean the run ended earlier or that the system or conversion lacks support for it. Linux and older Windows conversions can reach `first-draw` or `presents` with no `loaded` or `started`. `firstDraw` in particular is not set by compute work that is submitted and waited for on its own.
 
 ## What the runtime counts
 
-- `milestones.firstDraw` is set when a batch that carries a recorded guest draw or dispatch has been accepted by the GPU queue. A guest draw counts in either kind of batch the runtime submits; a guest compute dispatch counts only when it is recorded into the runtime's main batch (a dispatch that is submitted and waited for on its own does not set the milestone). `firstPresent` and `framesPresented` count guest display buffers that the swapchain queue accepted (a suboptimal one too); internal clears, test pixels and rejected presents are not counted. `loaded` and `started` come from the entry bridge of the converted executable; only the macOS bridge reports them so far, so on other systems those two are left out.
+- `milestones.firstDraw` is set when a batch that carries a recorded guest draw or dispatch has been accepted by the GPU queue. A guest draw counts in either kind of batch the runtime submits; a guest compute dispatch counts only when it is recorded into the runtime's main batch (a dispatch that is submitted and waited for on its own does not set the milestone). `firstPresent` and `framesPresented` count guest display buffers that the swapchain queue accepted (a suboptimal one too); internal clears, test pixels and rejected presents are not counted. On Windows, `loaded` is recorded before running guest startup initializers or preparing the main entry's arguments. `started` is recorded immediately before passing control to that entry.
 - `missing.functions` counts calls to a function the runtime does not implement. The library is the folder the stub is compiled in; a call from older code that does not say where it is made has a null library. The name is the exported name without the runtime's suffix; a name that does not fit the schema is not listed and is counted in `truncated.functions`.
 - `shaders.compiled` and `failed` count compilations where they happen (once per variant); reuse of a variant, in memory or from the disk cache, counts as a cache hit.
 - `shaders.compileMs` is the total wall time spent in those compilations, failed ones included, in milliseconds. `shaders.slowCompiles` counts compilations that took more than 100 ms. Both are left out when shader coverage is off. These are measured on the machine that ran the game, so compare them only on the same machine.
@@ -107,7 +123,7 @@ Values pass through the same text filter as the report, so a path or a user name
 - `coverage` says which sections the runtime collected for this run. A list can be empty because nothing happened or because this build doesn't collect it. With a section's coverage off, don't read its empty list as "nothing missing".
 - `truncated` counts the entries dropped from each capped list, so a capped list never looks complete.
 
-Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. When it would be larger, the runtime drops the lowest-ranked list entries first, then optional descriptions, and never the build, game or stop details.
+Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. If it would be larger, the runtime removes the last entry from the list with the most entries and increments that list's `truncated` count. This repeats until the report fits. If it still exceeds the limit with empty lists, the runtime does not write the report.
 
 ## Privacy
 

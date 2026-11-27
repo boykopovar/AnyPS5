@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -213,17 +214,6 @@ const Mode Modes[ModeCount] = {
     {"M2", ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}},
     {"M3", ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false}},
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 bool IsNan16(std::uint32_t bits) {
     return (bits & 0x7fffu) > 0x7c00u;

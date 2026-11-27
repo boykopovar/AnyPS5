@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -40,17 +41,6 @@ constexpr std::uint32_t ExpectedInfinity[2][Columns] = {
     {0x0000fc00u, 0x0000fc00u, 0x0000f4e2u, 0x0000f8e2u},
 };
 constexpr const char* Names[Columns] = {"v_mul_f16 omod:mul:2", "v_mul_f16 omod:mul:4", "v_mul_f16 omod:div:2", "v_mul_f16"};
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {

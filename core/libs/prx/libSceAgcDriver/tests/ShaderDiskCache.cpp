@@ -12,6 +12,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -60,6 +61,14 @@ void setEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+void clearEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -455,12 +464,16 @@ void verifyResultRoundTrip() {
     requireSameResult(result, decoded, "result round trip");
     require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
     auto memoized = result;
-    memoized.drawKeyMemo.words.store(std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u}));
+    const auto storedMemo = std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u});
+    memoized.drawKeyMemo.words.store(storedMemo);
+    memoized.drawKeyMemo.raw.store(storedMemo.get());
     std::vector<std::byte> memoizedBytes;
     ShaderDiskCache::EncodeResult(memoized, memoizedBytes);
     require(memoizedBytes == bytes, "the draw key memo was stored");
     RecompileResult memoizedDecoded;
-    require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load(), "a decoded result has a draw key memo");
+    memoizedDecoded.drawKeyMemo.words.store(storedMemo);
+    memoizedDecoded.drawKeyMemo.raw.store(storedMemo.get());
+    require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load() && memoizedDecoded.drawKeyMemo.raw.load() == nullptr, "a decoded result has a draw key memo");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
         require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
@@ -760,7 +773,15 @@ int runPrebuiltLoadingProcess() {
     return 0;
 }
 
-void verifyPrebuiltAcrossProcesses(const char* self, const std::filesystem::path& directory) {
+int RunSelf(const std::filesystem::path& self, const char* mode) {
+#ifdef _WIN32
+    return _wsystem((L"\"" + self.native() + L"\" " + std::filesystem::path(mode).native()).c_str());
+#else
+    return std::system(("\"" + self.string() + "\" " + mode).c_str());
+#endif
+}
+
+void verifyPrebuiltAcrossProcesses(const std::filesystem::path& self, const std::filesystem::path& directory) {
     using namespace ShaderRecompiler::ShaderDiskCache;
     SampleRequest sample = prebuiltSample();
     const auto prebuilt = directory / "prebuilt";
@@ -775,8 +796,7 @@ void verifyPrebuiltAcrossProcesses(const char* self, const std::filesystem::path
     auto corruptEntry = EncodeEntry(corruptKey, sampleVariant());
     corruptEntry.resize(corruptEntry.size() / 2);
     require(WriteFileAtomically(prebuilt / EntryName(corruptKey), corruptEntry), "cannot write the corrupt loose prebuilt entry");
-    const std::string command = "\"" + std::string(self) + "\" --load-prebuilt";
-    require(std::system(command.c_str()) == 0, "the prebuilt loading process failed");
+    require(RunSelf(self, "--load-prebuilt") == 0, "the prebuilt loading process failed");
 }
 
 void verifyPrebuiltDiscovery(std::string_view layout, bool seed) {
@@ -1225,6 +1245,66 @@ void verifyStore() {
     require(ShaderDiskCache::Load(key, loaded), "a rewritten entry does not load");
 }
 
+void verifySpecializedStore() {
+    require(ShaderDiskCache::Enabled(), "the disk cache is not enabled");
+    const std::vector<std::byte> key{std::byte{0x73}, std::byte{0x70}, std::byte{0x65}, std::byte{0x63}, std::byte{0x01}};
+    auto other = key;
+    other.back() = std::byte{0x02};
+    const std::vector<std::uint32_t> words{0x07230203u, 0x00010600u, 0u, 16u, 0u, 0x00020011u, 1u};
+    const auto before = ShaderDiskCache::Totals();
+    std::vector<std::uint32_t> loaded;
+    require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a specialized module loads before it was stored");
+    ShaderDiskCache::StoreSpecialized(key, words);
+    ShaderDiskCache::Flush();
+    require(ShaderDiskCache::Totals().specializedWrites == before.specializedWrites + 1, "the store did not write the specialized module");
+    require(ShaderDiskCache::LoadSpecialized(key, loaded) && loaded == words, "a stored specialized module does not load back unchanged");
+    require(!ShaderDiskCache::LoadSpecialized(other, loaded), "another key loads the stored specialized module");
+    const auto after = ShaderDiskCache::Totals();
+    require(after.specializedHits == before.specializedHits + 1 && after.specializedMisses == before.specializedMisses + 2, "the specialized loads were not counted");
+    require(after.writes == before.writes && after.planWrites == before.planWrites, "a specialized module was counted as another entry kind");
+
+    const auto path = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
+    std::vector<std::byte> file;
+    require(ReadWholeFile(path, file), "cannot read the specialized entry back");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) return;
+#endif
+    require(WriteFileAtomically(path, std::span(file).first(file.size() - 2)), "cannot truncate the specialized entry");
+    require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a truncated specialized entry loads");
+    auto corrupt = file;
+    corrupt[corrupt.size() - 3] ^= std::byte{0x40};
+    require(WriteFileAtomically(path, corrupt), "cannot damage the specialized entry");
+    require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a corrupt specialized entry loads");
+    require(ShaderDiskCache::Totals().specializedLoadFailures == after.specializedLoadFailures + 2, "the rejected specialized entries were not counted");
+}
+
+const std::vector<std::byte> SwitchedSpecializedKey{std::byte{0x73}, std::byte{0x70}, std::byte{0x65}, std::byte{0x63}, std::byte{0x03}};
+const std::vector<std::uint32_t> SwitchedSpecializedWords{0x07230203u, 0x00010600u, 0u, 16u, 0u, 0x00020011u, 2u};
+
+int runSwitchedSpecialized() {
+    const auto before = ShaderDiskCache::Totals();
+    std::vector<std::uint32_t> loaded;
+    require(!ShaderDiskCache::LoadSpecialized(SwitchedSpecializedKey, loaded), "a specialized module stored without APS5_NO_NAN_PAYLOAD_ELIMINATION loads with it");
+    const auto after = ShaderDiskCache::Totals();
+    require(after.specializedMisses == before.specializedMisses + 1 && after.specializedLoadFailures == before.specializedLoadFailures, "the switched lookup was not a miss");
+    ShaderDiskCache::StoreSpecialized(SwitchedSpecializedKey, std::vector<std::uint32_t>(SwitchedSpecializedWords.begin(), SwitchedSpecializedWords.end() - 1));
+    ShaderDiskCache::Flush();
+    std::cout << "APS5_NO_NAN_PAYLOAD_ELIMINATION=1 keeps its own specialized modules\n";
+    return 0;
+}
+
+void verifySpecializedSwitch(const char* self) {
+    ShaderDiskCache::StoreSpecialized(SwitchedSpecializedKey, SwitchedSpecializedWords);
+    ShaderDiskCache::Flush();
+    setEnvironment("APS5_NO_NAN_PAYLOAD_ELIMINATION", "1");
+    const std::string command = "\"" + std::string(self) + "\" --specialized-switch";
+    const auto status = std::system(command.c_str());
+    clearEnvironment("APS5_NO_NAN_PAYLOAD_ELIMINATION");
+    require(status == 0, "the process with APS5_NO_NAN_PAYLOAD_ELIMINATION=1 failed");
+    std::vector<std::uint32_t> loaded;
+    require(ShaderDiskCache::LoadSpecialized(SwitchedSpecializedKey, loaded) && loaded == SwitchedSpecializedWords, "a run with APS5_NO_NAN_PAYLOAD_ELIMINATION=1 replaced the default specialized module");
+}
+
 void verifyPersist() {
     SampleRequest sample;
     const auto key = sample.Key();
@@ -1372,7 +1452,7 @@ int runLoadingProcess() {
     return 0;
 }
 
-void verifyAcrossProcesses(const char* self) {
+void verifyAcrossProcesses(const std::filesystem::path& self) {
     ComputeRequest request(true);
     const auto before = ShaderDiskCache::Totals();
     const auto compiled = Recompile(request.request);
@@ -1380,8 +1460,7 @@ void verifyAcrossProcesses(const char* self) {
     const auto after = ShaderDiskCache::Totals();
     require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
-    const std::string command = "\"" + std::string(self) + "\" --load";
-    require(std::system(command.c_str()) == 0, "the loading process failed");
+    require(RunSelf(self, "--load") == 0, "the loading process failed");
 }
 
 struct ClockRequest {
@@ -1471,10 +1550,9 @@ int runWithoutFailureMemo() {
     return 0;
 }
 
-void verifyFailureMemoSwitch(const char* self) {
+void verifyFailureMemoSwitch(const std::filesystem::path& self) {
     setEnvironment("APS5_NO_FAILURE_MEMO", "1");
-    const std::string command = "\"" + std::string(self) + "\" --no-failure-memo";
-    require(std::system(command.c_str()) == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
+    require(RunSelf(self, "--no-failure-memo") == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
 }
 
 void verifyInvocationIsolation() {
@@ -2949,7 +3027,7 @@ int runPlanLoadingProcess(std::string_view mode) {
     return 0;
 }
 
-void verifyPlanAcrossProcesses(const char* self) {
+void verifyPlanAcrossProcesses(const std::filesystem::path& self) {
     auto fixtures = planFixtures();
     const auto builds = FrontEndBuilds();
     const auto before = ShaderDiskCache::Totals();
@@ -2974,8 +3052,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     for (auto& fixture : fixtures) planBytes += std::filesystem::file_size(planEntryPath(fixture));
     std::cout << fixtures.size() << " plan entries, " << planBytes / fixtures.size() << " bytes per entry on average\n";
     const auto run = [&](const char* mode) {
-        const std::string command = "\"" + std::string(self) + "\" " + mode;
-        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+        require(RunSelf(self, mode) == 0, std::string("the process ") + mode + " failed");
     };
     run("--load-plan");
     run("--load-plan-off");
@@ -2994,7 +3071,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     run("--load-plan-switch");
 }
 
-void verifyDefaultDirectory(const char* self) {
+void verifyDefaultDirectory(const std::filesystem::path& self) {
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", "");
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "1");
     require(ShaderRecompiler::ShaderCacheDirectory().empty(), "ANYPS5_NO_SHADER_CACHE=1 did not disable the cache");
@@ -3005,6 +3082,31 @@ void verifyDefaultDirectory(const char* self) {
     require(std::filesystem::equivalent(directory.parent_path(), std::filesystem::absolute(self).parent_path(), error) && !error, "the default cache directory is not beside the executable");
 }
 
+}
+
+void verifyNanSpeculationKey() {
+    NanSpeculationConfig base;
+    base.enabled = true;
+    const auto version = [](const NanSpeculationConfig& config) { return ShaderDiskCache::SourceVersionFor(config, true); };
+    NanSpeculationConfig computeMinimum = base;
+    computeMinimum.stageMinimum[0] = 128u;
+    NanSpeculationConfig vertexMinimum = base;
+    vertexMinimum.stageMinimum[1] = 64u;
+    require(version(computeMinimum) != version(vertexMinimum), "a compute minimum of 128 and a vertex minimum of 64 share a cache version");
+    require(version(computeMinimum) != version(base) && version(vertexMinimum) != version(base), "a stage minimum does not change the cache version");
+    NanSpeculationConfig density = base;
+    density.minimumFastOps = 4u;
+    NanSpeculationConfig fastOps = base;
+    fastOps.minimumDensityPercent = 4u;
+    require(version(density) != version(fastOps), "a minimum fast-op count and a minimum density share a cache version");
+    NanSpeculationConfig narrow = base;
+    narrow.maximumVectorInstructions = 128u;
+    NanSpeculationConfig floor = base;
+    floor.minimumVectorInstructions = 128u;
+    floor.stageMinimum.fill(128u);
+    require(version(narrow) != version(floor), "a lower and an upper region bound share a cache version");
+    NanSpeculationConfig off;
+    require(ShaderDiskCache::SourceVersionFor(off, true) != version(base), "enabling speculation does not change the cache version");
 }
 
 int main(int argc, char** argv) {
@@ -3055,12 +3157,14 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--load-prebuilt") return runPrebuiltLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
+        if (argc == 2 && std::string_view(argv[1]) == "--specialized-switch") return runSwitchedSpecialized();
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
-        verifyDefaultDirectory(argv[0]);
+        verifyDefaultDirectory(ArgumentPath(argv, 0));
         setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
         setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
+        verifyNanSpeculationKey();
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
         verifyElementFlags();
@@ -3075,13 +3179,15 @@ int main(int argc, char** argv) {
         verifyPlanKey();
         verifySharedPlans();
         verifyStore();
+        verifySpecializedStore();
+        verifySpecializedSwitch(argv[0]);
         verifyPersist();
         verifyReleaseMapped();
-        verifyAcrossProcesses(argv[0]);
-        verifyPrebuiltAcrossProcesses(argv[0], directory);
-        verifyPlanAcrossProcesses(argv[0]);
+        verifyAcrossProcesses(ArgumentPath(argv, 0));
+        verifyPrebuiltAcrossProcesses(ArgumentPath(argv, 0), directory);
+        verifyPlanAcrossProcesses(ArgumentPath(argv, 0));
         verifyEmissionFailureMemo();
-        verifyFailureMemoSwitch(argv[0]);
+        verifyFailureMemoSwitch(ArgumentPath(argv, 0));
         verifyInvocationIsolation();
         verifyBufferAlignmentSpecialization();
         verifyBindingPlanSelection();

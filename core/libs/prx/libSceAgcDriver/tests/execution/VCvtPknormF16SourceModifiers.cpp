@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -94,17 +95,6 @@ constexpr std::uint32_t Expected[VariantCount][Results][RowCount] = {
 };
 
 constexpr const char* Opcodes[Results] = {"v_cvt_pknorm_i16_f16_e64 v10, ", "v_cvt_pknorm_u16_f16_e64 v11, "};
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode mode, const Variant& variant) {
     const std::uint32_t first = 0xd7120000u | variant.opSel << 11u | variant.abs << 8u | 10u;

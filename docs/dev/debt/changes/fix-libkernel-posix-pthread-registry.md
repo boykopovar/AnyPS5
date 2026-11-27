@@ -1,0 +1,13 @@
+# libkernel
+
+## change [pthread_getname_np]
+
+- [pthread_getname_np](../../../core/libs/prx/libkernel/Pthread/Posix/Thread.cpp) (libkernel) - a thread that has already been joined returns `ESRCH` (3) and its output buffer is left untouched, as measured on a PS5 (firmware 13.60) by the author of this entry; since [#4481](https://github.com/boykopovar/AnyPS5/pull/4481) the joined thread's object is retained, so the posix wrapper answers `ESRCH` for it instead of reading the retained name. A null name buffer is answered with `EFAULT` before that, an order the console table does not measure. The SCE sibling `scePthreadGetname` has no measured joined-thread behaviour on the console and still reads the retained object's name. The `_joined` check is now answered while the thread registry lock is held, so after a detached thread is released the wrapper answers `ESRCH` through the thread registry instead of reading freed storage, as the sibling exports do; that released-handle answer is not measured on the console (see the scePthreadJoin entry)
+
+## change [scePthreadGetschedparam, scePthreadSetschedparam]
+
+- [scePthreadGetschedparam, scePthreadSetschedparam](../../../core/libs/prx/libkernel/Pthread/Posix/Thread.cpp) (libkernel) - the policy and parameter are written, and the requested parameter read, through GuestCopyOut_nid_no_patch / GuestCopyIn_nid_no_patch; returning `SCE_KERNEL_ERROR_EFAULT` (0x8002000e) for unwritable or unreadable non-null pointers, as `pthread_getschedparam` and `pthread_setschedparam` return `EFAULT`, is a host-safety fallback, and console fault behaviour is unmeasured. A null pointer still returns `SCE_KERNEL_ERROR_EINVAL`. The policy is now read in `scePthreadGetschedparam` and stored in `scePthreadSetschedparam` while the thread registry lock is held, so after a detached thread is released the functions answer `SCE_KERNEL_ERROR_ESRCH` (0x80020003) through the thread registry instead of reading or writing freed storage, as the sibling exports do; that released-handle answer is not measured on the console (see the scePthreadJoin entry)
+
+## change [pthread_getcpuclockid]
+
+- [pthread_getcpuclockid](../../../core/libs/prx/libkernel/Pthread/Posix/Thread.cpp) (libkernel) - returns `EFAULT` (14) when passed an unwritable clockId destination pointer per FreeBSD libthr, unverified on a PS5. The clock id is now read while the thread registry lock is held, so after a detached thread is released it answers `ESRCH` (3) through the thread registry instead of reading freed storage, as the sibling exports do; that released-handle answer is not measured on the console (see the scePthreadJoin entry)

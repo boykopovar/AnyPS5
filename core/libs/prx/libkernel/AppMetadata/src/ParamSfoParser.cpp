@@ -41,6 +41,8 @@ ParsedParamJson parseParamSfo(const std::filesystem::path& paramSfoPath) {
     const std::uint64_t dataTable = readU32(bytes, 12);
     const std::uint64_t count = readU32(bytes, 16);
     if (count > (bytes.size() - HeaderSize) / EntrySize) throw std::runtime_error("param.sfo tables are out of bounds");
+    const std::uint64_t indexTableEnd = HeaderSize + count * EntrySize;
+    if (keyTable < indexTableEnd || keyTable > dataTable || dataTable > bytes.size()) throw std::runtime_error("param.sfo tables are out of bounds");
     std::set<std::string> keys;
     std::map<std::string, std::string> strings;
     std::map<std::string, std::int32_t> integers;
@@ -49,10 +51,12 @@ ParsedParamJson parseParamSfo(const std::filesystem::path& paramSfoPath) {
         const auto keyOffset = keyTable + readU16(bytes, entry);
         const auto format = readU16(bytes, entry + 2);
         const std::uint64_t length = readU32(bytes, entry + 4);
+        const std::uint64_t maxLength = readU32(bytes, entry + 8);
         const auto dataOffset = dataTable + readU32(bytes, entry + 12);
-        if (keyOffset >= bytes.size() || dataOffset > bytes.size() || length > bytes.size() - dataOffset) throw std::runtime_error("param.sfo entry is out of bounds");
-        const auto keyEnd = std::find(bytes.begin() + static_cast<std::ptrdiff_t>(keyOffset), bytes.end(), std::uint8_t{0});
-        if (keyEnd == bytes.end()) throw std::runtime_error("param.sfo key is not terminated");
+        if (keyOffset >= dataTable || dataOffset > bytes.size() || length > maxLength || maxLength > bytes.size() - dataOffset) throw std::runtime_error("param.sfo entry is out of bounds");
+        const auto keyTableEnd = bytes.begin() + static_cast<std::ptrdiff_t>(dataTable);
+        const auto keyEnd = std::find(bytes.begin() + static_cast<std::ptrdiff_t>(keyOffset), keyTableEnd, std::uint8_t{0});
+        if (keyEnd == keyTableEnd) throw std::runtime_error("param.sfo key is not terminated");
         const std::string key(bytes.begin() + static_cast<std::ptrdiff_t>(keyOffset), keyEnd);
         if (!keys.insert(key).second) throw std::runtime_error("param.sfo repeats " + key);
         if (format == SfoUtf8) {

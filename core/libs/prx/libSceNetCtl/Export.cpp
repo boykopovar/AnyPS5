@@ -35,6 +35,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include <fstream>
 #include <memory>
@@ -1019,6 +1020,10 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
 #endif
 }
 
+extern "C" void NetCtlHostTraffic_nid_no_patch(std::uint64_t* sent, std::uint64_t* received) {
+    HostTraffic(*sent, *received);
+}
+
 static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS], bool includeV6 = false) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     const bool primary = HasCallback(callbacks);
@@ -1154,27 +1159,44 @@ int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event == NET_CTL_EVENT_DISCONNECT_REQ_FINISHED || event == NET_CTL_EVENT_IPOBTAINED) return SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED;
-    const int val = 0;
-    if (!GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!GuestWritable_nid_no_patch(result, sizeof(*result))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event != NET_CTL_EVENT_DISCONNECTED) {
         throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
     }
+    const int val = 0;
+    if (!GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(state, sizeof(*state));
+    if (!write.Open() || !GuestWritable_nid_no_patch(state, sizeof(*state))) {
+        errno = savedErrno;
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    }
     const int val = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
-    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetStateV6(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(state, sizeof(*state));
+    if (!write.Open() || !GuestWritable_nid_no_patch(state, sizeof(*state))) {
+        errno = savedErrno;
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    }
     const int val = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
-    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1367,6 +1389,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackV6IpcInt(int callbackId) {
 
 int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
     if (!error_code) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!GuestWritable_nid_no_patch(error_code, sizeof(*error_code))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }

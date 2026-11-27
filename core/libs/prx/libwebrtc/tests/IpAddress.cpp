@@ -180,6 +180,23 @@ void TestNullAddress() {
     RequireInvalidArgument([] { _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(nullptr); });
 }
 
+void TestUnmappedAddress() {
+    const auto* unmapped = reinterpret_cast<const WebRtcIpAddress*>(0x10);
+    WebRtcIpAddress v4 = V4(10, 0, 0, 1);
+    WebRtcIpAddress result = V4(1, 2, 3, 4);
+    RequireInvalidArgument([&] { _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(reinterpret_cast<WebRtcIpAddress*>(0x10), &v4, 8); });
+    RequireInvalidArgument([&] { _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(&result, unmapped, 8); });
+    Require(Equal(result, V4(1, 2, 3, 4)));
+    RequireInvalidArgument([&] { _ZNK3rtc9IPAddress12ipv4_addressEv_nid_postfix(unmapped); });
+    RequireInvalidArgument([&] { _ZNK3rtc9IPAddress12ipv6_addressEv_nid_postfix(unmapped); });
+    RequireInvalidArgument([&] { _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(unmapped); });
+    RequireInvalidArgument([&] { _ZNK3rtc9IPAddresseqERKS0__nid_postfix(unmapped, &v4); });
+    RequireInvalidArgument([&] { _ZNK3rtc9IPAddresseqERKS0__nid_postfix(&v4, unmapped); });
+    RequireInvalidArgument([&] { _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(unmapped); });
+    Require(_ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(&result, &v4, 8) == &result);
+    Require(Equal(result, V4(10, 0, 0, 0)));
+}
+
 }
 
 int main() {
@@ -188,5 +205,6 @@ int main() {
     TestMaskBits();
     TestTruncate();
     TestNullAddress();
+    TestUnmappedAddress();
     return 0;
 }

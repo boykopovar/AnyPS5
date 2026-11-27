@@ -5856,7 +5856,7 @@ void DepthClipTests() {
     collapsedQueue.context[0x10f] = std::bit_cast<std::uint32_t>(-1.0f);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(collapsedQueue); }, "unsupported viewport transform");
     for (std::uint32_t bit = 0; bit < 32; ++bit) {
-        if (bit == 16 || bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
+        if (bit == 16 || bit == 17 || bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
         for (const auto linearBit : {0u, 0x01000000u}) {
             queue.context[0x204] = (1u << bit) | linearBit;
             expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
@@ -5869,12 +5869,28 @@ void DepthClipTests() {
     for (const auto clip : {0x00080000u, 0x00000000u, 0x0c080000u, 0x04000000u}) {
         queue.context[0x204] = clip;
         const auto plain = AgcDriver::Graphics::DecodeState(queue);
-        for (const auto extraBit : {0x00010000u, 0x01000000u, 0x01010000u}) {
+        for (const auto extraBit : {0x00010000u, 0x00020000u, 0x01000000u, 0x01010000u, 0x01030000u}) {
             queue.context[0x204] = clip | extraBit;
             const auto decoded = AgcDriver::Graphics::DecodeState(queue);
-            Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected CLIP_DISABLE or DX_LINEAR_ATTR_CLIP_ENA");
-            Require(decoded.negativeOneToOne == plain.negativeOneToOne && decoded.depthClamp == plain.depthClamp && decoded.viewport.minDepth == plain.viewport.minDepth && decoded.viewport.maxDepth == plain.viewport.maxDepth, "CLIP_DISABLE or DX_LINEAR_ATTR_CLIP_ENA changed the clip space, depth clamping or depth range");
+            Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected CLIP_DISABLE, UCP_CULL_ONLY_ENA or DX_LINEAR_ATTR_CLIP_ENA");
+            Require(decoded.negativeOneToOne == plain.negativeOneToOne && decoded.depthClamp == plain.depthClamp && decoded.viewport.minDepth == plain.viewport.minDepth && decoded.viewport.maxDepth == plain.viewport.maxDepth, "CLIP_DISABLE, UCP_CULL_ONLY_ENA or DX_LINEAR_ATTR_CLIP_ENA changed the clip space, depth clamping or depth range");
         }
+    }
+    queue.context[0x207] = 0x0100u;
+    queue.context[0x204] = 0x000a0000u;
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected UCP_CULL_ONLY_ENA with cull distances only");
+    for (std::uint32_t bit = 0; bit < 8; ++bit) {
+        queue.context[0x207] = 1u << bit;
+        queue.context[0x204] = 0x000a0000u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_CLIP_CNTL") != std::string::npos, "the precheck accepted UCP_CULL_ONLY_ENA with an enabled clip distance");
+    }
+    queue.context[0x207] = 0u;
+    for (std::uint32_t ucp = 0; ucp < 6; ++ucp) {
+        queue.context[0x204] = 0x000a0000u | (1u << ucp);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_CLIP_CNTL") != std::string::npos, "the precheck accepted UCP_CULL_ONLY_ENA with an enabled user clip plane");
     }
 }
 
@@ -13390,6 +13406,55 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 2, 1) == 80, "incorrect strided vertex range");
         Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 64, "vertex range includes records before the first vertex");
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "an index past the records still spans its fetch");
+        {
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(attribute, 0) == 0x1000 + 80, "a descriptor's end is not its last record's end");
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(attribute, 4) == 0x1000 + 84, "a descriptor's end left out the widened bytes");
+            auto instanced = attribute;
+            instanced.fetchIndex = 1;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(instanced, 0) == 0x1000 + 80, "an instance attribute's descriptor end differs");
+            auto empty = attribute;
+            empty.resource.fields[2] = 0;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(empty, 0) == 0, "a descriptor without records has an end");
+            auto constant = attribute;
+            constant.resource.fields[1] = 0;
+            Require(AgcDriver::Graphics::VertexDescriptorEnd(constant, 0) == 0, "a zero-stride descriptor has an end");
+        }
+        {
+            using AgcDriver::Graphics::GrownVertexCopyBytes;
+            constexpr std::size_t mib = std::size_t{1} << 20u;
+            Require(GrownVertexCopyBytes(1000, 0) == 1000 && GrownVertexCopyBytes(1000, 1000) == 1000, "a vertex copy grew without room past its read");
+            Require(GrownVertexCopyBytes(1000, 2000) == 1250 && GrownVertexCopyBytes(3, 2000) == 3, "a vertex copy did not grow by a quarter of its read");
+            Require(GrownVertexCopyBytes(1000, 1100) == 1100, "a vertex copy grew past its limit");
+            Require(GrownVertexCopyBytes(800 * mib, 2048 * mib) == 1000 * mib && GrownVertexCopyBytes(900 * mib, 1024 * mib) == 1024 * mib, "a vertex copy within the draw input budget did not grow");
+            Require(GrownVertexCopyBytes(900 * mib, 1025 * mib) == 900 * mib && GrownVertexCopyBytes(900 * mib, 2048 * mib) == 900 * mib, "a vertex copy grew past the draw input budget");
+        }
+        {
+            using AgcDriver::Graphics::DepthTarget;
+            using AgcDriver::Graphics::VertexCopyGrowEnd;
+            const AgcDriver::Graphics::State none{};
+            Require(VertexCopyGrowEnd(none, 0x2000, 0x3000) == 0x3000, "a vertex copy's limit was cut without a target");
+            Require(VertexCopyGrowEnd(none, 0x2000, 0x1800) == 0x2000, "a vertex copy's limit fell before its read's end");
+            auto color = none;
+            color.hasColorTarget = true;
+            color.color.address = 0x2800;
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x3000) == 0x2800, "a vertex copy's limit passed the color target");
+            Require(VertexCopyGrowEnd(color, 0x2800, 0x3000) == 0x2800, "a color target at a vertex copy's read end left it headroom");
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x2700) == 0x2700 && VertexCopyGrowEnd(color, 0x2000, 0x2800) == 0x2800 && VertexCopyGrowEnd(color, 0x2900, 0x3000) == 0x3000, "a color target outside a vertex copy's headroom moved its limit");
+            color.hasColorTarget = false;
+            Require(VertexCopyGrowEnd(color, 0x2000, 0x3000) == 0x3000, "an unbound color target cut a vertex copy's limit");
+            auto colors = none;
+            colors.colors.resize(3);
+            colors.colors[0].address = 0x2c00;
+            colors.colors[1].address = 0x2400;
+            colors.colors[2].address = 0x2a00;
+            Require(VertexCopyGrowEnd(colors, 0x2000, 0x3000) == 0x2400, "a vertex copy's limit passed a color target of the set");
+            for (const auto member : {&DepthTarget::address, &DepthTarget::stencilAddress, &DepthTarget::htileAddress}) {
+                auto depth = none;
+                depth.depth = DepthTarget{};
+                (*depth.depth).*member = 0x2600;
+                Require(VertexCopyGrowEnd(depth, 0x2000, 0x3000) == 0x2600, "a vertex copy's limit passed a depth, stencil or HTILE address");
+            }
+        }
         {
             auto wider = attribute;
             wider.resource.fields[2] = 9;

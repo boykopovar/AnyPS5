@@ -21,6 +21,8 @@ constexpr std::uint32_t ErrorMessageCapacity = 32768;
 constexpr std::uint32_t ArgumentCapacity = 32768;
 constexpr std::uint32_t ArgumentTextCapacity = ArgumentCapacity * 3;
 
+enum class StartupMilestone : std::uint32_t { Loaded = 0, Started = 1 };
+
 std::string normalizeRunPath(const std::string& runPath) {
     auto path = runPath;
     if (path.empty() || std::any_of(path.begin(), path.end(), [](const unsigned char value) { return value == 0 || value >= 128; }))
@@ -131,6 +133,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto runtimeFreopenName = addString("_wfreopen");
     const auto runtimeAppendMode = addWideString(u"a");
     const auto enterMainStack = addString("EnterGuestMainStack_nid_no_patch");
+    const auto reportLibrary = addWideString(u"libc.prx");
+    const auto reportSymbol = addString("LibcRunReportMilestone_nid_no_patch");
+    const auto reportFunction = reserve(8);
     const auto handles = reserve(libraries.size() * 8);
     const auto guestFinished = reserve(4);
     const WindowsGuestStartup guestStartup;
@@ -316,6 +321,15 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     WindowsStubEmitter code(result.Code.Rva);
 
     const auto call = [&](const std::string& name) { code.Rip({0xff, 0x15}, nativeImports.Functions.at(name)); };
+    const auto noteMilestone = [&](const StartupMilestone milestone) {
+        code.Rip({0x48, 0x8b, 0x05}, reportFunction);
+        code.Emit({0x48, 0x85, 0xc0});
+        const auto unavailable = code.Branch({0x0f, 0x84});
+        code.Emit({0xb9});
+        code.U32(static_cast<std::uint32_t>(milestone));
+        code.Emit({0xff, 0xd0});
+        code.PatchBranch(unavailable, code.GetRva());
+    };
 
     const auto raise = [&](const std::uint32_t status) {
         code.Emit({0xb9});
@@ -800,6 +814,16 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x85, 0xc0});
         unresolvedBranches.push_back(code.Branch({0x0f, 0x85}));
     }
+    code.Rip({0x48, 0x8d, 0x0d}, reportLibrary);
+    call("GetModuleHandleW");
+    code.Emit({0x48, 0x85, 0xc0});
+    const auto noReportLibrary = code.Branch({0x0f, 0x84});
+    code.Emit({0x48, 0x89, 0xc1});
+    code.Rip({0x48, 0x8d, 0x15}, reportSymbol);
+    call("GetProcAddress");
+    code.Rip({0x48, 0x89, 0x05}, reportFunction);
+    noteMilestone(StartupMilestone::Loaded);
+    code.PatchBranch(noReportLibrary, code.GetRva());
     for (const auto message : deferredImports) writeString(message);
     std::optional<std::uint32_t> guestEntryStart;
     for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
@@ -872,6 +896,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     call("LocalFree");
     code.Rip({0x48, 0x8b, 0x0d}, shellHandle);
     call("FreeLibrary");
+    noteMilestone(StartupMilestone::Started);
     code.Rip({0x48, 0x8b, 0x3d}, argumentBlock);
     const auto exitCallback = code.Branch({0x48, 0x8d, 0x35});
     code.Emit({0x48, 0xc7, 0x44, 0x24, 0x40, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x48, 0, 0, 0, 0, 0x48, 0x8d, 0x6c, 0x24, 0x40});
