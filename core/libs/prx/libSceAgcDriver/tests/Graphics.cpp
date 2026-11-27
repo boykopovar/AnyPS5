@@ -10394,6 +10394,7 @@ std::size_t VariableBuiltIns(const ShaderRecompiler::RecompileResult& result, sp
 bool DeclaresCapability(const ShaderRecompiler::RecompileResult& result, std::uint32_t capability);
 bool DeclaresExtension(const ShaderRecompiler::RecompileResult& result, std::string_view name);
 std::optional<std::uint32_t> UintArrayAt(const ShaderRecompiler::RecompileResult& result, spv::StorageClass storage, std::uint32_t location);
+std::size_t LocatedVariables(const ShaderRecompiler::RecompileResult& result, spv::StorageClass storage);
 
 void barycentricEmulationTests() {
     using namespace ShaderRecompiler;
@@ -10954,6 +10955,19 @@ std::optional<std::uint32_t> UintArrayAt(const ShaderRecompiler::RecompileResult
     return std::nullopt;
 }
 
+std::size_t LocatedVariables(const ShaderRecompiler::RecompileResult& result, spv::StorageClass storage) {
+    const auto& words = result.spirv.Words();
+    std::set<std::uint32_t> variables;
+    std::set<std::uint32_t> located;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        const auto count = words[at] >> 16u;
+        if (op == spv::OpVariable && count >= 4u && words[at + 3] == storage) variables.insert(words[at + 2]);
+        if (op == spv::OpDecorate && count == 4u && words[at + 2] == spv::DecorationLocation) located.insert(words[at + 1]);
+    }
+    return static_cast<std::size_t>(std::ranges::count_if(located, [&](std::uint32_t variable) { return variables.contains(variable); }));
+}
+
 void vertexLayerRelocationTests() {
     using namespace ShaderRecompiler;
     Require(!FindVertexLayerOutput({}) && RelocateVertexLayerOutput({}).empty(), "an empty vertex module was given a layer output");
@@ -11074,6 +11088,22 @@ void rectListTests() {
         Require(VariableBuiltIns(clippedRect.evaluation, spv::BuiltInLayer) == 1u && VariableBuiltIns(clippedRect.evaluation, spv::BuiltInClipDistance) == 2u && UintArrayAt(clippedRect.control, spv::StorageClassInput, 0u) == 3u, "the rect-list stages do not forward both the clip distances and the layer");
         const std::array<CompiledShader, 4> clippedShaders{{{ShaderStage::Vertex, &clippedLayer, 0}, {ShaderStage::TessellationControl, &clippedRect.control, 0}, {ShaderStage::TessellationEvaluation, &clippedRect.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
         ValidateShaders(clippedShaders, state, subgroup, false, false, false, false, false, false, true, false, true);
+        struct CapacityCase {
+            std::uint32_t clipDistances;
+            bool layer;
+            std::uint32_t parameters;
+            std::size_t kept;
+        };
+        for (const auto& entry : {CapacityCase{3, true, 30, 30}, CapacityCase{3, true, 31, 30}, CapacityCase{3, false, 31, 30}, CapacityCase{0, false, 32, 31}, CapacityCase{0, true, 32, 30}, CapacityCase{4, true, 30, 29}, CapacityCase{4, false, 31, 30}}) {
+            RecompileResult source;
+            source.spirv = makeModule({.clipDistanceLength = entry.clipDistances, .layerOutput = entry.layer});
+            RecompileResult pixel;
+            pixel.spirv = makeModule({.fragment = true});
+            for (std::uint32_t location = 0; location < entry.parameters; ++location) pixel.fragmentParameters.push_back({location, location, false, false});
+            const auto rect = BuildRectListShaders(source, pixel, layerTarget);
+            const auto layerLocations = entry.layer ? 1u : 0u;
+            Require(LocatedVariables(rect.evaluation, spv::StorageClassOutput) == entry.kept && LocatedVariables(rect.evaluation, spv::StorageClassInput) == entry.kept + layerLocations && LocatedVariables(rect.control, spv::StorageClassOutput) == entry.kept + layerLocations, "the rect-list stages do not keep every parameter that fits the per-vertex components next to the position, the clip distances and a one-component layer");
+        }
     }
     vertex.spirv = makeModule({.parameterOutput = true});
     fragment.spirv = makeModule({.fragment = true, .rectParameters = true});

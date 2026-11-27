@@ -547,12 +547,15 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     const auto reservedSlots = emulatedSlots + (vertexLayer ? 1u : 0u);
     const auto& limits = *target.tessellation;
     const std::uint32_t perVertexComponents = std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents, limits.maxEvaluationOutputComponents});
-    const std::uint32_t parameterSlots = perVertexComponents > clipDistances ? (perVertexComponents - clipDistances) / 4u : 0u;
-    require(reservedSlots == 0u || parameterSlots > reservedSlots, "emulated barycentrics and the vertex layer exceed the tessellation interface limits");
-    if (const std::size_t capacity = parameterSlots > reservedSlots ? parameterSlots - 1u - reservedSlots : 0u; parameters.size() > capacity) {
+    const std::uint32_t layerComponents = vertexLayer ? 1u : 0u;
+    const std::uint32_t fixedLocations = 1u + reservedSlots;
+    const std::uint32_t fixedComponents = (1u + emulatedSlots) * 4u + clipDistances + layerComponents;
+    const bool fixedFits = perVertexComponents / 4u >= fixedLocations && perVertexComponents >= fixedComponents;
+    require(reservedSlots == 0u || fixedFits, "emulated barycentrics and the vertex layer exceed the tessellation interface limits");
+    if (const std::size_t capacity = fixedFits ? std::min(perVertexComponents / 4u - fixedLocations, (perVertexComponents - fixedComponents) / 4u) : 0u; parameters.size() > capacity) {
         parameters.resize(capacity);
     }
-    const auto components = static_cast<std::uint32_t>((parameters.size() + reservedSlots + 1) * 4 + clipDistances);
+    const auto components = static_cast<std::uint32_t>((parameters.size() + emulatedSlots + 1) * 4 + clipDistances + layerComponents);
     require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents && components <= limits.maxControlPerVertexOutputComponents && components <= limits.maxEvaluationInputComponents && components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 && components * 4 + 6 <= limits.maxControlTotalOutputComponents, "tessellation interface exceeds device limits");
     require(clipDistances == 0u || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityClipDistance) != target.supportedCapabilities.end(), "the vertex clip distances need shaderClipDistance");
     require(!vertexLayer || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityShaderViewportIndexLayerEXT) != target.supportedCapabilities.end(), "forwarding the vertex gl_Layer needs VK_EXT_shader_viewport_index_layer");
