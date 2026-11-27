@@ -199,6 +199,7 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t terminatedNetworkProcessesCount = 0;
 mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    mutable Retained<MediaSessionFocusManager> mediaSessionFocusManager;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
