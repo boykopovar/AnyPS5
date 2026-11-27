@@ -48,6 +48,11 @@ int main() {
     Require(sceVideoOutSetFlipRate(handle, 1) == 0);
     Require(sceVideoOutSetFlipRate(handle, 0) == 0);
 
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "");
+#else
+    unsetenv("APS5_FLIP_RATE");
+#endif
     Require(ConfiguredFlipRate(0) == 0);
     Require(ConfiguredFlipRate(1) == 1);
     Require(ConfiguredFlipRate(2) == 2);
@@ -59,6 +64,20 @@ int main() {
     Require(ConfiguredFlipRate(0) == 0);
     Require(ConfiguredFlipRate(1) == 0);
     Require(ConfiguredFlipRate(2) == 0);
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "1");
+#else
+    setenv("APS5_FLIP_RATE", "1", 1);
+#endif
+    Require(ConfiguredFlipRate(0) == 1);
+    Require(ConfiguredFlipRate(2) == 1);
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "2");
+#else
+    setenv("APS5_FLIP_RATE", "2", 1);
+#endif
+    Require(ConfiguredFlipRate(0) == 2);
+    Require(ConfiguredFlipRate(1) == 2);
     Require(sceVideoOutSetFlipRate(handle, 2) == 0);
 #ifdef _WIN32
     _putenv_s("APS5_FLIP_RATE", "");
