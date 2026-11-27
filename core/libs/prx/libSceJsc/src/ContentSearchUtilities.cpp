@@ -148,6 +148,7 @@ extern "C" {
 SizeVector* APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(SizeVector* result, const String* text) {
     if (!result) throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings: null return storage");
     if (!text) throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings requires a string");
+    const SizeVector previous = ReadGuestValue(result, __func__);
     RequireWritableGuestBytes(result, sizeof(SizeVector), __func__);
 
     const StringImpl* const impl = ReadGuestValue(text, __func__).impl;
@@ -201,8 +202,19 @@ SizeVector* APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF
     if (!GuestCopyOut_nid_no_patch(buffer, endings.data(), endings.size() * sizeof(std::size_t)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     const SizeVector output{buffer, static_cast<unsigned>(capacity), static_cast<unsigned>(endings.size())};
-    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output)))
+    auto* const resultBytes = reinterpret_cast<unsigned char*>(result);
+    constexpr std::size_t kTailOffset = offsetof(SizeVector, capacity);
+    constexpr std::size_t kTailSize = sizeof(SizeVector) - kTailOffset;
+    if (!GuestCopyOut_nid_no_patch(resultBytes + kTailOffset, reinterpret_cast<const unsigned char*>(&output) + kTailOffset, kTailSize)) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(resultBytes + kTailOffset, reinterpret_cast<const unsigned char*>(&previous) + kTailOffset, kTailSize));
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    if (!GuestCopyOut_nid_no_patch(resultBytes, &output.buffer, sizeof(output.buffer))) {
+        const bool restoredBuffer = GuestCopyOut_nid_no_patch(resultBytes, &previous.buffer, sizeof(previous.buffer));
+        static_cast<void>(GuestCopyOut_nid_no_patch(resultBytes + kTailOffset, reinterpret_cast<const unsigned char*>(&previous) + kTailOffset, kTailSize));
+        if (!restoredBuffer) guard.buffer = nullptr;
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     guard.buffer = nullptr;
     return result;
 }

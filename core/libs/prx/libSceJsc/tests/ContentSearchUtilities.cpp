@@ -38,10 +38,26 @@ unsigned allocateCalls = 0;
 unsigned deallocateCalls = 0;
 std::size_t lastAllocateSize = 0;
 bool failNext = false;
+unsigned char* protectPageOnNextAllocate = nullptr;
+std::size_t protectSizeOnNextAllocate = 0;
+
+void SetPageReadOnly(unsigned char* address, std::size_t size) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(address, size, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(address, size, PROT_READ) == 0);
+#endif
+}
 
 void* TestAllocate(std::size_t size) {
     ++allocateCalls;
     lastAllocateSize = size;
+    if (protectPageOnNextAllocate) {
+        SetPageReadOnly(protectPageOnNextAllocate, protectSizeOnNextAllocate);
+        protectPageOnNextAllocate = nullptr;
+        protectSizeOnNextAllocate = 0;
+    }
     if (failNext) {
         failNext = false;
         return nullptr;
@@ -285,6 +301,36 @@ void TestGuestPointers() {
     });
     Require(vector.buffer == Garbage().buffer && vector.capacity == 77 && vector.size == 99);
     Require(allocateCalls == allocationsBefore);
+
+    {
+        unsigned char* twoPages = nullptr;
+#ifdef _WIN32
+        twoPages = static_cast<unsigned char*>(VirtualAlloc(nullptr, pages.pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(twoPages != nullptr);
+#else
+        void* mapped = mmap(nullptr, pages.pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        twoPages = static_cast<unsigned char*>(mapped);
+#endif
+        auto* splitResult = reinterpret_cast<SizeVector*>(twoPages + pages.pageSize - sizeof(std::size_t));
+        const SizeVector sentinel = Garbage();
+        std::memcpy(splitResult, &sentinel, sizeof(sentinel));
+        protectPageOnNextAllocate = twoPages + pages.pageSize;
+        protectSizeOnNextAllocate = pages.pageSize;
+        const unsigned releasesBefore = deallocateCalls;
+        RequireNotImplemented([&] {
+            _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(splitResult, &validString);
+        });
+        Require(protectPageOnNextAllocate == nullptr);
+        Require(deallocateCalls == releasesBefore + 1);
+        Require(std::memcmp(splitResult, &sentinel, sizeof(sentinel)) == 0);
+        Require(liveAllocations.empty());
+#ifdef _WIN32
+        VirtualFree(twoPages, 0, MEM_RELEASE);
+#else
+        munmap(twoPages, pages.pageSize * 2);
+#endif
+    }
 }
 
 }  // namespace
