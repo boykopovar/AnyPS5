@@ -874,9 +874,10 @@ std::array<std::uint64_t, 4> untrackedKey(std::uint64_t address, std::size_t byt
 }
 
 std::span<const std::uint32_t> firstLayerWords(std::span<const std::uint32_t> words, std::optional<ShaderRecompiler::DescriptorImageShape> shape, std::array<std::uint32_t, 8>& narrowed, bool report) {
-    if (shape != ShaderRecompiler::DescriptorImageShape::Image2D || words.size() != narrowed.size() || IsNullSampledTextureResource(words)) return words;
+    if ((shape != ShaderRecompiler::DescriptorImageShape::Image2D && shape != ShaderRecompiler::DescriptorImageShape::Image1D) || words.size() != narrowed.size() || IsNullSampledTextureResource(words)) return words;
     try {
-        if (!FirstLayerDescriptor(words, narrowed)) return words;
+        const auto array = shape == ShaderRecompiler::DescriptorImageShape::Image1D ? TextureDimension::k1DArray : TextureDimension::k2DArray;
+        if (DecodeTextureResource(words).dimension != array || !FirstLayerDescriptor(words, narrowed)) return words;
     } catch (const std::runtime_error&) {
         return words;
     }
@@ -885,7 +886,8 @@ std::span<const std::uint32_t> firstLayerWords(std::span<const std::uint32_t> wo
         const auto count = narrowings.fetch_add(1) + 1;
         if (count <= 5 || (count & (count - 1)) == 0) {
             const auto resource = DecodeTextureResource(words);
-            std::fprintf(stderr, "[gpu] 2D read of the 2D array 0x%llx (%ux%u format %u, slices %u..%u) built from slice %u alone; %llu such reads\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, resource.baseArray, resource.depthOrLastArray, resource.baseArray, static_cast<unsigned long long>(count));
+            const char* dimension = resource.dimension == TextureDimension::k1DArray ? "1D" : "2D";
+            std::fprintf(stderr, "[gpu] %s read of the %s array 0x%llx (%ux%u format %u, slices %u..%u) built from slice %u alone; %llu such reads\n", dimension, dimension, static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, resource.baseArray, resource.depthOrLastArray, resource.baseArray, static_cast<unsigned long long>(count));
         }
     }
     return narrowed;
@@ -6193,7 +6195,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers[element], shaderSamplers);
             RequireDisablesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
-            const bool firstLayer = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
+            const bool firstLayer = (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray))) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image1D && resource.dimension == TextureDimension::k1DArray);
             const bool depth1D = depthCompare && ((binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
             const bool firstSample = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DMsaa;
             const bool layerRows = layerRowsBinding(binding.imageShape, resource, depthCompare);
@@ -6648,7 +6650,7 @@ void ShaderResources::resolveImageTables() {
             const auto& resource = decoded.resource;
             const auto shape = binding.imageShapes.at(element);
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
-            decoded.firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
+            decoded.firstLayer = (shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray))) || (shape == ShaderRecompiler::DescriptorImageShape::Image1D && resource.dimension == TextureDimension::k1DArray);
             const bool depth1D = depthCompare && ((shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
             if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) {
                 decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
