@@ -788,17 +788,24 @@ static void TestGuestPointers() {
     HistoryItem* badChildren[1] = {guardItem};
     item.children = {badChildren, 1, 1};
     Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&item, &empty)); }, "_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE"));
+    item.children = {badChildren, 1, 2};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&item, &empty)); }, "_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE"));
     item.children = {};
 
     HistoryItemVectorStorage badSource{pages.Guard(), 1, 1};
+    HistoryItemVectorStorage hugeBadSource{pages.Guard(), 1000000000u, 1000000000u};
     Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(readOnlyItem, &badSource); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, guardVector); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, &badSource); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, &hugeBadSource); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
 
     HistoryItem child;
     HistoryItem* childRef = &child;
+    HistoryItem* badChildRef = guardItem;
     Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(readOnlyItem, &childRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
     Require(childRef == &child);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(&item, &badChildRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
+    Require(badChildRef == guardItem && item.children.size == 0);
     Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(&item, guardRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(&item, readOnlyRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
 

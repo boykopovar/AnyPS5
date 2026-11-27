@@ -302,18 +302,20 @@ void AssignDocumentState(HistoryItem* self, const HistoryItemVectorStorage* stat
         target.capacity > std::numeric_limits<std::size_t>::max() / sizeof(String))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 
-    std::vector<StringImpl*> sourceImpls(source.size, nullptr);
+    std::vector<StringImpl*> sourceImpls;
     if (source.size > 0) {
         const std::size_t sourceBytes = static_cast<std::size_t>(source.size) * sizeof(StringImpl*);
         RequireReadableGuestBytes(source.buffer, sourceBytes, function);
+        sourceImpls.resize(source.size, nullptr);
         if (!GuestCopyIn_nid_no_patch(sourceImpls.data(), source.buffer, sourceBytes))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
 
-    std::vector<StringImpl*> targetImpls(target.size, nullptr);
+    std::vector<StringImpl*> targetImpls;
     if (target.size > 0) {
         const std::size_t targetBytes = static_cast<std::size_t>(target.size) * sizeof(StringImpl*);
         RequireReadableGuestBytes(target.buffer, targetBytes, function);
+        targetImpls.resize(target.size, nullptr);
         if (!GuestCopyIn_nid_no_patch(targetImpls.data(), target.buffer, targetBytes))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
@@ -382,6 +384,7 @@ void AppendChild(HistoryItem* self, HistoryItem** refSlot, const char* function)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 
     auto* const childPtr = ReadGuestValue<HistoryItem*>(refSlot, function);
+    if (childPtr) RequireReadableGuestBytes(childPtr, sizeof(HistoryItem), function);
     const auto children = ReadGuestField<HistoryItemVectorStorage>(self, offsetof(HistoryItem, children), function);
     if (children.size > children.capacity || children.size == std::numeric_limits<unsigned>::max())
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
@@ -411,8 +414,8 @@ void AppendChild(HistoryItem* self, HistoryItem** refSlot, const char* function)
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         }
         if (!GuestCopyOut_nid_no_patch(refSlot, &nullChild, sizeof(nullChild))) {
-            GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, children), &children, sizeof(children));
-            _ZN3WTF8fastFreeEPv(newBuffer);
+            if (GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + offsetof(HistoryItem, children), &children, sizeof(children)))
+                _ZN3WTF8fastFreeEPv(newBuffer);
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         }
         if (children.buffer) _ZN3WTF8fastFreeEPv(children.buffer);
@@ -438,16 +441,14 @@ void AssignUniquePointerField(HistoryItem* self, std::size_t fieldOffset, void**
     RequireNonNullHistoryItem(self);
     if (!source) throw std::invalid_argument("null WTF::RefPtr");
     const WritableHistoryItem writable(self, function, true);
-    RequireReadableGuestBytes(source, sizeof(void*), function);
-    const GuestArena::HostWrite sourceWrite(source, sizeof(void*));
-    if (!sourceWrite.Open() || !GuestWritable_nid_no_patch(source, sizeof(void*)))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-
     void* const current = ReadGuestField<void*>(self, fieldOffset, function);
     void* const incoming = ReadGuestValue<void*>(source, function);
     if (current && incoming != current) NotImplemented_nid_no_patch(function);
     unsigned char* const targetAddress = reinterpret_cast<unsigned char*>(self) + fieldOffset;
     if (reinterpret_cast<unsigned char*>(source) != targetAddress) {
+        const GuestArena::HostWrite sourceWrite(source, sizeof(void*));
+        if (!sourceWrite.Open() || !GuestWritable_nid_no_patch(source, sizeof(void*)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         if (!GuestCopyOut_nid_no_patch(targetAddress, &incoming, sizeof(incoming)))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         void* const nullPtr = nullptr;
@@ -617,11 +618,14 @@ void APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(HistoryItem* s
 }
 
 HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(HistoryItem* self, const String* target) {
-    RequireReadableHistoryItem(self, __func__);
+    RequireNonNullHistoryItem(self);
     if (!target) throw std::invalid_argument("null WTF::String");
+    RequireReadableHistoryItem(self, __func__);
     auto* const keyImpl = ReadGuestValue<StringImpl*>(target, __func__);
     ValidateReadableStringImpl(keyImpl, __func__);
     const auto children = ReadGuestField<HistoryItemVectorStorage>(self, offsetof(HistoryItem, children), __func__);
+    if (children.size > children.capacity)
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     if (!children.size) return nullptr;
     if (!children.buffer || children.size > std::numeric_limits<std::size_t>::max() / sizeof(HistoryItem*))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
