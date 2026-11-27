@@ -729,5 +729,15 @@ void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDom
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsCacheMaxAgeCap(const void* dataStore, double seconds, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsCrossSiteLoadWithLinkDecoration(const void* dataStore, const void* fromHostRef, const void* toHostRef, bool wasFiltered, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsExpiredStatistic(const void* dataStore, const void* hostRef, unsigned numberOfOperatingDaysPassed, bool hadUserInteraction, bool isScheduledForAllButCookieDataRemoval, bool isPrevalent, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsGrandfathered(const void* dataStore, const void* hostRef, bool value);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsGrandfatheringTime(const void* dataStore, double seconds);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsHasHadUserInteraction(const void* dataStore, const void* hostRef, bool value, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsIsRunningTest(const void* dataStore, bool value, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsLastSeen(const void* dataStore, const void* hostRef, double seconds, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsMaxStatisticsEntries(const void* dataStore, unsigned entries);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsMergeStatistic(const void* dataStore, const void* hostRef, const void* topFrameDomain1Ref, const void* topFrameDomain2Ref, double lastSeen, bool hadUserInteraction, double mostRecentUserInteraction, bool isGrandfathered, bool isPrevalent, bool isVeryPrevalent, int dataRecordsRemoved, void* context, void (APS5_VABI *callback)(void*));
 
 }

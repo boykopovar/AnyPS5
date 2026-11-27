@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -99,6 +100,31 @@ public:
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
 };
+struct ExpiredStatisticEntry {
+    unsigned numberOfOperatingDaysPassed = 0;
+    bool hadUserInteraction = false;
+    bool isScheduledForAllButCookieDataRemoval = false;
+    bool isPrevalent = false;
+};
+
+struct CrossSiteLoadWithLinkDecorationEntry {
+    std::string fromHost;
+    std::string toHost;
+    bool wasFiltered = false;
+};
+
+struct MergedStatisticEntry {
+    std::string topFrameDomain1;
+    std::string topFrameDomain2;
+    double lastSeen = 0.0;
+    bool hadUserInteraction = false;
+    double mostRecentUserInteraction = 0.0;
+    bool isGrandfathered = false;
+    bool isPrevalent = false;
+    bool isVeryPrevalent = false;
+    int dataRecordsRemoved = 0;
+};
+
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:
     bool resourceLoadStatisticsEnabled = false;
@@ -111,6 +137,16 @@ public:
     std::vector<std::string> thirdPartyCNAMEDomains;
     std::vector<std::string> sameSiteStrictCookiesHosts;
     bool firstPartyWebsiteDataRemovalMode = false;
+    double statisticsCacheMaxAgeCap = 0.0;
+    std::vector<CrossSiteLoadWithLinkDecorationEntry> crossSiteLoadsWithLinkDecoration;
+    std::map<std::string, ExpiredStatisticEntry> expiredStatistics;
+    std::unordered_set<std::string> grandfatheredHosts;
+    double statisticsGrandfatheringTime = 0.0;
+    std::unordered_set<std::string> userInteractionHosts;
+    bool statisticsIsRunningTest = false;
+    std::map<std::string, double> statisticsLastSeen;
+    unsigned maxStatisticsEntries = 0;
+    std::map<std::string, MergedStatisticEntry> mergedStatistics;
 };
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
