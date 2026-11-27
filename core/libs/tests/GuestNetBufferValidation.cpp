@@ -3,11 +3,18 @@
 #include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
+#include <windows.h>
 #else
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <unistd.h>
 #endif
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -22,8 +29,41 @@ static void Require(bool condition, std::source_location location = std::source_
     }
 }
 
+static std::size_t UnreadablePageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    return static_cast<std::size_t>(size);
+#endif
+}
+
+static void* UnreadablePage() {
+    const std::size_t size = UnreadablePageSize();
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return page;
+}
+
+static void ReleaseUnreadablePage(void* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, UnreadablePageSize()) == 0);
+#endif
+}
+
 int main() {
     Require(sceNetInit_nid_postfix() == 0);
+    void* unreadablePage = UnreadablePage();
     for (const int family : {2, 28}) {
         for (const int type : {1, 2}) {
             const int socket = sceNetSocket("buffer-validation", family, type, type == 1 ? 6 : 17);
@@ -64,9 +104,22 @@ int main() {
                 std::uint32_t size = sizeof(value);
                 Require(sceNetGetsockopt(socket, 0xffff, option, &value, &size) == 0 && value == valid);
             }
+            const std::uint64_t timeout[2]{};
+            for (const int option : {0x1005, 0x1006}) {
+                for (const void* unreadable : {reinterpret_cast<const void*>(0x10), static_cast<const void*>(unreadablePage)}) {
+                    Require(sceNetSetsockopt(socket, 0xffff, option, unreadable, sizeof(timeout)) ==
+                            static_cast<int>(0x8041010eu));
+                    Require(*sceNetErrnoLoc() == 14);
+                    Require(setsockopt_nid_postfix(socket, 0xffff, option, unreadable, sizeof(timeout)) == -1);
+                    Require(*__error_nid_postfix() == 14);
+                }
+                Require(sceNetSetsockopt(socket, 0xffff, option, timeout, sizeof(timeout)) == 0);
+                Require(setsockopt_nid_postfix(socket, 0xffff, option, timeout, sizeof(timeout)) == 0);
+            }
             Require(sceNetSocketClose(socket) == 0);
         }
     }
+    ReleaseUnreadablePage(unreadablePage);
     const int zero = 0;
     Require(sceNetSetsockopt(-1, 0xffff, 0x1001, &zero, sizeof(zero)) == static_cast<int>(0x80410109u));
     Require(*sceNetErrnoLoc() == 9);
