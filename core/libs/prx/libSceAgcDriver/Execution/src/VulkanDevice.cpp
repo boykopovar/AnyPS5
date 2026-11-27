@@ -837,6 +837,7 @@ struct VulkanDevice::State {
         // when the slot retires, and the swapchain bytes it wrote.
         VkQueryPool queries = VK_NULL_HANDLE;
         std::uint64_t blitBytes = 0;
+        bool blitTimed = false;
     };
     std::vector<PresentSlot> presentSlots;
     std::size_t presentCursor = 0;
@@ -1100,7 +1101,7 @@ struct VulkanDevice::State {
             slot.dumpRecorded = false;
             WriteFrameDump(slot);
         }
-        if (slot.queries != VK_NULL_HANDLE) {
+        if (slot.blitTimed && slot.queries != VK_NULL_HANDLE) {
             std::uint64_t stamps[2] = {};
             if (DeviceFunction<PFN_vkGetQueryPoolResults>("vkGetQueryPoolResults")(device, slot.queries, 0, 2, sizeof(stamps), stamps, sizeof(std::uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && stamps[1] > stamps[0]) {
                 Graphics::Recorder::AddGpuTiming(Graphics::Recorder::CommandClass::PresentBlit, static_cast<double>(stamps[1] - stamps[0]) * properties.limits.timestampPeriod, slot.blitBytes);
@@ -4471,8 +4472,9 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     check(state->DeviceFunction<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin), "vkBeginCommandBuffer");
     APS5_LOG_OUT_DEBUG("Presentation command buffer begin commands=%p image=%p", reinterpret_cast<void*>(commands), reinterpret_cast<void*>(state->images[index]));
     using CommandClass = Graphics::Recorder::CommandClass;
+    slot.blitTimed = Graphics::Recorder::ClassTimingSampled();
     Graphics::Recorder::CountPresent();
-    if (Graphics::Recorder::GpuTimingEnabled()) {
+    if (slot.blitTimed) {
         if (slot.queries == VK_NULL_HANDLE) {
             VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
             info.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -4655,7 +4657,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         pipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
     }
-    if (slot.queries != VK_NULL_HANDLE) state->DeviceFunction<PFN_vkCmdWriteTimestamp>("vkCmdWriteTimestamp")(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.queries, 1);
+    if (slot.blitTimed && slot.queries != VK_NULL_HANDLE) state->DeviceFunction<PFN_vkCmdWriteTimestamp>("vkCmdWriteTimestamp")(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.queries, 1);
     check(state->DeviceFunction<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(commands), "vkEndCommandBuffer");
     APS5_LOG_CHARS_OUT_DEBUG("Presentation command buffer recorded");
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};

@@ -219,6 +219,13 @@ class AbSplitTests(unittest.TestCase):
         self.assertEqual(row["classes"], {"staging-in": 8.0, "present-blit": 4.0})
         self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
 
+    def test_sampled_line_counts_only_its_sampled_presents(self):
+        text = gputime(400.0, 40.0, 8.0, presents=3).replace(
+            "outside every range;", "outside every range; sampled 1 present in 16, unsampled batch 1800 ms in 37 presents;")
+        row = ab_split.parse_report("gputime", text)
+        self.assertEqual((row["total"], row["presents"]), (400.0, 3))
+        self.assertEqual(row["classes"], {"staging-in": 8.0, "present-blit": 4.0})
+
     def test_draw_variants_are_not_summed_into_program_keys(self):
         row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x3000 x3 30ms"))
         self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
