@@ -196,8 +196,8 @@ static void RequireBusChainAfterGuestRegistration() {
 }
 
 static void RequireCopies() {
-    for (const std::size_t bytes : {std::size_t{1}, std::size_t{7}, std::size_t{8}, std::size_t{63}, std::size_t{4096}, std::size_t{4097}, std::size_t{65536}}) {
-        for (std::size_t offset = 0; offset < 4; ++offset) {
+    for (const std::size_t bytes : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{7}, std::size_t{8}, std::size_t{15}, std::size_t{16}, std::size_t{17}, std::size_t{31}, std::size_t{32}, std::size_t{33}, std::size_t{63}, std::size_t{4096}, std::size_t{4097}, std::size_t{65536}}) {
+        for (std::size_t offset = 0; offset < 8; ++offset) {
             std::vector<unsigned char> source(bytes + offset), destination(bytes + offset, 0);
             for (std::size_t index = 0; index < source.size(); ++index) source[index] = static_cast<unsigned char>(index * 7 + bytes);
             Require(GuestCopyIn_nid_no_patch(destination.data() + offset, source.data() + offset, bytes));
@@ -255,12 +255,64 @@ static void RequireThreads() {
     Require(failures.load() == 0);
 }
 
+static void RequireShortFaultPrefixes() {
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 64);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    std::memset(pages, 0x5a, page);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+    for (std::size_t bytes = 1; bytes <= 33; ++bytes) {
+        unsigned char buffer[64];
+        std::memset(buffer, 0xcc, sizeof(buffer));
+        Require(GuestCopyIn_nid_no_patch(buffer, pages + page - bytes, bytes));
+        for (std::size_t index = 0; index < bytes; ++index) Require(buffer[index] == 0x5a);
+        Require(buffer[bytes] == 0xcc);
+        Require(GuestCopyOut_nid_no_patch(pages + page - bytes, buffer, bytes));
+        for (std::size_t prefix = 0; prefix < bytes; ++prefix) {
+            std::memset(buffer, 0xcc, sizeof(buffer));
+            errno = 71;
+            Require(!GuestCopyIn_nid_no_patch(buffer, pages + page - prefix, bytes));
+            Require(errno == 71);
+            for (std::size_t index = 0; index < sizeof(buffer); ++index) Require(buffer[index] == (index < prefix ? 0x5a : 0xcc));
+            for (std::size_t index = 0; index < bytes; ++index) buffer[index] = static_cast<unsigned char>(index * 13 + 1);
+            Require(!GuestCopyOut_nid_no_patch(pages + page - prefix, buffer, bytes));
+            Require(errno == 71);
+            for (std::size_t index = 0; index < prefix; ++index) Require(pages[page - prefix + index] == buffer[index]);
+            std::memset(pages + page - prefix, 0x5a, prefix);
+        }
+    }
+    Require(munmap(pages, page * 2) == 0);
+}
+
+static void RequireShortBusFaults() {
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 0);
+    FILE* file = std::tmpfile();
+    Require(file != nullptr);
+    Require(ftruncate(fileno(file), page) == 0);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_SHARED, fileno(file), 0));
+    Require(pages != MAP_FAILED);
+    unsigned char buffer[33]{};
+    for (std::size_t bytes = 1; bytes <= sizeof(buffer); ++bytes) {
+        errno = 71;
+        Require(!GuestCopyIn_nid_no_patch(buffer, pages + page, bytes));
+        Require(errno == 71);
+        Require(!GuestCopyOut_nid_no_patch(pages + page, buffer, bytes));
+        Require(errno == 71);
+    }
+    Require(munmap(pages, page * 2) == 0);
+    Require(std::fclose(file) == 0);
+}
+
 int main() {
     RequireEarlierHandlerKeepsOtherFaults();
     RequireSigIgnWithSigInfoChains();
     RequireResetHandChainsToDefault();
     RequireCopies();
     RequireFaults();
+    RequireShortFaultPrefixes();
+    RequireShortBusFaults();
     RequireThreads();
     RequireLaterHandlerChains();
     RequireGuestRegistrationKeepsCopyFaults();

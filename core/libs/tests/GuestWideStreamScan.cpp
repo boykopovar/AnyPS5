@@ -239,6 +239,11 @@ static void CheckWideText() {
     Require(fgetwc_nid_postfix(stream) == 0xd83d && fgetwc_nid_postfix(stream) == u'q', "a lone high surrogate lookahead goes back as itself");
     Close(stream);
 
+    stream = Open("\xf0\x9f\x98\x80");
+    Require(fgetwc_nid_postfix(stream) == 0xd83d && ungetwc_nid_postfix(u'x', stream) == u'x' && ScanStream(stream, u"%d", &value) == 0, "%d stops at a letter pushed back in front of a pending low surrogate");
+    Require(fgetwc_nid_postfix(stream) == u'x' && fgetwc_nid_postfix(stream) == 0xde00, "the letter goes back in front of the low surrogate");
+    Close(stream);
+
     stream = Open("hello world");
     char16_t small[4]{};
     Require(ScanStreamSized(stream, u"%3ls", small, 4u) == 1 && std::u16string(small) == u"hel", "vfwscanf_s %ls with a size");

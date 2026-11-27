@@ -19,6 +19,13 @@
 #include <string_view>
 #include <stdexcept>
 #include "prx/libScePad/include/HostAudioInControl.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 
 namespace {
 
@@ -129,7 +136,8 @@ int checkDeviceArguments(std::uint32_t type, std::uint32_t len, std::uint32_t fr
 
 int checkMicLevel(int type, int level) {
     if (static_cast<std::uint32_t>(level) > 100) return AUDIO_IN_ERROR_INVALID_PARAM;
-    if (type >= 0 && static_cast<std::uint32_t>(type - 1) > 3) return AUDIO_IN_ERROR_INVALID_DEVICE;
+    const std::uint32_t kind = static_cast<std::uint32_t>(type);
+    if (kind < 1u || kind > 4u) return AUDIO_IN_ERROR_INVALID_DEVICE;
     return 0;
 }
 
@@ -149,8 +157,21 @@ void applyMode(int mode, int value) {
 int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     Format format{};
     if (!formatOf(param, format)) return AUDIO_IN_ERROR_INVALID_PARAM;
+#ifdef _WIN32
+    std::string requestedName;
+    if (const auto* configuredName = _wgetenv(L"ANYPS5_AUDIO_IN_DEVICE")) {
+        const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, configuredName, -1, nullptr, 0, nullptr, nullptr);
+        if (bytes == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
+        requestedName.resize(static_cast<std::size_t>(bytes));
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, configuredName, -1, requestedName.data(), bytes, nullptr, nullptr) != bytes) {
+            return AUDIO_IN_ERROR_INVALID_DEVICE;
+        }
+        requestedName.pop_back();
+    }
+#else
     const char* const configuredName = std::getenv("ANYPS5_AUDIO_IN_DEVICE");
     const std::string_view requestedName = configuredName ? std::string_view(configuredName) : std::string_view{};
+#endif
     const bool explicitDevice = !requestedName.empty() && requestedName != "default";
     std::lock_guard lock(g_mutex);
     for (std::size_t i = g_ports.size(); i-- > 0;) {
@@ -283,9 +304,9 @@ int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t in
 }
 
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
+    const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     std::lock_guard lock(g_mutex);
-    Port* port;
-    if (const int error = findPort(handle, &port)) return error;
+    if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
     return 0;
 }
 
@@ -327,10 +348,9 @@ int APS5_VABI sceAudioInSetUsbGain(void) {
 
 int APS5_VABI sceAudioInIsSharedDevice(int handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
-    if (index >= g_ports.size()) return AUDIO_IN_ERROR_INVALID_HANDLE;
     {
         std::lock_guard lock(g_mutex);
-        if (!g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
+        if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
     }
     NotImplemented_nid_no_patch(__func__);
     return 0;

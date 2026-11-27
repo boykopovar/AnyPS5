@@ -2,6 +2,13 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -183,6 +190,117 @@ int HostCount(const LibreSslX509VerifyParam* param) {
     return hosts ? hosts->num : -1;
 }
 
+template<typename TAction>
+void RequireRejected(TAction action, const char* message) {
+    errno = 71;
+    RequireInvalidArgument(action, message);
+    Require(errno == 71, message);
+}
+
+class FencedPages {
+public:
+    FencedPages() {
+#ifdef _WIN32
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "page allocation");
+        DWORD previous = 0;
+        Require(VirtualProtect(data + 4096, 4096, PAGE_NOACCESS, &previous) != 0, "fence protection");
+#else
+        void* mapped = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        Require(mapped != MAP_FAILED, "page allocation");
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + 4096, 4096, PROT_NONE) == 0, "fence protection");
+#endif
+    }
+    ~FencedPages() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, 8192);
+#endif
+    }
+    template<typename T>
+    T* ReadOnly(const T& value) {
+        std::memcpy(data, &value, sizeof(T));
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(data, 4096, PAGE_READONLY, &previous) != 0, "read-only protection");
+#else
+        Require(mprotect(data, 4096, PROT_READ) == 0, "read-only protection");
+#endif
+        return reinterpret_cast<T*>(data);
+    }
+    char** Tail(std::size_t count) { return reinterpret_cast<char**>(data + 4096) - count; }
+
+private:
+    unsigned char* data = nullptr;
+};
+
+void GuestPointers() {
+    auto* unmappedStore = reinterpret_cast<LibreSslX509Store*>(0x10);
+    auto* unmappedParam = reinterpret_cast<LibreSslX509VerifyParam*>(0x10);
+    auto* method = X509_LOOKUP_file_nid_postfix();
+    RequireRejected([&] { X509_STORE_set_flags_nid_postfix(unmappedStore, 1); }, "flags on an unmapped store");
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(unmappedStore, method); }, "lookup on an unmapped store");
+    RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(unmappedParam, "a", 0); }, "host on unmapped verify parameters");
+
+    auto* store = X509_STORE_new_nid_postfix();
+    auto* param = store->param;
+    store->param = unmappedParam;
+    RequireRejected([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "flags with unmapped verify parameters");
+    store->param = param;
+    {
+        FencedPages pages;
+        store->param = pages.ReadOnly(*param);
+        RequireRejected([&] { X509_STORE_set_flags_nid_postfix(store, 0x100); }, "flags on read-only verify parameters");
+        Require(store->param->flags == param->flags, "rejected flags leave the parameters unchanged");
+        store->param = param;
+    }
+
+    auto* lookups = static_cast<Stack*>(store->lookupMethods);
+    store->lookupMethods = reinterpret_cast<void*>(0x10);
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "an unmapped lookup stack");
+    store->lookupMethods = lookups;
+    char** const elements = lookups->data;
+    lookups->num = 1;
+    lookups->data = reinterpret_cast<char**>(0x10);
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "an unmapped lookup array");
+    lookups->data = elements;
+    elements[0] = reinterpret_cast<char*>(0x10);
+    RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "an unmapped listed lookup");
+    LibreSslX509Lookup other {};
+    {
+        FencedPages pages;
+        char** tail = pages.Tail(2);
+        tail[0] = tail[1] = reinterpret_cast<char*>(&other);
+        lookups->data = tail;
+        for (int count : {3, 4096, 0x7fffffff}) {
+            lookups->num = count;
+            RequireRejected([&] { X509_STORE_add_lookup_nid_postfix(store, method); }, "a lookup count past the array");
+        }
+        lookups->num = 2;
+        other.method = method;
+        Require(X509_STORE_add_lookup_nid_postfix(store, method) == &other, "a lookup at the end of the array is found");
+    }
+    elements[0] = nullptr;
+    lookups->data = elements;
+    lookups->num = 0;
+
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "kept.example", 0) == 1, "a name before rejected identities");
+    auto* id = param->id;
+    param->id = reinterpret_cast<LibreSslX509VerifyParamId*>(0x10);
+    RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "an unmapped identity");
+    {
+        FencedPages pages;
+        param->id = pages.ReadOnly(*id);
+        RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "a read-only identity");
+        RequireRejected([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0); }, "clearing a read-only identity");
+        param->id = id;
+    }
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "kept.example") == 0, "rejected identities keep the list");
+    X509_STORE_free_nid_postfix(store);
+}
+
 void Hosts() {
     auto* store = X509_STORE_new_nid_postfix();
     auto* param = store->param;
@@ -300,6 +418,7 @@ int main(int argc, char**) {
     ApplicationHeapRegister_nid_no_patch(api.data());
     NewStore();
     Flags();
+    GuestPointers();
     References();
     Identity();
     Unsupported();

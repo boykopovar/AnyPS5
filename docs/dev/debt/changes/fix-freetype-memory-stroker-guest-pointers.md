@@ -2,7 +2,7 @@
 
 ## change [FT_Alloc, FT_QAlloc and FT_Free]
 
-- [FT_Alloc, FT_QAlloc and FT_Free](../../../core/libs/prx/libSceFreeType/src/MemoryAllocation.cpp) (libSceFreeType) - console signatures and callback/error behavior are unverified; the LP64 guest adapter follows the legacy allocator contract in [FreeType 2.4.12](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftutil.c#L49-L89). Null records or outputs make the allocating helpers throw; the reference implementation dereferences them. The record and the output are read and written through checked guest copies: an unreadable record, an unreadable `FT_Free` output or an unwritable output throws before any callback runs; the console's response is unmeasured. FT_Free ignores null records, output pointers and blocks. The Ol provider implements its own Alloc and Free; the Ot QAlloc helper still throws.
+- [FT_Alloc, FT_QAlloc and FT_Free](../../../core/libs/prx/libSceFreeType/src/MemoryAllocation.cpp) (libSceFreeType) - console signatures and callback/error behavior are unverified; the LP64 guest adapter follows the legacy allocator contract in [FreeType 2.4.12](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftutil.c#L49-L89). Null records or outputs make the allocating helpers throw; the reference implementation dereferences them. The record and the output are read and written through checked guest copies: an unreadable record, an unreadable `FT_Free` output or an unwritable output throws before any callback runs; the console's response is unmeasured. FT_Free ignores null records, output pointers and blocks. The Ol provider implements its own Alloc and Free.
 
 ## change [FT_Realloc and FT_QRealloc]
 

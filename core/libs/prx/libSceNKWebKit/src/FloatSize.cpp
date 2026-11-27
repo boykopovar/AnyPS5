@@ -29,13 +29,20 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+
+#include <stdexcept>
 
 extern "C" {
 
 void APS5_VABI _ZN7WebCore9FloatSizeC1ERKNS_7IntSizeE(WebCore::FloatSize* self, const WebCore::IntSize& size) {
-    self->m_width = static_cast<float>(size.m_width);
-    self->m_height = static_cast<float>(size.m_height);
+    if (!self || !GuestWritable_nid_no_patch(self, sizeof(*self))) throw std::invalid_argument("WebCore::FloatSize(IntSize): invalid guest FloatSize");
+    WebCore::IntSize source;
+    if (!GuestCopyIn_nid_no_patch(&source, &size, sizeof(source)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    self->m_width = static_cast<float>(source.m_width);
+    self->m_height = static_cast<float>(source.m_height);
 }
 
 void APS5_VABI _ZN7WebCore9FloatSizeC2ERKNS_7IntSizeE(WebCore::FloatSize* self, const WebCore::IntSize& size) {

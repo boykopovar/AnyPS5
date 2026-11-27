@@ -15,20 +15,6 @@ constexpr std::uint8_t UnicodeVersion[VersionLength] = {17, 0, 0, 0};
 constexpr const char* IcuVersion = "78.1";
 constexpr std::size_t VersionTextCapacity = 256;
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
 template <typename Unit>
 bool CopyText(const Unit* text, Unit* copy, std::size_t capacity, std::size_t& length) {
     length = 0;
@@ -36,7 +22,7 @@ bool CopyText(const Unit* text, Unit* copy, std::size_t capacity, std::size_t& l
         const auto address = reinterpret_cast<std::uintptr_t>(text + length);
         const std::size_t room = (std::max)(std::size_t{1}, (0x1000 - address % 0x1000) / sizeof(Unit));
         const std::size_t count = (std::min)(capacity - length, room);
-        if (!CopyIn(copy + length, text + length, count * sizeof(Unit))) return false;
+        if (!GuestCopyIn_nid_no_patch(copy + length, text + length, count * sizeof(Unit))) return false;
         for (std::size_t index = 0; index < count; ++index) {
             if (copy[length + index] == 0) {
                 length += index;
@@ -80,7 +66,7 @@ void APS5_VABI u_versionFromString_nid_postfix(std::uint8_t* version, const char
             cursor = end + 1;
         }
     }
-    CopyOut(version, parsed, sizeof(parsed));
+    GuestCopyOut_nid_no_patch(version, parsed, sizeof(parsed));
 }
 
 void APS5_VABI u_versionFromUString_nid_postfix(std::uint8_t* version, const char16_t* text) {
@@ -97,9 +83,9 @@ void APS5_VABI u_versionFromUString_nid_postfix(std::uint8_t* version, const cha
 void APS5_VABI u_versionToString_nid_postfix(const std::uint8_t* version, char* text) {
     if (!text) return;
     std::uint8_t parts[VersionLength];
-    if (!version || !CopyIn(parts, version, sizeof(parts))) {
+    if (!version || !GuestCopyIn_nid_no_patch(parts, version, sizeof(parts))) {
         const char empty = 0;
-        CopyOut(text, &empty, sizeof(empty));
+        GuestCopyOut_nid_no_patch(text, &empty, sizeof(empty));
         return;
     }
     std::uint16_t count = VersionLength;
@@ -112,12 +98,12 @@ void APS5_VABI u_versionToString_nid_postfix(const std::uint8_t* version, char* 
         cursor = WriteField(cursor, parts[part]);
     }
     *cursor++ = 0;
-    CopyOut(text, formatted, static_cast<std::size_t>(cursor - formatted));
+    GuestCopyOut_nid_no_patch(text, formatted, static_cast<std::size_t>(cursor - formatted));
 }
 
 void APS5_VABI u_getUnicodeVersion_nid_postfix(std::uint8_t* version) {
     if (!version) return;
-    CopyOut(version, UnicodeVersion, sizeof(UnicodeVersion));
+    GuestCopyOut_nid_no_patch(version, UnicodeVersion, sizeof(UnicodeVersion));
 }
 
 void APS5_VABI u_getVersion_nid_postfix(std::uint8_t* version) {

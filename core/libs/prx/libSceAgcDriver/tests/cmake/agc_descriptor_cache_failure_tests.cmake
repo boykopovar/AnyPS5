@@ -1,6 +1,7 @@
 if(BUILD_TESTING)
     add_test_executable(agc_descriptor_cache_failure_tests
         tests/DescriptorCacheFailure.cpp
+        $<FILTER:$<TARGET_OBJECTS:libSceAgcDriver>,INCLUDE,/Graphics/src/DescriptorValidation\\.cpp\\.>
         $<FILTER:$<TARGET_OBJECTS:libSceAgcDriver>,INCLUDE,/Graphics/src/ShaderResources\\.cpp\\.>)
     target_include_directories(agc_descriptor_cache_failure_tests PRIVATE
         $<TARGET_PROPERTY:libSceAgcDriver,INCLUDE_DIRECTORIES>)

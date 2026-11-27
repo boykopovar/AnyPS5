@@ -3,7 +3,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "ThreadOwned.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -70,6 +72,14 @@ std::chrono::microseconds Driver::labelFlushDeadline() {
     return value;
 }
 
+std::chrono::microseconds Driver::labelFlushBusyDeadline() {
+    static const std::chrono::microseconds value = [] {
+        const char* text = std::getenv("APS5_LABEL_FLUSH_BUSY_US");
+        return std::max(labelFlushDeadline(), std::chrono::microseconds(text ? std::atoi(text) : 1000));
+    }();
+    return value;
+}
+
 bool Driver::labelFlushDue() {
     if (QueuedLabelTable() && !deferredLabels().labels.empty()) Get().recordQueuedLabelsByTry(GuestMemory::GpuLockThreadTag(), pollLabelRecords);
     const auto since = Graphics::Recorder::PendingLabelSince();
@@ -89,7 +99,7 @@ bool Driver::reapEachPacket() {
 std::uint64_t Driver::batchCap() {
     static const std::uint64_t value = [] {
         const char* text = std::getenv("APS5_BATCH_CAP");
-        return text ? std::strtoull(text, nullptr, 10) : 512ull;
+        return text ? std::strtoull(text, nullptr, 10) : 128ull;
     }();
     return value;
 }
@@ -124,8 +134,9 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
         first = false;
         countLabelOutcome(reason);
         if (reason != 0 && reason != 5) {
-            if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+            if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(label.address, bytes, 4);
+            KernelWakeSleepers_nid_no_patch();
         }
         noteLabelStore(label.address, bytes, stamp, queue);
     }

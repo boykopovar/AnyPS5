@@ -1,8 +1,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -74,7 +76,40 @@ static bool RunHost() {
     return context.failures == 0;
 }
 
-int main() {
+static void APS5_VABI DestroyAtProcessExit(void*) {
+    std::fputs("process exit: key destructor ran on the exiting thread\n", stderr);
+    std::_Exit(1);
+}
+
+static int ExitWithBoundValue() {
+    PthreadKey key = -1;
+    if (scePthreadKeyCreate(&key, reinterpret_cast<pthread_key_destructor_func_t>(DestroyAtProcessExit)) != 0) return 1;
+    if (scePthreadSetspecific(key, &key) != 0) return 1;
+    exit_nid_postfix(0);
+
+    return 1;
+}
+
+static void* APS5_VABI ExitFromThread(void* value) {
+    if (scePthreadSetspecific(*static_cast<PthreadKey*>(value), value) != 0) std::_Exit(1);
+    exit_nid_postfix(0);
+
+    return nullptr;
+}
+
+static int ExitThreadWithBoundValue() {
+    PthreadKey key = -1;
+    if (scePthreadKeyCreate(&key, reinterpret_cast<pthread_key_destructor_func_t>(DestroyAtProcessExit)) != 0) return 1;
+    Pthread thread = nullptr;
+    if (scePthreadCreate(&thread, nullptr, ExitFromThread, &key, "KeyExit") != 0) return 1;
+    scePthreadJoin(thread, nullptr);
+
+    return 1;
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "process-exit") == 0) return ExitWithBoundValue();
+    if (argc > 1 && std::strcmp(argv[1], "thread-exit") == 0) return ExitThreadWithBoundValue();
     const bool returned = RunGuest(false);
     const bool exited = RunGuest(true);
     const bool canceled = RunGuest(false, true);

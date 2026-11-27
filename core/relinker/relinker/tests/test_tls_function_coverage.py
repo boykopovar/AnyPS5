@@ -609,6 +609,17 @@ def main():
             fs66_overlap[0x1209:0x1216] = bytes.fromhex("66 66 66 66 64 48 8b 04 25 78 56 00 00")
             fs66_overlap[0x1216:0x121B] = b"\xe8" + struct.pack("<i", 0x1211 - 0x121B)
             convert("overlapping-fs-prefix-66", fs66_overlap, "Code analysis: overlapping instruction boundaries")
+            overlapping_non_fs = make_image("register", "unwind")
+            overlapping_non_fs[0x1209:0x1211] = bytes.fromhex("48 c7 c0 64 00 00 00 90")
+            overlapping_non_fs[0x1211:0x1216] = b"\xe8" + struct.pack("<i", 0x120D - 0x1216)
+            convert("overlapping-non-fs-immediate-64", overlapping_non_fs)
+            builder_overlap = make_image("register", "unwind")
+            builder_overlap[0x1209:0x1211] = bytes.fromhex("48 b8 00 00 64 fe ff 00")
+            builder_overlap[0x1211:0x1216] = b"\xe8" + struct.pack("<i", 0x120D - 0x1216)
+            convert("overlapping-sub-instruction-64-fe-ff", builder_overlap)
+            cut_tail_rel32 = make_image("register", "unwind", 0x51, TLS_LOAD + bytes.fromhex("8b 40 f0") + b"\xe9" + bytes.fromhex("64 fe ff ff"))
+            cut_tail_rel32[0x10b8] = 0xc3
+            convert("cut-tail-rel32-contains-64", cut_tail_rel32)
             external = make_image("register", "unwind")
             external[0x1300:0x1310] = external[0x1240:0x1250]
             external[0x1240:0x1250] = b"\xe8" + struct.pack("<i", 0x1300 - 0x1245) + b"\xc3" + b"\x90" * 10

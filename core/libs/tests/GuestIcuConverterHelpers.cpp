@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "unicode/ucnv.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -51,16 +52,89 @@ void DefaultConverterLifecycle() {
     u_releaseDefaultConverter_nid_postfix(first);
     RequiresInvalidArgument([&] { u_releaseDefaultConverter_nid_postfix(first); }, "already returned converter must be rejected");
 
-    status = 1;
-    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "incoming failure leaves the cache untouched");
+    for (const std::int32_t incoming : {std::int32_t{-129}, INT32_MIN}) {
+        status = incoming;
+        auto* below = u_getDefaultConverter_nid_postfix(&status);
+        Require(below && status == incoming, "a status below the warning range is not a failure");
+        u_releaseDefaultConverter_nid_postfix(below);
+    }
+
+    for (const std::int32_t incoming : {1, 7, 27, 0x10000}) {
+        status = incoming;
+        auto* cached = u_getDefaultConverter_nid_postfix(&status);
+        Require(cached == first && status == incoming, "an incoming failure still takes the cached converter");
+        u_releaseDefaultConverter_nid_postfix(cached);
+    }
     status = 0;
     auto* reused = u_getDefaultConverter_nid_postfix(&status);
     Require(reused == first && status <= 0, "get, release, get reuses the cached converter");
+    for (const std::int32_t incoming : {1, 7}) {
+        status = incoming;
+        Require(!u_getDefaultConverter_nid_postfix(&status) && status == incoming,
+                "an incoming failure opens no converter while the cache is empty");
+    }
+    status = 0;
     auto* second = u_getDefaultConverter_nid_postfix(&status);
     Require(second && second != reused && status <= 0, "checked-out converters are distinct");
     u_releaseDefaultConverter_nid_postfix(second);
     u_flushDefaultConverter_nid_postfix();
     u_releaseDefaultConverter_nid_postfix(reused);
+    u_flushDefaultConverter_nid_postfix();
+    status = 1;
+    Require(!u_getDefaultConverter_nid_postfix(&status) && status == 1, "an incoming failure opens no converter after a flush");
+}
+
+UConverter* AcquireDefaultConverter() {
+    std::int32_t status = U_ZERO_ERROR;
+    auto* converter = u_getDefaultConverter_nid_postfix(&status);
+    Require(converter && status <= 0, "acquire the configured default converter");
+    return converter;
+}
+
+void DefaultConverterNames() {
+    const char* initialName = ucnv_getDefaultName_nid_postfix();
+    Require(initialName && *initialName, "initial default converter name");
+    const std::string platformName = initialName;
+    auto* initial = AcquireDefaultConverter();
+    const auto platformType = ucnv_getType(initial);
+    u_releaseDefaultConverter_nid_postfix(initial);
+
+    if constexpr (U_CHARSET_IS_UTF8) {
+        ucnv_setDefaultName_nid_postfix("UTF-16LE");
+        Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), "UTF-8") == 0, "fixed UTF-8 default");
+        auto* fixed = AcquireDefaultConverter();
+        Require(ucnv_getType(fixed) == UCNV_UTF8, "fixed UTF-8 converter");
+        u_releaseDefaultConverter_nid_postfix(fixed);
+        return;
+    }
+
+    ucnv_setDefaultName_nid_postfix("UTF-8");
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), "UTF-8") == 0, "set UTF-8");
+    auto* previous = AcquireDefaultConverter();
+    Require(ucnv_getType(previous) == UCNV_UTF8, "acquire UTF-8");
+
+    const bool useLittleEndian = platformType != UCNV_UTF16_LittleEndian;
+    const char* canonicalName = useLittleEndian ? "UTF-16LE" : "UTF-16BE";
+    const std::string extendedName = std::string(useLittleEndian ? "utf-16le" : "utf-16be") + ",ignored=" + std::string(850, 'x');
+    const auto expectedType = useLittleEndian ? UCNV_UTF16_LittleEndian : UCNV_UTF16_BigEndian;
+    ucnv_setDefaultName_nid_postfix(extendedName.c_str());
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), canonicalName) == 0, "canonicalize the configured name");
+    u_releaseDefaultConverter_nid_postfix(previous);
+    auto* current = AcquireDefaultConverter();
+    Require(ucnv_getType(current) == expectedType, "old checkout cannot repopulate the cache");
+    u_releaseDefaultConverter_nid_postfix(current);
+
+    ucnv_setDefaultName_nid_postfix("anyps5-no-such-converter");
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), canonicalName) == 0, "unknown converter leaves the default name intact");
+    current = AcquireDefaultConverter();
+    Require(ucnv_getType(current) == expectedType, "unknown converter leaves the encoding intact");
+    u_releaseDefaultConverter_nid_postfix(current);
+
+    ucnv_setDefaultName_nid_postfix(nullptr);
+    auto* reset = AcquireDefaultConverter();
+    Require(ucnv_getType(reset) == platformType, "reset discards the cached converter");
+    Require(platformName == ucnv_getDefaultName_nid_postfix(), "reset restores the platform default name");
+    u_releaseDefaultConverter_nid_postfix(reset);
     u_flushDefaultConverter_nid_postfix();
 }
 
@@ -277,11 +351,187 @@ void SignatureGuestPointers() {
 #endif
 }
 
+void NameMatchingGuestPointers() {
+    struct GuardedPages {
+        std::size_t pageSize = 4096;
+        char* data = nullptr;
+
+        GuardedPages() {
+#ifdef _WIN32
+            auto* mapped = VirtualAlloc(nullptr, pageSize * 3, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            Require(mapped != nullptr, "allocate name matching pages");
+            data = static_cast<char*>(mapped);
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(data + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0,
+                    "protect name matching guard page");
+#else
+            const long hostPage = sysconf(_SC_PAGESIZE);
+            if (hostPage > 0) pageSize = static_cast<std::size_t>(hostPage);
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED, "allocate name matching pages");
+            data = static_cast<char*>(mapped);
+            Require(mprotect(data + pageSize * 2, pageSize, PROT_NONE) == 0,
+                    "protect name matching guard page");
+#endif
+        }
+
+        ~GuardedPages() {
+#ifdef _WIN32
+            if (data) VirtualFree(data, 0, MEM_RELEASE);
+#else
+            if (data) munmap(data, pageSize * 3);
+#endif
+        }
+
+        void ProtectReadOnly(std::size_t offset, std::size_t bytes) {
+#ifdef _WIN32
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(data + offset, bytes, PAGE_READONLY, &oldProtect) != 0, "protect read-only pages");
+#else
+            Require(mprotect(data + offset, bytes, PROT_READ) == 0, "protect read-only pages");
+#endif
+        }
+    };
+
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* unmappedOut = reinterpret_cast<char*>(std::uintptr_t{0x10});
+
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_compareNames_nid_postfix(unmapped, "utf8"); },
+                                     "compareNames rejects unreadable left");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_compareNames_nid_postfix("utf8", unmapped); },
+                                     "compareNames rejects unreadable right");
+
+    std::array<char, 32> scratch{};
+    scratch.fill('@');
+    for (auto call : {ucnv_io_stripASCIIForCompare_nid_postfix, ucnv_io_stripEBCDICForCompare_nid_postfix}) {
+        RequiresRuntimeErrorKeepingErrno([&] { call(scratch.data(), unmapped); },
+                                         "strip rejects unreadable name");
+        Require(std::all_of(scratch.begin(), scratch.end(), [](char c) { return c == '@'; }),
+                "unreadable name leaves destination unchanged");
+        RequiresRuntimeErrorKeepingErrno([&] { call(unmappedOut, "utf8"); },
+                                         "strip rejects unmapped destination");
+    }
+
+    GuardedPages pages;
+    char* const tail = pages.data + pages.pageSize * 2;
+    std::memset(pages.data, '@', pages.pageSize * 2);
+
+    std::memcpy(tail - 5, "utf8", 5);
+    Require(ucnv_compareNames_nid_postfix(tail - 5, "u*T@f08") == 0,
+            "compareNames stops at NUL before guard page");
+    Require(ucnv_compareNames_nid_postfix("u*T@f08", tail - 5) == 0,
+            "compareNames right operand stops at NUL before guard page");
+
+    std::memcpy(tail - 2, "0", 2);
+    Require(ucnv_compareNames_nid_postfix(tail - 2, "000") == 0,
+            "compareNames lookahead after leading zero sees NUL before guard page");
+
+    std::memcpy(tail - 3, "utf", 3);
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_compareNames_nid_postfix(tail - 3, "utf8"); },
+                                     "compareNames rejects left crossing into guard page");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_compareNames_nid_postfix("utf8", tail - 3); },
+                                     "compareNames rejects right crossing into guard page");
+
+    tail[-1] = '0';
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_compareNames_nid_postfix(tail - 1, "0"); },
+                                     "compareNames zero lookahead rejects crossing into guard page");
+
+    const std::string crossPage(2000, 'A');
+    std::memcpy(pages.data + pages.pageSize - 100, crossPage.c_str(), crossPage.size() + 1);
+    const std::string expectedLower(2000, 'a');
+    Require(ucnv_compareNames_nid_postfix(pages.data + pages.pageSize - 100, expectedLower.c_str()) == 0,
+            "compareNames handles valid names crossing a page boundary");
+    Require(ucnv_io_stripASCIIForCompare_nid_postfix(pages.data, pages.data + pages.pageSize - 100) == pages.data,
+            "strip supports names crossing a writable page boundary");
+    Require(std::string_view(pages.data) == expectedLower, "cross-page stripped content matches");
+    Require(ucnv_io_stripASCIIForCompare_nid_postfix(pages.data + pages.pageSize - 100,
+                                                     pages.data + pages.pageSize - 100) ==
+                pages.data + pages.pageSize - 100,
+            "in-place strip supports names crossing a writable page boundary");
+    Require(std::string_view(pages.data + pages.pageSize - 100) == expectedLower,
+            "in-place cross-page stripped content matches");
+
+    std::memset(pages.data, '@', pages.pageSize * 2);
+    std::memcpy(tail - 5, "UTF8", 5);
+    Require(ucnv_io_stripASCIIForCompare_nid_postfix(scratch.data(), tail - 5) == scratch.data() &&
+                std::strcmp(scratch.data(), "utf8") == 0,
+            "ASCII strip reads NUL-terminated name before guard page");
+    const std::string ebcdicUtf8 = ToEbcdic("UTF8");
+    std::memcpy(tail - 5, ebcdicUtf8.c_str(), ebcdicUtf8.size() + 1);
+    Require(ucnv_io_stripEBCDICForCompare_nid_postfix(scratch.data(), tail - 5) == scratch.data() &&
+                std::strcmp(scratch.data(), ToEbcdic("utf8").c_str()) == 0,
+            "EBCDIC strip reads NUL-terminated name before guard page");
+
+    std::memcpy(tail - 3, "UTF", 3);
+    scratch.fill('@');
+    for (auto call : {ucnv_io_stripASCIIForCompare_nid_postfix, ucnv_io_stripEBCDICForCompare_nid_postfix}) {
+        RequiresRuntimeErrorKeepingErrno([&] { call(scratch.data(), tail - 3); },
+                                         "strip rejects unterminated name crossing into guard page");
+        Require(std::all_of(scratch.begin(), scratch.end(), [](char c) { return c == '@'; }),
+                "unterminated guard-crossing name leaves destination unchanged");
+    }
+
+    tail[-1] = '0';
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_io_stripASCIIForCompare_nid_postfix(scratch.data(), tail - 1); },
+                                     "ASCII strip zero lookahead rejects crossing into guard page");
+    tail[-1] = Ebcdic('0');
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_io_stripEBCDICForCompare_nid_postfix(scratch.data(), tail - 1); },
+                                     "EBCDIC strip zero lookahead rejects crossing into guard page");
+
+    std::memset(tail - 16, '@', 16);
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_io_stripASCIIForCompare_nid_postfix(tail - 2, "UTF-8"); },
+                                     "ASCII strip rejects destination crossing into guard page");
+    Require(tail[-2] == '@' && tail[-1] == '@',
+            "rejected ASCII guard-crossing write makes no partial destination write");
+    RequiresRuntimeErrorKeepingErrno(
+        [&] { ucnv_io_stripEBCDICForCompare_nid_postfix(tail - 2, ToEbcdic("UTF-8").c_str()); },
+        "EBCDIC strip rejects destination crossing into guard page");
+    Require(tail[-2] == '@' && tail[-1] == '@',
+            "rejected EBCDIC guard-crossing write makes no partial destination write");
+
+    Require(ucnv_io_stripASCIIForCompare_nid_postfix(tail - 5, "UTF-8") == tail - 5 &&
+                std::strcmp(tail - 5, "utf8") == 0 && tail[-6] == '@',
+            "ASCII strip writes exact fit before guard page");
+    Require(ucnv_io_stripEBCDICForCompare_nid_postfix(tail - 5, ToEbcdic("UTF-8").c_str()) == tail - 5 &&
+                std::strcmp(tail - 5, ToEbcdic("utf8").c_str()) == 0 && tail[-6] == '@',
+            "EBCDIC strip writes exact fit before guard page");
+
+    std::memcpy(tail - 6, "UTF-8", 6);
+    Require(ucnv_io_stripASCIIForCompare_nid_postfix(tail - 6, tail - 6) == tail - 6 &&
+                std::strcmp(tail - 6, "utf8") == 0,
+            "in-place strip succeeds near guard page");
+
+    std::memcpy(pages.data + 32, "UTF-8", 6);
+    std::memcpy(pages.data + 64, "kept", 5);
+    const std::string ebcdicInput = ToEbcdic("UTF-8");
+    std::memcpy(pages.data + 96, ebcdicInput.c_str(), ebcdicInput.size() + 1);
+    pages.ProtectReadOnly(0, pages.pageSize);
+    Require(ucnv_compareNames_nid_postfix(pages.data + 32, "u*T@f08") == 0,
+            "compareNames reads from read-only page");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_io_stripASCIIForCompare_nid_postfix(pages.data + 64, "abc"); },
+                                     "ASCII strip rejects read-only destination");
+    RequiresRuntimeErrorKeepingErrno([&] { ucnv_io_stripASCIIForCompare_nid_postfix(pages.data + 64, ""); },
+                                     "ASCII strip rejects read-only destination even for empty output");
+    RequiresRuntimeErrorKeepingErrno(
+        [&] { ucnv_io_stripEBCDICForCompare_nid_postfix(pages.data + 64, ToEbcdic("abc").c_str()); },
+        "EBCDIC strip rejects read-only destination");
+    RequiresRuntimeErrorKeepingErrno(
+        [&] { ucnv_io_stripASCIIForCompare_nid_postfix(pages.data + 32, pages.data + 32); },
+        "strip rejects read-only in-place buffer");
+    Require(std::strcmp(pages.data + 64, "kept") == 0 && std::strcmp(pages.data + 32, "UTF-8") == 0,
+            "read-only buffers stay unchanged");
+    Require(ucnv_io_stripEBCDICForCompare_nid_postfix(scratch.data(), pages.data + 96) == scratch.data() &&
+                std::strcmp(scratch.data(), ToEbcdic("utf8").c_str()) == 0,
+            "EBCDIC strip reads from read-only page");
+}
+
 }
 
 int main() {
     DefaultConverterLifecycle();
+    DefaultConverterNames();
     NameMatching();
+    NameMatchingGuestPointers();
     Signatures();
     SignatureGuestPointers();
 }

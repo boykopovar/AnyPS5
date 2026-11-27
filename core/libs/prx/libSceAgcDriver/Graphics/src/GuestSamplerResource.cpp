@@ -22,7 +22,8 @@ bool isAnisoFilter(std::uint32_t raw) {
 
 VkSamplerReductionMode toVkReductionMode(std::uint32_t raw) {
     switch (raw) {
-        case 0: return VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
+        case 0:
+        case 3: return VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
         case 1: return VK_SAMPLER_REDUCTION_MODE_MIN_EXT;
         case 2: return VK_SAMPLER_REDUCTION_MODE_MAX_EXT;
         default: throw std::runtime_error("AGC graphics: guest sampler descriptor uses an unknown reduction filter mode " + std::to_string(raw));

@@ -1,5 +1,6 @@
 #include "prx/libSceMoveTracker/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -17,6 +18,9 @@ void CheckInitValidation() {
     Require(sceMoveTrackerInit(memory, 1, 8, 0) == kErrInvalidArg);
     Require(sceMoveTrackerInit(memory, 1, 0, 8) == kErrInvalidArg);
     Require(sceMoveTrackerInit(nullptr, 0, 8, 8) == kErrInvalidArg);
+    errno = 71;
+    Require(sceMoveTrackerInit(reinterpret_cast<void*>(0x10), 1, 0, 0) == kErrInvalidArg);
+    Require(errno == 71);
 }
 
 }
@@ -26,14 +30,26 @@ int main() {
     std::array<std::uint32_t, 2> total{kFill, kFill};
     std::array<std::uint32_t, 2> processing{kFill, kFill};
 
+    errno = 71;
     Require(sceMoveTrackerGetWorkingMemorySize(nullptr, nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceMoveTrackerGetWorkingMemorySize(reinterpret_cast<std::uint32_t*>(0x10), processing.data()) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceMoveTrackerGetWorkingMemorySize(total.data(), reinterpret_cast<std::uint32_t*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceMoveTrackerGetWorkingMemorySize(total.data(), nullptr) == kErrInvalidArg);
+    Require(errno == 71);
+    errno = 71;
     Require(sceMoveTrackerGetWorkingMemorySize(nullptr, processing.data()) == kErrInvalidArg);
+    Require(errno == 71);
     Require(total[0] == kFill && total[1] == kFill && processing[0] == kFill && processing[1] == kFill);
 
+    errno = 71;
     Require(sceMoveTrackerGetWorkingMemorySize(total.data(), processing.data()) == 0);
+    Require(errno == 71);
     Require(total[0] == 0xa00000 && processing[0] == 0x800000);
     Require(total[1] == kFill && processing[1] == kFill);
     return 0;

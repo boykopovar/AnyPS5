@@ -40,8 +40,10 @@ extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maxi
 extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" bool GuestReadable_nid_no_patch(const void* source, std::size_t bytes);
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" long double PowerScaled_nid_no_patch(long double base, long double exp, short* scale);
 extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t destinationPitch, const void* source, std::size_t sourcePitch, std::size_t rowBytes, std::size_t rows);
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" void GuestFaultCopyReinstall_nid_no_patch();

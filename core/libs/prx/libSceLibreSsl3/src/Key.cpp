@@ -164,6 +164,7 @@
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <cerrno>
 #include <stdexcept>
@@ -182,18 +183,12 @@ static_assert(offsetof(LibreSsl3EvpPkey, method) == 8);
 
 template <typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<const T>(source).CopyIn(destination);
 }
 
 template <typename T>
 bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<T>(destination).CopyOut(value);
 }
 
 template <typename T>
@@ -290,7 +285,7 @@ int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa) {
     return RetainGuest(rsa, __func__);
 }
 
-int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
+int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSslCtx* ctx) {
     if (!ctx)
         throw std::invalid_argument("SSL_CTX_up_ref requires a context");
     return RetainGuest(ctx, __func__);

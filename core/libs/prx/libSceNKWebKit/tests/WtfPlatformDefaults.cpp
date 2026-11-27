@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -51,6 +52,27 @@ int main() {
     _ZN3WTF11OSAllocator23hintMemoryNotNeededSoonEPvm(nullptr, 0);
     _ZN3WTF11OSAllocator23hintMemoryNotNeededSoonEPvm(buffer, sizeof(buffer));
     _ZN3WTF11OSAllocator23hintMemoryNotNeededSoonEPvm(buffer, SIZE_MAX);
+
+    {
+        constexpr std::size_t bytes = 0x8000;
+        void* reserved = mmap_nid_postfix(nullptr, bytes, 0, 0x1002, -1, 0);
+        Require(reserved != reinterpret_cast<void*>(-1));
+        auto* bytesView = static_cast<volatile unsigned char*>(reserved);
+        _ZN3WTF11OSAllocator6commitEPvmbb(reserved, bytes, true, false);
+        bytesView[0] = 0x5a;
+        bytesView[bytes - 1] = 0xa5;
+        _ZN3WTF11OSAllocator6commitEPvmbb(reserved, bytes, false, false);
+        Require(bytesView[0] == 0x5a && bytesView[bytes - 1] == 0xa5);
+        _ZN3WTF11OSAllocator8decommitEPvm(reserved, bytes);
+        _ZN3WTF11OSAllocator6commitEPvmbb(reserved, bytes / 2, true, false);
+        bytesView[1] = 1;
+        _ZN3WTF11OSAllocator8decommitEPvm(reserved, bytes / 2);
+        _ZN3WTF11OSAllocator8decommitEPvm(reserved, 0);
+        char residency[2]{};
+        Require(mincore_nid_postfix(reserved, bytes, residency) == 0);
+        _ZN3WTF11OSAllocator18releaseDecommittedEPvm(reserved, bytes);
+        Require(mincore_nid_postfix(reserved, bytes, residency) == -1);
+    }
 
     _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_(nullString, nullString, nullString);
     _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_(path, emptyString, path);

@@ -31,6 +31,18 @@ bool endsFlow(Codegen::ControlFlowKind kind) {
     return kind == Return || kind == Trap || kind == UnconditionalJump || kind == IndirectJump;
 }
 
+void readRelativeTable(std::span<const std::uint8_t> bytes, VirtualAddress address, VirtualAddress base, VirtualAddress textVaddr, std::size_t textSize, std::vector<VirtualAddress>& targets) {
+    if (base < address || base - address >= bytes.size()) return;
+    const auto begin = static_cast<std::size_t>(base - address);
+    for (auto offset = begin; offset + 4 <= bytes.size(); offset += 4) {
+        std::int32_t displacement;
+        std::memcpy(&displacement, bytes.data() + offset, sizeof(displacement));
+        const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
+        if (target < textVaddr || target - textVaddr >= textSize || (target >= base && target - base < offset + 4 - begin)) break;
+        targets.push_back(target);
+    }
+}
+
 class Analyzer {
 public:
     explicit Analyzer(const StrictReachabilityInput& input) : input(input) {}
@@ -166,6 +178,9 @@ private:
                 region.Instructions.push_back(address);
                 if (info.SegmentPrefix != 0 && info.HasMemoryOperand) region.UnknownSegmentAccess = true;
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
+                    if ((info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
+                        || (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(info.BranchDisp)))
+                        throw RelinkerException("Strict filter: direct branch leaves code", address);
                     const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
                     if (!isCode(target)) throw RelinkerException("Strict filter: direct branch leaves code", address);
                     region.Edges.insert(target);
@@ -216,6 +231,7 @@ private:
         for (const auto base : tableBases) {
             for (auto slot = base; input.ImportSlots.contains(slot) || input.Pointers.contains(slot); slot += sizeof(std::uint64_t)) addAddressTaken(slot);
             for (const auto target : ReadRelativeTableTargets(input.Data, base, input.TextVaddr, input.Text.size())) addAddressTaken(target);
+            for (const auto target : ReadRelativeTableTargets(input.Text, base, input.TextVaddr)) addAddressTaken(target);
         }
     }
 };
@@ -231,16 +247,16 @@ std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDat
     if (textSize == 0 || textSize > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
         throw RelinkerException("Strict filter: invalid text range");
     }
-    for (const auto& region : data) {
-        if (base < region.Address || base - region.Address >= region.Bytes.size()) continue;
-        for (auto offset = static_cast<std::size_t>(base - region.Address); offset + 4 <= region.Bytes.size(); offset += 4) {
-            std::int32_t displacement;
-            std::memcpy(&displacement, region.Bytes.data() + offset, sizeof(displacement));
-            const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
-            if (target < textVaddr || target - textVaddr >= textSize) break;
-            targets.push_back(target);
-        }
+    for (const auto& region : data) readRelativeTable(region.Bytes, region.Address, base, textVaddr, textSize, targets);
+    return targets;
+}
+
+std::vector<VirtualAddress> ReadRelativeTableTargets(std::span<const std::uint8_t> text, VirtualAddress base, VirtualAddress textVaddr) {
+    std::vector<VirtualAddress> targets;
+    if (text.empty() || text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+        throw RelinkerException("Relative jump table: invalid text range");
     }
+    readRelativeTable(text, textVaddr, base, textVaddr, text.size(), targets);
     return targets;
 }
 

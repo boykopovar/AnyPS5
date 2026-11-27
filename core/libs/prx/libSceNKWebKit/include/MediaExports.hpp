@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/src/MediaTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -31,6 +32,8 @@ void* APS5_VABI _ZN3WTF9MediaTimenaEmPv(std::size_t size, void* ptr);
 void* APS5_VABI _ZN3WTF9MediaTimenwEm10NotNullTagPv(std::size_t size, WTF::NotNullTag, void* ptr);
 void* APS5_VABI _ZN3WTF9MediaTimenwEmPv(std::size_t size, void* ptr);
 WTF::MediaTime& APS5_VABI _ZN3WTF9MediaTimepLERKS0_(WTF::MediaTime* self, const WTF::MediaTime& rhs);
+const NKWebKit::WtfAbi::String& APS5_VABI _ZN7WebCore16HTMLMediaElement19mediaCacheDirectoryEv();
+void APS5_VABI _ZN7WebCore16HTMLMediaElement22setMediaCacheDirectoryERKN3WTF6StringE(const NKWebKit::WtfAbi::String& path);
 void APS5_VABI _ZN7WebCore10TimeRanges13intersectWithERKS0_(WebCore::TimeRanges* self, const WebCore::TimeRanges& other);
 void APS5_VABI _ZN7WebCore10TimeRanges3addEdd(WebCore::TimeRanges* self, double start, double end);
 WebCore::Ref<WebCore::TimeRanges> APS5_VABI _ZN7WebCore10TimeRanges6createEdd(double start, double end);
@@ -68,6 +71,7 @@ WTF::MediaTime::ComparisonFlags APS5_VABI _ZNK3WTF9MediaTime7compareERKS0_(const
 bool APS5_VABI _ZNK3WTF9MediaTime7isValidEv(const WTF::MediaTime* self);
 float APS5_VABI _ZNK3WTF9MediaTime7toFloatEv(const WTF::MediaTime* self);
 double APS5_VABI _ZNK3WTF9MediaTime8toDoubleEv(const WTF::MediaTime* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF9MediaTime8toStringEv(const WTF::MediaTime* self);
 bool APS5_VABI _ZNK3WTF9MediaTime9isBetweenERKS0_S2_(const WTF::MediaTime* self, const WTF::MediaTime& a, const WTF::MediaTime& b);
 bool APS5_VABI _ZNK3WTF9MediaTime9isInvalidEv(const WTF::MediaTime* self);
 uint8_t APS5_VABI _ZNK3WTF9MediaTime9timeFlagsEv(const WTF::MediaTime* self);

@@ -35,6 +35,7 @@ static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <=
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherImageShapeBase);
 static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
+static_assert(PipelineSpecialization::NormalizedImageBase + ShaderInfo::MaxImages <= PipelineSpecialization::D16TowardZeroBase);
 
 namespace {
 
@@ -408,7 +409,8 @@ std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, st
 }
 
 bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter) {
-    return ((word0 >> 29u) & 3u) != 0u && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
+    const auto reduction = (word0 >> 29u) & 3u;
+    return (reduction == 1u || reduction == 2u) && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
 }
 
 std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter) {
@@ -515,7 +517,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& buffer = info.buffers[index];
         const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
         const auto format = (fields.word3 >> 12u) & 0x7fu;
-        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (fields.known && format == 0u))) fail("buffer specialization has an unsupported format");
+        if (buffer.descriptorFormatted && format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) fail("buffer specialization has an unsupported format");
         const auto misalignment = fields.misalignment;
         auto alignment = static_cast<std::uint32_t>(buffer.typedAlignment);
         if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
@@ -545,6 +547,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto first = PipelineSpecialization::ImageBase + index * PipelineSpecialization::ImageWords;
         plan.specialization.push_back({first, imageModes[index]});
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({first + 1u + component, (snapshot.images.at(index).dwords[3] >> (component * 3u)) & 7u});
+        if (!info.images[index].depthBitsCompatible) {
+            const auto texelFormat = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
+            plan.specialization.push_back({PipelineSpecialization::D16TowardZeroBase + index, texelFormat == 22u || texelFormat == 64u || texelFormat == 74u || texelFormat == 77u ? 1u : 0u});
+        }
         if (shaderImageMinLod) {
             const auto& words = snapshot.images.at(index).dwords;
             const auto clamp = RelativeMinLod(words)[0];
@@ -554,19 +560,9 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& image = info.images[index];
         if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;
         const auto code = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
-        const auto format = code >= 1u && code <= 77u ? GetFormatInfo(static_cast<IrBufferFormat>(code)) : SpirvBufferFormatInfo{};
-        const bool snorm = format.type == SpirvFormatComponentType::Snorm;
-        const auto bits = format.componentBits[0];
-        const bool uniform = format.componentCount != 0u && !format.packedBitfield && bits >= 2u && bits <= 16u && std::all_of(format.componentBits, format.componentBits + format.componentCount, [&](std::uint32_t width) { return width == bits; });
-        const bool quantized = uniform && (format.type == SpirvFormatComponentType::Unorm || snorm);
-        const auto scale = quantized ? static_cast<float>((1u << (snorm ? bits - 1u : bits)) - 1u) : 1.0f;
-        auto reciprocal = 1.0f / scale;
-        while (static_cast<double>(reciprocal) * static_cast<double>(scale) < 1.0) reciprocal = std::nextafter(reciprocal, 2.0f);
+        const auto values = StoreQuantizeValues(code);
         const auto quantize = PipelineSpecialization::StoreQuantizeBase + index * PipelineSpecialization::StoreQuantizeWords;
-        plan.specialization.push_back({quantize, quantized ? 1u : 0u});
-        plan.specialization.push_back({quantize + 1u, std::bit_cast<std::uint32_t>(scale)});
-        plan.specialization.push_back({quantize + 2u, std::bit_cast<std::uint32_t>(reciprocal)});
-        plan.specialization.push_back({quantize + 3u, quantized && snorm ? 1u : 0u});
+        for (std::uint32_t word = 0; word < values.size(); ++word) plan.specialization.push_back({quantize + word, values[word]});
     }
     for (std::uint32_t target = 0; target < exportMappings.size() && !registrationModules; ++target) {
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({PipelineSpecialization::ExportBase + target * 4u + component, (exportMappings[target] >> (component * 2u)) & 3u});
@@ -673,6 +669,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
+                physical.imageOverwrites.push_back(image.overwrite);
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {

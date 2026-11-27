@@ -91,6 +91,10 @@ constexpr char kUnicodeExtension = 'u';
 constexpr std::size_t kMinimumTagLength = 2;
 constexpr std::size_t kMaximumExtlang = 3;
 constexpr std::size_t kAttributeCapacity = 100;
+constexpr std::size_t kTypeCapacity = 128;
+constexpr std::string_view kTypeYes = "yes";
+constexpr std::string_view kPosixKey = "va";
+constexpr std::string_view kPosixValue = "posix";
 constexpr std::size_t kNone = static_cast<std::size_t>(-1);
 constexpr std::string_view kPosixVariant = "_POSIX";
 constexpr std::string_view kAttributeKey = "attribute";
@@ -435,6 +439,7 @@ struct Output {
 };
 
 bool AppendUnicodeExtension(std::string_view value, std::vector<Extension>& into, bool& posixVariant, std::int32_t& status) {
+    const bool variantExists = posixVariant;
     posixVariant = false;
     std::size_t position = 0;
     bool hasKeys = false;
@@ -471,7 +476,65 @@ bool AppendUnicodeExtension(std::string_view value, std::vector<Extension>& into
         AddExtension(collected, Extension{std::string(kAttributeKey), std::move(joined)});
     }
 
-    if (hasKeys) NotImplemented_nid_no_patch("uloc_forLanguageTag: -u- keywords need the ICU keyTypeData resource");
+    std::string_view bcpKey;
+    std::size_t typeStart = 0;
+    std::size_t typeEnd = 0;
+    bool haveKey = false;
+    bool haveType = false;
+    for (bool done = !hasKeys; !done;) {
+        std::string_view nextKey;
+        bool haveNext = false;
+        bool emit = false;
+        if (position < value.size()) {
+            std::size_t end = value.find(kSeparator, position);
+            if (end == std::string_view::npos) end = value.size();
+            const std::string_view subtag = value.substr(position, end - position);
+            if (!IsUnicodeLocaleKey(subtag)) {
+                if (!haveType) typeStart = position;
+                typeEnd = end;
+                haveType = true;
+            } else if (haveKey) {
+                emit = true;
+                nextKey = subtag;
+                haveNext = true;
+            } else {
+                bcpKey = subtag;
+                haveKey = true;
+            }
+            position = end;
+            if (position < value.size()) ++position;
+        } else {
+            emit = true;
+            done = true;
+        }
+        if (!emit) continue;
+        const std::string keyText(bcpKey);
+        const char* legacyKey = uloc_toLegacyKey_nid_postfix(keyText.c_str());
+        if (!legacyKey) {
+            status = Icu::IllegalArgument;
+            return false;
+        }
+        const std::string key = legacyKey == keyText.c_str() ? Lowered(keyText) : std::string(legacyKey);
+        std::string type(kTypeYes);
+        if (haveType) {
+            if (typeEnd - typeStart >= kTypeCapacity) {
+                status = Icu::IllegalArgument;
+                return false;
+            }
+            const std::string typeText(value.substr(typeStart, typeEnd - typeStart));
+            const char* legacyType = uloc_toLegacyType_nid_postfix(key.c_str(), typeText.c_str());
+            if (!legacyType) {
+                status = Icu::IllegalArgument;
+                return false;
+            }
+            type = legacyType == typeText.c_str() ? Lowered(typeText) : std::string(legacyType);
+        }
+        if (!variantExists && key == kPosixKey && type == kPosixValue) posixVariant = true;
+        else AddExtension(collected, Extension{key, std::move(type)});
+        bcpKey = nextKey;
+        haveKey = haveNext;
+        haveType = false;
+    }
 
     for (Extension& entry : collected) AddExtension(into, std::move(entry));
     return true;
@@ -569,8 +632,6 @@ constexpr std::size_t kFullNameCapacity = 157;
 constexpr std::size_t kKeywordNameCapacity = 25;
 constexpr std::size_t kMaximumKeywords = 25;
 constexpr std::string_view kUndetermined = "und";
-constexpr std::string_view kPosixKey = "va";
-constexpr std::string_view kPosixValue = "posix";
 constexpr std::string_view kVariantPrivateUse = "-x-lvariant-";
 
 constexpr Replacement kDeprecatedLanguages[] = {
@@ -986,7 +1047,16 @@ struct ToTag {
                 }
                 extension = Extension{std::string(kAttributeKey), std::string()};
             } else if (name.size() > 1) {
-                NotImplemented_nid_no_patch("uloc_toLanguageTag: locale keywords need the ICU keyTypeData resource");
+                const char* key = uloc_toUnicodeLocaleKey_nid_postfix(name.c_str());
+                const char* type = key ? uloc_toUnicodeLocaleType(name.c_str(), value.c_str()) : nullptr;
+                if (!type) {
+                    if (strict) {
+                        status = Icu::IllegalArgument;
+                        return;
+                    }
+                    continue;
+                }
+                extension = Extension{std::string(key), type == value.c_str() ? Lowered(value) : std::string(type)};
             } else {
                 const bool valid = name[0] == kPrivateUse ? SeparatedList(ValidPrivateUse, value)
                                                           : IsExtensionSingleton(name) && SeparatedList(ValidExtension, value);

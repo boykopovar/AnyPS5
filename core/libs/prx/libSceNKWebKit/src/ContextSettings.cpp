@@ -1,16 +1,22 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 
-extern "C" {
+#include <atomic>
 
-std::uint32_t APS5_VABI WKContextGetCacheModel(const void* contextRef) {
-    const auto* context = NKWebKit::Cast<NKWebKit::ProcessPool>(contextRef, __func__);
-    return context->cacheModel;
+namespace {
+
+std::atomic<std::uint32_t> globalCacheModel{2};
+
 }
 
-void APS5_VABI WKContextSetCacheModel(const void* contextRef, std::uint32_t cacheModel) {
-    auto* context = NKWebKit::Cast<NKWebKit::ProcessPool>(contextRef, __func__);
-    context->cacheModel = cacheModel;
+extern "C" {
+
+std::uint32_t APS5_VABI WKContextGetCacheModel(const void*) {
+    return globalCacheModel.load(std::memory_order_relaxed);
+}
+
+void APS5_VABI WKContextSetCacheModel(const void*, std::uint32_t cacheModel) {
+    globalCacheModel.store(cacheModel <= 2 ? cacheModel : 0, std::memory_order_relaxed);
 }
 
 bool APS5_VABI WKContextGetAccessibilityEnabled(const void* contextRef) {

@@ -1,5 +1,6 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -145,6 +146,13 @@ static void CheckReadOnly() {
 }
 
 static void CheckPreparedCreate2() {
+    const auto paramJson = ResolvePath_nid_no_patch("/app0/sce_sys/param.json");
+    std::filesystem::create_directories(paramJson.parent_path());
+    {
+        std::ofstream stream(paramJson, std::ios::binary | std::ios::trunc);
+        stream << "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}";
+        Require(static_cast<bool>(stream));
+    }
     const int resource = sceSaveDataCreateTransactionResource(0);
     Require(resource > 0);
     SceSaveDataDirName directory{};
