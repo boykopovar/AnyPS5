@@ -405,6 +405,22 @@ void TranslationContext::checkRoundingUse(const RdnaInstruction& inst) const {
     case RdnaOpcode::VRndneF16:
         if (inst.destination.omod != 0u && outputModifierApplies(6u)) use.fields |= ModeRound1664Bits;
         break;
+    case RdnaOpcode::VMinF64:
+    case RdnaOpcode::VMaxF64:
+    case RdnaOpcode::VFloorF64:
+    case RdnaOpcode::VCeilF64:
+    case RdnaOpcode::VTruncF64:
+    case RdnaOpcode::VRndneF64:
+    case RdnaOpcode::VFrexpMantF64:
+    case RdnaOpcode::VRcpF64:
+    case RdnaOpcode::VRsqF64:
+    case RdnaOpcode::VSqrtF64:
+    case RdnaOpcode::VTrigPreopF64:
+    case RdnaOpcode::VCvtF64F32:
+    case RdnaOpcode::VCvtF64I32:
+    case RdnaOpcode::VCvtF64U32:
+        if (inst.destination.omod != 0u && outputModifierApplies(6u)) use = {use.fields | ModeRound1664Bits, RoundingUseKind::Denormal};
+        break;
     default:
         break;
     }

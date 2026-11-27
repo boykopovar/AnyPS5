@@ -190,9 +190,13 @@ IrValue& TranslationContext::scaleF64Result(std::uint32_t omod, IrValue& value) 
         scaledLow = &ir.Select(underflow, ir.Constant(0u), low);
     } else {
         const std::uint32_t exponentStep = omod == 1u ? 0x00100000u : 0x00200000u;
+        const std::uint32_t rounding = floatMode.has_value() ? (floatMode->floatMode >> 2u) & 3u : 0u;
         IrValue& inRange = ir.ULessThan(magnitude, ir.Constant(0x7ff00000u - exponentStep));
-        scaledHigh = &ir.Select(inRange, ir.IAdd(high, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7ff00000u)));
-        scaledLow = &ir.Select(inRange, low, ir.Constant(0u));
+        IrValue& negative = ir.INotEqual(sign, ir.Constant(0u));
+        IrValue& finite = rounding == 3u ? ir.ConstantBool(true) : rounding == 1u ? negative : rounding == 2u ? ir.LogicalNot(negative) : ir.ConstantBool(false);
+        IrValue& overflowHigh = ir.BitwiseOr(sign, ir.Select(finite, ir.Constant(0x7fefffffu), ir.Constant(0x7ff00000u)));
+        scaledHigh = &ir.Select(inRange, ir.IAdd(high, ir.Constant(exponentStep)), overflowHigh);
+        scaledLow = &ir.Select(inRange, low, ir.Select(finite, ir.Constant(0xffffffffu), ir.Constant(0u)));
     }
     IrValue& denormal = ir.ULessThan(magnitude, ir.Constant(0x00100000u));
     scaledHigh = &ir.Select(denormal, ir.Constant(0u), *scaledHigh);
