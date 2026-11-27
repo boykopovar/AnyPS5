@@ -125,7 +125,7 @@ struct PthreadAttrPrivate {
     bool _createSuspended = false;
     KernelCpumask _affinity = ~KernelCpumask{0};
     bool _affinityExplicit = false;
-    std::size_t _guardsize = 0x1000;
+    std::size_t _guardsize = 0x4000;
     int _solosched = 0;
     int _scope = GUEST_SCOPE_SYSTEM;
 };
@@ -208,6 +208,8 @@ bool SetLiveGuestThreadsAffinity(KernelCpumask mask);
 KernelCpumask LiveGuestThreadsAffinity();
 KernelCpumask GuestProcessCpusetAffinity();
 bool SetLiveGuestProcessCpuset(KernelCpumask mask);
+enum class GuestCpusetTarget { Missing, Root, Process, Other };
+GuestCpusetTarget FindGuestCpuset(std::int64_t id);
 bool GuestThreadIsLive(const PthreadPrivate* thread);
 std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread);
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);
