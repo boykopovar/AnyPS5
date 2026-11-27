@@ -3760,10 +3760,6 @@ int APS5_VABI _ZN7WebCore16JSXMLHttpRequest23visitAdditionalChildrenERN3JSC11Slo
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore18setViewportFeatureERNS_17ViewportArgumentsEN3WTF10StringViewES3_bRKNS2_8FunctionIFvNS_17ViewportErrorCodeERKNS2_6StringEEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList11DrawPatternD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
