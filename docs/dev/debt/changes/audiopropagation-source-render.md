@@ -1,0 +1,5 @@
+# libSceAudioPropagation
+
+## add Functional
+
+- [sceAudioPropagationSourceRender](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) renders only format 0, 1024-sample frames, PCM types 0 and 1 (int16 at 1/32767, copied when attribute 4 is set and used by one render, as the console does) and non-portal three-point paths with a material on the middle point; anything else, unreadable PCM and delays beyond the 2^18-sample history throw. Reflection order 2 and rooms are not measured. The model fits console impulse responses (FW 13.00): `sceAudioPropagationSourceSetAudioPath` fixes the delay `(pathLength - |sourcePosition|) * 48000 / speed + 256`, plus a frame for a nonzero source position, OpenAL rolloff and cone, and ACN/SN3D gains. Material bands are sine crossovers at bins 2^(i+2)+1 (width (m-1)/3) on a 1024-point grid, 513 taps under a 0.54/0.46 Hamming window (within 4.2e-8). The console splits a fractional delay slightly differently (0.074 of the peak against 0.068 at 1979.07 samples).

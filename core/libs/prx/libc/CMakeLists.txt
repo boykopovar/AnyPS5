@@ -160,6 +160,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/GuestGs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/RuntimeThrowHandoff.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
@@ -176,6 +177,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringSearch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxToStringFloat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
@@ -194,14 +196,18 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxWeakCount.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxThreadState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxIntegerToString.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HashSearch.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/SearchTree.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Heapsort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostErrno.cpp
@@ -249,10 +255,13 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxCondition.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/LibcxxRuntimeErrorString.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSto.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringErase.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxPlainMutex.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/NumericLimits.cpp
 )
 
 find_package(Git QUIET)
@@ -421,6 +430,7 @@ endif()
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/CodecvtUtf.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxLocaleFacet.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_memset_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemsetExtent.cpp)
@@ -1698,6 +1708,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dinkumware_atomics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_libc_atomic_cas_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcAtomicCas.cpp)
+    target_include_directories(guest_libc_atomic_cas_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_atomic_cas_tests PRIVATE libc)
+    configure_windows_unwind(guest_libc_atomic_cas_tests)
+    add_test(NAME guest_libc_atomic_cas COMMAND guest_libc_atomic_cas_tests)
+    if(WIN32)
+        set_tests_properties(guest_libc_atomic_cas PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_dinkumware_division_tests ${LIBS_INCLUDE_DIR}/tests/GuestDinkumwareDivision.cpp)
     target_include_directories(guest_dinkumware_division_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_dinkumware_division_tests PRIVATE libc)
@@ -2012,6 +2031,16 @@ if(BUILD_TESTING)
         configure_windows_unwind(guest_stream_buffer_host_write_tests)
         add_test(NAME guest_stream_buffer_host_write COMMAND guest_stream_buffer_host_write_tests)
         set_tests_properties(guest_stream_buffer_host_write PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libc_file_lock_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcFileLock.cpp)
+    target_include_directories(guest_libc_file_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_file_lock_tests PRIVATE libc)
+    configure_windows_unwind(guest_libc_file_lock_tests)
+    add_test(NAME guest_libc_file_lock COMMAND guest_libc_file_lock_tests)
+    set_tests_properties(guest_libc_file_lock PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_file_lock PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_freopen_host_standard_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreopenHostStandard.cpp)
@@ -2723,6 +2752,18 @@ if(BUILD_TESTING)
     add_test(NAME guest_locale COMMAND guest_locale_tests)
     if(WIN32)
         set_tests_properties(guest_locale PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(guest_numpunct_facet_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestNumpunctFacet.cpp)
+target_include_directories(guest_numpunct_facet_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_numpunct_facet_tests PRIVATE libc)
+configure_windows_unwind(guest_numpunct_facet_tests)
+if(BUILD_TESTING)
+    set_target_properties(guest_numpunct_facet_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME guest_numpunct_facet COMMAND guest_numpunct_facet_tests)
+    if(WIN32)
+        set_tests_properties(guest_numpunct_facet PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 

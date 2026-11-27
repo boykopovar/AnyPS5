@@ -6,6 +6,7 @@
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "ThreadOwned.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -79,6 +80,14 @@ std::chrono::microseconds Driver::labelFlushDeadline() {
 
 std::chrono::microseconds Driver::labelIdleDeadline() {
     return labelDeadlines().idle;
+}
+
+std::chrono::microseconds Driver::labelFlushBusyDeadline() {
+    static const std::chrono::microseconds value = [] {
+        const char* text = std::getenv("APS5_LABEL_FLUSH_BUSY_US");
+        return std::max(labelFlushDeadline(), std::chrono::microseconds(text ? std::atoi(text) : 1000));
+    }();
+    return value;
 }
 
 bool Driver::labelFlushDue() {

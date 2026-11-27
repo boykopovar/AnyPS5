@@ -1,0 +1,5 @@
+# libSceFreeType
+
+## change [FT_List_Add, FT_List_Insert, FT_List_Find, FT_List_Remove, FT_List_Up, FT_List_Iterate and FT_List_Finalize]
+
+- [FT_List_Add, FT_List_Insert, FT_List_Find, FT_List_Remove, FT_List_Up, FT_List_Iterate and FT_List_Finalize](../../../core/libs/prx/libSceFreeType/src/List.cpp) - measured in libSceFreeTypeOt.sprx on a PS5 (firmware 11.60, payload process, one run, a title process may differ; prototypes and the 16, 24 and 32 byte list, node and allocator record layouts assumed): add appends, insert prepends, find returns the node or NULL, up moves a node to the head, iterate stops at a nonzero callback result and returns it, finalize calls destroy and then free per node in list order and clears head and tail. Names and NIDs follow the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceFreeTypeOt.c); the operations follow bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftutil.c). Malformed lists, null arguments and invalidating callbacks are not validated or measured.

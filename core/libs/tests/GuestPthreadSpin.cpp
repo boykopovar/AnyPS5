@@ -140,6 +140,33 @@ static void FaultArguments() {
     Require(pthread_spin_destroy_nid_postfix(&live) == 0);
 }
 
+static void FaultSlotPointers() {
+    PthreadSpinlock live = nullptr;
+    Require(pthread_spin_init_nid_postfix(&live, GuestPthread_Process_Private) == 0);
+    auto* badSlot = reinterpret_cast<PthreadSpinlock*>(0x1);
+    errno = 71;
+    Require(pthread_spin_lock_nid_postfix(badSlot) == GUEST_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(pthread_spin_trylock_nid_postfix(badSlot) == GUEST_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(pthread_spin_unlock_nid_postfix(badSlot) == GUEST_EFAULT);
+    Require(errno == 71);
+
+    ReadOnlyPage slotPage;
+    auto* readOnlySlot = slotPage.Set(live);
+    slotPage.Protect();
+    Require(pthread_spin_lock_nid_postfix(readOnlySlot) == 0);
+    Require(*readOnlySlot == live);
+    Require(pthread_spin_unlock_nid_postfix(readOnlySlot) == 0);
+
+    Require(pthread_spin_unlock_nid_postfix(&live) == GUEST_EPERM);
+    Require(pthread_spin_lock_nid_postfix(&live) == 0);
+    Require(pthread_spin_unlock_nid_postfix(&live) == 0);
+    Require(pthread_spin_destroy_nid_postfix(&live) == 0);
+}
+
 static void SingleThread(int pshared) {
     PthreadSpinlock lock = nullptr;
     Require(pthread_spin_init_nid_postfix(&lock, pshared) == 0);
@@ -203,6 +230,7 @@ static void MutualExclusion() {
 int main() {
     ArgumentErrors();
     FaultArguments();
+    FaultSlotPointers();
     SingleThread(GuestPthread_Process_Private);
     HeldByAnotherThread();
     MutualExclusion();

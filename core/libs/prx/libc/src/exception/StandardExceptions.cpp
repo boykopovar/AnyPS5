@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -399,9 +400,13 @@ const CategoryObject SystemCategory {SystemCategoryVtable + 2};
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyGuestMessage_nid_no_patch));
 }
+static std::atomic<LibcRaiseHandler> RaiseHandler {nullptr};
 }
 
 extern "C" {
+LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandler handler) {
+    return LibcException::RaiseHandler.exchange(handler);
+}
 const char* APS5_VABI _ZSt13_Syserror_mapi_nid_postfix(int value) {
     return LibcException::GenericErrorMessage(value);
 }
@@ -429,6 +434,7 @@ const char* APS5_VABI _ZNKSt9exception4whatEv_nid_postfix(const LibcException::E
 
 [[noreturn]] void APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix(const LibcException::ExceptionObject* self) {
     if (!self) throw std::invalid_argument("exception object is null");
+    if (const auto handler = LibcException::RaiseHandler.load()) handler(*self);
     LibcException::ThrowPlain(_ZTVSt9exception_nid_postfix);
 }
 void APS5_VABI _ZNSt9exceptionC1Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9exception_nid_postfix.destroy; }
@@ -708,6 +714,176 @@ static const LibcException::ExceptionVtable BadNodeAccessTable {0, &BadNodeAcces
 }
 [[noreturn]] void ThrowCppError_nid_no_patch(int code) {
     LibcException::ThrowCppError(code, _ZTVSt12system_error_nid_postfix, false);
+}
+}
+
+namespace LibcException::Libcxx {
+struct String { unsigned char bytes[24]; };
+static_assert(sizeof(LibcxxErrorCode) == 16 && offsetof(LibcxxErrorCode, category) == 8);
+static_assert(sizeof(LibcxxSystemErrorObject) == 32 && offsetof(LibcxxSystemErrorObject, code) == 16);
+
+static String* FillString(String* result, const std::string& text) {
+    if (!result) throw std::invalid_argument("std::__1::error_category::message: null result");
+    String value {};
+    const std::uint64_t size = text.size();
+    if (size < 23) {
+        value.bytes[0] = static_cast<unsigned char>(size << 1);
+        std::memcpy(value.bytes + 1, text.data(), size);
+    } else {
+        const std::uint64_t allocation = (size + 16) & ~std::uint64_t{15};
+        char* storage = static_cast<char*>(_Znwm_nid_postfix(allocation));
+        std::memcpy(storage, text.c_str(), size + 1);
+        const std::uint64_t words[] {allocation | 1, size, reinterpret_cast<std::uintptr_t>(storage)};
+        std::memcpy(value.bytes, words, sizeof(words));
+    }
+    std::memcpy(result, &value, sizeof(value));
+    return result;
+}
+static std::string ReadString(const String* source) {
+    if (!source) throw std::invalid_argument("std::__1::system_error: null what string");
+    String value {};
+    std::memcpy(&value, source, sizeof(value));
+    if ((value.bytes[0] & 1) == 0) {
+        const std::size_t size = value.bytes[0] >> 1;
+        if (size > 22) throw std::invalid_argument("std::__1::system_error: invalid short what string");
+        return std::string(reinterpret_cast<const char*>(value.bytes + 1), size);
+    }
+    std::uint64_t words[3] {};
+    std::memcpy(words, value.bytes, sizeof(words));
+    if (!words[2]) throw std::invalid_argument("std::__1::system_error: invalid long what string");
+    return std::string(reinterpret_cast<const char*>(static_cast<std::uintptr_t>(words[2])), words[1]);
+}
+static void ReleaseString(const String& value) {
+    if ((value.bytes[0] & 1) == 0) return;
+    std::uint64_t data = 0;
+    std::memcpy(&data, value.bytes + 16, sizeof(data));
+    _ZdlPv_nid_postfix(reinterpret_cast<void*>(static_cast<std::uintptr_t>(data)));
+}
+static std::string StrerrorMessage(int value) {
+    char buffer[1024] {};
+    const int saved = *__error_nid_postfix();
+    const int result = strerror_r_nid_postfix(value, buffer, sizeof(buffer));
+    *__error_nid_postfix() = saved;
+    if (result != 0 || !buffer[0]) return "Unknown error " + std::to_string(value);
+    return buffer;
+}
+static bool BeyondLast(int value) { return value >= sys_nerr_nid_postfix; }
+
+static const char* APS5_VABI GenericName_nid_no_patch(const CategoryObject*) { return "generic"; }
+static const char* APS5_VABI SystemName_nid_no_patch(const CategoryObject*) { return "system"; }
+static String* APS5_VABI GenericMessage_nid_no_patch(String* result, const CategoryObject*, int value) {
+    return FillString(result, BeyondLast(value) ? "unspecified generic_category error" : StrerrorMessage(value));
+}
+static String* APS5_VABI SystemMessage_nid_no_patch(String* result, const CategoryObject*, int value) {
+    return FillString(result, BeyondLast(value) ? "unspecified system_category error" : StrerrorMessage(value));
+}
+static LibcxxErrorCode APS5_VABI Condition_nid_no_patch(const CategoryObject* self, int value) { return {value, 0, self}; }
+static bool APS5_VABI EquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const LibcxxErrorCode* condition) {
+    using Mapping = LibcxxErrorCode (APS5_VABI *)(const CategoryObject*, int);
+    const auto mapped = reinterpret_cast<Mapping>(const_cast<void*>(static_cast<const void* const*>(self->vtable)[3]))(self, value);
+    return condition->category == mapped.category && condition->value == mapped.value;
+}
+static bool APS5_VABI EquivalentCode_nid_no_patch(const CategoryObject* self, const LibcxxErrorCode* code, int value) {
+    return code->category == self && code->value == value;
+}
+
+const TypeRecord DoMessageType {SingleTypeVtable + 2, "NSt3__112__do_messageE", &_ZTINSt3__114error_categoryE_nid_postfix};
+const TypeRecord GenericCategoryType {SingleTypeVtable + 2, "NSt3__124__generic_error_categoryE", &DoMessageType};
+const TypeRecord SystemCategoryType {SingleTypeVtable + 2, "NSt3__123__system_error_categoryE", &DoMessageType};
+const void* const GenericCategoryVtable[] {
+    nullptr, &GenericCategoryType,
+    reinterpret_cast<const void*>(CategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(CategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(GenericName_nid_no_patch), reinterpret_cast<const void*>(Condition_nid_no_patch),
+    reinterpret_cast<const void*>(EquivalentCondition_nid_no_patch), reinterpret_cast<const void*>(EquivalentCode_nid_no_patch),
+    reinterpret_cast<const void*>(GenericMessage_nid_no_patch)
+};
+const CategoryObject GenericCategory {GenericCategoryVtable + 2};
+static LibcxxErrorCode APS5_VABI SystemCondition_nid_no_patch(const CategoryObject* self, int value) {
+    return {value, 0, BeyondLast(value) ? self : &GenericCategory};
+}
+const void* const SystemCategoryVtable[] {
+    nullptr, &SystemCategoryType,
+    reinterpret_cast<const void*>(CategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(CategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(SystemName_nid_no_patch), reinterpret_cast<const void*>(SystemCondition_nid_no_patch),
+    reinterpret_cast<const void*>(EquivalentCondition_nid_no_patch), reinterpret_cast<const void*>(EquivalentCode_nid_no_patch),
+    reinterpret_cast<const void*>(SystemMessage_nid_no_patch)
+};
+const CategoryObject SystemCategory {SystemCategoryVtable + 2};
+
+static std::string CodeMessage(const LibcxxErrorCode& code) {
+    using Message = String* (APS5_VABI *)(String*, const CategoryObject*, int);
+    const auto message = reinterpret_cast<Message>(const_cast<void*>(static_cast<const void* const*>(code.category->vtable)[6]));
+    String text {};
+    message(&text, code.category, code.value);
+    std::string result;
+    try { result = ReadString(&text); }
+    catch (...) { ReleaseString(text); throw; }
+    ReleaseString(text);
+    return result;
+}
+static void ConstructSystemError(LibcxxSystemErrorObject* self, LibcxxErrorCode code, std::string what) {
+    if (!code.category) throw std::invalid_argument("std::__1::system_error: null error category");
+    if (code.value != 0) {
+        if (!what.empty()) what += ": ";
+        what += CodeMessage(code);
+    }
+    Construct(&self->base, _ZTVNSt3__112system_errorE_nid_postfix, what.c_str());
+    self->code = code;
+}
+static std::string WhatArgument(const char* what) {
+    if (!what) throw std::invalid_argument("std::__1::system_error: null what argument");
+    return what;
+}
+}
+
+extern "C" {
+constinit const LibcException::TypeRecord _ZTINSt3__114error_categoryE_nid_postfix {
+    LibcException::ClassTypeVtable + 2, "NSt3__114error_categoryE", nullptr,
+};
+void APS5_VABI _ZNSt3__114error_categoryD2Ev_nid_postfix(LibcException::CategoryObject*) noexcept {}
+const LibcException::CategoryObject* APS5_VABI _ZNSt3__116generic_categoryEv_nid_postfix() noexcept {
+    return &LibcException::Libcxx::GenericCategory;
+}
+
+constinit const LibcException::TypeRecord _ZTINSt3__112system_errorE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__112system_errorE", &_ZTISt13runtime_error_nid_postfix,
+};
+void APS5_VABI _ZNSt3__112system_errorD1Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
+void APS5_VABI _ZNSt3__112system_errorD2Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
+constinit const LibcException::ExceptionVtable _ZTVNSt3__112system_errorE_nid_postfix {
+    0, &_ZTINSt3__112system_errorE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch,
+    LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch,
+};
+void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeEPKc_nid_postfix(
+    LibcException::LibcxxSystemErrorObject* self, LibcException::LibcxxErrorCode code, const char* what) {
+    LibcException::Libcxx::ConstructSystemError(self, code, LibcException::Libcxx::WhatArgument(what));
+}
+void APS5_VABI _ZNSt3__112system_errorC2ENS_10error_codeEPKc_nid_postfix(
+    LibcException::LibcxxSystemErrorObject* self, LibcException::LibcxxErrorCode code, const char* what) {
+    LibcException::Libcxx::ConstructSystemError(self, code, LibcException::Libcxx::WhatArgument(what));
+}
+void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(
+    LibcException::LibcxxSystemErrorObject* self, LibcException::LibcxxErrorCode code, const void* what) {
+    LibcException::Libcxx::ConstructSystemError(self, code,
+        LibcException::Libcxx::ReadString(static_cast<const LibcException::Libcxx::String*>(what)));
+}
+[[noreturn]] void APS5_VABI _ZNSt3__120__throw_system_errorEiPKc_nid_postfix(int value, const char* what) {
+    auto text = LibcException::Libcxx::WhatArgument(what);
+    const LibcException::LibcxxErrorCode code {value, 0, &LibcException::Libcxx::SystemCategory};
+    auto* object = static_cast<LibcException::LibcxxSystemErrorObject*>(
+        __cxa_allocate_exception_nid_postfix(sizeof(LibcException::LibcxxSystemErrorObject)));
+    try {
+        LibcException::Libcxx::ConstructSystemError(object, code, std::move(text));
+    } catch (...) {
+        __cxa_free_exception_nid_postfix(object);
+        throw;
+    }
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<LibcException::TypeRecord*>(&_ZTINSt3__112system_errorE_nid_postfix)),
+        reinterpret_cast<decltype(LibcException::Header::destructor)>(LibcException::DestroyGuestMessage_nid_no_patch));
 }
 }
 
