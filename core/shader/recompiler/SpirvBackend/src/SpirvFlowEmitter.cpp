@@ -1432,11 +1432,12 @@ void EmitVoid(SpirvValueEmitContext&) {
 
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
-    if (state.program.Resources().stage == IrShaderStage::Vertex) {
+    const auto stage = state.program.Resources().stage;
+    if (stage == IrShaderStage::Vertex || stage == IrShaderStage::Geometry) {
         if (PrecedesEveryMemoryAccess(state.program, inst)) return;
         for (const auto* block : state.program.BlockOrder()) {
             for (const auto* instruction : block->Instructions()) {
-                if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented");
+                if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, stage == IrShaderStage::Vertex ? "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented" : "s_barrier in a geometry program that accesses LDS or GDS or writes memory is not implemented");
             }
         }
         return;

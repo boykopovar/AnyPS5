@@ -262,10 +262,10 @@ void TranslationContext::sSendmsg(const RdnaInstruction& inst) {
     constexpr std::uint32_t GsDoneMessage = 3u;
     const auto simm = inst.rawWords[0] & 0xffffu;
     if (program.Resources().stage == IrShaderStage::Geometry && ((simm & 0xfu) == GsMessage || (simm & 0xfu) == GsDoneMessage)) {
-        if ((simm & 0xfu) == GsDoneMessage) return;
-        if (((simm >> 8u) & 3u) != 0u) throw std::runtime_error("a GCN geometry program emits to vertex stream " + std::to_string((simm >> 8u) & 3u) + ", and only stream 0 is rasterized without stream-out");
         const auto operation = (simm >> 4u) & 3u;
-        if (operation != 0u) (void)ir.Emit(IrOpcode::EmitVertex, IrType::Void, {&ir.GetExec(), &ir.Constant(operation)});
+        if (operation == 0u) return;
+        if (((simm >> 8u) & 3u) != 0u) throw std::runtime_error("a GCN geometry program emits to vertex stream " + std::to_string((simm >> 8u) & 3u) + ", and only stream 0 is rasterized without stream-out");
+        (void)ir.Emit(IrOpcode::EmitVertex, IrType::Void, {&ir.GetExec(), &ir.Constant(operation)});
         return;
     }
     (void)ir.Emit(IrOpcode::Sendmsg, IrType::Void, {});

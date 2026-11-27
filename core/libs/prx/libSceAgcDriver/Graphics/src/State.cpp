@@ -1935,7 +1935,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     const auto raster = read(cx, 0x205);
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on
     // explicitly; KEEP_TOGETHER_ENABLE (bit 24) only affects primitive distribution across the chip.
-    const bool pointsOrLines = result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || (result.stages.mesh.has_value() && result.stages.mesh->outputPrimitiveSize <= 2u);
+    const bool pointsOrLines = RasterizesPointsOrLines(result);
     const auto lineOffset = (raster & 0x1800u) != 0 && !pointsOrLines ? 0x2000u : 0u;
     const auto rasterMode = raster & ~0x7u & ~0x7f8u & ~(1u << 24u) & ~0x1800u & ~lineOffset & ~(1u << 19u) & ~(1u << 16u);
     if (rasterMode != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "depth bias or nonstandard rasterization"));
@@ -2445,6 +2445,11 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state) {
         masks[pixel] = static_cast<std::uint16_t>(mask == full ? 0xffffu : mask);
     }
     return masks;
+}
+
+bool RasterizesPointsOrLines(const State& state) {
+    if (state.stages.legacyGeometry) return RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Line;
+    return state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || (state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize <= 2u);
 }
 
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state) {

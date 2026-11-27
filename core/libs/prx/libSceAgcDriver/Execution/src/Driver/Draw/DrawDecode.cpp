@@ -98,6 +98,34 @@ const DrawProgram& PositionExportProgram(const std::vector<DrawProgram>& program
     return programs[index];
 }
 
+std::vector<ShaderRecompiler::GeometryCopyExport> GeometryCopyExports(const DrawDecode& decoded, const std::vector<DrawProgram>& programs) {
+    const auto& geometry = decoded.state.stages.legacyGeometry;
+    require(geometry.has_value() && decoded.roles.size() == programs.size(), "GCN geometry copy exports were requested for a draw without a geometry configuration");
+    for (std::size_t i = 0; i < programs.size(); ++i) {
+        if (decoded.roles[i] == ShaderRecompiler::ProgramRole::Copy) return ShaderRecompiler::ParseGeometryCopyProgram(programs[i].binary.code, geometry->maxVertices, geometry->vertexDwords, decoded.copyStreamConfig);
+    }
+    require(false, "a GCN geometry draw has no copy program");
+    return {};
+}
+
+std::uint64_t GeometryConfigurationKey(const std::optional<ShaderRecompiler::GeometryConfiguration>& geometry) {
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    const auto mix = [&](std::uint64_t value) {
+        key ^= value;
+        key *= 0x100000001b3ull;
+    };
+    mix(geometry.has_value());
+    if (!geometry) return key;
+    for (const auto value : {geometry->inputVertices, geometry->outputTopology, geometry->maxVertices, geometry->instances, geometry->esgsItemDwords, geometry->vertexDwords}) mix(value);
+    mix(geometry->exports.size());
+    for (const auto& copy : geometry->exports) {
+        for (const auto value : {copy.target, copy.enable, copy.constants}) mix(value);
+        for (const auto value : copy.values) mix(value);
+        mix(copy.done);
+    }
+    return key;
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::uint32_t location) {
     using Role = ShaderRecompiler::ProgramRole;
     require(roles.size() == programs.size(), "draw program roles are incomplete");
@@ -105,7 +133,7 @@ std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector
     if (location == 0x280u) return words;
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i]) || location < programs[i].userDataBase) continue;
-        const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
+        const auto word = location - programs[i].userDataBase + programs[i].hiddenUserWords;
         if (word < programs[i].userData.size()) words.emplace_back(i, static_cast<std::size_t>(word));
     }
     return words;
@@ -202,8 +230,8 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             auto& geometry = *graphics.stages.legacyGeometry;
             const auto copyResources = queue.shader.find(0x04bu);
             const auto copyRsrc2 = copyResources == queue.shader.end() ? 0u : copyResources->second;
-            const auto streamConfig = (copyRsrc2 & 0x1000u) != 0u ? std::optional<std::uint32_t>((copyRsrc2 >> 1u) & 0x1fu) : std::nullopt;
-            geometry.exports = ShaderRecompiler::ParseGeometryCopyProgram(programs.back().binary.code, geometry.maxVertices, geometry.vertexDwords, streamConfig);
+            product->copyStreamConfig = (copyRsrc2 & 0x1000u) != 0u ? std::optional<std::uint32_t>((copyRsrc2 >> 1u) & 0x1fu) : std::nullopt;
+            geometry.exports = GeometryCopyExports(*product, programs);
         } else if (graphics.stages.legacyVertex) {
             append(0x48, 2, Stage::Vertex, 0x4b, 0x4c, Role::Main);
         } else {

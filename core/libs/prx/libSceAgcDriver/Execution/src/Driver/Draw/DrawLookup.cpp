@@ -35,6 +35,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(tess.mergedHull);
                 mix(tess.onChip);
             }
+            mix(GeometryConfigurationKey(graphics.stages.legacyGeometry));
             mix(graphics.rectList);
             mix(graphics.rasterizerDiscard);
             mix(programs.size());

@@ -42,6 +42,7 @@ struct DrawDecode {
     ShaderRecompiler::ShaderPixelStageInfo pixel;
     std::vector<DrawProgram> programs;
     std::vector<ShaderRecompiler::ProgramRole> roles;
+    std::optional<std::uint32_t> copyStreamConfig;
 };
 
 void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi);
@@ -51,6 +52,8 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<c
 
 void AppendProgramMemory(std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<DrawProgram>& programs);
 const DrawProgram& PositionExportProgram(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::size_t index);
+std::vector<ShaderRecompiler::GeometryCopyExport> GeometryCopyExports(const DrawDecode& decoded, const std::vector<DrawProgram>& programs);
+std::uint64_t GeometryConfigurationKey(const std::optional<ShaderRecompiler::GeometryConfiguration>& geometry);
 std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::uint32_t location);
 
 struct PreparedGraphicsStage {

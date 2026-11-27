@@ -894,7 +894,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         if (location == 0x280u) return std::nullopt;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (roles[i] == Role::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i]) || location < programs[i].userDataBase) continue;
-            const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
+            const auto word = location - programs[i].userDataBase + programs[i].hiddenUserWords;
             if (word < programs[i].userData.size()) return std::make_pair(i, static_cast<std::size_t>(word));
         }
         return std::nullopt;
@@ -1483,6 +1483,14 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
             program.memory = {{{fresh.codeAddress, std::as_bytes(std::span(fresh.code))}, {fresh.headerAddress, fresh.header}}};
             if (fresh.header.empty()) NoteRawGraphicsDraw(fresh);
             program.snapshot = std::move(snapshot);
+        }
+        if (tail.decode->state.stages.legacyGeometry) {
+            auto exports = GeometryCopyExports(*tail.decode, tail.writablePrograms);
+            if (exports != tail.decode->state.stages.legacyGeometry->exports) {
+                auto refreshed = std::make_shared<DrawDecode>(*tail.decode);
+                refreshed->state.stages.legacyGeometry->exports = std::move(exports);
+                tail.decode = std::move(refreshed);
+            }
         }
     }
     if (tail.drawHit && !tail.userPatches.empty()) {

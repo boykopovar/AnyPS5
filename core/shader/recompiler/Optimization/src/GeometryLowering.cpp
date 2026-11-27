@@ -76,24 +76,33 @@ std::optional<Term> Evaluate(const IrValue* raw, std::uint32_t depth = 0u) {
     case IrOpcode::IAdd32: {
         const auto terms = pair();
         if (!terms || (terms->first.vertex && terms->second.vertex)) return std::nullopt;
-        return Term{terms->first.vertex ? terms->first.vertex : terms->second.vertex, terms->first.scale + terms->second.scale, terms->first.constant + terms->second.constant};
+        Term sum{terms->first.vertex ? terms->first.vertex : terms->second.vertex};
+        if (__builtin_add_overflow(terms->first.scale, terms->second.scale, &sum.scale) || __builtin_add_overflow(terms->first.constant, terms->second.constant, &sum.constant)) return std::nullopt;
+        return sum;
     }
     case IrOpcode::ISub32: {
         const auto terms = pair();
         if (!terms || terms->second.vertex) return std::nullopt;
-        return Term{terms->first.vertex, terms->first.scale, terms->first.constant - terms->second.constant};
+        Term difference{terms->first.vertex, terms->first.scale};
+        if (__builtin_sub_overflow(terms->first.constant, terms->second.constant, &difference.constant)) return std::nullopt;
+        return difference;
     }
     case IrOpcode::ShiftLeftLogical32: {
         const auto terms = pair();
         if (!terms || terms->second.vertex || terms->second.constant < 0 || terms->second.constant > 31) return std::nullopt;
-        return Term{terms->first.vertex, terms->first.scale << terms->second.constant, terms->first.constant << terms->second.constant};
+        const auto factor = std::int64_t{1} << terms->second.constant;
+        Term shifted{terms->first.vertex};
+        if (__builtin_mul_overflow(terms->first.scale, factor, &shifted.scale) || __builtin_mul_overflow(terms->first.constant, factor, &shifted.constant)) return std::nullopt;
+        return shifted;
     }
     case IrOpcode::IMul32: {
         const auto terms = pair();
         if (!terms || (terms->first.vertex && terms->second.vertex)) return std::nullopt;
         const auto& varying = terms->first.vertex ? terms->first : terms->second;
         const auto& factor = terms->first.vertex ? terms->second : terms->first;
-        return Term{varying.vertex, varying.scale * factor.constant, varying.constant * factor.constant};
+        Term product{varying.vertex};
+        if (__builtin_mul_overflow(varying.scale, factor.constant, &product.scale) || __builtin_mul_overflow(varying.constant, factor.constant, &product.constant)) return std::nullopt;
+        return product;
     }
     default:
         return std::nullopt;
@@ -409,9 +418,10 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
             continue;
         }
         if (instruction.op == RdnaOpcode::BufferLoadDword && instruction.family == RdnaInstructionFamily::MUBUF) {
-            Forget(vectors, scalars, instruction);
             const auto address = vectors.find(instruction.source0.reg);
-            if (!instruction.offen || instruction.idxen || address == vectors.end() || !address->second.vertexOffset) FailCopy("a GSVS ring read not addressed by the vertex index times 4", pc);
+            const bool vertexOffset = address != vectors.end() && address->second.vertexOffset;
+            Forget(vectors, scalars, instruction);
+            if (!instruction.offen || instruction.idxen || !vertexOffset) FailCopy("a GSVS ring read not addressed by the vertex index times 4", pc);
             const auto soffset = ScalarValue(instruction.source2, scalars);
             if (!soffset) FailCopy("a GSVS ring read whose scalar offset is not a constant", pc);
             const auto bytes = static_cast<std::uint64_t>(*soffset) + instruction.memoryOffset;

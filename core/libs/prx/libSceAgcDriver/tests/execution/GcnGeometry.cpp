@@ -43,6 +43,20 @@ alignas(256) constexpr std::array<std::uint32_t, 63> GcnGeometry{
     0xe070403c, 0x08411000, 0xe070404c, 0x08410a00, 0xbf900022, 0xbf900012, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 63> GcnGeometryDone = [] {
+    auto code = GcnGeometry;
+    code[60] = 0xbf800000u;
+    code[61] = 0xbf900033u;
+    return code;
+}();
+
+alignas(256) constexpr std::array<std::uint32_t, 64> GcnGeometryBarrier = [] {
+    std::array<std::uint32_t, 64> code{};
+    code[0] = 0xbf8a0000u;
+    for (std::size_t i = 0; i < GcnGeometry.size(); ++i) code[i + 1u] = GcnGeometry[i];
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 20> GcnCopy{
     0x34020082, 0xe0305000, 0x80400201, 0xe0305100, 0x80400301, 0xe0305200, 0x80400401, 0xb0040300,
     0xe0305000, 0x04400501, 0xe0305400, 0x80400601, 0xbf8c0000, 0x7e0e0280, 0x7e1002f2, 0xf80008cf,
@@ -76,6 +90,10 @@ alignas(256) constexpr std::array<std::uint32_t, 12> GcnCopySkip{
 
 alignas(256) constexpr std::array<std::uint32_t, 11> GcnCopySccClobbered{
     0x34000082, 0x900a9802, 0xb48a0000, 0x80058105, 0xbf840005, 0xe0305000, 0x80400200, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> GcnCopyAliasedLoad{
+    0x34020082, 0xe0305000, 0x80400101, 0xbf8c0000, 0xf80008cf, 0x01010101, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyComputed{
@@ -131,6 +149,34 @@ ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& t
     auto result = ShaderRecompiler::Recompile(request);
     pushCursor += static_cast<std::uint32_t>(result.pushConstants.size());
     return result;
+}
+
+std::size_t CountOpcode(const ShaderRecompiler::RecompileResult& result, std::uint32_t opcode) {
+    const auto words = result.spirv.Words();
+    std::size_t count = 0;
+    for (std::size_t i = 5; i < words.size();) {
+        const auto length = words[i] >> 16u;
+        if ((words[i] & 0xffffu) == opcode) ++count;
+        if (length == 0u) break;
+        i += length;
+    }
+    return count;
+}
+
+void RequireGeometryMessages(const ShaderRecompiler::SpirvTarget& target) {
+    constexpr std::uint32_t OpEmitVertex = 218u;
+    constexpr std::uint32_t OpEndPrimitive = 219u;
+    constexpr std::uint32_t OpControlBarrier = 224u;
+    const auto geometry = Points();
+    std::uint32_t cursor = 0;
+    const auto plain = Compile(target, ShaderStage::Geometry, GcnGeometry, GeometryUserData, cursor, geometry);
+    cursor = 0;
+    const auto done = Compile(target, ShaderStage::Geometry, GcnGeometryDone, GeometryUserData, cursor, geometry);
+    Require(CountOpcode(plain, OpEmitVertex) == 4u && CountOpcode(plain, OpEndPrimitive) == 1u, "the GCN geometry program did not emit four vertices and one cut");
+    Require(CountOpcode(done, OpEmitVertex) == CountOpcode(plain, OpEmitVertex) && CountOpcode(done, OpEndPrimitive) == CountOpcode(plain, OpEndPrimitive), "MSG_GS_DONE with GS_OP_EMIT_CUT did not emit the final vertex and end the strip");
+    cursor = 0;
+    const auto barrier = Compile(target, ShaderStage::Geometry, GcnGeometryBarrier, GeometryUserData, cursor, geometry);
+    Require(CountOpcode(barrier, OpControlBarrier) == 0u && CountOpcode(barrier, OpEmitVertex) == 4u, "s_barrier in a GCN geometry program emitted a workgroup control barrier");
 }
 
 std::array<std::uint8_t, 4> PixelAt(float x, float y) {
@@ -218,6 +264,8 @@ void RequireCopyLayout() {
     Require(refused, "a copy program read at a slot stride other than VGT_GS_MAX_VERT_OUT times 64 bytes was accepted");
     const auto streams = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyStreams, 4u, 5u, 2u);
     Require(streams.size() == 1u && streams[0].constants == 0u && streams[0].values == std::array<std::uint32_t, 4>{0u, 0u, 0u, 0u}, "the stream 0 block of a copy program that selects its stream from the stream-out configuration SGPR was not read");
+    const auto aliased = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyAliasedLoad, 4u, 5u, std::nullopt);
+    Require(aliased.size() == 1u && aliased[0].constants == 0u && aliased[0].values == std::array<std::uint32_t, 4>{0u, 0u, 0u, 0u}, "a GSVS ring read that loads into its own address register was refused");
     const auto skipped = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopySkip, 4u, 5u, std::nullopt);
     Require(skipped.size() == 1u && skipped[0].values == std::array<std::uint32_t, 4>{0u, 0u, 0u, 0u}, "a taken s_cbranch_scc0 did not skip the export it jumps over");
     refused = false;
@@ -271,7 +319,13 @@ AgcDriver::QueueState GeometryQueue() {
 
 void RequireStageDecode() {
     auto queue = GeometryQueue();
-    const auto stages = AgcDriver::Graphics::DecodeShaderStages(queue);
+    std::vector<AgcDriver::Graphics::RegisterRead> log;
+    const auto stages = [&] {
+        const AgcDriver::Graphics::RegisterReadLogScope scope(&log);
+        return AgcDriver::Graphics::DecodeShaderStages(queue);
+    }();
+    Require(!log.empty(), "the GCN geometry stage decode recorded no register reads");
+    for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a register the GCN geometry decode reads: " + std::string(AgcDriver::Graphics::RegisterBankName(read.bank)) + " " + std::to_string(read.offset));
     Require(stages.path == AgcDriver::Graphics::ShaderPath::Vertex && stages.legacyGeometry.has_value() && !stages.legacyVertex && !stages.mesh, "VGT_SHADER_STAGES_EN 0xb0 did not decode as GCN ES-GS-VS routing");
     const auto& geometry = *stages.legacyGeometry;
     Require(geometry.inputVertices == 1u && geometry.outputTopology == 2u && geometry.maxVertices == 4u && geometry.instances == 1u && geometry.esgsItemDwords == 2u && geometry.vertexDwords == 5u, "the GCN geometry registers decoded to another configuration");
@@ -286,6 +340,13 @@ void RequireStageDecode() {
         }
         Require(false, "a GCN geometry draw was accepted with register 0x" + std::to_string(offset) + " = " + std::to_string(value));
     };
+    AgcDriver::Graphics::State points{};
+    points.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    Require(AgcDriver::Graphics::RasterizesPointsOrLines(points), "a plain point list draw was not rasterized as points");
+    points.stages.legacyGeometry = Points();
+    Require(!AgcDriver::Graphics::RasterizesPointsOrLines(points), "triangle strips a GCN geometry program makes from points were classified as points or lines, so a line polygon mode would draw them filled");
+    points.stages.legacyGeometry->outputTopology = 1u;
+    Require(AgcDriver::Graphics::RasterizesPointsOrLines(points), "line strips from a GCN geometry program were not classified as lines");
     refuses(0x2e5, 1u, "stream-out");
     refuses(0x290, 0x00200033u, "VGT_GS_MODE");
     refuses(0x2d8, 4u, "vertex streams 1-3");
@@ -331,6 +392,20 @@ void RequireProgramDecode() {
         Require(std::ranges::equal(program.userData, users[index]), name + " did not read its own stage's user data");
     }
     Require(draw.state.stages.legacyGeometry->exports == Points().exports, "the copy program's exports were not read into the geometry configuration");
+    Require(UserDataWords(draw.programs, draw.roles, 0x0ccu) == std::vector<std::pair<std::size_t, std::size_t>>{{0u, 0u}} && UserDataWords(draw.programs, draw.roles, 0x08du) == std::vector<std::pair<std::size_t, std::size_t>>{{1u, 1u}}, "a GCN program's first user SGPR register did not map to its first user data word");
+    Require(GeometryCopyExports(draw, draw.programs) == Points().exports, "the copy exports of the decoded programs differ from the decode's");
+    auto refreshed = draw.programs;
+    refreshed[2].binary.code = std::span<const std::uint32_t>(GcnCopyFolded);
+    Require(GeometryCopyExports(draw, refreshed) == ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyFolded, 4u, 5u, std::nullopt), "a refreshed copy program's exports were not read from its new code");
+    const auto key = GeometryConfigurationKey(draw.state.stages.legacyGeometry);
+    Require(key == GeometryConfigurationKey(Points()), "equal geometry configurations produced different draw keys");
+    auto taller = Points();
+    ++taller.maxVertices;
+    auto rerouted = Points();
+    rerouted.exports[1].values[0] = 3u;
+    for (const auto& [other, name] : {std::pair{std::optional<GeometryConfiguration>(taller), "VGT_GS_MAX_VERT_OUT"}, std::pair{std::optional<GeometryConfiguration>(rerouted), "a copy export"}, std::pair{std::optional<GeometryConfiguration>(), "no geometry configuration"}}) {
+        Require(GeometryConfigurationKey(other) != key, std::string("a geometry configuration differing in ") + name + " produced the same draw key");
+    }
     Require(&PositionExportProgram(draw.programs, draw.roles, 1u) == &draw.programs[2], "the GS position export layout was not read from the copy program that exports the GS vertices");
     Require(&PositionExportProgram(draw.programs, draw.roles, 0u) == &draw.programs[0], "the ES position export layout was not read from the ES program");
     Require(&PositionExportProgram(draw.programs, draw.roles, 2u) == &draw.programs[2], "the copy program's position export layout was not read from itself");
@@ -355,6 +430,7 @@ int main() {
             return VulkanTestSkipped;
         }
         ShaderRecompiler::SetGcnGuestShaders(true);
+        RequireGeometryMessages(device->Target());
         RequireQuads(*device);
         ShaderRecompiler::SetGcnGuestShaders(false);
         device.reset();
