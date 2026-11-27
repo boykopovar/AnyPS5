@@ -167,7 +167,7 @@ void RequireIberianRows() {
         {"pt-CV", PortuguesePortugal}, {"pt-TL", PortuguesePortugal},
     };
     RequireLanguages(entries);
-    constexpr const char* latinAmerica[] = {"MX", "AR", "BO", "CL", "CO", "CR", "CU", "DO", "EC", "GT", "HN", "NI", "PA", "PE", "PR", "PY", "SV", "US", "UY", "VE", "419"};
+    constexpr const char* latinAmerica[] = {"MX", "AR", "BO", "BR", "BZ", "CL", "CO", "CR", "CU", "DO", "EC", "GT", "HN", "NI", "PA", "PE", "PR", "PY", "SV", "US", "UY", "VE", "419"};
     for (const char* region : latinAmerica) Require(LanguageOf(std::string("es-") + region) == SpanishLatinAmerica, region);
 }
 

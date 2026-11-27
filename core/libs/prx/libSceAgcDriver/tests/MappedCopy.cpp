@@ -51,6 +51,15 @@ private:
     std::byte* data = nullptr;
 };
 
+const Range* resetOnCompare = nullptr;
+unsigned resetCompares = 0;
+
+void ResetCompared(std::uint64_t, std::size_t) {
+    ++resetCompares;
+    if (resetOnCompare != nullptr) GuestArena::GuestArenaReset_nid_postfix(resetOnCompare->Data(), 2 * Unit);
+    resetOnCompare = nullptr;
+}
+
 unsigned readGuards = 0;
 unsigned flushes = 0;
 
@@ -157,6 +166,38 @@ void Check(std::string_view mode) {
         Require(speculative == Compare::Equal, "a speculative copy with read hooks cannot read valid bytes");
         Require(speculativeReads == 0 && speculativeFlushes == 0, "a speculative mapped copy ran read guards or flushed GPU writes");
         Require(ordinary && ordinaryReads == 1 && ordinaryFlushes == 1, "an ordinary checked copy lost its read preparation");
+        return;
+    }
+    if (mode == "compare-reset") {
+        std::array<std::byte, 256> expected{};
+        expected.fill(std::byte{0x5b});
+        Require(CompareMapped(range.Address(), expected) == Compare::Equal, "a committed range did not compare equal");
+        resetOnCompare = &range;
+        SetCompareMappedHook(&ResetCompared);
+        errno = E2BIG;
+        const auto raced = CompareMapped(range.Address(), expected);
+        SetCompareMappedHook(nullptr);
+        Require(resetCompares == 1, "the compare did not reach the reset hook");
+        Require(raced == Compare::Unmapped, "a range reset during its compare was not reported unmapped");
+        Require(errno == E2BIG, "a compare over a reset range changed errno");
+        return;
+    }
+    if (mode == "compare-differs") {
+        std::array<std::byte, 256> expected{};
+        expected.fill(std::byte{0x5b});
+        expected.back() = std::byte{0x5c};
+        Require(CompareMapped(range.Address() + Unit - 128u, expected) == Compare::Differs, "a last-byte difference across two committed units was missed");
+        expected.back() = std::byte{0x5b};
+        Require(CompareMapped(range.Address() + Unit - 128u, expected) == Compare::Equal, "equal bytes across two committed units compared unequal");
+        return;
+    }
+    if (mode == "compare-prefix") {
+        GuestArena::GuestArenaReset_nid_postfix(range.Data() + Unit, Unit);
+        std::array<std::byte, 256> expected{};
+        expected.fill(std::byte{0x5b});
+        Require(CompareMapped(range.Address() + Unit - 128u, expected) == Compare::Unmapped, "an equal prefix before a reset unit was not reported unmapped");
+        expected.front() = std::byte{0x5c};
+        Require(CompareMapped(range.Address() + Unit - 128u, expected) == Compare::Differs, "a difference before a reset unit was reported unmapped");
         return;
     }
     if (mode == "reset") {
