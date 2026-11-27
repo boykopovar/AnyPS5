@@ -254,7 +254,7 @@ private:
                 }
             }
             address = next;
-            if (stopAtTerminal && endsFlow(info.FlowKind)) break;
+            if (stopAtTerminal && endsFlow(info.FlowKind)) return;
         }
         if (!incomplete && address < limit && (!stopAtTerminal || !endsFlow(lastFlow))) lastFlow = Codegen::ControlFlowKind::Sequential;
         if (!incomplete && !endsFlow(lastFlow) && isCode(limit)) addEdge(region, limit, !tolerateInvalid);
