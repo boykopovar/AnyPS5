@@ -358,6 +358,8 @@ void RequireProgramDecode() {
         Require(std::ranges::equal(program.userData, users[index]), name + " did not read its own stage's user data");
     }
     Require(!draw.state.stages.tessellation->mergedHull, "a GCN hull program decoded as a merged hull");
+    using Words = std::vector<std::pair<std::size_t, std::size_t>>;
+    Require(UserDataWords(draw.programs, draw.roles, 0x14cu) == Words{{0u, 0u}} && UserDataWords(draw.programs, draw.roles, 0x10du) == Words{{1u, 1u}} && UserDataWords(draw.programs, draw.roles, 0x04eu) == Words{{2u, 2u}}, "a GCN program's user data register did not map to its own user data word, so an indirect draw would patch another word");
 }
 
 }
