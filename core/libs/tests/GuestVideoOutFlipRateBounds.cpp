@@ -80,6 +80,34 @@ int main() {
     Require(ConfiguredFlipRate(1) == 2);
     Require(sceVideoOutSetFlipRate(handle, 2) == 0);
 #ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "3");
+#else
+    setenv("APS5_FLIP_RATE", "3", 1);
+#endif
+    {
+        bool threw = false;
+        try {
+            ConfiguredFlipRate(0);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "abc");
+#else
+    setenv("APS5_FLIP_RATE", "abc", 1);
+#endif
+    {
+        bool threw = false;
+        try {
+            sceVideoOutSetFlipRate(handle, 0);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+#ifdef _WIN32
     _putenv_s("APS5_FLIP_RATE", "");
 #else
     unsetenv("APS5_FLIP_RATE");
