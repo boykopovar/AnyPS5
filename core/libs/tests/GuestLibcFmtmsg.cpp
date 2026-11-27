@@ -38,11 +38,16 @@ void Require(bool condition, std::source_location location = std::source_locatio
 }
 
 void SetVerbosity(const char* value) {
+    if (value == nullptr) Require(unsetenv_nid_postfix("MSGVERB") == 0);
+    else Require(setenv_nid_postfix("MSGVERB", value, 1) == 0);
+}
+
+void SetHostVerbosity(const char* value) {
 #ifdef _WIN32
-    _putenv_s("MSGVERB", value == nullptr ? "" : value);
+    Require(_putenv_s("MSGVERB", value == nullptr ? "" : value) == 0);
 #else
-    if (value == nullptr) unsetenv("MSGVERB");
-    else setenv("MSGVERB", value, 1);
+    if (value == nullptr) Require(unsetenv("MSGVERB") == 0);
+    else Require(setenv("MSGVERB", value, 1) == 0);
 #endif
 }
 
@@ -172,6 +177,20 @@ int main() {
     BeginCapture();
     Require(fmtmsg_nid_postfix(MmConsole, nullptr, 0, nullptr, nullptr, nullptr) == MmOk);
     Require(EndCapture().empty());
+
+    SetVerbosity(nullptr);
+    SetHostVerbosity("label");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint | MmHard, "XSI:cat", MmError, "illegal option", "refer to cat in user's reference manual", "XSI:cat:001") == MmOk);
+    Require(EndCapture() == "XSI:cat: ERROR: illegal option\nTO FIX: refer to cat in user's reference manual XSI:cat:001\n");
+
+    SetVerbosity("");
+    BeginCapture();
+    Require(fmtmsg_nid_postfix(MmPrint | MmHard, "XSI:cat", MmError, "illegal option", "refer to cat in user's reference manual", "XSI:cat:001") == MmOk);
+    Require(EndCapture() == "XSI:cat: ERROR: illegal option\nTO FIX: refer to cat in user's reference manual XSI:cat:001\n");
+
+    SetVerbosity(nullptr);
+    SetHostVerbosity(nullptr);
 
     std::filesystem::remove(g_capture);
     return 0;

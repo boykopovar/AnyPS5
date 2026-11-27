@@ -1,9 +1,8 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -40,9 +39,9 @@ bool KnownComponent(const std::string& word) {
 }
 
 std::vector<std::string> Verbosity() {
-    const char* value = std::getenv("MSGVERB");
-    if (value != nullptr && *value != '\0' && std::strlen(value) <= sizeof(DefaultVerbosity) - 1) {
-        auto words = Components(value);
+    std::string value;
+    if (CopyGuestEnvironment_nid_no_patch("MSGVERB", value) && !value.empty() && value.size() <= sizeof(DefaultVerbosity) - 1) {
+        auto words = Components(value.c_str());
         bool valid = true;
         for (const auto& word : words) valid = valid && KnownComponent(word);
         if (valid) return words;
