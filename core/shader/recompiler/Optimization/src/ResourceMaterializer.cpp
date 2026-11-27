@@ -165,7 +165,7 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
 }
 
 bool multisamplePlaneRead(const ImageResource& image) {
-    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible && !image.gathered;
 }
 
 DescriptorValue gcnTableImageWords(DescriptorValue descriptor) {
