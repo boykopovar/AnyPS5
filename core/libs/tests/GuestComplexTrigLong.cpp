@@ -83,12 +83,13 @@ int main() {
     for (const long double x : {20.0L, 25.5L, 26.0L, 26.5L, 40.0L, 2000.0L}) {
         for (const long double y : {1.0L, -2.5L}) {
             const long double denominator = std::cosh(2 * x) + std::cos(2 * y);
+            const long double real = std::tanh(2 * x) / (1 + std::cos(2 * y) / std::cosh(2 * x));
             const __complex__ long double value = ctanhl_nid_postfix(Make(x, y));
-            Require(Close(__real__ value, std::sinh(2 * x) / denominator));
+            Require(Close(__real__ value, real));
             Require(Close(__imag__ value, std::sin(2 * y) / denominator));
             const __complex__ long double mirrored = ctanl_nid_postfix(Make(y, x));
             Require(Close(__real__ mirrored, std::sin(2 * y) / denominator));
-            Require(Close(__imag__ mirrored, std::sinh(2 * x) / denominator));
+            Require(Close(__imag__ mirrored, real));
         }
     }
     for (const long double x : {6000.0L, 11357.0L, 1e5L, LDBL_MAX}) {
