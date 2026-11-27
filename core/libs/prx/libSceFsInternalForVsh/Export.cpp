@@ -356,14 +356,16 @@ int APS5_VABI sceFsISSchedMapStat() {
     return 0;
 }
 
-int APS5_VABI sceFsISSchedResultToPriority() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsISSchedResultToPriority(int result) {
+    if (result < 0) NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(static_cast<std::uint8_t>(result));
 }
 
-int APS5_VABI sceFsISSchedResultToSlot() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsISSchedResultToSlot(int result) {
+    if (result < 0) NotImplemented_nid_no_patch(__func__);
+    const std::uint32_t slot = static_cast<std::uint32_t>(result) >> 16;
+    if (((slot - 1u) & 0xffu) > 1u) NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(slot & 0xffu);
 }
 
 int APS5_VABI sceFsISSchedStatCurrentThread() {

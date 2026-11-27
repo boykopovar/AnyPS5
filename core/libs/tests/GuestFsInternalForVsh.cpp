@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
@@ -10,6 +11,16 @@ void Require(bool value) {
     if (!value) {
         std::abort();
     }
+}
+
+template <typename Callable>
+bool Throws(Callable&& callable) {
+    try {
+        callable();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
 }
 
 void CheckWorkspaceOptInit(decltype(&sceFsInitCreateWorkspaceOpt) init) {
@@ -140,5 +151,15 @@ int main() {
         CheckOptInit(libSceFsInternalForVshUnknown_cUyUz68FKBc_nid_no_patch, stores, sizeof(stores) / sizeof(stores[0]));
     }
     CheckOptInit(libSceFsInternalForVshUnknown_k_minus_WaWvM74jI_nid_no_patch, nullptr, 0);
+    for (const int result : {0, 1, 0x7f, 0x80, 0xff, 0x100, 0x12345}) {
+        Require(sceFsISSchedResultToPriority(result) == (result & 0xff));
+    }
+    Require(Throws([] { sceFsISSchedResultToPriority(-1); }));
+    Require(sceFsISSchedResultToSlot(0x10000) == 1);
+    Require(sceFsISSchedResultToSlot(0x1ffff) == 1);
+    Require(sceFsISSchedResultToSlot(0x20000) == 2);
+    Require(Throws([] { sceFsISSchedResultToSlot(0); }));
+    Require(Throws([] { sceFsISSchedResultToSlot(0x30000); }));
+    Require(Throws([] { sceFsISSchedResultToSlot(-1); }));
     return 0;
 }
