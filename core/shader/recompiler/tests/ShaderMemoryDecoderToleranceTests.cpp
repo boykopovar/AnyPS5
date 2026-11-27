@@ -44,6 +44,20 @@ void ExpectThrows(const std::array<std::uint32_t, 2>& words, const char* expecte
     EXPECT_EQ(threw, true);
 }
 
+void TestScalarLoadCacheFlags() {
+    for (std::uint32_t opcode = 0; opcode <= 0x0cu; ++opcode) {
+        for (const bool dlc : {false, true}) {
+            for (const bool glc : {false, true}) {
+                const auto word0 = 0xf4000404u | (opcode << 18u) | (dlc ? 0x4000u : 0u) | (glc ? 0x10000u : 0u);
+                const std::array words{word0, 0x18000124u};
+                const auto inst = DecodeRdnaInstruction(0u, words, 0u);
+                EXPECT_EQ(inst.dlc, dlc);
+                EXPECT_EQ(inst.glc, glc);
+            }
+        }
+    }
+}
+
 void TestDsWriteAddtidTolerance() {
     constexpr std::array<std::uint32_t, 3> data1Values = {0u, 42u, 255u};
     for (const std::uint32_t data1 : data1Values) {
@@ -207,6 +221,7 @@ void Test64BitScalarDescriptorVccLoAndRefusals() {
 }
 
 int main() {
+    TestScalarLoadCacheFlags();
     TestDsWriteAddtidTolerance();
     TestDsReadAddtidTolerance();
     Test64BitScalarDescriptorVccLoAndRefusals();

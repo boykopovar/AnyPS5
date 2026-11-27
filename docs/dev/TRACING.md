@@ -26,10 +26,14 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_WAITS` | Blocking waits aggregated by guest call site, including timeout counts and longest waits, every three seconds. |
 
 To inspect a guest address in a saved `APS5_TRACE_MEMORY` log, run
-`python3 tools/memory_trace_address.py <log> --address 0x... [--length <bytes>]`. It lists recorded mapping,
-remapping, protection, reservation and unmapping events whose ranges overlap the query, in log order. These are trace
+`python3 tools/memory_trace_address.py <log> --address 0x... [--length <bytes>] [--limit <events>]`. It lists recorded mapping,
+remapping, protection, reservation and unmapping events whose ranges overlap the query, in log order. By default it shows
+the last 40 matches. Raise `--limit` to inspect earlier events, such as the mapping that preceded a later unmap. These are trace
 records, not confirmation that each attempted operation succeeded; no matching event does not prove the address was
 unmapped.
+
+The address query reads UTF-8 logs and logs with a UTF-16 or UTF-32 byte-order mark. It prints source line numbers
+from the saved log.
 
 ## GPU and memory
 
@@ -48,7 +52,7 @@ unmapped.
 | `APS5_TRACE_DRAWS` | Draw inputs and per-draw timing phases. With `APS5_PROFILE_DRAW`, also prints the detailed draw lines. |
 | `APS5_TRACE_DRAW_PROGRAMS` | One line per draw listing selected shader stages, roles, code addresses and entry addresses. |
 | `APS5_TRACE_FILL_COVER` | Initial fill/image coverage mismatches and refused image-layer clears. |
-| `APS5_TRACE_FLUSH` | Storage images flushed to guest memory and ranges left for the CPU. |
+| `APS5_TRACE_FLUSH` | Storage images flushed to guest memory and ranges left for the CPU. Also `[flush-skip]`, whether each flush was ordered on the GPU or why not, and `[refresh-eligible]`, why a storage refresh could not be ordered. |
 | `APS5_TRACE_GPU` | Queue submissions, packet execution, waits and display-buffer scanouts. |
 | `APS5_TRACE_HOST_IMPORT` | Host-import mapping attempts, memory-map details, failures and retirement. |
 | `APS5_TRACE_IMAGE_TABLE` | Image-table resource materialization and descriptor selection. |
@@ -65,6 +69,18 @@ unmapped.
 | `APS5_TRACE_UPLOAD` | Reasons storage-image data is uploaded again. |
 | `APS5_TRACE_BARRIERS` | Set to a positive integer to print that many skipped barrier decisions and their ranges. |
 
+## Windows sampling windows
+
+To isolate a period of a run, save two snapshots of the cumulative sample file from the same running process.
+Use the later snapshot as input and supply the earlier one with `--since`.
+
+```sh
+python tools/symbolize_samples.py later.collapsed.txt --libs path/to/runtime --since earlier.collapsed.txt --require-matching-window
+```
+
+`--require-matching-window` requires matching module records in both snapshots and rejects decreasing sample counters.
+Take both snapshots from the same process because these checks cannot establish that the snapshots came from one run.
+
 ## Performance captures
 
 See [Build](BUILD.md#performance-trace) for the trace format, summary fields and capture limits.
@@ -76,8 +92,12 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 | `APS5_TRACE_SUMMARY_EVERY=<seconds>` | Writes periodic summary lines without recording trace events. Can be combined with either window switch. |
 | `APS5_TRACE_EVENTS=<count>` | Sets the per-thread event-buffer capacity for a frame or seconds window (1–4,194,304; default 262,144). |
 | `APS5_TRACE_DIR=<path>` | Writes performance capture and summary files to this directory instead of the working directory. |
-| `APS5_AB=<seconds>:<switch>[+<switch>...]` | Alternates phase A (the environment's settings) and phase B (the listed switches toggled) at flip packets within one run, each phase at least `<seconds>` long. Every phase change prints `[ab] phase A\|B <k> begins at present <n> (t <s> s)` and, `APS5_AB_SETTLE` seconds (default 2) later, `[ab] phase A\|B <k> settled at present <n> (t <s> s)`; `t` counts from the first flip. `APS5_AB_START=<n>` starts at flip `<n>`, `APS5_AB_START=<n>s` `<n>` seconds after the first flip. Only runtime switches (`RuntimeSwitch` in `core/libs/prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp`; their rows in `docs/dev/ENVIRONMENT.md` say that `APS5_AB` can toggle them) can be listed; any other name fails the first flip. `python tools/ab_split.py <log>` prints the mean of each periodic report (`[present]`, `[gputime]`, `[draw] pipelined`, `[syncwait]`) per phase, counting only reports that lie wholly inside a settled phase, and each B phase against its neighbouring A phases. |
+| `APS5_AB=<seconds>:<switch>[+<switch>...]` | Alternates phase A (the environment's settings) and phase B (the listed switches toggled) at flip packets within one run, each phase at least `<seconds>` long. Every phase change prints `[ab] phase A\|B <k> begins at present <n> (t <s> s)` and, `APS5_AB_SETTLE` seconds (default 2) later, `[ab] phase A\|B <k> settled at present <n> (t <s> s)`; `t` counts from the first flip. `APS5_AB_START=<n>` starts at flip `<n>`, `APS5_AB_START=<n>s` `<n>` seconds after the first flip. Only runtime switches (`RuntimeSwitch` in `core/libs/prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp`; their rows in `docs/dev/ENVIRONMENT.md` say that `APS5_AB` can toggle them) can be listed; any other name fails the first flip. `APS5_AB=<seconds>:<arm>|<arm>[|...]` runs more than two arms in turn (phase `k` uses arm `k` modulo the arm count; with `APS5_AB_ROTATE` set, cycle `c` of that many phases begins with arm `c` modulo the arm count, so no arm always comes first, and the `[ab]` header says so): `A` is the environment's settings, `<name>=<switch>[+<switch>...]` defines a group that is toggled, a name defined earlier is reused, and a bare switch list is an arm too; the `[ab]` lines then carry the arm's name in place of `A` or `B`, and `tools/ab_split.py` gives every arm other than `A` its own rows. `python tools/ab_split.py <log>` prints the mean of each periodic report (`[present]`, `[gputime]`, `[draw] pipelined`, `[syncwait]`) per phase, counting only reports that lie wholly inside a settled phase, and each B phase against its neighbouring A phases (with more than two arms or a rotation, each phase of an arm against the A phases of its own cycle). |
 | `APS5_VIDEOOUT_TELEMETRY_DIR=<path>` | Writes the presents and the pad changes of a run to `<path>/videoout.jsonl`; see [Usage](../user/USAGE.md#video-out-and-pad-telemetry). |
+
+For an event trace, repeat `--thread <name>` with exact track names to focus the digest on selected threads.
+Quote a name that contains spaces. This option applies to `aps5-trace-*.json.gz` and uncompressed event traces.
+Use the interval digest without a thread filter for `aps5-summary.jsonl`.
 
 ## Shader registers
 
@@ -95,6 +115,19 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 
 ## CSV exports
 
-- `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.
+- `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported. `--require-matching-context` rejects differences in recorded configuration and machine or title metadata. Verify scene and input separately. `--spreadsheet-safe` modifies formula-like text cells for spreadsheet import.
 - `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` requires at least one interval, a consistent capture identity, no dropped events, and contiguous interval times and present numbers.
+  Without this option, a file with no interval rows produces only the CSV header. Use `--require-complete` in scripts
+  that need a usable capture. It requires an explicit `trace_dropped: false` in each interval.
+  Use `--spreadsheet-safe` when importing the output into a spreadsheet. It changes formula-like worker and phase
+  names by prefixing a tab. Keep the default output for consumers that need the original names.
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.
+  On Windows PowerShell 5.1, capture the log through `cmd /d /c "<command> 2> run.log"`. PowerShell's own
+  `2>` can write UTF-16 and wrap long report lines, which the A/B tools cannot use.
+
+For a performance CSV from JSONL files with multiple captures, select the exact `trace` value for either input.
+Each selector must match exactly one row. For example:
+
+```sh
+python3 tools/performance_csv.py before.jsonl after.jsonl --baseline-trace aps5-trace-before.json.gz --candidate-trace aps5-trace-after.json.gz
+```
