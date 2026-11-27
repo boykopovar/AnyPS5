@@ -37,21 +37,29 @@ static bool ValidFeedbackType(int type) {
     return type >= 1 && type <= 3;
 }
 
+struct ErrnoGuard {
+    int saved = errno;
+    ErrnoGuard() = default;
+    ErrnoGuard(const ErrnoGuard&) = delete;
+    ErrnoGuard& operator=(const ErrnoGuard&) = delete;
+    ~ErrnoGuard() { errno = saved; }
+};
+
 static bool ValidString(const char* text, std::size_t maxLength) {
+    ErrnoGuard guard;
     std::string value;
-    const int savedErrno = errno;
-    const int result = CopyGuestString_nid_no_patch(text, maxLength + 1, value);
-    errno = savedErrno;
-    return result == 0;
+    return CopyGuestString_nid_no_patch(text, maxLength + 1, value) == 0;
 }
 
 template<class T>
 static bool ReservedZero(const T* entry) {
     std::array<std::uint8_t, sizeof(T::reserved)> bytes{};
     const auto* reserved = reinterpret_cast<const std::uint8_t*>(entry) + offsetof(T, reserved);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), reserved, bytes.size());
-    errno = savedErrno;
+    bool copied = false;
+    {
+        ErrnoGuard guard;
+        copied = GuestCopyIn_nid_no_patch(bytes.data(), reserved, bytes.size());
+    }
     if (!copied) return false;
     for (const auto byte : bytes) {
         if (byte != 0) return false;
@@ -80,9 +88,8 @@ static bool ValidSeparateModeParam(const std::array<std::uint8_t, 0x44>& cfg) {
 }
 
 static int WriteGuestOutput(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
+    ErrnoGuard guard;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied ? 0 : ErrorInvalidArgument;
 }
 
@@ -166,9 +173,11 @@ int APS5_VABI sceGameLiveStreamingScreenConfigureSeparateMode(const void* parame
     if (!g_screenInitialized) return ErrorScreenNotInitialized;
     if (parameter == nullptr) return ErrorInvalidArgument;
     std::array<std::uint8_t, 0x44> localCfg{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(localCfg.data(), parameter, localCfg.size());
-    errno = savedErrno;
+    bool copied = false;
+    {
+        ErrnoGuard guard;
+        copied = GuestCopyIn_nid_no_patch(localCfg.data(), parameter, localCfg.size());
+    }
     if (!copied) return ErrorInvalidArgument;
     std::uint32_t field4 = 0;
     std::memcpy(&field4, localCfg.data() + 0x04, sizeof(field4));
@@ -236,9 +245,7 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessagesCount(int type, std::
     if (!g_initialized) return ErrorNotInitialized;
     if (count == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
     const std::uint32_t zero = 0;
-    const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
-    if (!copied) return ErrorInvalidArgument;
-    return 0;
+    return WriteGuestOutput(count, &zero, sizeof(zero));
 }
 
 int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t capacity, GameLiveStreamingFeedbackMessage* messages, size_t* acquired) {
@@ -247,9 +254,7 @@ int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t cap
     if (messages == nullptr || acquired == nullptr || !ValidFeedbackType(type)) return ErrorInvalidArgument;
     (void)capacity;
     const size_t zero = 0;
-    const bool copied = GuestCopyOut_nid_no_patch(acquired, &zero, sizeof(zero));
-    if (!copied) return ErrorInvalidArgument;
-    return 0;
+    return WriteGuestOutput(acquired, &zero, sizeof(zero));
 }
 
 int APS5_VABI sceGameLiveStreamingPermitServerSideRecording(bool permit) {
@@ -420,9 +425,11 @@ int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::uint32_t count, const void*
     if (count > 0) {
         std::array<float, 32> input{};
         const std::size_t bytes = static_cast<std::size_t>(count) * 4 * sizeof(float);
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(input.data(), areas, bytes);
-        errno = savedErrno;
+        bool copied = false;
+        {
+            ErrnoGuard guard;
+            copied = GuestCopyIn_nid_no_patch(input.data(), areas, bytes);
+        }
         if (!copied) return ErrorInvalidArgument;
     }
     NotImplemented_nid_no_patch(__func__);
@@ -463,9 +470,11 @@ int APS5_VABI sceGameLiveStreamingStartDebugBroadcast(const void* parameter) {
     if (!g_initialized) return ErrorNotInitialized;
     if (parameter == nullptr) return ErrorInvalidArgument;
     std::array<std::uint8_t, 0x424> localParam{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), parameter, localParam.size());
-    errno = savedErrno;
+    bool copied = false;
+    {
+        ErrnoGuard guard;
+        copied = GuestCopyIn_nid_no_patch(localParam.data(), parameter, localParam.size());
+    }
     if (!copied) return ErrorInvalidArgument;
     const void* nulPos = std::memchr(localParam.data() + 4, '\0', 0x401);
     if (nulPos == nullptr) return ErrorInvalidArgument;

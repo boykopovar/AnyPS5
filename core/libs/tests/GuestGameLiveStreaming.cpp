@@ -320,8 +320,14 @@ void CheckBroadcastControls() {
     errno = 71;
     Require(sceGameLiveStreamingSetLinkCommentPreset(reinterpret_cast<const char*>(0x10)) == kInvalidArgument);
     Require(errno == 71);
-    Require(sceGameLiveStreamingSetLinkCommentPreset(std::string(121, 'a').c_str()) == kInvalidArgument);
-    Require(sceGameLiveStreamingSetLinkCommentPreset(std::string(220, 'a').c_str()) == kInvalidArgument);
+    const std::string oversizedPreset121(121, 'a');
+    errno = 71;
+    Require(sceGameLiveStreamingSetLinkCommentPreset(oversizedPreset121.c_str()) == kInvalidArgument);
+    Require(errno == 71);
+    const std::string oversizedPreset220(220, 'a');
+    errno = 71;
+    Require(sceGameLiveStreamingSetLinkCommentPreset(oversizedPreset220.c_str()) == kInvalidArgument);
+    Require(errno == 71);
     Require(ThrowsNotImplemented([] { sceGameLiveStreamingSetLinkCommentPreset(""); }));
     Require(ThrowsNotImplemented([] { sceGameLiveStreamingSetLinkCommentPreset(std::string(120, 'a').c_str()); }));
 
