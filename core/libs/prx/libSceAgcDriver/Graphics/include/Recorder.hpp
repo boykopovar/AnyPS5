@@ -249,6 +249,7 @@ public:
     std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
     static constexpr VkPipelineStageFlags UploadScratchReuseStages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     std::size_t OpenKeptBytes() const { return open != nullptr ? open->keptBytes : 0; }
+    std::size_t OpenKeptCount() const { return open != nullptr ? open->kept.size() : 0; }
     void FlushDeferredReleases();
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();

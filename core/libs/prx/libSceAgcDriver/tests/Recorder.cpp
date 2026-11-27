@@ -7974,6 +7974,60 @@ void drawInputMirrorTests(const Device& device) {
     Require(remade != nullptr && remade != lostMirror && !remade->Mapped() && use(2 * held, held), "a mirror was not made again after its batch was discarded");
     Require(drawInputHolds(context, cache, remade, first, held), "a draw input mirror made after a discarded batch does not hold the bytes of its snapshot");
     cache.Sync();
+    const auto failedRegistration = [&](Recorder& batch, const Context& through, bool deferred, bool demoted, const char* mode) {
+        const auto commands = batch.Commands();
+        if (demoted) demoteThrough(through, commands);
+        Require(batch.Deferred() == deferred, std::string("the ") + mode + " batch did not open in its mode");
+        const auto reusing = [&] { return batch.ReusableDrawSnapshot(first, held, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true); };
+        const auto counted = [&](std::size_t kept, std::size_t mirrored) { return batch.DrawInputBytes() == std::pair<std::size_t, std::size_t>{kept, mirrored}; };
+        auto host = snapshot(first);
+        batch.KeepDrawSnapshot(first, held, CollectWrites(first, held), registry, host, Use::Vertex);
+        const std::weak_ptr<Buffer> hostWatch = host;
+        host.reset();
+        const auto keptBefore = batch.OpenKeptCount();
+        Recorder::FailNextDiscardRegistrationsForTest(1);
+        bool refused = false;
+        try {
+            reusing();
+        } catch (const std::bad_alloc&) {
+            refused = true;
+        }
+        Recorder::FailNextDiscardRegistrationsForTest(0);
+        Require(refused, std::string("registering the discard of a mirror did not fail in a ") + mode + " batch");
+        Require(counted(held, 0), std::string("a mirror whose discard registration failed was counted in a ") + mode + " batch");
+        Require(batch.OpenKeptCount() == keptBefore + 2, std::string("a ") + mode + " batch did not keep both operands of the mirror copy it recorded");
+        std::memset(reinterpret_cast<void*>(first), 0x5a, 16);
+        CollectWrites(first, 16);
+        Require(reusing() == nullptr && counted(0, 0), std::string("a snapshot whose guest memory changed outlived its eviction in a ") + mode + " batch");
+        Require(!hostWatch.expired(), std::string("the host snapshot a ") + mode + " batch copies from was released with the cache entry");
+        batch.Submit();
+        batch.Sync();
+        const auto next = snapshot(first);
+        batch.KeepDrawSnapshot(first, held, CollectWrites(first, held), registry, next, Use::Vertex);
+        const auto retried = reusing();
+        Require(retried != nullptr && retried != next && !retried->Mapped() && counted(2 * held, held), std::string("a mirror was not made again after its discard registration failed in a ") + mode + " batch");
+        Require(drawInputHolds(through, batch, retried, first, held), std::string("the mirror made after a failed discard registration does not hold the bytes of its snapshot in a ") + mode + " batch");
+        batch.Sync();
+    };
+    const char* recordInline = std::getenv("APS5_RECORD_INLINE");
+    const bool inlineRecording = recordInline != nullptr && std::strcmp(recordInline, "0") != 0;
+    if (!inlineRecording) {
+        Recorder batch(context, false, true, context.queueFamily);
+        failedRegistration(batch, context, true, false, "deferred");
+    }
+    {
+        Recorder batch(context);
+        failedRegistration(batch, context, false, false, "direct");
+    }
+    if (!inlineRecording) {
+        passedDeviceProc = context.deviceProc;
+        passedEndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(context.deviceProc(context.device, "vkEndCommandBuffer"));
+        passedQueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(context.deviceProc(context.device, "vkQueueSubmit"));
+        auto failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        Recorder batch(failing, false, true, context.queueFamily);
+        failedRegistration(batch, failing, false, true, "demoted");
+    }
     auto tight = context;
     tight.memoryProperties2 = tightMemoryBudget;
     Recorder narrow(tight);
