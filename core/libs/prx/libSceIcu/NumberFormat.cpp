@@ -250,9 +250,10 @@ std::int32_t APS5_VABI unum_formatDouble_nid_postfix(const UNumberFormat* format
 }
 
 std::int32_t APS5_VABI unum_formatDoubleForFields_nid_postfix(const UNumberFormat*, double, char16_t* result, std::int32_t resultLength, UFieldPositionIterator*, std::int32_t* status) {
-    if (Icu::Failure(status)) return -1;
+    const auto before = ReadStatus(status);
+    if (before > 0) return -1;
     if (result == nullptr ? resultLength != 0 : resultLength < 0) {
-        *status = Icu::IllegalArgument;
+        WriteStatus(status, before, Icu::IllegalArgument);
         return -1;
     }
     NotImplemented_nid_no_patch(__func__);
