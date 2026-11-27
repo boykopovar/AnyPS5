@@ -1212,6 +1212,50 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         for (std::size_t record = 0; record < records.size(); ++record) {
             if (drawable(records[record])) lastDrawable = record;
         }
+        static const bool uniformRecords = std::getenv("APS5_UNIFORM_INDIRECT_RECORDS") != nullptr;
+        const auto plainStages = [&] {
+            return std::ranges::all_of(stages, [](const Graphics::CompiledShader& shader) {
+                return shader.program != nullptr && (shader.stage == Stage::Vertex || shader.stage == Stage::Fragment) && shader.program->stencilReferences.empty();
+            }) && !Graphics::ShadersWriteMemory(stages);
+        };
+        if (uniformRecords && *indirectCpu == Graphics::IndirectDrawPath::NotFolded && !indirect.drawIndexEnabled &&
+            !graphics.rectList && !graphics.quadList && !graphics.primitiveRestart && !graphics.stages.mesh && !graphics.stages.tessellation &&
+            graphics.stages.path == Graphics::ShaderPath::Vertex && !graphics.depthBiasPerFace &&
+            !Graphics::SplitsAlternateAlpha(graphics) && plainStages()) {
+            const auto live = std::count_if(records.begin(), records.end(), drawable);
+            const auto equalWords = [&](const auto& slots, std::uint32_t value) {
+                return std::all_of(slots.begin(), slots.end(), [&](const auto& slot) { return programs[slot.first].userData.at(slot.second) == value; });
+            };
+            const auto unchanged = [&](const Pm4::DrawArguments& args) {
+                return args.count == 0 || args.instances == 0 || (equalWords(baseVertexWords, indirect.recordBytes == 20 ? args.vertexOffset : args.firstVertexOrIndex) && equalWords(startInstanceWords, args.firstInstance));
+            };
+            if (live > 1 && std::all_of(records.begin(), records.end(), unchanged)) {
+                auto grouped = drawParameters;
+                auto& args = *grouped.indirect;
+                args.baseVertexSgpr = -1;
+                args.startInstanceSgpr = -1;
+                args.countIndirect = false;
+                args.count = static_cast<std::uint32_t>(records.size());
+                if (!ClassifyIndirectDraw(*programResults[0], graphics, programs.front(), localDevice, grouped, false) && !localDevice->KnownDrawRejection(graphics, stages)) {
+                    drainBeforeInline();
+                    lockForDraw();
+                    runCaptureCheckHook();
+                    if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
+                        gpuLock.unlock();
+                        const RecaptureScope recapture;
+                        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    }
+                    args.capturedRecords = std::make_shared<const std::vector<Pm4::DrawArguments>>(std::move(records));
+                    if (traceIndirect) std::fprintf(stderr, "[uniform-indirect] grouped %zu drawable records\n", static_cast<std::size_t>(live));
+                    noteDrawWriters(stages, submission.queue);
+                    phaseTiming.Phase(DrawRowVectors);
+                    localDevice->Draw(graphics, grouped, stages, snapshots, nullptr, tracePtr);
+                    phaseTiming.Phase(DrawRowGraphics);
+                    timing.Mark("draw_and_resource_release");
+                    return drawn();
+                }
+            }
+        }
         const bool pushWord = drawCachePushWord();
         const bool verifyPushWord = pushWord && verifyDrawPushWord();
         std::uint64_t wordsForwarded = 0, stagesRecompiled = 0, wordsRefused = 0, wordsVerified = 0;

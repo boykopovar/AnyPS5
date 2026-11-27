@@ -323,6 +323,45 @@ void RecordsKeepThePacketsFragmentWord(bool libraries) {
     }
 }
 
+void CheckUniformIndirectRecords() {
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    alignas(256) static std::array<std::uint32_t, 10> records{};
+    alignas(256) static const std::array<std::uint16_t, 6> indices{0, 1, 2, 0, 1, 2};
+    const bool enabled = std::getenv("APS5_UNIFORM_INDIRECT_RECORDS") != nullptr;
+    for (const bool indexed : {false, true}) {
+        const auto check = [&](std::uint32_t initial, std::uint32_t first, std::uint32_t second, bool visible, bool eligible) {
+            ColorMemory.fill(std::byte{0});
+            records = indexed ? std::array<std::uint32_t, 10>{3, 1, 0, first, 0, 3, 1, 3, second, 0}
+                              : std::array<std::uint32_t, 10>{3, 1, first, 0, 3, 1, second, 0};
+            auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+            Append(commands, 0x76, {0x08c, initial});
+            Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+            Append(commands, 0x79, {0x24a, 0});
+            const auto arguments = reinterpret_cast<std::uintptr_t>(records.data());
+            Append(commands, 0x11, {1, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
+            if (indexed) {
+                const auto indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
+                Append(commands, 0x2a, {0});
+                Append(commands, 0x26, {static_cast<std::uint32_t>(indexBase), static_cast<std::uint32_t>(indexBase >> 32u)});
+                Append(commands, 0x13, {static_cast<std::uint32_t>(indices.size())});
+            }
+            Append(commands, indexed ? 0x38u : 0x2cu, {0, 0x8c, 0x280, 0x280, 2, 0, 0, indexed ? 20u : 16u, indexed ? 0u : 2u});
+            const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+            AgcDriver::Graphics::TakeVkDrawCounts();
+            const auto after = Submit(commands);
+            const auto emitted = AgcDriver::Graphics::TakeVkDrawCounts();
+            Require((indexed ? emitted.indexed : emitted.direct) == 2u, "uniform indirect records: both records must emit a draw");
+            Require((BrightestColorByte() != 0) == visible, "uniform indirect records: a patch to the vertex shader produced the wrong pixels");
+            const auto rebuilt = after.recordStagesRecompiled - before.recordStagesRecompiled;
+            Require(rebuilt == (enabled && eligible ? 0u : 2u), "uniform indirect records: unexpected number of per-record stage rebuilds: " + std::to_string(rebuilt));
+        };
+        check(0, 0, 0, true, true);
+        check(4, 4, 4, false, true);
+        check(4, 0, 0, true, false);
+        check(4, 4, 0, true, false);
+    }
+}
+
 void RecordWordsReachTheShader(bool libraries) {
     const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
     const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
@@ -499,6 +538,12 @@ int main(int argc, char** argv) {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             libraries = device->GraphicsPipelineLibraries();
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "uniform-records") {
+            CheckUniformIndirectRecords();
+            AgcDriverShutdown_nid_postfix();
+            std::cout << "uniform indirect record tests passed\n";
+            return 0;
         }
         if (argc == 2 && std::string_view(argv[1]).starts_with("--dump-")) {
             GraphicsRequestDumps(argv[1]);

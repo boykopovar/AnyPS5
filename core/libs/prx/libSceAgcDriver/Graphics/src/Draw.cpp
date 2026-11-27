@@ -1386,6 +1386,10 @@ void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten) {
     stats.indirectReadUs += readMs * 1000.0;
 }
 
+static void CountIndirectDraw(std::optional<IndirectDrawPath> path, double readMs, bool rewritten = false) {
+    if (path) AgcDriver::Graphics::CountIndirectDraw(*path, readMs, rewritten);
+}
+
 std::array<std::uint64_t, IndirectPathCount> IndirectDrawCounts() {
     auto& stats = Profile();
     std::lock_guard lock(stats.mutex);
@@ -2482,7 +2486,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
 // records read.
 struct IndirectRecord {
     const Pm4::DrawParameters::IndirectDraw* args = nullptr;
-    IndirectDrawPath path = IndirectDrawPath::Gpu;
+    std::optional<IndirectDrawPath> path = IndirectDrawPath::Gpu;
     const HostImport* argumentImport = nullptr;
     const HostImport* countImport = nullptr;
     std::span<const Pm4::DrawArguments> records;
@@ -4450,7 +4454,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& indirect = prepared.indirect;
     indirect.args = args;
     auto& records = prepared.records;
-    if (args != nullptr) {
+    if (args != nullptr && args->capturedRecords) {
+        indirect.path.reset();
+        indirect.records = *args->capturedRecords;
+    } else if (args != nullptr) {
         static const bool gpuIndirectDraws = std::getenv("APS5_NO_GPU_INDIRECT_DRAW") == nullptr;
         const auto decide = [&](std::uint64_t address, std::size_t bytes, const HostImport*& import) {
             if (StorageTexture::FlushPending(address, bytes, nullptr, "indirect draw arguments")) {
