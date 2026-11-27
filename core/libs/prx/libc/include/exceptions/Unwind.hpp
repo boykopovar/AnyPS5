@@ -144,7 +144,7 @@ inline Word Encoded(const Byte*& p, Byte encoding, Word data = 0, Word function 
     return value;
 }
 
-inline bool TryEncoded(const Byte*& p, const Byte* end, Byte encoding, Word& out, Word data = 0, Word function = 0, Word text = 0) {
+inline bool TryEncoded(const Byte*& p, const Byte* end, Byte encoding, Word& out, Word data = 0, Word function = 0, Word text = 0, bool resolveIndirect = true) {
     out = 0;
     if (encoding == 255) return true;
     if (!p || !end || end < p) return false;
@@ -178,7 +178,7 @@ inline bool TryEncoded(const Byte*& p, const Byte* end, Byte encoding, Word& out
     case 64: value += function; break;
     default: return false;
     }
-    if (encoding & 128) std::memcpy(&value, reinterpret_cast<void*>(value), sizeof(value));
+    if ((encoding & 128) && resolveIndirect) std::memcpy(&value, reinterpret_cast<void*>(value), sizeof(value));
     out = value;
     return true;
 }
@@ -223,7 +223,7 @@ inline bool SectionBounds(const Byte* base, Word virtualAddress, Word virtualSiz
 
 inline bool SearchEhFrameHeader(const Byte* header, const Byte* headerEnd, Lookup& query) {
     if (!header || !headerEnd || headerEnd < header || static_cast<std::size_t>(headerEnd - header) < 4) return false;
-    if (header[0] != 1 || header[3] == 255) return false;
+    if (header[0] != 1 || header[3] == 255 || (header[3] & 112) == 80) return false;
     const Byte* p = header + 4;
     Word ehFramePtr {};
     if (!TryEncoded(p, headerEnd, header[1], ehFramePtr, Word(header))) return false;
@@ -367,13 +367,14 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     return true;
 }
 
-inline bool DecodeFdeAugmentation(Frame& frame, const Lookup& query, const Byte*& p, const char* augmentation, Byte lsdaEncoding) {
+inline bool DecodeFdeAugmentation(Frame& frame, const Lookup& query, const Byte*& p, const char* augmentation, Byte lsdaEncoding, bool resolveLsda = true) {
     if (!augmentation || *augmentation != 'z') return true;
     Word size {};
     if (!TryUleb(p, frame.end, size)) return false;
     if (size > static_cast<Word>(frame.end - p)) return false;
     const Byte* end = p + size;
-    if (lsdaEncoding != 255 && !TryEncoded(p, end, lsdaEncoding, frame.lsda, query.data, frame.start, query.text)) return false;
+    if (size != 0 && lsdaEncoding != 255 && !TryEncoded(p, end, lsdaEncoding, frame.lsda, query.data, frame.start, query.text, resolveLsda)) return false;
+    if (!resolveLsda) frame.lsda = 0;
     p = end;
     return true;
 }

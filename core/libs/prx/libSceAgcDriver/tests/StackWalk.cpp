@@ -25,11 +25,11 @@ void Check(bool condition, const char* message) {
 
 class Section {
 public:
-    explicit Section(Byte returnColumn, bool withLsda = false, Byte fdeAugSize = 4) : bytes(0x200, 0) {
+    explicit Section(Byte returnColumn, bool withLsda = false, Byte fdeAugSize = 4, Byte lsdaEncoding = 0x1b) : bytes(0x200, 0) {
         const std::size_t cie = append32(0);
         append32(0);
         if (withLsda) {
-            append({1, 'z', 'L', 'R', 0, 1, 0x78, returnColumn, 2, 0x1b, 0x1b, 0x0c, 7, 8, static_cast<Byte>(0x80 | returnColumn), 1});
+            append({1, 'z', 'L', 'R', 0, 1, 0x78, returnColumn, 2, lsdaEncoding, 0x1b, 0x0c, 7, 8, static_cast<Byte>(0x80 | returnColumn), 1});
         } else {
             append({1, 'z', 'R', 0, 1, 0x78, returnColumn, 1, 0x1b, 0x0c, 7, 8, static_cast<Byte>(0x80 | returnColumn), 1});
         }
@@ -189,6 +189,12 @@ void LsdaAugmentation() {
     const auto truncatedFrames = truncatedSection.Frames();
     auto badRegisters = Registers(truncatedSection.Function() + 0x20, stack.At(8), stack.At(32));
     Check(truncatedFrames.Unwind(badRegisters, false, stack.Reader()) == Step::Failed, "zL FDE with truncated LSDA payload was not rejected");
+
+    const Section indirectSection(16, true, 4, 0x9b);
+    const auto indirectFrames = indirectSection.Frames();
+    auto indirectRegisters = Registers(indirectSection.Function() + 0x20, stack.At(8), stack.At(32));
+    Check(indirectFrames.Unwind(indirectRegisters, false, stack.Reader()) == Step::Stepped, "zL FDE with indirect LSDA pointer failed or faulted");
+    Check(indirectRegisters[16] == 0x1234 && indirectRegisters[7] == stack.At(34) && indirectRegisters[6] == 0x5555, "indirect LSDA FDE restored wrong registers");
 }
 
 }

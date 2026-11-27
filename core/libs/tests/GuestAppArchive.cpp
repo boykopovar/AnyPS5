@@ -354,8 +354,8 @@ void UnwindBounds() {
         0x18, 0x00, 0x00, 0x00,
         0x00, 0x10, 0x00, 0x00,
         0x40, 0x00, 0x00, 0x00,
-        0x44, 0x0e, 0x10, 0x86,
-        0x02, 0x90, 0x01, 0x00
+        0x00, 0x44, 0x0e, 0x10,
+        0x86, 0x02, 0x90, 0x01
     };
     {
         LibcUnwind::Frame frame{};
@@ -367,6 +367,7 @@ void UnwindBounds() {
         Require(frame.start == 0x1000 && frame.length == 0x40, "valid FDE decoded unexpected range");
         Require(frame.codeAlign == 1 && frame.dataAlign == -8 && frame.returnRegister == 16, "valid CIE decoded unexpected alignment or return register");
         Require(std::strcmp(augmentation, "zR") == 0 && lsdaEncoding == 255, "valid CIE decoded unexpected augmentation");
+        Require(LibcUnwind::DecodeFdeAugmentation(frame, query, p, augmentation, lsdaEncoding), "valid FDE augmentation failed");
         LibcUnwind::Rules initial{};
         Require(LibcUnwind::Instructions(frame.cieBegin, frame.cieEnd, frame, frame.start, initial, initial), "valid CIE instructions failed");
         Require(initial.cfaRegister == 7 && initial.cfaOffset == 8, "valid CIE instructions computed unexpected initial CFA");
@@ -410,6 +411,11 @@ void UnwindBounds() {
         LibcUnwind::Lookup truncHdrQuery{targetPc + 4};
         Require(!LibcUnwind::SearchEhFrameHeader(ehHdr, ehHdrEnd - 1, truncHdrQuery), "SearchEhFrameHeader accepted a truncated .eh_frame_hdr table");
 
+        auto alignedHdrBuf = ehBuf;
+        alignedHdrBuf[55] = 0x5b;
+        LibcUnwind::Lookup alignedHdrQuery{targetPc + 4};
+        Require(!LibcUnwind::SearchEhFrameHeader(&alignedHdrBuf[52], alignedHdrBuf.data() + alignedHdrBuf.size(), alignedHdrQuery), "SearchEhFrameHeader accepted aligned table encoding");
+
         LibcUnwind::Lookup query{targetPc + 4};
         Require(LibcUnwind::SearchEhFrameHeader(ehHdr, ehHdrEnd, query), "SearchEhFrameHeader failed on valid .eh_frame_hdr");
         Require(query.fde == &ehBuf[24], "SearchEhFrameHeader returned unexpected FDE");
@@ -424,6 +430,21 @@ void UnwindBounds() {
         Require(frame.start == targetPc && frame.length == 0x40, "looked-up FDE decoded unexpected range");
         Require(LibcUnwind::DecodeFdeAugmentation(frame, query, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation failed on valid LSDA");
         Require(frame.lsda == 0x11223344, "DecodeFdeAugmentation decoded unexpected LSDA");
+
+        {
+            const LibcUnwind::Byte emptyZLAug[] = {0x00, 0x00};
+            const LibcUnwind::Byte* ep = emptyZLAug;
+            LibcUnwind::Frame emptyLsdaFrame{};
+            emptyLsdaFrame.end = emptyZLAug + sizeof(emptyZLAug);
+            Require(LibcUnwind::DecodeFdeAugmentation(emptyLsdaFrame, query, ep, "zRL", 0x1b), "DecodeFdeAugmentation rejected empty zL FDE augmentation");
+            Require(emptyLsdaFrame.lsda == 0 && ep == emptyZLAug + 1, "empty zL FDE augmentation moved pointer unexpectedly");
+
+            const LibcUnwind::Byte shortZLAug[] = {0x01, 0x44};
+            const LibcUnwind::Byte* sp = shortZLAug;
+            LibcUnwind::Frame shortLsdaFrame{};
+            shortLsdaFrame.end = shortZLAug + sizeof(shortZLAug);
+            Require(!LibcUnwind::DecodeFdeAugmentation(shortLsdaFrame, query, sp, "zRL", 0x1b), "DecodeFdeAugmentation accepted truncated nonempty zL FDE augmentation");
+        }
 
         LibcUnwind::Lookup truncFdeQuery = query;
         truncFdeQuery.fdeEnd = &ehBuf[48];
