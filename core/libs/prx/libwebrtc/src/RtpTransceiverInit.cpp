@@ -223,6 +223,13 @@ void ReleaseEncoding(const EncodingResources& resources) {
 
 }
 
+void APS5_VABI DestroyRtpCodecParameters_nid_no_patch(WebRtcRtpCodecParameters* parameters) {
+    constexpr const char* message = "RtpCodecParameters destructor requires a valid object";
+    WebRtcRtpCodec snapshot{};
+    CopyInChecked(&snapshot, parameters, sizeof(snapshot), message);
+    ReleaseCodec(ValidateCodec(snapshot, &parameters->codec, message));
+}
+
 extern "C" {
 
 void APS5_VABI _ZN6webrtc18RtpTransceiverInitC1Ev_nid_postfix(WebRtcRtpTransceiverInit* init) {

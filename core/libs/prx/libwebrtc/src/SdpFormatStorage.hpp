@@ -14,6 +14,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace WebRtcSdpStorage {
@@ -199,16 +200,17 @@ struct NodeGuard {
     }
 };
 
-inline void CloneMap(const WebRtcStringMap& source, WebRtcStringMap& destination, const char* message) {
+inline std::vector<WebRtcStringMapNode*> CloneMap(const WebRtcStringMap& source, WebRtcStringMap& destination, const char* message) {
     std::vector<WebRtcStringMapNode*> validated;
     ValidateMapNodes(source, message, validated);
     destination.beginNode = EndNode(destination);
     destination.root = nullptr;
     destination.size = 0;
     if (source.size == 0)
-        return;
+        return {};
 
     NodeGuard guard;
+    guard.nodes.reserve(validated.size());
     struct CloneTask {
         const WebRtcStringMapNode* source;
         WebRtcStringMapNode** slot;
@@ -238,6 +240,7 @@ inline void CloneMap(const WebRtcStringMap& source, WebRtcStringMap& destination
     }
     destination.size = source.size;
     guard.active = false;
+    return std::move(guard.nodes);
 }
 
 inline std::uint64_t ModeCount(const WebRtcScalabilityModeVector& modes) {

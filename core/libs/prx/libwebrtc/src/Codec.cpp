@@ -1,4 +1,4 @@
-/* Derived from media/base/codec.cc and media/base/codec.h@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+// https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/media/base/codec.cc
 /*
  *  Copyright (c) 2004 The WebRTC project authors. All Rights Reserved.
  *
@@ -62,8 +62,48 @@ namespace {
 
 constexpr std::size_t LargeVectorBytes = 0x1000;
 
-void* APS5_VABI CodecToCodecParameters_nid_no_patch(void* result, const WebRtcCodec*) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI DeleteRtpCodecParameters_nid_no_patch(WebRtcRtpCodecParameters* parameters) {
+    DestroyRtpCodecParameters_nid_no_patch(parameters);
+    _ZdlPv_nid_postfix(parameters);
+}
+
+void* CodecParametersVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&DestroyRtpCodecParameters_nid_no_patch),
+    reinterpret_cast<void*>(&DeleteRtpCodecParameters_nid_no_patch),
+};
+
+WebRtcRtpCodecParameters* APS5_VABI CodecToCodecParameters_nid_no_patch(WebRtcRtpCodecParameters* result, const WebRtcCodec* codec) {
+    constexpr const char* message = "Codec::ToCodecParameters requires a valid codec and output";
+    RequireWritable(result, sizeof(*result), message);
+    WebRtcCodec snapshot{};
+    CopyInChecked(&snapshot, codec, sizeof(snapshot), message);
+    if (snapshot.type != 0 && snapshot.type != WebRtcCodecTypeVideo)
+        throw std::invalid_argument("Codec::ToCodecParameters invalid codec type");
+    ValidateString(snapshot.name, message);
+    StringGuard name;
+    CopyString(snapshot.name, name.value);
+    name.active = true;
+    WebRtcRtpCodecParameters output{};
+    output.codec.vtable = CodecParametersVtable + 2;
+    output.codec.name = name.value;
+    output.codec.kind = snapshot.type;
+    output.codec.clockRate = snapshot.clockrate;
+    output.codec.hasClockRate = true;
+    if (snapshot.type == 0) {
+        output.codec.numChannels = static_cast<std::int32_t>(snapshot.channels);
+        output.codec.hasNumChannels = true;
+    }
+    output.payloadType = snapshot.id;
+    NodeGuard map{CloneMap(codec->params, output.codec.parameters, message)};
+    if (output.codec.parameters.root)
+        output.codec.parameters.root->links.parent = EndNode(result->codec.parameters);
+    else
+        output.codec.parameters.beginNode = EndNode(result->codec.parameters);
+    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output)))
+        throw std::invalid_argument(message);
+    name.active = false;
+    map.active = false;
     return result;
 }
 

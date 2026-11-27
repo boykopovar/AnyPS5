@@ -21,6 +21,14 @@ struct WebRtcFeedbackParamVector {
     WebRtcFeedbackParam* capacityEnd;
 };
 
+struct WebRtcRtpCodecParameters {
+    WebRtcRtpCodec codec;
+    std::int32_t payloadType;
+};
+
+static_assert(offsetof(WebRtcRtpCodecParameters, payloadType) == 120);
+static_assert(sizeof(WebRtcRtpCodecParameters) == 128);
+
 struct WebRtcCodec {
     const void* vtable;
     std::int32_t type;
@@ -50,3 +58,5 @@ static_assert(offsetof(WebRtcCodec, scalabilityModes) == 120);
 static_assert(offsetof(WebRtcCodec, txMode) == 168);
 static_assert(offsetof(WebRtcCodec, params) == 216);
 static_assert(offsetof(WebRtcCodec, feedbackParams) == 240);
+
+void APS5_VABI DestroyRtpCodecParameters_nid_no_patch(WebRtcRtpCodecParameters* parameters);

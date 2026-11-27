@@ -75,6 +75,52 @@ std::size_t Received(const WebRtcRtcpTransportFeedback& feedback) {
     return feedback.receivedPackets.begin ? feedback.receivedPackets.end - feedback.receivedPackets.begin : 0;
 }
 
+using BlockLength = std::size_t(APS5_VABI*)(const WebRtcRtcpTransportFeedback*);
+using PacketReady = void(APS5_VABI*)(void*, const std::uint8_t*, std::size_t);
+using Create = bool(APS5_VABI*)(const WebRtcRtcpTransportFeedback*, std::uint8_t*, std::size_t*, std::size_t, void*, PacketReady);
+
+void APS5_VABI SavePrefix(void* context, const std::uint8_t* bytes, std::size_t length) {
+    static_cast<std::vector<std::uint8_t>*>(context)->assign(bytes, bytes + length);
+}
+
+void TestWriting() {
+    WebRtcRtcpTransportFeedback feedback;
+    _ZN6webrtc4rtcp17TransportFeedbackC1Ev_nid_postfix(&feedback);
+    const auto length = reinterpret_cast<BlockLength>(feedback.vtable[2]);
+    const auto create = reinterpret_cast<Create>(feedback.vtable[3]);
+    Require(length(&feedback) == 20);
+    Require(!create(&feedback, nullptr, nullptr, 0, nullptr, nullptr));
+    const auto check = [&](const std::vector<std::uint8_t>& input, const std::vector<std::uint8_t>& expectedPayload) {
+        Require(Parse(feedback, input));
+        const std::size_t rawSize = 4 + expectedPayload.size();
+        const std::size_t padding = (4 - rawSize % 4) % 4;
+        Require(length(&feedback) == rawSize + padding);
+        std::vector<std::uint8_t> expected{static_cast<std::uint8_t>(padding ? 0xaf : 0x8f), 205, 0,
+                                          static_cast<std::uint8_t>((rawSize + padding) / 4 - 1)};
+        expected.insert(expected.end(), expectedPayload.begin(), expectedPayload.end());
+        expected.resize(rawSize + padding, 0);
+        if (padding) expected.back() = static_cast<std::uint8_t>(padding);
+        std::vector<std::uint8_t> output(expected.size(), 0xac);
+        std::size_t offset = 1;
+        std::vector<std::uint8_t> flushed;
+        Require(create(&feedback, output.data(), &offset, output.size(), &flushed, &SavePrefix));
+        Require(flushed == std::vector<std::uint8_t>{0xac} && output == expected && offset == expected.size());
+        offset = 0;
+        Require(!create(&feedback, output.data(), &offset, output.size() - 1, nullptr, nullptr));
+        Require(offset == 0 && output == expected);
+    };
+    const auto run = Payload(3, {0x2003}, {0, 255, 1});
+    check(run, run);
+    check(Payload(4, {0xa800}, {1, 2}), Payload(4, {0xd100}, {1, 2}));
+    const auto wide = Payload(3, {0xd800}, {255, 0xff, 0xfe});
+    check(wide, wide);
+    const auto multiple = Payload(15, {0x0001, 0xa000}, {7});
+    check(multiple, multiple);
+    const auto noTime = Payload(1, {0x2001});
+    check(noTime, noTime);
+    _ZN6webrtc4rtcp17TransportFeedbackD1Ev_nid_postfix(&feedback);
+}
+
 void TestParsing() {
     WebRtcRtcpTransportFeedback feedback;
     _ZN6webrtc4rtcp17TransportFeedbackC1Ev_nid_postfix(&feedback);
@@ -84,12 +130,6 @@ void TestParsing() {
     Require(!feedback.receivedPackets.begin && !feedback.allPackets.begin && !feedback.encodedChunks.begin);
     Require(feedback.lastChunk.size == 0 && feedback.lastChunk.allSame && !feedback.lastChunk.hasLargeDelta);
     Require(feedback.vtable && !feedback.vtable[-1] && !feedback.vtable[-2]);
-    using Unsupported = void(APS5_VABI*)();
-    for (auto slot : {2, 3}) {
-        bool threw = false;
-        try { reinterpret_cast<Unsupported>(feedback.vtable[slot])(); } catch (const std::exception&) { threw = true; }
-        Require(threw);
-    }
     const std::int64_t base = ((std::int64_t{1} << 24) + 0x010203) * 64000;
     Require(Parse(feedback, Payload(3, {0x2003}, {0, 255, 1})));
     Require(feedback.senderSsrc == 0x12345678 && feedback.mediaSsrc == 0x87654321);
@@ -299,6 +339,7 @@ int main() {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
+    TestWriting();
     TestBaseSequence();
     TestNullPacketThrows();
     TestGuardedPointers();
