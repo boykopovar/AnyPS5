@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -92,17 +93,6 @@ constexpr std::array<ConvertVector, 32> Vectors{{
     {{0x3e800000u, 0x80800000u}, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000000u, 0x3fd00000u, 0x00002000u, 0x00004000u, 0x00000000u, 0x80003400u, 0x00003400u}, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffffffffu, 0x00000000u, 0x3fd00000u, 0x00002000u, 0x00004000u, 0x00000000u, 0x80003400u, 0x00003400u}},
     {{0xbf800000u, 0x00000001u}, {0xffffffffu, 0x00000000u, 0xffffffffu, 0xffffffffu, 0x00000001u, 0x00000000u, 0xbff00000u, 0x00008001u, 0x00000000u, 0x00000000u, 0x0000bc00u, 0x0000bc00u}, {0xffffffffu, 0x00000000u, 0xffffffffu, 0xffffffffu, 0x00000001u, 0x00000000u, 0xbff00000u, 0x00008001u, 0x00000000u, 0x00000000u, 0x0000bc00u, 0x0000bc00u}},
 }};
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 bool InPass(std::uint32_t column, bool float64) {
     return (column == Float64Low || column == Float64High) == float64;

@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -326,7 +327,14 @@ bool vertexControlSupported(std::uint32_t word) {
 }
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
 // bit 16 disables clipping.
+constexpr std::uint32_t UcpCullOnlyEnable = 0x20000u;
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
+
+std::uint32_t clipControlMask(const Registers& cx) {
+    const auto exports = find(cx, 0x207);
+    const bool hasClipDistances = exports != cx.end() && (exports->second & 0xffu) != 0u;
+    return hasClipDistances ? ClipControlMask : (ClipControlMask & ~UcpCullOnlyEnable);
+}
 
 bool zFormatSupported(std::uint32_t format) {
     return format == 0u || format == 1u || format == 2u || format == 3u || format == 9u;
@@ -520,6 +528,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
     }
     Require(!gcn || (maxMip == 0 && viewMip == 0), "PS4 depth targets with mip levels are not implemented");
+    std::uint64_t htileSliceBytes = 0;
+    std::uint64_t htileMipOffset = 0;
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);
@@ -531,7 +541,24 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         const auto stencilMips = ComputeElementMipLayout(TextureTileMode::kZ64KBX, 1u, depth.extent.width, depth.extent.height, maxMip + 1u);
         Require(zFormat == 0 || !depthMips.at(viewMip).tail, "rendering the " + where + " into the packed mip tail is unsupported");
         Require(!stencil || !stencilMips.at(viewMip).tail, "rendering the stencil of the " + where + " into the packed mip tail is unsupported");
-        Require((read(cx, 0x010) & (1u << 29u)) == 0, "HTILE for the " + where + " is unsupported");
+        if (zFormat != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
+            std::uint32_t firstTail = maxMip + 1u;
+            for (std::uint32_t mip = 0; mip <= maxMip; ++mip) {
+                if (depthMips.at(mip).tail) {
+                    firstTail = mip;
+                    break;
+                }
+            }
+            htileSliceBytes = firstTail == maxMip + 1u ? 0u : HtileMetadataBytes({1u, 1u});
+            for (auto mip = firstTail; mip-- > 0u;) {
+                const auto mipBytes = HtileMetadataBytes({std::max((depth.extent.width + (1u << mip) - 1u) >> mip, 1u), std::max((depth.extent.height + (1u << mip) - 1u) >> mip, 1u)});
+                if (mip == viewMip) {
+                    htileMipOffset = htileSliceBytes;
+                    Require(mipBytes == HtileMetadataBytes({depthMips.at(mip).width, depthMips.at(mip).height}), "the " + where + " needs more HTILE than its extent covers, which is unsupported");
+                }
+                htileSliceBytes += mipBytes;
+            }
+        }
         if (const auto slice = view & 0x1fffu; slice != 0) {
             if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(depthMips, 1u);
             if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(stencilMips, 1u);
@@ -548,7 +575,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     depth.depthPartiallyResident = zFormat != 0 && (read(cx, 0x010) & 0x1000u) != 0;
     depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
-        depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
+        const auto sliceBytes = htileSliceBytes != 0u ? htileSliceBytes : HtileMetadataBytes(depth.extent);
+        depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * sliceBytes + htileMipOffset;
         depth.htileStencil = stencil && !depth.htileDepthOnly;
     }
     return depth;
@@ -1269,8 +1297,13 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order) {
     return std::ranges::any_of(order, [&](std::uint32_t word) { return (HostSampleBits(mask, word) & full) != mask; });
 }
 
-std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order) {
-    if (!SampleMaskFollowsOrder(state, order)) return QuadSampleMasks(state);
+bool SampleMaskInShader(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (SampleMaskFollowsOrder(state, order)) return true;
+    return !staticMaskStopsShading && state.perSampleShading && PartialSampleMask(state) && UniformSampleMask(state);
+}
+
+std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (!SampleMaskInShader(state, order, staticMaskStopsShading)) return QuadSampleMasks(state);
     const auto mask = static_cast<std::uint16_t>(state.quadSampleMask[0] & ((1u << state.samples) - 1u));
     return {mask, mask, mask, mask};
 }
@@ -1858,7 +1891,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
-    zero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag");
+    zero(cx, 0x204, clipControlMask(cx), "a PA_CL_CLIP_CNTL flag");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
     const auto raster = read(cx, 0x205);
@@ -2443,7 +2476,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
+    surface.dccAddress = color.chainDccAddress != 0 ? color.chainDccAddress : color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
     if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
@@ -2475,7 +2508,10 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
     const auto slice = view & 0x7ffu;
-    Require(((view >> 13u) & 0x7ffu) == slice, "GCN color views of several array slices are not implemented");
+    const auto lastSlice = (view >> 13u) & 0x7ffu;
+    Require(lastSlice >= slice, "the color view ends before its first slice");
+    const auto exports = find(cx, 0x207);
+    Require(lastSlice == slice || exports == cx.end() || (exports->second & (1u << 18u)) == 0, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
     const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
     const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
     color.extent = {pitch, sliceElements / pitch};
@@ -2730,6 +2766,9 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.chainDccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX && !RuntimeSwitches::Set(RuntimeSwitch::NoDccMipFastClear)) {
+                if (const auto offset = DccMipKeyOffset(color.surfaceExtent.width, color.surfaceExtent.height, color.elementBytes, color.mipCount, std::min(firstTailLevel, color.mipCount), color.mip)) color.dccAddress = dccBase + *offset;
+            }
         } else {
             static bool reported = false;
             if (!reported) {
@@ -2992,7 +3031,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
         if (auto reason = sampleMaskRejection(queue, config, word, other); !reason.empty()) return reason;
     }
     if (value(cx, 0x206, word) && word != 0x43fu && word != 0u) return vteMessage(word);
-    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
+    if (auto reason = nonzero(cx, 0x204, clipControlMask(cx), "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
         const auto slots = ColorExportSlots(shaderMask);

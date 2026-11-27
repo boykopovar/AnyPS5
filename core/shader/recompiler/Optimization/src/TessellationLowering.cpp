@@ -874,6 +874,7 @@ public:
         if (stage == IrShaderStage::TessellationControl) lowerWaterfallTests();
         collect();
         derive();
+        if (passthrough) requirePassthroughLimits();
         orderControlOutputReads();
         for (const auto& access : accesses) rewrite(access);
         if (passthrough) copyInputControlPoints();
@@ -1182,6 +1183,7 @@ private:
                 if (!access.write) {
                     if (controlStride == 0u) Fail("the hull shader reads off-chip memory but writes no control point there, so the control point stride is unknown", access.pc);
                     if ((address.vertex != 0 && address.vertex != controlStride) || address.relative != outputs * controlStride || address.constant < 0 || end + address.vertex * (outputs - 1) > outputs * controlStride) Fail("the hull shader reads off-chip memory outside its patch's control points", access.pc);
+                    if (address.dynamic && (address.dynamicScale == 0 || address.dynamicScale % controlStride != 0)) Fail("the hull shader reads its output control points at a computed offset that is not a whole number of control points", access.pc);
                     break;
                 }
                 if (address.vertex == 0 && !soleControlPoint(access)) {
@@ -1235,7 +1237,8 @@ private:
         if (user->Opcode() != IrOpcode::GetTessellationAttribute || user->Argument(1)->Resolve() != value->Resolve()) return false;
         const bool control = IsImmediate(user->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::ControlInput));
         const bool evaluation = IsImmediate(user->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::EvaluationInput));
-        if (!control && !evaluation) return false;
+        const bool output = stage == IrShaderStage::TessellationControl && IsImmediate(user->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::ControlOutput));
+        if (!control && !evaluation && !output) return false;
         const auto address = evaluator.Evaluate(value, user->Argument(2), true);
         const auto stride = control ? static_cast<std::int64_t>(tessellation.inputControlPoints) * localStride : static_cast<std::int64_t>(tessellation.outputControlPoints) * controlStride;
         return address && address->dynamic && address->relative == stride;
@@ -1536,6 +1539,17 @@ private:
         }
     }
 
+    void requirePassthroughLimits() const {
+        if (limits == nullptr) Fail("the target has no tessellation limits for a pass-through hull shader on chip", 0u);
+        const auto input = 4u * ((localStride + 15u) / 16u);
+        const auto output = 4u * ((controlStride + 15u) / 16u);
+        if (input > limits->maxControlPerVertexInputComponents || output > limits->maxControlPerVertexOutputComponents) {
+            char text[256];
+            std::snprintf(text, sizeof(text), "the pass-through hull shader's control points exceed the device limits (%u input and %u output components per control point, %u and %u allowed)", input, output, limits->maxControlPerVertexInputComponents, limits->maxControlPerVertexOutputComponents);
+            Fail(text, 0u);
+        }
+    }
+
     void requireMergedLimits() const {
         if (limits == nullptr) Fail("the target has no tessellation limits for a merged hull program", 0u);
         const auto vectors = [](std::uint32_t bytes) { return (bytes + 15u) / 16u; };
@@ -1640,6 +1654,7 @@ private:
             if (evaluator.Lowest(access.address) < base) Fail("a hull shader reads LDS across its input and output control points on chip", access.pc);
             access.kind = TessellationAttribute::ControlOutput;
         }
+        if (access.address.dynamic && (access.address.dynamicRoot == nullptr || access.address.dynamicScale < 0)) Fail(stage == IrShaderStage::TessellationControl ? "a hull shader addresses LDS on chip at a computed offset that can fall below its on-chip output control points" : "a domain shader reads LDS on chip at a computed offset that can fall below the hull shader's on-chip output control points", access.pc);
         if (evaluator.Lowest(access.address) < base) Fail(stage == IrShaderStage::TessellationControl ? "a hull shader writes LDS below its on-chip output control points" : "a domain shader reads LDS below the hull shader's on-chip output control points", access.pc);
         if (base == 0) return;
         access.address.constant -= base;
@@ -1739,7 +1754,8 @@ private:
             for (IrValue* inst : block->Instructions()) {
                 if (inst->Opcode() != IrOpcode::GetTessellationAttribute) continue;
                 const bool control = IsImmediate(inst->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::ControlInput));
-                if (!control && !IsImmediate(inst->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::EvaluationInput))) continue;
+                const bool output = stage == IrShaderStage::TessellationControl && IsImmediate(inst->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::ControlOutput));
+                if (!control && !output && !IsImmediate(inst->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::EvaluationInput))) continue;
                 const auto address = evaluator.Evaluate(inst->Argument(1), inst->Argument(2), true);
                 if (!address || !address->dynamic || address->relative == 0) continue;
                 IrValue& patch = program.CreateValue(IrOpcode::IMul32, IrType::U32);

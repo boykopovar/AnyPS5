@@ -6,7 +6,6 @@
 
 #include FT_STROKER_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -75,9 +74,7 @@ int CountBorder(GuestStroker& stroker, std::int32_t border, FT_UInt& points, FT_
 FT_Library ReadGuestLibrary(GuestLibrary* library, const char* function) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    const int saved = errno;
     const bool read = reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) == 0 && GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
-    errno = saved;
     if (!read) throw std::invalid_argument(std::string(function) + ": unreadable library handle");
     return host;
 }
@@ -229,6 +226,10 @@ void ExportStroke(void* stroker, unsigned borders, GuestOutline* outline, const 
     }
 }
 
+}
+
+extern "C" void* FreeType::FreeTypeHostStroker_nid_no_patch(void* stroker) {
+    return ChangeStroke(stroker);
 }
 
 extern "C" {

@@ -15,7 +15,7 @@ public:
 
     HostGainRamp() : HostGainRamp(DefaultRampFrames) {}
 
-    explicit HostGainRamp(std::uint32_t rampFrames) {
+    explicit HostGainRamp(std::uint32_t rampFrames, std::uint32_t initialGain = Unity) : current(initialGain) {
         Configure(rampFrames);
     }
 

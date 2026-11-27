@@ -1,11 +1,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
@@ -319,6 +321,119 @@ void TestRwlockTimedWaitTimespecBounds() {
     Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
 }
 
+void TestPosixThreadDeadlineHelpers() {
+    const auto unreadableLow = reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x10});
+    const auto unreadablePage = reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x1000});
+
+    KernelUseconds usec = 1234;
+    Require(!PosixThread::RelativeMicroseconds(0, nullptr, &usec));
+    Require(usec == 1234);
+    Require(!PosixThread::RelativeMicroseconds(0, unreadableLow, &usec));
+    Require(usec == 1234);
+    Require(!PosixThread::RelativeMicroseconds(0, unreadablePage, &usec));
+    Require(usec == 1234);
+
+    std::uint64_t deadline = 0xA5A5A5A5A5A5A5A5ULL;
+    Require(!PosixThread::AbsoluteDeadlineNanos(0, nullptr, &deadline));
+    Require(deadline == 0xA5A5A5A5A5A5A5A5ULL);
+    Require(!PosixThread::AbsoluteDeadlineNanos(0, unreadableLow, &deadline));
+    Require(deadline == 0xA5A5A5A5A5A5A5A5ULL);
+    Require(!PosixThread::AbsoluteDeadlineNanos(0, unreadablePage, &deadline));
+    Require(deadline == 0xA5A5A5A5A5A5A5A5ULL);
+
+    const KernelTimespec negativeNsec{10, -1};
+    const KernelTimespec overflowNsec{10, 1000000000};
+    Require(!PosixThread::RelativeMicroseconds(0, &negativeNsec, &usec));
+    Require(usec == 1234);
+    Require(!PosixThread::RelativeMicroseconds(0, &overflowNsec, &usec));
+    Require(usec == 1234);
+    Require(!PosixThread::AbsoluteDeadlineNanos(0, &negativeNsec, &deadline));
+    Require(deadline == 0xA5A5A5A5A5A5A5A5ULL);
+    Require(!PosixThread::AbsoluteDeadlineNanos(0, &overflowNsec, &deadline));
+    Require(deadline == 0xA5A5A5A5A5A5A5A5ULL);
+
+    KernelTimespec validTime{};
+    Require(clock_gettime_nid_postfix(0, &validTime) == 0);
+    validTime.tv_sec += 1;
+
+    usec = 5678;
+    Require(!PosixThread::RelativeMicroseconds(-1, &validTime, &usec));
+    Require(usec == 5678);
+
+    deadline = 0x5A5A5A5A5A5A5A5AULL;
+    Require(!PosixThread::AbsoluteDeadlineNanos(-1, &validTime, &deadline));
+    Require(deadline == 0x5A5A5A5A5A5A5A5AULL);
+
+    constexpr auto relativeMax = std::numeric_limits<KernelUseconds>::max();
+    constexpr std::int64_t relativeMaxSeconds = static_cast<std::int64_t>(relativeMax / 1000000) + 1;
+    constexpr std::uint64_t relativeMaxMicros = static_cast<std::uint64_t>(relativeMax);
+
+    constexpr std::int64_t horizonSeconds = 365LL * 24 * 3600;
+    constexpr std::uint64_t horizonMaxMicros = static_cast<std::uint64_t>(horizonSeconds) * 1000000ULL;
+
+    const KernelTimespec baseNow{10, 0};
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10, 1}, relativeMaxSeconds, relativeMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10, 999}, relativeMaxSeconds, relativeMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10, 1000}, relativeMaxSeconds, relativeMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10, 1001}, relativeMaxSeconds, relativeMaxMicros) == 2);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10, 0}, relativeMaxSeconds, relativeMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{10, 500}, KernelTimespec{10, 499}, relativeMaxSeconds, relativeMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{8, 999999999}, relativeMaxSeconds, relativeMaxMicros) == 0);
+
+    const KernelTimespec wrapNow{10, 999999999};
+    Require(PosixThread::WaitMicrosecondsBetween(wrapNow, KernelTimespec{11, 0}, relativeMaxSeconds, relativeMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(wrapNow, KernelTimespec{11, 0}, horizonSeconds, horizonMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{10, 999999500}, KernelTimespec{11, 400}, horizonSeconds, horizonMaxMicros) == 1);
+
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10 + relativeMaxSeconds + 1, 0}, relativeMaxSeconds, relativeMaxMicros) == relativeMaxMicros);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10 + relativeMaxSeconds, 0}, relativeMaxSeconds, relativeMaxMicros) == relativeMaxMicros);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10 + horizonSeconds + 1, 0}, horizonSeconds, horizonMaxMicros) == horizonMaxMicros);
+    Require(PosixThread::WaitMicrosecondsBetween(baseNow, KernelTimespec{10 + horizonSeconds, 500}, horizonSeconds, horizonMaxMicros) == horizonMaxMicros);
+
+    constexpr std::int64_t minSec = std::numeric_limits<std::int64_t>::min();
+    constexpr std::int64_t maxSec = std::numeric_limits<std::int64_t>::max();
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 0}, KernelTimespec{minSec, 0}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 0}, KernelTimespec{minSec, 1}, horizonSeconds, horizonMaxMicros) == 1);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 999999999}, KernelTimespec{minSec, 0}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{minSec, 0}, KernelTimespec{maxSec, 0}, horizonSeconds, horizonMaxMicros) == horizonMaxMicros);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{maxSec, 0}, KernelTimespec{minSec, 999999999}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{0, 0}, KernelTimespec{minSec, 999999999}, horizonSeconds, horizonMaxMicros) == 0);
+    Require(PosixThread::WaitMicrosecondsBetween(KernelTimespec{-10, 0}, KernelTimespec{maxSec, 0}, relativeMaxSeconds, relativeMaxMicros) == relativeMaxMicros);
+
+    const KernelTimespec pastDeadline{1, 0};
+    KernelUseconds pastUsec = 999;
+    Require(PosixThread::RelativeMicroseconds(0, &pastDeadline, &pastUsec));
+    Require(pastUsec == 0);
+
+    const std::uint64_t pastBaseBefore = TimedWait::DeadlineNanos(0);
+    std::uint64_t pastDeadlineNanos = 0;
+    Require(PosixThread::AbsoluteDeadlineNanos(0, &pastDeadline, &pastDeadlineNanos));
+    const std::uint64_t pastBaseAfter = TimedWait::DeadlineNanos(0);
+    Require(pastDeadlineNanos >= pastBaseBefore && pastDeadlineNanos <= pastBaseAfter);
+
+    KernelTimespec now{};
+    Require(clock_gettime_nid_postfix(0, &now) == 0);
+    const KernelTimespec futureDeadline{now.tv_sec + 5, now.tv_nsec};
+    KernelUseconds futureUsec = 0;
+    Require(PosixThread::RelativeMicroseconds(0, &futureDeadline, &futureUsec));
+    Require(futureUsec > 0 && futureUsec <= 5000000);
+
+    const std::uint64_t futureBaseBefore = TimedWait::DeadlineNanos(0);
+    std::uint64_t futureDeadlineNanos = 0;
+    Require(PosixThread::AbsoluteDeadlineNanos(0, &futureDeadline, &futureDeadlineNanos));
+    Require(futureDeadlineNanos > futureBaseBefore);
+
+    const KernelTimespec farFuture{now.tv_sec + horizonSeconds + 100, now.tv_nsec};
+    KernelUseconds clampedUsec = 0;
+    Require(PosixThread::RelativeMicroseconds(0, &farFuture, &clampedUsec));
+    Require(clampedUsec == relativeMax);
+
+    const std::uint64_t farBaseBefore = TimedWait::DeadlineNanos(0);
+    std::uint64_t clampedDeadlineNanos = 0;
+    Require(PosixThread::AbsoluteDeadlineNanos(0, &farFuture, &clampedDeadlineNanos));
+    Require(clampedDeadlineNanos >= farBaseBefore + horizonMaxMicros * 1000ULL);
+}
+
 void TestRwlockThreadExclusionAndContention() {
     ThreadSyncContext sync;
     Require(pthread_rwlock_init_nid_postfix(&sync.rwlock, nullptr) == 0);
@@ -381,6 +496,7 @@ int main() {
     TestRwlockSetNameBounds();
     TestRwlockLockingRecursionAndUnlockErrors();
     TestRwlockTimedWaitTimespecBounds();
+    TestPosixThreadDeadlineHelpers();
     TestRwlockThreadExclusionAndContention();
     return 0;
 }

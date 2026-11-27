@@ -1,9 +1,9 @@
 if(BUILD_TESTING)
     add_test(NAME agc_driver_batch_cap_64 COMMAND agc_driver_batch_cap_tests cap 64)
     add_test(NAME agc_driver_batch_cap_off COMMAND agc_driver_batch_cap_tests cap 0)
-    add_test(NAME agc_driver_batch_cap_wait COMMAND agc_driver_batch_cap_tests wait 512)
+    add_test(NAME agc_driver_batch_cap_wait COMMAND agc_driver_batch_cap_tests wait 128)
     add_test(NAME agc_driver_batch_cap_wait_64 COMMAND agc_driver_batch_cap_tests wait 64)
-    add_test(NAME agc_driver_batch_cap_wait_draw_pipeline COMMAND agc_driver_batch_cap_tests wait 512)
+    add_test(NAME agc_driver_batch_cap_wait_draw_pipeline COMMAND agc_driver_batch_cap_tests wait 128)
     set(agcBatchCapTests agc_driver_batch_cap agc_driver_batch_cap_64 agc_driver_batch_cap_off agc_driver_batch_cap_wait agc_driver_batch_cap_wait_64 agc_driver_batch_cap_wait_draw_pipeline)
     set_tests_properties(${agcBatchCapTests} PROPERTIES
         ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

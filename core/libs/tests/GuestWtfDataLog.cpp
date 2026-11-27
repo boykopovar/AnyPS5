@@ -211,9 +211,7 @@ void CheckVtableLayout() {
     _ZN3WTF15FilePrintStreamD0Ev(stream);
 }
 
-std::string CaptureStdout(void (*print)()) {
-    const auto path = std::filesystem::temp_directory_path() /
-        ("anyps5-wtf-data-log-stdout-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+std::string CaptureStdout(const std::filesystem::path& path, void (*print)()) {
     std::fflush(stdout);
 #ifdef _WIN32
     const int saved = ::_dup(::_fileno(stdout));
@@ -248,8 +246,8 @@ void PrintThroughDefaultSink() {
     FlushStream(stream);
 }
 
-void CheckDefaultSink() {
-    const std::string printed = CaptureStdout(PrintThroughDefaultSink);
+void CheckDefaultSink(const std::filesystem::path& directory) {
+    const std::string printed = CaptureStdout(directory / "stdout.txt", PrintThroughDefaultSink);
     Require(printed == "guest_wtf_data_log: default sink 1\n", "the default sink writes to stdout");
     PrintStream& first = _ZN3WTF8dataFileEv();
     Require(&first == &_ZN3WTF8dataFileEv(), "dataFile is one stream");
@@ -431,8 +429,24 @@ void CheckSetDataFileAfterDefault(const std::filesystem::path& directory) {
     CheckInstalledStream(directory, installed, "installed.txt");
 }
 
+std::filesystem::path CreateTemporaryDirectory(const std::filesystem::path& root, const std::string& prefix) {
+    auto directory = root / prefix;
+    for (unsigned suffix = 1; !std::filesystem::create_directory(directory); ++suffix) {
+        directory = root / (prefix + "-" + std::to_string(suffix));
+    }
+    return directory;
+}
+
+void CheckTemporaryDirectoryCollision(const std::filesystem::path& directory) {
+    const auto first = CreateTemporaryDirectory(directory, "collision");
+    const auto second = CreateTemporaryDirectory(directory, "collision");
+    Require(first != second, "each caller gets a distinct temporary directory");
+    Require(std::filesystem::is_directory(first) && std::filesystem::is_directory(second), "both temporary directories exist");
+}
+
 void RunDefault(const std::filesystem::path& directory) {
-    CheckDefaultSink();
+    CheckTemporaryDirectoryCollision(directory);
+    CheckDefaultSink(directory);
     CheckStaticStreamIsNotDestroyed();
     CheckLockExcludesOtherThreads();
     CheckVtableLayout();
@@ -471,9 +485,9 @@ void RunInstallNull() {
 
 int main(int argc, char** argv) {
     RegisterTrackingHeap();
-    const auto directory = std::filesystem::temp_directory_path() /
-        ("anyps5-wtf-data-log-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(directory), "temporary directory");
+    const auto root = std::filesystem::temp_directory_path();
+    const auto prefix = "anyps5-wtf-data-log-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto directory = CreateTemporaryDirectory(root, prefix);
     AddPathAlias_nid_no_patch("/wtf-data-log", directory.string().c_str());
     const std::string mode = argc > 1 ? argv[1] : "default";
     if (mode == "default") {

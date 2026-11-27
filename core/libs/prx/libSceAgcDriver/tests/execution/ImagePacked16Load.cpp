@@ -4,6 +4,7 @@
 #include "Recompiler.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -54,12 +55,6 @@ alignas(256) constexpr std::array<std::uint32_t, 9> SampleLz{
     0x34060084u, 0x7e280280u, 0x7e2a0280u, 0xf09c0f08u, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u,
     0xbf810000u,
 };
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 std::uint32_t Pattern(std::uint32_t x) {
     return (x + 1u) & 15u;

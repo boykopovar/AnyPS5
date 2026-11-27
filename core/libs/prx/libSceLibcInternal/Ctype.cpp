@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Ctype.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -75,6 +76,10 @@ char APS5_VABI _ZNKSt5ctypeIwE9do_narrowEwc_nid_postfix(const GuestLocale::Facet
 const std::uint16_t* APS5_VABI _ZNKSt5ctypeIwE9do_narrowEPKwS2_cPc_nid_postfix(const GuestLocale::Facet*, const std::uint16_t* first, const std::uint16_t* last, char fallback, char* destination) {
     ConvertRangeOut(__func__, first, last, destination, [fallback](std::uint16_t character) { return NarrowWide(character, fallback); });
     return last;
+}
+
+const short* APS5_VABI _Getctyptab_nid_postfix() {
+    return _Getpctype_nid_postfix();
 }
 
 }
