@@ -135,7 +135,7 @@ const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
         Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
     }
     static const bool reporting = LibcRunReportEnabled_nid_no_patch();
-    if (reporting) formatUse[remapped].fetch_add(1, std::memory_order_relaxed);
+    if (reporting) formatUse[guestFormat].fetch_add(1, std::memory_order_relaxed);
     return *entry;
 }
 
