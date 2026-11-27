@@ -31,17 +31,24 @@ inline UpscaleMode SelectUpscaleMode(const char* upscale, const char* sharpness)
 #if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 260000
         const int savedErrno = errno;
         const locale_t locale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
-        if (locale == nullptr) throw std::runtime_error("Vulkan presentation: could not create the numeric locale");
+        if (locale == nullptr) {
+            errno = savedErrno;
+            throw std::runtime_error("Vulkan presentation: could not create the numeric locale");
+        }
         std::fenv_t environment;
-        std::feholdexcept(&environment);
-        std::fesetround(FE_TONEAREST);
-        errno = 0;
+        const bool saved = std::fegetenv(&environment) == 0;
+        const bool ready = saved && std::fesetenv(FE_DFL_ENV) == 0;
         char* end = nullptr;
-        value = strtof_l(sharpness, &end, locale);
-        const bool underflowed = value == 0.0f && errno == ERANGE;
-        std::fesetenv(&environment);
+        bool underflowed = false;
+        if (ready) {
+            errno = 0;
+            value = strtof_l(sharpness, &end, locale);
+            underflowed = value == 0.0f && errno == ERANGE;
+        }
+        const bool restored = saved && std::fesetenv(&environment) == 0;
         freelocale(locale);
         errno = savedErrno;
+        if (!ready || !restored) throw std::runtime_error("Vulkan presentation: could not set or restore the floating-point environment");
         const bool decimal = text.front() != '+' && text.find_first_not_of("0123456789eE+-.") == std::string_view::npos;
         const bool parsed = decimal && end == text.data() + text.size() && !underflowed;
 #else
