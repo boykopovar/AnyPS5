@@ -17,10 +17,19 @@ class BoundedBlobReader extends BlobReader {
 }
 
 
+function utf8Length(value) {
+  let length = 0;
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    length += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return length;
+}
+
 export function validPath(name, locale = "en") {
   if (!name || name.includes("\\") || /[\x00-\x1f<>:"|?*]/u.test(name)) throw new Error(translate(locale, "unsafeZipPath", { name }));
   const parts = name.replace(/\/$/u, "").split("/");
-  if (parts.some(part => !part || part === "." || part === ".." || /[. ]$/u.test(part) || /^(con|conin\$|conout\$|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]) *(?:\.|$)/iu.test(part))) throw new Error(translate(locale, "unsafeZipPath", { name }));
+  if (parts.some(part => !part || part === "." || part === ".." || utf8Length(part) > 255 || /[. ]$/u.test(part) || /^(con|conin\$|conout\$|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]) *(?:\.|$)/iu.test(part))) throw new Error(translate(locale, "unsafeZipPath", { name }));
   return name;
 }
 

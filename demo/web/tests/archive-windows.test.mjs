@@ -5,7 +5,7 @@ import path from "node:path";
 
 register("./cdn-loader.mjs", import.meta.url, { data: { url: process.env.ANYPS5_TEST_ZIP_URL, path: process.env.ANYPS5_TEST_ZIP_PATH } });
 const webRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
-const { Archive, packageArchive } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
+const { Archive, packageArchive, validPath } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const { BlobReader, BlobWriter, Uint8ArrayReader, ZipReader, ZipWriter } = await import(process.env.ANYPS5_TEST_ZIP_URL);
 const header = new Uint8Array([127, 69, 76, 70]);
 const dos = { versionMadeBy: 0x14, externalFileAttributes: 0x20 };
@@ -45,3 +45,31 @@ finally { await escape.close(); }
 const unix = new Archive(await zipped([["title\\main.elf", false]], { versionMadeBy: 0x31e, externalFileAttributes: (0o100644 << 16) >>> 0 }));
 try { await assert.rejects(unix.inspect(() => {}), /Unsafe ZIP path: title\\main\.elf/); }
 finally { await unix.close(); }
+
+const maximum = "a".repeat(255);
+assert.equal(validPath(maximum), maximum);
+assert.equal(validPath("data/" + maximum), "data/" + maximum);
+assert.throws(() => validPath("a".repeat(256)), /Unsafe ZIP path/);
+assert.throws(() => validPath("data/" + "a".repeat(256)), /Unsafe ZIP path/);
+assert.equal(validPath("\u4e2d".repeat(85)), "\u4e2d".repeat(85));
+assert.throws(() => validPath("\u4e2d".repeat(86)), /Unsafe ZIP path/);
+
+const longestFolder = new Archive([{ path: "main.elf", file: new Blob([header]) }, { path: "data/" + maximum, file: new Blob(["resource"]) }]);
+try { await longestFolder.inspect(() => {}); }
+finally { await longestFolder.close(); }
+
+const overlongZip = new Archive(await zipped([["title/main.elf", false], ["title/" + "a".repeat(256) + "/", true]], dos));
+try { await assert.rejects(overlongZip.inspect(() => {}), /Unsafe ZIP path/); }
+finally { await overlongZip.close(); }
+
+const longExecutable = "a".repeat(255);
+const longSource = new Archive([{ path: longExecutable, file: new Blob([header]) }, { path: "sce_sys/param.json", file: new Blob(["{}"]) }]);
+try {
+  await longSource.inspect(() => {});
+  const libraries = new ZipWriter(new BlobWriter(), { useWebWorkers: false, useCompressionStream: false });
+  await libraries.add("libs/libc.prx", new Uint8ArrayReader(header));
+  let writes = 0;
+  await assert.rejects(packageArchive(longSource, { executable: header, modules: [] }, longExecutable + ".elf", await libraries.close(),
+    { async file() { writes++; throw new Error("destination opened"); } }, () => {}, true), /Unsafe ZIP path/);
+  assert.equal(writes, 0);
+} finally { await longSource.close(); }
