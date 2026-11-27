@@ -405,6 +405,7 @@ def plan(build, graph, picked):
     if any(not t.get("command") for t in listed if t["name"] in names):
         return run, build.leaves(), len(listed)
     keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
+    keep.update(build.target(t) for t in listed if t["name"] in names)
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
     targets = [t for t in build.leaves() if t not in skip]
     return run, targets + build.outputs(sorted(keep - set(targets) - {None})), len(listed)

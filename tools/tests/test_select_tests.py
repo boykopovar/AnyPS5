@@ -365,6 +365,30 @@ class SelectArgumentTests(SelectFixture):
             cmake.write_text(original, encoding="utf-8")
             subprocess.run(configure, check=True, capture_output=True)
 
+    def test_selected_relative_env_command_builds_its_excluded_executable(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        configure = ["cmake", "-S", str(self.source), "-B", str(self.build)]
+        try:
+            cmake.write_text(original + 'add_executable(relative_tool EXCLUDE_FROM_ALL main.c)\n'
+                             'add_test(NAME alpha_env_excluded COMMAND ${CMAKE_COMMAND} -E env '
+                             '"./$<TARGET_FILE_NAME:relative_tool>" WORKING_DIRECTORY "$<TARGET_FILE_DIR:relative_tool>")\n',
+                             encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+            graph = self.build / "relative-env-graph.json"
+            self.tool("dump", self.build, graph)
+            executable = self.build / "alpha" / ("relative_tool.exe" if os.name == "nt" else "relative_tool")
+            self.assertFalse(executable.exists())
+            self.assertIn("alpha_env_excluded", self.select("alpha/main.c", graph=graph)[1])
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"],
+                           check=True, capture_output=True)
+            self.assertTrue(executable.is_file())
+            output = self.tool("ctest", self.build, "-R", "^alpha_env_excluded$", "--output-on-failure")
+            self.assertIn("100% tests passed", output)
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+
     def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
         cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
         original = cmake.read_text(encoding="utf-8")
