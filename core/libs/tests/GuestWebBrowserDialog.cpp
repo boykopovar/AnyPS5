@@ -6,6 +6,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <algorithm>
+#include <barrier>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -14,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -239,6 +241,44 @@ void RequireRequests(const void* openParam) {
     Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
 }
 
+void RequireSerializedLifecycle(const void* param) {
+    std::barrier sync(3);
+    bool done = false;
+    std::thread terminator([&] {
+        for (;;) {
+            sync.arrive_and_wait();
+            if (done) return;
+            sceWebBrowserDialogTerminate();
+            sync.arrive_and_wait();
+        }
+    });
+    std::thread opener([&] {
+        for (;;) {
+            sync.arrive_and_wait();
+            if (done) return;
+            sceWebBrowserDialogInitialize();
+            sceWebBrowserDialogOpen(param);
+            sync.arrive_and_wait();
+        }
+    });
+    for (int iteration = 0; iteration < 20000; ++iteration) {
+        Require(sceWebBrowserDialogInitialize() == 0);
+        Require(sceWebBrowserDialogOpen(param) == 0);
+        sync.arrive_and_wait();
+        sync.arrive_and_wait();
+        const int status = sceWebBrowserDialogGetStatus();
+        Require(status == COMMON_DIALOG_STATUS_NONE || status == COMMON_DIALOG_STATUS_FINISHED);
+        if (status == COMMON_DIALOG_STATUS_FINISHED) {
+            Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_INVALID_STATE);
+            Require(sceWebBrowserDialogTerminate() == 0);
+        }
+    }
+    done = true;
+    sync.arrive_and_wait();
+    terminator.join();
+    opener.join();
+}
+
 }
 
 int main() {
@@ -430,6 +470,7 @@ int main() {
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_NONE);
     RequireRequests(param);
+    RequireSerializedLifecycle(param);
     RequireNotices(param);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
