@@ -34,7 +34,6 @@ static_assert(offsetof(WebBrowserDialogEvent, reserved) == 0x1030);
 namespace {
 std::atomic<int> g_status{0};
 std::atomic<bool> g_open{false};
-std::atomic<bool> g_requestPending{false};
 
 bool CopyIn(void* dst, const void* src, std::size_t size) {
     const int savedErrno = errno;
@@ -76,7 +75,6 @@ int OpenDialog(const void* param) {
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     std::uint8_t probe = 0;
     if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
-    g_requestPending = false;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     g_open = true;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);
@@ -85,13 +83,6 @@ int OpenDialog(const void* param) {
 
 bool DialogOpen() {
     return g_status.load() != COMMON_DIALOG_STATUS_NONE && g_open.load();
-}
-
-int QueueRequest() {
-    if (!DialogOpen()) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    bool expected = false;
-    if (!g_requestPending.compare_exchange_strong(expected, true)) return COMMON_DIALOG_ERROR_INVALID_STATE;
-    return 0;
 }
 
 bool ZoomValid(const WebBrowserDialogZoomParam& param) {
@@ -204,7 +195,6 @@ int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, 
     std::uint8_t probe = 0;
     if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
-    g_requestPending = false;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     g_open = true;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);
@@ -242,7 +232,8 @@ int APS5_VABI sceWebBrowserDialogNavigate(const WebBrowserDialogNavigateParam* p
     if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param)) || local.size != sizeof(local) ||
         !LengthWithin(local.url, 0x800) || !ReservedClear(local.reserved))
         return COMMON_DIALOG_ERROR_PARAMETER;
-    return QueueRequest();
+    if (!DialogOpen()) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceWebBrowserDialogSetZoom(const WebBrowserDialogZoomParam* param) {
@@ -252,7 +243,8 @@ int APS5_VABI sceWebBrowserDialogSetZoom(const WebBrowserDialogZoomParam* param)
     if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param)) || local.size != sizeof(local) ||
         !ZoomValid(local) || !ReservedClear(local.reserved))
         return COMMON_DIALOG_ERROR_PARAMETER;
-    return QueueRequest();
+    if (!DialogOpen()) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

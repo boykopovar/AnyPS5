@@ -2,7 +2,7 @@
 
 ## add Silent stubs
 
-- [sceWebBrowserDialogGetEvent, sceWebBrowserDialogNavigate, sceWebBrowserDialogSetZoom](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - no browser runs, so no event arrives and no URL or zoom is applied. Each open clears the event record and the single request slot, and only the browser fills or empties them. So `GetEvent` copies out an all-zero event, and `Navigate` and `SetZoom` accept one request per open, then return `0x80B80006`. Prototypes, checks and their order follow firmware 9.00's `libSceWebBrowserDialog.sprx` (SHA-256 `db1b8dfc…9016`); 13.42 is not read. Unknown: what the browser writes into an event (16 bytes at `+0x0c`, two strings) and what the zoom `type` values mean.
+- [sceWebBrowserDialogGetEvent](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - no browser runs, so no event ever arrives. Each open clears the event record and only the browser fills it, so an open dialog copies out an all-zero event. What the browser writes into an event (16 bytes at `+0x0c`, two strings) is unknown. The prototype, checks and their order follow firmware 9.00's `libSceWebBrowserDialog.sprx` (SHA-256 `db1b8dfc…9016`); 13.42 is not read.
 
 ## change import-resolution placeholder
 
@@ -14,4 +14,6 @@
 
 ## remove PS5 3.20 export inventory
 
-## remove state-first check order
+## change state-first check order
+
+- [sceWebBrowserDialogNavigate, sceWebBrowserDialogSetZoom](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - no browser runs to take a request. Both run firmware 9.00's parameter checks and then return `0x80B80003` unless a dialog is open; a request on an open dialog throws through `NotImplemented_nid_no_patch`. On the console the request goes into a single slot that the browser empties, and a second request while one is pending returns `0x80B80006`. What the zoom `type` values mean is unknown.

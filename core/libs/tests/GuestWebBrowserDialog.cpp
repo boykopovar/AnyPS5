@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -73,6 +75,17 @@ bool EventUntouched(const WebBrowserDialogEvent& event) {
     return marked(event.untouched0) && marked(event.untouched1);
 }
 
+template <typename TCall>
+void RequireNotImplemented(TCall call) {
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find("not implemented") != std::string::npos;
+    }
+    Require(threw);
+}
+
 void RequireRequests(const void* openParam) {
     static WebBrowserDialogEvent event{};
     WebBrowserDialogNavigateParam navigate{};
@@ -98,27 +111,7 @@ void RequireRequests(const void* openParam) {
 
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
-    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
-    Require(sceWebBrowserDialogSetZoom(&zoom) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
-    Require(sceWebBrowserDialogOpen(openParam) == 0);
-
-    Require(sceWebBrowserDialogGetEvent(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
-    Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_PARAMETER);
-    std::memset(&event, 0x5a, sizeof(event));
-    event.size = sizeof(event);
-    Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_PARAMETER);
-    std::fill(std::begin(event.reserved), std::end(event.reserved), 0);
-    event.reserved[255] = 1;
-    Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_PARAMETER);
-    event.reserved[255] = 0;
-    errno = 71;
-    Require(sceWebBrowserDialogGetEvent(&event) == 0);
-    Require(errno == 71);
-    Require(EventZeroed(event) && EventUntouched(event) && event.size == sizeof(event));
-    errno = 71;
-    Require(sceWebBrowserDialogGetEvent(reinterpret_cast<WebBrowserDialogEvent*>(0x10)) == COMMON_DIALOG_ERROR_ARG_NULL);
-    Require(errno == 71);
 
     Require(sceWebBrowserDialogNavigate(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     errno = 71;
@@ -146,18 +139,13 @@ void RequireRequests(const void* openParam) {
     longUrl[0x800] = '\0';
     navigate.url = longUrl;
     Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_PARAMETER);
+    longUrl[0x7ff] = '\0';
+    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     navigate.url = "http://example.com";
     navigate.reserved[255] = 1;
     Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_PARAMETER);
     navigate.reserved[255] = 0;
-    errno = 71;
-    Require(sceWebBrowserDialogNavigate(&navigate) == 0);
-    Require(errno == 71);
-    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_INVALID_STATE);
-    Require(sceWebBrowserDialogSetZoom(&zoom) == COMMON_DIALOG_ERROR_INVALID_STATE);
-    longUrl[0x7ff] = '\0';
-    navigate.url = longUrl;
-    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_INVALID_STATE);
+    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
 
     const auto zoomResult = [&zoom](float value, std::uint32_t type, std::uint32_t width, std::uint32_t height) {
         zoom.zoom = value;
@@ -171,14 +159,14 @@ void RequireRequests(const void* openParam) {
         Require(zoomResult(0.0f, type, 0, 0) == COMMON_DIALOG_ERROR_PARAMETER);
         Require(zoomResult(-1.0f, type, 0, 0) == COMMON_DIALOG_ERROR_PARAMETER);
         Require(zoomResult(std::nextafter(3.0f, 4.0f), type, 0, 0) == COMMON_DIALOG_ERROR_PARAMETER);
-        Require(zoomResult(std::numeric_limits<float>::min(), type, 0, 0) == COMMON_DIALOG_ERROR_INVALID_STATE);
-        Require(zoomResult(3.0f, type, 0, 0) == COMMON_DIALOG_ERROR_INVALID_STATE);
-        Require(zoomResult(nan, type, 0, 0) == COMMON_DIALOG_ERROR_INVALID_STATE);
+        Require(zoomResult(std::numeric_limits<float>::min(), type, 0, 0) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+        Require(zoomResult(3.0f, type, 0, 0) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+        Require(zoomResult(nan, type, 0, 0) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     }
     Require(zoomResult(1.0f, 3, 1, 1) == COMMON_DIALOG_ERROR_PARAMETER);
     Require(zoomResult(1.0f, 0xffffffffu, 1, 1) == COMMON_DIALOG_ERROR_PARAMETER);
-    Require(zoomResult(0.0f, 2, 1, 1) == COMMON_DIALOG_ERROR_INVALID_STATE);
-    Require(zoomResult(0.0f, 2, 1920, 1080) == COMMON_DIALOG_ERROR_INVALID_STATE);
+    Require(zoomResult(0.0f, 2, 1, 1) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(zoomResult(0.0f, 2, 1920, 1080) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(zoomResult(0.0f, 2, 0, 1080) == COMMON_DIALOG_ERROR_PARAMETER);
     Require(zoomResult(0.0f, 2, 1921, 1080) == COMMON_DIALOG_ERROR_PARAMETER);
     Require(zoomResult(0.0f, 2, 1920, 0) == COMMON_DIALOG_ERROR_PARAMETER);
@@ -195,12 +183,34 @@ void RequireRequests(const void* openParam) {
     errno = 71;
     Require(sceWebBrowserDialogSetZoom(reinterpret_cast<const WebBrowserDialogZoomParam*>(0x10)) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(errno == 71);
+    Require(zoomResult(1.0f, 0, 0, 0) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
 
-    Require(libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch(openParam) == 0);
-    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
-    Require(zoomResult(1.0f, 0, 0, 0) == 0);
-    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_INVALID_STATE);
-    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_INVALID_STATE);
+    Require(sceWebBrowserDialogOpen(openParam) == 0);
+    Require(sceWebBrowserDialogGetEvent(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_PARAMETER);
+    std::memset(&event, 0x5a, sizeof(event));
+    event.size = sizeof(event);
+    Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_PARAMETER);
+    std::fill(std::begin(event.reserved), std::end(event.reserved), 0);
+    event.reserved[255] = 1;
+    Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_PARAMETER);
+    event.reserved[255] = 0;
+    errno = 71;
+    Require(sceWebBrowserDialogGetEvent(&event) == 0);
+    Require(errno == 71);
+    Require(EventZeroed(event) && EventUntouched(event) && event.size == sizeof(event));
+    errno = 71;
+    Require(sceWebBrowserDialogGetEvent(reinterpret_cast<WebBrowserDialogEvent*>(0x10)) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(errno == 71);
+    Require(sceWebBrowserDialogNavigate(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    navigate.size = 1;
+    Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_PARAMETER);
+    navigate.size = sizeof(navigate);
+    zoom.type = 3;
+    Require(sceWebBrowserDialogSetZoom(&zoom) == COMMON_DIALOG_ERROR_PARAMETER);
+    zoom.type = 0;
+    RequireNotImplemented([&navigate] { sceWebBrowserDialogNavigate(&navigate); });
+    RequireNotImplemented([&zoom] { sceWebBrowserDialogSetZoom(&zoom); });
 
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
@@ -210,18 +220,20 @@ void RequireRequests(const void* openParam) {
     Require(sceWebBrowserDialogGetResult(&result) == 0);
     Require(result.result == COMMON_DIALOG_RESULT_USER_CANCELED);
 
-    Require(sceWebBrowserDialogOpen(openParam) == 0);
-    Require(sceWebBrowserDialogNavigate(&navigate) == 0);
+    Require(libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch(openParam) == 0);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
+    Require(sceWebBrowserDialogGetEvent(&event) == 0);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_INVALID_STATE);
     Require(sceWebBrowserDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
 
-    Require(sceWebBrowserDialogOpenForPredeterminedContent(openParam, nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     WebBrowserDialogAllowList allowList{};
     allowList.size = sizeof(allowList);
     allowList.addresses[0] = "test.invalid";
     Require(sceWebBrowserDialogOpenForPredeterminedContent(openParam, &allowList) == 0);
-    Require(sceWebBrowserDialogSetZoom(&zoom) == 0);
+    Require(sceWebBrowserDialogGetEvent(&event) == 0);
+    RequireNotImplemented([&zoom] { sceWebBrowserDialogSetZoom(&zoom); });
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogNavigate(&navigate) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogGetEvent(&event) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
