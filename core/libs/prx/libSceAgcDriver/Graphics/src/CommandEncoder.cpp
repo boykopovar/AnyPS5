@@ -88,6 +88,13 @@ TestDelay& testBlocked() {
     return value;
 }
 
+void runBlockedHook() {
+    if (auto& hook = testBlocked(); hook.set.load(std::memory_order_relaxed)) [[unlikely]] {
+        std::lock_guard hookLock(hook.mutex);
+        if (hook.delay) hook.delay();
+    }
+}
+
 bool sameSite(const CommandEncoder::WaitSite& left, const CommandEncoder::WaitSite& right) {
     if (left.kind != right.kind || left.line != right.line) return false;
     if (left.detail == right.detail) return true;
@@ -750,10 +757,7 @@ void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
         if (flushed) note(site, 0, false, true);
         return;
     }
-    if (auto& hook = testBlocked(); hook.set.load(std::memory_order_relaxed)) [[unlikely]] {
-        std::lock_guard hookLock(hook.mutex);
-        if (hook.delay) hook.delay();
-    }
+    runBlockedHook();
     const auto start = std::chrono::steady_clock::now();
     if (!SpinUntil(HandoffSpinWindow(), [&] { return executed.load(std::memory_order_acquire) >= through; })) {
         for (auto seen = executed.load(std::memory_order_acquire); seen < through; seen = executed.load(std::memory_order_acquire)) executed.wait(seen, std::memory_order_acquire);
@@ -804,6 +808,7 @@ void CommandEncoder::awaitSpare() noexcept {
         std::lock_guard lock(queueMutex);
         if (spare != nullptr) return;
     }
+    runBlockedHook();
     executed.wait(seen, std::memory_order_acquire);
     const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
     waitCount.fetch_add(1, std::memory_order_relaxed);

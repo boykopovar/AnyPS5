@@ -609,6 +609,63 @@ void ForeignLookupWhileAWindowIsOpenProceeds() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}, {own, {"draw 7 1 0 0"}}}, "a foreign lookup");
 }
 
+bool WaitFor(const std::function<bool()>& done) {
+    const auto giveUp = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!done()) {
+        if (std::chrono::steady_clock::now() >= giveUp) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+void RetirementWaitsForALookupInFlight() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x5c);
+    auto encoder = Attached(device, table);
+    const auto commands = Handle<VkCommandBuffer>(0x1d00);
+    std::atomic<bool> held{true};
+    std::atomic<bool> pinned{false};
+    std::atomic<bool> proceed{false};
+    std::atomic<bool> released{false};
+    const auto release = [&] {
+        held.store(false, std::memory_order_release);
+        held.notify_all();
+    };
+    const auto proceedNow = [&] {
+        released.store(true, std::memory_order_release);
+        proceed.store(true, std::memory_order_release);
+        proceed.notify_all();
+    };
+    CommandEncoder::SetDelayForTesting([&] { held.wait(true, std::memory_order_acquire); });
+    CommandEncoder::SetBlockedHookForTesting([&] {
+        pinned.store(true, std::memory_order_release);
+        proceed.wait(false, std::memory_order_acquire);
+    });
+    encoder->Open(commands, RecordingOf(commands));
+    table.cmdDraw(commands, 1, 1, 0, 0);
+    encoder->Close();
+    std::thread lookup([&] { AgcDriver::Graphics::BeforeCommandLookup(device); });
+    const bool inFlight = WaitFor([&] { return pinned.load(std::memory_order_acquire); });
+    release();
+    if (inFlight) {
+        WaitFor([&] { return Recorded(commands) == 1; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    std::thread releaser([&] {
+        if (inFlight) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        proceedNow();
+    });
+    encoder.reset();
+    const bool retiredAfterTheLookup = released.load(std::memory_order_acquire);
+    releaser.join();
+    lookup.join();
+    CommandEncoder::SetBlockedHookForTesting({});
+    CommandEncoder::SetDelayForTesting({});
+    Require(inFlight, "a lookup on another thread did not wait for the queued replay");
+    Require(retiredAfterTheLookup, "a slot was retired while a lookup that pinned it was still in flight");
+}
+
 void LookupsSurviveSlotChurn() {
     Reset();
     auto table = FakeTable();
@@ -616,12 +673,15 @@ void LookupsSurviveSlotChurn() {
     const auto churned = Handle<VkDevice>(0x4b);
     const auto attached = Attached(steady, table);
     std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> looked{0};
     std::thread lookups([&] {
         while (!stop.load(std::memory_order_acquire)) {
             AgcDriver::Graphics::BeforeCommandLookup(steady);
             AgcDriver::Graphics::BeforeCommandLookup(churned);
+            looked.fetch_add(1, std::memory_order_release);
         }
     });
+    while (looked.load(std::memory_order_acquire) == 0) std::this_thread::yield();
     for (int round = 0; round < 300; ++round) {
         auto other = FakeTable();
         const auto encoder = Attached(churned, other);
@@ -1090,38 +1150,37 @@ void EncoderParksBetweenSpacedPosts() {
 }
 
 void ProducerAheadOfTheChunkPoolWaits() {
+    SetEnvironment("APS5_PROFILE_ENCODER", "1");
     Reset();
     auto table = FakeTable();
     const auto device = Handle<VkDevice>(0x4e);
     const auto commands = Handle<VkCommandBuffer>(0x1400);
     constexpr std::uint32_t Windows = 64;
-    std::atomic<bool> release{false};
-    std::atomic<bool> producerDone{false};
-    bool doneWhileHeld = true;
+    std::atomic<bool> held{true};
     CommandEncoder::Statistics counts{};
-    CommandEncoder::SetDelayForTesting([&] {
-        while (!release.load()) std::this_thread::yield();
+    std::vector<CommandEncoder::SiteWaits> sites;
+    CommandEncoder::SetDelayForTesting([&] { held.wait(true, std::memory_order_acquire); });
+    CommandEncoder::SetBlockedHookForTesting([&] {
+        held.store(false, std::memory_order_release);
+        held.notify_all();
     });
     {
         const auto attached = Attached(device, table);
         auto& encoder = *attached;
-        std::thread producer([&] {
-            for (std::uint32_t index = 0; index < Windows; ++index) {
-                encoder.Open(commands, RecordingOf(commands));
-                table.cmdDraw(commands, index, 1, 0, 0);
-                encoder.Close();
-            }
-            producerDone.store(true);
-        });
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        doneWhileHeld = producerDone.load();
-        release.store(true);
-        producer.join();
+        for (std::uint32_t index = 0; index < Windows; ++index) {
+            encoder.Open(commands, RecordingOf(commands));
+            table.cmdDraw(commands, index, 1, 0, 0);
+            encoder.Close();
+        }
         encoder.Quiesce();
         counts = encoder.Counts();
+        sites = encoder.WaitsBySite();
     }
+    CommandEncoder::SetBlockedHookForTesting({});
     CommandEncoder::SetDelayForTesting({});
-    Require(!doneWhileHeld, "a producer posted " + std::to_string(Windows) + " windows ahead of a held encoder without waiting for its chunk pool");
+    SetEnvironment("APS5_PROFILE_ENCODER", "0");
+    const auto* pool = SiteOf(sites, CommandEncoder::WaitSite{CommandEncoder::Wait::ChunkPool, nullptr, 0});
+    Require(pool != nullptr && pool->waits != 0, "a producer posted " + std::to_string(Windows) + " windows ahead of a held encoder without waiting for its chunk pool; sites:" + CommandEncoder::Report(sites, sites.size()));
     Require(Recorded(commands) == Windows && counts.waits != 0, "a producer that waited for the chunk pool recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Windows) + " commands after " + std::to_string(counts.waits) + " waits");
 }
 
@@ -1597,6 +1656,7 @@ int main(int argc, char** argv) {
         OwnersOutliveTheUnwindDrain();
         ForeignThreadCannotProduceIntoAnOpenWindow();
         ForeignLookupWhileAWindowIsOpenProceeds();
+        RetirementWaitsForALookupInFlight();
         LookupsSurviveSlotChurn();
         RawCallAfterLookupKeepsOrder();
         FailedReplayStaysWithItsRecording();
