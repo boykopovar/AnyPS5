@@ -9,6 +9,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <xmmintrin.h>
 
@@ -427,6 +428,33 @@ void TestIntegerErrors() {
     };
     checkUnsigned(_Stoulx_nid_postfix);
     checkUnsigned(_Stoullx_nid_postfix);
+}
+
+void TestIntegerOutputsUnmapped() {
+    const auto throws = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    auto* const unmappedError = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    auto** const unmappedEnd = reinterpret_cast<char**>(std::uintptr_t{0x10});
+    char* end = nullptr;
+    int error = 7;
+    Require(throws([&] { _Stollx_nid_postfix("12", &end, 10, unmappedError); }), "_Stollx with an unwritable error output throws");
+    Require(throws([&] { _Stoullx_nid_postfix("12", &end, 10, unmappedError); }), "_Stoullx with an unwritable error output throws");
+    Require(throws([&] { _Stoulx_nid_postfix("12", &end, 10, unmappedError); }), "_Stoulx with an unwritable error output throws");
+    Require(throws([&] { _Stolx_nid_postfix("12", &end, 10, unmappedError); }), "_Stolx with an unwritable error output throws");
+    Require(throws([&] { _Stollx_nid_postfix("12", unmappedEnd, 1, &error); }), "_Stollx with an invalid base and an unwritable end throws");
+    Require(throws([&] { _Stolx_nid_postfix("12", unmappedEnd, 37, &error); }), "_Stolx with an invalid base and an unwritable end throws");
+    *__error_nid_postfix() = 77;
+    Require(throws([&] { _Stollx_nid_postfix("12", &end, 10, unmappedError); }) && *__error_nid_postfix() == 77, "an unwritable error output keeps errno");
+    *__error_nid_postfix() = 77;
+    Require(throws([&] { _Stoullx_nid_postfix("12", unmappedEnd, 1, &error); }) && *__error_nid_postfix() == 77, "an unwritable end keeps errno");
+    error = 7;
+    Require(_Stolx_nid_postfix("12", &end, 10, &error) == 12 && error == 0, "_Stolx still converts after the failures");
 }
 
 void TestFloatingRounds() {
@@ -866,6 +894,7 @@ int main() {
     TestFloatErrors();
     TestScaledNan();
     TestIntegerErrors();
+    TestIntegerOutputsUnmapped();
     TestArithmetic();
     TestDispatch();
     TestLongDoubleHelpers();

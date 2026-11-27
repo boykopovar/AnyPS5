@@ -56,6 +56,7 @@ private:
 
 struct InputRequests {
     bool toggleFullscreen = false;
+    bool toggleBorderless = false;
     bool togglePerformanceOverlay = false;
     bool screenshot = false;
     bool showPadStatus = false;
@@ -83,6 +84,7 @@ public:
     void SetTitleReadsMouse(bool reads);
     void Release();
     bool MouseMode() const;
+    const char* MouseModeShortcut(bool guestReadsMouse) const;
     PadInputState Compose(const PadInputState& controller) const;
     const InputConfiguration& Configuration() const;
 

@@ -323,9 +323,6 @@ bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size
 }
 
 static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
-    if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error("NativePositioned: nbytes exceeds platform limit");
-    }
     if (write) {
         if (File::HasFixedSizeWrites(descriptor)) {
             if (!File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, offset)) return -1;
@@ -348,48 +345,63 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         errno = ESPIPE;
         return -1;
     }
-    const auto at = write && File::Appends(descriptor) ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset);
-    OVERLAPPED overlapped{};
-    overlapped.Offset = static_cast<DWORD>(at);
-    overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
-    DWORD done = 0;
-    const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped)
-                          : ::ReadFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped);
-    const DWORD error = ok ? ERROR_SUCCESS : ::GetLastError();
+    const bool appends = write && File::Appends(descriptor);
+    std::size_t done = 0;
+    DWORD error = ERROR_SUCCESS;
+    do {
+        const auto part = File::TransferPartBytes(nbytes, done);
+        const auto at = appends ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset) + done;
+        OVERLAPPED overlapped{};
+        overlapped.Offset = static_cast<DWORD>(at);
+        overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
+        DWORD moved = 0;
+        auto* const data = static_cast<char*>(buf) + done;
+        if (!(write ? ::WriteFile(handle, data, static_cast<DWORD>(part), &moved, &overlapped)
+                    : ::ReadFile(handle, data, static_cast<DWORD>(part), &moved, &overlapped))) {
+            error = ::GetLastError();
+            break;
+        }
+        done += moved;
+        if (moved < part) break;
+    } while (done < nbytes);
     if (!::SetFilePointerEx(handle, position, nullptr, FILE_BEGIN)) {
         throw std::runtime_error("NativePositioned: cannot restore the file offset");
     }
-    if (!ok) {
+    if (error != ERROR_SUCCESS && done == 0) {
         if (!write && error == ERROR_HANDLE_EOF) return 0;
         errno = error == ERROR_ACCESS_DENIED ? EBADF : EIO;
         return -1;
     }
-    return done;
+    return static_cast<std::int64_t>(done);
 }
 std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
     const auto positioned = File::LockPositionedTransfer(descriptor);
     return NativePositionedTransfer(descriptor, buf, nbytes, offset, write);
 }
 std::int64_t File::WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes) {
-    if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error("WriteAtEnd: nbytes exceeds platform limit");
-    }
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
     if (handle == INVALID_HANDLE_VALUE) {
         errno = EBADF;
         return -1;
     }
     if (::GetFileType(handle) != FILE_TYPE_DISK) return -2;
-    OVERLAPPED end{};
-    end.Offset = 0xFFFFFFFF;
-    end.OffsetHigh = 0xFFFFFFFF;
-    DWORD done = 0;
-    if (!::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &end)) {
-        const DWORD error = ::GetLastError();
-        errno = error == ERROR_ACCESS_DENIED ? EBADF : error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL ? ENOSPC : EIO;
-        return -1;
-    }
-    return done;
+    std::size_t done = 0;
+    do {
+        const auto part = File::TransferPartBytes(nbytes, done);
+        OVERLAPPED end{};
+        end.Offset = 0xFFFFFFFF;
+        end.OffsetHigh = 0xFFFFFFFF;
+        DWORD moved = 0;
+        if (!::WriteFile(handle, static_cast<const char*>(buf) + done, static_cast<DWORD>(part), &moved, &end)) {
+            if (done != 0) break;
+            const DWORD error = ::GetLastError();
+            errno = error == ERROR_ACCESS_DENIED ? EBADF : error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL ? ENOSPC : EIO;
+            return -1;
+        }
+        done += moved;
+        if (moved < part) break;
+    } while (done < nbytes);
+    return static_cast<std::int64_t>(done);
 }
 static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t nbytes, bool write) {
     if (nbytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -607,7 +619,7 @@ static bool IsSeekableDescriptor(int descriptor) {
 }
 
 static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, std::int64_t offset) {
-    if (IsKqueueDescriptor_nid_no_patch(descriptor)) return GUEST_ESPIPE;
+    if (IsKqueueDescriptor_nid_no_patch(descriptor) || IsKsemDescriptor(descriptor)) return GUEST_ESPIPE;
     if (!nullBuffer && offset >= 0) return 0;
     if (!GuestSockets::IsOpen(descriptor) && !DescriptorIsOpen_nid_no_patch(descriptor)) return GUEST_EBADF;
     if (!IsSeekableDescriptor(descriptor)) return GUEST_ESPIPE;
@@ -617,7 +629,7 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
-    if (!nullBuffer || IsKqueueDescriptor_nid_no_patch(descriptor)) return 0;
+    if (!nullBuffer || IsKqueueDescriptor_nid_no_patch(descriptor) || IsKsemDescriptor(descriptor)) return 0;
     return (GuestSockets::IsOpen(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor)) ? GUEST_EFAULT : GUEST_EBADF;
 }
 
@@ -915,6 +927,7 @@ int File::DuplicateFrom(int fd, int start) {
 #else
     const int duplicate = ::fcntl(fd, F_DUPFD, start);
     if (duplicate < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    DuplicateKsemDescriptor(fd, duplicate);
     File::DuplicateDirectoryDescriptor(fd, duplicate);
     if (File::IsRandomDevice(fd)) File::RememberRandomDevice(duplicate);
     File::ShareDescriptor(fd, duplicate);
@@ -1085,7 +1098,6 @@ int APS5_VABI dup_nid_postfix(int d) {
     if (GuestSockets::IsOpen(d)) return GuestSockets::Duplicate(d);
     if (d < 0) return PosixFailure(GUEST_EBADF);
     if (IsKqueueDescriptor_nid_no_patch(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
-    if (IsKsemDescriptor(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a ksem id is not supported");
 #ifdef _WIN32
     const int duplicate = WithoutParameterHandler([d] { return ::_dup(d); });
     if (duplicate >= 0) File::DuplicateSharedMemoryDescriptor_nid_no_patch(d, duplicate);
@@ -1093,6 +1105,7 @@ int APS5_VABI dup_nid_postfix(int d) {
     const int duplicate = ::dup(d);
 #endif
     if (duplicate < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    DuplicateKsemDescriptor(d, duplicate);
     File::DuplicateDirectoryDescriptor(d, duplicate);
     if (File::IsRandomDevice(d)) File::RememberRandomDevice(duplicate);
     File::ShareDescriptor(d, duplicate);
@@ -1127,7 +1140,6 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     }
     const bool sourceIsRandom = File::IsRandomDevice(from);
     if (from != to && IsKqueueDescriptor_nid_no_patch(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
-    if (from != to && IsKsemDescriptor(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a ksem id is not supported");
 #ifdef _WIN32
     if (WithoutParameterHandler([from] { return ::_get_osfhandle(from) == -1 ? -1 : 0; }) != 0) return PosixFailure(GUEST_EBADF);
     if (from == to) return to;
@@ -1151,6 +1163,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     positioned.unlock();
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
+    DuplicateKsemDescriptor(from, to);
     return to;
 #else
     if (from == to) {
@@ -1169,6 +1182,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     if (sourceIsRandom) File::RememberRandomDevice(to);
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
+    DuplicateKsemDescriptor(from, to);
     return result;
 #endif
 }
@@ -1321,7 +1335,7 @@ int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
     if (!GuestSockets::IsOpen(d) && !DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
-    if (whence < 0 || whence > 2) return PosixFailure(GUEST_EINVAL);
+    if ((whence < 0 || whence > 2) && !IsKsemDescriptor(d)) return PosixFailure(GUEST_EINVAL);
     return PosixResult(sceKernelLseek(d, offset, whence));
 }
 
@@ -1341,6 +1355,23 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
     }
     RecordWrittenPath_nid_no_patch(native);
     return 0;
+}
+
+int APS5_VABI mkfifo_nid_postfix(const char* path, uint16_t mode) {
+#ifdef _WIN32
+    (void)path;
+    (void)mode;
+    NotImplemented_nid_no_patch(__func__);
+#else
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
+    std::filesystem::path native;
+    if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
+    if (::mkfifo(native.c_str(), static_cast<mode_t>(mode)) != 0) return PosixResult(SceErrorFromErrno(errno));
+    RecordWrittenPath_nid_no_patch(native);
+    return 0;
+#endif
 }
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
@@ -1893,7 +1924,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     if (offset != nullptr) {
         if (const int error = PositionedArgumentError(d, write, false, *offset)) return SceErrorFromErrno(error);
     }
-    if (offset == nullptr && IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, write);
+    if (offset == nullptr && (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d))) return KqueueIovecsResult(iov, iovcnt, write);
     std::size_t total = 0;
     for (int i = 0; i < iovcnt; ++i) {
         if (iov[i].base == nullptr && iov[i].length != 0) return SceErrorFromErrno(GUEST_EFAULT);
@@ -2013,7 +2044,7 @@ static int64_t KernelReadv(int d, const KernelIovec* guestIov, int iovcnt) {
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
-    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, false);
+    if (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return KqueueIovecsResult(iov, iovcnt, false);
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
     if (GuestSockets::IsOpen(d)) {
@@ -2035,7 +2066,7 @@ static int64_t KernelWritev(int d, const KernelIovec* guestIov, int iovcnt) {
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
-    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, true);
+    if (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return KqueueIovecsResult(iov, iovcnt, true);
     if (GuestSockets::IsOpen(d)) {
         const auto result = GuestSockets::Writev(d, reinterpret_cast<const GuestSockets::Iovec*>(iov), iovcnt);
         return result < 0 ? SceKernelError(*__error_nid_postfix()) : result;

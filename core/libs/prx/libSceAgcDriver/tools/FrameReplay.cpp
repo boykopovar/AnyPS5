@@ -188,8 +188,17 @@ bool committedWritable(std::uint64_t address, std::uint64_t bytes) {
 }
 
 void commit(const FrameMemoryChunk& chunk) {
-    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
-    const auto bytes = static_cast<std::size_t>(chunk.bytes);
+    auto first = chunk.address;
+    auto last = chunk.address + chunk.bytes;
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::uint64_t windowsPage = system.dwPageSize;
+    first &= ~(windowsPage - 1);
+    last = (last + windowsPage - 1) & ~(windowsPage - 1);
+#endif
+    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(first));
+    const auto bytes = static_cast<std::size_t>(last - first);
 #ifdef __linux__
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto begin = chunk.address & ~(page - 1);

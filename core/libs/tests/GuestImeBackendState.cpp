@@ -110,6 +110,10 @@ void CheckEditing() {
 
     Require(sceImeBackendModeCaretPrevious() == 0);
     Require(sceImeBackendGetCaretIndex() == 2);
+    Require(sceImeBackendModeCaretNext() == 0);
+    Require(sceImeBackendGetCaretIndex() == 3);
+    Require(sceImeBackendModeCaretPrevious() == 0);
+    Require(sceImeBackendGetCaretIndex() == 2);
     Require(sceImeBackendEnterCharacter(u'B', text) == 0 && TextEquals(text, u"HiBA"));
     Require(sceImeBackendBackspaceCharacter() == 0);
     Require(sceImeBackendGetConvertString(text) == 0 && TextEquals(text, u"HiA"));
