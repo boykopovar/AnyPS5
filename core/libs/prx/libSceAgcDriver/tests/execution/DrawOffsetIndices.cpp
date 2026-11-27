@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -401,7 +402,7 @@ public:
         return state;
     }
 
-    AgcDriver::Graphics::DrawResult Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false) {
+    AgcDriver::Graphics::DrawResult Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false, std::optional<std::uint32_t> indexLimit = std::nullopt) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -413,11 +414,14 @@ public:
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
         AgcDriver::Graphics::DrawResult result;
-        if (compactRestart) {
+        if (compactRestart || indexLimit) {
             auto context = device->graphicsContext();
-            context.primitiveListRestart = false;
             auto state = State();
-            state.primitiveRestart = true;
+            if (indexLimit) context.limits.maxDrawIndexedIndexValue = *indexLimit;
+            if (compactRestart) {
+                context.primitiveListRestart = false;
+                state.primitiveRestart = true;
+            }
             result = AgcDriver::Graphics::Draw(context, state, draw, shaders);
         } else {
             auto state = State(false, restartStrip);
@@ -545,15 +549,14 @@ std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRest
     return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "runtime-fetched VertexIndex was changed\n";
 }
 
-void CheckCapturedVertexTail(Fixture& fixture) {
+void CheckCapturedInputRanges(Fixture& fixture) {
     using AgcDriver::Graphics::DrawResult;
     using AgcDriver::Graphics::TakeVkDrawCounts;
     using AgcDriver::Pm4::DrawArguments;
-    // Keep the embedded fetch and export its result, with no shader buffer writes.
     alignas(256) static constexpr auto code = [] {
         auto words = PostAddCode;
-        words[23] = words[24] = 0xbf800000u; // s_nop instead of buffer_store_dwordx4
-        words[28] = 0x1110100au; // export the fetched v10 as position.x
+        words[23] = words[24] = 0xbf800000u;
+        words[28] = 0x1110100au;
         return words;
     }();
     auto vertex = fixture.Vertex(code, fixture.UserData(0, 0));
@@ -577,10 +580,48 @@ void CheckCapturedVertexTail(Fixture& fixture) {
             Require(result == DrawResult::Handled && emitted == 2, "a disjoint vertex descriptor must still group both records");
         }
     }
+
+    constexpr std::size_t block = 65536;
+    auto* mapping = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * block, block));
+    Require(mapping != nullptr, "could not reserve the vertex test allocation");
+    constexpr std::uint32_t readWrite = 0x04u;
+    GuestArena::GuestArenaCommit_nid_postfix(mapping, block, readWrite, block);
+    auto* prefix = mapping + block - Vertices * sizeof(std::uint32_t);
+    Require(AgcDriver::GuestMemory::Accessible(prefix, 12) && !AgcDriver::GuestMemory::Accessible(prefix, 16), "expected three readable vertex elements");
+    vertex.vertexAttributes.front().resource.fields = SlotDescriptor(prefix, Vertices + 1);
+    TakeVkDrawCounts();
+    Require(fixture.Draw(vertex, grouped) == DrawResult::NeedsIndividualRecords && TakeVkDrawCounts().direct == 0, "the unreadable vertex tail must fall back before recording a draw");
+    fixture.Draw(vertex, direct);
+    Require(TakeVkDrawCounts().direct == 1, "the individual draw must accept the readable prefix");
+    GuestArena::GuestArenaReset_nid_postfix(mapping, block);
+    GuestArena::GuestArenaRelease_nid_postfix(mapping, 2 * block);
+
+    vertex.vertexAttributes.front().resource.fields = SlotDescriptor(targetMemory.vertices.data(), Vertices);
+    alignas(256) static constexpr std::array<std::uint32_t, 4> indices{0, 1, 2, 16};
+    const auto address = reinterpret_cast<std::uintptr_t>(indices.data());
+    const AgcDriver::Pm4::DrawParameters indexed{address, Vertices, 4, 1, 0, true};
+    auto packet = indexed;
+    packet.indexCount = static_cast<std::uint32_t>(indices.size());
+    packet.indirect = args;
+    packet.indirect->recordBytes = 20;
+    const auto limited = [&](const auto& draw) { return fixture.Draw(vertex, draw, false, false, false, 15); };
+    TakeVkDrawCounts();
+    Require(limited(packet) == DrawResult::NeedsIndividualRecords && TakeVkDrawCounts().indexed == 0, "an excessive index outside the record must fall back");
+    limited(indexed);
+    Require(TakeVkDrawCounts().indexed == 1, "the selected three indices fit the device limit");
+    auto invalid = indexed;
+    invalid.indexCount = packet.indexCount;
+    bool rejected = false;
+    try {
+        limited(invalid);
+    } catch (const std::exception& error) {
+        rejected = std::string_view(error.what()).find("indexed draw limit") != std::string_view::npos;
+    }
+    Require(rejected, "selecting the excessive index must still reject the draw");
 }
 
 std::string Run(Fixture& fixture) {
-    CheckCapturedVertexTail(fixture);
+    CheckCapturedInputRanges(fixture);
     std::string failures = Analysis(fixture);
     const std::array<std::uint32_t, Vertices> autoIndices{0, 1, 2};
     const std::array<std::uint32_t, Vertices> bufferIndices{Indices[0], Indices[1], Indices[2]};

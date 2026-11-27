@@ -2128,6 +2128,11 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                 lowest = clampedBounds->lowest;
             }
         }
+        if (args != nullptr && args->capturedRecords &&
+            (*highest > context.limits.maxDrawIndexedIndexValue || args->vertexConstant > std::numeric_limits<std::uint32_t>::max() - *highest)) {
+            inputs.result = DrawResult::NeedsIndividualRecords;
+            return inputs;
+        }
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.maxIndex = *highest;
         inputs.minIndex = lowest;
@@ -2189,7 +2194,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
         const bool aliasesTarget = state.hasColorTarget && address + bytes > state.color.MemoryAddress() && state.color.MemoryAddress() + state.color.bytes > address + firstByte;
         if (aliasesTarget && args != nullptr && args->capturedRecords) {
-            // The full descriptor can overlap even when every record fetches a disjoint prefix.
             inputs.result = DrawResult::NeedsIndividualRecords;
             return inputs;
         }
@@ -2228,7 +2232,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     for (std::size_t range = 0; range < plan.copies.size(); ++range) {
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
-        GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
+        const auto* source = reinterpret_cast<const void*>(begin);
+        if (args != nullptr && args->capturedRecords) {
+            if (!GuestMemory::Accessible(source, bytes)) {
+                inputs.result = DrawResult::NeedsIndividualRecords;
+                return inputs;
+            }
+        } else GuestMemory::CheckRange(source, bytes, 1);
         RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read", DepthReadCause::Reuse);
         if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads)) {
             rangeHandles.push_back(import->buffer);
