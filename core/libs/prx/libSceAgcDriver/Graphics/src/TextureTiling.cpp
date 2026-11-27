@@ -805,7 +805,7 @@ std::optional<MinLodResidency> MinLodResidentLevels(const GuestTextureResource& 
     const auto clamp = static_cast<std::uint32_t>(EffectiveMinLod(descriptor));
     if (clamp == 0u) return std::nullopt;
     const auto geometry = DescribeSurface(descriptor);
-    if (geometry.thick || geometry.levelMajor || geometry.layers != 1u || clamp >= geometry.mips.size()) return std::nullopt;
+    if (geometry.thick || geometry.levelMajor || geometry.layers != 1u || clamp >= geometry.mips.size() || clamp >= geometry.imageLevels) return std::nullopt;
     std::uint64_t resident = 0;
     for (std::size_t level = clamp; level < geometry.mips.size(); ++level) resident = std::max(resident, geometry.mips[level].tiledOffset + geometry.mips[level].tiledSize);
     for (std::uint32_t level = 0; level < clamp; ++level) {
