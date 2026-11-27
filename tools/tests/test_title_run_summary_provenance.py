@@ -11,6 +11,38 @@ class SummaryValidationProvenanceTests(unittest.TestCase):
     run_fixture = fixtures.NativeProvenanceFlowTests.run_fixture
     assert_qualification = fixtures.NativeProvenanceFlowTests.assert_qualification
 
+    def test_repeated_identity_retains_intervening_commit(self):
+        import performance_bisect
+        clean = {"commit": self.commit[:12], "dirty": False}
+        other = {"commit": "b" * 12, "dirty": False}
+        summary, run, path, _ = self.run_fixture([clean, other, clean], {"commit": self.commit, "modified": False})
+        self.assertEqual(run["native"]["summary"], [clean, other])
+        self.assert_qualification(summary, "conflicting")
+        with self.assertRaisesRegex(ValueError, "native.*conflicting"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_repeated_identity_retains_intervening_numeric_dirty_flag(self):
+        import performance_bisect
+        clean = {"commit": self.commit[:12], "dirty": False}
+        numeric = {"commit": self.commit[:12], "dirty": 0}
+        summary, run, path, _ = self.run_fixture([clean, numeric, clean], {"commit": self.commit, "modified": False})
+        identities = run["native"]["summary"]
+        self.assertEqual(identities, [clean, numeric])
+        self.assertIs(identities[0]["dirty"], False)
+        self.assertIs(type(identities[1]["dirty"]), int)
+        self.assert_qualification(summary, "unknown")
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_identical_intervals_share_one_identity_and_keep_their_presents(self):
+        import performance_bisect
+        clean = {"commit": self.commit[:12], "dirty": False}
+        summary, run, path, _ = self.run_fixture([clean, clean], {"commit": self.commit, "modified": False})
+        self.assertEqual(run["native"]["summary"], [clean])
+        self.assertEqual(run["presents"], 120)
+        self.assert_qualification(summary, "matched")
+        self.assertEqual(performance_bisect.sample_summary(path, "PPSA00001", self.commit)["fps"], 60.0)
+
     def test_invalid_metrics_cannot_hide_conflicting_native_evidence(self):
         import performance_bisect
         invalid = json.dumps({"format": "aps5-bench/1", "commit": "b" * 12, "dirty": False,

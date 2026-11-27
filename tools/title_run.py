@@ -287,7 +287,7 @@ def read_summary(path):
     if any("commit" in line or "dirty" in line for line in native_lines):
         for line in native_lines:
             identity = {"commit": line.get("commit"), "dirty": line.get("dirty")}
-            native[json.dumps(identity, sort_keys=True)] = identity
+            native.setdefault(json.dumps(identity, sort_keys=True), identity)
     intervals = [line for line in lines if "interval_start_s" in line]
     if intervals:
         lines = intervals
