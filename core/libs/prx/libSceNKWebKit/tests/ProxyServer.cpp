@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::ProxyAbi::ProxyServer;
 using NKWebKit::ProxyAbi::ProxyServerVector;
@@ -208,6 +216,103 @@ void TestProxyServersForURL() {
     Require(ThrowsInvalidArgument([&] { ForURL(nullptr, &url); }));
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 3) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TAction> bool ThrowsNotImplemented(TAction action, const char* symbol) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+void TestGuestPointers() {
+    constexpr const char* kToStringSymbol = "_ZN7WebCore8toStringERKN3WTF6VectorINS_11ProxyServerELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE";
+    constexpr const char* kForUrlSymbol = "_ZN7WebCore18proxyServersForURLERKN3WTF3URLE";
+
+    GuardedPages pages;
+    Require(ThrowsNotImplemented([&] { static_cast<void>(ToString(reinterpret_cast<const ProxyServerVector*>(0x10))); }, kToStringSymbol));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(ToString(reinterpret_cast<const ProxyServerVector*>(pages.Guard()))); }, kToStringSymbol));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(ToString(reinterpret_cast<const ProxyServerVector*>(pages.Guard() - 8))); }, kToStringSymbol));
+
+    ProxyServerVector guardBuffer{reinterpret_cast<ProxyServer*>(pages.Guard()), 1, 1};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(ToString(&guardBuffer)); }, kToStringSymbol));
+
+    ProxyServerVector splitBuffer{reinterpret_cast<ProxyServer*>(pages.Guard() - 12), 1, 1};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(ToString(&splitBuffer)); }, kToStringSymbol));
+
+    ProxyServerVector hugeCount{reinterpret_cast<ProxyServer*>(pages.ReadOnly()), 100000, 100000};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(ToString(&hugeCount)); }, kToStringSymbol));
+
+    std::vector<ProxyServer> guardHost{{NKWebKit::ProxyAbi::ProxyTypeHTTP, reinterpret_cast<StringImpl*>(pages.Guard()), 8080}};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(Convert(guardHost)); }, kToStringSymbol));
+
+    std::vector<ProxyServer> splitHost{{NKWebKit::ProxyAbi::ProxyTypeHTTP, reinterpret_cast<StringImpl*>(pages.Guard() - 8), 8080}};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(Convert(splitHost)); }, kToStringSymbol));
+
+    StringImpl guardData{2, 8, pages.Guard() - 4, 4};
+    std::vector<ProxyServer> badData{{NKWebKit::ProxyAbi::ProxyTypeHTTP, &guardData, 8080}};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(Convert(badData)); }, kToStringSymbol));
+
+    StringImpl guardWideData{2, 4, pages.Guard() - 4, 0};
+    std::vector<ProxyServer> badWideData{{NKWebKit::ProxyAbi::ProxyTypeHTTP, &guardWideData, 8080}};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(Convert(badWideData)); }, kToStringSymbol));
+
+    StringImpl nullData{2, 4, nullptr, 4};
+    std::vector<ProxyServer> nullHostData{{NKWebKit::ProxyAbi::ProxyTypeHTTP, &nullData, 8080}};
+    Require(ThrowsInvalidArgument([&] { static_cast<void>(Convert(nullHostData)); }));
+
+    URL url{};
+    Require(ThrowsNotImplemented([&] { ForURL(reinterpret_cast<ProxyServerVector*>(0x10), &url); }, kForUrlSymbol));
+    Require(ThrowsNotImplemented([&] { ForURL(reinterpret_cast<ProxyServerVector*>(pages.ReadOnly()), &url); }, kForUrlSymbol));
+    Require(ThrowsNotImplemented([&] { ForURL(reinterpret_cast<ProxyServerVector*>(pages.Guard()), &url); }, kForUrlSymbol));
+
+    unsigned char* splitOut = pages.ReadOnly() - 8;
+    std::memset(splitOut, 0x5A, 8);
+    Require(ThrowsNotImplemented([&] { ForURL(reinterpret_cast<ProxyServerVector*>(splitOut), &url); }, kForUrlSymbol));
+    for (std::size_t i = 0; i < 8; ++i) Require(splitOut[i] == 0x5A);
+}
+
 }
 
 int main() {
@@ -218,5 +323,6 @@ int main() {
     TestWidth();
     TestInvalid();
     TestProxyServersForURL();
+    TestGuestPointers();
     return 0;
 }
