@@ -210,6 +210,18 @@ bool dump(std::string_view reason, bool failing) {
     }
     line.Add("[pm4 ring] %.*s: %zu queue(s), up to %zu submissions each, oldest first", label, reason.data(), used, capacity);
     bool written = line.Write();
+    std::array<UnacceptedSubmit, MaximumUnacceptedSubmits> unaccepted;
+    const auto waiting = UnacceptedSubmits(unaccepted);
+    for (std::size_t index = 0; index < waiting; ++index) {
+        char text[200];
+        DescribeUnacceptedSubmit(unaccepted[index], text);
+        line.Add("[pm4 ring] %s", text);
+        written = line.Write() && written;
+    }
+    if (waiting == 0) {
+        line.Add("[pm4 ring] %s", NoUnacceptedSubmitText);
+        written = line.Write() && written;
+    }
     for (std::size_t queue = 0; queue < state.queues.size(); ++queue) {
         auto& ring = state.queues[queue];
         if (ring.recorded.load(std::memory_order_acquire) == 0) continue;
@@ -238,6 +250,36 @@ bool dump(std::string_view reason, bool failing) {
         }
     }
     return written;
+}
+
+struct OpenSubmit {
+    std::atomic<std::uint32_t> state{0};
+    std::atomic<std::uint32_t> queue{0};
+    std::atomic<std::uint64_t> dwords{0};
+    std::atomic<SubmitStage> stage{SubmitStage::Reading};
+    std::atomic<std::int64_t> enteredNs{0};
+    std::atomic<std::int64_t> stageNs{0};
+};
+
+constexpr std::uint32_t SubmitFree = 0;
+constexpr std::uint32_t SubmitFilling = 1;
+constexpr std::uint32_t SubmitOpen = 2;
+
+std::array<OpenSubmit, MaximumUnacceptedSubmits> openSubmits;
+
+std::int64_t steadyNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+const char* stageText(SubmitStage stage) {
+    switch (stage) {
+        case SubmitStage::Reading: return "reading its commands";
+        case SubmitStage::FlipRoom: return "waiting for flip room";
+        case SubmitStage::FlipHold: return "held behind earlier flips";
+        case SubmitStage::ShaderPreparation: return "waiting for shader preparation";
+        case SubmitStage::Accepting: return "waiting for the submission lock";
+    }
+    return "in an unknown stage";
 }
 
 void reportFailure() noexcept {
@@ -312,6 +354,61 @@ void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const
     entry.rewindTail = rewindTail;
     std::copy_n(commands.begin(), entry.kept, entry.words.begin());
     ring.recorded.store(recorded + 1, std::memory_order_release);
+}
+
+SubmitCall::SubmitCall(std::uint32_t queue, std::size_t dwords) {
+    for (std::size_t index = 0; index < openSubmits.size(); ++index) {
+        auto& entry = openSubmits[index];
+        auto expected = SubmitFree;
+        if (!entry.state.compare_exchange_strong(expected, SubmitFilling, std::memory_order_acq_rel)) continue;
+        const auto now = steadyNs();
+        entry.queue.store(queue, std::memory_order_relaxed);
+        entry.dwords.store(dwords, std::memory_order_relaxed);
+        entry.stage.store(SubmitStage::Reading, std::memory_order_relaxed);
+        entry.enteredNs.store(now, std::memory_order_relaxed);
+        entry.stageNs.store(now, std::memory_order_relaxed);
+        entry.state.store(SubmitOpen, std::memory_order_release);
+        slot = static_cast<int>(index);
+        return;
+    }
+}
+
+void SubmitCall::Enter(SubmitStage stage) {
+    if (slot < 0) return;
+    auto& entry = openSubmits[static_cast<std::size_t>(slot)];
+    entry.stageNs.store(steadyNs(), std::memory_order_relaxed);
+    entry.stage.store(stage, std::memory_order_release);
+}
+
+void SubmitCall::Accepted() {
+    if (slot < 0) return;
+    openSubmits[static_cast<std::size_t>(slot)].state.store(SubmitFree, std::memory_order_release);
+    slot = -1;
+}
+
+std::size_t UnacceptedSubmits(std::span<UnacceptedSubmit> out) {
+    const auto now = steadyNs();
+    std::size_t count = 0;
+    for (const auto& entry : openSubmits) {
+        if (count == out.size()) break;
+        if (entry.state.load(std::memory_order_acquire) != SubmitOpen) continue;
+        UnacceptedSubmit submit{};
+        submit.queue = entry.queue.load(std::memory_order_relaxed);
+        submit.dwords = static_cast<std::size_t>(entry.dwords.load(std::memory_order_relaxed));
+        submit.stage = entry.stage.load(std::memory_order_acquire);
+        submit.stageTenthsOfMs = static_cast<std::uint64_t>(std::max<std::int64_t>(now - entry.stageNs.load(std::memory_order_relaxed), 0)) / 100000u;
+        submit.callTenthsOfMs = static_cast<std::uint64_t>(std::max<std::int64_t>(now - entry.enteredNs.load(std::memory_order_relaxed), 0)) / 100000u;
+        if (entry.state.load(std::memory_order_acquire) != SubmitOpen) continue;
+        out[count++] = submit;
+    }
+    return count;
+}
+
+void DescribeUnacceptedSubmit(const UnacceptedSubmit& submit, std::span<char> text) {
+    if (text.empty()) return;
+    std::snprintf(text.data(), text.size(), "submit call not yet accepted: queue 0x%x, %zu dwords, %s for %llu.%llu ms (entered %llu.%llu ms ago)", submit.queue, submit.dwords, stageText(submit.stage),
+                  static_cast<unsigned long long>(submit.stageTenthsOfMs / 10), static_cast<unsigned long long>(submit.stageTenthsOfMs % 10), static_cast<unsigned long long>(submit.callTenthsOfMs / 10),
+                  static_cast<unsigned long long>(submit.callTenthsOfMs % 10));
 }
 
 void DumpSubmissionRings(std::string_view reason) {

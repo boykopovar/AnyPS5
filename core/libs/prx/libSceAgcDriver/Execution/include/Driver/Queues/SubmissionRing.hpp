@@ -36,6 +36,35 @@ void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const
 
 void DumpSubmissionRings(std::string_view reason);
 
+enum class SubmitStage : std::uint8_t { Reading, FlipRoom, FlipHold, ShaderPreparation, Accepting };
+
+class SubmitCall {
+public:
+    SubmitCall(std::uint32_t queue, std::size_t dwords);
+    ~SubmitCall() { Accepted(); }
+    SubmitCall(const SubmitCall&) = delete;
+    SubmitCall& operator=(const SubmitCall&) = delete;
+    void Enter(SubmitStage stage);
+    void Accepted();
+
+private:
+    int slot = -1;
+};
+
+struct UnacceptedSubmit {
+    std::uint32_t queue = 0;
+    std::size_t dwords = 0;
+    SubmitStage stage = SubmitStage::Reading;
+    std::uint64_t stageTenthsOfMs = 0;
+    std::uint64_t callTenthsOfMs = 0;
+};
+
+inline constexpr std::size_t MaximumUnacceptedSubmits = 32;
+inline constexpr char NoUnacceptedSubmitText[] = "no submit call is waiting to be accepted";
+
+std::size_t UnacceptedSubmits(std::span<UnacceptedSubmit> out);
+void DescribeUnacceptedSubmit(const UnacceptedSubmit& submit, std::span<char> text);
+
 class StallWatch {
 public:
     explicit StallWatch(std::uint32_t queue) : queue(queue) {}

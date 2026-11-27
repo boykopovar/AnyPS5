@@ -2060,6 +2060,22 @@ void testSubmissionRing() {
         lines = capture.RingLines();
     }
     check(!lines.empty() && lines.front() == "[pm4 ring] ring test: 2 queue(s), up to 4 submissions each, oldest first", "the ring dump header is wrong");
+    check(std::find(lines.begin(), lines.end(), "[pm4 ring] no submit call is waiting to be accepted") != lines.end(), "the ring dump does not say that no submit call is waiting");
+    {
+        AgcDriver::DriverDetail::SubmitCall call(0x20, 64);
+        call.Enter(AgcDriver::DriverDetail::SubmitStage::ShaderPreparation);
+        std::vector<std::string> waiting;
+        {
+            CapturedStderr capture;
+            AgcDriver::DriverDetail::DumpSubmissionRings("ring test");
+            waiting = capture.RingLines();
+        }
+        check(std::any_of(waiting.begin(), waiting.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] submit call not yet accepted: queue 0x20, 64 dwords, waiting for shader preparation for ") && line.ends_with(" ms ago)"); }), "the ring dump does not name a submit call that is not accepted");
+        check(std::find(waiting.begin(), waiting.end(), "[pm4 ring] no submit call is waiting to be accepted") == waiting.end(), "the ring dump says no submit call is waiting while one is");
+        call.Accepted();
+        std::array<AgcDriver::DriverDetail::UnacceptedSubmit, AgcDriver::DriverDetail::MaximumUnacceptedSubmits> left;
+        check(AgcDriver::DriverDetail::UnacceptedSubmits(left) == 0, "an accepted submit call is still listed as waiting");
+    }
     check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x0: 6 submissions recorded, last 4 kept") != lines.end(), "the ring dump does not count every submission of queue 0");
     check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x20: 2 submissions recorded, last 2 kept") != lines.end(), "the ring dump does not count every submission of queue 0x20");
     const std::vector<std::string> expected{"0x0 #3 5a000003", "0x0 #4 5a000004", "0x0 #5 5a000005", "0x0 #6 5a000006", "0x20 #1 5b000001", "0x20 #2 5b000002"};
@@ -2235,6 +2251,7 @@ void testStallWatchdog() {
                       "a WAIT_REG_MEM stalled past APS5_STALL_WATCHDOG_SECS did not dump the rings");
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         check(std::atomic_ref<std::uint32_t>(done).load() == 0, "the stalled submission finished before its gate was opened");
+        check(capture.Text().find("[gpu]   no submit call is waiting to be accepted") != std::string::npos, "a WAIT_REG_MEM timeout report does not say whether a submit call is waiting");
         std::atomic_ref<std::uint32_t>(gate).store(1);
         AgcDriverWaitIdle_nid_postfix();
         lines = capture.RingLines();

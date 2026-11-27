@@ -15,6 +15,7 @@
 #endif
 #include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
+#include <array>
 #include <tuple>
 #include <vector>
 
@@ -446,6 +447,14 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
                              static_cast<unsigned long long>(Graphics::Recorder::PendingCompletionLabels()), static_cast<unsigned long long>(Graphics::Recorder::PendingWriteBackCompletions()), age,
                              static_cast<unsigned long long>(Graphics::Recorder::WriteGeneration()), static_cast<unsigned long long>(seenGeneration), queue0Dormant.load(std::memory_order_relaxed) ? 1 : 0, completionsPending() ? 1 : 0, labelFlushDue() ? 1 : 0);
             }
+            std::array<UnacceptedSubmit, MaximumUnacceptedSubmits> unaccepted;
+            const auto waiting = UnacceptedSubmits(unaccepted);
+            for (std::size_t index = 0; index < waiting; ++index) {
+                char text[200];
+                DescribeUnacceptedSubmit(unaccepted[index], text);
+                std::fprintf(stderr, "[gpu]   %s\n", text);
+            }
+            if (waiting == 0) std::fprintf(stderr, "[gpu]   %s\n", NoUnacceptedSubmitText);
             context.Print(stderr, "[gpu]   preceding packet %s\n");
         }
     }
