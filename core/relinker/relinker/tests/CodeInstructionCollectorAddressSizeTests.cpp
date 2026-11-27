@@ -127,6 +127,60 @@ void CheckAddressSize32WrapsHighInstructionToLowCallback() {
     Require(!entryRoots.contains(highDecoy), "67h LEA falsely added unmasked 64-bit decoy to entryRoots");
 }
 
+void CheckFunctionRangeUsesLaterOverlappingExecutableSegment() {
+    constexpr Domain::VirtualAddress functionAddress = 0x1010;
+    std::vector<std::uint8_t> image(0xA00, 0xCC);
+    std::fill_n(image.begin(), 64, std::uint8_t{0});
+    Io::WriteU64(image, 24, 0x1000);
+
+    std::vector<std::uint8_t> code(0x80, 0x90);
+    code[0] = 0xC3;
+    code[0x10] = 0xC3;
+    WriteBytes(image, 0x100, code);
+    WriteBytes(image, 0x300, code);
+
+    Io::WriteU64(image, 0x400, 0x61000039);
+    Io::WriteU64(image, 0x408, 0x100);
+    Io::WriteU64(image, 0x410, 0x6100003B);
+    Io::WriteU64(image, 0x418, 24);
+    Io::WriteU64(image, 0x420, 0x6100003F);
+    Io::WriteU64(image, 0x428, 48);
+    Io::WriteU64(image, 0x430, 0);
+    Io::WriteU64(image, 0x438, 0);
+    image[0x618 + 4] = 0x12;
+    Io::WriteU16(image, 0x618 + 6, 0xFFF1);
+    Io::WriteU64(image, 0x620, functionAddress);
+    Io::WriteU64(image, 0x628, 0x20);
+
+    Domain::ProgramHeader dynamic{};
+    dynamic.Type = 2;
+    dynamic.Flags = 6;
+    dynamic.Offset = 0x400;
+    dynamic.MappedAddress = 0x2000;
+    dynamic.PhysicalAddress = dynamic.MappedAddress;
+    dynamic.FileSize = 0x40;
+    dynamic.MemorySize = dynamic.FileSize;
+    dynamic.Alignment = 8;
+
+    Domain::ProgramHeader sceDynlib{};
+    sceDynlib.Type = 0x61000000;
+    sceDynlib.Offset = 0x500;
+    sceDynlib.FileSize = 0x400;
+
+    const std::vector<Domain::ProgramHeader> headers{
+        MakeLoadHeader(0x1000, 0x100, 0x18),
+        MakeLoadHeader(0x1000, 0x300, 0x80),
+        dynamic,
+        sceDynlib,
+    };
+
+    std::set<Domain::VirtualAddress> entryRoots;
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(image, headers, {}, &entryRoots);
+    Require(ContainsAddress(instructions, functionAddress),
+            "Function range admission stopped at a short overlapping executable segment");
+    Require(entryRoots.contains(functionAddress), "Function in the later overlapping segment was not added as a root");
+}
+
 void CheckOrdinary64BitLeaPreservesHighBits() {
     std::vector<std::uint8_t> image(0x400, 0xcc);
     std::fill_n(image.begin(), 64, std::uint8_t{0});
@@ -347,6 +401,7 @@ void CheckEhFrameAndSceBranchesHonorAddressSize32() {
 int main() {
     try {
         CheckAddressSize32WrapsHighInstructionToLowCallback();
+        CheckFunctionRangeUsesLaterOverlappingExecutableSegment();
         CheckOrdinary64BitLeaPreservesHighBits();
         CheckNegativeDisplacementAnd32BitWrap();
         CheckEhFrameAndSceBranchesHonorAddressSize32();

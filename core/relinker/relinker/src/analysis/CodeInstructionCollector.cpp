@@ -381,14 +381,16 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         if (!isCode(begin) || size > std::numeric_limits<std::uint64_t>::max() - begin)
             throw Domain::RelinkerException("Code analysis: invalid function range", begin);
         bool mapped = false;
+        bool startContained = false;
         for (const auto& header : headers) {
             if (header.Type != 1 || (header.Flags & 1) == 0 || begin < header.MappedAddress || begin - header.MappedAddress >= header.FileSize) continue;
-            if (size > header.FileSize - (begin - header.MappedAddress))
-                throw Domain::RelinkerException("Code analysis: function exceeds executable segment", begin);
+            startContained = true;
+            if (size > header.FileSize - (begin - header.MappedAddress)) continue;
             range(header.Offset + begin - header.MappedAddress, size);
             mapped = true;
             break;
         }
+        if (!mapped && startContained) throw Domain::RelinkerException("Code analysis: function exceeds executable segment", begin);
         if (!mapped) throw Domain::RelinkerException("Code analysis: function is not file-backed", begin);
         const auto [position, inserted] = functions.emplace(begin, begin + size);
         if (!inserted && !symbolAlias && position->second != begin + size)
