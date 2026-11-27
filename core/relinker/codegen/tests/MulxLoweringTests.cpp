@@ -165,6 +165,21 @@ void matching() {
                 "The sequence trampoline did not preserve the kept MULX instruction");
         require(converted.Bytes == file, "Sequence conversion changed the input image before patching");
     }
+    {
+        const Bytes shortRequired{0x0F, 0x01, 0xFD};
+        const Bytes keptReservedMulx{0xC4, 0xE2, 0xEB, 0xF6, 0x11};
+        Bytes file(0x300, 0xCC);
+        std::copy(shortRequired.begin(), shortRequired.end(), file.begin() + 0x200);
+        std::copy(keptReservedMulx.begin(), keptReservedMulx.end(), file.begin() + 0x200 + shortRequired.size());
+        const auto length = shortRequired.size() + keptReservedMulx.size();
+        const Domain::ProgramHeader segment{1, 5, 0x200, 0x1000, 0, length, length, 16};
+        const auto converted = converter->Convert(file, {segment});
+        require(converted.Trampolines.size() == 1 && converted.Trampolines[0].Length == length,
+                "An optional native MULX with reserved destinations prevented its short required neighbor from lowering");
+        const auto& body = converted.Trampolines[0].Body;
+        require(std::search(body.begin(), body.end(), keptReservedMulx.begin(), keptReservedMulx.end()) != body.end(),
+                "Sequence conversion did not preserve the optional native MULX with reserved destinations");
+    }
     for (const Bytes site : {bytes, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0x05, 0x40, 0, 0, 0}}) {
         Bytes file(0x300, 0xCC);
         std::copy(site.begin(), site.end(), file.begin() + 0x200);
