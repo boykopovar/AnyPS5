@@ -181,6 +181,22 @@ constexpr std::array<std::uint32_t, 98> BaseContextState400 = [] {
     return base;
 }();
 
+constexpr std::array<std::uint32_t, 18> BaseContextState = [] {
+    constexpr auto& neo = GnmNeo::ContextState;
+    static_assert(neo[7] == 0xc0016900u && neo[8] == 0x102u);
+    static_assert(neo[13] == 0xc0026900u && neo[14] == 0xebu && neo[16] == 0xff00u);
+    static_assert(neo[17] == 0xc00d1000u);
+    std::array<std::uint32_t, 18> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 13; ++i) base[out++] = neo[i];
+    base[out++] = Header(OpSetContextReg, 2);
+    base[out++] = 0x2aa;
+    base[out++] = 0xff;
+    base[out++] = 0xc00e1000u;
+    base[out++] = neo[18];
+    return base;
+}();
+
 struct FrameStart {
     std::uint32_t words[HwInitPacketWords]{};
     std::uint32_t size = 0;
@@ -577,6 +593,14 @@ std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std:
     else at = std::copy(BaseHardwareState350.begin(), BaseHardwareState350.end(), at);
     Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
     return HwInitPacketWords;
+}
+
+std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd) return static_cast<std::uint32_t>(-1);
+    if (size != 0x20u) return 0;
+    if (sceKernelIsNeoMode()) std::copy(GnmNeo::ContextState.begin(), GnmNeo::ContextState.end(), cmd);
+    else std::copy(BaseContextState.begin(), BaseContextState.end(), cmd);
+    return 0x20u;
 }
 
 std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {

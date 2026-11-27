@@ -10,6 +10,8 @@
 
 - [Validate queries](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the nine validation entry points answer as the Neo provider does (validation not enabled; version and on-submit checks 0), which the console's regular module must also export: Heretic + Hexen (CUSA51664) imports all nine from `libSceGnmDriver` while AnyPS5 only provided them in `libSceGnmDriverForNeoMode`. Not measured on a console. Complements #27342 (shared compute waits and GPU queries). Closes when: measured on a console.
 
+- [Default context state](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the normal provider answers `sceGnmDrawInitToDefaultContextState` for the 0x20-dword packet as the Neo provider does on Neo hardware and with a base table on base hardware, which the console's regular module must also export: Battlefield 1 (CUSA02429) imports it from `libSceGnmDriver` while AnyPS5 only provided it in `libSceGnmDriverForNeoMode`. The base table drops the Neo VGT-control words for the base `0x2aa`/`0xff` pair and grows the final span by one word to keep exact termination, as the 400-word base table does; the exact console bytes are unmeasured. Closes when: measured on a console.
+
 # libSceAgcDriver
 
 ## add Unknown function info
