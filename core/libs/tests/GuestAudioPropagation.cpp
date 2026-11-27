@@ -304,13 +304,22 @@ int main() {
 #ifndef _WIN32
     rusage after{};
     getrusage(RUSAGE_SELF, &after);
+#ifdef __APPLE__
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024 * 1024, "a huge attribute count sized a buffer before reading");
+#else
     Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024, "a huge attribute count sized a buffer before reading");
+#endif
 #endif
 
     std::uint8_t materialBytes[AudioPropagation::MaterialSize]{};
     auto* material = reinterpret_cast<AudioPropagationStructDescriptor*>(materialBytes);
     AudioPropagationHandle materialHandle = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemRegisterMaterial(system, material, &materialHandle); }, "material without descriptor");
+    AudioPropagationHandle unreadableHandle = 0x12345678u;
+    errno = 73;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemRegisterMaterial(system, reinterpret_cast<const AudioPropagationStructDescriptor*>(0x10), &unreadableHandle); }, "unreadable material descriptor");
+    Require(errno == 73, "errno preserved for unreadable material descriptor");
+    Require(unreadableHandle == 0x12345678u, "unreadable material descriptor modified output handle");
     *material = {AudioPropagation::MaterialId, AudioPropagation::MaterialSize};
     Require(sceAudioPropagationSystemRegisterMaterial(system, material, &materialHandle) == 0 && materialHandle != 0, "register material failed");
     Require(sceAudioPropagationSystemUnregisterMaterial(materialHandle) == 0, "unregister material failed");

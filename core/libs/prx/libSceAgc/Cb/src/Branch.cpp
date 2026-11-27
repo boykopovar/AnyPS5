@@ -30,7 +30,6 @@ std::uint32_t APS5_VABI sceAgcCbBranchGetSize() {
 std::uint32_t* APS5_VABI sceAgcCbCondWrite(CommandBuffer* buf, std::uint32_t compareFunction, std::uint32_t writeSpace, const volatile void* writeAddress, std::uint32_t writeData, const volatile void* pollAddress, std::uint32_t reference, std::uint32_t mask) {
     const auto destination = reinterpret_cast<std::uintptr_t>(writeAddress);
     const auto source = reinterpret_cast<std::uintptr_t>(pollAddress);
-    Agc::Command::CheckBits(destination, 0xffffffffffffull, __func__);
     Agc::Command::CheckBits(source, 0xffffffffffffull, __func__);
     return Agc::Command::Emit(buf, 0x45u, {0x10u | (compareFunction & 7u) | ((writeSpace & 3u) << 8u), static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32u), reference, mask, static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), writeData}, __func__);
 }

@@ -123,6 +123,27 @@ void TestLs() {
 
 }  // namespace
 
+void TestUnmapped() {
+    auto* const unwritable = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    const auto* const unreadable = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x10});
+    auto words = Fresh();
+    Require(sceGnmSetPsShader(words.data(), 0x100, unreadable) == -1 && words[0] == Untouched, "an unreadable pixel shader register block was accepted");
+    Require(sceGnmSetVsShader(words.data(), 0x100, unreadable, 0) == -1 && words[0] == Untouched, "an unreadable vertex shader register block was accepted");
+    Require(sceGnmSetCsShader(words.data(), 0x100, unreadable) == -1 && words[0] == Untouched, "an unreadable compute shader register block was accepted");
+    Require(sceGnmSetEsShader(words.data(), 0x100, unreadable, 0) == -1 && words[0] == Untouched, "an unreadable export shader register block was accepted");
+    Require(sceGnmSetGsShader(words.data(), 0x100, unreadable) == -1 && words[0] == Untouched, "an unreadable geometry shader register block was accepted");
+    Require(sceGnmSetHsShader(words.data(), 0x100, unreadable, 0) == -1 && words[0] == Untouched, "an unreadable hull shader register block was accepted");
+    Require(sceGnmSetLsShader(words.data(), 0x100, unreadable, 0) == -1 && words[0] == Untouched, "an unreadable local shader register block was accepted");
+    Require(sceGnmSetPsShader(unwritable, 0x100, Regs) == -1, "an unwritable pixel shader buffer was accepted");
+    Require(sceGnmSetPsShader(unwritable, 0x100, nullptr) == -1, "an unwritable null-register pixel shader buffer was accepted");
+    Require(sceGnmSetVsShader(unwritable, 0x100, Regs, 0) == -1, "an unwritable vertex shader buffer was accepted");
+    Require(sceGnmSetCsShader(unwritable, 0x100, Regs) == -1, "an unwritable compute shader buffer was accepted");
+    Require(sceGnmSetEsShader(unwritable, 0x100, Regs, 0) == -1, "an unwritable export shader buffer was accepted");
+    Require(sceGnmSetGsShader(unwritable, 0x100, Regs) == -1, "an unwritable geometry shader buffer was accepted");
+    Require(sceGnmSetHsShader(unwritable, 0x100, Regs, 0) == -1, "an unwritable hull shader buffer was accepted");
+    Require(sceGnmSetLsShader(unwritable, 0x100, Regs, 0) == -1, "an unwritable local shader buffer was accepted");
+}
+
 int main() {
     try {
         TestPs();
@@ -132,6 +153,7 @@ int main() {
         TestGs();
         TestHs();
         TestLs();
+        TestUnmapped();
         std::puts("gnm shader writer tests passed");
         return 0;
     } catch (const std::exception& error) {

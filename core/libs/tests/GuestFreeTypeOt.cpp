@@ -551,6 +551,45 @@ void VariantSelectors(decltype(&FT_Face_GetCharsOfVariant_nid_postfix) getChars,
     Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release variant selectors face and library");
 }
 
+void CharVariantIndex(decltype(&FT_Face_GetCharVariantIndex_nid_postfix) query) {
+    auto cmap = FontFixture::Words({0, 2, 3, 1, 0, 20, 0, 5, 0, 52,
+        4, 32, 0, 4, 4, 1, 0, 'A', 0xFFFF, 0, 'A', 0xFFFF, 1 - 'A', 1, 0, 0});
+    constexpr std::array<unsigned char, 49> format14{
+        0, 14, 0, 0, 0, 49, 0, 0, 0, 2,
+        0, 0xFE, 0x0F, 0, 0, 0, 32, 0, 0, 0, 0,
+        0x0E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 40,
+        0, 0, 0, 1, 0, 0, 'A', 0,
+        0, 0, 0, 1, 0, 0, 'A', 0, 2
+    };
+    cmap.insert(cmap.end(), format14.begin(), format14.end());
+    const auto bytes = FontFixture::BuildFont(3, {{"cmap", cmap}});
+    FreeType::GuestLibrary* guestLibrary = nullptr;
+    FreeType::GuestFaceRec* guest = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face native = nullptr;
+    Require(forwarded.init(&guestLibrary) == 0 && FT_Init_FreeType(&nativeLibrary) == 0, "init selector libraries");
+    Require(forwarded.newMemoryFace(guestLibrary, bytes.data(), bytes.size(), 0, &guest) == 0, "open guest format 14 face");
+    Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), bytes.size(), 0, &native) == 0, "open native format 14 face");
+    Require(FT_Get_Char_Index(native, 'A') == 1, "base Unicode glyph");
+    Require(query(nullptr, 'A', 0xFE0F) == 0, "missing selector face");
+    const auto* selected = guest->charmap;
+    struct Case {
+        std::uint64_t character;
+        std::uint64_t selector;
+        std::uint32_t glyph;
+    };
+    constexpr Case cases[]{{'A', 0xFE0F, 1}, {'A', 0xE0100, 2}, {'B', 0xFE0F, 0}, {'A', 0xE0101, 0},
+                           {0x100000041ull, 0x1000E0100ull, 2}};
+    for (const auto& test : cases) {
+        const auto expected = FT_Face_GetCharVariantIndex(native, static_cast<std::uint32_t>(test.character),
+                                                         static_cast<std::uint32_t>(test.selector));
+        Require(expected == test.glyph && query(guest, test.character, test.selector) == expected, "format 14 glyph index");
+    }
+    Require(guest->charmap == selected, "preserve selected Unicode charmap");
+    Require(forwarded.doneFace(guest) == 0 && FT_Done_Face(native) == 0, "release selector faces");
+    Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release selector libraries");
+}
+
 void Outlines() {
     std::vector<GuestVector> points{{0, 0}, {640, 0}, {640, 640}, {0, 640}, {64, 64}, {320, 576}, {576, 64}, {320, 32}, {200, 100}};
     std::vector<unsigned char> tags{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_ON,
@@ -691,6 +730,37 @@ void Resolve(Function& function, void* library, bool patched, const char* nid, c
     Require(function != nullptr, "missing export");
 }
 
+void ValidatorInitialization(decltype(&ft_validator_init_nid_postfix) initialize) {
+    struct Validator {
+        const std::uint8_t* base;
+        const std::uint8_t* limit;
+        std::int32_t level;
+        std::int32_t error;
+        std::array<std::uint8_t, 96> jumpBuffer;
+    };
+    const std::array<std::uint8_t, 8> table{1, 2, 3, 4, 5, 6, 7, 8};
+    Validator validator{};
+    validator.jumpBuffer.fill(0xA5);
+    const auto originalJumpBuffer = validator.jumpBuffer;
+    for (const std::int32_t level : {0, 1, 2, -1}) {
+        validator.error = 0x08;
+        initialize(&validator, table.data(), table.data() + table.size(), level);
+        Require(validator.base == table.data() && validator.limit == table.data() + table.size(), "validator table bounds");
+        Require(validator.level == level && validator.error == 0, "validator level and cleared error");
+        Require(validator.jumpBuffer == originalJumpBuffer, "validator jump buffer left alone");
+    }
+    initialize(&validator, nullptr, nullptr, 0);
+    Require(validator.base == nullptr && validator.limit == nullptr && validator.level == 0 && validator.error == 0,
+            "validator stores null bounds");
+    Require(validator.jumpBuffer == originalJumpBuffer, "reinitialization preserves jump buffer");
+    try {
+        initialize(nullptr, table.data(), table.data() + table.size(), 0);
+    } catch (const std::exception&) {
+        return;
+    }
+    Require(false, "validator rejects an inaccessible destination");
+}
+
 }
 
 static void SfntTables(void* library, void* dependency, bool patched) {
@@ -756,6 +826,9 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+    decltype(&ft_validator_init_nid_postfix) initializeValidator = nullptr;
+    Resolve(initializeValidator, library, patched, "2WLueaP8Qyc", "ft_validator_init_nid_postfix");
+    ValidatorInitialization(initializeValidator);
     Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
     Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
             "outline bitmap without library");
@@ -822,6 +895,13 @@ int main(int argc, char** argv) {
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");
+    decltype(&FT_Face_GetCharVariantIndex_nid_postfix) charVariantIndex = nullptr;
+#ifdef _WIN32
+    Resolve(charVariantIndex, library, patched, "dPcZ76eZb64", "FT_Face_GetCharVariantIndexForward_nid_no_patch");
+#else
+    Resolve(charVariantIndex, library, patched, "dPcZ76eZb64", "FT_Face_GetCharVariantIndex_nid_postfix");
+#endif
+    CharVariantIndex(charVariantIndex);
     Resolve(ot.orientation, library, patched, "weVsBCT+TTQ", "FT_Outline_Get_Orientation_nid_postfix");
     Resolve(ot.copy, library, patched, "Bhm8Injl0KA", "FT_Outline_Copy_nid_postfix");
     decltype(&FT_Get_Multi_Master_nid_postfix) multiMaster = nullptr;

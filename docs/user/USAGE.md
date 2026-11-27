@@ -2,9 +2,15 @@
 
 [**Web converter**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
 
+The web converter also relinks ELF modules directly inside `Media/Modules/` and `Media/Plugins/`, with the same initialization behavior as the native relinker's `--module-dir` option.
+
 ### Browser folder output
 
 The online converter can save Linux output as an uncompressed folder in supported browsers. It does not overwrite an existing destination folder. If conversion fails or is cancelled, it aborts the active file and attempts to remove the newly created output folder. If the browser prevents cleanup, the error names the folder that may contain incomplete files.
+
+### Browser game patches
+
+When converting one app, use **Game patch (optional)** to select one UTF-8 TOML file of up to 1 MiB. The browser uses the same patch parser and byte checks as the command line. Use the original executable file name or the module path relative to the app directory as the patch target. A patch that cannot be applied stops the conversion before packaging the output. The patch stays on your device.
 
 ### Browser batch conversion
 
@@ -44,7 +50,7 @@ Use a clean ELF executable. Put its bundled ELF modules in `sce_module/`, `sce_m
 - `--sce-module-path` accepts absolute paths and paths relative to the current working directory. Give the parent directory, not the `sce_module` directory itself.
 - Only files directly inside the module directories are processed.
 - SELF/fSELF containers are skipped with a warning. Unwrap them before relinking if they need to be included.
-  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It refuses a container whose load segments all look encrypted.
+  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It also refuses a container when every load segment looks encrypted or large, high-entropy segments account for most load bytes.
 - Backup copies are skipped with a message, both on the command line and in the online converter. An ELF module counts as a backup when its file name extends the name of another ELF module in the same directory and both have the same SONAME, or, when neither has a SONAME, both export the same module names. Example: a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`. A single backup beside a SELF container is still relinked.
 - `prx/` can exist together with either `sce_module/` or `sce_modules/`.
 - Having both `sce_module/` and `sce_modules/` is an error.
@@ -178,7 +184,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `--to-rosetta`                | Convert as `--to-intel` does and also lower what Rosetta lacks: ANDN becomes scalar NOT/AND, BLSI, BLSMSK and BLSR become scalar LEA/AND/XOR/NEG sequences, SHLX, SHRX, SARX and RORX become flag-preserving scalar shifts and rotates, BZHI and BEXTR become scalar shift-and-mask sequences, RDSEED becomes RDRAND, CLWB a NOP, XSAVEOPT becomes XSAVE, and RDPID and the ECX of RDTSCP return processor 0. Implies `--to-intel`. Independent of `--macos`: `--macos` alone leaves these instructions as they are. Conflicts with `--windows`. |
 | `--to-avx`                    | Convert as `--to-intel` does and also lower what a CPU with AVX but without AVX2 lacks: ANDN, BLSI, BLSMSK, BLSR, SHLX, SHRX, SARX, RORX, BZHI, BEXTR, MULX, CLWB and RDPID as `--to-rosetta` lowers them, TZCNT and LZCNT become BSF and BSR with a CMOV for a zero source, and MOVBE becomes MOV and BSWAP. VINSERTI128, VEXTRACTI128, VPERM2I128, VPBLENDD, VBROADCASTI128 and the memory forms of VPBROADCASTD and VPBROADCASTQ become their AVX equivalents VINSERTF128, VEXTRACTF128, VPERM2F128, VBLENDPS, VBROADCASTF128, VBROADCASTSS and VBROADCASTSD or VMOVDDUP in place, and 256-bit lane-local integer instructions (additions, logic, compares, packs, unpacks, shuffles within a lane, shifts by an immediate or by an XMM count, VPBLENDVB, VMPSADBW and VPMOVMSKB) run as two 128-bit halves in a stub, and the cross-lane permutes VPERMQ, VPERMPD, VPERMD and VPERMPS, the 256-bit widening moves VPMOVZX and VPMOVSX and the register-source and byte or word broadcasts run in AVX stubs. The Rosetta workarounds for 256-bit stores, scalar compares, masked stores, RDTSCP, XSAVEOPT and RDSEED are not applied. Other AVX2 instructions, F16C, PDEP and PEXT are not lowered yet ([list](../dev/debt/relinker.md)). Implies `--to-intel`. Requires `--macos`, because only the macOS runtime starts without checking the host CPU. |
 | `unused-filter=0`             | Keep all imported NID references.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis, treating address-taken code as reachable; preserve PLT imports.                                                                                                                                                                                                                                                                                                                                   |
+| `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis, treating address-taken code and exception landing pads as reachable; preserve PLT imports. Exception tables the relinker cannot read cause an error.                                                                                                                                                                                                                                              |
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                                                                                                                                                                         |
 | `--registry`                  | Write `<output-stem>.registry.json` beside the output executable, and `<output-stem>.<module>.registry.json` for each converted bundled module.                                                                                                                                                                                                                                                                                                                             |
 | `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. On Linux and macOS every colon-separated entry must be nonempty, and with guest modules each must be absolute or begin with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory.                                                                                               |
@@ -712,10 +718,10 @@ Which milestones a run records depends on the system:
 | System | `loaded`, `started` | `firstDraw`, `firstPresent` | `stage`, frames, frame rate |
 |---|---|---|---|
 | Linux | not recorded | recorded | recorded |
-| Windows | not recorded | recorded | recorded |
+| Windows | recorded with a recent relinker and a runtime that supports the report hook | recorded | recorded |
 | macOS | recorded | recorded | recorded |
 
-A milestone that is missing from the report is either one the run did not reach or one this system does not record: on Linux and Windows `loaded` and `started` are never recorded, so their absence says nothing, and `stage` and `framesPresented` say how far the run was seen to get. The Windows and macOS code has not been run.
+A missing milestone can mean the run ended earlier or that the system or conversion lacks support for it. Linux and older Windows conversions can reach `first-draw` or `presents` with no `loaded` or `started`. Use `stage` and `framesPresented` to see how far the run was observed to get.
 
 To share a run, attach `anyps5-report.json` to the title's discussion. The runtime filters user names, home folders, host names, addresses and account numbers out of the report and never writes save data. That is a filter, not a guarantee, so read the file before you share it.
 
