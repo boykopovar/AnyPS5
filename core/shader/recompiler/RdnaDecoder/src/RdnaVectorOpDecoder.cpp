@@ -2012,6 +2012,7 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
         return true;
     }
     switch (opcode) {
+        case RdnaOpcode::VMullitF32:
         case RdnaOpcode::VAddF32:
         case RdnaOpcode::VSubF32:
         case RdnaOpcode::VSubrevF32:
