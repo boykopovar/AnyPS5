@@ -18,12 +18,49 @@ HOOK = ("#include <string.h>\n"
         "void* TraceImport_nid_no_patch(void* target, const char* name, const char* library) {\n"
         "    return strcmp(name, \"shared\") == 0 && strcmp(library, \"a.prx\") == 0 ? (void*)replacement : target;\n"
         "}\n")
+WEAK_CALL = (b"\x48\x8b\x05" + struct.pack("<i", 0x4a20 - 0x4007)
+             + b"\x48\x85\xc0\x74\x02\xff\xe0\xb8\x21\x00\x00\x00\xc3")
+ALIGNED_PROVIDER = r"""
+__asm__(
+".text\n"
+".globl shared\n"
+".type shared, @function\n"
+"shared:\n"
+".rept 8\n"
+"nop\n"
+".endr\n"
+"mov $60, %eax\n"
+"mov $11, %edi\n"
+"syscall\n"
+".size shared, .-shared\n");
+"""
 PLAIN = "int Unrelated(void) { return 0; }\n"
 
 
 def relink(relinker, source, output, *options):
     return subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
                           capture_output=True, text=True, timeout=30)
+
+
+def trace_entries(image):
+    phoff, = struct.unpack_from("<Q", image, 32)
+    entsize, count = struct.unpack_from("<HH", image, 54)
+    entry, = struct.unpack_from("<Q", image, 24)
+    headers = [struct.unpack_from("<IIQQQQQQ", image, phoff + index * entsize) for index in range(count)]
+
+    def offset(address):
+        for header in headers:
+            if header[0] == 1 and header[3] <= address < header[3] + header[5]:
+                return header[2] + address - header[3]
+        raise AssertionError(f"Entry address is unmapped: {address:#x}")
+
+    stub = image[offset(entry):offset(entry) + 120]
+    assert stub[:8] == bytes.fromhex("52 53 41 54 48 83 ec 08"), stub[:8].hex()
+    assert b"\x48\x85\xff\x74" in stub, stub.hex()
+    hits = [index for index in range(len(stub) - 2) if stub[index:index + 3] == b"\x4c\x8d\x25"]
+    assert len(hits) == 2, hits
+    target = [entry + index + 7 + struct.unpack_from("<i", stub, index + 3)[0] for index in hits]
+    return (target[1] - target[0]) // 24
 
 
 def library(work, name, code):
@@ -172,24 +209,32 @@ def main():
         work = Path(directory)
         libraries = {}
         if runnable:
-            libraries = {name: library(work, name, code) for name, code in (("a", PROVIDER), ("hook", HOOK), ("plain", PLAIN))}
+            libraries = {name: library(work, name, code) for name, code in (("a", PROVIDER), ("hook", HOOK), ("plain", PLAIN), ("aligned", ALIGNED_PROVIDER))}
 
-        for name, options, libc, symbol_info, expected in (
-                ("untraced", (), "hook", 0x12, 11),
-                ("traced", ("--trace-imports",), "hook", 0x12, 77),
-                ("fixed-base", ("--trace-imports", "--linux-fixed-base", "0x400000"), "hook", 0x12, 77),
-                ("data", ("--trace-imports",), "hook", 0x11, 11),
-                ("weak", ("--trace-imports",), "hook", 0x22, 11),
-                ("unsupported", ("--trace-imports",), "plain", 0x12, None)):
+        for name, options, libc, symbol_info, symbol, relocation, expected, entries in (
+                ("untraced", (), "hook", 0x12, "shared#A#B", 6, 11, 0),
+                ("traced", ("--trace-imports",), "hook", 0x12, "shared#A#B", 6, 77, 1),
+                ("fixed-base", ("--trace-imports", "--linux-fixed-base", "0x400000"), "hook", 0x12, "shared#A#B", 6, 77, 1),
+                ("data", ("--trace-imports",), "hook", 0x11, "shared#A#B", 6, 11, 0),
+                ("weak", ("--trace-imports",), "hook", 0x22, "shared#A#B", 6, 77, 1),
+                ("pointer", ("--trace-imports",), "hook", 0x12, "shared#A#B", 1, 77, 1),
+                ("pointer-data", ("--trace-imports",), "hook", 0x11, "shared#A#B", 1, 11, 0),
+                ("weak-unresolved", ("--trace-imports",), "hook", 0x22, "absent#A#B", 6, 33, 1),
+                ("unsupported", ("--trace-imports",), "plain", 0x12, "shared#A#B", 6, None, 0)):
             case = work / name
             case.mkdir()
-            image = executable("a.prx", extra_dependencies=("libc.prx",))
+            image = executable("a.prx", symbol=symbol, extra_dependencies=("libc.prx",))
             image[0x4898 + 4] = symbol_info
+            struct.pack_into("<Q", image, 0x4908, (1 << 32) | relocation)
+            if symbol != "shared#A#B":
+                image[0x4000:0x4000 + len(WEAK_CALL)] = WEAK_CALL
             source = case / "input.elf"
             source.write_bytes(image)
             output = case / "output.elf"
             result = relink(relinker, source, output, *options)
             assert result.returncode == 0, (name, result.stdout, result.stderr)
+            if expected is not None and "--trace-imports" in options:
+                assert trace_entries(output.read_bytes()) == entries, (name, entries)
             if not runnable:
                 continue
             (case / "libs").mkdir()
@@ -201,6 +246,26 @@ def main():
                 assert run.returncode != 0 and "TraceImport_nid_no_patch" in run.stderr, (name, run.returncode, run.stdout, run.stderr)
             else:
                 assert run.returncode == expected, (name, run.returncode, run.stdout, run.stderr)
+
+        addend = work / "pointer-addend"
+        addend.mkdir()
+        image = executable("a.prx", extra_dependencies=("libc.prx",))
+        image[0x4898 + 4] = 0x12
+        struct.pack_into("<Q", image, 0x4908, (1 << 32) | 1)
+        struct.pack_into("<q", image, 0x4910, 8)
+        source = addend / "input.elf"
+        source.write_bytes(image)
+        output = addend / "output.elf"
+        result = relink(relinker, source, output, "--trace-imports")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert trace_entries(output.read_bytes()) == 0
+        if runnable:
+            (addend / "libs").mkdir()
+            (addend / "libs" / "a.prx").write_bytes(libraries["aligned"])
+            (addend / "libs" / "libc.prx").write_bytes(libraries["hook"])
+            output.chmod(0o755)
+            run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+            assert run.returncode == 11 and run.stderr == "", (run.returncode, run.stdout, run.stderr)
 
         case = work / "without-libc"
         case.mkdir()

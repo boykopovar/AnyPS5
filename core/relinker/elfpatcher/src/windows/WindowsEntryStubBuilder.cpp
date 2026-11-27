@@ -774,6 +774,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             guestStartup.WriteImport(code, imports[index], handles);
             const auto weakDone = code.Branch({0xe9});
             patchResolved();
+            if (traceImports && imports[index].Function && imports[index].Addend == 0) {
+                code.Emit({0x48, 0x85, 0xc0});
+                const auto unresolvedWeak = code.Branch({0x0f, 0x84});
+                trace(imports[index], symbolNames[index]);
+                code.PatchBranch(unresolvedWeak, code.GetRva());
+            }
             code.Rip({0xe9}, writeWeak);
             code.PatchBranch(weakDone, code.GetRva());
             continue;

@@ -16,6 +16,9 @@ HOOK = (b'\x80\x3a\x73\x75\x0e'
         b'\x48\x89\xc8\xc3'
         b'\xb8\x4d\x00\x00\x00\xc3')
 
+WEAK_CALL = (b'\x48\x8b\x05' + struct.pack('<i', 0x4a20 - 0x4007)
+             + b'\x48\x85\xc0\x74\x02\xff\xe0\xb8\x21\x00\x00\x00\xc3')
+
 
 def named_provider(symbol, soname, code):
     image = provider(0, code=code, main_stack_entry=True)
@@ -49,20 +52,26 @@ def main():
         assert result.returncode == 0, (result.stdout, result.stderr)
         converted = {name: (build / 'app0' / 'prx' / (name + '.prx.guest.prx')).read_bytes() for name in ('a', 'hook', 'plain')}
 
-        for name, options, libc, symbol_info, expected, message in (
-                ('untraced', (), 'hook', 0x12, 11, None),
-                ('traced', ('--trace-imports',), 'hook', 0x12, 77, None),
-                ('data', ('--trace-imports',), 'hook', 0x11, 11, None),
-                ('weak', ('--trace-imports',), 'hook', 0x22, 11, None),
-                ('unsupported', ('--trace-imports',), 'plain', 0x12, None, 'libc.prx does not export TraceImport_nid_no_patch')):
+        for name, options, libc, symbol_info, symbol, relocation, expected, message in (
+                ('untraced', (), 'hook', 0x12, 'shared#A#B', 6, 11, None),
+                ('traced', ('--trace-imports',), 'hook', 0x12, 'shared#A#B', 6, 77, None),
+                ('data', ('--trace-imports',), 'hook', 0x11, 'shared#A#B', 6, 11, None),
+                ('weak', ('--trace-imports',), 'hook', 0x22, 'shared#A#B', 6, 77, None),
+                ('pointer', ('--trace-imports',), 'hook', 0x12, 'shared#A#B', 1, 77, None),
+                ('pointer-data', ('--trace-imports',), 'hook', 0x11, 'shared#A#B', 1, 11, None),
+                ('weak-unresolved', ('--trace-imports',), 'hook', 0x22, 'absent#A#B', 6, 33, None),
+                ('unsupported', ('--trace-imports',), 'plain', 0x12, 'shared#A#B', 6, None, 'libc.prx does not export TraceImport_nid_no_patch')):
             case = work / name
             (case / 'libs').mkdir(parents=True)
             (case / 'prx').mkdir()
             (case / 'libs' / 'a.prx').write_bytes(converted['a'])
             (case / 'libs' / 'libc.prx').write_bytes(converted[libc])
             source = case / 'input.elf'
-            image = executable('a.prx', extra_dependencies=('libc.prx',))
+            image = executable('a.prx', symbol=symbol, extra_dependencies=('libc.prx',))
             image[0x4898 + 4] = symbol_info
+            struct.pack_into('<Q', image, 0x4908, (1 << 32) | relocation)
+            if symbol != 'shared#A#B':
+                image[0x4000:0x4000 + len(WEAK_CALL)] = WEAK_CALL
             source.write_bytes(image)
             output = case / 'output.exe'
             result = relink(relinker, source, output, *options)

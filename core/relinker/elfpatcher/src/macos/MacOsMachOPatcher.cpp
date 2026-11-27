@@ -98,7 +98,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
     input.Rebases = relocations.BaseRelocations;
     for (const auto& import : relocations.Imports) {
         input.Binds.push_back({"_" + import.Name, import.TargetRva, static_cast<std::int64_t>(import.Addend), import.Weak});
-        if (traceImports && import.Function && !import.Weak && import.Addend == 0 && !import.Name.empty())
+        if (traceImports && import.Function && import.Addend == 0 && !import.Name.empty())
             input.Traced.push_back({import.TargetRva, import.Name, import.Library});
     }
     input.TraceImports = traceImports;

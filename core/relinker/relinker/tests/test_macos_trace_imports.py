@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import platform
+import struct
 import subprocess
 import sys
 import tempfile
@@ -18,8 +19,10 @@ HOOK = ("#include <string.h>\n"
         "    if (((unsigned long)__builtin_frame_address(0) & 15) != 0) _exit(13);\n"
         "    return strcmp(name, \"shared\") == 0 && strcmp(library, \"a.prx\") == 0 ? (void*)replacement : target;\n"
         "}\n")
+WEAK_CALL = (b"\x48\x8b\x05" + struct.pack("<i", 0x4a20 - 0x4007)
+             + b"\x48\x85\xc0\x74\x02\xff\xe0\xb8\x21\x00\x00\x00\xc3")
 PLAIN = "int Unrelated(void) { return 0; }\n"
-START = "void Aps5StartGuest_nid_no_patch(void (*entry)(void)) { entry(); }\n"
+START = "#include <unistd.h>\nvoid Aps5StartGuest_nid_no_patch(int (*entry)(void)) { _exit(entry()); }"
 
 
 def relink(relinker, source, output, *options):
@@ -37,6 +40,29 @@ def library(work, name, code):
     return output
 
 
+def trace_entries(image):
+    commands, = struct.unpack_from("<I", image, 16)
+    offset = 32
+    for _ in range(commands):
+        command, size = struct.unpack_from("<II", image, offset)
+        if command == 0x19 and image[offset + 8:offset + 24].rstrip(b"\0") == b"__APS5TEXT":
+            file_offset, file_size = struct.unpack_from("<QQ", image, offset + 40)
+            data = image[file_offset:file_offset + file_size]
+            for index in range(len(data) - 21):
+                if data[index:index + 3] != b"\x48\x8d\x1d" or data[index + 7:index + 10] != b"\x4c\x8d\x25":
+                    continue
+                first, = struct.unpack_from("<i", data, index + 3)
+                second, = struct.unpack_from("<i", data, index + 10)
+                span = second - first + 7
+                if span < 0 or span % 24 != 0:
+                    continue
+                assert b"\x48\x85\xff\x74" in data[index:index + 96]
+                return span // 24
+            raise AssertionError("Import trace prologue is missing")
+        offset += size
+    raise AssertionError("__APS5TEXT segment is missing")
+
+
 def run_binary(output):
     command = (["/usr/bin/arch", "-x86_64"] if platform.machine() == "arm64" else []) + [str(output)]
     return subprocess.run(command, capture_output=True, text=True, timeout=30)
@@ -52,22 +78,30 @@ def main():
             libraries = {name: library(work, name, code) for name, code in (
                 ("a", PROVIDER), ("hook", HOOK), ("plain", PLAIN), ("libkernel", START))}
 
-        for name, options, libc, symbol_info, expected in (
-                ("untraced", (), "hook", 0x12, 11),
-                ("traced", ("--trace-imports",), "hook", 0x12, 77),
-                ("fixed-base", ("--trace-imports", "--macos-fixed-base", "0x400000"), "hook", 0x12, 77),
-                ("data", ("--trace-imports",), "hook", 0x11, 11),
-                ("weak", ("--trace-imports",), "hook", 0x22, 11),
-                ("unsupported", ("--trace-imports",), "plain", 0x12, None)):
+        for name, options, libc, symbol_info, symbol, relocation, expected, entries in (
+                ("untraced", (), "hook", 0x12, "shared#A#B", 6, 11, 0),
+                ("traced", ("--trace-imports",), "hook", 0x12, "shared#A#B", 6, 77, 1),
+                ("fixed-base", ("--trace-imports", "--macos-fixed-base", "0x400000"), "hook", 0x12, "shared#A#B", 6, 77, 1),
+                ("data", ("--trace-imports",), "hook", 0x11, "shared#A#B", 6, 11, 0),
+                ("weak", ("--trace-imports",), "hook", 0x22, "shared#A#B", 6, 77, 1),
+                ("pointer", ("--trace-imports",), "hook", 0x12, "shared#A#B", 1, 77, 1),
+                ("pointer-data", ("--trace-imports",), "hook", 0x11, "shared#A#B", 1, 11, 0),
+                ("weak-unresolved", ("--trace-imports",), "hook", 0x22, "absent#A#B", 6, 33, 1),
+                ("unsupported", ("--trace-imports",), "plain", 0x12, "shared#A#B", 6, None, 0)):
             case = work / name
             case.mkdir()
-            image = executable("a.prx", extra_dependencies=("libc.prx",))
+            image = executable("a.prx", symbol=symbol, extra_dependencies=("libc.prx",))
             image[0x4898 + 4] = symbol_info
+            struct.pack_into("<Q", image, 0x4908, (1 << 32) | relocation)
+            if symbol != "shared#A#B":
+                image[0x4000:0x4000 + len(WEAK_CALL)] = WEAK_CALL
             source = case / "input.elf"
             source.write_bytes(image)
             output = case / "output"
             result = relink(relinker, source, output, *options)
             assert result.returncode == 0, (name, result.stdout, result.stderr)
+            if expected is not None and "--trace-imports" in options:
+                assert trace_entries(output.read_bytes()) == entries, (name, entries)
             if not runnable:
                 continue
             (case / "libs").mkdir()
