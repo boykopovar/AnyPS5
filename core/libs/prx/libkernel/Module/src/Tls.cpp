@@ -26,14 +26,15 @@ extern "C" void* __tls_get_addr(void* index);
 extern "C" {
 
 void* APS5_VABI __tls_get_addr_nid_postfix(const KernelTlsIndex* index) {
-    if (index == nullptr || index->module == 0) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
+    if (index == nullptr) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
+    KernelTlsIndex host{};
+    if (!GuestCopyInUnsynced_nid_no_patch(&host, index, sizeof(host)) || host.module == 0) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
 #if defined(_WIN32)
-    const auto slot = *reinterpret_cast<const DWORD*>(static_cast<std::uintptr_t>(index->module));
+    const auto slot = *reinterpret_cast<const DWORD*>(static_cast<std::uintptr_t>(host.module));
     auto* blocks = *reinterpret_cast<char***>(reinterpret_cast<char*>(NtCurrentTeb()) + ThreadLocalStoragePointerOffset);
     if (blocks == nullptr || blocks[slot] == nullptr) throw std::logic_error("__tls_get_addr: thread has no TLS block for the module");
-    return blocks[slot] + index->offset;
+    return blocks[slot] + host.offset;
 #elif defined(__linux__)
-    KernelTlsIndex host = *index;
     return __tls_get_addr(&host);
 #else
     NotImplemented_nid_no_patch("__tls_get_addr on this host");

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <sstream>
+#include <stdexcept>
 
 namespace NKWebKit {
 
@@ -23,6 +24,25 @@ JSValueConst StoredValue(const OpaqueJSValue* value) {
 
 JSValueConst ArgumentValue(const JSValueRef arguments[], std::size_t index) {
     return arguments ? StoredValue(arguments[index]) : JS_UNDEFINED;
+}
+
+enum class SetRefusal {
+    NotExtensible,
+    ReadOnly,
+    NoSetter,
+};
+
+int RefuseSetAsTheEngineDoes(JSContext* qctx, JSAtom prop, JSValueConst value, int flags, SetRefusal refusal) {
+    JSValue model = JS_NewObjectProto(qctx, JS_NULL);
+    if (refusal == SetRefusal::ReadOnly) {
+        JS_DefineProperty(qctx, model, prop, JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED, JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE);
+    } else if (refusal == SetRefusal::NoSetter) {
+        JS_DefineProperty(qctx, model, prop, JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED, JS_PROP_HAS_GET | JS_PROP_HAS_SET);
+    }
+    JS_PreventExtensions(qctx, model);
+    const int result = JS_SetPropertyValue(qctx, model, JS_AtomToValue(qctx, prop), JS_DupValue(qctx, value), flags);
+    JS_FreeValue(qctx, model);
+    return result;
 }
 
 OpaqueJSValue* CoerceThisToObject(OpaqueJSContext* ctx, JSValueConst thisVal) {
@@ -61,25 +81,26 @@ JSValue OrdinaryToPrimitive(JSContext* qctx, JSValueConst object, bool preferStr
     return JS_ThrowTypeError(qctx, "No default value");
 }
 
-JSValue ToPrimitiveClosure(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, void* opaque) {
-    (void)magic;
-    auto* data = static_cast<CallbackObjectData*>(opaque);
-    if (!data || !data->ctx || !data->handle || !data->jsClass) return JS_UNDEFINED;
-    OpaqueJSContext* ctx = data->ctx;
-    JSType hint = kJSTypeNumber;
-    if (argc > 0 && JS_IsString(argv[0])) {
-        const char* hintStr = JS_ToCString(qctx, argv[0]);
-        if (hintStr) {
-            if (std::strcmp(hintStr, "string") == 0) {
-                hint = kJSTypeString;
-            }
-            JS_FreeCString(qctx, hintStr);
-        }
+JSValue CallbackToPrimitive(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst* argv, int forGlobalObject) {
+    auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
+    CallbackObjectData* data = group && JS_IsObject(thisVal) ? group->FindCallbackDataByPtr(JS_VALUE_GET_PTR(thisVal)) : nullptr;
+    const bool usable = data && data->ctx && data->handle && ObjectClass(data) && !data->isGlobalInterceptor;
+    if (!usable || (data->handle == data->ctx->globalObject) != (forGlobalObject != 0)) {
+        return JS_ThrowTypeError(qctx, "JSCallbackObject[Symbol.toPrimitive] method called on incompatible |this| value.");
     }
-    OpaqueJSValue* targetHandle = JS_IsObject(thisVal) ? ctx->group->BorrowHandle(ctx, thisVal) : data->handle;
+    if (argc < 1 || !JS_IsString(argv[0])) return JS_ThrowTypeError(qctx, "Primitive hint is not a string.");
+    const char* hintStr = JS_ToCString(qctx, argv[0]);
+    if (!hintStr) return JS_EXCEPTION;
+    const bool preferString = std::strcmp(hintStr, "string") == 0;
+    const bool knownHint = preferString || std::strcmp(hintStr, "default") == 0 || std::strcmp(hintStr, "number") == 0;
+    JS_FreeCString(qctx, hintStr);
+    if (!knownHint) return JS_ThrowTypeError(qctx, "Expected primitive hint to match one of 'default', 'number', 'string'.");
+    OpaqueJSContext* ctx = data->ctx;
+    const JSType hint = preferString ? kJSTypeString : kJSTypeNumber;
+    OpaqueJSValue* targetHandle = data->handle;
     CallbackPinScope pinScope(ctx->group);
     pinScope.Pin(targetHandle);
-    for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
+    for (OpaqueJSClass* cls = ObjectClass(data); cls; cls = cls->parentClass) {
         if (cls->convertToType) {
             JSValueRef exc = nullptr;
             JSValueRef res = cls->convertToType(ctx, targetHandle, hint, &exc);
@@ -186,16 +207,6 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                 return 1;
             }
         }
-    } else if (prop == group->toPrimitiveAtom) {
-        if (ObjectClass(data) && ObjectClass(data)->HasConvertToType()) {
-            if (desc) {
-                desc->flags = JS_PROP_CONFIGURABLE;
-                desc->value = JS_NewCClosure(qctx, &ToPrimitiveClosure, "[Symbol.toPrimitive]", nullptr, 1, 0, data);
-                desc->getter = JS_UNDEFINED;
-                desc->setter = JS_UNDEFINED;
-            }
-            return 1;
-        }
     } else if (prop == group->hasInstanceAtom) {
         if (ObjectClass(data)) {
             if (desc) {
@@ -243,7 +254,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             }
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
-                                desc->flags = JS_PROP_WRITABLE | JS_PROP_ENUMERABLE;
+                                desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
                                 desc->value = JS_DupValue(qctx, val->qval);
                                 desc->getter = JS_UNDEFINED;
                                 desc->setter = JS_UNDEFINED;
@@ -266,7 +277,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                 if (val && val->alive) {
                     if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                     if (desc) {
-                        desc->flags = JS_PROP_WRITABLE | JS_PROP_ENUMERABLE;
+                        desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
                         desc->value = JS_DupValue(qctx, val->qval);
                         desc->getter = JS_UNDEFINED;
                         desc->setter = JS_UNDEFINED;
@@ -289,7 +300,7 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
                             if (val && val->alive) {
                                 if (propNameRef) JSStringRelease_nid_postfix(propNameRef);
                                 if (desc) {
-                                    desc->flags = ToQuickJsPropFlags(sv->attributes);
+                                    desc->flags = JS_PROP_CONFIGURABLE | (ToQuickJsPropFlags(sv->attributes) & JS_PROP_ENUMERABLE);
                                     desc->value = JS_DupValue(qctx, val->qval);
                                     desc->getter = JS_UNDEFINED;
                                     desc->setter = JS_UNDEFINED;
@@ -368,14 +379,42 @@ int CallbackExoticGetOwnProperty(JSContext* qctx, JSPropertyDescriptor* desc, JS
     return 0;
 }
 
+int SetWithAlteredReceiver(JSContext* qctx, CallbackObjectData* data, JSValueConst obj, JSAtom prop, JSValueConst value, JSValueConst receiver) {
+    JSValue target = JS_UNDEFINED;
+    if (!JS_IsUndefined(data->propStore)) {
+        const int hasOwn = JS_GetOwnProperty(qctx, nullptr, data->propStore, prop);
+        if (hasOwn < 0) return -1;
+        if (hasOwn > 0) target = JS_DupValue(qctx, data->propStore);
+    }
+    if (JS_IsUndefined(target)) {
+        JSValue proto = JS_GetPrototype(qctx, obj);
+        if (JS_IsException(proto)) return -1;
+        target = JS_NewObjectProto(qctx, proto);
+        JS_FreeValue(qctx, proto);
+        if (JS_IsException(target)) return -1;
+    }
+    JSValue key = JS_AtomToValue(qctx, prop);
+    JSValueConst arguments[4] = {target, key, value, receiver};
+    auto* running = static_cast<OpaqueJSContext*>(JS_GetContextOpaque(qctx));
+    JSValue stored = JS_Call(qctx, (running ? running : data->ctx)->reflectSet, JS_UNDEFINED, 4, arguments);
+    JS_FreeValue(qctx, key);
+    JS_FreeValue(qctx, target);
+    if (JS_IsException(stored)) return -1;
+    const int result = JS_ToBool(qctx, stored);
+    JS_FreeValue(qctx, stored);
+    return result;
+}
+
 int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JSValueConst value, JSValueConst receiver, int flags) {
-    (void)receiver;
     auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
     if (!group || group->shuttingDown) return 0;
     CallbackObjectData* data = group->FindCallbackDataByPtr(JS_VALUE_GET_PTR(obj));
     if (!data || !data->ctx || !data->handle) return 0;
     OpaqueJSContext* ctx = data->ctx;
     OpaqueJSValue* targetHandle = data->handle;
+    if (!JS_IsObject(receiver) || JS_VALUE_GET_PTR(receiver) != JS_VALUE_GET_PTR(targetHandle->qval)) {
+        return SetWithAlteredReceiver(qctx, data, obj, prop, value, receiver);
+    }
 
     JSValue atomVal = JS_AtomToValue(qctx, prop);
     const bool isSymbol = JS_IsSymbol(atomVal);
@@ -483,12 +522,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
                     JS_FreeValue(qctx, protoDesc.value);
                     JS_FreeValue(qctx, curProto);
                     if (JS_IsUndefined(setter)) {
-                        JS_FreeValue(qctx, setter);
-                        if (flags & JS_PROP_THROW) {
-                            JS_ThrowTypeError(qctx, "Cannot set property which has only a getter");
-                            return -1;
-                        }
-                        return 0;
+                        return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::NoSetter);
                     }
                     JSValueConst arg = value;
                     JSValue res = JS_Call(qctx, setter, targetHandle->qval, 1, &arg);
@@ -502,13 +536,8 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
                 JS_FreeValue(qctx, protoDesc.setter);
                 JS_FreeValue(qctx, protoDesc.value);
                 JS_FreeValue(qctx, curProto);
-                if (!writable) {
-                    if (flags & JS_PROP_THROW) {
-                        JS_ThrowTypeError(qctx, "Cannot assign to read only property");
-                        return -1;
-                    }
-                    return 0;
-                }
+                curProto = JS_UNDEFINED;
+                if (!writable) return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::ReadOnly);
                 break;
             }
             JSValue nextProto = JS_GetPrototype(qctx, curProto);
@@ -516,6 +545,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
             curProto = nextProto;
         }
         JS_FreeValue(qctx, curProto);
+        if (JS_IsExtensible(qctx, obj) == 0) return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::NotExtensible);
         return JS_SetPropertyValue(qctx, data->propStore, JS_AtomToValue(qctx, prop), JS_DupValue(qctx, value), flags);
     }
     return 0;
@@ -582,6 +612,17 @@ int CallbackExoticDefineOwnProperty(JSContext* qctx, JSValueConst thisObj, JSAto
     if (!group || group->shuttingDown) return -1;
     CallbackObjectData* data = group->FindCallbackDataByPtr(JS_VALUE_GET_PTR(thisObj));
     if (!data || JS_IsUndefined(data->propStore)) return -1;
+    if (JS_IsExtensible(qctx, thisObj) == 0) {
+        const int present = JS_GetOwnProperty(qctx, nullptr, thisObj, prop);
+        if (present < 0) return -1;
+        if (present == 0) {
+            JSValue model = JS_NewObjectProto(qctx, JS_NULL);
+            JS_PreventExtensions(qctx, model);
+            const int result = JS_DefineProperty(qctx, model, prop, val, getter, setter, flags);
+            JS_FreeValue(qctx, model);
+            return result;
+        }
+    }
     return JS_DefineProperty(qctx, data->propStore, prop, val, getter, setter, flags);
 }
 
@@ -681,17 +722,21 @@ void CallbackClassFinalizer(JSRuntime* rt, JSValueConst val) {
     if (!data->isGlobalInterceptor) {
         RunClassFinalize(data);
     }
-    if (!JS_IsUndefined(data->propStore)) {
-        JS_FreeValueRT(rt, data->propStore);
-        data->propStore = JS_UNDEFINED;
-    }
-    for (auto& [k, slot] : data->privateProperties) {
-        if (!JS_IsUndefined(slot.strongVal)) {
-            JS_FreeValueRT(rt, slot.strongVal);
-            slot.strongVal = JS_UNDEFINED;
+    CallbackObjectData* owned[2] = {data, data->isGlobalInterceptor ? group->FindCallbackData(handle) : nullptr};
+    for (CallbackObjectData* holder : owned) {
+        if (!holder) continue;
+        if (!JS_IsUndefined(holder->propStore)) {
+            JS_FreeValueRT(rt, holder->propStore);
+            holder->propStore = JS_UNDEFINED;
         }
+        for (auto& [k, slot] : holder->privateProperties) {
+            if (!JS_IsUndefined(slot.strongVal)) {
+                JS_FreeValueRT(rt, slot.strongVal);
+                slot.strongVal = JS_UNDEFINED;
+            }
+        }
+        holder->privateProperties.clear();
     }
-    data->privateProperties.clear();
     group->callbackDataByPtr.erase(ptr);
     if (!data->isGlobalInterceptor) {
         group->NotifyObjectFinalized(ptr, handle);
@@ -913,6 +958,96 @@ bool ToQuickJsTypedArrayEnum(JSTypedArrayType type, JSTypedArrayEnum* outEnum, s
     }
 }
 
+JSValue CallIntrinsicGetter(OpaqueJSContextGroup* group, JSContext* qctx, JSValueConst receiver, const char* constructorName, bool onParentPrototype,
+    const char* property) {
+    JSContext* uctx = group->utilityCtx;
+    JSValue global = JS_GetGlobalObject(uctx);
+    JSValue constructor = JS_GetPropertyStr(uctx, global, constructorName);
+    JSValue prototype = JS_GetPropertyStr(uctx, constructor, "prototype");
+    if (onParentPrototype) {
+        JSValue parent = JS_GetPrototype(uctx, prototype);
+        JS_FreeValue(uctx, prototype);
+        prototype = parent;
+    }
+    JSAtom atom = JS_NewAtom(uctx, property);
+    JSPropertyDescriptor desc{};
+    JSValue result = JS_EXCEPTION;
+    const int found = JS_GetOwnProperty(uctx, &desc, prototype, atom);
+    if (found > 0) {
+        result = JS_Call(qctx, desc.getter, receiver, 0, nullptr);
+        JS_FreeValue(uctx, desc.value);
+        JS_FreeValue(uctx, desc.getter);
+        JS_FreeValue(uctx, desc.setter);
+    } else if (found == 0) {
+        result = JS_ThrowTypeError(qctx, "intrinsic accessor not found");
+    }
+    JS_FreeAtom(uctx, atom);
+    JS_FreeValue(uctx, prototype);
+    JS_FreeValue(uctx, constructor);
+    JS_FreeValue(uctx, global);
+    return result;
+}
+
+void DropPendingException(JSContext* qctx) {
+    JS_FreeValue(qctx, JS_GetException(qctx));
+}
+
+std::size_t TakeSizeOrZero(JSContext* qctx, JSValue value) {
+    if (JS_IsException(value)) {
+        DropPendingException(qctx);
+        return 0;
+    }
+    double number = 0.0;
+    if (JS_ToFloat64(qctx, &number, value) < 0) {
+        DropPendingException(qctx);
+        number = 0.0;
+    }
+    JS_FreeValue(qctx, value);
+    return number > 0.0 ? static_cast<std::size_t>(number) : 0;
+}
+
+bool IsBufferView(JSValueConst value) {
+    return JS_GetTypedArrayType(value) >= 0 || JS_IsDataView(value);
+}
+
+JSContext* QuickJsContextOf(JSContextRef ctx, JSObjectRef object) {
+    if (ctx) return ctx->qctx;
+    OpaqueJSContext* owner = object->ctx ? object->ctx : object->group->DefaultContext();
+    return owner ? owner->qctx : object->group->utilityCtx;
+}
+
+struct BufferViewMetrics {
+    std::size_t byteOffset = 0;
+    std::size_t byteLength = 0;
+    std::size_t length = 0;
+};
+
+BufferViewMetrics ReadBufferViewMetrics(JSContextRef ctx, JSObjectRef object) {
+    BufferViewMetrics metrics;
+    if (!object || !object->alive || !object->group || !IsBufferView(object->qval)) return metrics;
+    JSContext* qctx = QuickJsContextOf(ctx, object);
+    if (JS_IsDataView(object->qval)) {
+        metrics.byteLength = TakeSizeOrZero(qctx, CallIntrinsicGetter(object->group, qctx, object->qval, "DataView", false, "byteLength"));
+        metrics.byteOffset = TakeSizeOrZero(qctx, CallIntrinsicGetter(object->group, qctx, object->qval, "DataView", false, "byteOffset"));
+        metrics.length = metrics.byteLength;
+        return metrics;
+    }
+    std::size_t bytesPerElement = 0;
+    JSValue buffer = JS_GetTypedArrayBuffer(qctx, object->qval, &metrics.byteOffset, &metrics.byteLength, &bytesPerElement);
+    if (JS_IsException(buffer)) {
+        DropPendingException(qctx);
+        return BufferViewMetrics{};
+    }
+    JS_FreeValue(qctx, buffer);
+    metrics.length = bytesPerElement > 0 ? metrics.byteLength / bytesPerElement : 0;
+    return metrics;
+}
+
+JSValue BufferOfView(OpaqueJSContextGroup* group, JSContext* qctx, JSValueConst view) {
+    if (JS_IsDataView(view)) return CallIntrinsicGetter(group, qctx, view, "DataView", false, "buffer");
+    return CallIntrinsicGetter(group, qctx, view, "Uint8Array", true, "buffer");
+}
+
 }  // namespace
 
 void OpaqueJSClass::DestroyInPlace() {
@@ -1105,8 +1240,14 @@ OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, 
         JS_SetPrototype(ctx->qctx, handle->qval, proto->qval);
     }
 
+    if (jsClass->HasConvertToType()) DefineToPrimitive(ctx, cbData->propStore, false);
     RunClassInitialize(ctx, handle, jsClass);
     return handle;
+}
+
+void DefineToPrimitive(OpaqueJSContext* ctx, JSValueConst target, bool forGlobalObject) {
+    JSValue function = JS_NewCFunctionMagic(ctx->qctx, &CallbackToPrimitive, "[Symbol.toPrimitive]", 1, JS_CFUNC_generic_magic, forGlobalObject ? 1 : 0);
+    JS_DefinePropertyValue(ctx->qctx, target, ctx->group->toPrimitiveAtom, function, JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
 }
 
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object) {
@@ -1452,11 +1593,13 @@ JSValueRef APS5_VABI JSObjectGetPrototype(JSContextRef ctx, JSObjectRef object) 
 
 void APS5_VABI JSObjectSetPrototype(JSContextRef ctx, JSObjectRef object, JSValueRef value) {
     if (!ctx || !object || !object->alive || (value && !value->alive)) return;
+    for (const OpaqueJSContext* context : ctx->group->contexts) {
+        if (context && context->globalObject == object) return;
+    }
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     VmEntryScope vmScope(mutCtx->group);
     JSValueConst protoVal = (value && value->isObjectHandle) ? value->qval : JS_NULL;
-    JSValue target = (object == mutCtx->globalObject && !JS_IsUndefined(mutCtx->globalExoticInterceptor)) ? mutCtx->globalExoticInterceptor : object->qval;
-    if (JS_SetPrototype(mutCtx->qctx, target, protoVal) < 0) {
+    if (JS_SetPrototype(mutCtx->qctx, object->qval, protoVal) < 0) {
         JS_FreeValue(mutCtx->qctx, JS_GetException(mutCtx->qctx));
     }
 }
@@ -1897,17 +2040,12 @@ JSObjectRef APS5_VABI JSObjectMakeArrayBufferWithBytesNoCopy(JSContextRef ctx, v
 }
 
 void* APS5_VABI JSObjectGetArrayBufferBytesPtr(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
-    if (!ctx || !object || !object->alive || !JS_IsArrayBuffer(object->qval)) {
-        if (ctx) {
-            auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-            SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "Argument is not an ArrayBuffer"));
-        }
-        return nullptr;
-    }
+    (void)exception;
+    if (!ctx || !object || !object->alive || !JS_IsArrayBuffer(object->qval)) return nullptr;
     std::size_t size = 0;
     std::uint8_t* ptr = JS_GetArrayBuffer(ctx->qctx, &size, object->qval);
-    if (JS_HasException(ctx->qctx)) {
-        CapturePendingException(const_cast<OpaqueJSContext*>(ctx), exception);
+    if (!ptr && JS_HasException(ctx->qctx)) {
+        DropPendingException(ctx->qctx);
         return nullptr;
     }
     if (ptr == &g_emptyBufferByte && size == 0) return nullptr;
@@ -1915,17 +2053,13 @@ void* APS5_VABI JSObjectGetArrayBufferBytesPtr(JSContextRef ctx, JSObjectRef obj
 }
 
 std::size_t APS5_VABI JSObjectGetArrayBufferByteLength(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
-    if (!ctx || !object || !object->alive || !JS_IsArrayBuffer(object->qval)) {
-        if (ctx) {
-            auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-            SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "Argument is not an ArrayBuffer"));
-        }
-        return 0;
-    }
+    (void)exception;
+    if (!object) throw std::invalid_argument("JSObjectGetArrayBufferByteLength: null object");
+    if (!object->alive || !object->group || !JS_IsArrayBuffer(object->qval)) return 0;
+    JSContext* qctx = QuickJsContextOf(ctx, object);
     std::size_t size = 0;
-    JS_GetArrayBuffer(ctx->qctx, &size, object->qval);
-    if (JS_HasException(ctx->qctx)) {
-        CapturePendingException(const_cast<OpaqueJSContext*>(ctx), exception);
+    if (!JS_GetArrayBuffer(qctx, &size, object->qval) && JS_HasException(qctx)) {
+        DropPendingException(qctx);
         return 0;
     }
     return size;
@@ -1958,13 +2092,20 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBuffer(JSContextRef ctx, JS
         SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBuffer expects buffer to be an Array Buffer object"));
         return nullptr;
     }
-    JSValueConst arg = buffer->qval;
-    JSValue ta = JS_NewTypedArray(mutCtx->qctx, 1, &arg, qtype);
-    if (JS_IsException(ta)) {
+    JSValue resizable = CallIntrinsicGetter(mutCtx->group, mutCtx->qctx, buffer->qval, "ArrayBuffer", false, "resizable");
+    if (JS_IsException(resizable)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
     }
-    return mutCtx->group->ToHandle(mutCtx, ta);
+    const bool isResizable = JS_ToBool(mutCtx->qctx, resizable) > 0;
+    JS_FreeValue(mutCtx->qctx, resizable);
+    if (isResizable) throw std::invalid_argument("JSObjectMakeTypedArrayWithArrayBuffer: resizable buffer");
+    std::size_t byteLength = 0;
+    if (!JS_GetArrayBuffer(mutCtx->qctx, &byteLength, buffer->qval) && JS_HasException(mutCtx->qctx)) {
+        CapturePendingException(mutCtx, exception);
+        return nullptr;
+    }
+    return JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx, arrayType, buffer, 0, byteLength / elemSize, exception);
 }
 
 JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBufferAndOffset(JSContextRef ctx, JSTypedArrayType arrayType, JSObjectRef buffer, std::size_t byteOffset, std::size_t length, JSValueRef* exception) {
@@ -1974,7 +2115,7 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBufferAndOffset(JSContextRe
     std::size_t elemSize = 0;
     if (!ToQuickJsTypedArrayEnum(arrayType, &qtype, &elemSize)) return nullptr;
     if (!buffer || !buffer->alive || !JS_IsArrayBuffer(buffer->qval)) {
-        SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBufferAndOffset expects buffer to be an Array Buffer object"));
+        SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBuffer expects buffer to be an Array Buffer object"));
         return nullptr;
     }
     JSValue offsetVal = JS_NewUint64(mutCtx->qctx, byteOffset);
@@ -2005,12 +2146,9 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithBytesNoCopy(JSContextRef ctx, JS
 }
 
 void* APS5_VABI JSObjectGetTypedArrayBytesPtr(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
-    if (!ctx || !object || !object->alive || JS_GetTypedArrayType(object->qval) < 0) return nullptr;
+    if (!ctx || !object || !object->alive || !IsBufferView(object->qval)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    std::size_t byteOffset = 0;
-    std::size_t byteLength = 0;
-    std::size_t bytesPerElem = 0;
-    JSValue abuf = JS_GetTypedArrayBuffer(mutCtx->qctx, object->qval, &byteOffset, &byteLength, &bytesPerElem);
+    JSValue abuf = BufferOfView(mutCtx->group, mutCtx->qctx, object->qval);
     if (JS_IsException(abuf)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
@@ -2018,8 +2156,8 @@ void* APS5_VABI JSObjectGetTypedArrayBytesPtr(JSContextRef ctx, JSObjectRef obje
     std::size_t bufSize = 0;
     std::uint8_t* ptr = JS_GetArrayBuffer(mutCtx->qctx, &bufSize, abuf);
     JS_FreeValue(mutCtx->qctx, abuf);
-    if (JS_HasException(mutCtx->qctx)) {
-        CapturePendingException(mutCtx, exception);
+    if (!ptr && JS_HasException(mutCtx->qctx)) {
+        DropPendingException(mutCtx->qctx);
         return nullptr;
     }
     if (ptr == &g_emptyBufferByte && bufSize == 0) return nullptr;
@@ -2028,56 +2166,23 @@ void* APS5_VABI JSObjectGetTypedArrayBytesPtr(JSContextRef ctx, JSObjectRef obje
 
 std::size_t APS5_VABI JSObjectGetTypedArrayLength(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
     (void)exception;
-    if (!ctx || !object || !object->alive || JS_GetTypedArrayType(object->qval) < 0) return 0;
-    std::size_t byteOffset = 0;
-    std::size_t byteLength = 0;
-    std::size_t bytesPerElem = 0;
-    JSValue abuf = JS_GetTypedArrayBuffer(ctx->qctx, object->qval, &byteOffset, &byteLength, &bytesPerElem);
-    if (JS_IsException(abuf)) {
-        JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
-        return 0;
-    }
-    JS_FreeValue(ctx->qctx, abuf);
-    return bytesPerElem > 0 ? (byteLength / bytesPerElem) : 0;
+    return ReadBufferViewMetrics(ctx, object).length;
 }
 
 std::size_t APS5_VABI JSObjectGetTypedArrayByteLength(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
     (void)exception;
-    if (!ctx || !object || !object->alive || JS_GetTypedArrayType(object->qval) < 0) return 0;
-    std::size_t byteOffset = 0;
-    std::size_t byteLength = 0;
-    std::size_t bytesPerElem = 0;
-    JSValue abuf = JS_GetTypedArrayBuffer(ctx->qctx, object->qval, &byteOffset, &byteLength, &bytesPerElem);
-    if (JS_IsException(abuf)) {
-        JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
-        return 0;
-    }
-    JS_FreeValue(ctx->qctx, abuf);
-    return byteLength;
+    return ReadBufferViewMetrics(ctx, object).byteLength;
 }
 
 std::size_t APS5_VABI JSObjectGetTypedArrayByteOffset(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
     (void)exception;
-    if (!ctx || !object || !object->alive || JS_GetTypedArrayType(object->qval) < 0) return 0;
-    std::size_t byteOffset = 0;
-    std::size_t byteLength = 0;
-    std::size_t bytesPerElem = 0;
-    JSValue abuf = JS_GetTypedArrayBuffer(ctx->qctx, object->qval, &byteOffset, &byteLength, &bytesPerElem);
-    if (JS_IsException(abuf)) {
-        JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
-        return 0;
-    }
-    JS_FreeValue(ctx->qctx, abuf);
-    return byteOffset;
+    return ReadBufferViewMetrics(ctx, object).byteOffset;
 }
 
 JSObjectRef APS5_VABI JSObjectGetTypedArrayBuffer(JSContextRef ctx, JSObjectRef object, JSValueRef* exception) {
-    if (!ctx || !object || !object->alive || JS_GetTypedArrayType(object->qval) < 0) return nullptr;
+    if (!ctx || !object || !object->alive || !IsBufferView(object->qval)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    std::size_t byteOffset = 0;
-    std::size_t byteLength = 0;
-    std::size_t bytesPerElem = 0;
-    JSValue abuf = JS_GetTypedArrayBuffer(mutCtx->qctx, object->qval, &byteOffset, &byteLength, &bytesPerElem);
+    JSValue abuf = BufferOfView(mutCtx->group, mutCtx->qctx, object->qval);
     if (JS_IsException(abuf)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;

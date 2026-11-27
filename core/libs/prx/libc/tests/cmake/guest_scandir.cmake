@@ -1,0 +1,10 @@
+add_test_executable(guest_scandir_tests ${LIBS_INCLUDE_DIR}/tests/GuestScandir.cpp)
+target_include_directories(guest_scandir_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_scandir_tests PRIVATE libc)
+configure_windows_unwind(guest_scandir_tests)
+add_test(NAME guest_scandir COMMAND guest_scandir_tests guest_scandir.tmp)
+set_tests_properties(guest_scandir PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_scandir PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

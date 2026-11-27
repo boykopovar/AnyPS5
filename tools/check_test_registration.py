@@ -161,11 +161,14 @@ def cpp_source(text, keep_strings=False):
 
 def ninja(build):
     program, generator = None, None
+    configurations = []
     for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
             program = line.partition("=")[2]
         elif line.startswith("CMAKE_GENERATOR:"):
             generator = line.partition("=")[2]
+        elif line.startswith("CMAKE_CONFIGURATION_TYPES:"):
+            configurations = list(filter(None, line.partition("=")[2].split(";")))
     if generator not in ("Ninja", "Ninja Multi-Config"):
         raise ValueError(f"test registration audit requires a Ninja generator, got {generator!r}")
     if not program or program.endswith("-NOTFOUND"):
@@ -178,42 +181,46 @@ def ninja(build):
         if codepage not in encodings:
             raise ValueError(f"unsupported Ninja build-file encoding: {codepage!r}")
         encoding = encodings[codepage]
-    return program, encoding
+    return program, encoding, configurations if generator == "Ninja Multi-Config" else []
+
+
+def ninja_outputs(build, *arguments):
+    program, encoding, configurations = ninja(build)
+    manifests = [("-f", f"build-{configuration}.ninja") for configuration in configurations]
+    for manifest in manifests or [()]:
+        yield subprocess.run([program, "-C", str(build), *manifest, "-t", *arguments],
+                             capture_output=True, text=True, encoding=encoding, check=True).stdout
 
 
 def built(build):
-    program, encoding = ninja(build)
-    listed = subprocess.run([program, "-C", str(build), "-t", "targets", "all"],
-                            capture_output=True, text=True, encoding=encoding, check=True).stdout
     names = set()
-    for line in listed.splitlines():
-        path, _, rule = line.partition(": ")
-        if "EXECUTABLE" not in rule:
-            continue
-        found = _TEST_EXEC_PATH.match(path)
-        if not found:
-            continue
-        name = found.group(1)
-        if name.endswith(".exe"):
-            name = name[:-4]
-        if name:
-            names.add(name)
+    for output in ninja_outputs(build, "targets", "all"):
+        for line in output.splitlines():
+            path, _, rule = line.partition(": ")
+            if "EXECUTABLE" not in rule:
+                continue
+            found = _TEST_EXEC_PATH.match(path)
+            if not found:
+                continue
+            name = found.group(1)
+            if name.endswith(".exe"):
+                name = name[:-4]
+            if name:
+                names.add(name)
     return names
 
 
 def compiled(build):
-    program, encoding = ninja(build)
-    database = subprocess.run([program, "-C", str(build), "-t", "compdb"],
-                              capture_output=True, text=True, encoding=encoding, check=True).stdout
     sources = set()
-    for entry in json.loads(database):
-        command = entry.get("command") or " ".join(entry.get("arguments", []))
-        if not COMPILE_FLAG.search(command):
-            continue
-        file = Path(entry["file"])
-        if not file.is_absolute():
-            file = Path(entry["directory"]) / file
-        sources.add(file.resolve())
+    for database in ninja_outputs(build, "compdb"):
+        for entry in json.loads(database):
+            command = entry.get("command") or " ".join(entry.get("arguments", []))
+            if not COMPILE_FLAG.search(command):
+                continue
+            file = Path(entry["file"])
+            if not file.is_absolute():
+                file = Path(entry["directory"]) / file
+            sources.add(file.resolve())
     return sources
 
 
@@ -227,6 +234,15 @@ def skipped_libraries(build):
         if name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
             enabled = enabled or on
     return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
+
+
+def source_directory(build):
+    cache = Path(build) / "CMakeCache.txt"
+    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition("=")
+        if name == "CMAKE_HOME_DIRECTORY:INTERNAL" and value:
+            return Path(value)
+    raise ValueError(f"CMAKE_HOME_DIRECTORY is not set in {cache}")
 
 
 def unbuilt_exports(root, sources, skipped=()):
@@ -713,7 +729,7 @@ def main(argv=None):
         every = sorted(built(args.build))
         run = registered(args.build)
         skipped = skipped_libraries(args.build)
-        unbuilt = None if skipped is None else unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
+        unbuilt = None if skipped is None else unbuilt_exports(source_directory(args.build), compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:

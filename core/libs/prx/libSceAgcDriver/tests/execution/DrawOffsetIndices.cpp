@@ -582,6 +582,16 @@ std::string Run(Fixture& fixture) {
     const auto indexAddress = fixture.GuestIndices(Indices);
 
     {
+        const auto vertex = fixture.Vertex(RuntimeFetchCode, fixture.UserData(0, 0), true);
+        Require(vertex.vertexAttributes.empty(), "the restart-only draw must use shader vertex pulling");
+        const auto indices = fixture.GuestIndices({0xffffu, 0xffffu, 0xffffu, 0xffffu});
+        AgcDriver::Graphics::TakeVkDrawCounts();
+        fixture.Draw(vertex, {indices, 4, 2, 1, 0, true}, true);
+        Require(AgcDriver::Graphics::TakeVkDrawCounts().indexed == 0, "an all-restart index buffer recorded a Vulkan indexed draw");
+        Require(std::ranges::all_of(Output, [](auto value) { return value == Unwritten; }), "a restart-only draw ran the vertex shader");
+    }
+
+    {
         constexpr std::uint32_t indxOffset = 5;
         constexpr std::uint32_t baseVertex = 1000;
         constexpr std::uint32_t startInstance = 40;

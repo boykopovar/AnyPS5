@@ -13,8 +13,8 @@ UNBLOCKS_LABEL = pr_labels.UNBLOCKS_LABEL
 QUEUE_SIZE = 30
 BLOCKING_LABELS = {"needs rebase", "perf numbers missing", "open PR limit"}
 CONVENTIONS_CHECK = "conventions"
-BOT_CHECKS = {"intake", "labels", "eligibility", "report"}
-BUILD_CHECKS = {"linux", "windows", "relinker", "relinker-asan", "register-context", "write-watch"}
+BOT_CHECKS = {"intake", "labels", "eligibility", "report", "pr"}
+BUILD_CHECKS = {"linux", "windows", "relinker", "relinker-asan", "register-context", "write-watch", "pipe-write", "edge-watch"}
 FAILED = {"failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale", "error"}
 PASSED = {"success", "neutral"}
 MARKER = "<!-- pr-review-queue -->"
@@ -25,14 +25,17 @@ PULL_FIELDS = """
 fragment Readiness on PullRequest {
   number title isDraft mergeable headRefOid createdAt
   author { login }
-  labels(first: 50) { nodes { name } }
-  reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-  latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
+  labels(first: 50) { pageInfo { hasNextPage } nodes { name } }
+  reviewRequests(first: 50) { pageInfo { hasNextPage } nodes { requestedReviewer { ... on User { login } } } }
+  latestOpinionatedReviews(first: 50) { pageInfo { hasNextPage } nodes { state author { login } } }
+  commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) {
     pageInfo { hasNextPage }
     nodes {
       __typename
-      ... on CheckRun { databaseId name status conclusion }
+      ... on CheckRun {
+        databaseId name status conclusion
+        checkSuite { app { slug } workflowRun { workflow { databaseId } } }
+      }
       ... on StatusContext { context state }
     }
   } } } } }
@@ -56,6 +59,17 @@ query($url: URI!) {
     ... on PullRequest {
       state baseRefName
       ...Readiness
+    }
+  }
+}
+""" + PULL_FIELDS
+
+AUTHOR_QUERY = """
+query($login: String!, $after: String, $size: Int!) {
+  user(login: $login) {
+    pullRequests(states: OPEN, baseRefName: "main", first: $size, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { repository { nameWithOwner } ...Readiness }
     }
   }
 }
@@ -85,25 +99,37 @@ def check_of(node):
     if node.get("__typename") == "StatusContext":
         state = str(node.get("state") or "").lower()
         done = state not in {"pending", "expected"}
-        return {"id": 0, "name": node.get("context"), "done": done,
+        return {"id": 0, "name": node.get("context"), "source": ("status",), "done": done,
                 "conclusion": {"success": "success"}.get(state, "failure") if done else None}
+    suite = node.get("checkSuite") or {}
+    app = (suite.get("app") or {}).get("slug")
+    workflow = (suite.get("workflowRun") or {}).get("workflow") or {}
     return {"id": node.get("databaseId") or 0, "name": node.get("name"),
+            "source": ("run", app, workflow.get("databaseId")),
             "done": str(node.get("status") or "").lower() == "completed",
             "conclusion": str(node.get("conclusion") or "").lower() or None}
 
 
 def pull(node):
-    if not isinstance(node, dict) or not isinstance(node.get("number"), int):
-        raise ValueError("pull request needs a number")
+    if not isinstance(node, dict) or type(node.get("number")) is not int or node["number"] < 1:
+        raise ValueError("expected a positive pull request number")
     if not isinstance(node.get("isDraft"), bool):
         raise ValueError(f"#{node['number']}: draft flag must be a boolean")
     commits = listed(node.get("commits"))
-    rollup = commits[0]["commit"].get("statusCheckRollup") if commits else None
+    commit = commits[0]["commit"] if commits else {}
+    if commits and "headRefOid" in node and commit.get("oid") != node["headRefOid"]:
+        raise ValueError(f"#{node['number']}: head commit changed while reading checks")
+    rollup = commit.get("statusCheckRollup")
     contexts = (rollup or {}).get("contexts") or {}
     author = (node.get("author") or {}).get("login") or "ghost"
+    labels = listed(node.get("labels"))
     reviews = [(item.get("author") or {}).get("login") or "ghost" for item in listed(node.get("latestOpinionatedReviews"))
                if item.get("state") == "CHANGES_REQUESTED"]
     requested = {(item.get("requestedReviewer") or {}).get("login") for item in listed(node.get("reviewRequests"))}
+    requested = {login.casefold() for login in requested if isinstance(login, str)}
+    incomplete = [label for field, label in (("labels", "labels"), ("reviewRequests", "review requests"),
+                                              ("latestOpinionatedReviews", "reviews"))
+                  if (node[field].get("pageInfo") or {}).get("hasNextPage")]
     return {
         "number": node["number"],
         "title": node.get("title") or "",
@@ -111,20 +137,21 @@ def pull(node):
         "draft": node["isDraft"],
         "mergeable": node.get("mergeable"),
         "created": node.get("createdAt") or "",
-        "labels": {item["name"] for item in listed(node.get("labels"))},
-        "changes": sorted(set(reviews) - requested),
+        "labels": {item["name"] for item in labels},
+        "changes": sorted({login for login in reviews if login.casefold() not in requested}),
         "checks": [check_of(item) for item in listed(contexts)] if contexts else [],
         "checks_incomplete": bool((contexts.get("pageInfo") or {}).get("hasNextPage")),
+        "incomplete_metadata": incomplete,
     }
 
 
 def latest_checks(checks):
     latest = {}
     for check in checks:
-        name = check["name"]
-        if name not in latest or check["id"] > latest[name]["id"]:
-            latest[name] = check
-    return [check for name, check in latest.items() if name not in BOT_CHECKS]
+        key = check["name"], check["source"]
+        if key not in latest or check["id"] > latest[key]["id"]:
+            latest[key] = check
+    return [check for check in latest.values() if check["name"] not in BOT_CHECKS]
 
 
 def blockers(pr):
@@ -135,15 +162,17 @@ def blockers(pr):
         reasons.append("conflicts with main")
     reasons += [f"label: {label}" for label in sorted(BLOCKING_LABELS - {"needs rebase"} & pr["labels"])]
     checks = latest_checks(pr["checks"])
-    by_name = {check["name"]: check for check in checks}
+    conventions = [check for check in checks if check["name"] == CONVENTIONS_CHECK]
     if pr["checks_incomplete"]:
         reasons.append("too many checks to read")
-    if CONVENTIONS_CHECK not in by_name:
+    if pr["incomplete_metadata"]:
+        reasons.append("incomplete " + ", ".join(pr["incomplete_metadata"]))
+    if not conventions:
         reasons.append("conventions has not run")
-    elif by_name[CONVENTIONS_CHECK]["done"] and by_name[CONVENTIONS_CHECK]["conclusion"] not in FAILED | {"success"}:
+    elif all(check["done"] and check["conclusion"] not in FAILED | {"success"} for check in conventions):
         reasons.append("conventions did not pass")
-    failing = sorted(check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED)
-    running = sorted(check["name"] for check in checks if not check["done"])
+    failing = sorted({check["name"] for check in checks if check["done"] and check["conclusion"] in FAILED})
+    running = sorted({check["name"] for check in checks if not check["done"]})
     if failing:
         reasons.append("failing: " + ", ".join(failing))
     if running:
@@ -189,6 +218,16 @@ def pagination_cursor(connection, seen, label):
     return cursor
 
 
+def unique_pulls(prs):
+    seen = set()
+    for pr in prs:
+        number = pr["number"]
+        if number in seen:
+            raise ValueError(f"duplicate pull request #{number} in paginated results")
+        seen.add(number)
+    return prs
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after = [], None
@@ -203,7 +242,7 @@ def fetch(repo):
         connection = page["data"]["repository"]["pullRequests"]
         prs += [pull(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
-            return prs
+            return unique_pulls(prs)
         after = pagination_cursor(connection, seen, "open pull request")
 
 
@@ -216,6 +255,40 @@ def fetch_one(repo, number):
     if node and node["state"] == "OPEN" and node["baseRefName"] == "main":
         return pull(node)
     return None
+
+
+def missing_user(error):
+    try:
+        errors = json.loads(error.stdout or "{}").get("errors") or []
+    except (ValueError, AttributeError):
+        return False
+    return bool(errors) and all(isinstance(item, dict) and item.get("type") == "NOT_FOUND"
+                                and item.get("path") == ["user"] for item in errors)
+
+
+def fetch_author(repo, login):
+    if login.casefold() == "ghost":
+        return fetch(repo)
+    prs, after = [], None
+    seen = set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={AUTHOR_QUERY}", "-f", f"login={login}", "-F", f"size={PAGE_SIZE}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        try:
+            page = json.loads(pr_labels.gh(*args))
+        except subprocess.CalledProcessError as error:
+            if missing_user(error):
+                return fetch(repo)
+            raise
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["user"]["pullRequests"]
+        prs += [pull(node) for node in listed(connection)
+                if node["repository"]["nameWithOwner"].casefold() == repo.casefold()]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return unique_pulls(prs)
+        after = pagination_cursor(connection, seen, "author pull request")
 
 
 def closed_with_label(repo):
@@ -274,7 +347,7 @@ def main(argv=None):
                 parser.error(f"#{args.explain} is not an open pull request to main")
             print("\n".join(blockers(pr)) or "nothing blocks it")
             return 0
-        prs = fetch(repo)
+        prs = fetch(repo) if args.author is None else fetch_author(repo, args.author)
         closed = closed_with_label(repo) if args.author is None else []
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
