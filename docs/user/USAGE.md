@@ -2,6 +2,8 @@
 
 [**Web converter**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
 
+The web converter also relinks ELF modules directly inside `Media/Modules/` and `Media/Plugins/`, with the same initialization behavior as the native relinker's `--module-dir` option.
+
 ### Browser folder output
 
 The online converter can save Linux output as an uncompressed folder in supported browsers. It does not overwrite an existing destination folder. If conversion fails or is cancelled, it aborts the active file and attempts to remove the newly created output folder. If the browser prevents cleanup, the error names the folder that may contain incomplete files.
