@@ -168,12 +168,17 @@ void RegisterGuestHeap() {
 
 std::string printed;
 int writesBeforeFailure = -1;
+int failOnlyCall = -1;
+int shortWriteOnCall = -1;
+int writeCallIndex = 0;
 
 int APS5_VABI CaptureWrite(LibreSsl::Bio*, const char* data, int size) {
-    if (writesBeforeFailure == 0) return -1;
+    const int currentCall = writeCallIndex++;
+    if (writesBeforeFailure == 0 || currentCall == failOnlyCall) return -1;
     if (writesBeforeFailure > 0) --writesBeforeFailure;
-    printed.append(data, static_cast<std::size_t>(size));
-    return size;
+    const int accepted = currentCall == shortWriteOnCall && size > 1 ? 1 : size;
+    printed.append(data, static_cast<std::size_t>(accepted));
+    return accepted;
 }
 
 struct CaptureBio {
@@ -191,7 +196,9 @@ constexpr unsigned char OidSha256WithRsa[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d
 constexpr unsigned char OidRsaEncryption[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01};
 constexpr unsigned char OidEcPublicKey[] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01};
 constexpr unsigned char OidPrime256v1[] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
+constexpr unsigned char OidSecp224k1[] = {0x2b, 0x81, 0x04, 0x00, 0x20};
 constexpr unsigned char OidDsaWithSha1[] = {0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x03};
+constexpr unsigned char OidDsaWithSha256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x02};
 constexpr unsigned char OidRsaSsaPss[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a};
 constexpr unsigned char OidOcspNonce[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01, 0x02};
 constexpr unsigned char OidUnknownExt[] = {0x2a, 0x03, 0x04};
@@ -217,11 +224,23 @@ constexpr unsigned char OcspNonceBytes[] = {0xde, 0xad, 0xbe, 0xef};
 constexpr unsigned char UnknownExtBytes[] = {'a', 'b', 'c', 0x01};
 
 constexpr unsigned char EcPubPointBytes[] = {
-    0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
-    0xff, 0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0,
-    0xe0, 0xf0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
-    0x0e, 0x0f, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
-    0x1e, 0x1f, 0x21, 0x22, 0x23,
+    0x04,
+    0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
+    0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96,
+    0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16,
+    0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5,
+};
+
+constexpr unsigned char EcCompressedP256Bytes[] = {
+    0x03,
+    0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
+    0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96,
+};
+
+constexpr unsigned char EcSecp224k1PointBytes[] = {
+    0x03,
+    0xa1, 0x45, 0x5b, 0x33, 0x4d, 0xf0, 0x99, 0xdf, 0x30, 0xfc, 0x28, 0xa1, 0x69, 0xa4, 0x67, 0xe9,
+    0xe4, 0x70, 0x75, 0xa9, 0x0f, 0x7e, 0x65, 0x0e, 0xb6, 0xb7, 0xa4, 0x5c,
 };
 
 struct CertificateFixture {
@@ -418,17 +437,65 @@ void CheckEcCertificate() {
         "            Public Key Algorithm: id-ecPublicKey\n"
         "                Public-Key: (256 bit)\n"
         "                pub: \n"
-        "                    04:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:\n"
-        "                    ff:00:10:20:30:40:50:60:70:80:90:a0:b0:c0:d0:\n"
-        "                    e0:f0:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:\n"
-        "                    0e:0f:11:12:13:14:15:16:17:18:19:1a:1b:1c:1d:\n"
-        "                    1e:1f:21:22:23\n"
+        "                    04:6b:17:d1:f2:e1:2c:42:47:f8:bc:e6:e5:63:a4:\n"
+        "                    40:f2:77:03:7d:81:2d:eb:33:a0:f4:a1:39:45:d8:\n"
+        "                    98:c2:96:4f:e3:42:e2:fe:1a:7f:9b:8e:e7:eb:4a:\n"
+        "                    7c:0f:9e:16:2b:ce:33:57:6b:31:5e:ce:cb:b6:40:\n"
+        "                    68:37:bf:51:f5\n"
         "                ASN1 OID: prime256v1\n"
         "                NIST CURVE: P-256\n"
         "    Signature Algorithm: sha256WithRSAEncryption\n"
         "         30:45:02:21:00:83:08:a4:a1:7a:2e:64:c3:69:09:5e:fa:fd:\n"
         "         74:6f\n";
     Require(printed == expected, "EC P-256 certificate literal mismatch");
+
+    const std::uint64_t pubOnly =
+        X509FlagNoHeader | X509FlagNoVersion | X509FlagNoSerial | X509FlagNoSigName |
+        X509FlagNoIssuer | X509FlagNoValidity | X509FlagNoSubject |
+        X509FlagNoExtensions | X509FlagNoSigDump | X509FlagNoAux;
+
+    std::memcpy(fixture.pubKeyData, EcCompressedP256Bytes, sizeof(EcCompressedP256Bytes));
+    fixture.pubKeyBits.length = sizeof(EcCompressedP256Bytes);
+    printed.clear();
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, pubOnly) == 1);
+    Require(printed ==
+        "        Subject Public Key Info:\n"
+        "            Public Key Algorithm: id-ecPublicKey\n"
+        "                Public-Key: (256 bit)\n"
+        "                pub: \n"
+        "                    03:6b:17:d1:f2:e1:2c:42:47:f8:bc:e6:e5:63:a4:\n"
+        "                    40:f2:77:03:7d:81:2d:eb:33:a0:f4:a1:39:45:d8:\n"
+        "                    98:c2:96\n"
+        "                ASN1 OID: prime256v1\n"
+        "                NIST CURVE: P-256\n");
+
+    fixture.pubKeyData[0] = 0x04;
+    fixture.pubKeyBits.length = 1;
+    printed.clear();
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, pubOnly) == 1);
+    Require(printed ==
+        "        Subject Public Key Info:\n"
+        "            Public Key Algorithm: id-ecPublicKey\n"
+        "            Unable to load Public Key\n");
+
+    std::memcpy(fixture.pubKeyData, EcPubPointBytes, sizeof(EcPubPointBytes));
+    fixture.pubKeyData[sizeof(EcPubPointBytes) - 1] ^= 1;
+    fixture.pubKeyBits.length = sizeof(EcPubPointBytes);
+    printed.clear();
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, pubOnly) == 1);
+    Require(printed ==
+        "        Subject Public Key Info:\n"
+        "            Public Key Algorithm: id-ecPublicKey\n"
+        "            Unable to load Public Key\n");
+
+    std::memcpy(fixture.curveOid, OidSecp224k1, sizeof(OidSecp224k1));
+    fixture.curveObj.length = sizeof(OidSecp224k1);
+    std::memcpy(fixture.pubKeyData, EcSecp224k1PointBytes, sizeof(EcSecp224k1PointBytes));
+    fixture.pubKeyBits.length = sizeof(EcSecp224k1PointBytes);
+    printed.clear();
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, pubOnly) == 1);
+    Require(printed.find("Public-Key: (225 bit)\n") != std::string::npos);
+    Require(printed.find("ASN1 OID: secp224k1\n") != std::string::npos);
 }
 
 void CheckDsaSignature() {
@@ -465,22 +532,70 @@ void CheckDsaSignature() {
         "    Signature Algorithm: dsaWithSHA1\n"
         "         01:02:03\n";
     Require(printed == expectedFallback, "malformed DSA signature fallback mismatch");
+
+    std::memcpy(fixture.sigAlgOid, OidDsaWithSha256, sizeof(OidDsaWithSha256));
+    fixture.sigAlgObj.length = sizeof(OidDsaWithSha256);
+    std::memcpy(fixture.signatureBytes, dsaSigDer, sizeof(dsaSigDer));
+    fixture.signature.length = sizeof(dsaSigDer);
+    printed.clear();
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, sigOnly) == 1);
+    const std::string expectedDsa256 =
+        "    Signature Algorithm: dsa_with_SHA256\n"
+        "         r:    4660 (0x1234)\n"
+        "         s:    (Negative)\n"
+        "             7f:fe:fd:fc:fb:fa:f9:f8:f7:f6:f5:f5\n";
+    Require(printed == expectedDsa256, "DSA-SHA256 DER signature r/s literal mismatch");
 }
 
 void CheckFlagsAndNameFormats() {
     CertificateFixture fixture;
     CaptureBio bio;
 
-    const std::array<std::uint64_t, 10> flags{
-        X509FlagNoHeader, X509FlagNoVersion, X509FlagNoSerial, X509FlagNoSigName,
-        X509FlagNoIssuer, X509FlagNoValidity, X509FlagNoSubject, X509FlagNoPubkey,
-        X509FlagNoExtensions, X509FlagNoSigDump,
+    struct FlagCase {
+        std::uint64_t flag;
+        const char* omitted;
     };
+    const std::array<FlagCase, 10> flagCases{{
+        {X509FlagNoHeader, "Certificate:\n    Data:\n"},
+        {X509FlagNoVersion, "        Version: 3 (0x2)\n"},
+        {X509FlagNoSerial, "        Serial Number: 81985529216486895 (0x123456789abcdef)\n"},
+        {X509FlagNoSigName, "    Signature Algorithm: sha256WithRSAEncryption\n"},
+        {X509FlagNoIssuer, "        Issuer: C=JP, CN=AnyPS5 CA\n"},
+        {X509FlagNoValidity,
+            "        Validity\n"
+            "            Not Before: Nov 17 20:01:04 2026 GMT\n"
+            "            Not After : Nov 14 20:01:04 2036 GMT\n"},
+        {X509FlagNoSubject, "        Subject: C=JP, CN=AnyPS5 Server\n"},
+        {X509FlagNoPubkey,
+            "        Subject Public Key Info:\n"
+            "            Public Key Algorithm: rsaEncryption\n"
+            "                Public-Key: (128 bit)\n"
+            "                Modulus:\n"
+            "                    00:a1:b2:c3:d4:e5:f6:07:18:29:3a:4b:5c:6d:7e:\n"
+            "                    8f:90\n"
+            "                Exponent: 65537 (0x10001)\n"},
+        {X509FlagNoExtensions,
+            "        X509v3 extensions:\n"
+            "            OCSP Nonce: critical\n"
+            "                DEADBEEF\n"
+            "            1.2.3.4: \n"
+            "                abc.\n"},
+        {X509FlagNoSigDump,
+            "    Signature Algorithm: sha256WithRSAEncryption\n"
+            "         30:45:02:21:00:83:08:a4:a1:7a:2e:64:c3:69:09:5e:fa:fd:\n"
+            "         74:6f\n"},
+    }};
     const std::string full = ExpectedRsaFull();
-    for (const std::uint64_t flag : flags) {
+    for (const FlagCase& entry : flagCases) {
+        std::string expected = full;
+        const std::size_t pos = entry.flag == X509FlagNoSigDump
+            ? expected.rfind(entry.omitted)
+            : expected.find(entry.omitted);
+        Require(pos != std::string::npos);
+        expected.erase(pos, std::strlen(entry.omitted));
         printed.clear();
-        Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, flag) == 1);
-        Require(printed.size() < full.size(), "individual NO_* flag should omit output");
+        Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, entry.flag) == 1);
+        Require(printed == expected, "individual NO_* flag should omit only its section");
     }
 
     const std::uint64_t allOff =
@@ -591,6 +706,43 @@ void CheckErrorsAndGuardPages() {
     Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, X509FlagCompat) == 0);
     Require(!printed.empty() && printed != ExpectedRsaFull());
     writesBeforeFailure = -1;
+
+    printed.clear();
+    writeCallIndex = 0;
+    shortWriteOnCall = 0;
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, X509FlagCompat) == 0);
+    Require(printed == "C");
+    shortWriteOnCall = -1;
+
+    const std::uint64_t extOnly =
+        X509FlagNoHeader | X509FlagNoVersion | X509FlagNoSerial | X509FlagNoSigName |
+        X509FlagNoIssuer | X509FlagNoValidity | X509FlagNoSubject | X509FlagNoPubkey |
+        X509FlagNoSigDump | X509FlagNoAux;
+    for (int call = 0; call < 20; ++call) {
+        printed.clear();
+        writeCallIndex = 0;
+        failOnlyCall = call;
+        const int res = X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, extOnly);
+        failOnlyCall = -1;
+        if (call < writeCallIndex) {
+            Require(res == 0);
+            Require(printed.find("....") == std::string::npos);
+        }
+        if (call >= writeCallIndex) break;
+    }
+
+    {
+        CertificateFixture bad;
+        std::memcpy(bad.pubKeyAlgOid, OidEcPublicKey, sizeof(OidEcPublicKey));
+        bad.pubAlgObj.length = sizeof(OidEcPublicKey);
+        bad.pubAlg.parameter = &bad.pubParam;
+        std::memcpy(bad.pubKeyData, EcPubPointBytes, sizeof(EcPubPointBytes));
+        bad.pubKeyBits.length = sizeof(EcPubPointBytes);
+        bad.curveObj.nid = 0;
+        bad.curveObj.length = 8;
+        bad.curveObj.data = nullptr;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "null OID data");
+    }
 
     RequireThrows([] { X509_print_ex_nid_postfix(nullptr, nullptr, X509FlagCompat, X509FlagCompat); }, "null cert");
 

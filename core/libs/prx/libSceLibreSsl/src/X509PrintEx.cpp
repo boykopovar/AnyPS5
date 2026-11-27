@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -41,7 +42,12 @@ constexpr std::int32_t Asn1TagNegativeInteger = 0x102;
 constexpr std::int32_t Asn1TagObject = 6;
 
 constexpr int NidRsaEncryption = 6;
+constexpr int NidDsaWithSha = 66;
+constexpr int NidDsaWithSha1Old = 70;
+constexpr int NidDsaWithSha1 = 113;
 constexpr int NidEcPublicKey = 408;
+constexpr int NidDsaWithSha224 = 802;
+constexpr int NidDsaWithSha256 = 803;
 constexpr int NidRsaSsaPss = 912;
 
 struct Asn1Type {
@@ -125,7 +131,7 @@ constexpr EcNamedCurve NamedCurves[] = {
     {409, 192, "prime192v1", "P-192"},
     {415, 256, "prime256v1", "P-256"},
     {711, 192, "secp192k1", nullptr},
-    {712, 224, "secp224k1", nullptr},
+    {712, 225, "secp224k1", nullptr},
     {713, 224, "secp224r1", "P-224"},
     {714, 256, "secp256k1", nullptr},
     {715, 384, "secp384r1", "P-384"},
@@ -143,11 +149,11 @@ const EcNamedCurve* FindNamedCurve(int nid) {
 
 bool IsDsaSignatureNid(int nid) {
     switch (nid) {
-    case 66:
-    case 70:
-    case 113:
-    case 671:
-    case 672:
+    case NidDsaWithSha:
+    case NidDsaWithSha1Old:
+    case NidDsaWithSha1:
+    case NidDsaWithSha224:
+    case NidDsaWithSha256:
         return true;
     default:
         return false;
@@ -217,7 +223,9 @@ struct HostAsn1Object {
             longName = CopyGuestCString(object.longName, function);
             object.longName = longName.c_str();
         }
-        if (object.length > 0 && object.data) {
+        if (object.length < 0) throw std::invalid_argument(std::string(function) + ": negative ASN1_OBJECT length");
+        if (object.length > 0) {
+            if (!object.data) throw std::invalid_argument(std::string(function) + ": null ASN1_OBJECT data");
             data = CopyBytes(object.data, static_cast<std::size_t>(object.length), function);
             object.data = data.data();
         }
@@ -261,7 +269,9 @@ struct HostX509Name {
                 }
                 if (entries[i].value) {
                     values[i] = CopyIn(static_cast<const Asn1String*>(entries[i].value), function);
-                    if (values[i].length > 0 && values[i].data) {
+                    if (values[i].length < 0) throw std::invalid_argument(std::string(function) + ": negative name value length");
+                    if (values[i].length > 0) {
+                        if (!values[i].data) throw std::invalid_argument(std::string(function) + ": null name value data");
                         valueBytes[i] = CopyBytes(values[i].data, static_cast<std::size_t>(values[i].length), function);
                         values[i].data = valueBytes[i].data();
                     }
@@ -278,8 +288,14 @@ struct HostX509Name {
 
 bool WriteBytes(LibreSsl::Bio* bio, std::string_view text) {
     if (!bio) return false;
-    if (text.empty()) return true;
-    return LibreSslBioWrite_nid_no_patch(bio, text.data(), static_cast<int>(text.size())) > 0;
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const int chunk = static_cast<int>(std::min<std::size_t>(
+            text.size() - offset, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+        if (LibreSslBioWrite_nid_no_patch(bio, text.data() + offset, chunk) != chunk) return false;
+        offset += static_cast<std::size_t>(chunk);
+    }
+    return true;
 }
 
 bool WriteIndent(LibreSsl::Bio* bio, int indent) {
@@ -546,6 +562,21 @@ int BitLengthOfBigEndian(const std::vector<unsigned char>& bytes) {
     return static_cast<int>((bytes.size() - firstNonZero - 1) * 8 + static_cast<std::size_t>(std::bit_width(bytes[firstNonZero])));
 }
 
+bool ValidEcPublicKeyPoint(int curveNid, const std::vector<unsigned char>& rawKey) {
+    if (rawKey.empty() || (rawKey.size() == 1 && rawKey[0] == 0)) return false;
+    const auto freeGroup = [](EcGroup* group) { EC_GROUP_free_nid_postfix(group); };
+    const auto freePoint = [](EcPoint* point) { EC_POINT_free_nid_postfix(point); };
+    std::unique_ptr<EcGroup, decltype(freeGroup)> group(EC_GROUP_new_by_curve_name_nid_postfix(curveNid), freeGroup);
+    if (!group) return false;
+    std::unique_ptr<EcPoint, decltype(freePoint)> point(EC_POINT_new_nid_postfix(group.get()), freePoint);
+    if (!point) return false;
+    try {
+        return EC_POINT_oct2point_nid_postfix(group.get(), point.get(), rawKey.data(), rawKey.size(), nullptr) == 1;
+    } catch (const std::runtime_error&) {
+        return false;
+    }
+}
+
 bool PrintPublicKey(LibreSsl::Bio* bio, const void* guestKey) {
     if (!WriteBytes(bio, "        Subject Public Key Info:\n")) return false;
     if (!WriteBytes(bio, "            Public Key Algorithm: ")) return false;
@@ -617,6 +648,8 @@ bool PrintPublicKey(LibreSsl::Bio* bio, const void* guestKey) {
         if (curveNid == 0) return WriteBytes(bio, "            Unable to load Public Key\n");
         const EcNamedCurve* curve = FindNamedCurve(curveNid);
         if (!curve) NotImplemented_nid_no_patch("X509_print_ex: unsupported EC named curve");
+        if (!ValidEcPublicKeyPoint(curveNid, rawKey))
+            return WriteBytes(bio, "            Unable to load Public Key\n");
         if (!WriteIndent(bio, 16)) return false;
         if (!WriteBytes(bio, "Public-Key: (" + Decimal(static_cast<std::uint64_t>(curve->orderBits)) + " bit)\n")) return false;
         if (!WriteAsn1Bn(bio, "pub: ", rawKey, false, 16)) return false;
@@ -629,6 +662,27 @@ bool PrintPublicKey(LibreSsl::Bio* bio, const void* guestKey) {
         return true;
     }
     NotImplemented_nid_no_patch("X509_print_ex: unsupported public key algorithm");
+}
+
+struct ExtensionBioProxy {
+    LibreSsl::Bio* target;
+    bool writeFailed;
+};
+
+int APS5_VABI ProxyBioWrite(LibreSsl::Bio* proxy, const char* data, int size) {
+    if (!proxy || !proxy->data) return -1;
+    auto* state = static_cast<ExtensionBioProxy*>(proxy->data);
+    if (state->writeFailed || !state->target || size < 0) {
+        state->writeFailed = true;
+        return -1;
+    }
+    if (size == 0) return 0;
+    const int written = LibreSslBioWrite_nid_no_patch(state->target, data, size);
+    if (written != size) {
+        state->writeFailed = true;
+        return -1;
+    }
+    return written;
 }
 
 bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint64_t certFlags) {
@@ -644,6 +698,13 @@ bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint6
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     if (!WriteBytes(bio, "        X509v3 extensions:\n")) return false;
+    ExtensionBioProxy proxyState{bio, false};
+    LibreSsl::BioMethod proxyMethod{};
+    proxyMethod.write = &ProxyBioWrite;
+    LibreSsl::Bio proxyBio{};
+    proxyBio.method = &proxyMethod;
+    proxyBio.initialized = 1;
+    proxyBio.data = &proxyState;
     for (std::size_t i = 0; i < count; ++i) {
         if (!pointers[i]) throw std::invalid_argument("X509_print_ex: null extension");
         const X509Extension ext = CopyIn(reinterpret_cast<const X509Extension*>(pointers[i]), __func__);
@@ -654,7 +715,9 @@ bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint6
         const Asn1String* valPtr = nullptr;
         if (ext.value) {
             hostVal = CopyIn(ext.value, __func__);
-            if (hostVal.length > 0 && hostVal.data) {
+            if (hostVal.length < 0) throw std::invalid_argument("X509_print_ex: negative extension value length");
+            if (hostVal.length > 0) {
+                if (!hostVal.data) throw std::invalid_argument("X509_print_ex: null extension value data");
                 valBytes = CopyBytes(hostVal.data, static_cast<std::size_t>(hostVal.length), __func__);
                 hostVal.data = valBytes.data();
             }
@@ -664,9 +727,11 @@ bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint6
         if (!WriteIndent(bio, 12)) return false;
         if (!bio || i2a_ASN1_OBJECT_nid_postfix(bio, objPtr) <= 0) return false;
         if (!WriteBytes(bio, ext.critical > 0 ? ": critical\n" : ": \n")) return false;
-        if (!X509V3_EXT_print_nid_postfix(bio, &hostExt, certFlags, 16)) {
+        const int extResult = X509V3_EXT_print_nid_postfix(&proxyBio, &hostExt, certFlags, 16);
+        if (proxyState.writeFailed) return false;
+        if (extResult == 0 && (certFlags & (std::uint64_t{0xf} << 16)) == 0) {
             if (!WriteIndent(bio, 16)) return false;
-            ASN1_STRING_print_nid_postfix(bio, valPtr);
+            if (!ASN1_STRING_print_nid_postfix(&proxyBio, valPtr) || proxyState.writeFailed) return false;
         }
         if (!WriteBytes(bio, "\n")) return false;
     }
@@ -685,14 +750,14 @@ bool PrintValidity(LibreSsl::Bio* bio, const void* guestValidity) {
 }
 
 bool PrintNameSection(LibreSsl::Bio* bio, const void* guestName, std::string_view label, char mlch,
-    int nmindent, std::uint64_t nameFlags) {
+    int nameIndent, std::uint64_t nameFlags) {
     std::string prefix(label);
     prefix.push_back(mlch);
     if (!WriteBytes(bio, prefix)) return false;
     HostX509Name hostName;
     const LibreSslX509Name* namePtr = hostName.CopyFrom(static_cast<const LibreSslX509Name*>(guestName), __func__);
     const int minSuccess = nameFlags == X509FlagCompat ? 1 : 0;
-    if (!bio || X509_NAME_print_ex_nid_postfix(bio, namePtr, nmindent, nameFlags) < minSuccess) return false;
+    if (!bio || X509_NAME_print_ex_nid_postfix(bio, namePtr, nameIndent, nameFlags) < minSuccess) return false;
     return WriteBytes(bio, "\n");
 }
 
@@ -708,12 +773,12 @@ int APS5_VABI X509_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX509* 
     const LibreSslX509CertInfo info = CopyIn(static_cast<const LibreSslX509CertInfo*>(cert.certificateInfo), __func__);
 
     char mlch = ' ';
-    int nmindent = 0;
+    int nameIndent = 0;
     if ((nameFlags & XnFlagSepMask) == XnFlagSepMultiline) {
         mlch = '\n';
-        nmindent = 12;
+        nameIndent = 12;
     }
-    if (nameFlags == X509FlagCompat) nmindent = 16;
+    if (nameFlags == X509FlagCompat) nameIndent = 16;
 
     if (!(certFlags & X509FlagNoHeader)) {
         if (!WriteBytes(bio, "Certificate:\n")) return 0;
@@ -729,13 +794,13 @@ int APS5_VABI X509_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX509* 
         if (!PrintSignature(bio, cert.signatureAlgorithm, nullptr)) return 0;
     }
     if (!(certFlags & X509FlagNoIssuer)) {
-        if (!PrintNameSection(bio, info.issuer, "        Issuer:", mlch, nmindent, nameFlags)) return 0;
+        if (!PrintNameSection(bio, info.issuer, "        Issuer:", mlch, nameIndent, nameFlags)) return 0;
     }
     if (!(certFlags & X509FlagNoValidity)) {
         if (!PrintValidity(bio, info.validity)) return 0;
     }
     if (!(certFlags & X509FlagNoSubject)) {
-        if (!PrintNameSection(bio, info.subject, "        Subject:", mlch, nmindent, nameFlags)) return 0;
+        if (!PrintNameSection(bio, info.subject, "        Subject:", mlch, nameIndent, nameFlags)) return 0;
     }
     if (!(certFlags & X509FlagNoPubkey)) {
         if (!PrintPublicKey(bio, info.key)) return 0;
