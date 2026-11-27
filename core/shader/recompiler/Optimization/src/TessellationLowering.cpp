@@ -863,6 +863,7 @@ public:
           evaluator(stage == IrShaderStage::TessellationControl ? tessellation.outputControlPoints : capture ? 1u : 0u, stage == IrShaderStage::Local ? LocalVertexIndexCount : static_cast<std::int64_t>(tessellation.patchesPerGroup), capture), localStride(program.Metadata().tessellationLocalStride) {}
 
     void Run() {
+        if (merged && tessellation.onChip) Fail("a merged hull program cannot keep its outputs on chip (SPI_SHADER_PGM_RSRC2_HS.OC_LDS_EN=0)", 0u);
         if (merged) {
             if (tessellation.inputControlPoints > tessellation.outputControlPoints) Fail("a merged hull program with more input than output control points runs its local part on lanes the hull stage does not have", 0u);
             requireUniformBarriers();
