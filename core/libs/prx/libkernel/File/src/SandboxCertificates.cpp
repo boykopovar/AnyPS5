@@ -87,35 +87,44 @@ std::string HostCertificates() {
 unsigned long ProcessId() { return static_cast<unsigned long>(getpid()); }
 #endif
 
-void RemoveTemporary(const std::filesystem::path& path) {
+bool RemoveTemporary(const std::filesystem::path& path) {
     std::error_code error;
     const auto status = std::filesystem::symlink_status(path, error);
-    if (error || status.type() == std::filesystem::file_type::not_found) return;
+    if (status.type() == std::filesystem::file_type::not_found) return true;
+    if (error) return false;
     if (std::filesystem::is_directory(status)) {
 #ifdef _WIN32
         const auto writableDirectory = std::filesystem::perms::owner_write;
 #else
-        const auto writableDirectory = std::filesystem::perms::owner_write | std::filesystem::perms::owner_exec;
+        const auto writableDirectory = std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::owner_exec;
 #endif
         std::filesystem::permissions(path, writableDirectory, std::filesystem::perm_options::add, error);
         std::error_code iterateError;
-        std::filesystem::recursive_directory_iterator it(path, std::filesystem::directory_options::skip_permission_denied, iterateError);
-        if (!iterateError) {
-            for (const auto& entry : it) {
+        {
+            std::filesystem::recursive_directory_iterator it(path, std::filesystem::directory_options::skip_permission_denied, iterateError);
+            for (const auto end = std::filesystem::recursive_directory_iterator{}; !iterateError && it != end; it.increment(iterateError)) {
                 std::error_code entryError;
-                const auto entryStatus = entry.symlink_status(entryError);
+                const auto entryStatus = it->symlink_status(entryError);
                 if (entryError || std::filesystem::is_symlink(entryStatus)) continue;
                 const auto added = std::filesystem::is_directory(entryStatus) ? writableDirectory : std::filesystem::perms::owner_write;
-                std::filesystem::permissions(entry.path(), added, std::filesystem::perm_options::add, entryError);
+                std::filesystem::permissions(it->path(), added, std::filesystem::perm_options::add, entryError);
             }
         }
+        if (iterateError) return false;
         std::filesystem::remove_all(path, error);
-        return;
+        if (error) return false;
+        std::error_code postError;
+        const auto postStatus = std::filesystem::symlink_status(path, postError);
+        return postStatus.type() == std::filesystem::file_type::not_found;
     }
     if (!std::filesystem::is_symlink(status)) {
         std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add, error);
     }
     std::filesystem::remove(path, error);
+    if (error) return false;
+    std::error_code postError;
+    const auto postStatus = std::filesystem::symlink_status(path, postError);
+    return postStatus.type() == std::filesystem::file_type::not_found;
 }
 
 std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
@@ -134,7 +143,9 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     auto temporary = target;
     temporary += "." + std::to_string(ProcessId()) + ".tmp";
     const auto tempStatus = std::filesystem::symlink_status(temporary, error);
-    if (!error && tempStatus.type() != std::filesystem::file_type::not_found) RemoveTemporary(temporary);
+    if (!error && tempStatus.type() != std::filesystem::file_type::not_found) {
+        if (!RemoveTemporary(temporary)) return {};
+    }
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         file.write(bundle.data(), static_cast<std::streamsize>(bundle.size()));

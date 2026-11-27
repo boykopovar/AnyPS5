@@ -180,6 +180,22 @@ int main() {
     Require(std::filesystem::is_regular_file(cached));
     Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
     Require(std::filesystem::symlink_status(conflictTemp).type() == std::filesystem::file_type::not_found);
+
+    std::filesystem::permissions(cached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    Require(std::filesystem::remove(cached));
+    Require(std::filesystem::create_directory(conflictTemp));
+    const auto lockedChild = conflictTemp / "locked.pem";
+    {
+        std::ofstream file(lockedChild, std::ios::binary | std::ios::trunc);
+        file << "locked stale entry\n";
+        Require(static_cast<bool>(file));
+    }
+    std::filesystem::permissions(lockedChild, std::filesystem::perms::none);
+    std::filesystem::permissions(conflictTemp, std::filesystem::perms::none);
+    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
+    Require(std::filesystem::is_regular_file(cached));
+    Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(std::filesystem::symlink_status(conflictTemp).type() == std::filesystem::file_type::not_found);
 #endif
     return 0;
 }
