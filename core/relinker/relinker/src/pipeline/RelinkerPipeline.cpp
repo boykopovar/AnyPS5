@@ -582,6 +582,9 @@ RelinkResult RelinkerPipeline::Relink() {
                     if (index == 0 && !textSection.empty() && routed.StubOffset + patchBytes.size() <= textSection.size())
                         std::copy(patchBytes.begin(), patchBytes.end(), textSection.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
                     syscallPatches.push_back({segmentFileOffset + routed.StubOffset, std::move(patchBytes)});
+                    std::ostringstream message;
+                    message << "Routing SDK syscall stub 191 at code offset 0x" << std::hex << stubVAddr << '\n';
+                    progress.Message(message.str());
                 } else if (syscallScanner->TrapsSdkStubs()) {
                     const std::size_t opcodeOffset = routed.StubOffset + 10u;
                     if (opcodeOffset > segment.size() || segment.size() - opcodeOffset < 2u)
@@ -593,8 +596,11 @@ RelinkResult RelinkerPipeline::Relink() {
                         textSection[opcodeOffset + 1] = 0x0B;
                     }
                     syscallPatches.push_back({segmentFileOffset + opcodeOffset, {0x0F, 0x0B}});
+                    std::ostringstream message;
+                    message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << segmentVAddr + opcodeOffset << '\n';
+                    progress.Message(message.str());
                 } else {
-                    throw RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import", segmentVAddr + routed.StubOffset);
+                    throw RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import; --trap-sdk-syscall-stubs replaces the stub's syscall with UD2", segmentVAddr + routed.StubOffset);
                 }
             }
         }

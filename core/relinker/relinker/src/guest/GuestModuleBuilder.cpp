@@ -602,6 +602,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                             GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Traps = std::span<const GamePatch::WriterRange>(&route, 1)});
                         }
                         std::copy(patchBytes.begin(), patchBytes.end(), image.Bytes.begin() + static_cast<std::ptrdiff_t>(header.Offset + routed.StubOffset));
+                        std::ostringstream message;
+                        message << "Routing SDK syscall stub 191 at code offset 0x" << std::hex << stubVAddr << '\n';
+                        progress.Message(message.str());
                     } else if (syscallScanner.TrapsSdkStubs()) {
                         const std::size_t opcodeOffset = routed.StubOffset + 10u;
                         if (opcodeOffset > code.size() || code.size() - opcodeOffset < 2u)
@@ -612,8 +615,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                         }
                         image.Bytes[header.Offset + opcodeOffset] = 0x0F;
                         image.Bytes[header.Offset + opcodeOffset + 1] = 0x0B;
+                        std::ostringstream message;
+                        message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << header.MappedAddress + opcodeOffset << '\n';
+                        progress.Message(message.str());
                     } else {
-                        throw Domain::RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import in " + Io::Utf8Path(image.SourcePath), header.MappedAddress + routed.StubOffset);
+                        throw Domain::RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import in " + Io::Utf8Path(image.SourcePath) + "; --trap-sdk-syscall-stubs replaces the stub's syscall with UD2", header.MappedAddress + routed.StubOffset);
                     }
                 }
             }

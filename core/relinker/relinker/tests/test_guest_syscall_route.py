@@ -159,6 +159,7 @@ def main():
                     capture_output=True, text=True, timeout=20,
                 )
                 assert result.returncode == 0, (case_name, result.stdout, result.stderr)
+                assert "Routing SDK syscall stub 191 at code offset 0x1000" in result.stdout + result.stderr, (case_name, result.stdout)
 
                 relinked = output.read_bytes()
                 if platform == "windows":
@@ -291,6 +292,8 @@ def main():
         )
         assert result.returncode != 0, "Expected failure when pathconf import is missing"
         assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+        assert "--trap-sdk-syscall-stubs replaces the stub's syscall with UD2" in result.stderr, result.stderr
+        assert "Routing SDK syscall stub" not in result.stdout + result.stderr, result.stdout
 
         trap_out = work / "trapped.out"
         result = subprocess.run(
@@ -298,6 +301,8 @@ def main():
             capture_output=True, text=True, timeout=20,
         )
         assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "Trapping SDK syscall instruction at code offset 0x100a" in result.stdout + result.stderr, result.stdout
+        assert "Routing SDK syscall stub" not in result.stdout + result.stderr, result.stdout
         trapped_loads = elf_loads(trap_out.read_bytes())
         trapped_code_load = next(header for header in trapped_loads if (header[1] & 1))
         trapped_bytes = elf_bytes_at(trap_out.read_bytes(), trapped_loads, trapped_code_load[3], 13)
@@ -334,6 +339,7 @@ def main():
                     capture_output=True, text=True, timeout=20,
                 )
                 assert result.returncode == 0, (result.stdout, result.stderr)
+                assert "Routing SDK syscall stub 191 at code offset 0x1040" in result.stdout + result.stderr, result.stdout
 
                 converted = output.parent / "app0" / "sce_module" / "sample.prx.guest.prx"
                 image = converted.read_bytes()
@@ -469,6 +475,8 @@ def main():
         )
         assert result.returncode != 0, "Expected failure when guest module lacks pathconf import"
         assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+        assert "--trap-sdk-syscall-stubs replaces the stub's syscall with UD2" in result.stderr, result.stderr
+        assert "Routing SDK syscall stub" not in result.stdout + result.stderr, result.stdout
 
         output_trapped = guest_no_import_dir / "output_trapped.elf"
         result = subprocess.run(
@@ -476,6 +484,8 @@ def main():
             capture_output=True, text=True, timeout=20,
         )
         assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "Trapping SDK syscall instruction at code offset 0x104a" in result.stdout + result.stderr, result.stdout
+        assert "Routing SDK syscall stub" not in result.stdout + result.stderr, result.stdout
         converted = output_trapped.parent / "app0" / "sce_module" / "sample.prx.guest.prx"
         image = converted.read_bytes()
         loads = elf_loads(image)
