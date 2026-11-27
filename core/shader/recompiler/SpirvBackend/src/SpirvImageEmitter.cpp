@@ -3078,7 +3078,7 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
             return node64 ? inRange : both(op(spv::OpINotEqual, boolean, baseUnits, BdaConstant(state, 0u)), inRange);
         };
         const auto valid = within(spv::OpULessThanEqual);
-        const auto isTriangle = both(valid, op(spv::OpULessThanEqual, boolean, type, uint(1u)));
+        const auto isTriangle = both(valid, op(spv::OpULessThanEqual, boolean, type, uint(3u)));
         const auto isBox16 = both(valid, op(spv::OpIEqual, boolean, type, uint(4u)));
         const auto isBox32 = both(within(spv::OpULessThan), op(spv::OpIEqual, boolean, type, uint(5u)));
 
@@ -3148,14 +3148,18 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
 
         const auto triangle = [&] {
             const auto d = nodeDwords(16u);
-            const auto second = op(spv::OpIEqual, boolean, type, uint(1u));
+            const auto isType = [&](std::uint32_t value) { return op(spv::OpIEqual, boolean, type, uint(value)); };
+            const auto vertex = [&](std::array<std::uint32_t, 4> byType, std::uint32_t axis) {
+                const auto at = [&](std::uint32_t index) { return asFloat(d[index * 3u + axis]); };
+                return selectF(isType(3u), at(byType[3]), selectF(isType(2u), at(byType[2]), selectF(isType(1u), at(byType[1]), at(byType[0]))));
+            };
             std::array<std::uint32_t, 3> v1{};
             std::array<std::uint32_t, 3> v2{};
             std::array<std::uint32_t, 3> v3{};
             for (std::uint32_t axis = 0; axis < 3u; ++axis) {
-                v1[axis] = selectF(second, asFloat(d[3u + axis]), asFloat(d[axis]));
-                v2[axis] = selectF(second, asFloat(d[9u + axis]), asFloat(d[3u + axis]));
-                v3[axis] = asFloat(d[6u + axis]);
+                v1[axis] = vertex({0u, 1u, 2u, 2u}, axis);
+                v2[axis] = vertex({1u, 3u, 3u, 4u}, axis);
+                v3[axis] = vertex({2u, 2u, 4u, 0u}, axis);
             }
             const auto e1 = sub(v2, v1);
             const auto e2 = sub(v3, v1);
@@ -3172,17 +3176,20 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
             const auto zero = real(0u);
             const auto one = real(0x3f800000u);
             const auto missed = either(either(either(op(spv::OpFOrdLessThan, boolean, u, zero), op(spv::OpFOrdGreaterThan, boolean, u, one)), either(op(spv::OpFOrdLessThan, boolean, v, zero), op(spv::OpFOrdGreaterThan, boolean, op(spv::OpFAdd, f32, u, v), one))), op(spv::OpFOrdLessThan, boolean, t, zero));
+            const auto signedInfinity = asFloat(op(spv::OpBitwiseOr, u32, op(spv::OpBitwiseAnd, u32, asUint(tDenom), uint(0x80000000u)), uint(0x7f800000u)));
+            const auto baryNum = selectF(missed, signedInfinity, tNum);
             tNum = selectF(missed, real(0x7f800000u), tNum);
+            const auto realDenom = tDenom;
             tDenom = selectF(missed, one, tDenom);
             const auto triangleId = d[15];
             const auto shift = op(spv::OpShiftLeftLogical, u32, type, uint(3u));
             const auto barycentric = [&](std::uint32_t sourceShift) {
                 const auto source = op(spv::OpBitwiseAnd, u32, op(spv::OpShiftRightLogical, u32, triangleId, op(spv::OpIAdd, u32, shift, uint(sourceShift))), uint(3u));
-                const auto rest = op(spv::OpFSub, f32, op(spv::OpFSub, f32, tDenom, iNum), jNum);
+                const auto rest = op(spv::OpFSub, f32, op(spv::OpFSub, f32, realDenom, iNum), jNum);
                 return selectF(op(spv::OpIEqual, boolean, source, uint(1u)), iNum, selectF(op(spv::OpIEqual, boolean, source, uint(2u)), jNum, rest));
             };
             const auto hit = Unary(state, spv::OpLogicalNot, boolean, missed);
-            return compose({asUint(tNum), asUint(tDenom), selectU(barycentrics, asUint(barycentric(0u)), triangleId), selectU(barycentrics, asUint(barycentric(2u)), selectU(hit, uint(1u), uint(0u)))});
+            return compose({selectU(barycentrics, asUint(baryNum), asUint(tNum)), selectU(barycentrics, asUint(realDenom), asUint(tDenom)), selectU(barycentrics, asUint(barycentric(0u)), op(spv::OpIAdd, u32, triangleId, type)), selectU(barycentrics, asUint(barycentric(2u)), selectU(hit, uint(1u), uint(0u)))});
         };
 
         const auto boxes = [&](bool fp16) {
