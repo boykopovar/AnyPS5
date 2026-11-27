@@ -919,6 +919,39 @@ void CheckRewatch() {
     GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
 }
 
+enum class LostDriverStore { Piece, PossiblePiece, Whole, PossibleWhole };
+
+void CheckRewatchKeepsDriverStores(LostDriverStore kind) {
+    constexpr std::size_t Page = 4096;
+    constexpr std::size_t Bytes = 2 * Block;
+    void* memory = GuestArena::GuestArenaAllocate_nid_postfix(Bytes, Block);
+    GuestArena::GuestArenaCommit_nid_postfix(memory, Bytes, PAGE_READWRITE, 16384);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    Require(Watched(base, Bytes), "the rewatched driver store fixture is not watched");
+    std::memset(memory, 0x11, Bytes);
+    BumpCollectEpoch();
+    const auto taken = CollectWritesUncached(base, Bytes);
+    Require(taken != 0, "the rewatched driver store fixture was not collected");
+    const auto stored = base + 2 * Page;
+    const auto rewatched = base + 9 * Page;
+    switch (kind) {
+        case LostDriverStore::Piece: Require(MarkWritten(stored + 8, 16) != 0, "the driver store was not stamped"); break;
+        case LostDriverStore::PossiblePiece: Require(MarkPossiblyWritten(stored + 8, 16) != 0, "the possible driver store was not stamped"); break;
+        case LostDriverStore::Whole: Require(MarkWritten(base, Block) != 0, "the whole-block driver store was not stamped"); break;
+        case LostDriverStore::PossibleWhole: Require(MarkPossiblyWritten(base, Block) != 0, "the possible whole-block driver store was not stamped"); break;
+    }
+    Require(!UnchangedSince(stored, Page, taken) && StoredOver(stored, Page, taken), "the driver store does not read as a store before the rewatch");
+    Unwatch(rewatched, Page);
+    Require(!Watched(rewatched, Page), "the rewatched page did not leave the write watch");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{rewatched, rewatched + Page}}};
+    Rewatch(span);
+    Require(Watched(base, Bytes), "the page did not return to the write watch");
+    Require(!UnchangedSince(stored, Page, taken), "rewatching another page of the block made a driver store read as unchanged");
+    Require(StoredOver(stored, Page, taken), "rewatching another page of the block made a driver store read as not stored over");
+    GuestArena::GuestArenaReset_nid_postfix(memory, Bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(memory, Bytes);
+}
+
 using RewatchSpan = std::array<std::pair<std::uint64_t, std::uint64_t>, 1>;
 
 RewatchSpan BlockSpan(std::uint64_t address, std::size_t bytes) {
@@ -2828,6 +2861,7 @@ int main(int argc, char** argv) {
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
         CheckRewatch();
+        for (const auto kind : {LostDriverStore::Piece, LostDriverStore::PossiblePiece, LostDriverStore::Whole, LostDriverStore::PossibleWhole}) CheckRewatchKeepsDriverStores(kind);
         CheckUntrackedHint();
         CheckHostHoleInChild(HostHoleMode, ChildHostHole());
         CheckHostHoleInChild(MetadataCommitMode, ProbedHostHole());

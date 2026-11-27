@@ -2802,7 +2802,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
         ++tracker.generation;
         tracker.noteCpuStore(begin, end, tracker.generation);
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
-            tracker.driverPieces.erase(block);
+            if (const auto found = tracker.driverPieces.find(block); found != tracker.driverPieces.end()) found->second.dropped = std::max<std::uint64_t>(found->second.dropped, tracker.generation);
             tracker.stamp(block, tracker.generation, StampKind::Cpu);
             tracker.rewatchStamps[block] = tracker.stampOf(block);
             tracker.anyRewatchStamp.store(true, std::memory_order_release);
