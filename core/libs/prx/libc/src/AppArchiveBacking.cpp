@@ -101,7 +101,7 @@ public:
 
     int ReadOnlyDescriptor() {
 #ifdef _WIN32
-        const HANDLE reader = ReOpenFile(writer, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+        const HANDLE reader = ReOpenFile(writer, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
         if (reader == INVALID_HANDLE_VALUE) Fail(GetLastError());
         const int descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(reader), _O_RDONLY | _O_BINARY | _O_NOINHERIT);
         if (descriptor < 0) {

@@ -1559,7 +1559,8 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     if (access == 0 && (prot & PROT_WRITE) != 0) throw std::system_error(EACCES, std::generic_category(), "map file: a writable shared mapping of a read-only descriptor");
     const bool execute = (prot & PROT_EXEC) != 0;
     const DWORD viewProtection = execute ? (access == 2 ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : (access == 2 ? PAGE_READWRITE : PAGE_READONLY);
-    const HANDLE source = execute ? ReOpenFile(file, GENERIC_READ | GENERIC_EXECUTE | (access == 2 ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0) : file;
+    const bool reopen = execute && (WindowsHandleAccess_nid_no_patch(file, descriptor, "mmap") & FILE_EXECUTE) == 0;
+    const HANDLE source = reopen ? ReOpenFile(file, GENERIC_READ | GENERIC_EXECUTE | (access == 2 ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0) : file;
     if (source == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
         throw std::system_error(error == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: reopen the file with execute access");
