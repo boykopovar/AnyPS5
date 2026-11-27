@@ -161,7 +161,6 @@ int APS5_VABI _ZN3JSC8JSObject6toThisEPNS_6JSCellEPNS_14JSGlobalObjectENS_8ECMAM
 int APS5_VABI _ZN3JSC8evaluateEPNS_14JSGlobalObjectERKNS_10SourceCodeENS_7JSValueERN3WTF8NakedPtrINS_9ExceptionEEE();
 int APS5_VABI _ZN3JSC9CallFrame15isAnyWasmCalleeEv();
 int APS5_VABI _ZN3JSC9CodeCache5writeERNS_2VME();
-int APS5_VABI _ZN3JSC9HandleSet12writeBarrierEPNS_7JSValueERKS1_();
 int APS5_VABI _ZN3JSC9Integrity14auditCellFullyERNS_2VMEPNS_6JSCellE();
 int APS5_VABI _ZN3JSC9JSONParseEPNS_14JSGlobalObjectERKN3WTF6StringE();
 int APS5_VABI _ZN3JSC9Structure14sealTransitionERNS_2VMEPS0_();

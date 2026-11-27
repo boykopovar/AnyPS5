@@ -5,6 +5,7 @@
 
 #include "prx/libSceJsc/include/ApiBridgeExports.hpp"
 #include "prx/libSceJsc/include/ArrayBufferContentsExports.hpp"
+#include "prx/libSceJsc/include/HandleSetExports.hpp"
 #include "prx/libSceJsc/include/InspectorAccessorsExports.hpp"
 #include "prx/libSceJsc/include/JsCellDestroyExports.hpp"
 #include "prx/libSceJsc/include/InspectorEnumParsingExports.hpp"

@@ -1315,10 +1315,6 @@ int APS5_VABI _ZN3JSC9CodeCache5writeERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC9HandleSet12writeBarrierEPNS_7JSValueERKS1_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC9Integrity14auditCellFullyERNS_2VMEPNS_6JSCellE() {
     NotImplemented_nid_no_patch(__func__);
 }
