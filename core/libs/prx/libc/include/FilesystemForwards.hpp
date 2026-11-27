@@ -25,3 +25,4 @@ struct FilesystemForwards_nid_no_patch {
 };
 
 extern "C" void RegisterFilesystemForwards_nid_no_patch(const FilesystemForwards_nid_no_patch* forwards);
+extern "C" const FilesystemForwards_nid_no_patch* RegisteredFilesystemForwards_nid_no_patch();

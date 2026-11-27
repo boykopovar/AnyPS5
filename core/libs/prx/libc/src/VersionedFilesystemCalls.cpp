@@ -104,6 +104,10 @@ void RegisterFilesystemForwards_nid_no_patch(const FilesystemForwards_nid_no_pat
     registeredForwards.store(forwards, std::memory_order_release);
 }
 
+const FilesystemForwards_nid_no_patch* RegisteredFilesystemForwards_nid_no_patch() {
+    return registeredForwards.load(std::memory_order_acquire);
+}
+
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix(const char* path, int* perms, int* error) {
     return StatusType(__func__, path, perms, error);
 }

@@ -26,12 +26,28 @@
  */
 /* Adapted from FreeBSD release/11.4.0 lib/libc/gen/ftok.c: https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/ftok.c */
 #include "prx/libc/include/Api.hpp"
-#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/FilesystemForwards.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 
+namespace {
+
+constexpr std::uint32_t KernelErrnoBase = 0x80020000u;
+constexpr int NoSystemCall = 78;
+
+}
+
 extern "C" std::int64_t APS5_VABI ftok_nid_postfix(const char* path, int id) {
+    const auto* forwards = RegisteredFilesystemForwards_nid_no_patch();
+    if (!forwards) {
+        *__error_nid_postfix() = NoSystemCall;
+        return -1;
+    }
     FileStat status{};
-    if (stat_nid_postfix(path, &status) < 0) return -1;
+    if (const int result = forwards->stat(path, &status); result != 0) {
+        const auto code = static_cast<std::uint32_t>(result);
+        *__error_nid_postfix() = (code & 0xffff0000u) == KernelErrnoBase ? static_cast<int>(code & 0xffffu) : 1;
+        return -1;
+    }
     return static_cast<std::int64_t>(static_cast<std::uint32_t>(id) << 24 | (status.st_dev & 0xffu) << 16 | (status.st_ino & 0xffffu));
 }
