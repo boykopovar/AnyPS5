@@ -701,8 +701,8 @@ struct AsyncPhases {
     int request;
     std::mutex mutex;
     std::condition_variable changed;
-    std::array<bool, 12> blocked{};
-    std::array<unsigned, 12> seen{};
+    std::array<bool, 13> blocked{};
+    std::array<unsigned, 13> seen{};
     bool finished = false;
     bool rejectCompletionAllocations = false;
     bool rejectAbortAllocations = false;
@@ -2398,6 +2398,24 @@ void AsyncReadOutput(int ssl, std::string_view access) {
     Require(completion.req_id == client.request && completion.event_type == 1 && completion.result == static_cast<int>(0x817b1225), "a read into an unwritable buffer completes with null pointer");
 }
 
+void AsyncReadOutputAfterDeletion(int ssl) {
+    std::fprintf(stderr, "HTTP2 async read output after deletion\n");
+    Server server(Mode::Normal);
+    Client client(ssl);
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "prepare response before the read deletion race");
+    server.Join();
+    std::array<char, 64> buffer{};
+    AsyncPhases phases(client.request);
+    phases.Block(AsyncPhase::ReadReturned);
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr) == 0, "submit the read raced by deletion");
+    phases.Wait(AsyncPhase::ReadReturned);
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete after the transport read returned");
+    phases.Release(AsyncPhase::ReadReturned);
+    phases.Wait(AsyncPhase::Completed);
+    Require(buffer == std::array<char, 64>{}, "a read that returns after deletion leaves the guest buffer untouched");
+}
+
 void AsyncBlockingWait(int ssl) {
     std::fprintf(stderr, "HTTP2 async blocking wait scenario\n");
     Server server(Mode::StallResponse, "/another", 302, "localhost");
@@ -3267,6 +3285,8 @@ int main(int argc, char** argv) {
         AsyncInputCopies(ssl, argv[2], argv[3]);
     } else if (argc == 3 && std::string_view(argv[1]) == "--async-read-output") {
         AsyncReadOutput(ssl, argv[2]);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--async-read-output-after-deletion") {
+        AsyncReadOutputAfterDeletion(ssl);
     } else if (argc == 3 && std::string_view(argv[1]) == "--async-completion-storage") {
         Require(std::string_view(argv[2]) == "read" || std::string_view(argv[2]) == "offline", "completion storage probe mode");
         AsyncCompletionStorage(ssl, std::string_view(argv[2]) == "offline");
