@@ -5471,7 +5471,24 @@ void CheckExpandedHtileStore(Context context, std::uint32_t samples) {
     Require(CachedSampledTexture(context, words) != nullptr, "a GPU store of expanded HTILE words over native depth was refused");
     Require(DepthSurfaceHolds(context, DecodeTextureResource(words), texture.get()), "a GPU store of expanded HTILE words lost the native depth view");
     recorder.Sync();
-    Require(CachedSampledTexture(context, words) != nullptr, "native depth was refused on the lookup after an accepted expanded HTILE store");
+    const auto kept = CachedSampledTexture(context, words);
+    Require(kept != nullptr, "native depth was refused on the lookup after an accepted expanded HTILE store");
+    {
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        const Fetch fetch(context, *kept, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            Require(result[0] == 0.0f, "an accepted expanded HTILE store changed a native depth sample");
+        }
+    }
     QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, 0xfffffff0u);
     TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
     recorder.Sync();

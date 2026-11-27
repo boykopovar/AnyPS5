@@ -1085,9 +1085,10 @@ public:
                 if (recorder->PendingStoreOverlaps(range.address, range.bytes)) {
                     Require(index == 1u && target.htileAddress != 0u, "external GPU writes over native multisample depth are not implemented");
                     RecorderFor(context)->SyncThrough(range.address, range.bytes);
+                    const auto generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
                     if (!expandedHtilePlane(range)) sampling.refusal = "external GPU writes over native multisample depth are not implemented";
                     Require(sampling.refusal.empty(), sampling.refusal);
-                    sampling.initial[index].generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                    sampling.initial[index].generation = generation;
                     RebasePublication(1u);
                 } else {
                     const auto settled = GuestMemory::TrackerGeneration();
