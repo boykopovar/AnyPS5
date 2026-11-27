@@ -132,11 +132,16 @@ struct DepthTarget {
     std::uint32_t lastSlice = 0;
     bool iterate256 = false;
     bool htilePipeAligned = false;
+    std::uint8_t gcnDepthTileIndex : 3 = 0;
+    std::uint8_t gcnDepthTileSplit : 3 = 0;
+    std::uint8_t gcnStencilTileIndex : 3 = 0;
+    std::uint8_t gcnStencilTileSplit : 3 = 0;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
     bool gcn = false;
     bool depthPartiallyResident = false;
     bool stencilPartiallyResident = false;
+    std::uint32_t gcnSliceTiles = 0;
 
     bool operator==(const DepthTarget& other) const {
         return address == other.address && stencilAddress == other.stencilAddress && extent.width == other.extent.width &&
@@ -145,7 +150,7 @@ struct DepthTarget {
             htileAddress == other.htileAddress && htileStencil == other.htileStencil && samples == other.samples && depthSwizzle == other.depthSwizzle &&
             pipeBankXor == other.pipeBankXor && firstSlice == other.firstSlice && lastSlice == other.lastSlice && iterate256 == other.iterate256 &&
             htilePipeAligned == other.htilePipeAligned && htileVrsEncoding == other.htileVrsEncoding && htileDepthOnly == other.htileDepthOnly &&
-            gcn == other.gcn && depthPartiallyResident == other.depthPartiallyResident && stencilPartiallyResident == other.stencilPartiallyResident;
+            gcn == other.gcn && gcnSliceTiles == other.gcnSliceTiles && gcnDepthTileIndex == other.gcnDepthTileIndex && gcnStencilTileIndex == other.gcnStencilTileIndex && gcnDepthTileSplit == other.gcnDepthTileSplit && gcnStencilTileSplit == other.gcnStencilTileSplit && depthPartiallyResident == other.depthPartiallyResident && stencilPartiallyResident == other.stencilPartiallyResident;
     }
 };
 
@@ -382,7 +387,7 @@ struct DrawKeyRange {
     std::uint32_t count;
 };
 inline constexpr std::array<DrawKeyRange, 53> DrawKeyRegisters{{
-    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 2}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 5},
+    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 2}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 8}, {RegisterBank::Context, 0x01a, 5},
     {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 0x20}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 0x60},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL .. SPI_BARYC_CNTL, SPI_SHADER_POS/Z/COL_FORMAT,
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.

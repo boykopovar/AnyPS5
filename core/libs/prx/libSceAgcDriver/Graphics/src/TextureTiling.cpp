@@ -8,6 +8,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <stdexcept>
 
@@ -524,6 +525,19 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
     return mips;
 }
 
+std::uint32_t GcnDepthTileSplit(TextureTileMode tileMode) {
+    switch (tileMode) {
+        case TextureTileMode::kGcnDepth2D64: return 64u;
+        case TextureTileMode::kGcnDepth2D128: return 128u;
+        case TextureTileMode::kGcnDepth2D256:
+        case TextureTileMode::kGcnDepthPrt256: return 256u;
+        case TextureTileMode::kGcnDepth2D512: return 512u;
+        case TextureTileMode::kGcnDepth2D1K:
+        case TextureTileMode::kGcnDepthPrt1K: return 1024u;
+        default: return 0u;
+    }
+}
+
 GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t samples) {
     Require(IsGcnTiled(tileMode), "PS4 tile geometry needs a PS4 tiled mode");
     Require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "unsupported bytes per element for PS4 tiling");
@@ -560,17 +574,8 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     struct MacroMode { std::uint32_t bankHeight; std::uint32_t banks; std::uint32_t aspect; };
     constexpr std::array<MacroMode, 5> macroModes{{{4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
     constexpr std::array<MacroMode, 5> prtMacroModes{{{8u, 16u, 4u}, {4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
-    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * microBytes));
-    switch (tileMode) {
-        case TextureTileMode::kGcnDepth2D64: tileSplit = 64u; break;
-        case TextureTileMode::kGcnDepth2D128: tileSplit = 128u; break;
-        case TextureTileMode::kGcnDepth2D256:
-        case TextureTileMode::kGcnDepthPrt256: tileSplit = 256u; break;
-        case TextureTileMode::kGcnDepth2D512: tileSplit = 512u; break;
-        case TextureTileMode::kGcnDepth2D1K:
-        case TextureTileMode::kGcnDepthPrt1K: tileSplit = 1024u; break;
-        default: break;
-    }
+    const auto depthSplit = GcnDepthTileSplit(tileMode);
+    const auto tileSplit = depthSplit != 0u ? depthSplit : std::min(1024u, std::max(256u, 2u * microBytes));
     const bool prt = IsGcnPrtTiled(tileMode);
     const bool splitRotation = tileMode != TextureTileMode::kGcnDisplayPrt && tileMode != TextureTileMode::kGcnThinPrt;
     const bool pipe8x16 = tileMode == TextureTileMode::kGcnDisplayPrt || tileMode == TextureTileMode::kGcnThinPrt;
@@ -619,6 +624,65 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     geometry.bankMask = mode.banks - 1u;
     geometry.bankShift = pipeInterleaveBits + log2Pipes;
     return geometry;
+}
+
+GcnMultisampleTextureLayout::GcnMultisampleTextureLayout(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t fragments, std::uint32_t width, std::uint32_t height) : elementBytes(elementBytes), fragments(fragments), width(width), height(height) {
+    Require(IsGcnDepthTiled(tileMode) && (elementBytes == 1u || elementBytes == 2u || elementBytes == 4u) && (fragments == 2u || fragments == 4u || fragments == 8u), "PS4 multisampled depth layout needs a 2D or PRT depth tile mode, 1, 2 or 4 bytes and 2, 4 or 8 samples");
+    Require(width != 0u && width <= 16384u && height != 0u && height <= 16384u, "invalid PS4 multisampled depth extent");
+    const auto geometry = GcnTiling(tileMode, elementBytes, fragments);
+    blockWidth = geometry.blockWidth;
+    blockHeight = geometry.blockHeight;
+    blockBytes = geometry.blockBytes;
+    splitSlices = geometry.splitSlices;
+    Require(width % blockWidth == 0u, "PS4 multisampled depth pitch is not a whole number of macro tiles");
+    sliceBytes = static_cast<std::uint64_t>(width / blockWidth) * ((height + blockHeight - 1u) / blockHeight) * blockBytes;
+    const auto bits = [&](std::uint32_t coordinate) {
+        std::uint32_t value = 0u;
+        for (std::uint32_t bit = 0; bit < 16u; ++bit) value |= static_cast<std::uint32_t>(std::popcount(coordinate & geometry.equation[bit]) & 1) << bit;
+        for (std::uint32_t bit = 0; bit < geometry.splitMasks.size(); ++bit) value |= static_cast<std::uint32_t>(std::popcount(coordinate & geometry.splitMasks[bit]) & 1) << (16u + bit);
+        return value;
+    };
+    xBits.resize(width);
+    yBits.resize(height);
+    fragmentBits.resize(fragments);
+    for (std::uint32_t x = 0; x < width; ++x) xBits[x] = bits(x & 0xfffu);
+    for (std::uint32_t y = 0; y < height; ++y) yBits[y] = bits((y & 0xfffu) << 12u);
+    for (std::uint32_t fragment = 0; fragment < fragments; ++fragment) fragmentBits[fragment] = bits(fragment << GcnSampleShift);
+}
+
+std::uint64_t GcnMultisampleTextureLayout::offset(std::uint32_t x, std::uint32_t y, std::uint32_t fragment) const {
+    const auto block = static_cast<std::uint64_t>(y / blockHeight) * (width / blockWidth) + x / blockWidth;
+    const auto bits = xBits[x] ^ yBits[y] ^ fragmentBits[fragment];
+    return (bits >> 16u) * sliceBytes + block * blockBytes + (bits & 0xffffu);
+}
+
+std::uint64_t GcnMultisampleTextureLayout::Offset(std::uint32_t x, std::uint32_t y, std::uint32_t fragment) const {
+    Require(x < width && y < height && fragment < fragments, "PS4 multisampled depth coordinate is outside its extent");
+    return offset(x, y, fragment);
+}
+
+void GcnMultisampleTextureLayout::transfer(std::span<const std::byte> source, std::span<std::byte> destination, bool retile) const {
+    const auto sourceBytes = retile ? LinearBytes() : Bytes();
+    const auto destinationBytes = retile ? Bytes() : LinearBytes();
+    Require(source.size() >= sourceBytes && destination.size() >= destinationBytes, "PS4 multisampled depth transfer buffer is too small");
+    std::uint64_t linear = 0;
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            for (std::uint32_t fragment = 0; fragment < fragments; ++fragment) {
+                const auto tiled = offset(x, y, fragment);
+                std::memcpy(destination.data() + (retile ? tiled : linear), source.data() + (retile ? linear : tiled), elementBytes);
+                linear += elementBytes;
+            }
+        }
+    }
+}
+
+void GcnMultisampleTextureLayout::Detile(std::span<const std::byte> source, std::span<std::byte> destination) const {
+    transfer(source, destination, false);
+}
+
+void GcnMultisampleTextureLayout::TileHoisted(std::span<const std::byte> source, std::span<std::byte> destination) const {
+    transfer(source, destination, true);
 }
 
 namespace {

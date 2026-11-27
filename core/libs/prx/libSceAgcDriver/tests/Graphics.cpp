@@ -2810,6 +2810,35 @@ void DepthStencilTests() {
         Require(HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x4000) && !HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x3ffc), "a 16 KiB fill covers the HTILE of a 512x512 PS4 depth target");
         ShaderRecompiler::SetGcnGuestShaders(false);
     }
+    {
+        auto ps4 = queue;
+        ps4.context[0x08e] = 0u;
+        ps4.context[0x010] = 0xa0102007u;
+        ps4.context[0x011] = 0x00306001u;
+        for (const auto offset : {0x012u, 0x014u}) ps4.context[offset] = 0x10080u;
+        for (const auto offset : {0x013u, 0x015u}) ps4.context[offset] = 0x20080u;
+        ps4.context[0x016] = (239u << 11u) | 223u;
+        ps4.context[0x017] = 1792u * 2048u / 64u - 1u;
+        ShaderRecompiler::SetGcnGuestShaders(true);
+        struct Restore {
+            ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+        } restore;
+        std::vector<AgcDriver::Graphics::RegisterRead> reads;
+        const auto decoded = [&] {
+            const AgcDriver::Graphics::RegisterReadLogScope logScope(&reads);
+            return AgcDriver::Graphics::DecodeState(ps4);
+        }();
+        for (const auto read : reads) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a PS4 depth register the decoder reads: " + std::to_string(read.offset));
+        Require(std::ranges::any_of(reads, [](const auto& read) { return read.offset == 0x017u; }), "the PS4 depth decoder did not read DB_DEPTH_SLICE");
+        const auto& depth = decoded.depth;
+        Require(depth && depth->gcn && depth->samples == 2u && depth->extent.width == 1792u && depth->extent.height == 1920u, "a 2-sample PS4 depth target lost its sample count or DB_DEPTH_SIZE extent");
+        Require(depth->address == 0x1008000u && depth->stencilAddress == 0x2008000u && depth->pipeBankXor == 0u, "a multisampled PS4 depth target lost the low bits of its 256-byte bases to a PS5 pipe and bank XOR");
+        Require(depth->gcnSliceTiles == 1792u * 2048u / 64u, "a PS4 depth target did not take its slice size from DB_DEPTH_SLICE");
+        Require(depth->gcnDepthTileIndex == 1u && depth->gcnStencilTileIndex == 3u, "a PS4 depth target did not take its tile mode indices from DB_Z_INFO and DB_STENCIL_INFO");
+        Require(depth->gcnDepthTileSplit == 1u && depth->gcnStencilTileSplit == 3u, "a PS4 depth target did not take its tile splits from DB_Z_INFO and DB_STENCIL_INFO");
+        ps4.context.erase(0x017);
+        Require(AgcDriver::Graphics::DecodeState(ps4).depth->gcnSliceTiles == 1792u / 8u * (1920u / 8u), "a PS4 depth target without DB_DEPTH_SLICE did not fall back to its DB_DEPTH_SIZE tiles");
+    }
     Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
     Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
     queue.context.erase(0x005);

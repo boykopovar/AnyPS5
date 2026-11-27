@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -107,6 +108,33 @@ struct GcnTileGeometry {
     std::uint32_t bankShift = 0;
 };
 GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t samples = 1);
+std::uint32_t GcnDepthTileSplit(TextureTileMode tileMode);
+class GcnMultisampleTextureLayout {
+public:
+    GcnMultisampleTextureLayout(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t fragments, std::uint32_t width, std::uint32_t height);
+    std::uint64_t Bytes() const { return sliceBytes * splitSlices; }
+    std::uint64_t LinearBytes() const { return static_cast<std::uint64_t>(width) * height * fragments * elementBytes; }
+    std::uint64_t Offset(std::uint32_t x, std::uint32_t y, std::uint32_t fragment) const;
+    void Detile(std::span<const std::byte> source, std::span<std::byte> destination) const;
+    void TileHoisted(std::span<const std::byte> source, std::span<std::byte> destination) const;
+
+private:
+    std::uint64_t offset(std::uint32_t x, std::uint32_t y, std::uint32_t fragment) const;
+    void transfer(std::span<const std::byte> source, std::span<std::byte> destination, bool retile) const;
+
+    std::uint32_t elementBytes;
+    std::uint32_t fragments;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t blockWidth = 0;
+    std::uint32_t blockHeight = 0;
+    std::uint32_t blockBytes = 0;
+    std::uint32_t splitSlices = 1;
+    std::uint64_t sliceBytes = 0;
+    std::vector<std::uint32_t> xBits;
+    std::vector<std::uint32_t> yBits;
+    std::vector<std::uint32_t> fragmentBits;
+};
 inline std::uint32_t GcnLayerBankXor(const GcnTileGeometry& geometry, std::uint32_t layer) { return ((geometry.layerBankStep * layer) & geometry.bankMask) << geometry.bankShift; }
 inline TextureTileMode MipTileMode(TextureTileMode tileMode, const TileMipLayout& mip) { return mip.gcnMicroTiled ? (IsGcnThick(tileMode) ? TextureTileMode::kGcnThin1D : GcnMicroTileMode(tileMode)) : tileMode; }
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);

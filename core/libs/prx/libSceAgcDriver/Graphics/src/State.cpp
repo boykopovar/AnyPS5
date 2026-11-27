@@ -511,7 +511,7 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     depth.lastSlice = (view >> 13u) & 0x7ffu;
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
     depth.stencilAddress = stencil ? base(0x013, 0x01b) : 0;
-    if (depth.samples != 1u) {
+    if (depth.samples != 1u && !gcn) {
         depth.pipeBankXor = static_cast<std::uint32_t>(depth.address & 65535u);
         depth.address &= ~std::uint64_t{65535u};
         depth.stencilAddress &= ~std::uint64_t{65535u};
@@ -523,6 +523,12 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     if (gcn) {
         const auto size = read(cx, 0x016);
         depth.extent = {((size & 0x7ffu) + 1u) * 8u, (((size >> 11u) & 0x7ffu) + 1u) * 8u};
+        const auto slice = find(cx, 0x017);
+        depth.gcnSliceTiles = slice != cx.end() ? (slice->second & 0x3fffffu) + 1u : depth.extent.width / 8u * (depth.extent.height / 8u);
+        depth.gcnDepthTileIndex = (read(cx, 0x010) >> 20u) & 7u;
+        depth.gcnStencilTileIndex = (stencilInfo >> 20u) & 7u;
+        depth.gcnDepthTileSplit = (read(cx, 0x010) >> 13u) & 7u;
+        depth.gcnStencilTileSplit = (stencilInfo >> 13u) & 7u;
     } else {
         const auto size = read(cx, 0x007);
         depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};

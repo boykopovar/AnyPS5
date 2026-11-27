@@ -1519,7 +1519,7 @@ void descriptorFields() {
     }
     {
         using Target = DepthTarget;
-        const std::array<FieldChange<Target>, 21> changes{{
+        const std::array<FieldChange<Target>, 26> changes{{
             {"address", [](Target& target) { ++target.address; }},
             {"stencilAddress", [](Target& target) { ++target.stencilAddress; }},
             {"extent.width", [](Target& target) { ++target.extent.width; }},
@@ -1540,7 +1540,12 @@ void descriptorFields() {
             {"htileDepthOnly", [](Target& target) { target.htileDepthOnly = !target.htileDepthOnly; }},
             {"gcn", [](Target& target) { target.gcn = !target.gcn; }},
             {"depthPartiallyResident", [](Target& target) { target.depthPartiallyResident = !target.depthPartiallyResident; }},
-            {"stencilPartiallyResident", [](Target& target) { target.stencilPartiallyResident = !target.stencilPartiallyResident; }}
+            {"stencilPartiallyResident", [](Target& target) { target.stencilPartiallyResident = !target.stencilPartiallyResident; }},
+            {"gcnSliceTiles", [](Target& target) { ++target.gcnSliceTiles; }},
+            {"gcnDepthTileIndex", [](Target& target) { ++target.gcnDepthTileIndex; }},
+            {"gcnStencilTileIndex", [](Target& target) { ++target.gcnStencilTileIndex; }},
+            {"gcnDepthTileSplit", [](Target& target) { ++target.gcnDepthTileSplit; }},
+            {"gcnStencilTileSplit", [](Target& target) { ++target.gcnStencilTileSplit; }}
         }};
         requireEveryFieldCounts(depthTarget(false), changes, "depth");
     }

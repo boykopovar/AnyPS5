@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -22,6 +23,8 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "VulkanTestDevice.hpp"
 #include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
@@ -857,6 +860,31 @@ public:
             state.BindPipeline(context, pipelines[sample], 0);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
+        }
+        context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    }
+    template<typename Depth, typename Reference>
+    void RunPixels(VkCommandBuffer commands, Depth depth, Reference reference) const {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = pass;
+        begin.framebuffer = framebuffer;
+        begin.renderArea = {{0, 0}, extent};
+        context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        CommandState state;
+        state.Begin(commands, false);
+        for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+            state.BindPipeline(context, pipelines[sample], 0);
+            for (std::uint32_t y = 0u; y < extent.height; ++y) {
+                for (std::uint32_t x = 0u; x < extent.width; ++x) {
+                    const float value = depth(x, y, sample);
+                    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
+                    state.SetScissor(context, VkRect2D{{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)}, {1u, 1u}});
+                    state.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference(x, y, sample));
+                    context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
+                }
+            }
         }
         context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
@@ -5497,6 +5525,230 @@ void CheckReusePublication(Context context, ReuseCase use) {
     }
 }
 
+std::vector<std::uint32_t> SizeQueryShader() {
+    ShaderRecompiler::SpirvModule module;
+    module.EmitCapability(spv::CapabilityShader);
+    module.EmitCapability(spv::CapabilityImageQuery);
+    module.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    const auto u32 = module.Type(spv::OpTypeInt, 32u, 0u);
+    const auto i32 = module.Type(spv::OpTypeInt, 32u, 1u);
+    const auto f32 = module.Type(spv::OpTypeFloat, 32u);
+    const auto v4 = module.Type(spv::OpTypeVector, u32, 4u);
+    const auto v2 = module.Type(spv::OpTypeVector, i32, 2u);
+    const auto voidType = module.Type(spv::OpTypeVoid);
+    const auto array = module.Type(spv::OpTypeRuntimeArray, v4);
+    module.AddAnnotation(spv::OpDecorate, array, spv::DecorationArrayStride, 16u);
+    const auto block = module.Type(spv::OpTypeStruct, array);
+    module.AddAnnotation(spv::OpDecorate, block, spv::DecorationBlock);
+    module.AddAnnotation(spv::OpMemberDecorate, block, 0u, spv::DecorationOffset, 0u);
+    const auto buffer = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, block), spv::StorageClassStorageBuffer);
+    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationDescriptorSet, 0u);
+    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationBinding, 1u);
+    const auto imageType = module.Type(spv::OpTypeImage, f32, spv::Dim2D, 0u, 0u, 1u, 1u, spv::ImageFormatUnknown);
+    const auto image = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType), spv::StorageClassUniformConstant);
+    module.AddAnnotation(spv::OpDecorate, image, spv::DecorationDescriptorSet, 0u);
+    module.AddAnnotation(spv::OpDecorate, image, spv::DecorationBinding, 0u);
+    const auto main = module.AllocateId();
+    module.AddFunction(spv::OpFunction, voidType, main, spv::FunctionControlMaskNone, module.Type(spv::OpTypeFunction, voidType));
+    module.AddFunction(spv::OpLabel, module.AllocateId());
+    const auto object = module.AllocateId();
+    module.AddFunction(spv::OpLoad, imageType, object, image);
+    const auto size = module.AllocateId();
+    module.AddFunction(spv::OpImageQuerySize, v2, size, object);
+    std::array<std::uint32_t, 2> components{};
+    for (std::uint32_t index = 0u; index < 2u; ++index) {
+        const auto component = module.AllocateId();
+        module.AddFunction(spv::OpCompositeExtract, i32, component, size, index);
+        components[index] = module.AllocateId();
+        module.AddFunction(spv::OpBitcast, u32, components[index], component);
+    }
+    const auto zero = module.Constant(spv::OpConstant, u32, 0u);
+    const auto value = module.AllocateId();
+    module.AddFunction(spv::OpCompositeConstruct, v4, value, components[0], components[1], zero, zero);
+    const auto pointer = module.AllocateId();
+    module.AddFunction(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, v4), pointer, buffer, zero, module.Constant(spv::OpConstant, u32, 1u));
+    module.AddFunction(spv::OpStore, pointer, value);
+    module.AddFunction(spv::OpReturn);
+    module.AddFunction(spv::OpFunctionEnd);
+    module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", {});
+    module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 1u, 1u, 1u);
+    return module.Finalize();
+}
+
+std::array<std::uint32_t, 8> Ps4SampleWords(std::uint64_t address, VkExtent2D viewed, std::uint32_t pitch, std::uint32_t samples, std::uint32_t dataFormat, std::uint32_t numberFormat, std::uint32_t tileIndex = 1u) {
+    const std::array<std::uint32_t, 8> gcn{
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (dataFormat << 20u) | (numberFormat << 26u),
+        (viewed.width - 1u) | ((viewed.height - 1u) << 14u),
+        0x204u | (static_cast<std::uint32_t>(std::countr_zero(samples)) << 16u) | (tileIndex << 20u) | (14u << 28u),
+        (pitch - 1u) << 13u,
+        0u, 0u, 0u};
+    return ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcn));
+}
+
+struct Ps4Planes {
+    std::uint32_t depthIndex = 1u;
+    std::uint32_t stencilIndex = 1u;
+    bool depthOnly = false;
+    VkFormat format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+};
+
+DepthTarget Ps4Target(std::uint64_t address, std::uint64_t stencil, std::uint64_t htile, VkExtent2D extent, std::uint32_t samples, Ps4Planes planes = {}) {
+    DepthTarget target{address, stencil, extent, planes.format, 0.0f, 0x5au, htile, htile != 0u && stencil != 0u && !planes.depthOnly, samples};
+    target.gcn = true;
+    target.htileDepthOnly = planes.depthOnly;
+    target.gcnSliceTiles = extent.width * extent.height / 64u;
+    target.gcnDepthTileIndex = planes.depthIndex;
+    target.gcnStencilTileIndex = planes.stencilIndex;
+    const auto split = [](std::uint32_t index) { return index == 6u ? 2u : index == 7u ? 4u : index; };
+    target.gcnDepthTileSplit = split(planes.depthIndex);
+    target.gcnStencilTileSplit = split(planes.stencilIndex);
+    return target;
+}
+
+float Ps4Depth(std::uint32_t x, std::uint32_t y, std::uint32_t sample) {
+    return static_cast<float>(1u + x + y * 128u + sample * 16384u) / 131072.0f;
+}
+
+std::uint8_t Ps4Stencil(std::uint32_t x, std::uint32_t y, std::uint32_t sample) {
+    return static_cast<std::uint8_t>(x * 3u + y * 5u + sample * 7u + 1u);
+}
+
+void CheckPs4Target(Context context, std::uint32_t samples, bool depthOnly) {
+    constexpr VkExtent2D extent{128u, 128u};
+    constexpr VkExtent2D viewed{96u, 112u};
+    const Ps4Planes planes = samples == 8u ? Ps4Planes{3u, 2u, depthOnly} : Ps4Planes{1u, samples == 2u ? 2u : 1u, depthOnly};
+    const GcnMultisampleTextureLayout depthLayout(GcnTileMode(planes.depthIndex), 4u, samples, extent.width, extent.height);
+    const GcnMultisampleTextureLayout stencilLayout(GcnTileMode(planes.stencilIndex), 1u, samples, extent.width, extent.height);
+    const auto depthBytes = static_cast<std::size_t>(depthLayout.Bytes());
+    const auto stencilBytes = static_cast<std::size_t>(stencilLayout.Bytes());
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    Require(depthBytes == extent.width * extent.height * 4u * samples && stencilBytes == extent.width * extent.height * samples && metadataBytes == 16384u, "the PS4 depth fixture is not one 128x128 macro tile with one 16 KiB HTILE block");
+    TargetMemory memory(depthBytes, true), stencil(stencilBytes, true), metadata(65536u, true);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    const auto target = Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples, planes);
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    NoteDepthSurfaceWrite(context, target);
+    const auto words = Ps4SampleWords(target.address, viewed, extent.width, samples, 4u, 7u, planes.depthIndex);
+    const auto resource = DecodeTextureResource(words);
+    Require(resource.format == 22u && resource.samples == samples && resource.tileMode == GcnTileMode(planes.depthIndex) && resource.gcnPitch == extent.width && resource.width == viewed.width, "the PS4 depth fixture's T# does not decode to a 2D MSAA R32 float view in the target's depth tile mode");
+    const auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr && CachedSampledTexture(context, words) == texture && DepthSurfaceHolds(context, resource, texture.get()), "a PS4 depth target sampled through a smaller T# did not keep one view its attachment holds");
+    const auto count = viewed.width * viewed.height * samples;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(viewed.width, viewed.height, samples, false, true));
+    const Fetch query(context, *texture, output, SizeQueryShader());
+    const auto run = [&](const Fetch& shader, std::uint32_t groups) {
+        Require(CachedSampledTexture(context, words) == texture, "a PS4 depth target sampled again through the same smaller T# did not reuse its view");
+        recorder.Sync();
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        CommandBatch batch(context);
+        shader.Run(batch.Handle(), groups);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+    };
+    const auto checkSamples = [&](bool drawn) {
+        run(fetch, count);
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto pixel = index / samples, sample = index % samples;
+            const auto expected = drawn ? Ps4Depth(pixel % viewed.width, pixel / viewed.width, sample) : target.clearDepth;
+            if (result[0] != expected || result[1] != 0.0f || result[2] != 0.0f || result[3] != 1.0f) Require(false, "a PS4 depth target sampled through a smaller T# read " + std::to_string(result[0]) + " at sample " + std::to_string(sample) + " of texel " + std::to_string(pixel % viewed.width) + "," + std::to_string(pixel / viewed.width) + ", expected " + std::to_string(expected) + " with the components (x, 0, 0, 1)");
+        }
+    };
+    run(query, 1u);
+    std::array<std::uint32_t, 4> size{};
+    std::memcpy(size.data(), output.Bytes().data() + 16u, 16u);
+    Require(size[0] == viewed.width && size[1] == viewed.height, "a PS4 depth target sampled through a 96x112 T# reports the size " + std::to_string(size[0]) + "x" + std::to_string(size[1]));
+    checkSamples(false);
+    DepthRaster raster(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0u}, true);
+    raster.RunPixels(recorder.Commands(), Ps4Depth, Ps4Stencil);
+    checkSamples(true);
+    RequireNoMultisampleTarget(target.htileAddress, metadataBytes, "a DMA copy");
+    Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view, "publishing a PS4 depth target to guest memory retired or replaced its native attachment");
+    for (std::uint32_t y = 0u; y < extent.height; ++y) {
+        for (std::uint32_t x = 0u; x < extent.width; ++x) {
+            for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+                float depth = 0.0f;
+                std::memcpy(&depth, memory.Data() + depthLayout.Offset(x, y, sample), 4u);
+                const auto stencilValue = static_cast<std::uint8_t>(stencil.Data()[stencilLayout.Offset(x, y, sample)]);
+                if (depth != Ps4Depth(x, y, sample) || stencilValue != Ps4Stencil(x, y, sample)) Require(false, "PS4 depth publication placed sample " + std::to_string(sample) + " of " + std::to_string(x) + "," + std::to_string(y) + " where the PS4 layout does not");
+            }
+        }
+    }
+    const std::uint32_t expanded = depthOnly ? 0xfffc000fu : 0xfffff3ffu;
+    for (std::size_t offset = 0u; offset < metadataBytes; offset += 4u) {
+        std::uint32_t word = 0u;
+        std::memcpy(&word, metadata.Data() + offset, 4u);
+        Require(word == expanded, "PS4 depth publication did not expand the HTILE of the target");
+    }
+    checkSamples(true);
+    for (const auto other : {VkExtent2D{64u, 64u}, VkExtent2D{32u, 48u}, VkExtent2D{16u, 16u}, VkExtent2D{128u, 96u}}) Require(CachedSampledTexture(context, Ps4SampleWords(target.address, other, extent.width, samples, 4u, 7u, planes.depthIndex)) != nullptr, "a PS4 depth target was not sampled through another smaller T#");
+    Require(!DepthSurfaceHolds(context, resource, texture.get()), "a PS4 depth target kept the copy of the oldest of five T# sizes");
+    if (planes.stencilIndex == 2u) {
+        auto other = target;
+        other.gcnStencilTileIndex = 1u;
+        other.gcnStencilTileSplit = 1u;
+        Require(DepthSurfaceView(context, other) != view, "a PS4 depth target rebound with another stencil tile mode kept its native attachment");
+    }
+    std::printf("PS4 native depth samples=%u depthOnly=%u sampled through a 96x112 T#, published in the PS4 layout\n", samples, depthOnly ? 1u : 0u);
+}
+
+void CheckPs4Refusals(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{128u, 128u};
+    TargetMemory memory(extent.width * extent.height * 4u * samples, true), stencil(extent.width * extent.height * samples, true), metadata(65536u, true);
+    std::memset(metadata.Data(), 0, 16384u);
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto sampled = [&](const DepthTarget& target, std::uint32_t pitch, std::uint32_t tileIndex) {
+        DepthSurfaceView(context, target);
+        NoteDepthSurfaceWrite(context, target);
+        return CachedSampledTexture(context, Ps4SampleWords(target.address, extent, pitch, samples, 4u, 7u, tileIndex));
+    };
+    const auto refuses = [&](DepthTarget target, std::string_view reason, std::uint32_t pitch = 128u, std::uint32_t tileIndex = 1u) {
+        TargetRefuses([&] { sampled(target, pitch, tileIndex); }, reason);
+        ClearDepthSurfaces(context.device);
+    };
+    auto layered = Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples);
+    layered.lastSlice = 1u;
+    refuses(layered, "PS4 native multisample depth arrays are not implemented");
+    refuses(Ps4Target(memory.Address(), stencil.Address(), 0u, extent, samples), "PS4 native multisample depth without HTILE is not implemented");
+    refuses(Ps4Target(memory.Address(), 0u, 0u, extent, samples, {1u, 1u, false, VK_FORMAT_D32_SFLOAT}), "PS4 native multisample depth without HTILE is not implemented");
+    refuses(Ps4Target(memory.Address(), 0u, metadata.Address(), extent, samples, {1u, 1u, true, VK_FORMAT_D16_UNORM}), "only implemented for D32 S8 targets with HTILE");
+    refuses(Ps4Target(memory.Address(), 0u, metadata.Address(), extent, samples, {1u, 1u, true, VK_FORMAT_D32_SFLOAT}), "only implemented for D32 S8 targets with HTILE");
+    refuses(Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples, {5u, 5u}), "outside the 2D and PRT depth tile modes");
+    auto split = Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples);
+    split.gcnStencilTileSplit = 0u;
+    refuses(split, "disagrees with its TILE_SPLIT");
+    refuses(Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples, samples == 2u ? Ps4Planes{2u, 2u} : Ps4Planes{1u, 2u}), "planes in different macro tile modes");
+    auto tall = Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples);
+    tall.gcnSliceTiles += 1u;
+    refuses(tall, "slice size differs from its tile layout");
+    refuses(Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples), "native multisample depth sampled identity or format mismatch", 256u);
+    refuses(Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples), "native multisample depth sampled array, mip or layout is not implemented", 128u, 2u);
+    const auto target = Ps4Target(memory.Address(), stencil.Address(), metadata.Address(), extent, samples);
+    DepthSurfaceView(context, target);
+    NoteDepthSurfaceWrite(context, target);
+    const auto smaller = Ps4SampleWords(target.address, {96u, 112u}, extent.width, samples, 4u, 7u);
+    TargetRefuses([&] { DepthSurfaceFirstSample(context, smaller, DecodeTextureResource(smaller), {}); }, "through a T# smaller than the target is not implemented");
+    std::printf("PS4 native depth refusals checked at %u samples\n", samples);
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -5530,6 +5782,35 @@ int main(int argc, char** argv) {
             return checked == 0u ? VulkanTestSkipped : 0;
         }
         const auto context = device->GetContext();
+        if (argc == 2 && std::string_view(argv[1]) == "--ps4") {
+            std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            ShaderRecompiler::SetGcnGuestShaders(true);
+            struct Restore {
+                ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+            } restore;
+            std::uint32_t checked = 0u, refused = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(publishing, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (publishing.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
+                for (const bool depthOnly : {false, true}) {
+                    try {
+                        CheckPs4Target(publishing, samples, depthOnly);
+                    } catch (const std::runtime_error& error) {
+                        if (std::string_view(error.what()).find("needs a sampled depth shadow on this device") == std::string_view::npos) throw;
+                        std::printf("skipped, the device samples native depth directly: %s\n", error.what());
+                        return VulkanTestSkipped;
+                    }
+                    ++checked;
+                }
+                if (refused == 0u) {
+                    CheckPs4Refusals(publishing, samples);
+                    ++refused;
+                }
+            }
+            return checked == 0u ? VulkanTestSkipped : 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--publication") {
             std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
             TextureDetiler detiler(context);

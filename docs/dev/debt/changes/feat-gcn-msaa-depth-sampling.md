@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Unknown function info
+
+- [PS4 (GCN) native multisampled depth sampling](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver, PS4) - not checked on a console; PS4 Pro alternate tiling is not modeled, and other formats than D32 S8, arrays, targets without HTILE, the 1D depth mode and sample 0 through a smaller T# throw. A 2, 4 or 8 sample PS4 D32 S8 target with HTILE is sampled from its host image: its planes are sized from DB_DEPTH_SLICE (slice tiles x 64 texels x bytes x samples), every HTILE word must prove the clear value, and a T# smaller than the padded target reads a copy of its own size where the device samples through a shadow copy; where it samples the depth attachment itself, such a T# throws. When the guest reads a plane, the samples are written back in the tile modes DB_Z_INFO and DB_STENCIL_INFO name (TILE_MODE_INDEX, checked against TILE_SPLIT; DB_DEPTH_INFO is not read) in the PS4 base layout `GcnTiling` models, and HTILE as expanded words.
