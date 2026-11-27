@@ -461,8 +461,14 @@ void Run() {
     Require(collator != nullptr);
     ucol_setStrength_nid_postfix(collator, UCOL_PRIMARY);
     Require(ucol_getStrength_nid_postfix(collator) == UCOL_PRIMARY);
+    Icu::StringSearchHost::FailNextResetAllocation();
     usearch_reset_nid_postfix(opened);
     status = 0;
+    Require(usearch_next_nid_postfix(opened, &status) == Done);
+    Require(status == 7);
+    ucol_setStrength_nid_postfix(collator, UCOL_TERTIARY);
+    status = 0;
+    usearch_reset_nid_postfix(opened);
     Require(usearch_next_nid_postfix(opened, &status) == 2);
     Require(status <= 0);
 }

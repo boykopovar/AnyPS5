@@ -19,6 +19,11 @@ std::atomic_bool& PatternAllocationFailure() {
     return failure;
 }
 
+std::atomic_bool& ResetAllocationFailure() {
+    static std::atomic_bool failure;
+    return failure;
+}
+
 }
 
 namespace Icu::StringSearchHost {
@@ -60,7 +65,10 @@ bool Reset(void* search, bool force) {
         usearch_reset(native);
         return true;
     }
-    if (force) native->strength = currentStrength == UCOL_PRIMARY ? UCOL_TERTIARY : UCOL_PRIMARY;
+    if (force) {
+        native->strength = currentStrength == UCOL_PRIMARY ? UCOL_TERTIARY : UCOL_PRIMARY;
+        native->ceMask = 0;
+    }
     const auto previousCes = native->pattern.ces;
     const auto previousCesLength = native->pattern.cesLength;
     const auto previousPces = native->pattern.pces;
@@ -73,7 +81,7 @@ bool Reset(void* search, bool force) {
     native->pattern.cesLength = -1;
     native->pattern.pces = nullptr;
     native->pattern.pcesLength = 0;
-    usearch_reset(native);
+    if (!ResetAllocationFailure().exchange(false)) usearch_reset(native);
     if (native->pattern.cesLength >= 0) {
         if (previousCes != native->pattern.cesBuffer && previousCes) uprv_free(previousCes);
         if (previousPces != native->pattern.pcesBuffer && previousPces) uprv_free(previousPces);
@@ -93,6 +101,10 @@ bool Reset(void* search, bool force) {
     native->toShift = previousShift;
     std::copy(previousCesBuffer.begin(), previousCesBuffer.end(), native->pattern.cesBuffer);
     return false;
+}
+
+void FailNextResetAllocation() {
+    ResetAllocationFailure() = true;
 }
 
 void SetOffset(void* search, std::int32_t position, std::int32_t& status) {
