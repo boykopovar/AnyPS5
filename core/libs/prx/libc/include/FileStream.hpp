@@ -19,6 +19,7 @@
 #include <type_traits>
 #ifdef _WIN32
 #include <io.h>
+#include <sys/stat.h>
 #include "prx/libc/include/FileLock.hpp"
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
@@ -36,6 +37,7 @@ extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wcha
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
 extern "C" void DuplicateDirectoryStream_nid_no_patch(int from, int to);
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 #if defined(__GLIBC__)
@@ -109,6 +111,9 @@ class FileStream {
     std::atomic<int> _orientation{0};
     char16_t lowSurrogate = 0;
     unsigned pushedBack = 0;
+    std::string bytesPushedBack;
+    bool pushbackLive = false;
+    signed char seekableCache = -1;
 #ifdef _WIN32
     char* pushbackBuffer = nullptr;
 
@@ -146,6 +151,41 @@ class FileStream {
 #endif
 
 public:
+    std::string& PushedBackBytes() { return bytesPushedBack; }
+    bool PushbackLive() const { return pushbackLive; }
+    void ClearPushback() {
+        bytesPushedBack.clear();
+        pushbackLive = false;
+    }
+
+    bool IsRegularFile() {
+        if (seekableCache < 0) {
+#ifdef _WIN32
+            struct _stat64 status{};
+            seekableCache = ::_fstat64(::_fileno(GetHandle()), &status) == 0 && (status.st_mode & _S_IFMT) == _S_IFREG ? 1 : 0;
+#else
+            struct stat status{};
+            seekableCache = ::fstat(::fileno(GetHandle()), &status) == 0 && S_ISREG(status.st_mode) ? 1 : 0;
+#endif
+        }
+        return seekableCache == 1;
+    }
+
+    std::int64_t TellSeekable() {
+        if (!IsRegularFile()) return -1;
+#ifdef _WIN32
+        return ::_ftelli64(GetHandle());
+#else
+        return ::ftello(GetHandle());
+#endif
+    }
+
+    void NotePushedBackByte(char byte, bool wasLive) {
+        if (!wasLive) bytesPushedBack.clear();
+        bytesPushedBack.push_back(byte);
+        pushbackLive = true;
+    }
+
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
         if (!_handle) throw std::runtime_error("FileStream: null handle");
 #ifdef _WIN32
@@ -210,6 +250,7 @@ public:
         _guest.descriptor = -1;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     void RestoreHostStandard(std::FILE* stream, int kept) {
@@ -232,6 +273,7 @@ public:
         _guest.descriptor = -1;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     bool IsRandomDevice() const {
@@ -256,6 +298,7 @@ public:
         randomDevice = false;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
         if (!_handle) return false;
         _guest.flags = 0x10;
 #ifdef _WIN32
@@ -291,6 +334,7 @@ public:
         _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
@@ -380,11 +424,13 @@ public:
     }
 
     void SyncStatus() {
+        pushbackLive = false;
         if (!_handle) return;
         PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
+        pushbackLive = false;
         if (!_handle) return;
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
@@ -538,6 +584,7 @@ public:
     void SetLowSurrogate(char16_t unit) {
         lowSurrogate = unit;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     void NotePushback() {
@@ -569,6 +616,7 @@ public:
         _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
         return result;
     }
 };

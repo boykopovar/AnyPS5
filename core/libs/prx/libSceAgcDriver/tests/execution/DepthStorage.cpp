@@ -280,6 +280,7 @@ void Run(Context context, std::uint8_t* block) {
     Require(CountFloats(block, 0.5f) == Side * Side, "the two-layer 2D array view did not receive the layer the depth surface holds");
     layeredDepth.baseArray = 1;
     Require(DepthSurfaceStorage(context, {}, layeredDepth, 0) != nullptr, "a 2D array view from layer 1 of the depth plane was not taken as a storage image");
+    Require(DepthSurfaceStorage(context, {}, layeredDepth, 0)->ImageLayers() == 1, "a 2D array view of layer 1 alone over the depth plane was not given a storage image of that layer alone");
     const auto own = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
     const std::array<std::uint32_t, 4> eighth{std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f)};
     Require(own->FillClear(eighth, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the storage image could not be filled");
@@ -308,7 +309,49 @@ void Run(Context context, std::uint8_t* block) {
     submit(recorder);
     readBack(*spanningView);
     Require(CountFloats(block + layerPitch, overlapping) == Side * Side, "the layer that only overlaps the depth surface did not hold the guest bytes that were there");
+    auto limited = context;
+    limited.limits.maxImageArrayLayers = 2;
+    auto threeLayers = spanning;
+    threeLayers.depthOrLastArray = 2;
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(limited, {}, threeLayers, 0)); }, "maxImageArrayLayers", "a three-layer view under a two-layer limit was built, so the store back below would not follow a failed construction");
     Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
+}
+
+void RunUnclaimed(Context context, std::uint8_t* block) {
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto stencilAddress = address + BlockBytes / 2;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto plane = [](const Context& at, std::uint64_t where, std::uint32_t format) {
+        return DepthSurfaceStorage(at, {}, PlaneResource(where, format), 0);
+    };
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        Require(plane(context, address, Format32Float) == nullptr, "an address no depth surface holds had a storage image");
+        Require(plane(context, stencilAddress, Format8Uint) == nullptr, "a stencil address no depth surface holds had a storage image");
+    }
+    const DepthTarget target{address, stencilAddress, {Side, Side}, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.25f, 7};
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the depth surface was not created");
+    auto elsewhere = context;
+    elsewhere.device = reinterpret_cast<VkDevice>(static_cast<std::uintptr_t>(0x1000));
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        Require(plane(elsewhere, address, Format32Float) == nullptr, "another device's lookup took this device's depth surface");
+        Require(plane(context, address + BlockBytes / 4, Format32Float) == nullptr, "an address inside the depth memory but not at a plane's base had a storage image");
+    }
+    Require(plane(context, address, Format32Float) != nullptr, "a depth plane created after a lookup that found none was not found");
+    const auto scans = DepthSurfaceStorageScans();
+    for (int repeat = 0; repeat < 5; ++repeat) Require(plane(context, address + 1, Format32Float) == nullptr, "an address inside the depth plane but not at its base had a storage image");
+    Require(DepthSurfaceStorageScans() - scans == 1, "a repeated lookup of an address no depth surface holds scanned the depth surfaces again");
+    for (std::uint64_t offset = 2; offset < 258; ++offset) Require(plane(context, address + offset, Format32Float) == nullptr, "an address inside the depth plane but not at its base had a storage image");
+    Require(plane(context, address, Format32Float) != nullptr, "a depth plane was taken for the miss of another address");
+    Require(plane(context, stencilAddress, Format8Uint) != nullptr, "a stencil plane created after a lookup that found none was not found");
+    RetireDepthSurfaces(context.device, address, BlockBytes);
+    for (int repeat = 0; repeat < 3; ++repeat) Require(plane(context, address, Format32Float) == nullptr, "a retired depth surface still had a storage image");
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the retired depth surface was not bound again");
+    Require(plane(context, address, Format32Float) != nullptr, "a retired depth surface bound again was not found");
+    recorder.Submit();
+    Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    ClearDepthSurfaces(context.device);
+    Require(plane(context, address, Format32Float) == nullptr, "a depth surface cleared with its device was still found");
 }
 
 void RunPairings(Context context, std::uint8_t* block) {
@@ -431,6 +474,7 @@ int main(int argc, char** argv) {
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            RunUnclaimed(context, block);
             Run(context, block);
             ClearDepthSurfaces(context.device);
             RunPairings(context, block);

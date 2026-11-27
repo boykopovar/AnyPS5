@@ -687,6 +687,10 @@ bool isVop3BCarryOutOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VAddI32 || opcode == RdnaOpcode::VSubI32 || opcode == RdnaOpcode::VSubrevI32;
 }
 
+bool isVop3BCarryOpcode(RdnaOpcode opcode) {
+    return isVop3BCarryOutOpcode(opcode) || opcode == RdnaOpcode::VAddcU32 || opcode == RdnaOpcode::VSubCoCiU32 || opcode == RdnaOpcode::VSubrevCoCiU32;
+}
+
 bool isVop3BMadU64Opcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VMadU64U32 || opcode == RdnaOpcode::VMadI64I32 || opcode == RdnaOpcode::VDivScaleF32 || opcode == RdnaOpcode::VDivScaleF64;
 }
@@ -742,6 +746,11 @@ bool isNativeVop3I16TernaryOpcode(RdnaOpcode opcode) {
         opcode == RdnaOpcode::VMax3U16 || opcode == RdnaOpcode::VMin3I16 || opcode == RdnaOpcode::VMin3U16 ||
         opcode == RdnaOpcode::VMadU16 || opcode == RdnaOpcode::VMadI16 || opcode == RdnaOpcode::VMadU32U16 ||
         opcode == RdnaOpcode::VMadI32I16;
+}
+
+bool isNativeVop3I32TernaryOpcode(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VMed3I32 || opcode == RdnaOpcode::VMed3U32 || opcode == RdnaOpcode::VMax3I32 ||
+        opcode == RdnaOpcode::VMax3U32 || opcode == RdnaOpcode::VMin3I32 || opcode == RdnaOpcode::VMin3U32;
 }
 
 bool isNativeVop3AlignOpcode(RdnaOpcode opcode) {
@@ -859,6 +868,24 @@ bool isVop1FloatSourceOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VCosF16:
         case RdnaOpcode::VSinF32:
         case RdnaOpcode::VCosF32: return true;
+        default: return false;
+    }
+}
+
+bool isVop1IntegerSourceOpcode(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::VCvtF32I32:
+        case RdnaOpcode::VCvtF32U32:
+        case RdnaOpcode::VCvtOffF32I4:
+        case RdnaOpcode::VCvtF32Ubyte0:
+        case RdnaOpcode::VCvtF32Ubyte1:
+        case RdnaOpcode::VCvtF32Ubyte2:
+        case RdnaOpcode::VCvtF32Ubyte3:
+        case RdnaOpcode::VNotB32:
+        case RdnaOpcode::VBfrevB32:
+        case RdnaOpcode::VFfbhU32:
+        case RdnaOpcode::VFfblB32:
+        case RdnaOpcode::VFfbhI32: return true;
         default: return false;
     }
 }
@@ -1064,8 +1091,17 @@ bool isVop2FloatOpcode(RdnaOpcode opcode) {
     }
 }
 
+bool isVop2IntegerOpcode(RdnaOpcode opcode) {
+    for (const auto& entry : vop2Opcodes) {
+        if (entry.opcode == opcode) {
+            return entry.sdwaProfile == Vop2SdwaProfile::Integer;
+        }
+    }
+    return false;
+}
+
 bool hasUnsupportedVop2SourceModifiers(RdnaOpcode opcode, bool src0Modified, bool src1Modified) {
-    if (isVop2FloatOpcode(opcode) || opcode == RdnaOpcode::VCndmaskB32) {
+    if (isVop2FloatOpcode(opcode) || isVop2IntegerOpcode(opcode)) {
         return false;
     }
     if (opcode == RdnaOpcode::VLdexpF16) {
@@ -1081,18 +1117,6 @@ bool usesInexactClampControl(RdnaOpcode opcode) {
 
 bool supportsVop1Clamp(RdnaOpcode opcode) {
     return isVop1FloatResultOpcode(opcode) || usesInexactClampControl(opcode);
-}
-
-bool ignoresVop1SdwaOutputModifiers(RdnaOpcode opcode) {
-    switch (opcode) {
-        case RdnaOpcode::VMovB32:
-        case RdnaOpcode::VNotB32:
-        case RdnaOpcode::VBfrevB32:
-        case RdnaOpcode::VFfbhU32:
-        case RdnaOpcode::VFfblB32:
-        case RdnaOpcode::VFfbhI32: return true;
-        default: return false;
-    }
 }
 
 constexpr std::uint32_t sdwaSel(std::uint32_t sel) {
@@ -1152,7 +1176,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VRcpF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VSqrtF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VRsqF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
@@ -1199,14 +1223,15 @@ const Vop1SdwaRule* findVop1SdwaRule(RdnaOpcode opcode) {
 }
 
 bool isVop1SdwaSourceSupported(RdnaOpcode opcode, std::uint32_t sourceSelector, bool sourceNegate, bool sourceAbsolute) {
+    const bool modifiersAccepted = isVop1IntegerSourceOpcode(opcode) || (!sourceNegate && !sourceAbsolute);
     if (sourceSelector == 6u) {
-        return isVop1FloatSourceOpcode(opcode) || (!sourceNegate && !sourceAbsolute);
+        return isVop1FloatSourceOpcode(opcode) || modifiersAccepted;
     }
     const auto* rule = findVop1SdwaRule(opcode);
     if (rule == nullptr || !hasSdwaSelector(rule->sourceSelectors, sourceSelector)) {
         return false;
     }
-    return rule->sourceModifiers || (!sourceNegate && !sourceAbsolute);
+    return rule->sourceModifiers || modifiersAccepted;
 }
 
 bool isVop1SdwaDestinationSupported(RdnaOpcode opcode, std::uint32_t destinationSelector, std::uint32_t destinationUnused, std::uint32_t sourceSelector) {
@@ -1225,7 +1250,7 @@ void validateVop1Sdwa(const RdnaInstruction& instruction, std::uint32_t destinat
     if (sourceSelector > 6u || destinationSelector > 6u) {
         throw std::invalid_argument("VOP1 SDWA selector is invalid");
     }
-    if (!ignoresVop1SdwaOutputModifiers(instruction.op) && ((clamp != 0u && !supportsVop1Clamp(instruction.op)) || (omod != 0u && !isVop1FloatResultOpcode(instruction.op)))) {
+    if ((clamp != 0u && !supportsVop1Clamp(instruction.op)) || (omod != 0u && !isVop1FloatResultOpcode(instruction.op))) {
         throw std::invalid_argument("VOP1 SDWA output modifiers are not supported");
     }
     if (!isVop1SdwaDestinationSupported(instruction.op, destinationSelector, destinationUnused, sourceSelector)) {
@@ -1274,9 +1299,8 @@ void decodeVop1Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     instruction.destination.sdwaSel = dstSel;
     instruction.destination.sdwaDstUnused = dstUnused;
     instruction.destination.explicitSdwaDst = true;
-    const bool outputModifiers = !ignoresVop1SdwaOutputModifiers(instruction.op);
-    instruction.destination.clamp = outputModifiers && clamp != 0u;
-    instruction.destination.omod = outputModifiers ? omod : 0u;
+    instruction.destination.clamp = clamp != 0u;
+    instruction.destination.omod = omod;
     instruction.source0.sdwaSel = src0Sel;
     instruction.source0.sdwaSext = src0Sext != 0u;
     instruction.source0.negate = src0Neg != 0u;
@@ -1324,7 +1348,7 @@ void decodeVop1Dpp(std::uint32_t programCounter, std::span<const std::uint32_t> 
     }
     instruction.sourceCount = 1;
 
-    if (!isVop1FloatSourceOpcode(instruction.op) && (instruction.source0.negate || instruction.source0.absolute)) {
+    if (!isVop1FloatSourceOpcode(instruction.op) && !isVop1IntegerSourceOpcode(instruction.op) && (instruction.source0.negate || instruction.source0.absolute)) {
         throw std::invalid_argument("VOP1 DPP integer source modifiers are not supported");
     }
     ReadRdnaLiteralOperands(code, wordIndex, instruction);
@@ -1373,13 +1397,12 @@ struct Vop2SdwaRule {
     std::uint32_t src0Selectors = sdwaSelFull();
     std::uint32_t src1Selectors = sdwaSelFull();
     bool partialDst = false;
-    bool sourceModifiers = false;
 };
 
 constexpr Vop2SdwaRule vop2SdwaRules[] = {
     {},
-    {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true, true},
-    {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true, false},
+    {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true},
+    {sdwaSelAll(), sdwaSelAll(), sdwaSelAll(), true},
 };
 
 const Vop2SdwaRule* findVop2SdwaRule(std::uint32_t encoding) {
@@ -1390,9 +1413,9 @@ const Vop2SdwaRule* findVop2SdwaRule(std::uint32_t encoding) {
     return &vop2SdwaRules[static_cast<std::size_t>(info->sdwaProfile)];
 }
 
-bool isVop2SdwaIntegerOpcode(std::uint32_t encoding) {
+bool supportsVop2SdwaIntegerClamp(RdnaOpcode op, std::uint32_t encoding) {
     const auto* info = findVectorOpcodeEntry(vop2Opcodes, encoding);
-    return info != nullptr && info->sdwaProfile == Vop2SdwaProfile::Integer;
+    return info != nullptr && info->sdwaProfile == Vop2SdwaProfile::Integer && op != RdnaOpcode::VCndmaskB32;
 }
 
 bool isVop2SdwaDestinationSupported(const Vop2SdwaRule& rule, const Vop2SdwaFields& fields) {
@@ -1414,7 +1437,8 @@ void validateVop2Sdwa(const RdnaInstruction& instruction, std::uint32_t opcode, 
         throw std::invalid_argument("VOP2 SDWA selector is invalid");
     }
     const bool floatResult = isVop2FloatOpcode(instruction.op) || instruction.op == RdnaOpcode::VLdexpF16;
-    if ((fields.clamp != 0u || fields.omod != 0u) && !floatResult && !isVop2SdwaIntegerOpcode(opcode)) {
+    const bool clampSupported = floatResult || supportsVop2SdwaIntegerClamp(instruction.op, opcode);
+    if ((fields.clamp != 0u && !clampSupported) || (fields.omod != 0u && !floatResult)) {
         throw std::invalid_argument("VOP2 SDWA output modifiers are not supported");
     }
     if (hasUnsupportedVop2SourceModifiers(instruction.op, fields.src0Neg != 0u || fields.src0Abs != 0u, fields.src1Neg != 0u || fields.src1Abs != 0u)) {
@@ -1433,11 +1457,6 @@ void validateVop2Sdwa(const RdnaInstruction& instruction, std::uint32_t opcode, 
     }
     if (!hasSdwaSelector(rule->src0Selectors, fields.src0Sel) || !hasSdwaSelector(rule->src1Selectors, fields.src1Sel)) {
         throw std::invalid_argument("VOP2 SDWA source selector is not supported");
-    }
-    const bool hasSourceModifiers = fields.src0Neg != 0u || fields.src0Abs != 0u || fields.src1Neg != 0u || fields.src1Abs != 0u;
-    const bool cndmaskFloatModifiers = instruction.op == RdnaOpcode::VCndmaskB32 && fields.src0Sel == 6u && fields.src1Sel == 6u;
-    if (!rule->sourceModifiers && hasSourceModifiers && !cndmaskFloatModifiers) {
-        throw std::invalid_argument("VOP2 SDWA source modifiers are not supported");
     }
 }
 
@@ -1490,7 +1509,7 @@ void decodeVop2Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     instruction.destination.sdwaDstUnused = fields.dstUnused;
     instruction.destination.explicitSdwaDst = true;
     instruction.destination.clamp = fields.clamp != 0u;
-    instruction.destination.omod = isVop2SdwaIntegerOpcode(opcode) ? 0u : fields.omod;
+    instruction.destination.omod = fields.omod;
     instruction.source0.sdwaSel = fields.src0Sel;
     instruction.source0.sdwaSext = fields.src0Sext != 0u;
     instruction.source0.negate = fields.src0Neg != 0u;
@@ -2068,6 +2087,12 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         }
         return;
     }
+    if (isNativeVop3I32TernaryOpcode(opcode)) {
+        if (abs != 0u || opSel != 0u || omod != 0u || neg != 0u) {
+            throw std::invalid_argument("VOP3 source modifiers are not implemented");
+        }
+        return;
+    }
     if (isNativeVop3AlignOpcode(opcode)) {
         if (abs != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
@@ -2083,7 +2108,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     if (carryInOut || scalarDst) {
         const bool floatCompare = scalarDst && isVopcFloatCompareOpcode(opcode);
         const bool divScale = opcode == RdnaOpcode::VDivScaleF32 || opcode == RdnaOpcode::VDivScaleF64;
-        if ((clamp != 0u && !isVop3BMadU64Opcode(opcode) && !floatCompare) || (omod != 0u && !divScale) || (neg != 0u && !floatCompare && !divScale)) {
+        if ((clamp != 0u && !isVop3BMadU64Opcode(opcode) && !isVop3BCarryOpcode(opcode) && !floatCompare) || (omod != 0u && !divScale) || (neg != 0u && !floatCompare && !divScale)) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2101,7 +2126,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         return;
     }
     if (opcode == RdnaOpcode::VCvtPkU8F32) {
-        if ((abs & ~1u) != 0u || opSel != 0u || clamp != 0u || omod != 0u || (neg & ~1u) != 0u) {
+        if ((abs & ~1u) != 0u || opSel != 0u || omod != 0u || (neg & ~1u) != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2423,7 +2448,7 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
         instruction.destination = DecodeRdnaVectorGpr(vdst);
     }
     instruction.source0 = DecodeRdnaScalarSource(src0, programCounter);
-    instruction.destination.clamp = (supportsNativeVop3Clamp(instruction.op) || vop3bMadU64) && clamp != 0u;
+    instruction.destination.clamp = (supportsNativeVop3Clamp(instruction.op) || vop3bUsesSdst) && clamp != 0u;
     instruction.destination.omod = nativeResultModifiers ? omod : 0u;
     if (permlane) {
         instruction.destination.opSel = (opSel & 0x1u) != 0u;

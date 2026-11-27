@@ -74,12 +74,19 @@ void testConsoleArguments() {
     }
 }
 
+void testWriteAddressAboveBit48() {
+    Storage storage;
+    const auto* packet = sceAgcCbCondWrite(&storage.buffer, 1, 1, at(0x0001000000000000u), 0x33333333u, at(0x0000000200014004u), 0x44444444u, 0x55555555u);
+    check(packet == storage.words.data(), "COND_WRITE refused a write address above bit 48");
+    const std::array<std::uint32_t, 9> expected{0xc0074500u, 0x111u, 0x00014004u, 0x00000002u, 0x44444444u, 0x55555555u, 0x00000000u, 0x00010000u, 0x33333333u};
+    for (std::size_t index = 0; index < expected.size(); ++index) check(packet[index] == expected[index], "COND_WRITE packet mismatch for a write address above bit 48");
+    check(storage.buffer.cursor_up == storage.words.data() + 9 && storage.words[9] == Sentinel, "COND_WRITE cursor advance for a write address above bit 48");
+}
+
 void testInvalid() {
     Storage storage;
     const auto before = storage.words;
-    const auto poll = at(0x1000u);
     const auto write = at(0x2000u);
-    expectFailure([&] { sceAgcCbCondWrite(&storage.buffer, 3, 1, at(0x0001000000000000u), 0, poll, 0, 0); });
     expectFailure([&] { sceAgcCbCondWrite(&storage.buffer, 3, 1, write, 0, at(0x0001000000000000u), 0, 0); });
     check(storage.words == before && storage.buffer.cursor_up == storage.words.data(), "failed COND_WRITE modified the buffer");
 }
@@ -89,6 +96,7 @@ int main() {
     try {
         testPacket();
         testConsoleArguments();
+        testWriteAddressAboveBit48();
         testInvalid();
         std::puts("AGC COND_WRITE tests passed");
         return 0;

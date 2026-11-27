@@ -214,6 +214,16 @@ Ngs2Voice* Ngs2FindVoice(Ngs2Handle handle) {
     return nullptr;
 }
 
+Ngs2Stream* Ngs2FindStream(Ngs2Handle handle) {
+    for (auto* system : Systems()) {
+        if (system->destroying) continue;
+        for (auto* stream : system->streams) {
+            if (!stream->destroying && reinterpret_cast<Ngs2Handle>(stream) == handle) return stream;
+        }
+    }
+    return nullptr;
+}
+
 void* Ngs2Place(const Ngs2ContextBufferInfo* bufferInfo, std::size_t size, std::size_t alignment) {
     if (bufferInfo == nullptr || bufferInfo->host_buffer == nullptr || bufferInfo->host_buffer_size < size) {
         throw std::invalid_argument("NGS2: the context buffer is missing or smaller than the queried size");

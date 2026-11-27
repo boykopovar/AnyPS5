@@ -53,6 +53,7 @@ constexpr int NGS2_ERROR_INVALID_OUT_ADDRESS = static_cast<int>(0x804a8010u);
 constexpr int NGS2_ERROR_INVALID_OUT_SIZE = static_cast<int>(0x804a8011u);
 constexpr int NGS2_ERROR_INVALID_OPTION_SIZE = static_cast<int>(0x804a8013u);
 constexpr int NGS2_ERROR_INVALID_BUFFER_INFO = static_cast<int>(0x804a8020u);
+constexpr int NGS2_ERROR_INVALID_BUFFER_SIZE = static_cast<int>(0x804a8021u);
 constexpr int NGS2_ERROR_INVALID_BUFFER_ALLOCATOR = static_cast<int>(0x804a8023u);
 constexpr int NGS2_ERROR_INVALID_STREAM_COMMANDS = static_cast<int>(0x804a8030u);
 constexpr int NGS2_ERROR_INVALID_STREAM_QUERY_ID = static_cast<int>(0x804a8031u);
@@ -325,7 +326,8 @@ int APS5_VABI sceNgs2RackQueryInfo(uintptr_t rack_handle, std::uint32_t info_id,
         if (info == nullptr) return NGS2_ERROR_INVALID_OUT_ADDRESS;
         const std::uint32_t moduleIdx = info_id >> 24;
         if (moduleIdx >= rack->customModules.size()) return NGS2_ERROR_INVALID_RACK_MODULE_INDEX;
-        NotImplemented_nid_no_patch(__func__);
+        const Ngs2CustomModuleInfo record = rack->customModules[moduleIdx];
+        if (!WriteGuest(static_cast<Ngs2CustomModuleInfo*>(info), record)) return NGS2_ERROR_INVALID_OUT_ADDRESS;
         return 0;
     }
     case 0xf14070: {
@@ -377,6 +379,7 @@ int APS5_VABI sceNgs2StreamCreate(uintptr_t system_handle, const void* option, c
     Ngs2StreamOption checked{};
     const int optError = CheckStreamOption(option, checked);
     if (optError != 0) return optError;
+    if (localBufferInfo.host_buffer_size < ComputeStreamBufferSize(checked)) return NGS2_ERROR_INVALID_BUFFER_SIZE;
     const Ngs2Lock lock;
     auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return NGS2_ERROR_INVALID_SYSTEM_HANDLE;
@@ -400,14 +403,16 @@ int APS5_VABI sceNgs2StreamCreateWithAllocator(uintptr_t system_handle, const vo
 }
 
 int APS5_VABI sceNgs2StreamDestroy(uintptr_t stream_handle, void* buffer_info) {
+    const Ngs2Lock lock;
+    if (Ngs2FindStream(stream_handle) == nullptr) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     static_cast<void>(buffer_info);
-    if (stream_handle == 0) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNgs2StreamRunCommands(uintptr_t stream_handle, const void* commands, std::size_t count) {
-    if (stream_handle == 0) return NGS2_ERROR_INVALID_STREAM_HANDLE;
+    const Ngs2Lock lock;
+    if (Ngs2FindStream(stream_handle) == nullptr) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     if (commands == nullptr && count != 0) return NGS2_ERROR_INVALID_STREAM_COMMANDS;
     if (count == 0) return 0;
     std::vector<Ngs2CommandRecord> records(count);
@@ -438,7 +443,8 @@ int APS5_VABI sceNgs2StreamRunCommands(uintptr_t stream_handle, const void* comm
 }
 
 int APS5_VABI sceNgs2StreamQueryInfo(uintptr_t stream_handle, std::uint32_t info_id, void* info, std::size_t info_size) {
-    if (stream_handle == 0) return NGS2_ERROR_INVALID_STREAM_HANDLE;
+    const Ngs2Lock lock;
+    if (Ngs2FindStream(stream_handle) == nullptr) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     const std::uint32_t cmd = info_id & 0x00FFFFFFu;
     if (cmd == 0xf24001) {
         if (info_size < 8) return NGS2_ERROR_INVALID_OUT_SIZE;

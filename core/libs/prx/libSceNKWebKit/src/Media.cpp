@@ -6,6 +6,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <string>
 #include <utility>
 
 namespace {
@@ -99,6 +101,32 @@ float mediaTimeToFloat(const WTF::MediaTime& t) {
         return static_cast<float>(t.m_timeValueAsDouble);
     }
     return static_cast<float>(t.m_timeValue) / t.m_timeScale;
+}
+
+std::string shortestNumber(double value) {
+    if (std::isnan(value)) return "NaN";
+    if (std::isinf(value)) return value < 0 ? "-Infinity" : "Infinity";
+    if (value == 0) return "0";
+    char buffer[32];
+    auto converted = std::to_chars(buffer, buffer + sizeof(buffer), std::fabs(value), std::chars_format::scientific);
+    std::string text(buffer, converted.ptr);
+    const std::size_t e = text.find('e');
+    const int exponent = std::stoi(text.substr(e + 1));
+    std::string digits = text.substr(0, e);
+    digits.erase(std::remove(digits.begin(), digits.end(), '.'), digits.end());
+    const int count = static_cast<int>(digits.size());
+    const int point = exponent + 1;
+    std::string result = value < 0 ? "-" : "";
+    if (point >= -5 && point <= 21) {
+        if (point <= 0) result += "0." + std::string(static_cast<std::size_t>(-point), '0') + digits;
+        else if (point >= count) result += digits + std::string(static_cast<std::size_t>(point - count), '0');
+        else result += digits.substr(0, point) + "." + digits.substr(point);
+        return result;
+    }
+    result += digits.substr(0, 1);
+    if (count > 1) result += "." + digits.substr(1);
+    result += exponent < 0 ? "e-" : "e+";
+    return result + std::to_string(exponent < 0 ? -exponent : exponent);
 }
 
 constexpr std::size_t mediaTimeFieldBytes = offsetof(WTF::MediaTime, m_timeFlags) + sizeof(uint8_t);
@@ -601,6 +629,20 @@ double APS5_VABI _ZNK3WTF9MediaTime8toDoubleEv(const WTF::MediaTime* self) {
     return mediaTimeToDouble(time);
 }
 
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF9MediaTime8toStringEv(const WTF::MediaTime* self) {
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    std::string text = "{";
+    if (!mediaTimeHasDoubleValue(time))
+        text += std::to_string(time.m_timeValue) + "/" + std::to_string(time.m_timeScale) + " = ";
+    text += shortestNumber(mediaTimeToDouble(time));
+    if (mediaTimeIsInvalid(time))
+        text += ", invalid";
+    text += "}";
+    return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text.data()), static_cast<unsigned>(text.size()));
+}
+
 uint8_t APS5_VABI _ZNK3WTF9MediaTime9timeFlagsEv(const WTF::MediaTime* self) {
     WTF::MediaTime time;
     if (!loadMediaTime(time, self))
@@ -904,10 +946,6 @@ WebCore::PlatformTimeRanges& APS5_VABI _ZN7WebCore18PlatformTimeRangesaSERKS0_(W
 }
 
 void APS5_VABI _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(WebCore::PlatformTimeRanges* self, const WTF::MediaTime& start, const WTF::MediaTime& end) {
-    if (_ZNK3WTF9MediaTimegtERKS0_(&start, end)) {
-        return;
-    }
-
     WebCore::PlatformTimeRanges::Range addedRange{start, end};
     unsigned overlappingArcIndex = 0;
 
