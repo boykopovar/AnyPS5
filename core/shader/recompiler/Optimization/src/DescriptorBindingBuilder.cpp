@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace ShaderRecompiler {
 
@@ -517,11 +518,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& buffer = info.buffers[index];
         const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
         const auto format = (fields.word3 >> 12u) & 0x7fu;
-        if (buffer.descriptorFormatted && format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) fail("buffer specialization has an unsupported format");
+        const bool discardedType = !GcnGuestShaders() && ((fields.word3 >> 30u) & 0x3u) != 0u;
+        if (!discardedType && buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (fields.known && format == 0u))) fail("buffer specialization has an unsupported format");
         const auto misalignment = fields.misalignment;
         auto alignment = static_cast<std::uint32_t>(buffer.typedAlignment);
-        if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
-        if (alignment == 0u || misalignment % alignment != 0u) fail("is a formatted buffer access through a V# whose base is not aligned to its element");
+        if (!discardedType && buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
+        if (!discardedType && (alignment == 0u || misalignment % alignment != 0u)) fail("is a formatted buffer access through a V# whose base is not aligned to its element");
         if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, fields.word3});
         if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 2u, fields.tail});
         if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 3u, misalignment});
@@ -532,7 +534,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             plan.specialization.push_back({first + 2u, fields.tail});
             plan.specialization.push_back({first + 3u, misalignment});
         }
-        if (buffer.formattedReadMask != 0u) {
+        if (buffer.formattedReadMask != 0u && !discardedType) {
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 if ((buffer.formattedReadMask & (1u << component)) == 0u) continue;
                 const auto selector = (fields.word3 >> (component * 3u)) & 7u;

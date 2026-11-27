@@ -87,7 +87,7 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
         auto& size = constant(records);
         auto& base = constant(valid ? 0x100u : 0u);
         auto& handle = emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&base, &zero, &size, &zero});
-        emit(test.opcode, test.type, {&handle, &zero, &address, &zero, &enabled});
+        emit(test.opcode, test.type, {&handle, &zero, &address, &zero, &zero, &enabled});
     } else {
         if (test.kind == ResourceKind::Gds) program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Gds, {0}});
         emit(test.opcode, test.type, {&address, &enabled});
