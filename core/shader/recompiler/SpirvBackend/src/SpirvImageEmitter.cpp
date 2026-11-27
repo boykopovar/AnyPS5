@@ -170,14 +170,29 @@ std::uint32_t CubeAxis(SpirvEmitterState& state, std::uint32_t value) {
     return Binary(state, spv::OpFSub, TypeF32(state), value, ConstantF32(state, 0x3f800000u));
 }
 
-std::uint32_t CubeLayer(SpirvEmitterState& state, std::uint32_t value) {
-    const auto guest = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertFToU, TypeU32(state), guest, value);
-    const auto padding = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), guest, ConstantU32(state, 3)), ConstantU32(state, 1));
-    const auto host = Binary(state, spv::OpISub, TypeU32(state), guest, padding);
-    const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), result, host);
-    return result;
+std::uint32_t CubeLayer(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t value) {
+    if (GcnGuestShaders()) {
+        const auto guest = Unary(state, spv::OpConvertFToU, TypeU32(state), value);
+        const auto padding = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), guest, ConstantU32(state, 3)), ConstantU32(state, 1));
+        return Unary(state, spv::OpConvertUToF, TypeF32(state), Binary(state, spv::OpISub, TypeU32(state), guest, padding));
+    }
+    const auto i32 = TypeI32(state);
+    const auto ext = [&](std::uint32_t op, std::uint32_t a, std::uint32_t b) {
+        const auto id = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, i32, id, GlslStd450(state), op, a, b);
+        return id;
+    };
+    const auto guest = Unary(state, spv::OpConvertFToS, i32, value);
+    const auto face = ext(GLSLstd450SMin, Binary(state, spv::OpBitwiseAnd, i32, guest, ConstantI32(state, 7)), ConstantI32(state, 5));
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 3), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    const auto layers = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, i32, layers, size, 2u);
+    const auto lastCube = ext(GLSLstd450SMax, Binary(state, spv::OpISub, i32, Binary(state, spv::OpSDiv, i32, layers, ConstantI32(state, 6)), ConstantI32(state, 1)), ConstantI32(state, 0));
+    const auto cube = ext(GLSLstd450SMin, ext(GLSLstd450SMax, Binary(state, spv::OpShiftRightArithmetic, i32, guest, ConstantI32(state, 3)), ConstantI32(state, 0)), lastCube);
+    const auto host = Binary(state, spv::OpIAdd, i32, Binary(state, spv::OpIMul, i32, cube, ConstantI32(state, 6)), face);
+    return Unary(state, spv::OpConvertSToF, TypeF32(state), host);
 }
 
 std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t first, std::uint32_t components, std::uint32_t encoded, bool gradient = false) {
@@ -204,7 +219,7 @@ std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access
     if (components == 3u) {
         auto z = (access.image.depthCompare && (access.mem.imageDimension == RdnaImageDimension::Dim1DArray || (access.image.remappedDepth1D && access.image.dimension == RdnaImageDimension::Dim2DArray))) ? component(1u) : component(2u);
         if (cube) {
-            z = CubeLayer(ctx.state, z);
+            z = CubeLayer(ctx.state, access, z);
         }
         ctx.state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(ctx.state, 3), result, x, y, z);
     } else {
@@ -1452,6 +1467,11 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageDimension == RdnaImageDimension::Dim3D && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
     }
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (VolumeSliceAddress(access)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, VolumeSliceInRange(ctx, access, LoadSampledImageDescriptor(state, access.mem.resource), LodU32(ctx, access)));
     }
@@ -1482,8 +1502,31 @@ std::uint32_t ImageSampleIndex(SpirvValueEmitContext& ctx, const ImageEmitAccess
     return AddressU32(ctx, access, addressInfo.coordinateComponents);
 }
 
+std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> StoreQuantizeWordValues(SpirvEmitterState& state, std::uint32_t resource) {
+    const auto u32 = TypeU32(state);
+    std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> words{};
+    if (!state.registrationModules) {
+        const auto first = PipelineSpecialization::StoreQuantizeBase + resource * PipelineSpecialization::StoreQuantizeWords;
+        for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = state.module.SpecializationConstant(u32, first + index, 0u);
+        return words;
+    }
+    words.fill(ConstantU32(state, 0u));
+    const auto& image = state.program.Info().images.at(resource);
+    if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) return words;
+    const auto code = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u), ConstantU32(state, 20u)), 0x1ffu);
+    const auto unquantized = StoreQuantizeValues(0u);
+    for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = ConstantU32(state, unquantized[index]);
+    for (std::uint32_t value = 0; value <= 0x1ffu; ++value) {
+        const auto values = StoreQuantizeValues(value);
+        if (values[0] == 0u) continue;
+        const auto match = Binary(state, spv::OpIEqual, TypeBool(state), code, ConstantU32(state, value));
+        for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = Select(state, u32, match, ConstantU32(state, values[index]), words[index]);
+    }
+    return words;
+}
+
 std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t texel) {
-    const auto first = PipelineSpecialization::StoreQuantizeBase + resource * PipelineSpecialization::StoreQuantizeWords;
+    const auto words = StoreQuantizeWordValues(state, resource);
     const auto f32 = TypeF32(state);
     const auto vec4 = TypeF32Vector(state, 4u);
     const auto bvec4 = state.module.Type(spv::OpTypeVector, TypeBool(state), 4u);
@@ -1492,7 +1535,7 @@ std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resourc
         state.module.AddFunction(spv::OpCompositeConstruct, type, result, scalar, scalar, scalar, scalar);
         return result;
     };
-    const auto word = [&](std::uint32_t index) { return state.module.SpecializationConstant(TypeU32(state), first + index, 0u); };
+    const auto word = [&](std::uint32_t index) { return words.at(index); };
     const auto enabled = Binary(state, spv::OpINotEqual, TypeBool(state), word(0u), ConstantU32(state, 0u));
     const auto scale = splat(vec4, Unary(state, spv::OpBitcast, f32, word(1u)));
     const auto reciprocal = splat(vec4, Unary(state, spv::OpBitcast, f32, word(2u)));
@@ -1550,6 +1593,11 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageDimension == RdnaImageDimension::Dim2DArray && access.image.dimension == RdnaImageDimension::Dim1D) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
     }
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || (access.image.dimension == RdnaImageDimension::Dim1D && access.mem.imageDimension == RdnaImageDimension::Dim1DArray))) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (VolumeSliceAddress(access) || ArraySliceAddress(access)) {
         if (access.image.mipMode == ImageMipMode::DynamicStorage) ctx.Fail(access.inst, "stores a 2D-array address to a 3D image or a 3D address to a 2D-array image with dynamic mips, which is not implemented");
         const auto image = state.module.AllocateId();
@@ -1560,7 +1608,7 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? LodU32(ctx, access) : 0u;
         const auto coord = CoordU32(ctx, access);
         auto texel = access.mem.imagePacked ? PackedStoreTexel(ctx, access, ctx.Arg(access.inst, 2)) : StoreTexel(ctx, access, ctx.Arg(access.inst, 2), uintImage);
-        if (!uintImage && !access.mem.imagePacked && !access.image.atomic && access.image.table == NoTable && !state.registrationModules && access.image.conversionFormat == IrBufferFormat::Invalid) texel = QuantizeStoreTexel(state, access.mem.resource, texel);
+        if (!uintImage && !access.mem.imagePacked && !access.image.atomic && access.image.table == NoTable && access.image.conversionFormat == IrBufferFormat::Invalid) texel = QuantizeStoreTexel(state, access.mem.resource, texel);
         EmitStorageImageWrite(state, access.mem.resource, mipLod, coord, texel, ImageSampleIndex(ctx, access));
     });
 }
@@ -1647,7 +1695,12 @@ std::uint32_t LockedImageAtomic64(SpirvValueEmitContext& ctx, const ImageEmitAcc
 void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto opcode = access.inst.Opcode();
-    const auto condition = ctx.Arg(access.inst, access.inst.ArgumentCount() - 1u);
+    auto condition = ctx.Arg(access.inst, access.inst.ArgumentCount() - 1u);
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (IsImageAtomic64Opcode(opcode) && state.requirements.imageAtomicLocks) {
         ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU64(state), ConstantU64(state, 0u), [&]() { return LockedImageAtomic64(ctx, access); }));
         return;
@@ -1710,7 +1763,8 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 
 SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto& dimensionInfo = RdnaImageDimensionInfoFor(access.image.dimension);
-    const auto layout = Layout(access.mem);
+    auto layout = Layout(access.mem);
+    if (access.image.cube) layout.offset = NoImageComponent;
     const bool dref = HasFlag(access.mem, RdnaImageSampleFlagCompare);
     if (dref && access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");

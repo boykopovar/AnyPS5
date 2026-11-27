@@ -156,7 +156,7 @@ void LeavesTheKeyUnchangedWhenTheInputCannotBeRead() {
     EC_KEY_free_nid_postfix(key);
 }
 
-void ReleasesTheDecodedPointWhenDecodingThrows() {
+void RejectsACompressedPointThatIsNotOnTheCurve() {
     constexpr int Secp224r1 = 713;
     EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp224r1);
     Require(key != nullptr);
@@ -164,13 +164,11 @@ void ReleasesTheDecodedPointWhenDecodingThrows() {
     compressed[0] = 0x02;
     compressed[28] = 0x01;
     const unsigned char* cursor = compressed.data();
-    bool threw = false;
-    try {
-        o2i_ECPublicKey_nid_postfix(&key, &cursor, 29);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw && key->publicKey == nullptr && cursor == compressed.data());
+    ERR_clear_error_nid_postfix();
+    Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, 29) == nullptr);
+    Require(ERR_get_error_nid_postfix() == EcLibraryFailure);
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(key->publicKey == nullptr && cursor == compressed.data());
     EC_KEY_free_nid_postfix(key);
 }
 
@@ -287,7 +285,7 @@ int main() {
     ReusesTheExistingPoint();
     LeavesAKeyWithoutAPointUnchangedOnFailure();
     KeepsTheCurveOfThePointAfterTheGroupChanges();
-    ReleasesTheDecodedPointWhenDecodingThrows();
+    RejectsACompressedPointThatIsNotOnTheCurve();
     LeavesTheKeyUnchangedWhenTheInputCannotBeRead();
     RejectsAMissingKeyOrGroup();
     RejectsBadEncodings();

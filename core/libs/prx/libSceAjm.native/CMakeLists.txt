@@ -116,4 +116,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_ajm_batch_error_dump PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
     endif()
+
+    add_test_executable(guest_ajm_batch_job_guest_pointers_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmBatchJobGuestPointers.cpp)
+    target_include_directories(guest_ajm_batch_job_guest_pointers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajm_batch_job_guest_pointers_tests PRIVATE libSceAjm.native libc)
+    configure_windows_unwind(guest_ajm_batch_job_guest_pointers_tests)
+    add_test(NAME guest_ajm_batch_job_guest_pointers COMMAND guest_ajm_batch_job_guest_pointers_tests)
+    if(WIN32)
+        set_tests_properties(guest_ajm_batch_job_guest_pointers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
+    endif()
 endif()

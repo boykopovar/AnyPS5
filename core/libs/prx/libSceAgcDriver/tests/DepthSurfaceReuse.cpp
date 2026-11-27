@@ -207,8 +207,24 @@ VKAPI_ATTR VkResult VKAPI_CALL sampledDepthProperties(VkPhysicalDevice, VkFormat
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL attachmentOnlyProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties*) {
-    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+VKAPI_ATTR VkResult VKAPI_CALL attachmentOnlyProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags usage, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    *properties = {};
+    properties->maxExtent = {16384, 16384, 1};
+    properties->maxArrayLayers = 1;
+    properties->maxMipLevels = 1;
+    properties->sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL twoSampleAttachmentProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags usage, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    *properties = {};
+    properties->maxExtent = {16384, 16384, 1};
+    properties->maxArrayLayers = 1;
+    properties->maxMipLevels = 1;
+    properties->sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT;
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR void VKAPI_CALL formatPropertiesWithoutD16S8(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
@@ -445,6 +461,15 @@ void TestMultisampleDepthOwnership(Context context) {
     DepthTarget target{0x71000000, 0, {129, 67}, VK_FORMAT_D32_SFLOAT, 0.0f, 0, 0, false, 4};
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "lack of sampled MSAA support must retain attachment rendering");
     Require((lastImageUsage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0, "unsupported sampled usage must not be requested for a native depth attachment");
+    ClearDepthSurfaces(context.device);
+    context.imageFormatProperties = twoSampleAttachmentProperties;
+    std::string unheld;
+    try {
+        DepthSurfaceView(context, target);
+    } catch (const std::runtime_error& error) {
+        unheld = error.what();
+    }
+    Require(unheld.find("cannot hold 4 samples on this device") != std::string::npos, "a four-sample depth target in a format the device holds only at one or two samples must be refused, not created");
     ClearDepthSurfaces(context.device);
     context.imageFormatProperties = sampledDepthProperties;
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a supported sampled MSAA format must retain attachment rendering without import eligibility");
