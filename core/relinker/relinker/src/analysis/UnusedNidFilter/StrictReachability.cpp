@@ -98,6 +98,7 @@ private:
     const StrictReachabilityInput& input;
     Codegen::X64InstructionDecoder decoder;
     std::map<VirtualAddress, Region> regions;
+    std::vector<StrictCodeRegion> sortedFunctions;
     std::set<VirtualAddress> decodedRoots;
     std::vector<VirtualAddress> addressTaken;
     std::set<VirtualAddress> tableBases;
@@ -109,13 +110,13 @@ private:
     }
 
     VirtualAddress rootLimit(VirtualAddress target) const {
-        const auto next = std::upper_bound(input.Functions.begin(), input.Functions.end(), target,
+        const auto next = std::upper_bound(sortedFunctions.begin(), sortedFunctions.end(), target,
             [](VirtualAddress address, const StrictCodeRegion& function) { return address < function.Begin; });
-        if (next != input.Functions.begin()) {
+        if (next != sortedFunctions.begin()) {
             const auto& previous = *(next - 1);
             if (target < previous.End) return previous.End;
         }
-        if (next != input.Functions.end()) return next->Begin;
+        if (next != sortedFunctions.end()) return next->Begin;
         return input.TextVaddr + input.Text.size();
     }
 
@@ -162,11 +163,11 @@ private:
     }
 
     void buildRegions() {
-        auto functions = input.Functions;
-        std::sort(functions.begin(), functions.end(), [](const auto& left, const auto& right) { return left.Begin < right.Begin; });
+        sortedFunctions = input.Functions;
+        std::sort(sortedFunctions.begin(), sortedFunctions.end(), [](const auto& left, const auto& right) { return left.Begin < right.Begin; });
         auto previousEnd = input.TextVaddr;
         const auto textEnd = input.TextVaddr + input.Text.size();
-        for (const auto& function : functions) {
+        for (const auto& function : sortedFunctions) {
             if (function.Begin < previousEnd || function.End <= function.Begin || function.End > textEnd)
                 throw RelinkerException("Strict filter: invalid or overlapping function range", function.Begin);
             addGap(previousEnd, function.Begin);
