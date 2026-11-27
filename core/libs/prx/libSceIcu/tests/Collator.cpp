@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -408,6 +409,30 @@ void Locales() {
     ucol_close_nid_postfix(swedish);
 }
 
+void GuestDefault() {
+    const std::string saved = uloc_getDefault();
+    std::int32_t status = 0;
+    uloc_setDefault_nid_postfix("sv", &status);
+    Require(status <= 0);
+    for (const char* locale : {static_cast<const char*>(nullptr), "sv"}) {
+        UCollator* collator = Open(locale);
+        Require(Compare(collator, u"ä", u"z") == UCOL_GREATER);
+        ucol_close_nid_postfix(collator);
+    }
+    UCollator* root = Open("");
+    Require(Compare(root, u"ä", u"z") == UCOL_LESS);
+    ucol_close_nid_postfix(root);
+    status = 0;
+    uloc_setDefault_nid_postfix("de", &status);
+    Require(status <= 0);
+    UCollator* german = Open(nullptr);
+    Require(Compare(german, u"ä", u"z") == UCOL_LESS);
+    ucol_close_nid_postfix(german);
+    status = 0;
+    uloc_setDefault_nid_postfix(saved.c_str(), &status);
+    Require(status <= 0);
+}
+
 void Handles() {
     UCollator* collator = Open("und");
     ucol_close_nid_postfix(collator);
@@ -429,6 +454,7 @@ void Run() {
     Utf8(root);
     ucol_close_nid_postfix(root);
     Locales();
+    GuestDefault();
     Handles();
 }
 
