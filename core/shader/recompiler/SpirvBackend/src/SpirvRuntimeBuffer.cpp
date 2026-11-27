@@ -1066,7 +1066,7 @@ struct CoherentPair {
 std::optional<CoherentPair> coherentPair(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t components) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
-    if (components != 2u || !memory.coherent || memory.gpuDescriptor || memory.dataBits != 32u || state.storageBufferU64Variable == 0u) return std::nullopt;
+    if (components != 2u || !memory.coherent || memory.gpuDescriptor || memory.dataBits != 32u || state.storageBufferU64Variable == 0u || state.coherentBufferAtomics) return std::nullopt;
     const auto low = address(context, instruction, resource, 0u, 4u);
     const auto high = address(context, instruction, resource, 4u, 4u);
     const auto wide = directAccess(context, instruction, true);

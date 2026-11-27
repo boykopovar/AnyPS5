@@ -565,6 +565,114 @@ int main() {
         const bool atomicWithoutFlag = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
         require(plain.atomicStores == 0u && plain.volatileStores == 3u && (atomicWithoutFlag ? plain.volatileLoads == 0u && plain.atomicLoads != 0u : plain.volatileLoads != 0u) && plain.atomicLoads + plain.volatileLoads == fenced.atomicLoads, "without the flag, the coherent stores of a publication are not volatile or its loads do not follow APS5_COHERENT_ATOMIC_LOADS");
     });
+    run("a coherent dword pair is read and written with the dword atomics of the coherent buffer atomics target", [] {
+        static constexpr std::array<std::uint32_t, 3> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityInt64Atomics};
+        const auto emitPair = [](bool flag) {
+            IrProgram program;
+            program.SetWaveSize(32);
+            program.Resources().stage = IrShaderStage::Compute;
+            program.Resources().srtPlanComplete = true;
+            program.Resources().resourceTrackingComplete = true;
+            program.Metadata().shaderInfoComplete = true;
+            program.Metadata().bindingLayoutComplete = true;
+            auto& block = program.CreateBlock();
+            program.SetEntryBlock(block);
+            program.BlockOrder().push_back(&block);
+            program.Metadata().blockInfo.emplace_back();
+            const auto constant = [&](std::uint32_t number) -> IrValue& {
+                auto& value = program.CreateValue(IrOpcode::Void, IrType::U32);
+                value.SetImmediateU32(number);
+                return value;
+            };
+            const auto emit = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments) -> IrValue& {
+                auto& value = program.CreateValue(opcode, type);
+                for (auto* argument : arguments) value.AddArgument(argument);
+                block.AppendInstruction(&value);
+                return value;
+            };
+            auto& enabled = program.CreateValue(IrOpcode::Void, IrType::Bool);
+            enabled.SetImmediateBool(true);
+            auto& zero = constant(0);
+            MemoryInfo pair;
+            pair.kind = ResourceKind::Buffer;
+            pair.dataBits = 32;
+            pair.dataDwords = 2;
+            pair.componentCount = 2;
+            pair.coherent = true;
+            auto single = pair;
+            single.dataDwords = 1;
+            single.componentCount = 1;
+            program.Resources().memoryInfo = {pair, single};
+            program.Info().buffers.emplace_back().read = true;
+            program.Info().buffers.front().written = true;
+            program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Buffers, {0}});
+            program.Metadata().bindings.pushDataStartDword = 0;
+            program.Metadata().bindings.memoryOffsetCount = 1;
+            auto& handle = emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&constant(0x100u), &zero, &constant(64u), &zero});
+            auto& data = emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {&constant(1u), &constant(2u)});
+            emit(IrOpcode::StoreBufferU32x2, IrType::Void, {&handle, &zero, &constant(0u), &zero, &data, &enabled});
+            emit(IrOpcode::StoreBufferU32, IrType::Void, {&handle, &zero, &constant(4u), &zero, &constant(3u), &enabled}).SetFlags(MemoryFlags{1u, 0u});
+            auto& loaded = emit(IrOpcode::LoadBufferU32x2, IrType::U32x2, {&handle, &zero, &constant(0u), &zero, &enabled});
+            auto& sum = emit(IrOpcode::IAdd32, IrType::U32, {&emit(IrOpcode::CompositeExtractU32x2, IrType::U32, {&loaded, &constant(0u)}), &emit(IrOpcode::CompositeExtractU32x2, IrType::U32, {&loaded, &constant(1u)})});
+            emit(IrOpcode::StoreBufferU32, IrType::Void, {&handle, &zero, &constant(16u), &zero, &sum, &enabled}).SetFlags(MemoryFlags{1u, 0u});
+            ShaderComputeInputInfo compute;
+            compute.threadsNum[0] = 32;
+            compute.threadsNum[1] = 1;
+            compute.threadsNum[2] = 1;
+            compute.ldsSizeDwords = 16;
+            compute.scratchSizeDwords = 16;
+            compute.hostSubgroupSize = 32;
+            compute.waveSize = 32;
+            ShaderStageInputInfo inputs;
+            inputs.compute = &compute;
+            CompiledBindingLayout bindings;
+            bindings.layout = program.Metadata().bindings;
+            SpirvTargetOptions target{};
+            target.vulkanVersion = 0x00401000;
+            target.spirvVersion = 0x00010300;
+            target.subgroupSize = 32;
+            target.supportedCapabilities = capabilities;
+            target.coherentBufferAtomics = flag;
+            return SpirvEmitter().Emit(program, inputs, bindings, target);
+        };
+        struct Access {
+            spv::Op opcode;
+            std::string root;
+            std::uint32_t width;
+        };
+        const auto accesses = [](const std::vector<std::uint32_t>& module) {
+            std::map<std::uint32_t, std::span<const std::uint32_t>> definitions;
+            std::map<std::uint32_t, std::string> names;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                const auto instruction = std::span(module).subspan(offset, module[offset] >> 16u);
+                const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffffu);
+                bool result = false;
+                bool type = false;
+                spv::HasResultAndType(opcode, &result, &type);
+                if (result) definitions.emplace(instruction[type ? 2 : 1], instruction);
+                if (opcode == spv::OpName) names.emplace(instruction[1], std::string(reinterpret_cast<const char*>(instruction.data() + 2)));
+            }
+            std::vector<Access> found;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                const auto instruction = std::span(module).subspan(offset, module[offset] >> 16u);
+                const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffffu);
+                if (opcode != spv::OpAtomicLoad && opcode != spv::OpAtomicStore && opcode != spv::OpAtomicCompareExchange) continue;
+                const auto pointer = instruction[opcode == spv::OpAtomicStore ? 1 : 3];
+                auto root = pointer;
+                while (definitions.contains(root) && ((definitions.at(root)[0] & 0xffffu) == spv::OpAccessChain || (definitions.at(root)[0] & 0xffffu) == spv::OpInBoundsAccessChain)) root = definitions.at(root)[3];
+                const auto pointee = definitions.at(definitions.at(definitions.at(pointer)[1])[3]);
+                found.push_back({opcode, names.contains(root) ? names.at(root) : std::string{}, (pointee[0] & 0xffffu) == spv::OpTypeInt ? pointee[2] : 0u});
+            }
+            return found;
+        };
+        const auto wide = [](const Access& access) { return access.root == "buffers_u64" || access.width != 32u; };
+        const auto control = accesses(emitPair(false));
+        require(std::ranges::any_of(control, [&](const Access& access) { return access.opcode == spv::OpAtomicLoad && wide(access); }) && std::ranges::any_of(control, [&](const Access& access) { return access.opcode == spv::OpAtomicStore && wide(access); }), "control: without the flag and with Int64Atomics, the coherent dword pair is not one 64-bit atomic load and store, so this case cannot show the flag");
+        const auto flagged = accesses(emitPair(true));
+        require(std::ranges::none_of(flagged, wide), "with the flag, a coherent dword pair used a 64-bit atomic or the buffers_u64 view, which the dword atomics of the same target do not synchronize with");
+        require(std::ranges::count(flagged, spv::OpAtomicLoad, &Access::opcode) != 0u && std::ranges::count(flagged, spv::OpAtomicStore, &Access::opcode) != 0u, "with the flag, the coherent dword pair and dword stores have no dword atomic loads or stores");
+        require(std::ranges::all_of(flagged, [&](const Access& access) { return access.root == flagged.front().root; }), "with the flag, the dword pair and the dword stores do not use the same buffer view");
+    });
     run("coherent loads either side of a guest fence are read as one vector only without the coherent buffer atomics target", [] {
         const auto readSites = [](std::initializer_list<IrOpcode> between, bool flag) {
             IrProgram program;
