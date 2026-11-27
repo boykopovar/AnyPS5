@@ -259,6 +259,7 @@ static bool DeferringControls(const Ngs2Voice& voice) {
 }
 
 static void EnqueueControl(Ngs2Voice& voice, Ngs2PendingControl control) {
+    if (PS4_LIBRARY && std::holds_alternative<std::uint32_t>(control) && std::get<std::uint32_t>(control) == 0) return;
     voice.pendingControls.push_back(std::move(control));
     PublishPendingEvent(voice, voice.pendingControls.back());
 }
@@ -826,6 +827,18 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2Voice::ApplyPendingControls() {
     bool restart = false, stop = false, kill = false;
     std::uint32_t pause = 0;
+    const auto reduceEvent = [&](std::uint32_t event) {
+        if (event == SCE_NGS2_VOICE_EVENT_PLAY) {
+            restart = true;
+            stop = kill = false;
+            pause = 0;
+        } else if (event == SCE_NGS2_VOICE_EVENT_KILL) {
+            restart = stop = false;
+            kill = true;
+            pause = 0;
+        } else if (event == SCE_NGS2_VOICE_EVENT_STOP || event == SCE_NGS2_VOICE_EVENT_STOP_IMM) stop = true;
+        else if (event != 0) pause = event;
+    };
     const auto applyEvents = [&] {
         if (kill) {
             SetEvent(SCE_NGS2_VOICE_EVENT_KILL);
@@ -851,16 +864,10 @@ void Ngs2Voice::ApplyPendingControls() {
             std::visit([&](auto& value) {
                 using TValue = std::decay_t<decltype(value)>;
                 if constexpr (std::is_same_v<TValue, std::uint32_t>) {
-                    if (value == SCE_NGS2_VOICE_EVENT_PLAY) {
-                        restart = true;
-                        stop = kill = false;
-                        pause = 0;
-                    } else if (value == SCE_NGS2_VOICE_EVENT_KILL) {
-                        restart = stop = false;
-                        kill = true;
-                        pause = 0;
-                    } else if (value == SCE_NGS2_VOICE_EVENT_STOP || value == SCE_NGS2_VOICE_EVENT_STOP_IMM) stop = true;
-                    else pause = value;
+                    if (PS4_LIBRARY && value != 0 && (value & ~0x3fu) == 0 && (value & (value - 1u)) != 0) {
+                        for (std::uint32_t bit = 1; bit != 0; bit <<= 1)
+                            if ((value & bit) != 0) reduceEvent(bit);
+                    } else reduceEvent(value);
                 } else if constexpr (std::is_same_v<TValue, Ngs2VoicePortVolumeParam>) ports[value.port].volume = value.level;
                 else if constexpr (std::is_same_v<TValue, Ngs2VoicePortMatrixParam>) ports[value.port].matrix = value.matrix_id;
                 else if constexpr (std::is_same_v<TValue, Ngs2MatrixControl>) matrices[value.index] = std::move(value.levels);

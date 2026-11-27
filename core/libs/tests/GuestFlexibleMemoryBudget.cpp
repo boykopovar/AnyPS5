@@ -204,6 +204,18 @@ int main(int argc, char** argv) {
             Require(static_cast<volatile unsigned char*>(target)[0] == 51 && static_cast<volatile unsigned char*>(target)[page - 1] == 53);
             VirtualQueryInfo info{};
             Require(sceKernelVirtualQuery(target, 0, &info, sizeof(info)) == 0 && info.is_direct && !info.is_flexible);
+            void* probe = nullptr;
+            Require(sceKernelMapFlexibleMemory(&probe, page * 3, 3, 0) == 0);
+            auto* probeBase = static_cast<unsigned char*>(probe);
+            void* misaligned = probeBase + page;
+            if ((reinterpret_cast<std::uintptr_t>(misaligned) & (bigAlign - 1)) == 0) misaligned = probeBase + page * 2;
+            Require((reinterpret_cast<std::uintptr_t>(misaligned) & (bigAlign - 1)) != 0);
+            Require(sceKernelReleaseFlexibleMemory(probe, page * 3) == 0);
+            void* refused = misaligned;
+            bool rejected = false;
+            try { rejected = sceKernelMapDirectMemory(&refused, page, 3, 0x90, phys, bigAlign) != 0; }
+            catch (const std::invalid_argument&) { rejected = true; }
+            Require(rejected && refused == misaligned);
             Require(sceKernelReleaseDirectMemory(phys, page) == 0);
             Require(sceKernelReleaseFlexibleMemory(region, page * 4) == 0);
             Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
