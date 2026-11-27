@@ -341,5 +341,82 @@ class TimestampTests(unittest.TestCase):
         self.assertRegex(progress_prs.timestamp(), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
+class MissingHeadTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        self.git("init", "-b", "main")
+        self.git("config", "user.name", "test")
+        self.git("config", "user.email", "test@example.invalid")
+        self.source = self.root / "core/libs/prx/libSceExample/Export.cpp"
+        self.source.parent.mkdir(parents=True)
+        self.source.write_text("int APS5_VABI first() { return 0; }\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "base")
+        self.base = self.git("rev-parse", "HEAD").stdout.strip()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def git(self, *args, check=True):
+        result = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True)
+        if check and result.returncode:
+            self.fail(result.stderr)
+        return result
+
+    def branch(self, number, text):
+        self.git("checkout", "--detach", self.base)
+        self.source.write_text(text, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", f"PR {number}")
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("update-ref", f"refs/open-pr-progress/{number}", head)
+        return {"sha": head, "ref": f"refs/open-pr-progress/{number}", "depends": set()}
+
+    def test_a_missing_head_is_excluded_instead_of_failing_the_estimate(self):
+        present = self.branch(1, "int APS5_VABI first() { return 1; }\n")
+        missing = {"sha": "0123456789abcdef0123456789abcdef01234567",
+                   "ref": "refs/open-pr-progress/2", "depends": set()}
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: present, 2: missing}, self.base, "fixture/repo")
+        self.assertEqual(included, {1})
+        self.assertEqual(excluded, {2: "head_unavailable"})
+        self.assertEqual(progress_prs.measure(self.root, combined)["done"], 1)
+
+    def test_a_deleted_head_still_leaves_the_estimate_available(self):
+        present = self.branch(1, "int APS5_VABI first() { return 1; }\n")
+        deleted = self.branch(2, "int APS5_VABI first() { return 2; }\n")
+        self.git("update-ref", "-d", deleted["ref"])
+        pull_requests = {1: present, 2: deleted}
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, pull_requests, self.base, "fixture/repo")
+        self.assertEqual(included, {1})
+        self.assertEqual(excluded, {2: "head_unavailable"})
+
+    def test_an_unexpected_merge_tree_failure_names_the_pull_request(self):
+        present = self.branch(1, "int APS5_VABI first() { return 1; }\n")
+        with patch.object(progress_prs, "merge_tree",
+                          return_value=subprocess.CompletedProcess([], 128, "", "fatal: bad object")):
+            with self.assertRaisesRegex(RuntimeError, "#1.*bad object"):
+                progress_prs.integrate_pull_requests(
+                    self.root, {1: present}, self.base, "fixture/repo")
+
+    def test_an_empty_merge_tree_result_names_the_pull_request(self):
+        present = self.branch(1, "int APS5_VABI first() { return 1; }\n")
+        with patch.object(progress_prs, "merge_tree",
+                          return_value=subprocess.CompletedProcess([], 0, "", "")):
+            with self.assertRaisesRegex(RuntimeError, "#1"):
+                progress_prs.integrate_pull_requests(
+                    self.root, {1: present}, self.base, "fixture/repo")
+
+    def test_an_estimate_without_a_reason_still_reports_one(self):
+        with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError()), \
+                patch.object(progress_prs, "measure"):
+            result = progress_prs.estimate("fixture/repo", self.root)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "RuntimeError")
+
+
 if __name__ == "__main__":
     unittest.main()

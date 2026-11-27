@@ -2,6 +2,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ import pr_overlap
 ROOT = Path(__file__).resolve().parent.parent
 REMOTE = "https://github.com"
 REFS = "refs/open-pr-progress"
+OBJECT_NAME = re.compile(r"[0-9a-f]{40}")
 
 
 def git(root, *args, check=True):
@@ -77,12 +79,21 @@ def is_ancestor(root, ancestor, descendant):
     return result.returncode == 0
 
 
+def resolvable(root, sha):
+    if not OBJECT_NAME.fullmatch(sha):
+        return True
+    return git(root, "cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
+
+
 def dependency_order(pull_requests, root, base_sha, repo):
     dependencies = {number: set(pr["depends"]) for number, pr in pull_requests.items()}
     excluded = {}
     for number, required in dependencies.items():
         pr = pull_requests[number]
         if pr.get("unavailable"):
+            excluded[number] = "head_unavailable"
+            continue
+        if not resolvable(root, pr["sha"]):
             excluded[number] = "head_unavailable"
             continue
         if is_ancestor(root, pr["sha"], base_sha):
@@ -129,6 +140,18 @@ def make_commit(root, tree, current, head):
     return result.stdout.strip()
 
 
+MISSING_REF = "not something we can merge"
+
+
+def merge_tree(root, current, ref):
+    return git(root, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only",
+               "--no-messages", "-z", current, ref, check=False)
+
+
+def missing_ref(result):
+    return result.returncode and MISSING_REF in result.stderr
+
+
 def integrate_pull_requests(root, pull_requests, base_sha, repo):
     order, excluded = dependency_order(pull_requests, root, base_sha, repo)
     current = base_sha
@@ -138,8 +161,10 @@ def integrate_pull_requests(root, pull_requests, base_sha, repo):
         if dependencies_blocked(pr, excluded) and not is_ancestor(root, pr["sha"], base_sha):
             excluded[number] = "dependency_excluded"
             continue
-        result = git(root, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only",
-                     "--no-messages", "-z", current, pr["ref"], check=False)
+        result = merge_tree(root, current, pr["ref"])
+        if missing_ref(result):
+            excluded[number] = "head_unavailable"
+            continue
         lines = result.stdout.rstrip("\0").split("\0")
         if result.returncode not in (0, 1) or not lines or not lines[0]:
             raise RuntimeError(f"could not integrate pull request #{number}: {result.stderr.strip()}")
@@ -183,7 +208,8 @@ def estimate(repo, root):
                 "excluded_reasons": {reason: sum(value == reason for value in excluded.values())
                                      for reason in sorted(set(excluded.values()))}}
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-        return {"available": False, "generated_at": timestamp(), "reason": str(error)}
+        return {"available": False, "generated_at": timestamp(),
+                "reason": str(error) or error.__class__.__name__}
     finally:
         try:
             refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
