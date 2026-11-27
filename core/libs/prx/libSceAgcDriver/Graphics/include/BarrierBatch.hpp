@@ -17,6 +17,12 @@ struct BarrierMask {
     bool transfersQueue = false;
 };
 
+inline constexpr BarrierMask StagedBufferCopyBarrier{
+    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT,
+    VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+};
+
 bool Covers(const BarrierMask& outer, const BarrierMask& inner);
 bool OrderedByTrailing(VkAccessFlags covered, const BarrierMask& wanted);
 

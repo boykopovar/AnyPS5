@@ -29,7 +29,6 @@ constexpr VkAccessFlags Full = SR | SW | TR | TW;
 
 const BarrierMask PassEnd{All, All, SW | CAW | DSW | TW, Full};
 const BarrierMask LabelLeading{All, Transfer, SW | TW | CAW, TW};
-const BarrierMask StagingInLeading{All | Host, Transfer, SW | TW | HW, TR};
 const BarrierMask StagingOutLeading{All, Transfer, SW, TR};
 const BarrierMask WriteBackReady{All | Host, Compute, SR | SW | TR | TW | HW | CAW, SR | SW};
 
@@ -39,8 +38,8 @@ void testCoversStages() {
     Expect(Covers(PassEnd, PassEnd), "a barrier covers itself");
     Expect(Covers(BarrierMask{}, BarrierMask{}), "the empty barrier covers the empty one");
     Expect(Covers(PassEnd, StagingOutLeading), "ALL_COMMANDS holds a transfer destination and a shader write");
-    Expect(!Covers(PassEnd, StagingInLeading), "ALL_COMMANDS does not hold the host stage or a host write");
-    Expect(Covers(StagingInLeading, StagingOutLeading), "a wider source covers the narrower one");
+    Expect(!Covers(PassEnd, StagedBufferCopyBarrier), "ALL_COMMANDS does not hold the host stage or a host write");
+    Expect(Covers(StagedBufferCopyBarrier, StagingOutLeading), "a wider source covers the narrower one");
     const BarrierMask computeOnly{Compute, Compute, SW, SR};
     Expect(!Covers(computeOnly, PassEnd), "a compute-only barrier does not cover ALL_COMMANDS");
     Expect(!Covers(computeOnly, StagingOutLeading), "a compute destination does not hold a transfer destination");
@@ -69,16 +68,17 @@ void testCoversImage() {
 void testOrderedByTrailing() {
     constexpr VkAccessFlags dispatched = Full | HR;
     constexpr VkAccessFlags filled = Full | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | HR;
-    Expect(OrderedByTrailing(dispatched, StagingInLeading), "a dispatch's trailing barrier orders the staging copy-in");
+    Expect(OrderedByTrailing(dispatched, StagedBufferCopyBarrier), "a dispatch's trailing barrier orders the staging copy-in");
     Expect(OrderedByTrailing(dispatched, StagingOutLeading), "a dispatch's trailing barrier orders the staging copy-out");
     Expect(OrderedByTrailing(filled, WriteBackReady), "a fill's trailing barrier orders the write-back's import-ready barrier");
     Expect(OrderedByTrailing(Full, LabelLeading), "the pass end's destination accesses order the label run");
-    Expect(!OrderedByTrailing(0, StagingInLeading), "an intervening command clears the covered accesses, so the barrier is kept");
+    Expect(!OrderedByTrailing(0, StagedBufferCopyBarrier), "an intervening command clears the covered accesses, so the barrier is kept");
     Expect(!OrderedByTrailing(0, StagingOutLeading) && !OrderedByTrailing(0, WriteBackReady), "no trailing barrier, no elision");
-    Expect(!OrderedByTrailing(SR | SW, StagingInLeading), "a shader-only trailing barrier does not order a transfer read");
-    Expect(!OrderedByTrailing(SR | SW | TW, StagingInLeading), "a trailing barrier without the transfer read is kept");
+    Expect(!OrderedByTrailing(SR | SW, StagedBufferCopyBarrier), "a shader-only trailing barrier does not order a transfer read");
+    Expect(!OrderedByTrailing(SR | SW | TW, StagedBufferCopyBarrier), "a trailing barrier without the transfer read is kept");
+    Expect(!OrderedByTrailing(SR | SW | TR, StagedBufferCopyBarrier), "a staging copy into a reused buffer still needs transfer write ordering");
     constexpr VkAccessFlags stagedIn = SR | VK_ACCESS_UNIFORM_READ_BIT | SW;
-    Expect(!OrderedByTrailing(stagedIn, StagingInLeading), "the staging copy-in's own trailing barrier does not order the next copy-in");
+    Expect(!OrderedByTrailing(stagedIn, StagedBufferCopyBarrier), "the staging copy-in's own trailing barrier does not order the next copy-in");
     Expect(!OrderedByTrailing(Full, BarrierMask{All, Transfer, SW, TR | VK_ACCESS_INDIRECT_COMMAND_READ_BIT}), "a destination access the trailing barrier lacks is kept");
 }
 
