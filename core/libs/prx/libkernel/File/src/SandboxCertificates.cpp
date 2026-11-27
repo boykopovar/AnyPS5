@@ -89,7 +89,32 @@ unsigned long ProcessId() { return static_cast<unsigned long>(getpid()); }
 
 void RemoveTemporary(const std::filesystem::path& path) {
     std::error_code error;
-    std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add, error);
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error || status.type() == std::filesystem::file_type::not_found) return;
+    if (std::filesystem::is_directory(status)) {
+#ifdef _WIN32
+        const auto writableDirectory = std::filesystem::perms::owner_write;
+#else
+        const auto writableDirectory = std::filesystem::perms::owner_write | std::filesystem::perms::owner_exec;
+#endif
+        std::filesystem::permissions(path, writableDirectory, std::filesystem::perm_options::add, error);
+        std::error_code iterateError;
+        std::filesystem::recursive_directory_iterator it(path, std::filesystem::directory_options::skip_permission_denied, iterateError);
+        if (!iterateError) {
+            for (const auto& entry : it) {
+                std::error_code entryError;
+                const auto entryStatus = entry.symlink_status(entryError);
+                if (entryError || std::filesystem::is_symlink(entryStatus)) continue;
+                const auto added = std::filesystem::is_directory(entryStatus) ? writableDirectory : std::filesystem::perms::owner_write;
+                std::filesystem::permissions(entry.path(), added, std::filesystem::perm_options::add, entryError);
+            }
+        }
+        std::filesystem::remove_all(path, error);
+        return;
+    }
+    if (!std::filesystem::is_symlink(status)) {
+        std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add, error);
+    }
     std::filesystem::remove(path, error);
 }
 
@@ -108,7 +133,8 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     }
     auto temporary = target;
     temporary += "." + std::to_string(ProcessId()) + ".tmp";
-    if (std::filesystem::exists(temporary, error)) RemoveTemporary(temporary);
+    const auto tempStatus = std::filesystem::symlink_status(temporary, error);
+    if (!error && tempStatus.type() != std::filesystem::file_type::not_found) RemoveTemporary(temporary);
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         file.write(bundle.data(), static_cast<std::streamsize>(bundle.size()));
@@ -129,7 +155,7 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
         if (!error) return target;
         if (ReadFile(target) == bundle) {
             RemoveTemporary(temporary);
-            std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::remove, error);
+            std::filesystem::permissions(target, perms::owner_read | perms::group_read | perms::others_read, error);
             return target;
         }
         if (!std::filesystem::is_regular_file(target, error) || std::chrono::steady_clock::now() > deadline) {

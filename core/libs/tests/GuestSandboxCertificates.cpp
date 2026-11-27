@@ -152,5 +152,34 @@ int main() {
     Require(std::filesystem::is_regular_file(cached));
     Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
     Require(!std::filesystem::exists(conflictTemp));
+
+    std::filesystem::permissions(cached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    Require(std::filesystem::remove(cached));
+    Require(std::filesystem::create_directory(conflictTemp));
+    const auto staleChild = conflictTemp / "stale.pem";
+    {
+        std::ofstream file(staleChild, std::ios::binary | std::ios::trunc);
+        file << "stale temporary certificate entry\n";
+        Require(static_cast<bool>(file));
+    }
+    std::filesystem::permissions(
+        staleChild,
+        std::filesystem::perms::owner_read | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
+    Require((std::filesystem::status(staleChild).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
+    Require(std::filesystem::is_regular_file(cached));
+    Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(std::filesystem::symlink_status(conflictTemp).type() == std::filesystem::file_type::not_found);
+
+#ifndef _WIN32
+    std::filesystem::permissions(cached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    Require(std::filesystem::remove(cached));
+    std::filesystem::create_symlink(originalRoot / "nonexistent_ca_target", conflictTemp);
+    Require(std::filesystem::is_symlink(std::filesystem::symlink_status(conflictTemp)));
+    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
+    Require(std::filesystem::is_regular_file(cached));
+    Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(std::filesystem::symlink_status(conflictTemp).type() == std::filesystem::file_type::not_found);
+#endif
     return 0;
 }
