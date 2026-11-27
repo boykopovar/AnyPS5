@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -88,12 +89,6 @@ std::uint32_t BufferBase(std::uint32_t buffer) {
 
 std::uint32_t InputValue(std::uint32_t buffer, std::uint32_t tid) {
     return 0x40000000u | (buffer << 8u) | tid;
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t buffers, bool shaderData) {
