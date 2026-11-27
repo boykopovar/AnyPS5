@@ -305,6 +305,11 @@ void VerifyTessellationOnChipWithBarycentrics() {
         Require(serializer.Serialize(replay.request) == encoded);
         const auto current = DecodeBase64(encoded);
         Require(current[4] == 67u && current.back() == 1u && current[current.size() - 2u] == 0u && current[current.size() - 3u] == 0u && current[current.size() - 4u] == (onChip ? 1u : 0u));
+        auto version65 = current;
+        version65.erase(version65.end() - 3, version65.end() - 1);
+        version65[4] = 65u;
+        const auto replay65 = serializer.Deserialize(EncodeBase64(version65));
+        Require(replay65.request.graphics && replay65.request.graphics->emulateBarycentrics && replay65.request.graphics->tessellation && replay65.request.graphics->tessellation->onChip == onChip && !replay65.request.graphics->tessellationConstants);
         auto older = current;
         older.erase(older.end() - 4, older.end() - 1);
         older[4] = 64u;
