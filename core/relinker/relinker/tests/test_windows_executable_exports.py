@@ -160,6 +160,12 @@ def main():
         assert result.returncode == 0 and crossing_output.exists(), (result.stdout, result.stderr)
         assert 'Strict filtering total: 1 -> 0; filtered=1' in result.stdout, result.stdout
         assert 'absolute_function' not in exports(crossing_output.read_bytes())
+        result, rooted_crossing_output = convert(
+            'strict-crossing-absolute-root-symbol-roots', crossing_symbols,
+            options=('--function-symbol-roots', '--registry', 'unused-filter=2'), strict_import=True)
+        assert result.returncode == 0 and rooted_crossing_output.exists(), (result.stdout, result.stderr)
+        assert 'Strict filtering total: 1 -> 0; filtered=1' in result.stdout, result.stdout
+        assert 'absolute_function' not in exports(rooted_crossing_output.read_bytes())
         overlapping_symbols = [(name, info, visibility, section,
                                 0x4ff0 if name == 'absolute_function' else value,
                                 0x20 if name == 'absolute_function' else size)
