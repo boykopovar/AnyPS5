@@ -44,6 +44,7 @@ void stateNote(const char* name, TArguments... arguments) {
 }
 
 inline VKAPI_ATTR void VKAPI_CALL stateBind(VkCommandBuffer, VkPipelineBindPoint point, VkPipeline pipeline) { stateNote("bind", static_cast<std::uint32_t>(point), pipeline); }
+inline VKAPI_ATTR void VKAPI_CALL stateExecuteCommands(VkCommandBuffer, std::uint32_t count, const VkCommandBuffer*) { stateNote("execute", count); }
 inline VKAPI_ATTR void VKAPI_CALL stateViewport(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkViewport* viewport) { stateNote("viewport", viewport->x, viewport->y, viewport->width, viewport->height, viewport->minDepth, viewport->maxDepth); }
 inline VKAPI_ATTR void VKAPI_CALL stateScissor(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkRect2D* scissor) { stateNote("scissor", scissor->offset.x, scissor->offset.y, scissor->extent.width, scissor->extent.height); }
 inline VKAPI_ATTR void VKAPI_CALL stateDepthBounds(VkCommandBuffer, float minimum, float maximum) { stateNote("bounds", minimum, maximum); }
@@ -87,6 +88,7 @@ inline VkPipeline stateFakePipeline(std::size_t index) {
 inline DeviceFunctions stateFunctions() {
     DeviceFunctions functions;
     functions.cmdBindPipeline = stateBind;
+    functions.cmdExecuteCommands = stateExecuteCommands;
     functions.cmdSetViewport = stateViewport;
     functions.cmdSetScissor = stateScissor;
     functions.cmdSetDepthBounds = stateDepthBounds;

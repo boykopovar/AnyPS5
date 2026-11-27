@@ -15383,6 +15383,21 @@ void commandStateTests() {
     {
         CommandState tracker;
         tracker.Begin(commands);
+        const auto drawLines = stateTrackedDrawLines(pipelineA);
+        stateTrackedDraw(tracker, context, pipelineA);
+        expectStateLog(drawLines, "the initial primary draw state");
+        stateTrackedDraw(tracker, context, pipelineA);
+        expectStateLog({}, "an identical primary draw state before secondary execution");
+        const auto secondary = makeHandle<VkCommandBuffer>();
+        tracker.ExecuteCommands(context, 1, &secondary);
+        expectStateLog({stateLine("execute", 1u)}, "executing a secondary command buffer");
+        stateTrackedDraw(tracker, context, pipelineA);
+        expectStateLog(drawLines, "the primary draw state after secondary execution");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
         for (const auto mode : {1u, 1u, 2u, 2u, 1u}) tracker.SetCullMode(context, mode);
         expectStateLog({stateLine("cull", 1u), stateLine("cull", 2u), stateLine("cull", 1u)}, "unknown, unchanged and changed cull modes");
         CommandState unsuppressed;
