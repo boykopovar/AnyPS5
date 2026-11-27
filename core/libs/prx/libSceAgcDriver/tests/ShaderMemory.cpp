@@ -9170,7 +9170,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQUIAAAA=", "new requests did not use serialization version 66");
+    require(requestPrefix(encoded, 8u) == "NVNQQUMAAAA=", "new requests did not use serialization version 67");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9291,7 +9291,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQUMAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQUQAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9349,8 +9349,8 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 }
 
 std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes, bool tessellated = false) {
-    require(bytes.size() > 14u && bytes[4] == 66u, "a legacy fixture did not start from serialization version 66");
-    bytes.resize(bytes.size() - (tessellated ? 9u : 6u));
+    require(bytes.size() > 22u && bytes[4] == 67u, "a legacy fixture did not start from serialization version 67");
+    bytes.resize(bytes.size() - (tessellated ? 17u : 14u));
     bytes[4] = 56u;
     return bytes;
 }
@@ -9411,9 +9411,9 @@ void verifyEmulatedBarycentricRequests() {
     require(replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics && serializer.Serialize(replay.request) == encoded, "emulated barycentrics were lost in serialization");
     auto bytes = decodeBase64(serializer.Serialize(request));
     auto flagged = decodeBase64(encoded);
-    require(bytes[4] == 66u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
+    require(bytes[4] == 67u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
     auto legacyBytes = bytes;
-    legacyBytes.pop_back();
+    legacyBytes.resize(legacyBytes.size() - 9u);
     legacyBytes[4] = 62u;
     const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
     require(legacy.request.graphics.has_value() && !legacy.request.graphics->emulateBarycentrics, "a version 62 request emulated barycentrics");
@@ -9422,7 +9422,7 @@ void verifyEmulatedBarycentricRequests() {
     require(legacyKey == native && serializer.Serialize(legacy.request) == serializer.Serialize(request), "a version 62 request changed its cache key or its upgraded bytes");
     flagged[4] = 62u;
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "unexpected trailing data", "a version 62 request accepted an emulated barycentrics flag");
-    flagged[4] = 66u;
+    flagged[4] = 67u;
     flagged.back() = 0u;
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "flag is clear", "a written but clear emulated barycentrics flag was accepted");
     auto orphanBytes = decodeBase64(serializer.Serialize(unset));
@@ -9677,7 +9677,7 @@ void verifyVertexInfoVersion19() {
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
     auto version54 = mergingBytes;
-    version54.resize(version54.size() - 6u);
+    version54.resize(version54.size() - 14u);
     version54.erase(version54.begin() + mergeOffset + 40, version54.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
     version54[4] = 54u;
     auto version53 = version54;
@@ -9714,7 +9714,7 @@ void verifyVertexInfoVersion19() {
         at[3] = flags;
     };
     auto blendVersion49 = blendMergingBytes;
-    blendVersion49.resize(blendVersion49.size() - 6u);
+    blendVersion49.resize(blendVersion49.size() - 14u);
     blendRecordToVersion49(blendVersion49, mergeOffset);
     blendVersion49.resize(blendVersion49.size() - 5u);
     blendVersion49[4] = 49u;
@@ -9726,7 +9726,7 @@ void verifyVertexInfoVersion19() {
     require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[static_cast<std::size_t>(twoMergingFlags)] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset, blendMergingBytes.begin() + twoMergingFlags, twoMergingBytes.begin() + mergeOffset) && std::equal(blendMergingBytes.begin() + twoMergingFlags + 1, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + twoMergingFlags + 1), "a second color target merge did not follow the first, counted in the first merge's flags");
     require(serializer.Deserialize(serializer.Serialize(twoMerging)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a serialized request lost its second color target merge");
     auto twoVersion49 = twoMergingBytes;
-    twoVersion49.resize(twoVersion49.size() - 6u);
+    twoVersion49.resize(twoVersion49.size() - 14u);
     blendRecordToVersion49(twoVersion49, mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
     blendRecordToVersion49(twoVersion49, mergeOffset);
     twoVersion49.resize(twoVersion49.size() - 5u);
@@ -10491,7 +10491,7 @@ void verifyInt64AtomicCapabilities() {
     const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80010003u, 0xe1685000u, 0x80010203u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80010003u, 0xe1645000u, 0x80010203u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
-        const std::array<std::uint32_t, 8> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageWriteWithoutFormat, static_cast<std::uint32_t>(added)};
+        const std::array<std::uint32_t, 6> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, 0x58000u, code, 0, {}};
         request.context.waveSize = 32;
@@ -10576,6 +10576,7 @@ void verifyInt64AtomicCapabilities() {
     const auto locked = compile(imageAtomic, spv::CapabilityShader);
     require(!declares(locked.spirv, spv::CapabilityInt64ImageEXT) && !declares(locked.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics declares 64-bit atomics");
     require(asksForLockTable(locked), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not ask for the atomic lock table");
+    require(declares(locked.spirv, spv::CapabilityStorageImageExtendedFormats) && !declares(locked.spirv, spv::CapabilityStorageImageReadWithoutFormat) && !declares(locked.spirv, spv::CapabilityStorageImageWriteWithoutFormat), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not declare its image as Rg32ui");
     const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
     require(declares(native.spirv, spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
     require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
@@ -12510,11 +12511,19 @@ constexpr std::uint32_t GcnType3D = 10u;
 constexpr std::uint32_t GcnTypeCube = 11u;
 constexpr std::uint32_t GcnType1DArray = 12u;
 constexpr std::uint32_t GcnType2DArray = 13u;
+constexpr std::uint32_t GcnType2DMsaa = 14u;
 
 std::array<std::uint32_t, 8> gcnDescriptor(std::uint32_t type, std::uint32_t slices = 6u) {
     auto words = GcnVolumeDescriptor;
     words[3] = (words[3] & 0x0fffffffu) | (type << 28u);
     if (type == GcnTypeCube || type == GcnType1DArray || type == GcnType2DArray) words[5] = (slices - 1u) << 13u;
+    return words;
+}
+
+std::array<std::uint32_t, 8> gcnMultisampleDescriptor() {
+    auto words = gcnDescriptor(GcnType2DMsaa);
+    words[3] = (words[3] & ~0x000f0000u) | (1u << 16u);
+    words[4] &= ~0x1fffu;
     return words;
 }
 
@@ -12586,6 +12595,26 @@ void verifyGcnRuntimeImageDimensions() {
     require(!offers(gatherModes, RdnaImageDimension::Dim1D, false) && !offers(gatherModes, RdnaImageDimension::Dim1DArray, false) && !offers(gatherModes, RdnaImageDimension::Dim3D, false), "GCN dimensions: a gathered image offered a dimension SPIR-V cannot gather");
     require(offers(gatherModes, RdnaImageDimension::Dim2DArray, true), "GCN dimensions: a gathered image does not offer a cube");
     expectFailure([&] { static_cast<void>(selected(gathered, gcnDescriptor(GcnType3D))); }, "incompatible with the static runtime image interface", "GCN dimensions: a gather through a 3D T# was accepted");
+    auto loaded = image;
+    loaded.read = true;
+    loaded.sampledOnly = false;
+    require(offers(ResourceMaterializer::RuntimeImageModes(loaded), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image only loaded does not offer a 2D MSAA mode");
+    require(!offers(modes, RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image that is not read offered a 2D MSAA mode");
+    require(selected(loaded, gcnMultisampleDescriptor()).dimension == RdnaImageDimension::Dim2DMsaa, "GCN dimensions: a load through a 2D MSAA T# did not select a multisampled mode");
+    auto loadedArray = loaded;
+    loadedArray.dimension = RdnaImageDimension::Dim2DArray;
+    const auto loadedArrayModes = ResourceMaterializer::RuntimeImageModes(loadedArray);
+    require(!offers(loadedArrayModes, RdnaImageDimension::Dim2DMsaa, false) && !offers(loadedArrayModes, RdnaImageDimension::Dim2DMsaaArray, false), "GCN dimensions: a load with DA offered a multisampled mode");
+    auto notOnlyLoaded = loaded;
+    notOnlyLoaded.fmaskCompatible = false;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(notOnlyLoaded), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image with a use other than a 32-bit load offered a 2D MSAA mode");
+    auto notPlainLoad = loaded;
+    notPlainLoad.cubeFaceCompatible = false;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(notPlainLoad), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image loaded with a mip, a sample flag or packing offered a 2D MSAA mode");
+    auto loadedTable = loaded;
+    loadedTable.table = 0u;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(loadedTable), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: a table image offered a 2D MSAA mode");
+    expectFailure([&] { static_cast<void>(selected(image, gcnMultisampleDescriptor())); }, "incompatible with the static runtime image interface", "GCN dimensions: a sample through a 2D MSAA T# was accepted");
     auto compared = image;
     compared.depthCompare = true;
     require(!offers(ResourceMaterializer::RuntimeImageModes(compared), RdnaImageDimension::Dim3D, false), "GCN dimensions: a depth comparison offered a volume mode");
@@ -12697,6 +12726,8 @@ public:
             if (op == spv::OpTypeSampledImage) sampledImages[words[cursor + 1]] = words[cursor + 2];
             if (op == spv::OpImageSampleExplicitLod) samples.push_back({words[cursor + 3], words[cursor + 4], words[cursor + 6]});
             if (op == spv::OpImageWrite) writes.push_back({words[cursor + 1], words[cursor + 2]});
+            if (op == spv::OpTypeImage) multisampled[words[cursor + 1]] = words[cursor + 6];
+            if (op == spv::OpImageFetch) fetches.push_back({words[cursor + 3], words[cursor + 4], length > 6u && (words[cursor + 5] & spv::ImageOperandsSampleMask) != 0u ? words[cursor + 6] : 0u});
             if (op == spv::OpImageQuerySizeLod) querySize = words[cursor + 2];
             if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
             if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
@@ -12716,6 +12747,11 @@ public:
     struct Write {
         std::uint32_t image;
         std::uint32_t coordinate;
+    };
+    struct Fetch {
+        std::uint32_t image;
+        std::uint32_t coordinate;
+        std::uint32_t sample;
     };
 
     std::uint32_t Root(std::uint32_t id) const {
@@ -12737,6 +12773,7 @@ public:
 
     std::pair<std::uint32_t, std::uint32_t> SampledImageKind(const Sample& sample) const { return images.at(sampledImages.at(resultTypes.at(sample.sampledImage))); }
     std::pair<std::uint32_t, std::uint32_t> WrittenImageKind(const Write& write) const { return images.at(resultTypes.at(write.image)); }
+    bool FetchesMultisampled(const Fetch& fetch) const { return multisampled.at(resultTypes.at(fetch.image)) == 1u; }
 
     bool ComparesConstants(std::uint32_t left, std::uint32_t right) const {
         return std::ranges::any_of(comparisons, [&](const std::pair<std::uint32_t, std::uint32_t>& pair) { return Root(pair.first) == left && Root(pair.second) == right; });
@@ -12752,10 +12789,12 @@ public:
 
     std::vector<Sample> samples;
     std::vector<Write> writes;
+    std::vector<Fetch> fetches;
 
 private:
     std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> images;
     std::map<std::uint32_t, std::uint32_t> sampledImages;
+    std::map<std::uint32_t, std::uint32_t> multisampled;
     std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::map<std::uint32_t, std::uint32_t> constants;
     std::map<std::uint32_t, std::uint32_t> sources;
@@ -12807,6 +12846,23 @@ void verifyGcnSampleAddresses() {
             require(module.Root(sample.lod) == addressCase.lod, addressCase.what);
         }
     }
+}
+
+void verifyGcnMultisampleLoadAddress() {
+    using namespace ShaderRecompiler;
+    GcnGuestShaderScope gcn;
+    constexpr std::array<std::uint32_t, 4> sources{0x81u, 0x82u, 0x83u, 0x84u};
+    const auto code = gcnImageProgram(sources, 0xf0000f00u, 0x00020400u);
+    const GcnImageModule module(code, gcnMultisampleDescriptor());
+    require(!module.fetches.empty(), "GCN MSAA load: no image fetch was emitted");
+    for (const auto& fetch : module.fetches) {
+        require(module.FetchesMultisampled(fetch), "GCN MSAA load: the fetched image is not multisampled");
+        require(module.Components(fetch.coordinate) == std::vector<std::uint32_t>{1u, 2u}, "GCN MSAA load: the coordinate is not the first two address registers");
+        require(fetch.sample != 0u && module.Root(fetch.sample) == 3u, "GCN MSAA load: the sample index is not the third address register");
+    }
+    expectFailure([&] { static_cast<void>(GcnImageModule(gcnImageProgram(sources, 0xf0040f00u, 0x00020400u), gcnMultisampleDescriptor())); }, "incompatible with the static runtime image interface", "GCN MSAA load: a mip load through a 2D MSAA T# was accepted");
+    constexpr std::array<std::uint32_t, 4> sampleSources{0xf0u, 0xf2u, 0xf4u, 0xf6u};
+    expectFailure([&] { static_cast<void>(GcnImageModule(gcnImageProgram(sampleSources, 0xf0900f00u, 0x00820400u), gcnMultisampleDescriptor())); }, "incompatible with the static runtime image interface", "GCN MSAA load: a sample through a 2D MSAA T# was accepted");
 }
 
 void verifyGcnStoreAddresses() {
@@ -13955,6 +14011,7 @@ int main(int argc, char** argv) {
         verifyGcnSampleThroughVolume();
         verifyGcnSampleAddresses();
         verifyGcnStoreAddresses();
+        verifyGcnMultisampleLoadAddress();
         verifyGcnDimensionQueries();
         verifyGcnTableImageConversion();
         verifySrgbDepthCompareModes();

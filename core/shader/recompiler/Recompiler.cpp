@@ -2571,8 +2571,7 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     } catch (const std::exception& e) {
         NoteFailureOnce();
         constexpr auto requestSerializer = RequestSerializer{};
-        const auto inputInfo = request.context.splitState.empty() ? "\nRecompileRequest:\n" + requestSerializer.Serialize(request) : std::string();
-        throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + inputInfo);
+        throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + "\nRecompileRequest:\n" + requestSerializer.Serialize(request));
     } catch (...) {
         throw std::runtime_error("ShaderRecompiler::Recompile: unknown exception");
     }

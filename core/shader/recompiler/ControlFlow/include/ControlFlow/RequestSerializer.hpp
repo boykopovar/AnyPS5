@@ -35,6 +35,7 @@ namespace ShaderRecompiler {
         std::vector<std::vector<std::byte>> memoryBytesStorage;
         std::vector<MemoryRegion> memory;
         std::vector<std::uint32_t> linkedCallFallbacks;
+        std::vector<std::uint32_t> splitState;
         std::vector<std::uint32_t> supportedCapabilities;
         std::vector<std::string> supportedExtensionStorage;
         std::vector<std::string_view> supportedExtensions;

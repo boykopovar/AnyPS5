@@ -308,6 +308,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     ((vertex || evaluation || mesh || copiedGeometry) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||
                     capability == spv::CapabilityStorageImageWriteWithoutFormat ||
                     capability == spv::CapabilityStorageImageReadWithoutFormat ||
+                    capability == spv::CapabilityStorageImageExtendedFormats ||
                     capability == spv::CapabilityInt64 ||
                     capability == spv::CapabilityInt16 ||
                     capability == spv::CapabilityFloat16 ||

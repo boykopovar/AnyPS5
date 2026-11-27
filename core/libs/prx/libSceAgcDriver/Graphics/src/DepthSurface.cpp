@@ -837,6 +837,8 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
         const VkClearDepthStencilValue clear{0.25f, 0xa5u};
         const VkImageSubresourceRange depthOnly{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
         context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &depthOnly);
+        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, shadow->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &aspects);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         VkImageViewCreateInfo sourceViewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         sourceViewInfo.image = source->image;
         sourceViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
