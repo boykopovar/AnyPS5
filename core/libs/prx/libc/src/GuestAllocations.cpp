@@ -98,6 +98,7 @@ bool isRetiring(const Range& range) {
 }
 
 std::atomic<std::uint64_t> generation{1};
+std::atomic<std::uint64_t> mapGeneration{1};
 std::atomic<std::size_t> retiringRanges{0};
 
 struct ChangeEntry {
@@ -169,6 +170,7 @@ struct MutationState {
     std::vector<std::pair<std::uintptr_t, std::size_t>> unpinned;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> replaced;
     bool untracked = false;
+    bool mapChanged = false;
 };
 
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
@@ -181,6 +183,10 @@ void recordReplaced(void* mutation, std::uint64_t begin, std::uint64_t end) {
 
 void markUntracked(void* mutation) {
     if (mutation != nullptr) static_cast<MutationState*>(mutation)->untracked = true;
+}
+
+void noteMapChange(void* mutation) {
+    if (mutation != nullptr) static_cast<MutationState*>(mutation)->mapChanged = true;
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
@@ -246,6 +252,7 @@ void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     } catch (...) {
         complete = false;
     }
+    if (state->mapChanged) mapGeneration.fetch_add(1, std::memory_order_release);
     const auto ended = logChanges(spans, complete);
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
@@ -280,11 +287,16 @@ std::uint64_t GuestAllocationsGeneration_nid_postfix() {
     return generation.load(std::memory_order_acquire);
 }
 
+std::uint64_t GuestAllocationsMapGeneration_nid_postfix() {
+    return mapGeneration.load(std::memory_order_acquire);
+}
+
 void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t, std::size_t)) {
     invalidator.store(callback, std::memory_order_release);
 }
 
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    mapGeneration.fetch_add(1, std::memory_order_release);
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{address, address + bytes}}};
     logChanges(span, bytes <= std::numeric_limits<std::uint64_t>::max() - address);
     if (const auto callback = invalidator.load(std::memory_order_acquire)) callback(address, bytes);
@@ -356,14 +368,19 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     if (state.mainImageRegistered) return;
     const auto image = GetModuleHandleW(nullptr);
     require(image != nullptr, "cannot locate the main guest image");
+    const bool registered = state.registeredImages.contains(reinterpret_cast<std::uintptr_t>(image));
     registerImage(image);
     state.mainImageRegistered = true;
+    if (!registered) noteMapChange(mutation);
 }
 
 void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image) {
     markUntracked(mutation);
     require(image != nullptr, "cannot register a guest image without a base");
+    auto& state = registry();
+    if (state.registeredImages.contains(reinterpret_cast<std::uintptr_t>(image))) return;
     registerImage(image);
+    noteMapChange(mutation);
 }
 
 #else
@@ -468,6 +485,7 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     require(!collected.pages.empty(), "main guest image has no loadable segments");
     registerImagePages(collected);
     state.mainImageRegistered = true;
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image) {
@@ -486,6 +504,7 @@ void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image
     require(!collected.pages.empty(), "guest image has no loadable segments");
     require(collected.pages.begin()->first == base, "guest image does not start at its base");
     state.registeredImages.emplace(base, registerImagePages(collected));
+    noteMapChange(mutation);
 }
 #endif
 
@@ -498,6 +517,7 @@ void GuestAllocationsUnregisterImage_nid_postfix(void* mutation, const void* ima
     recordChange(mutation, image, end - begin);
     std::erase_if(state.ranges, [&](const auto& entry) { return !entry.second->releasable && entry.second->allocationAddress >= begin && entry.second->allocationAddress < end; });
     state.registeredImages.erase(found);
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsAddGpu_nid_no_patch(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, bool gpuWritable) {
@@ -514,6 +534,7 @@ void GuestAllocationsAddGpu_nid_no_patch(void* mutation, void* pointer, std::siz
         require(previous.address + previous.bytes <= address, "overlapping guest allocation");
     }
     ranges.emplace(address, std::make_shared<const Range>(Range{address, bytes, readable, writable, address, bytes, true, gpu, freshBacking(), gpuWritable}));
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu) {
@@ -761,6 +782,7 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer) {
     } else {
         std::erase_if(ranges, [&](const auto& entry) { return entry.second->allocationAddress == range.address; });
     }
+    noteMapChange(mutation);
     if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(range.address, range.bytes);
 }
 
@@ -841,6 +863,7 @@ void GuestAllocationsProtectGpu_nid_no_patch(void* mutation, const void* pointer
     StagedPatch staged(patch);
     apply();
     staged.apply();
+    noteMapChange(mutation);
 }
 
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply) {
@@ -874,6 +897,7 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         StagedPatch staged(patch);
         apply(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, reinterpret_cast<const void*>(range.allocationAddress), last);
         staged.apply();
+        noteMapChange(mutation);
         if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(cursor, pieceEnd - cursor);
         any = true;
         cursor = pieceEnd;
