@@ -62,7 +62,7 @@ private:
     std::ofstream output;
     BoundedLineQueue queue;
     const std::optional<FlipTimingWindow> flipTiming;
-    std::atomic<std::uint8_t> flipGenerationState{0};
+    std::once_flag flipGenerationOnce;
     std::uint64_t flipGeneration = 0;
     std::uint64_t reportedDrops = 0;
     std::jthread thread;

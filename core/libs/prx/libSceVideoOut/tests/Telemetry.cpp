@@ -1,6 +1,7 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #ifdef _WIN32
@@ -247,6 +248,41 @@ void completedFlipCapturePinsGenerationMax() {
     }
 }
 
+void completedFlipCapturePinsGenerationConcurrently() {
+    constexpr int threadCount = 4;
+    for (int trial = 0; trial < 32; ++trial) {
+        const auto lines = captureFlipLines({2, 2}, [](VideoOutTelemetry::Writer& writer) {
+            std::atomic<int> ready{0};
+            std::atomic<bool> start{false};
+            std::vector<std::thread> threads;
+            threads.reserve(threadCount);
+            for (int i = 0; i < threadCount; ++i) {
+                threads.emplace_back([&, i]() {
+                    const std::uint64_t gen = static_cast<std::uint64_t>(i);
+                    ready.fetch_add(1, std::memory_order_acq_rel);
+                    while (!start.load(std::memory_order_acquire)) {
+                        std::this_thread::yield();
+                    }
+                    writer.EmitCompletedFlip(gen, 2, 100 + gen);
+                    writer.EmitCompletedFlip(gen, 3, 200 + gen);
+                });
+            }
+            while (ready.load(std::memory_order_acquire) != threadCount) {
+                std::this_thread::yield();
+            }
+            start.store(true, std::memory_order_release);
+            for (auto& thread : threads) thread.join();
+        });
+        check(lines.size() == 3u, "concurrent callers must record only the single pinned generation window");
+        const auto pinned = field(lines[1], "generation");
+        check(pinned >= 0 && pinned < threadCount, "pinned generation must come from a participating thread");
+        check(field(lines[1], "n") == 2 && field(lines[1], "process_us") == 100 + pinned,
+            "first captured flip must match the pinned generation");
+        check(field(lines[2], "generation") == pinned && field(lines[2], "n") == 3 && field(lines[2], "process_us") == 200 + pinned,
+            "second captured flip must stay on the same pinned generation");
+    }
+}
+
 void completedFlipCaptureCountsLoss() {
     const auto directory = freshDirectory("flip-loss");
     {
@@ -317,6 +353,7 @@ int main(int argc, char** argv) {
         completedFlipCapturePinsGeneration();
         completedFlipCapturePinsGenerationZero();
         completedFlipCapturePinsGenerationMax();
+        completedFlipCapturePinsGenerationConcurrently();
         completedFlipCaptureCountsLoss();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

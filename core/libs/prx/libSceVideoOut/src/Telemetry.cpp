@@ -12,7 +12,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
-#include <thread>
 #include <utility>
 
 #ifdef _WIN32
@@ -204,16 +203,7 @@ void Writer::EmitPresent(std::uint64_t frame, double fps) {
 
 void Writer::EmitCompletedFlip(std::uint64_t generation, std::uint64_t sequence, std::uint64_t processTimeUs) {
     if (!flipTiming) return;
-    std::uint8_t state = flipGenerationState.load(std::memory_order_acquire);
-    if (state == 0 && flipGenerationState.compare_exchange_strong(state, 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
-        flipGeneration = generation;
-        flipGenerationState.store(2, std::memory_order_release);
-        state = 2;
-    }
-    while (state == 1) {
-        std::this_thread::yield();
-        state = flipGenerationState.load(std::memory_order_acquire);
-    }
+    std::call_once(flipGenerationOnce, [this, generation]() { flipGeneration = generation; });
     if (flipGeneration != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
     char text[128];
     std::snprintf(text, sizeof(text), ",\"n\":%llu,\"generation\":%llu,\"process_us\":%llu}\n",
