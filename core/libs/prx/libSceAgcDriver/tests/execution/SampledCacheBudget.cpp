@@ -812,9 +812,9 @@ void remappedEpochTests(Context context) {
 #endif
         mutation.Add(memory, SurfaceBytes, true, true, true);
     };
-    const auto exitInputs = [] { return std::array<std::uint64_t, 6>{AgcDriver::GuestMemory::CollectEpoch(), AgcDriver::GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), AgcDriver::GuestMemory::UnwatchSerial(), RetiredImportSerial(), DepthSurfacesSerial()}; };
-    const auto movedInputs = [&](const std::array<std::uint64_t, 6>& before) {
-        constexpr std::array<const char*, 6> names{"epoch", "proof", "pending", "unwatch", "retired imports", "surfaces"};
+    const auto exitInputs = [] { return std::array<std::uint64_t, 8>{AgcDriver::GuestMemory::CollectEpoch(), AgcDriver::GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), ShaderResources::TextureReleases(), AgcDriver::GuestMemory::UnwatchSerial(), HostImportSetGeneration(), RetiredImportSerial(), DepthSurfacesSerial()}; };
+    const auto movedInputs = [&](const std::array<std::uint64_t, 8>& before) {
+        constexpr std::array<const char*, 8> names{"epoch", "proof", "pending", "releases", "unwatch", "import set", "retired imports", "surfaces"};
         const auto after = exitInputs();
         std::string moved;
         for (std::size_t input = 0; input < names.size(); ++input) {
@@ -849,8 +849,7 @@ void remappedEpochTests(Context context) {
             const auto before = exitInputs();
             if (pages) replacePages(surface.Address());
             else replaceRegistry(surface.Address(), SurfaceBytes);
-            auto moved = movedInputs(before);
-            if (bound != nullptr && bound->Released()) moved += std::string(moved.empty() ? "" : ", ") + "releases";
+            const auto moved = movedInputs(before);
             bool exitProved = false;
             const bool exited = reused(*resources, shader, exitProved);
             AgcDriver::GuestMemory::BreakProofs();
@@ -953,6 +952,7 @@ void remappedEpochTests(Context context) {
     bool keysProved = false;
     const bool keysExited = reused(*keyed, keyedShader, keysProved);
     std::printf("remapped allocation: a sampled template after the allocation of its DCC keys was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", keysMoved.empty() ? "none" : keysMoved.c_str(), keysExited ? "took" : "did not take", keysProved ? "proved current" : "refused");
+    Require(keysMoved.empty(), "replacing the allocation of a sampled template's DCC keys moved another epoch exit input, so the case tests nothing");
     Require(!keysExited, "a sampled template took the epoch exit over DCC keys whose guest allocation was replaced");
     keyed.reset();
     ClearCachedTextures(context.device);
@@ -976,6 +976,7 @@ void remappedEpochTests(Context context) {
             bool viewProved = false;
             const bool viewExited = reused(*view, viewShader, viewProved);
             std::printf("remapped allocation: an unkeyed sampled template over a storage image with DCC keys after the allocation of those keys was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", viewMoved.empty() ? "none" : viewMoved.c_str(), viewExited ? "took" : "did not take", viewProved ? "proved current" : "refused");
+            Require(viewMoved.empty(), "replacing the allocation of a storage image's DCC keys moved another epoch exit input, so the case tests nothing");
             Require(!viewExited, "a sampled template took the epoch exit over its storage image's DCC keys whose guest allocation was replaced");
             view.reset();
         } else {
@@ -983,6 +984,77 @@ void remappedEpochTests(Context context) {
         }
         ClearCachedTextures(context.device);
     }
+    struct SplitAllocation {
+        std::uint8_t* memory;
+        std::size_t bytes;
+        std::size_t head;
+        SplitAllocation(std::uint64_t address, std::size_t bytes, std::size_t head) : memory(reinterpret_cast<std::uint8_t*>(address)), bytes(bytes), head(head) {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(memory);
+            mutation.Add(memory, head, true, true, true);
+            mutation.Add(memory + head, bytes - head, true, true, false);
+        }
+        ~SplitAllocation() {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(memory + head);
+            mutation.Remove(memory);
+            mutation.Add(memory, bytes, true, true, true);
+        }
+        SplitAllocation(const SplitAllocation&) = delete;
+        SplitAllocation& operator=(const SplitAllocation&) = delete;
+        void ReplaceTail() const {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(memory + head);
+            mutation.Add(memory + head, bytes - head, true, true, false);
+        }
+    };
+    const auto chainWords = [](std::uint64_t address, std::uint64_t keys) {
+        auto words = Descriptor(address, Side, Format32UInt, keys);
+        words[3] |= 1u << 16u;
+        words[5] = 1u << 4u;
+        return words;
+    };
+    constexpr std::size_t keyHalf = 65536;
+    const auto uncompressedKeys = [](const WatchedSurface& memory, std::size_t bytes) {
+        std::memset(reinterpret_cast<void*>(memory.Address()), 0xff, bytes);
+        AgcDriver::GuestMemory::CollectWritesUncached(memory.Address(), bytes);
+    };
+    enum class ViewKeys { None, Source, Named };
+    for (const auto mode : {ViewKeys::None}) {
+        const char* kind = mode == ViewKeys::None ? "an unkeyed view" : mode == ViewKeys::Source ? "a view naming its image's keys" : "a view naming other keys";
+        ClearCachedTextures(context.device);
+        WatchedSurface chain(context, 2 * SurfaceBytes);
+        WatchedSurface tailed(context, 2 * keyHalf);
+        WatchedSurface other(context, keyHalf);
+        uncompressedKeys(tailed, 2 * keyHalf);
+        uncompressedKeys(other, keyHalf);
+        const auto viewBytes = DescribeSurface(DecodeTextureResource(Descriptor(chain.Address()))).guestBytes;
+        const auto sourceBytes = DescribeSurface(DecodeTextureResource(chainWords(chain.Address(), 0))).guestBytes;
+        Require(viewBytes < sourceBytes && sourceBytes <= 2 * SurfaceBytes && DccKeyBytes(viewBytes) < DccKeyBytes(sourceBytes) && DccKeyBytes(sourceBytes) <= keyHalf, "the two-mip chain does not take more keys than its first mip within the fixture");
+        const auto edge = tailed.Address() + keyHalf - DccKeyBytes(viewBytes);
+        SplitAllocation split(tailed.Address(), 2 * keyHalf, keyHalf);
+        ClearHostImports(context.device);
+        const auto stored = CachedStorageSurface(context, DecodeTextureResource(chainWords(chain.Address(), mode == ViewKeys::Named ? other.Address() : edge)));
+        Require(stored != nullptr && stored->GuestBytes() == sourceBytes && stored->UploadedKeys() == DccKeys::Uncompressed, "the mip chain's storage image does not hold the chain under uncompressed keys");
+        stored->MarkDirty();
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto viewProgram = ImageProgramAt(chain.Address(), true, mode == ViewKeys::None ? 0 : edge);
+        const CompiledShader viewShader{ShaderRecompiler::ShaderStage::Compute, &viewProgram, 0};
+        auto view = std::make_shared<ShaderResources>(context, viewShader);
+        Require(view->Reusable() && view->SampledTextures().size() == 1 && view->SampledTextures().front()->StorageSource() == stored.get(), std::string(kind) + " of the first mip does not view the pending chain's storage image");
+        Require(settle(*view, viewShader), std::string(kind) + " of a pending chain never took the epoch exit");
+        const auto before = exitInputs();
+        split.ReplaceTail();
+        const auto moved = movedInputs(before);
+        bool proved = false;
+        const bool exited = reused(*view, viewShader, proved);
+        std::printf("remapped allocation: %s of the first mip of a pending two-mip chain after the allocation of the chain's last keys was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", kind, moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", proved ? "proved current" : "refused");
+        Require(moved.empty(), std::string("replacing the allocation of a chain's last keys under ") + kind + " moved another epoch exit input, so the case tests nothing");
+        Require(!exited, std::string(kind) + " took the epoch exit over keys of its storage image whose guest allocation was replaced");
+        view.reset();
+        stored->Flush();
+    }
+    ClearCachedTextures(context.device);
     std::puts("templates over a remapped allocation in the same collect epoch passed");
 }
 

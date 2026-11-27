@@ -3264,6 +3264,10 @@ std::uint64_t ShaderResources::DepthGuardRefusals() {
     return depthGuardRefusals.load(std::memory_order_relaxed);
 }
 
+std::uint64_t ShaderResources::TextureReleases() {
+    return textureReleases.load(std::memory_order_acquire);
+}
+
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
