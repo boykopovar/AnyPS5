@@ -1,5 +1,7 @@
 #include "prx/libSceIcu/StringSearchHost.hpp"
+#include "cmemory.h"
 #include "unicode/usearch.h"
+#include "usrchimp.h"
 #include <mutex>
 
 namespace {
@@ -53,7 +55,11 @@ void SetAttribute(void* search, std::int32_t attribute, std::int32_t value, std:
 
 void SetPattern(void* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t& status) {
     auto code = static_cast<UErrorCode>(status);
-    usearch_setPattern(static_cast<UStringSearch*>(search), pattern, patternLength, &code);
+    auto* native = static_cast<UStringSearch*>(search);
+    if (native->pattern.ces != native->pattern.cesBuffer && native->pattern.ces) uprv_free(native->pattern.ces);
+    native->pattern.ces = native->pattern.cesBuffer;
+    native->pattern.cesLength = 0;
+    usearch_setPattern(native, pattern, patternLength, &code);
     status = code;
 }
 
