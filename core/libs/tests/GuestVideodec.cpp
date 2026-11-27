@@ -1,10 +1,13 @@
 #include "prx/libSceVideodec2/include/Api.hpp"
 #include "prx/libSceVideodec/include/Api.hpp"
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include "prx/libc/include/General.hpp"
 #include "H264Fixture.hpp"
@@ -89,6 +92,50 @@ public:
     }
     template <typename T>
     T* As() const { return static_cast<T*>(data); }
+};
+
+class SplitFrameBuffer {
+    void* memory = nullptr;
+    std::size_t page = 0;
+    std::uint8_t* luma = nullptr;
+    std::size_t lumaBytes = 0;
+
+public:
+    SplitFrameBuffer(std::size_t lumaSize, std::size_t chromaSize) : lumaBytes(lumaSize) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        check(page >= lumaSize && page >= chromaSize, "the host page size is smaller than a plane");
+        memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        check(memory != nullptr, "the split frame buffer pages could not be allocated");
+        DWORD previous = 0;
+        check(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_READONLY, &previous) != 0,
+              "the chroma page could not be made read-only");
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        check(page >= lumaSize && page >= chromaSize, "the host page size is smaller than a plane");
+        memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        check(memory != MAP_FAILED, "the split frame buffer pages could not be allocated");
+        check(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_READ) == 0,
+              "the chroma page could not be made read-only");
+#endif
+        luma = static_cast<std::uint8_t*>(memory) + page - lumaSize;
+        std::fill_n(luma, lumaSize, std::uint8_t{0xA5});
+    }
+    SplitFrameBuffer(const SplitFrameBuffer&) = delete;
+    SplitFrameBuffer& operator=(const SplitFrameBuffer&) = delete;
+    ~SplitFrameBuffer() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, page * 2);
+#endif
+    }
+    void* Data() const { return luma; }
+    bool LumaUntouched() const {
+        return std::all_of(luma, luma + lumaBytes, [](std::uint8_t byte) { return byte == 0xA5; });
+    }
 };
 
 struct Session {
@@ -189,6 +236,248 @@ void testCopyFailureLeavesPictureUntouched() {
     testDecodeCopyFailure(units, readOnlyFrame, ErrorFrameBufferPointer, "read-only frame pixel buffer");
     testFlushCopyFailure(units, shortBuffer, ErrorFrameBufferSize, "short frame buffer");
     testFlushCopyFailure(units, readOnlyFrame, ErrorFrameBufferPointer, "read-only frame pixel buffer");
+}
+
+void testReadOnlyPictureInfoPreservesState() {
+    const auto units = accessUnits(false);
+    const PictureInfo initialPicture{sizeof(PictureInfo)};
+    PageTail readOnlyPicture(&initialPicture, sizeof(initialPicture));
+    readOnlyPicture.ReadOnly();
+
+    {
+        Session session;
+        std::fill(session.buffer.begin(), session.buffer.end(), std::uint8_t{0xA5});
+        auto target = session.MakeTarget();
+        const SceVideodec2::InputData input0{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+        check(sceVideodecDecode(&session.ctrl, &input0, &target, readOnlyPicture.As<PictureInfo>()) == ErrorArgumentPointer,
+              "decode accepted a read-only picture info block");
+        check(std::all_of(session.buffer.begin(), session.buffer.end(), [](std::uint8_t byte) { return byte == 0xA5; }),
+              "failed decode modified frame buffer on read-only picture info");
+
+        std::vector<std::uint64_t> hashes;
+        std::vector<std::uint64_t> timestamps;
+        std::vector<std::uint64_t> attachments;
+        const auto collect = [&](const PictureInfo& picture) {
+            if (!picture.isValid) return;
+            hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
+            timestamps.push_back(picture.ptsData);
+            attachments.push_back(picture.attachedData);
+        };
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+            PictureInfo picture{sizeof(PictureInfo)};
+            check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode retry failed after read-only picture info");
+            collect(picture);
+        }
+        for (;;) {
+            PictureInfo picture{sizeof(PictureInfo)};
+            check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush failed after read-only decode picture info");
+            if (!picture.isValid) break;
+            collect(picture);
+        }
+        check(hashes.size() == PictureHashes.size(), "decoded frame was lost or duplicated after read-only picture info");
+        for (std::size_t index = 0; index < hashes.size(); ++index) {
+            check(hashes[index] == PictureHashes[index], "decoded picture hash mismatched after read-only picture info retry");
+            const auto unit = DisplayOrderUnits[index];
+            check(timestamps[index] == 1000 + unit && attachments[index] == 0xa0 + unit,
+                  "decoded picture metadata mismatched after read-only picture info retry");
+        }
+    }
+
+    {
+        Session session;
+        std::vector<std::uint64_t> hashes;
+        std::vector<std::uint64_t> timestamps;
+        std::vector<std::uint64_t> attachments;
+        auto target = session.MakeTarget();
+        const auto collect = [&](const PictureInfo& picture) {
+            if (!picture.isValid) return;
+            hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
+            timestamps.push_back(picture.ptsData);
+            attachments.push_back(picture.attachedData);
+        };
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+            PictureInfo picture{sizeof(PictureInfo)};
+            check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed before flush read-only picture test");
+            collect(picture);
+        }
+        std::fill(session.buffer.begin(), session.buffer.end(), std::uint8_t{0xA5});
+        check(sceVideodecFlush(&session.ctrl, &target, readOnlyPicture.As<PictureInfo>()) == ErrorArgumentPointer,
+              "flush accepted a read-only picture info block");
+        check(std::all_of(session.buffer.begin(), session.buffer.end(), [](std::uint8_t byte) { return byte == 0xA5; }),
+              "failed flush modified frame buffer on read-only picture info");
+        for (;;) {
+            PictureInfo picture{sizeof(PictureInfo)};
+            check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush retry failed after read-only picture info");
+            if (!picture.isValid) break;
+            collect(picture);
+        }
+        check(hashes.size() == PictureHashes.size(), "flushed frame was lost after read-only picture info");
+        for (std::size_t index = 0; index < hashes.size(); ++index) {
+            check(hashes[index] == PictureHashes[index], "flushed picture hash mismatched after read-only picture info retry");
+            const auto unit = DisplayOrderUnits[index];
+            check(timestamps[index] == 1000 + unit && attachments[index] == 0xa0 + unit,
+                  "flushed picture metadata mismatched after read-only picture info retry");
+        }
+    }
+}
+
+void testPartiallyProtectedFrameBufferUntouched() {
+    const auto units = accessUnits(false);
+    constexpr std::size_t lumaBytes = static_cast<std::size_t>(Pitch) * PictureHeight;
+    constexpr std::size_t chromaBytes = static_cast<std::size_t>(Pitch) * (PictureHeight / 2);
+    const auto sentinel = makeSentinelPicture();
+
+    {
+        SplitFrameBuffer split(lumaBytes, chromaBytes);
+        FrameBuffer badFrame{sizeof(FrameBuffer), split.Data(), FrameBytes};
+        Session session;
+        int refusals = 0;
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+            auto picture = sentinel;
+            const auto status = sceVideodecDecode(&session.ctrl, &input, &badFrame, &picture);
+            check(status == 0 || status == ErrorFrameBufferPointer, "unexpected decode status for split frame buffer");
+            if (status == ErrorFrameBufferPointer) {
+                ++refusals;
+                check(isPictureUntouched(picture, sentinel), "failed decode modified picture info on split frame buffer");
+            }
+            check(split.LumaUntouched(), "decode modified writable luma plane despite read-only chroma plane");
+        }
+        check(refusals > 0, "decode never failed on split frame buffer");
+    }
+
+    {
+        SplitFrameBuffer split(lumaBytes, chromaBytes);
+        FrameBuffer badFrame{sizeof(FrameBuffer), split.Data(), FrameBytes};
+        Session session;
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+            auto target = session.MakeTarget();
+            PictureInfo picture{sizeof(PictureInfo)};
+            check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed before split flush test");
+        }
+        int refusals = 0;
+        for (;;) {
+            auto picture = sentinel;
+            const auto status = sceVideodecFlush(&session.ctrl, &badFrame, &picture);
+            check(status == 0 || status == ErrorFrameBufferPointer, "unexpected flush status for split frame buffer");
+            check(split.LumaUntouched(), "flush modified writable luma plane despite read-only chroma plane");
+            if (status == 0) {
+                check(!picture.isValid, "flush produced valid picture on split frame buffer");
+                break;
+            }
+            ++refusals;
+            check(isPictureUntouched(picture, sentinel), "failed flush modified picture info on split frame buffer");
+        }
+        check(refusals > 0, "flush never failed on split frame buffer");
+    }
+}
+
+void testUnreadableAuDataReturnsAuPointer() {
+    Session session;
+    const auto units = accessUnits(false);
+    auto target = session.MakeTarget();
+    const auto sentinel = makeSentinelPicture();
+
+    const SceVideodec2::InputData badPtrInput{
+        sizeof(SceVideodec2::InputData), reinterpret_cast<const std::uint8_t*>(std::uintptr_t{0x10}), 16, 1000, 0, 0xa0};
+    auto picture = sentinel;
+    check(sceVideodecDecode(&session.ctrl, &badPtrInput, &target, &picture) == ErrorAuPointer,
+          "decode did not return ErrorAuPointer for unreadable auData pointer");
+    check(isPictureUntouched(picture, sentinel), "failed decode modified picture info for unreadable auData");
+
+    PageTail partialAu(units[0].data(), 16);
+    const SceVideodec2::InputData partialInput{
+        sizeof(SceVideodec2::InputData), partialAu.As<const std::uint8_t>(), 32, 1000, 0, 0xa0};
+    picture = sentinel;
+    check(sceVideodecDecode(&session.ctrl, &partialInput, &target, &picture) == ErrorAuPointer,
+          "decode did not return ErrorAuPointer for partially unreadable auData spanning guard page");
+    check(isPictureUntouched(picture, sentinel), "failed decode modified picture info for partially unreadable auData");
+}
+
+void testReadOnlyCtrlCreateDecoder() {
+    const ConfigInfo config{sizeof(ConfigInfo), 1, 100, 42, static_cast<std::int32_t>(Width),
+                            static_cast<std::int32_t>(CodedHeight), 4, 0};
+    const ResourceInfo resource{sizeof(ResourceInfo), 16u << 20u, nullptr, 16u << 20u, nullptr, FrameBytes, 256};
+    const Ctrl sentinel{sizeof(Ctrl), reinterpret_cast<void*>(std::uintptr_t{0x5a}), 0x5au};
+    PageTail readOnlyCtrl(&sentinel, sizeof(sentinel));
+    readOnlyCtrl.ReadOnly();
+    check(sceVideodecCreateDecoder(&config, &resource, readOnlyCtrl.As<Ctrl>()) == ErrorArgumentPointer,
+          "create accepted a read-only control block");
+    check(readOnlyCtrl.As<const Ctrl>()->handle == sentinel.handle && readOnlyCtrl.As<const Ctrl>()->version == sentinel.version,
+          "read-only control block was unexpectedly altered");
+    Ctrl ctrl{sizeof(Ctrl)};
+    check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "create failed after read-only control block test");
+    check(sceVideodecDeleteDecoder(&ctrl) == 0, "delete failed after read-only control block test");
+}
+
+void testConcurrentDecodeAndDelete() {
+    const auto units = accessUnits(false);
+    const auto& idrUnit = units[0];
+    const ConfigInfo config{sizeof(ConfigInfo), 1, 100, 42, static_cast<std::int32_t>(Width),
+                            static_cast<std::int32_t>(CodedHeight), 4, 0};
+    const ResourceInfo resource{sizeof(ResourceInfo), 16u << 20u, nullptr, 16u << 20u, nullptr, FrameBytes, 256};
+
+    {
+        Session session;
+        std::atomic<bool> failed{false};
+        std::vector<std::thread> workers;
+        for (int worker = 0; worker < 3; ++worker) {
+            workers.emplace_back([&]() {
+                std::vector<std::uint8_t> localBuffer(FrameBytes);
+                FrameBuffer localFrame{sizeof(FrameBuffer), localBuffer.data(), localBuffer.size()};
+                for (int round = 0; round < 20; ++round) {
+                    const SceVideodec2::InputData input{
+                        sizeof(SceVideodec2::InputData), idrUnit.data(), idrUnit.size(), 1000ull + static_cast<std::uint64_t>(round), static_cast<std::uint64_t>(round), 0xa0};
+                    PictureInfo picture{sizeof(PictureInfo)};
+                    if (sceVideodecDecode(&session.ctrl, &input, &localFrame, &picture) != 0) failed.store(true);
+                    PictureInfo flushPicture{sizeof(PictureInfo)};
+                    if (sceVideodecFlush(&session.ctrl, &localFrame, &flushPicture) != 0) failed.store(true);
+                }
+            });
+        }
+        for (auto& worker : workers) worker.join();
+        check(!failed.load(), "concurrent decode/flush failed on shared decoder");
+    }
+
+    for (int iteration = 0; iteration < 20; ++iteration) {
+        Ctrl ctrl{sizeof(Ctrl)};
+        check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "stress decoder creation failed");
+        std::atomic<bool> stop{false};
+        std::atomic<bool> unexpectedStatus{false};
+        std::vector<std::thread> workers;
+        for (int worker = 0; worker < 3; ++worker) {
+            workers.emplace_back([&, worker]() {
+                std::vector<std::uint8_t> localBuffer(FrameBytes);
+                FrameBuffer localFrame{sizeof(FrameBuffer), localBuffer.data(), localBuffer.size()};
+                std::size_t index = 0;
+                while (!stop.load()) {
+                    const SceVideodec2::InputData input{
+                        sizeof(SceVideodec2::InputData), idrUnit.data(), idrUnit.size(), 1000 + index, index, 0xa0 + index};
+                    PictureInfo picture{sizeof(PictureInfo)};
+                    const int decodeStatus = sceVideodecDecode(&ctrl, &input, &localFrame, &picture);
+                    if (decodeStatus != 0 && decodeStatus != ErrorHandle) unexpectedStatus.store(true);
+                    if ((worker & 1) == 0) {
+                        PictureInfo flushPicture{sizeof(PictureInfo)};
+                        const int flushStatus = sceVideodecFlush(&ctrl, &localFrame, &flushPicture);
+                        if (flushStatus != 0 && flushStatus != ErrorHandle) unexpectedStatus.store(true);
+                    } else if ((index % 4) == 0) {
+                        const int resetStatus = sceVideodecReset(&ctrl);
+                        if (resetStatus != 0 && resetStatus != ErrorHandle) unexpectedStatus.store(true);
+                    }
+                    ++index;
+                }
+            });
+        }
+        std::this_thread::yield();
+        check(sceVideodecDeleteDecoder(&ctrl) == 0, "stress decoder deletion failed");
+        stop.store(true);
+        for (auto& worker : workers) worker.join();
+        check(!unexpectedStatus.load(), "concurrent decode/delete produced unexpected status or race");
+        check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "deleted stress decoder was deleted twice");
+    }
 }
 
 void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32_t cropTop, std::uint32_t cropBottom) {
@@ -518,6 +807,11 @@ int main() {
         testDecodeCropped();
         testErrors();
         testCopyFailureLeavesPictureUntouched();
+        testReadOnlyPictureInfoPreservesState();
+        testPartiallyProtectedFrameBufferUntouched();
+        testUnreadableAuDataReturnsAuPointer();
+        testReadOnlyCtrlCreateDecoder();
+        testConcurrentDecodeAndDelete();
         testReset();
         testDeepPicture();
         testDeepReorderedPicture();
@@ -530,4 +824,3 @@ int main() {
         return 1;
     }
 }
-
