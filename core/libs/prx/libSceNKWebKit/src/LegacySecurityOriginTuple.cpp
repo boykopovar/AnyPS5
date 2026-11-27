@@ -106,17 +106,105 @@
 #include <limits>
 #include <stdexcept>
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstddef>
+#include <cstring>
+#include <type_traits>
+#include <vector>
+
 namespace {
 
 using NKWebKit::WebCoreAbi::LegacyOptionalSecurityOriginTuple;
+using NKWebKit::WebCoreAbi::LegacyOriginPort;
+using NKWebKit::WebCoreAbi::LegacySecurityOriginTuple;
 using NKWebKit::WtfAbi::CodeUnitAt;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringView;
 
+static_assert(sizeof(bool) == 1);
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+
 constexpr std::int32_t kWhiteSpaceNeutral = 9;
 constexpr char16_t kSeparator = u'_';
 constexpr unsigned kNotFound = ~0U;
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+struct HostStringSnapshot {
+    bool isNull = true;
+    bool is8Bit = true;
+    std::vector<unsigned char> narrow;
+    std::vector<char16_t> wide;
+
+    StringView View() const {
+        if (isNull) return {nullptr, 0, true};
+        if (is8Bit) return {narrow.empty() ? nullptr : narrow.data(), static_cast<unsigned>(narrow.size()), true};
+        return {wide.empty() ? nullptr : wide.data(), static_cast<unsigned>(wide.size()), false};
+    }
+};
+
+HostStringSnapshot CopyGuestString(const String* source, const char* function) {
+    StringImpl* const impl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(source), function);
+    HostStringSnapshot snapshot{};
+    if (!impl) return snapshot;
+    const StringImpl header = ReadGuestValue(impl, function);
+    snapshot.isNull = false;
+    snapshot.is8Bit = (header.hashAndFlags & 4u) != 0;
+    if (!header.length) return snapshot;
+    if (!header.data) throw std::invalid_argument("null WTF character buffer");
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (snapshot.is8Bit ? 1u : sizeof(char16_t));
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    if (snapshot.is8Bit) {
+        snapshot.narrow.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(snapshot.narrow.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    } else {
+        snapshot.wide.resize(header.length);
+        if (!GuestCopyIn_nid_no_patch(snapshot.wide.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return snapshot;
+}
+
+struct StringImplGuard {
+    StringImpl* ptr = nullptr;
+
+    ~StringImplGuard() {
+        if (!ptr) return;
+        try {
+            NKWebKit::WtfAbi::Release(ptr);
+        } catch (...) {
+        }
+    }
+};
 
 bool IsSpaceOrNewline(char16_t c) {
     if (c <= 0xFF) return c == u' ' || (c <= 0xD && c >= 0x9);
@@ -166,6 +254,12 @@ StringImpl* Create(const StringView& view, unsigned start, unsigned length) {
     return impl;
 }
 
+void PublishDisengaged(LegacyOptionalSecurityOriginTuple* result, const char* function) {
+    const unsigned char engaged = 0;
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(result) + offsetof(LegacyOptionalSecurityOriginTuple, engaged), &engaged, sizeof(engaged)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 }  // namespace
 
 extern "C" {
@@ -174,9 +268,17 @@ LegacyOptionalSecurityOriginTuple* APS5_VABI _ZN7WebCore18SecurityOriginData22fr
     LegacyOptionalSecurityOriginTuple* result, const String* databaseIdentifier) {
     if (!result) throw std::invalid_argument("WebCore::SecurityOriginData::fromDatabaseIdentifier: null result");
     if (!databaseIdentifier) throw std::invalid_argument("WebCore::SecurityOriginData::fromDatabaseIdentifier: null WTF::String");
-    result->engaged = false;
-    if (!databaseIdentifier->impl) return result;
-    const StringView view = NKWebKit::WtfAbi::ViewOf(databaseIdentifier->impl);
+    RequireReadableGuestBytes(result, sizeof(LegacyOptionalSecurityOriginTuple), __func__);
+    RequireWritableGuestBytes(result, sizeof(LegacyOptionalSecurityOriginTuple), __func__);
+    unsigned char previousRaw[sizeof(LegacyOptionalSecurityOriginTuple)]{};
+    if (!GuestCopyIn_nid_no_patch(previousRaw, result, sizeof(previousRaw)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const HostStringSnapshot identifier = CopyGuestString(databaseIdentifier, __func__);
+    if (identifier.isNull) {
+        PublishDisengaged(result, __func__);
+        return result;
+    }
+    const StringView view = identifier.View();
     unsigned first = kNotFound;
     unsigned last = kNotFound;
     for (unsigned index = 0; index < view.length; ++index) {
@@ -184,17 +286,40 @@ LegacyOptionalSecurityOriginTuple* APS5_VABI _ZN7WebCore18SecurityOriginData22fr
         if (first == kNotFound) first = index;
         last = index;
     }
-    if (first == kNotFound || first == last) return result;
+    if (first == kNotFound || first == last) {
+        PublishDisengaged(result, __func__);
+        return result;
+    }
     bool portOkay = false;
     const int port = ToInt(view, last + 1, portOkay);
     const bool portAbsent = last == view.length - 1;
-    if (!portOkay && !portAbsent) return result;
-    if (port < 0 || port > std::numeric_limits<std::uint16_t>::max()) return result;
-    result->value.protocol = Create(view, 0, first);
-    result->value.host = Create(view, first + 1, last - first - 1);
-    result->value.port.engaged = port != 0;
-    result->value.port.value = static_cast<std::uint16_t>(port);
-    result->engaged = true;
+    if (!portOkay && !portAbsent) {
+        PublishDisengaged(result, __func__);
+        return result;
+    }
+    if (port < 0 || port > std::numeric_limits<std::uint16_t>::max()) {
+        PublishDisengaged(result, __func__);
+        return result;
+    }
+    StringImplGuard protocol{Create(view, 0, first)};
+    StringImplGuard host{Create(view, first + 1, last - first - 1)};
+    unsigned char updatedRaw[sizeof(LegacyOptionalSecurityOriginTuple)]{};
+    std::memcpy(updatedRaw, previousRaw, sizeof(updatedRaw));
+    const unsigned char engagedTrue = 1;
+    const unsigned char portEngaged = port != 0 ? 1u : 0u;
+    const auto portValue = static_cast<std::uint16_t>(port);
+    constexpr std::size_t kValueOffset = offsetof(LegacyOptionalSecurityOriginTuple, value);
+    std::memcpy(updatedRaw + offsetof(LegacyOptionalSecurityOriginTuple, engaged), &engagedTrue, sizeof(engagedTrue));
+    std::memcpy(updatedRaw + kValueOffset + offsetof(LegacySecurityOriginTuple, protocol), &protocol.ptr, sizeof(protocol.ptr));
+    std::memcpy(updatedRaw + kValueOffset + offsetof(LegacySecurityOriginTuple, host), &host.ptr, sizeof(host.ptr));
+    std::memcpy(updatedRaw + kValueOffset + offsetof(LegacySecurityOriginTuple, port) + offsetof(LegacyOriginPort, engaged), &portEngaged, sizeof(portEngaged));
+    std::memcpy(updatedRaw + kValueOffset + offsetof(LegacySecurityOriginTuple, port) + offsetof(LegacyOriginPort, value), &portValue, sizeof(portValue));
+    if (!GuestCopyOut_nid_no_patch(result, updatedRaw, sizeof(updatedRaw))) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(result, previousRaw, sizeof(previousRaw)));
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    protocol.ptr = nullptr;
+    host.ptr = nullptr;
     return result;
 }
 

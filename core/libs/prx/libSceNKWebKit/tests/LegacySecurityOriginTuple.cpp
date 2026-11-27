@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
@@ -6,6 +7,13 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::LegacyOptionalSecurityOriginTuple;
 using NKWebKit::WtfAbi::String;
@@ -181,11 +189,132 @@ static void TestInvalidArguments() {
     Require(!parsed.engaged && text.impl->refCount == 2);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    void ProtectReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TFunction>
+static void RequireNotImplemented(TFunction&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    const String text = Text("http_example.com_80");
+    std::memcpy(pages.ReadOnly(), &text, sizeof(text));
+    pages.ProtectReadOnly();
+
+    alignas(8) unsigned char outBytes[32];
+    std::memset(outBytes, 0xA5, sizeof(outBytes));
+    auto* const out = reinterpret_cast<LegacyOptionalSecurityOriginTuple*>(outBytes);
+    Require(fromDatabaseIdentifier(out, reinterpret_cast<const String*>(pages.ReadOnly())) == out);
+    Require(out->engaged && Units(out->value.protocol) == u"http" && Units(out->value.host) == u"example.com" && out->value.port.engaged && out->value.port.value == 80);
+    NKWebKit::WtfAbi::Release(out->value.protocol);
+    NKWebKit::WtfAbi::Release(out->value.host);
+
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(reinterpret_cast<LegacyOptionalSecurityOriginTuple*>(pages.Guard()), &text);
+    });
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(reinterpret_cast<LegacyOptionalSecurityOriginTuple*>(pages.ReadOnly()), &text);
+    });
+
+    unsigned char* const splitOut = pages.ReadOnly() - 8;
+    std::memset(splitOut, 0x5A, 8);
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(reinterpret_cast<LegacyOptionalSecurityOriginTuple*>(splitOut), &text);
+    });
+    for (std::size_t i = 0; i < 8; ++i) Require(splitOut[i] == 0x5A);
+
+    std::memset(outBytes, 0x5A, sizeof(outBytes));
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(out, reinterpret_cast<const String*>(pages.Guard()));
+    });
+    for (const unsigned char byte : outBytes) Require(byte == 0x5A);
+
+    String badImpl{};
+    badImpl.impl = reinterpret_cast<StringImpl*>(pages.Guard());
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(out, &badImpl);
+    });
+    badImpl.impl = nullptr;
+    for (const unsigned char byte : outBytes) Require(byte == 0x5A);
+
+    StringImpl badChars{2, 8, pages.Guard(), 4};
+    String badCharsStr{};
+    badCharsStr.impl = &badChars;
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(out, &badCharsStr);
+    });
+    badCharsStr.impl = nullptr;
+    for (const unsigned char byte : outBytes) Require(byte == 0x5A);
+
+    StringImpl splitChars{2, 8, pages.Guard() - 2, 0};
+    String splitCharsStr{};
+    splitCharsStr.impl = &splitChars;
+    RequireNotImplemented([&] {
+        fromDatabaseIdentifier(out, &splitCharsStr);
+    });
+    splitCharsStr.impl = nullptr;
+    for (const unsigned char byte : outBytes) Require(byte == 0x5A);
+}
+
 int main() {
     TestTheSeparators();
     TestThePort();
     TestWideStrings();
     TestInvalidArguments();
+    TestGuestPointers();
     std::puts("libSceNKWebKit legacy security origin tuple tests passed");
     return 0;
 }
