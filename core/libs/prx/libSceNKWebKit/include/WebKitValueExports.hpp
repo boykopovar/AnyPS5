@@ -624,8 +624,17 @@ bool APS5_VABI WKUserContentURLPatternMatchesURL(const void* urlPatternRef, cons
 std::uint32_t APS5_VABI WKUserMediaPermissionCheckGetTypeID();
 std::uint32_t APS5_VABI WKUserMediaPermissionRequestGetTypeID();
 std::uint32_t APS5_VABI WKUserScriptGetTypeID();
+struct WKPunchHole {
+    float quad[4][2];
+    float opacity;
+    std::uint32_t canvasHandle;
+    std::uint32_t flags;
+};
+
+const void* APS5_VABI WKViewCreate(const void* pageConfigurationRef);
 void APS5_VABI WKViewDidEnterFullScreen(const void* viewRef);
 void APS5_VABI WKViewDidExitFullScreen(const void* viewRef);
+void APS5_VABI WKViewGetPunchHoles(const void* viewRef, WKPunchHole* holes, int arrayLengthOfHoles, int* numberOfCopiedPunchHoles, int* numberOfActualPunchHoles);
 double APS5_VABI WKViewGetPageScaleFactor(const void* viewRef);
 double APS5_VABI WKViewGetViewScaleFactor(const void* viewRef);
 bool APS5_VABI WKViewIsFullScreen(const void* viewRef);
@@ -635,8 +644,11 @@ void APS5_VABI WKViewSetDrawsBackground(const void* viewRef, bool drawsBackgroun
 void APS5_VABI WKViewSetFocus(const void* viewRef, bool focused);
 void APS5_VABI WKViewSetPageScaleFactor(const void* viewRef, double scale);
 void APS5_VABI WKViewSetSize(const void* viewRef, NKWebKit::SizeValue size);
+void APS5_VABI WKViewSetViewClient(const void* viewRef, const void* clientRef);
+void APS5_VABI WKViewSetViewPopupMenuClient(const void* viewRef, const void* clientRef);
 void APS5_VABI WKViewSetViewScaleFactor(const void* viewRef, double scale);
 void APS5_VABI WKViewSetVisible(const void* viewRef, bool visible);
+void APS5_VABI WKViewValueChangedForPopupMenu(const void* viewRef, int selectedIndex);
 void APS5_VABI WKViewWillEnterFullScreen(const void* viewRef);
 void APS5_VABI WKViewWillExitFullScreen(const void* viewRef);
 std::uint32_t APS5_VABI WKViewportAttributesGetTypeID();

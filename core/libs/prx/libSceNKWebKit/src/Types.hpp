@@ -575,6 +575,13 @@ public:
     }
 };
 
+struct PunchHole {
+    float quad[4][2] = {};
+    float opacity = 1.0f;
+    std::uint32_t canvasHandle = 0;
+    std::uint32_t flags = 0;
+};
+
 class View final : public ObjectOf<ObjectType::View> {
 public:
     double pageScaleFactor = 1.0;
@@ -585,6 +592,11 @@ public:
     bool isFocused = false;
     bool isVisible = false;
     SizeValue size{ 0.0, 0.0 };
+    Retained<Object> configuration;
+    const void* viewClient = nullptr;
+    const void* popupMenuClient = nullptr;
+    std::int32_t lastPopupMenuSelectedIndex = -1;
+    std::vector<PunchHole> punchHoles;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
