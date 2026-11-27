@@ -10,8 +10,18 @@
 #include <memory>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WtfAbi::ParallelEnvironment;
 using NKWebKit::WtfAbi::ParallelEnvironmentThread;
@@ -279,6 +289,111 @@ static void TestAnEnvironmentThatNeverRuns() {
     next.Run();
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 3) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TFunction>
+static bool ThrowsNotImplemented(TFunction&& function, const char* symbol) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    Parameter parameter;
+    auto* readOnly = reinterpret_cast<ParallelEnvironment*>(pages.ReadOnly());
+    auto* guard = reinterpret_cast<ParallelEnvironment*>(pages.Guard());
+    auto* dangling = reinterpret_cast<ParallelEnvironment*>(0x10);
+    unsigned char* splitWritable = pages.ReadOnly() - 16;
+    std::memset(splitWritable, 0x5A, 16);
+
+    Require(ThrowsNotImplemented([&] { construct(readOnly, &Work, sizeof(Parameter), 2); }, "_ZN3WTF19ParallelEnvironmentC1EPFvPvEmi"));
+    Require(ThrowsNotImplemented([&] { _ZN3WTF19ParallelEnvironmentC2EPFvPvEmi(guard, &Work, sizeof(Parameter), 2); }, "_ZN3WTF19ParallelEnvironmentC2EPFvPvEmi"));
+    Require(ThrowsNotImplemented([&] { construct(dangling, &Work, sizeof(Parameter), 2); }, "_ZN3WTF19ParallelEnvironmentC1EPFvPvEmi"));
+    Require(ThrowsNotImplemented([&] { construct(reinterpret_cast<ParallelEnvironment*>(splitWritable), &Work, sizeof(Parameter), 2); }, "_ZN3WTF19ParallelEnvironmentC1EPFvPvEmi"));
+    for (std::size_t i = 0; i < 16; ++i) Require(splitWritable[i] == 0x5A);
+
+    Require(ThrowsNotImplemented([&] { execute(guard, &parameter); }, "_ZN3WTF19ParallelEnvironment7executeEPv"));
+    Require(ThrowsNotImplemented([&] { execute(dangling, &parameter); }, "_ZN3WTF19ParallelEnvironment7executeEPv"));
+    Require(ThrowsNotImplemented([&] { execute(reinterpret_cast<ParallelEnvironment*>(pages.Guard() - 16), &parameter); }, "_ZN3WTF19ParallelEnvironment7executeEPv"));
+
+    ParallelEnvironment badBuffer{};
+    badBuffer.threadFunction = &Work;
+    badBuffer.sizeOfParameter = sizeof(Parameter);
+    badBuffer.numberOfJobs = 2;
+    badBuffer.threads.buffer = reinterpret_cast<ParallelEnvironmentThread**>(pages.Guard());
+    badBuffer.threads.capacity = 1;
+    badBuffer.threads.size = 1;
+    Require(ThrowsNotImplemented([&] { execute(&badBuffer, &parameter); }, "_ZN3WTF19ParallelEnvironment7executeEPv"));
+    Require(parameter.calls.load() == 0);
+
+    ParallelEnvironmentThread* forgedWorker = reinterpret_cast<ParallelEnvironmentThread*>(pages.Guard());
+    ParallelEnvironment badWorker{};
+    badWorker.threadFunction = &Work;
+    badWorker.sizeOfParameter = sizeof(Parameter);
+    badWorker.numberOfJobs = 2;
+    badWorker.threads.buffer = &forgedWorker;
+    badWorker.threads.capacity = 1;
+    badWorker.threads.size = 1;
+    Require(ThrowsNotImplemented([&] { execute(&badWorker, &parameter); }, "_ZN3WTF19ParallelEnvironment7executeEPv"));
+    Require(parameter.calls.load() == 0);
+
+    if (cores >= 2) {
+        Environment validEnv(2);
+        ParallelEnvironmentThread* duplicateWorkers[2] = {validEnv.Thread(0), validEnv.Thread(0)};
+        ParallelEnvironment dupEnv{};
+        dupEnv.threadFunction = &Work;
+        dupEnv.sizeOfParameter = sizeof(Parameter);
+        dupEnv.numberOfJobs = 3;
+        dupEnv.threads.buffer = duplicateWorkers;
+        dupEnv.threads.capacity = 2;
+        dupEnv.threads.size = 2;
+        Require(ThrowsNotImplemented([&] { execute(&dupEnv, &parameter); }, "_ZN3WTF19ParallelEnvironment7executeEPv"));
+        Require(parameter.calls.load() == 0);
+        validEnv.Run();
+    }
+}
+
 int main() {
     std::thread([] {
         std::this_thread::sleep_for(std::chrono::seconds(20));
@@ -299,6 +414,7 @@ int main() {
     TestSimultaneousConstruction();
     TestInvalidArguments();
     TestAnEnvironmentThatNeverRuns();
+    TestGuestPointers();
     std::puts("libSceNKWebKit parallel environment tests passed");
     return 0;
 }
