@@ -28,6 +28,24 @@ public:
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled, bool fma, bool hostNans) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; float16HostNans = enabled && hostNans; }
     void SetNativeInteger16(bool enabled) { nativeInteger16 = enabled; }
+    void SetNanFast(bool enabled) { nanFast = enabled; }
+    [[nodiscard]] IrValue* TakeNanSeen() {
+        IrValue* seen = nanSeen;
+        nanSeen = nullptr;
+        ++nanRegion;
+        return seen;
+    }
+    void SwitchBlock(IrBlock& next) { ir.SetInsertionPoint(next); }
+    struct SpeculationState {
+        bool execLowInactive = false;
+        bool execHighInactive = false;
+    };
+    [[nodiscard]] SpeculationState SaveSpeculationState() const { return {execLowInactive, execHighInactive}; }
+    void RestoreSpeculationState(const SpeculationState& state) {
+        execLowInactive = state.execLowInactive;
+        execHighInactive = state.execHighInactive;
+    }
+    [[nodiscard]] IrValue& WaveAny(IrValue& flag);
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
@@ -73,6 +91,7 @@ private:
     IrU32 shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction);
     void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    IrValue& f32OverflowBits(IrValue& sign);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
     IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode);
     IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
@@ -104,11 +123,14 @@ private:
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
+    void noteNan(IrValue& condition, IrValue& value, std::uint8_t lanes);
+    IrU1 anyHalfNan(IrU32 word);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr, bool multiplication = false);
     IrValue* propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result);
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
+    IrValue& ldexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
@@ -153,6 +175,7 @@ private:
     bool sLoad(const RdnaInstruction& inst, bool raw);
     bool sScratchLoad(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
+    void bufferLoadToLds(const RdnaInstruction& inst, const MemoryInfo& memory, IrOpcode opcode, IrValue* resource, const BufferAddress& address);
     bool bufferLoadFormatD16(const RdnaInstruction& inst);
     bool bufferStoreFormatD16(const RdnaInstruction& inst);
     bool bufferStore(const RdnaInstruction& inst);
@@ -433,6 +456,9 @@ private:
     bool relativeVectorRead = false;
     bool execLowInactive = false;
     bool execHighInactive = false;
+    bool nanFast = false;
+    IrValue* nanSeen = nullptr;
+    std::uint32_t nanRegion = 0;
 };
 
 // Debug aid: APS5_PROBE=<pc hex>:<vgpr>[:<shift>] copies VGPR <vgpr> into v255 right after the

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,12 +23,22 @@ BATCH = 20000
 CTEST_INDEX_PREFIX = "0,0,0,"
 
 
+def read_cmake_cache(path):
+    cache = {}
+    for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition("=")
+        cache[name.partition(":")[0]] = value
+    return cache
+
+
+def ctest_program(cache):
+    configured = cache.get("CMAKE_CTEST_COMMAND")
+    return (shutil.which(configured) if configured else None) or "ctest"
+
+
 class Build:
     def __init__(self, path):
-        cache = {}
-        for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
-            name, _, value = line.partition("=")
-            cache[name.partition(":")[0]] = value
+        cache = read_cmake_cache(path)
         self.path = os.path.normpath(cache["CMAKE_CACHEFILE_DIR"])
         self.source = os.path.normpath(cache["CMAKE_HOME_DIRECTORY"])
         try:
@@ -37,6 +48,7 @@ class Build:
         if not same_directory:
             raise ValueError(f"CMake cache belongs to {self.path}; configure this directory first")
         self.program = cache.get("CMAKE_MAKE_PROGRAM") or "ninja"
+        self.ctest = ctest_program(cache)
         self.encoding = "utf-8"
         if sys.platform == "win32":
             codepage = self.run("-t", "wincodepage").strip()
@@ -106,7 +118,7 @@ class Build:
         return [path for path in paths if path in built]
 
     def tests(self, *arguments):
-        listing = ctest_listing(["ctest", "--test-dir", self.path], *arguments)
+        listing = ctest_listing([self.ctest, "--test-dir", self.path], *arguments)
         missing = {test["name"] for test in listing["tests"] if not test.get("command")}
         if missing:
             commands = self.test_commands(missing)
@@ -451,7 +463,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        command = ["ctest", "--test-dir", args.build]
+        try:
+            cache = read_cmake_cache(args.build)
+        except (OSError, UnicodeDecodeError):
+            cache = {}
+        command = [ctest_program(cache), "--test-dir", args.build]
         try:
             selection = read_test_selection(selected)
         except FileNotFoundError:

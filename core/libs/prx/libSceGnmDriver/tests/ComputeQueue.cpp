@@ -216,6 +216,33 @@ void TestComputeQueues() {
     Require(sceGnmUnmapComputeQueue(again) == 0, "sceGnmUnmapComputeQueue of the remapped ring failed");
 }
 
+void TestPriorityQueues() {
+    constexpr int Invalid = static_cast<int>(0x80d17000u);
+    GuestBlock block;
+    auto& memory = block.Data();
+    auto* misaligned = reinterpret_cast<std::uint8_t*>(&memory.readB) + 2;
+    Require(sceGnmMapComputeQueueWithPriority_nid_disambig1(7, 8, memory.ringB + 1, 12, misaligned, 2) == Invalid, "pipe 7 was not refused with 0x80D17000 before the other checks");
+    Require(sceGnmMapComputeQueueWithPriority_nid_disambig1(0, 8, memory.ringB + 1, 12, misaligned, 2) == Invalid + 1, "queue 8 was not refused with 0x80D17001 before the ring checks");
+    Require(sceGnmMapComputeQueueWithPriority_nid_disambig1(0, 0, memory.ringB + 1, 12, misaligned, 2) == Invalid + 2, "a ring size that is not a power of two was not refused with 0x80D17002 before the alignment checks");
+    Require(sceGnmMapComputeQueueWithPriority_nid_disambig1(0, 0, memory.ringB + 1, RingWords, misaligned, 2) == Invalid + 3, "a ring that is not 256-byte aligned was not refused with 0x80D17003");
+    Require(sceGnmMapComputeQueueWithPriority_nid_disambig1(0, 0, memory.ringB, RingWords, misaligned, 0) == Invalid + 4, "a read offset that is not 4-byte aligned was not refused with 0x80D17004");
+    Require(sceGnmMapComputeQueueWithPriority_nid_disambig1(0, 0, memory.ringB, RingWords, &memory.readB, 2) == Invalid + 4, "priority 2 was not refused with 0x80D17004");
+    for (const std::uint32_t priority : {0u, 1u}) {
+        const int queue = sceGnmMapComputeQueueWithPriority_nid_disambig1(6, 7, memory.ringA, RingWords, &memory.readA, priority);
+        Require(queue > 0, "sceGnmMapComputeQueueWithPriority did not return a queue id for priority " + std::to_string(priority));
+        std::vector<std::uint32_t> words;
+        WriteData(words, &memory.direct, 10u + priority);
+        const auto offset = Put(memory.ringA, 0, words);
+        Require(sceGnmDingDong(queue, offset) == 0, "sceGnmDingDong on a queue mapped with a priority failed");
+        AgcDriverWaitIdle_nid_postfix();
+        Require(memory.direct == 10u + priority && memory.readA == offset, "a queue mapped with priority " + std::to_string(priority) + " did not run its ring's packets");
+        Require(ExpectFailure([&] { sceGnmMapComputeQueueWithPriority_nid_disambig1(6, 7, memory.ringB, RingWords, &memory.readB, priority); }).find("already mapped") != std::string::npos, "mapping a pipe and queue twice with a priority did not throw as sceGnmMapComputeQueue does");
+        Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue of a queue mapped with a priority failed");
+        memory.readA = 0;
+    }
+    Require(ExpectFailure([&] { sceGnmMapComputeQueueWithPriority_nid_disambig1(0, 0, nullptr, RingWords, &memory.readB, 0); }).find("missing") != std::string::npos, "a null ring did not throw as sceGnmMapComputeQueue does");
+}
+
 void TestWorkloadDingDong() {
     GuestBlock block;
     auto& memory = block.Data();
@@ -314,6 +341,7 @@ int main() {
         device.reset();
         TestComputeQueues();
         TestCalledBuffers();
+        TestPriorityQueues();
         TestWorkloadDingDong();
         std::puts("GnmDriver compute queue tests passed");
         return 0;

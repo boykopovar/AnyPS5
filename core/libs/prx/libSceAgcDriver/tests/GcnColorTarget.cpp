@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -237,6 +238,47 @@ void LaterSlicesDecode() {
     Check(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
 }
 
+AgcDriver::Graphics::ColorTarget DecodeTiled(std::uint64_t base, std::uint32_t tileIndex, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags) {
+    AgcDriver::Registers cx;
+    SetTarget(cx, samples, fragments, flags, true, AddressOf(fmaskMemory));
+    cx[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    cx[0x319] = TiledWidth / 8u - 1u;
+    cx[0x31a] = TiledWidth * TiledHeight / 64u - 1u;
+    cx[0x322] = TiledWidth * TiledHeight / 64u - 1u;
+    cx[0x31d] = tileIndex | (static_cast<std::uint32_t>(std::countr_zero(samples)) << 12u) | (static_cast<std::uint32_t>(std::countr_zero(fragments)) << 15u);
+    return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+}
+
+void MultisampledFootprintsAndFills() {
+    using AgcDriver::Graphics::MultisampledColorBytes;
+    using AgcDriver::Graphics::MultisampledColorFill;
+    Check(MultisampledColorBytes(Decode(4u, 4u, 0u)) == 0u, "a 1D-tiled 4x GCN target, whose multisampled layout is not modeled, has a color footprint");
+    static std::byte* const tiledMemory = LowMemory(SliceMemoryBytes);
+    if (tiledMemory == nullptr || AddressOf(tiledMemory) + SliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate 2D-tiled multisampled test memory below 1 TiB");
+        return;
+    }
+    const auto base = AddressOf(tiledMemory);
+    const auto two = DecodeTiled(base, Thin2D, 2u, 2u, 0u);
+    Check(two.bytes == TiledSliceBytes && MultisampledColorBytes(two) == 2u * TiledSliceBytes, "the color memory of a thin 2D 2x GCN target is not 2 times the size CB_COLOR_SLICE gives");
+    const auto display = DecodeTiled(base, Display2D, 2u, 2u, 0u);
+    Check(MultisampledColorBytes(display) == 2u * TiledSliceBytes, "the color memory of a display 2D 2x GCN target is not 2 times the size CB_COLOR_SLICE gives");
+    const auto four = DecodeTiled(base, Thin2D, 4u, 4u, 0u);
+    Check(MultisampledColorBytes(four) == 4u * TiledSliceBytes, "the color memory of a thin 2D 4x GCN target is not 4 times the size CB_COLOR_SLICE gives");
+    const auto eqaa = DecodeTiled(base, Thin2D, 4u, 2u, Compression);
+    Check(eqaa.eqaaFragments == 2u && MultisampledColorBytes(eqaa) == 2u * TiledSliceBytes, "the color memory of a thin 2D 4-sample 2-fragment GCN target is not 2 times the size CB_COLOR_SLICE gives");
+    MultisampledColorFill whole(four);
+    whole.NoteFill(four.address, 4u * TiledSliceBytes, 0x3c003c00u);
+    const auto cleared = whole.TakeFill();
+    Check(cleared && *cleared == 0x3c003c00u, "a fill of the whole color memory of a 4x GCN target was not taken as a clear");
+    MultisampledColorFill firstQuarter(four);
+    firstQuarter.NoteFill(four.address, TiledSliceBytes, 0u);
+    Check(Failure([&] { firstQuarter.TakeFill(); }).find("partly covers") != std::string::npos, "a fill of the first quarter of the color memory of a 4x GCN target was taken as a clear of all its samples");
+    MultisampledColorFill inside(four);
+    inside.NoteFill(four.address + TiledSliceBytes, TiledSliceBytes, 0u);
+    Check(Failure([&] { inside.TakeFill(); }).find("partly covers") != std::string::npos, "a fill inside the color memory of a 4x GCN target was not refused as partial");
+}
+
 void PaddedTargetsAreCovered() {
     Check(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
     const auto padded = FmaskDecompress(Height - 4u);
@@ -261,6 +303,7 @@ int main() {
         MultisampledSlicesDecode();
         PaddedTargetsAreCovered();
         LaterSlicesDecode();
+        MultisampledFootprintsAndFills();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

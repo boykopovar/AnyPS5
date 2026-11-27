@@ -98,6 +98,17 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     unsigned char highRoomByte[64] = {0, 0, 0, 0, 0, 0, 0, 1};
     std::uint32_t requestId = 77;
 
+    struct ExtraInitParam {
+        std::uint8_t flags;
+        std::uint8_t reserved[7];
+        std::uint64_t value;
+    };
+    const ExtraInitParam extra{1, {}, 0};
+    const ExtraInitParam extraValue{0xfe, {}, 5000000};
+    Require(sceNpMatching2SetExtraInitParam(nullptr) == InvalidArgument, "sceNpMatching2SetExtraInitParam", "a null parameter was taken");
+    Require(sceNpMatching2SetExtraInitParam(&extra) == 0, "sceNpMatching2SetExtraInitParam", "a parameter before initialization was refused");
+    errno = 71;
+    Require(sceNpMatching2SetExtraInitParam(reinterpret_cast<const void*>(0x10)) == InvalidArgument && errno == 71, "sceNpMatching2SetExtraInitParam", "an unreadable parameter was taken or errno changed");
     Require(getWorldInfoList(1, serverRequest, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2GetWorldInfoList", "a request before initialization did not return NOT_INITIALIZED");
     Require(leaveRoom(1, nullptr, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2LeaveRoom", "a null request before initialization did not return NOT_INITIALIZED");
     Require(getServerId(1, nullptr) == NotInitialized, "sceNpMatching2GetServerId", "a null output before initialization did not return NOT_INITIALIZED");
@@ -112,6 +123,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     std::uint16_t context = 0;
     std::uint16_t contextA = 0;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initializing for the requests failed");
+    Require(sceNpMatching2SetExtraInitParam(&extraValue) == 0, "sceNpMatching2SetExtraInitParam", "a parameter after initialization was refused");
     Require(sceNpMatching2CreateContext(&create, &context) == 0 && context == 1, "sceNpMatching2CreateContext", "the request context is not id 1");
     Require(createContextA(&createA, &contextA) == 0 && contextA == 0x102, "sceNpMatching2CreateContextA", "the request A context is not id 0x102");
 
