@@ -84,6 +84,10 @@ struct Ring {
     std::once_flag allocated;
     std::atomic<std::uint64_t> recorded{0};
     std::unique_ptr<Entry[]> entries;
+    std::atomic<std::uint64_t> workSerial{0};
+    std::atomic<std::uint64_t> workOffset{0};
+    std::atomic<std::uint64_t> workPackets{0};
+    std::atomic<bool> working{false};
 };
 
 void reportFailure() noexcept;
@@ -193,7 +197,7 @@ bool writePackets(const Entry& entry, Line& line) {
     return written;
 }
 
-bool dump(std::string_view reason, bool failing) {
+bool dump(std::string_view reason, bool failing, std::string_view detail = {}) {
     const auto capacity = SubmissionRingCapacity();
     const auto label = static_cast<int>(std::min<std::size_t>(reason.size(), 200));
     Line line;
@@ -210,6 +214,12 @@ bool dump(std::string_view reason, bool failing) {
     }
     line.Add("[pm4 ring] %.*s: %zu queue(s), up to %zu submissions each, oldest first", label, reason.data(), used, capacity);
     bool written = line.Write();
+    {
+        const auto tenthsOfMs = static_cast<std::uint64_t>(std::max(TraceMs(), 0.0) * 10.0 + 0.5);
+        line.Add("[pm4 ring] dumped at t=%llu.%llu ms%s%.*s", static_cast<unsigned long long>(tenthsOfMs / 10), static_cast<unsigned long long>(tenthsOfMs % 10), detail.empty() ? "" : "; ",
+                 static_cast<int>(std::min<std::size_t>(detail.size(), 200)), detail.data());
+        written = line.Write() && written;
+    }
     std::array<UnacceptedSubmit, MaximumUnacceptedSubmits> unaccepted;
     const auto waiting = UnacceptedSubmits(unaccepted);
     for (std::size_t index = 0; index < waiting; ++index) {
@@ -240,6 +250,11 @@ bool dump(std::string_view reason, bool failing) {
         const auto first = recorded > capacity ? recorded - capacity : 0;
         line.Add("[pm4 ring] queue 0x%zx: %llu submissions recorded, last %llu kept", queue, static_cast<unsigned long long>(recorded), static_cast<unsigned long long>(recorded - first));
         written = line.Write() && written;
+        if (const auto packets = ring.workPackets.load(std::memory_order_acquire); packets != 0) {
+            line.Add("[pm4 ring] queue 0x%zx worker: %s serial %llu at +0x%04llx, %llu packets started on this queue", queue, ring.working.load(std::memory_order_acquire) ? "inside" : "finished",
+                     static_cast<unsigned long long>(ring.workSerial.load(std::memory_order_acquire)), static_cast<unsigned long long>(ring.workOffset.load(std::memory_order_acquire)), static_cast<unsigned long long>(packets));
+            written = line.Write() && written;
+        }
         for (auto ordinal = first; ordinal < recorded; ++ordinal) {
             const auto& entry = ring.entries[ordinal % capacity];
             line.Add("[pm4 ring] queue 0x%zx #%llu serial %llu t=%llu.%llu ms: %zu dwords from 0x%llx%s, first %zu kept", queue, static_cast<unsigned long long>(ordinal + 1), static_cast<unsigned long long>(entry.serial),
@@ -411,8 +426,22 @@ void DescribeUnacceptedSubmit(const UnacceptedSubmit& submit, std::span<char> te
                   static_cast<unsigned long long>(submit.callTenthsOfMs % 10));
 }
 
-void DumpSubmissionRings(std::string_view reason) {
-    require(dump(reason, false), "cannot write the PM4 ring dump to stderr");
+void DumpSubmissionRings(std::string_view reason, std::string_view detail) {
+    require(dump(reason, false, detail), "cannot write the PM4 ring dump to stderr");
+}
+
+void NoteWorkerPacket(std::uint32_t queue, std::uint64_t serial, std::size_t offset) noexcept {
+    if (queue >= SubmissionQueueEnd) return;
+    auto& ring = rings().queues[queue];
+    ring.workSerial.store(serial, std::memory_order_relaxed);
+    ring.workOffset.store(offset, std::memory_order_relaxed);
+    ring.working.store(true, std::memory_order_relaxed);
+    ring.workPackets.store(ring.workPackets.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+}
+
+void NoteWorkerIdle(std::uint32_t queue) noexcept {
+    if (queue >= SubmissionQueueEnd) return;
+    rings().queues[queue].working.store(false, std::memory_order_release);
 }
 
 void StallWatch::Check(const char* waiter, std::uint64_t value, std::unique_lock<std::mutex>* held) {
@@ -420,6 +449,7 @@ void StallWatch::Check(const char* waiter, std::uint64_t value, std::unique_lock
     const auto period = StallWatchdogPeriod();
     if (period.count() == 0) return;
     const auto now = stallClock.load()();
+    if (began == std::chrono::steady_clock::time_point{}) began = now;
     if (since == std::chrono::steady_clock::time_point{}) {
         since = now;
         return;
@@ -429,7 +459,9 @@ void StallWatch::Check(const char* waiter, std::uint64_t value, std::unique_lock
     std::snprintf(reason, sizeof(reason), "queue 0x%x %s 0x%llx has not progressed for %lld s (APS5_STALL_WATCHDOG_SECS)", queue, waiter, static_cast<unsigned long long>(value), static_cast<long long>(period.count()));
     if (!dumped) {
         dumped = true;
-        DumpSubmissionRings(reason);
+        char detail[96];
+        std::snprintf(detail, sizeof(detail), "this wait began %lld ms ago", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - began).count()));
+        DumpSubmissionRings(reason, detail);
     }
     if (!StallPromptEnabled()) {
         finished = true;

@@ -2258,6 +2258,10 @@ void testStallWatchdog() {
     }
     checkOneStallDump(lines, done);
     check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 WAIT_REG_MEM 00000013") != std::string::npos; }), "the stall dump does not decode the stalled submission");
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] dumped at t=") && line.find(" ms; this wait began ") != std::string::npos && line.ends_with(" ms ago"); }),
+          "the stall dump does not say when it was taken and how long the wait has lasted");
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] queue 0x0 worker: inside serial ") && line.find(" at +0x0000, ") != std::string::npos; }),
+          "the stall dump does not name the packet the queue worker is inside");
 }
 
 int stallDumpCount(const CapturedStderr& capture) {

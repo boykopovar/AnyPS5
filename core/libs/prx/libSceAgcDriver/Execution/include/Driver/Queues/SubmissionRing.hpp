@@ -34,7 +34,10 @@ void PrepareSubmissionRing(std::uint32_t queue);
 
 void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const std::uint32_t> commands, const void* guest, bool rewindTail);
 
-void DumpSubmissionRings(std::string_view reason);
+void DumpSubmissionRings(std::string_view reason, std::string_view detail = {});
+
+void NoteWorkerPacket(std::uint32_t queue, std::uint64_t serial, std::size_t offset) noexcept;
+void NoteWorkerIdle(std::uint32_t queue) noexcept;
 
 enum class SubmitStage : std::uint8_t { Reading, FlipRoom, FlipHold, ShaderPreparation, Accepting };
 
@@ -74,6 +77,7 @@ public:
 private:
     std::uint32_t queue;
     std::chrono::steady_clock::time_point since{};
+    std::chrono::steady_clock::time_point began{};
     bool dumped = false;
     bool finished = false;
     int prompts = 0;
