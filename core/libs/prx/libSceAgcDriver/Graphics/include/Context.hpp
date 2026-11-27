@@ -106,7 +106,7 @@ void TrackedCommandOutsideCommandState();
 class FunctionName {
 public:
     consteval FunctionName(const char* name) : value(name) {
-        constexpr std::array<std::string_view, 32> tracked{
+        constexpr std::array<std::string_view, 33> tracked{
             "vkCmdBindPipeline", "vkCmdSetViewport", "vkCmdSetViewportWithCount", "vkCmdSetViewportWithCountEXT",
             "vkCmdSetScissor", "vkCmdSetScissorWithCount", "vkCmdSetScissorWithCountEXT", "vkCmdSetColorWriteMaskEXT", "vkCmdSetDepthBias",
             "vkCmdSetDepthBias2EXT", "vkCmdSetDepthBounds", "vkCmdSetCullMode", "vkCmdSetCullModeEXT",
@@ -114,7 +114,7 @@ public:
             "vkCmdSetDepthWriteEnable", "vkCmdSetDepthWriteEnableEXT", "vkCmdSetDepthCompareOp", "vkCmdSetDepthCompareOpEXT",
             "vkCmdSetDepthBoundsTestEnable", "vkCmdSetDepthBoundsTestEnableEXT", "vkCmdSetStencilTestEnable", "vkCmdSetStencilTestEnableEXT",
             "vkCmdSetStencilOp", "vkCmdSetStencilOpEXT", "vkCmdSetStencilCompareMask", "vkCmdSetStencilWriteMask",
-            "vkCmdSetStencilReference", "vkCmdBindShadersEXT", "vkCmdExecuteCommands"};
+            "vkCmdSetStencilReference", "vkCmdBindShadersEXT", "vkCmdExecuteCommands", "vkCmdSetDepthBiasEnableEXT"};
         for (const auto entry : tracked) {
             if (entry == name) TrackedCommandOutsideCommandState();
         }
@@ -163,6 +163,7 @@ struct DeviceFunctions {
     TrackedFunction<PFN_vkCmdSetCullModeEXT> cmdSetCullMode;
     TrackedFunction<PFN_vkCmdSetFrontFaceEXT> cmdSetFrontFace;
     TrackedFunction<PFN_vkCmdSetDepthTestEnableEXT> cmdSetDepthTestEnable;
+    TrackedFunction<PFN_vkCmdSetDepthBiasEnableEXT> cmdSetDepthBiasEnable;
     TrackedFunction<PFN_vkCmdSetDepthWriteEnableEXT> cmdSetDepthWriteEnable;
     TrackedFunction<PFN_vkCmdSetDepthCompareOpEXT> cmdSetDepthCompareOp;
     TrackedFunction<PFN_vkCmdSetDepthBoundsTestEnableEXT> cmdSetDepthBoundsTestEnable;
@@ -227,10 +228,12 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
+    std::size_t drawInputsInPlaceBelow = 0;
     bool discreteGpu = false;
     bool integratedGpu = false;
     bool hostPointerImport = true;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -291,6 +294,7 @@ struct Context {
     bool partiallyBound = false;
     bool variableDescriptorCount = false;
     bool sampledImageUpdateAfterBind = false;
+    bool storageBufferUpdateAfterBind = false;
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
@@ -317,6 +321,7 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool staticSampleMaskStopsShading = true;
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
@@ -329,9 +334,11 @@ struct Context {
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
+    bool dynamicDepthBiasEnable = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     std::uint32_t scaledSampledFormats = 0;
+    std::uint32_t optionalSampledFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;

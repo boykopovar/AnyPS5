@@ -398,6 +398,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         char hex[3 * sizeof(bytes) + 1] = "";
         for (std::size_t i = 0; i < available; ++i) std::snprintf(hex + 3 * i, sizeof(hex) - 3 * i, "%02x ", bytes[i]);
         Report("  bytes %s(sse4a emulation %s, %llu emulated so far)\n", hex, g_sse4aEmulation ? "on" : "off", g_sse4aEmulated.load());
+        if (const char* name = crash_text::AmdOnlyInstruction(bytes, available)) Report("  %s is an AMD-only instruction this CPU lacks: relink with --to-intel, which converts the executable and its modules but not code generated at run time\n", name);
     }
     if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2) {
         const char* kind = record->ExceptionInformation[0] == 0 ? "read" : record->ExceptionInformation[0] == 1 ? "write" : "execute";

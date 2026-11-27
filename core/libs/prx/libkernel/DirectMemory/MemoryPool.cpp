@@ -73,18 +73,19 @@ struct PhysicalMemoryPool {
         const size_t pageCount = static_cast<size_t>(alignedLen / kPage);
 
         while (cur <= end && alignedLen <= end - cur) {
+            size_t lastUsed;
+            if (_lastUsedPage(static_cast<size_t>(cur / kPage), pageCount, lastUsed)) {
+                if (!RoundUp(static_cast<uint64_t>(_nextFreePage(lastUsed + 1, static_cast<size_t>(end / kPage))) * kPage, align, cur)) break;
+                continue;
+            }
             uint64_t claimEnd;
             if (DirectMemoryReleaseClaimed(cur, cur + alignedLen, &claimEnd)) {
                 if (!RoundUp(claimEnd, align, cur)) break;
                 continue;
             }
-            size_t lastUsed;
-            if (!_lastUsedPage(static_cast<size_t>(cur / kPage), pageCount, lastUsed)) {
-                _commit(cur, alignedLen, memoryType);
-                *physOut = static_cast<int64_t>(cur);
-                return 0;
-            }
-            if (!RoundUp((static_cast<uint64_t>(lastUsed) + 1) * kPage, align, cur)) break;
+            _commit(cur, alignedLen, memoryType);
+            *physOut = static_cast<int64_t>(cur);
+            return 0;
         }
         return SCE_KERNEL_ERROR_EAGAIN;
     }
@@ -242,6 +243,10 @@ private:
             }
         }
         return false;
+    }
+
+    size_t _nextFreePage(size_t first, size_t limit) const {
+        return static_cast<size_t>(std::find(_used + first, _used + limit, false) - _used);
     }
 
     bool _allUsed(size_t first, size_t count) const {

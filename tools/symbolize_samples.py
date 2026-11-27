@@ -30,7 +30,16 @@ Input: a collapsed-stack file (<file stem>.collapsed.txt, 'frame;...;frame count
 ('module offset self inclusive' lines, under 'thread <id> samples <n>' headings for APS5_SAMPLE_THREADS; --thread
 keeps one thread). Output: the hottest functions by self and by inclusive samples, and with --out a symbolized
 collapsed-stack file for speedscope.app or flamegraph.pl. For an address file, a function's inclusive count is the
-sum of its addresses' counts, which overcounts the samples in which it is on the stack more than once."""
+sum of its addresses' counts, which overcounts the samples in which it is on the stack more than once.
+
+--compare takes a second saved capture of the same kind. Give each capture the --libs or --compare-libs
+directories for its own build. The report compares recorded counts as percentages of each capture's
+sample total and lists the largest absolute percentage-point changes. It matches raw labels by module
+and symbol. Use the same workload and sampler settings for both captures. The files do not establish
+equal capture durations or workloads. Process-thread files retain only the hottest addresses per thread,
+so a zero means a symbol has no recorded count in that capture. Unlisted self counts are leaf samples
+omitted from the address rows. Unresolved inclusive counts samples with an unresolved frame in stack
+captures, and unresolved address occurrences in address captures."""
 
 IMAGE_SCN_CNT_CODE = 0x20
 IMAGE_SYM_CLASS_EXTERNAL = 2
@@ -64,6 +73,17 @@ class PeModule:
             virtual_size, rva, raw_size, raw_pointer = struct.unpack_from("<IIII", data, entry + 8)
             characteristics = struct.unpack_from("<I", data, entry + 36)[0]
             self.sections.append((rva, max(virtual_size, raw_size), raw_size, raw_pointer, characteristics))
+        ranges = [(start, start + size, bool(flags & IMAGE_SCN_CNT_CODE))
+                  for start, size, _, _, flags in self.sections if size]
+        if self.headers_size:
+            ranges.append((0, self.headers_size, False))
+        mapped_end = code_end = 0
+        for start, end, code in sorted(ranges):
+            if start < code_end or code and start < mapped_end:
+                raise ValueError(f"{path}: PE code section overlaps another mapped range")
+            mapped_end = max(mapped_end, end)
+            if code:
+                code_end = end
         symbols = self.coff_symbols(data, symbol_table, symbol_count) if symbol_table and symbol_count else []
         self.exported = not symbols
         if self.exported and export_rva:
@@ -168,6 +188,10 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
+        if size < 40:
+            raise ValueError("PE export directory is smaller than its header")
+        if rva + size > 0x100000000:
+            raise ValueError("PE export directory exceeds address space")
         directory = self.read_bytes(data, rva, 40)
         functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
         if not names:
@@ -259,20 +283,32 @@ class Symbolizer:
         self.modules[name] = module
         return module
 
-    def frame(self, frame):
+    def resolve_frame(self, frame):
         name, separator, offset = frame.partition("+0x")
         if not separator:
-            return frame
+            return None
         module = self.module(name)
         if module is None:
-            return frame
+            return None
         try:
             symbol = module.name(int(offset, 16))
         except ValueError:
+            return None
+        return (name, symbol) if symbol is not None else None
+
+    def frame(self, frame):
+        resolved = self.resolve_frame(frame)
+        if resolved is None:
             return frame
-        if symbol is None:
-            return frame
+        name, symbol = resolved
         return f"{name}!{self.pretty(symbol)}"
+
+    def comparison_frame(self, frame):
+        resolved = self.resolve_frame(frame)
+        if resolved is None:
+            return None
+        name, symbol = resolved
+        return name.lower(), symbol
 
     def pretty(self, symbol):
         if not self.demangle or not symbol.lstrip("~").startswith("_Z"):
@@ -285,15 +321,27 @@ class Symbolizer:
         return self.demangled[symbol]
 
 
-def read_headers(lines):
+def is_ascii_digits(value):
+    return value.isascii() and value.isdigit()
+
+
+def is_hex(value):
+    return re.fullmatch(r"(?:0[xX])?[0-9a-fA-F]+", value) is not None
+
+
+def read_headers(lines, path=None):
     headers = {}
-    for line in lines:
+    for number, line in enumerate(lines, 1):
         parts = line.split(None, 2)
-        fields = parts[2].rsplit(None, 2) if len(parts) == 3 and parts[:2] == ["#", "module"] else []
-        if len(fields) == 3:
-            name = fields[0].lower()
-            identity = (int(fields[1], 16), int(fields[2], 16))
-            headers[name] = False if name in headers else identity
+        if len(parts) < 2 or parts[:2] != ["#", "module"]:
+            continue
+        fields = parts[2].rsplit(None, 2) if len(parts) == 3 else []
+        if len(fields) != 3 or not (is_hex(fields[1]) and is_hex(fields[2])):
+            location = f"{path}:{number}" if path is not None else f"line {number}"
+            raise ValueError(f"{location}: expected '# module <name> <size> <timestamp>'")
+        name = fields[0].lower()
+        identity = (int(fields[1], 16), int(fields[2], 16))
+        headers[name] = False if name in headers else identity
     return headers
 
 
@@ -306,12 +354,13 @@ class Samples:
         self.inclusive = collections.Counter()
         self.total = collections.Counter()
         self.threads = set()
+        self.unheaded_addresses = False
 
 
 def load(path, thread=None):
     lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
     samples = Samples()
-    samples.headers = read_headers(lines)
+    samples.headers = read_headers(lines, path)
     current = None
 
     def record_format(kind, number):
@@ -321,12 +370,16 @@ def load(path, thread=None):
 
     for number, line in enumerate(lines, 1):
         parts = line.split()
-        if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples" and parts[1].isdigit():
+        if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples":
+            if not is_ascii_digits(parts[1]):
+                raise ValueError(f"{path}:{number}: expected '# <n> samples'")
             samples.total["samples"] += int(parts[1])
             continue
         if line.startswith("#") or not line.strip():
             continue
-        if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples" and parts[1].isdigit() and parts[3].isdigit():
+        if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples":
+            if not (is_ascii_digits(parts[1]) and is_ascii_digits(parts[3])):
+                raise ValueError(f"{path}:{number}: expected 'thread <id> samples <n>'")
             record_format("address", number)
             current = parts[1]
             samples.threads.add(current)
@@ -334,19 +387,25 @@ def load(path, thread=None):
                 samples.total["threads"] += int(parts[3])
             continue
         fields = line.strip().rsplit(None, 3)
-        if len(fields) == 4 and fields[2].isdigit() and fields[3].isdigit():
+        if len(fields) == 4 and ((fields[2].isdigit() and fields[3].isdigit()) or re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is not None):
             if re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is None:
                 raise ValueError(f"{path}:{number}: expected a hexadecimal offset after the module name")
+            if not (is_ascii_digits(fields[2]) and is_ascii_digits(fields[3])):
+                raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
             record_format("address", number)
-            if thread is not None and current is None:
-                raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
+            if current is None:
+                samples.unheaded_addresses = True
+                if thread is not None:
+                    raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
             if thread is None or current == thread:
                 samples.self_counts[(fields[0], fields[1])] += int(fields[2])
                 samples.inclusive[(fields[0], fields[1])] += int(fields[3])
             continue
         frames, _, count = line.rpartition(" ")
-        if not frames or not count.isdigit():
+        if not frames or not is_ascii_digits(count):
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if any(not frame.strip() for frame in frames.split(";")):
+            raise ValueError(f"{path}:{number}: collapsed stack contains an empty frame")
         record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
@@ -391,22 +450,24 @@ def window(later, earlier):
     return result
 
 
-def sample_counts(symbolizer, samples):
+def sample_counts(symbolizer, samples, frame_key=None):
+    if frame_key is None:
+        frame_key = symbolizer.frame
     self_counts = collections.Counter()
     inclusive = collections.Counter()
     total = 0
     if samples.stacks:
         for frames, count in samples.stacks.items():
-            names = [symbolizer.frame(frame) for frame in frames.split(";")]
+            names = [frame_key(frame) for frame in frames.split(";")]
             total += count
             self_counts[names[-1]] += count
             for name in set(names):
                 inclusive[name] += count
     else:
         for (module, offset), count in samples.self_counts.items():
-            self_counts[symbolizer.frame(f"{module}+{offset}")] += count
+            self_counts[frame_key(f"{module}+{offset}")] += count
         for (module, offset), count in samples.inclusive.items():
-            inclusive[symbolizer.frame(f"{module}+{offset}")] += count
+            inclusive[frame_key(f"{module}+{offset}")] += count
         total = samples.total["threads"] or samples.total["samples"] or sum(samples.self_counts.values())
     return total, self_counts, inclusive
 
@@ -433,6 +494,96 @@ def json_report(symbolizer, samples, top):
                         for name, module in sorted(symbolizer.modules.items())]}
 
 
+def comparison_capture(path, libs, label):
+    samples = load(path)
+    if samples.capture_format == "collapsed":
+        kind = "collapsed"
+        total = sum(samples.stacks.values())
+    elif samples.threads:
+        if "samples" in samples.total or samples.unheaded_addresses:
+            raise ValueError(f"{path}: mixes single-thread and process-thread address records")
+        kind = "process-thread-address"
+        total = samples.total["threads"]
+    else:
+        kind = "single-thread-address"
+        total = samples.total["samples"]
+    if total <= 0:
+        raise ValueError(f"{path}: comparison needs a positive sample total")
+    symbolizer = Symbolizer(libs, samples.headers, warn=lambda message: print(f"warning: {label}: {message}", file=sys.stderr))
+    _, self_counts, inclusive = sample_counts(symbolizer, samples, symbolizer.comparison_frame)
+    unlisted_self = total - sum(self_counts.values())
+    if unlisted_self < 0:
+        raise ValueError(f"{path}: recorded self counts exceed the sample total")
+    coverage = {
+        "samples": total,
+        "unresolved_self": self_counts.pop(None, 0),
+        "unresolved_inclusive": inclusive.pop(None, 0),
+        "unlisted_self": unlisted_self,
+    }
+    return kind, coverage, self_counts, inclusive
+
+
+def comparison_rows(baseline, candidate, baseline_total, candidate_total, top):
+    changes = []
+    for key in baseline.keys() | candidate.keys():
+        before = baseline[key]
+        after = candidate[key]
+        if before or after:
+            delta = after * baseline_total - before * candidate_total
+            changes.append((delta, key))
+    changes.sort(key=lambda entry: (-abs(entry[0]), entry[1]))
+    rows = []
+    for delta, (module, symbol) in changes[:top]:
+        before = baseline[(module, symbol)]
+        after = candidate[(module, symbol)]
+        rows.append({
+            "module": module, "symbol": symbol,
+            "baseline_count": before, "candidate_count": after,
+            "baseline_percent": 100 * before / baseline_total,
+            "candidate_percent": 100 * after / candidate_total,
+            "delta_percentage_points": 100 * delta / (baseline_total * candidate_total),
+        })
+    return rows
+
+
+def print_comparison(report):
+    print(f"{report['capture_kind']} comparison")
+    for label in ("baseline", "candidate"):
+        coverage = report[label]
+        print(f"{label}: {coverage['samples']} samples, unresolved self {coverage['unresolved_self']}, "
+              f"unresolved inclusive {coverage['unresolved_inclusive']}, unlisted self {coverage['unlisted_self']}")
+    if report["capture_kind"] == "process-thread-address":
+        print("Process-thread counts cover the recorded hottest addresses.")
+    if report["capture_kind"] != "collapsed":
+        print("Address inclusive percentages can exceed 100%.")
+    for metric in ("self", "inclusive"):
+        print(f"{metric} (baseline -> candidate):")
+        for row in report[metric]:
+            print(f"  {row['baseline_count']:8d} {row['baseline_percent']:6.1f}% -> "
+                  f"{row['candidate_count']:8d} {row['candidate_percent']:6.1f}%  "
+                  f"{row['delta_percentage_points']:+6.1f} pp  {row['module']}!{row['symbol']}")
+
+
+def compare_samples(args):
+    baseline_kind, baseline, baseline_self, baseline_inclusive = comparison_capture(args.samples, args.libs, "baseline")
+    candidate_kind, candidate, candidate_self, candidate_inclusive = comparison_capture(args.compare, args.compare_libs, "candidate")
+    if baseline_kind != candidate_kind:
+        raise ValueError(f"capture kinds differ: baseline is {baseline_kind}, candidate is {candidate_kind}")
+    totals = baseline["samples"], candidate["samples"]
+    report = {
+        "capture_kind": baseline_kind,
+        "baseline": baseline,
+        "candidate": candidate,
+        "self": comparison_rows(baseline_self, candidate_self, *totals, args.top),
+        "inclusive": comparison_rows(baseline_inclusive, candidate_inclusive, *totals, args.top),
+    }
+    if args.json:
+        print(json.dumps(report, ensure_ascii=True))
+    else:
+        print_comparison(report)
+    return 0
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -441,6 +592,8 @@ def main(argv=None):
     parser.add_argument("samples", help="collapsed-stack file or address file written by a Windows sampler")
     parser.add_argument("--libs", action="append", required=True, help="directory holding the modules that ran (repeatable)")
     parser.add_argument("--since", help="an earlier copy of the same file, subtracted to keep the samples taken after it")
+    parser.add_argument("--compare", help="compare the positional baseline with this saved candidate capture")
+    parser.add_argument("--compare-libs", action="append", help="directory holding the candidate's modules (repeatable)")
     parser.add_argument("--out", help="write the symbolized collapsed stacks to this file")
     parser.add_argument("--top", type=int, default=30, help="functions listed per table (default 30)")
     parser.add_argument("--demangle", action="store_true", help="demangle C++ names with c++filt when it is on PATH")
@@ -455,7 +608,15 @@ def main(argv=None):
         parser.error("--top must be positive")
     if args.require_matching_window and not args.since:
         parser.error("--require-matching-window needs --since")
+    if args.compare is not None and not args.compare_libs:
+        parser.error("--compare needs --compare-libs")
+    if args.compare is None and args.compare_libs:
+        parser.error("--compare-libs needs --compare")
+    if args.compare is not None and (args.since is not None or args.out is not None or args.thread is not None or args.unverified or args.demangle):
+        parser.error("--compare cannot be used with --since, --out, --thread, --unverified or --demangle")
     try:
+        if args.compare is not None:
+            return compare_samples(args)
         return symbolize(parser, args)
     except (OSError, ValueError) as error:
         parser.error(str(error))

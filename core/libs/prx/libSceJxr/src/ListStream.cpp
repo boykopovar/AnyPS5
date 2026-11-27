@@ -30,6 +30,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -139,23 +140,28 @@ std::int64_t APS5_VABI GetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_
 }
 
 std::int64_t APS5_VABI CloseWS_List_nid_postfix(Jxr::Stream** stream) {
-    if (!stream || !*stream) throw std::invalid_argument("CloseWS_List requires a stream");
-    for (auto* link = Next(reinterpret_cast<std::uint8_t*>(*stream + 1)); link;) {
+    Jxr::Stream* current = nullptr;
+    if (!stream || !GuestCopyIn_nid_no_patch(&current, stream, sizeof(current)) || !current) throw std::invalid_argument("CloseWS_List requires a stream");
+    Jxr::Stream* const closed = nullptr;
+    if (!GuestCopyOut_nid_no_patch(stream, &closed, sizeof(closed))) throw std::invalid_argument("CloseWS_List requires a writable stream");
+    for (auto* link = Next(reinterpret_cast<std::uint8_t*>(current + 1)); link;) {
         auto* next = Next(link);
         free_nid_postfix(link);
         link = next;
     }
-    free_nid_postfix(*stream);
-    *stream = nullptr;
+    free_nid_postfix(current);
     return Success;
 }
 
 std::int64_t APS5_VABI CreateWS_List_nid_postfix(Jxr::Stream** stream) {
     if (!stream) throw std::invalid_argument("CreateWS_List requires an output");
     auto* block = static_cast<std::uint8_t*>(calloc_nid_postfix(1, sizeof(Jxr::Stream) + PacketLength + sizeof(void*)));
-    *stream = reinterpret_cast<Jxr::Stream*>(block);
+    auto* created = reinterpret_cast<Jxr::Stream*>(block);
+    if (!GuestCopyOut_nid_no_patch(stream, &created, sizeof(created))) {
+        if (block) free_nid_postfix(block);
+        throw std::invalid_argument("CreateWS_List requires an output");
+    }
     if (!block) return OutOfMemory;
-    auto* created = *stream;
     created->state[Buffer] = reinterpret_cast<std::uintptr_t>(block + sizeof(Jxr::Stream) + sizeof(void*));
     created->state[Capacity] = PacketLength;
     created->close = &CloseWS_List_nid_postfix;

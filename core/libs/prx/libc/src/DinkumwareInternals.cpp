@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -14,6 +15,7 @@
 #include <string>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ExtendedPrecisionParts.hpp"
 
 namespace {
 
@@ -22,10 +24,7 @@ constexpr int InvalidArgument = 22;
 constexpr int DomainError = 33;
 constexpr int RangeError = 34;
 
-constexpr long double LogPolynomial[] = {
-    0x87f45b3375e0c9edp-66L, 0x87a58c55129af2f8p-66L, 0x9d90cfd7547e4ed2p-66L, 0xba2e6ba9488d3d0cp-66L,
-    0xe38e393a60e2888bp-66L, 0x924924920646cc89p-65L, 0xcccccccccd00c2ebp-65L, 0xaaaaaaaaaaaaa334p-64L,
-};
+using LibcDetail::LogPolynomial;
 
 bool Hexadecimal(const char* text) {
     while (std::isspace(static_cast<unsigned char>(*text))) ++text;
@@ -249,22 +248,32 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     return value;
 }
 
+void StoreError(int* error, int value) {
+    if (error == nullptr) return;
+    if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) throw std::invalid_argument("integer conversion: unwritable error output");
+}
+
+void StoreEnd(char** end, const char* value) {
+    if (end == nullptr) return;
+    if (!GuestCopyOut_nid_no_patch(end, &value, sizeof(value))) throw std::invalid_argument("integer conversion: unwritable end output");
+}
+
 bool InvalidBase(const char* text, char** end, int base, int* error) {
     if (base >= 0 && base != 1 && base <= 36) return false;
-    if (end != nullptr) *end = const_cast<char*>(text);
-    if (error != nullptr) *error = InvalidArgument;
+    StoreEnd(end, text);
+    StoreError(error, InvalidArgument);
     return true;
 }
 
 template<typename TInteger>
 TInteger ParsedInteger(const char* text, char** end, int base, int* error, TInteger (APS5_VABI *parse)(const char*, char**, int)) {
-    if (error != nullptr) *error = 0;
+    StoreError(error, 0);
     if (InvalidBase(text, end, base, error)) return 0;
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     guestErrno = 0;
     const TInteger value = parse(text, end, base);
-    if (error != nullptr) *error = guestErrno;
+    StoreError(error, guestErrno);
     if (guestErrno == 0) guestErrno = saved;
     return value;
 }
@@ -384,7 +393,7 @@ short ScaledResult(short result, TFloat value, const std::fexcept_t& entryFlags,
 }
 
 template<typename TFloat>
-short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, long exponent) {
+short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, std::int64_t exponent) {
     std::fexcept_t saved;
     std::fegetexceptflag(&saved, FE_ALL_EXCEPT);
     const int savedErrno = errno;
@@ -459,13 +468,13 @@ std::uint64_t APS5_VABI _Stoulx_nid_postfix(const char* text, char** end, int ba
 }
 
 std::int64_t APS5_VABI _Stolx_nid_postfix(const char* text, char** end, int base, int* error) {
-    if (error != nullptr) *error = 0;
+    StoreError(error, 0);
     if (InvalidBase(text, end, base, error)) return 0;
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     guestErrno = 0;
     const long long value = strtoll_nid_postfix(text, end, base);
-    if (error != nullptr) *error = guestErrno;
+    StoreError(error, guestErrno);
     guestErrno = 0;
     static_cast<void>(strtoull_nid_postfix(text, nullptr, base));
     if (guestErrno == 0) guestErrno = saved;
@@ -492,8 +501,9 @@ std::uint64_t APS5_VABI _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(const char*
     return VersionedUnsigned<std::uint32_t>(text, end, base, error);
 }
 
-short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
+short APS5_VABI _Exp_nid_postfix(double* value, double y, std::int64_t offset) {
     if (value == nullptr) throw std::invalid_argument("_Exp: null value");
+    offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     std::fexcept_t entryFlags;
     std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
     const int entryErrno = errno;
@@ -580,8 +590,9 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
     return ScaledResult(result, *value, entryFlags, entryErrno);
 }
 
-short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
+short APS5_VABI _FExp_nid_postfix(float* value, float y, std::int64_t offset) {
     if (value == nullptr) throw std::invalid_argument("_FExp: null value");
+    offset = std::clamp<std::int64_t>(offset, -200000, 200000);
     std::fexcept_t entryFlags;
     std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
     const int entryErrno = errno;
