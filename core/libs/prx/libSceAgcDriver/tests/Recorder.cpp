@@ -18211,7 +18211,7 @@ int pipelineCacheFileTests(const Device& device) {
 
 void descriptorPoolTests(const Device& device) {
     DescriptorCache cache(device.GetContext());
-    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min(32u, device.GetContext().limits.maxPerStageDescriptorStorageBuffers), VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
     const auto layout = cache.Layout(key, std::span(&binding, 1));
     const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
@@ -19720,6 +19720,38 @@ void smallElementDetileTests(Device& device) {
     std::cout << "small element detile tests passed\n";
 }
 
+void dataRunAccessTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    std::unique_lock gpu(GpuMutex());
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {1, 2, 3, 4};
+    program.bindings.push_back(binding);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    ShaderResources resources(context, shader);
+    std::vector<std::array<std::uint64_t, 3>> accesses;
+    resources.RunAccesses(accesses);
+    const auto refreshed = std::count_if(accesses.begin(), accesses.end(), [](const auto& access) { return (access[2] & Recorder::RunAccessBuffer) != 0 && (access[2] & Recorder::RunAccessWritten) != 0; });
+    Require(refreshed == 1, "the template's data buffer is missing from its run accesses");
+    int firstDispatch = 0;
+    int secondDispatch = 0;
+    const void* firstOwner = &firstDispatch;
+    const void* secondOwner = &secondDispatch;
+    static_cast<void>(recorder.Commands());
+    recorder.DeferDispatchBarrier(1, std::span<const void* const>(&firstOwner, 1), accesses);
+    bool overlapped = true;
+    static_cast<void>(recorder.OverlapCommands(1, std::span<const void* const>(&secondOwner, 1), accesses, nullptr, overlapped));
+    Require(!overlapped, "a dispatch rewriting the template's data joined a run whose earlier dispatch still reads it");
+    recorder.Submit();
+    recorder.Sync();
+    std::cout << "data run accesses checked\n";
+}
+
 int main(int argc, char** argv) {
     _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::fflush(nullptr);
@@ -20553,6 +20585,7 @@ int main(int argc, char** argv) {
         importWindowTests(device, recorder);
         dataWordPositionsTests();
         dataRefreshTests(device, recorder);
+        dataRunAccessTests(device, recorder);
         imageMemoTests(device, recorder);
         minLodTests(device, recorder);
         uploadScratchReuseTests(device, recorder);

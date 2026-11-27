@@ -723,7 +723,7 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     return {};
 }
 
-static std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
+std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, registered] : registry.threads) {
@@ -1045,6 +1045,8 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 using FinalThreadReleaseTestHook = void (*)(Pthread);
 static std::atomic<PthreadPrivate*> finalThreadReleaseTestTarget{nullptr};
 static std::atomic<FinalThreadReleaseTestHook> finalThreadReleaseTestHook{nullptr};
+using JoinWindowTestHook = void (*)(Pthread);
+static std::atomic<JoinWindowTestHook> joinWindowTestHook{nullptr};
 
 static void ReleaseThread(PthreadPrivate* thread) {
     if (thread->_adopted)
@@ -1095,6 +1097,10 @@ private:
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, FinalThreadReleaseTestHook hook) {
     finalThreadReleaseTestHook.store(hook, std::memory_order_relaxed);
     finalThreadReleaseTestTarget.store(static_cast<PthreadPrivate*>(thread), std::memory_order_release);
+}
+
+extern "C" void APS5_Test_SetJoinWindowHook(Pthread thread, JoinWindowTestHook hook) {
+    joinWindowTestHook.store(hook, std::memory_order_relaxed);
 }
 
 static std::mutex joinedLock;
@@ -1395,11 +1401,10 @@ int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const Kerne
     if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
     if (thread->_joined.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
     registered.unlock();
-    reference.Reset();
+    if (const auto hook = joinWindowTestHook.exchange(nullptr, std::memory_order_relaxed)) hook(thread);
     ThreadCancel::Check();
     registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    if (!reference.Retain(thread)) return SCE_KERNEL_ERROR_ESRCH;
     {
         std::unique_lock lock(thread->_join_mtx);
         if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
