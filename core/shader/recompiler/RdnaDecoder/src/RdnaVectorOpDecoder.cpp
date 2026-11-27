@@ -748,6 +748,11 @@ bool isNativeVop3I16TernaryOpcode(RdnaOpcode opcode) {
         opcode == RdnaOpcode::VMadI32I16;
 }
 
+bool isNativeVop3I32TernaryOpcode(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VMed3I32 || opcode == RdnaOpcode::VMed3U32 || opcode == RdnaOpcode::VMax3I32 ||
+        opcode == RdnaOpcode::VMax3U32 || opcode == RdnaOpcode::VMin3I32 || opcode == RdnaOpcode::VMin3U32;
+}
+
 bool isNativeVop3AlignOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VAlignbitB32 || opcode == RdnaOpcode::VAlignbyteB32;
 }
@@ -1168,7 +1173,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
@@ -2082,6 +2087,12 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         }
         return;
     }
+    if (isNativeVop3I32TernaryOpcode(opcode)) {
+        if (abs != 0u || opSel != 0u || omod != 0u || neg != 0u) {
+            throw std::invalid_argument("VOP3 source modifiers are not implemented");
+        }
+        return;
+    }
     if (isNativeVop3AlignOpcode(opcode)) {
         if (abs != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
@@ -2321,7 +2332,13 @@ RdnaInstruction DecodeRdnaVop2(std::uint32_t programCounter, std::span<const std
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::VOP2;
     instruction.opcodeId = opcode;
-    instruction.op = lookupVectorOpcode(vop2Opcodes, opcode, "VOP2 opcode is not implemented");
+    const auto* entry = findVectorOpcodeEntry(vop2Opcodes, opcode);
+    if (entry == nullptr) {
+        char reason[160];
+        std::snprintf(reason, sizeof(reason), "VOP2 opcode is not implemented: opcode 0x%x at program counter 0x%08x raw word 0x%08x", opcode, programCounter, word);
+        throw std::invalid_argument(reason);
+    }
+    instruction.op = entry->opcode;
     SetRdnaRawWords(instruction, code, wordIndex, 1);
 
     if (src0 == 249u) {

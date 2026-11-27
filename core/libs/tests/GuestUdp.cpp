@@ -789,7 +789,7 @@ int main() {
     Require(fcntl_nid_postfix(receiver, 3) == 2);
     Require(fcntl_nid_postfix(receiver, 4, 6) == 0);
     Require(fcntl_nid_postfix(receiver, 3) == 6);
-    Require(fcntl_nid_postfix(receiver, 4, 0x8000) == -1);
+    Require(fcntl_nid_postfix(receiver, 4, 0x8000 | 6) == 0);
     Require(fcntl_nid_postfix(receiver, 3) == 6);
     char buffer[64]{};
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0, nullptr, nullptr) == -1);

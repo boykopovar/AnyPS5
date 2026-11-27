@@ -126,6 +126,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_posix_times_tests PRIVATE libScePosixForWebKit libc)
     configure_windows_unwind(guest_posix_times_tests)
     add_test(NAME guest_posix_times COMMAND guest_posix_times_tests)
+    set_tests_properties(guest_posix_times PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_posix_times PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")

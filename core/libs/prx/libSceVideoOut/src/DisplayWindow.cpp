@@ -252,6 +252,7 @@ void DisplayWindow::removeSubclass() noexcept {
 
 void DisplayWindow::applyAspectRatio(void* hwnd, std::uintptr_t edge, void* rect) const {
 #ifdef _WIN32
+    if (AgcDriver::PresentationStretches_nid_postfix()) return;
     require(aspectWidth != 0 && aspectHeight != 0, "source extent must be non-zero during resize");
     RECT windowBounds{};
     RECT clientBounds{};
