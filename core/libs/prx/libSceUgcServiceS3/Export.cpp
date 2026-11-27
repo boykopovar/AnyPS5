@@ -99,8 +99,12 @@ APS5_EXPORT("stkA1oba6eY", sceUgcServiceS3Unknown00);
 int APS5_VABI sceUgcServiceS3Unknown00(void) {
     std::lock_guard<std::mutex> lock(g_clientLifecycleMutex);
     if (g_client != nullptr) return kErrAlreadyInitialized;
-    std::shared_ptr<ClientState> client(new (std::nothrow) ClientState());
-    if (client == nullptr) return kErrOutOfMemory;
+    std::shared_ptr<ClientState> client;
+    try {
+        client = std::make_shared<ClientState>();
+    } catch (const std::bad_alloc&) {
+        return kErrOutOfMemory;
+    }
     g_client = std::move(client);
     return 0;
 }
