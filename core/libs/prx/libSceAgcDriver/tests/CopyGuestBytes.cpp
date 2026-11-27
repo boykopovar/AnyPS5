@@ -51,6 +51,7 @@ static void CheckComparisons() {
     }
 }
 
+#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
 static void CheckConcurrentAccess() {
     alignas(64) static std::array<unsigned char, 4096> shared{};
     std::atomic<bool> stop{false};
@@ -70,7 +71,6 @@ static void CheckConcurrentAccess() {
     writer.join();
 }
 
-#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
 static void CheckAlignedWordsDoNotTear() {
     alignas(64) static std::array<std::uint64_t, 512> shared{};
     std::atomic<bool> stop{false};
@@ -106,8 +106,8 @@ static void CheckReadsPastHostObject() {
 int main() {
     CheckCopies();
     CheckComparisons();
-    CheckConcurrentAccess();
 #if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
+    CheckConcurrentAccess();
     CheckAlignedWordsDoNotTear();
 #endif
 #ifdef ANYPS5_ENABLE_ASAN

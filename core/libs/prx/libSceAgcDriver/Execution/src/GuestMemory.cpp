@@ -4207,13 +4207,7 @@ template <typename OnByte, typename OnWord>
             return true;
         });
 }
-#else
-void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
-    std::memcpy(destination, source, bytes);
-}
-#endif
 
-#ifdef ANYPS5_ENABLE_TSAN
 void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
@@ -4244,6 +4238,10 @@ bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes)
         });
 }
 #else
+void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+}
+
 void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
     std::memcpy(destination, source, bytes);
 }
