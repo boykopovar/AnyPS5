@@ -1255,6 +1255,11 @@ static bool PrepareCheckpointMarker(const Context& context) {
     return state.write != nullptr && state.buffer != VK_NULL_HANDLE;
 }
 
+bool BatchBeginTokensEnabled() {
+    static const bool enabled = std::getenv("APS5_GPU_CHECKPOINT_BATCHES") != nullptr && std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    return enabled;
+}
+
 constexpr VkDeviceSize CheckpointMarkerSerialOffset = 0;
 constexpr VkDeviceSize CheckpointMarkerTokenOffset = sizeof(std::uint32_t);
 
@@ -2019,7 +2024,7 @@ void Recorder::flushDeferredDispatch() {
 bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
     for (const auto& access : accesses) {
         for (const auto& member : open->runAccess) {
-            if (((access[2] ^ member[2]) & RunAccessImage) != 0) continue;
+            if (((access[2] ^ member[2]) & (RunAccessImage | RunAccessBuffer)) != 0) continue;
             if (!(access[0] < member[1] && member[0] < access[1])) continue;
             if (((access[2] | member[2]) & RunAccessWritten) != 0) return true;
         }
@@ -2351,8 +2356,15 @@ void Recorder::ensureOpen() {
         }
         open->predictedSerial = submissions + 1;
         try {
-            if (open->queue == 0) WriteCheckpointSerial(context, live(), open->predictedSerial, open->queue);
-            else WriteCheckpointSentinel(context, live());
+            if (open->queue == 0) {
+                WriteCheckpointSerial(context, live(), open->predictedSerial, open->queue);
+                if (BatchBeginTokensEnabled()) {
+                    const AgcDriver::FaultToken beginToken = AgcDriver::ClaimBatchBeginToken(AgcDriver::FaultTokenRing::Instance(), open->predictedSerial);
+                    NoteFaultToken(beginToken);
+                    WriteCheckpointMarker(context, live(), beginToken, open->queue);
+                    WriteNvCheckpointToken(context, live(), beginToken, open->queue);
+                }
+            } else WriteCheckpointSentinel(context, live());
         } catch (...) {
         }
         if (PerformanceTrace::Recording()) {
@@ -2842,7 +2854,7 @@ std::uint32_t Recorder::beginTiming(std::uint64_t key) {
     const auto commands = live();
     const std::uint32_t queryCount = full ? MaxTimedRanges * 2 : 2;
     if (open->queries == VK_NULL_HANDLE) {
-        if (!full && !sparePools.empty()) {
+        if (!sparePools.empty()) {
             open->queries = sparePools.back();
             sparePools.pop_back();
         } else {
@@ -3830,6 +3842,16 @@ void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     ensureOpen();
     open->kept.push_back(std::move(object));
     open->keptBytes += bytes;
+}
+
+bool Recorder::KeepWithOutstanding(const std::shared_ptr<void>& object) noexcept {
+    try {
+        if (open != nullptr) open->kept.push_back(object);
+        if (!inFlight.empty()) inFlight.back()->kept.push_back(object);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void Recorder::KeepThroughHold(std::shared_ptr<void> object) {
@@ -5762,7 +5784,7 @@ void Recorder::removeLabels(Batch& batch) {
 
 void Recorder::release(Batch& batch) noexcept {
     if (batch.queries != VK_NULL_HANDLE) {
-        if (!GpuTimingEnabled() && sparePools.size() < 64) {
+        if (sparePools.size() < 64) {
             try {
                 sparePools.push_back(batch.queries);
                 batch.queries = VK_NULL_HANDLE;

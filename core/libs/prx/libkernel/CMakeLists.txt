@@ -2994,6 +2994,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_directory_removed_entries PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_append_positioned_write_tests ${LIBS_INCLUDE_DIR}/tests/GuestAppendPositionedWrite.cpp)
+    target_include_directories(guest_append_positioned_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_append_positioned_write_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_append_positioned_write_tests)
+    add_test(NAME guest_append_positioned_write COMMAND guest_append_positioned_write_tests)
+    set_tests_properties(guest_append_positioned_write PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_append_positioned_write PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_directory_entry_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryEntries.cpp)
     target_include_directories(guest_directory_entry_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_directory_entry_tests PRIVATE libkernel libc)
@@ -3611,13 +3621,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_mutexattr_protocol_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-endif()
-
-file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
-list(SORT libkernelTestFragments)
-foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
-    include(${libkernelTestFragment})
-endforeach()
 
     add_test_executable(guest_kernel_socket_type_error_readonly_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketTypeErrorReadonlyBounds.cpp)
     target_include_directories(guest_kernel_socket_type_error_readonly_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -3653,3 +3656,10 @@ endif()
         set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+endif()
+
+file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
+list(SORT libkernelTestFragments)
+foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
+    include(${libkernelTestFragment})
+endforeach()

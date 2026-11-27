@@ -466,6 +466,16 @@ std::array<IrU32, 2> TranslationContext::quietNan64(const std::array<IrU32, 2>& 
     return ieeeMode ? std::array<IrU32, 2>{bits[0], IrU32(ir.BitwiseOr(bits[1].Value(), ir.Constant(0x00080000u)))} : bits;
 }
 
+IrValue& TranslationContext::f32OverflowBits(IrValue& sign) {
+    if ((rounding.unknown & ModeRound32Bits) != 0u) {
+        throw std::runtime_error("f32 overflow with unknown MODE rounding bits is not implemented");
+    }
+    const auto roundMode = rounding.value & ModeRound32Bits;
+    if (roundMode == 1u) return ir.Select(ir.IEqual(sign, ir.Constant(0u)), ir.Constant(0x7f800000u), ir.Constant(0xff7fffffu));
+    if (roundMode == 2u) return ir.Select(ir.IEqual(sign, ir.Constant(0u)), ir.Constant(0x7f7fffffu), ir.Constant(0xff800000u));
+    return ir.BitwiseOr(sign, ir.Constant(roundMode == 3u ? 0x7f7fffffu : 0x7f800000u));
+}
+
 IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value) {
     IrValue& bits = ir.BitCastU32(value.Value());
     IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
@@ -475,7 +485,7 @@ IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value) {
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x01000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
     } else {
         const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
-        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7f800000u)));
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), f32OverflowBits(sign));
     }
     result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x00800000u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);

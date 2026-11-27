@@ -36,9 +36,10 @@ std::intptr_t StandardHandle(int descriptor) {
 
 extern "C" void PrepareStandardStreams_nid_no_patch() {
     static const bool ready = [] {
+        const int savedErrno = errno;
         for (int descriptor = 0; descriptor <= 2; ++descriptor) {
             const std::intptr_t handle = StandardHandle(descriptor);
-            if (handle != -1 && handle != NoStreamHandle) continue;
+            if (handle != -1 && handle != NoStreamHandle && handle != 0) continue;
             auto* const stream = __acrt_iob_func(descriptor);
             const int existing = ::_fileno(stream);
             if (existing >= 0) {
@@ -61,6 +62,7 @@ extern "C" void PrepareStandardStreams_nid_no_patch() {
             if (::_wfreopen(L"NUL", descriptor == 0 ? L"rb" : L"wb", stream) != stream || ::_fileno(stream) != descriptor)
                 throw std::runtime_error("cannot attach a standard stream to its NUL descriptor");
         }
+        errno = savedErrno;
         return true;
     }();
     static_cast<void>(ready);
@@ -69,6 +71,7 @@ extern "C" void PrepareStandardStreams_nid_no_patch() {
 namespace {
 #else
 const bool standardDescriptorsOpen = [] {
+    const int savedErrno = errno;
     for (int descriptor = 0; descriptor <= 2; ++descriptor) {
         if (::fcntl(descriptor, F_GETFD) != -1 || errno != EBADF) continue;
         const int opened = ::open("/dev/null", descriptor == 0 ? O_RDONLY : O_WRONLY);
@@ -77,6 +80,7 @@ const bool standardDescriptorsOpen = [] {
             ::close(opened);
         }
     }
+    errno = savedErrno;
     return true;
 }();
 #endif

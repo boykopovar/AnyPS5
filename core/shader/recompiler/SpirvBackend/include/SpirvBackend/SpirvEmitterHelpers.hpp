@@ -286,7 +286,11 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     const auto exchanged = state.module.AllocateId();
     state.module.AddFunction(spv::OpBranch, preheader);
     EmitLabel(state, preheader);
-    state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    if (kind == ResourceKind::Image && type != TypeU32(state)) {
+        state.module.AddFunction(spv::OpAtomicIAdd, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone), state.module.Constant(spv::OpConstant, type, 0u, 0u));
+    } else {
+        state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    }
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, header);
     state.module.AddFunction(spv::OpPhi, type, observed, initial, preheader, exchanged, cont);

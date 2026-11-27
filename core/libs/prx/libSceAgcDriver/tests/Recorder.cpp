@@ -12369,6 +12369,152 @@ private:
     static inline StorageUploadProbe* active = nullptr;
 };
 
+class DetilerReleaseProbe {
+public:
+    explicit DetilerReleaseProbe(Context& context) : context(context), resolver(context.deviceProc) {
+        Require(active == nullptr, "nested detiler release probe");
+        active = this;
+        context.deviceProc = resolve;
+    }
+    ~DetilerReleaseProbe() {
+        context.deviceProc = resolver;
+        active = nullptr;
+    }
+    std::uint64_t Released() const { return released; }
+
+private:
+    template<typename TFunction>
+    TFunction function(VkDevice device, const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks* callbacks) {
+        if (pipeline != VK_NULL_HANDLE) ++active->released;
+        active->function<PFN_vkDestroyPipeline>(device, "vkDestroyPipeline")(device, pipeline, callbacks);
+    }
+    static VKAPI_ATTR void VKAPI_CALL destroyPool(VkDevice device, VkDescriptorPool pool, const VkAllocationCallbacks* callbacks) {
+        if (pool != VK_NULL_HANDLE) ++active->released;
+        active->function<PFN_vkDestroyDescriptorPool>(device, "vkDestroyDescriptorPool")(device, pool, callbacks);
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkDestroyPipeline") == 0) return reinterpret_cast<PFN_vkVoidFunction>(destroyPipeline);
+        if (std::strcmp(name, "vkDestroyDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(destroyPool);
+        return active->resolver(device, name);
+    }
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    std::uint64_t released = 0;
+    static inline DetilerReleaseProbe* active = nullptr;
+};
+
+void detilerRetirementTests(const Device& device, Recorder& previous) {
+    auto context = device.GetContext();
+    DetilerReleaseProbe probe(context);
+    constexpr std::uint32_t side = 64;
+    const auto layout = ComputeMipLayout(TextureTileMode::kLinear, 56, side, side, 1).front();
+    Require(layout.pitchBytes == side * 4u && layout.tiledSize == layout.linearSize, "the linear detile fixture has a padded pitch");
+    const auto bytes = static_cast<std::size_t>(layout.linearSize);
+    Buffer source(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer destination(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer otherSource(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer otherDestination(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    for (std::size_t index = 0; index < bytes; ++index) {
+        source.Bytes()[index] = static_cast<std::byte>((index * 7u + 3u) & 0xffu);
+        otherSource.Bytes()[index] = static_cast<std::byte>((index * 13u + 5u) & 0xffu);
+    }
+    constexpr int rounds = 4;
+    const auto initial = probe.Released();
+    std::uint64_t perDetiler = 0;
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler measured(context);
+                measured.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                measured.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                recorder.Sync();
+            }
+            perDetiler = probe.Released() - before;
+        }
+        Require(perDetiler != 0, "a detiler destroyed while its recorder was idle released no pipeline or descriptor pool");
+        for (int round = 0; round < rounds; ++round) {
+            std::memset(destination.Bytes().data(), 0, bytes);
+            std::memset(otherDestination.Bytes().data(), 0, bytes);
+            const auto record = [&](TextureDetiler& detiler, const Buffer& from, const Buffer& to) {
+                detiler.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                detiler.Dispatch(commands, TextureTileMode::kLinear, 4, from.Handle(), 0, to.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            };
+            const auto before = probe.Released();
+            {
+                std::lock_guard gpu(GpuMutex());
+                {
+                    TextureDetiler retired(context);
+                    record(retired, source, destination);
+                }
+                Require(recorder.Recording(), "the recorded detile was submitted before its detiler was destroyed");
+                Require(probe.Released() == before, "a destroyed detiler released its pipeline or descriptor pool while its recorded detile was unsubmitted");
+                TextureDetiler live(context);
+                record(live, otherSource, otherDestination);
+                Require(probe.Released() == before, "recording after a detiler was destroyed released its objects early");
+                recorder.Sync();
+            }
+            Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded by a destroyed detiler did not run with its own descriptors");
+            Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded after another detiler was destroyed lost its descriptors");
+        }
+        std::memset(destination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler switched(context);
+                switched.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                switched.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+            }
+            Require(probe.Released() == before, "a detiler destroyed while another recorder was active released objects its own recorder's open batch still uses");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded before another recorder was activated did not run with its own descriptors");
+        std::memset(destination.Bytes().data(), 0, bytes);
+        std::memset(otherDestination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler shared(context);
+                shared.BeginBatch();
+                auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+                commands = previous.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, otherSource.Handle(), 0, otherDestination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Sync();
+            }
+            Require(probe.Released() == before, "a detiler that recorded under two recorders released objects the first recorder's open batch still uses once the second recorder was idle");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded under the first of two recorders did not run with its own descriptors");
+        Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded under the second of two recorders did not run with its own descriptors");
+    }
+    Require(probe.Released() - initial == perDetiler * (2u * rounds + 3u), "the destroyed detilers' pipelines and descriptor pools were not all released exactly once after their batches completed");
+    previous.Activate();
+    std::cout << "Detiler retirement: passed\n";
+}
+
 void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool failView) {
     auto context = device.GetContext();
     context.hostImportAlignment = 0;
@@ -18830,7 +18976,7 @@ int pipelineCacheFileTests(const Device& device) {
 
 void descriptorPoolTests(const Device& device) {
     DescriptorCache cache(device.GetContext());
-    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min(32u, device.GetContext().limits.maxPerStageDescriptorStorageBuffers), VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
     const auto layout = cache.Layout(key, std::span(&binding, 1));
     const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
@@ -20337,6 +20483,38 @@ void smallElementDetileTests(Device& device) {
     std::cout << "small element detile tests passed\n";
 }
 
+void dataRunAccessTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    std::unique_lock gpu(GpuMutex());
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {1, 2, 3, 4};
+    program.bindings.push_back(binding);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    ShaderResources resources(context, shader);
+    std::vector<std::array<std::uint64_t, 3>> accesses;
+    resources.RunAccesses(accesses);
+    const auto refreshed = std::count_if(accesses.begin(), accesses.end(), [](const auto& access) { return (access[2] & Recorder::RunAccessBuffer) != 0 && (access[2] & Recorder::RunAccessWritten) != 0; });
+    Require(refreshed == 1, "the template's data buffer is missing from its run accesses");
+    int firstDispatch = 0;
+    int secondDispatch = 0;
+    const void* firstOwner = &firstDispatch;
+    const void* secondOwner = &secondDispatch;
+    static_cast<void>(recorder.Commands());
+    recorder.DeferDispatchBarrier(1, std::span<const void* const>(&firstOwner, 1), accesses);
+    bool overlapped = true;
+    static_cast<void>(recorder.OverlapCommands(1, std::span<const void* const>(&secondOwner, 1), accesses, nullptr, overlapped));
+    Require(!overlapped, "a dispatch rewriting the template's data joined a run whose earlier dispatch still reads it");
+    recorder.Submit();
+    recorder.Sync();
+    std::cout << "data run accesses checked\n";
+}
+
 int main(int argc, char** argv) {
     const bool recordedInline = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
     _ZSt13set_terminatePFvvE_nid_postfix([] {
@@ -20587,6 +20765,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-pending-write-snapshot") {
             pendingWriteSnapshotBenchmark(recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--detiler-retirement-only") {
+            detilerRetirementTests(device, recorder);
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--storage-upload-lifetime-only" || std::string_view(argv[1]) == "--storage-upload-failure-only")) {
@@ -21179,6 +21361,7 @@ int main(int argc, char** argv) {
         importWindowTests(device, recorder);
         dataWordPositionsTests();
         dataRefreshTests(device, recorder);
+        dataRunAccessTests(device, recorder);
         imageMemoTests(device, recorder);
         minLodTests(device, recorder);
         uploadScratchReuseTests(device, recorder);

@@ -95,6 +95,7 @@ constexpr std::uint32_t getregMode = 0xb9141801;
 constexpr std::uint32_t vAddF32 = 0x06000300;
 constexpr std::uint32_t vCvtF32I32 = 0x7e000b00;
 constexpr std::uint32_t vCvtF32U32 = 0x7e000d00;
+constexpr std::uint32_t vCvtF32F64 = 0x7e001f00;
 constexpr std::uint32_t vCvtF16F32 = 0x7e001500;
 constexpr std::uint32_t vAddF16 = 0x64000300;
 
@@ -274,7 +275,7 @@ void verifyDiamond() {
 }
 
 void verifyRoundingBeforeDirected32Use() {
-    for (const auto instruction : {vCvtF32I32, vCvtF32U32}) {
+    for (const auto instruction : {vCvtF32I32, vCvtF32U32, vCvtF32F64}) {
         for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
             const std::array<std::uint32_t, 3> runtime{roundMode(rounding), instruction, endProgram};
             const std::array<std::uint32_t, 2> declared{instruction, endProgram};
