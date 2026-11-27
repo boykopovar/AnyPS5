@@ -35,6 +35,28 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct LibcxxFacet;
+
+struct LibcxxFacetVtable {
+    void (APS5_VABI *destroy)(LibcxxFacet* self);
+    void (APS5_VABI *deleteObject)(LibcxxFacet* self);
+    void (APS5_VABI *onZeroShared)(LibcxxFacet* self);
+};
+
+struct LibcxxFacet {
+    const LibcxxFacetVtable* vtable;
+    std::int64_t sharedOwners;
+};
+
+struct LibcxxLocaleId {
+    std::uint64_t flag;
+    std::int32_t id;
+};
+
+static_assert(sizeof(LibcxxFacet) == 0x10);
+static_assert(offsetof(LibcxxLocaleId, id) == 0x8);
+static_assert(sizeof(LibcxxLocaleId) == 0x10);
+
 struct CtypeFacet {
     Facet base;
     const std::int16_t* classification;

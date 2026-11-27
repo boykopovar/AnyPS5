@@ -28,6 +28,8 @@ extern const TypeRecord _ZTISt8bad_cast_nid_postfix;
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 void APS5_VABI AllocateOverAligned(const void* resource);
+void APS5_VABI AllocateMaxSizeDefault(const void* resource);
+void APS5_VABI AllocateMaxSizeOverAligned(const void* resource);
 
 const void* SceV2CatchType = nullptr;
 const void* SceV2OtherType = nullptr;
@@ -41,6 +43,22 @@ asm(".text\n"
     "    movq (%rdi), %rax\n"
     "    jmp *16(%rax)\n"
     APS5_ASM_FUNCTION_END("AllocateOverAligned"));
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("AllocateMaxSizeDefault")
+    "    movl $16, %edx\n"
+    "    movq $-1, %rsi\n"
+    "    movq (%rdi), %rax\n"
+    "    jmp *16(%rax)\n"
+    APS5_ASM_FUNCTION_END("AllocateMaxSizeDefault"));
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("AllocateMaxSizeOverAligned")
+    "    movl $64, %edx\n"
+    "    movq $-1, %rsi\n"
+    "    movq (%rdi), %rax\n"
+    "    jmp *16(%rax)\n"
+    APS5_ASM_FUNCTION_END("AllocateMaxSizeOverAligned"));
 
 static unsigned failures = 0;
 
@@ -133,6 +151,9 @@ static void CheckResources() {
 
     CheckThrows(AllocateOverAligned, unaligned, "unaligned allocate over 32 throws bad_alloc");
     CheckThrows(reinterpret_cast<Thrower>(const_cast<void*>(Vtable(empty)[2])), empty, "null allocate throws bad_alloc");
+    CheckThrows(AllocateMaxSizeDefault, aligned, "aligned allocate with SIZE_MAX throws bad_alloc");
+    CheckThrows(AllocateMaxSizeOverAligned, aligned, "aligned over-aligned allocate with SIZE_MAX throws bad_alloc");
+    CheckThrows(AllocateMaxSizeDefault, unaligned, "unaligned allocate with SIZE_MAX throws bad_alloc");
 }
 
 static void CheckDefaults() {

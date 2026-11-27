@@ -135,6 +135,7 @@ std::uint32_t EmitScratchPoolElementPointer(SpirvEmitterState& state, std::uint3
 void EmitReturnReleasingScratch(SpirvEmitterState& state) {
     if (ScratchPoolActive(state)) {
         const auto device = ConstantU32(state, spv::ScopeDevice);
+        if (state.ldsLockFences) state.module.AddFunction(spv::OpMemoryBarrier, device, ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask));
         const auto previous = state.module.AllocateId();
         state.module.AddFunction(spv::OpAtomicIDecrement, TypeU32(state), previous, PoolWord(state, EmitAddU32(state, state.scratchPoolSlotCount, state.scratchPoolSlot)), device, ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask));
         EmitIfCondition(state, EmitCompareU32Constant(state, spv::OpIEqual, previous, 1u), [&] {

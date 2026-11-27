@@ -57,8 +57,8 @@ bool Replayed(const PadData& data) {
         data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 200;
 }
 
-bool Idle(const PadData& data) {
-    return data.buttons == 0 && data.left_stick_x == 128 && data.left_stick_y == 128 && data.right_stick_x == 128 && data.right_stick_y == 128 &&
+bool Neutral(const PadData& data, std::uint32_t buttons = 0) {
+    return data.buttons == buttons && data.left_stick_x == 128 && data.left_stick_y == 128 && data.right_stick_x == 128 && data.right_stick_y == 128 &&
         data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 0;
 }
 
@@ -154,18 +154,34 @@ int main() {
     Require(Pad::Read(empty, 8, 0) == 1 && Replayed(empty[0]), "scePadRead without queued input returned the live controller");
     Require(Pad::ReadState(1).buttons != 0x4000, "the replay of port 0 reached port 1");
 
+    constexpr std::uint32_t interceptedButton = 0x80000000u;
+    PadInputState intercepted{};
+    intercepted.intercepted = true;
+    PadPublishInput_nid_postfix(intercepted);
+    Require(scePadReadState(handle, &state) == PAD_OK && Neutral(state, interceptedButton),
+        "scePadReadState replaced the intercepted state with replay input");
+    Require(Pad::Read(queued, 8, 0) == 1 && Neutral(queued[0], interceptedButton),
+        "scePadRead replaced a queued intercepted state with replay input");
+    Require(Pad::Read(empty, 8, 0) == 1 && Neutral(empty[0], interceptedButton),
+        "scePadRead without queued input replaced the intercepted state with replay input");
+
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    Require(Idle(Pad::ReadState(0)), "the replay did not move to the change recorded at 150 ms");
+    PadPublishInput_nid_postfix(live);
+    Require(Neutral(Pad::ReadState(0)), "the replay did not move to the change recorded at 150 ms");
     Require(scePadClose_nid_postfix(handle) == PAD_OK, "scePadClose failed");
 
     std::stringstream text;
     text << std::ifstream(record, std::ios::binary).rdbuf();
-    std::string header, first, second, extra;
+    std::string header, first, captured, second, extra;
     std::getline(text, header);
     std::getline(text, first);
+    std::getline(text, captured);
     std::getline(text, second);
     Require(header == "APS5_PAD_RECORDING 1", "the recording has no header");
     Require(first == "0 4000 255 0 128 128 0 200", "the recording does not start with the state the title read first");
+    const auto capturedSpace = captured.find(' ');
+    Require(capturedSpace != std::string::npos && captured.substr(capturedSpace) == " 80000000 128 128 128 128 0 0",
+        "the recording did not preserve the intercepted state seen by the title");
     const auto space = second.find(' ');
     Require(space != std::string::npos && std::stoull(second.substr(0, space)) >= 150 && second.substr(space) == " 0 128 128 128 128 0 0",
         "the recording does not hold the later change once, after its time");

@@ -177,20 +177,23 @@ void TestEveryAllocationFailsWithASplit() {
         records.pool.emplace(0, page);
         records.pool.emplace(2 * page, 3 * page);
         const auto before = records;
+        int mappedRuns = 0;
         bool failed = false;
         failingAllocation.store(allocation);
         try {
-            Map(records, 3 * page, [&](std::uint64_t, std::uint64_t, std::uint64_t) {});
+            Map(records, 3 * page, [&](std::uint64_t, std::uint64_t, std::uint64_t) { ++mappedRuns; });
         } catch (const std::bad_alloc&) {
             failed = true;
         }
         failingAllocation.store(-1);
         if (!failed) {
+            Require(mappedRuns == 2);
             Require(records.pool.size() == 1 && records.pool.at(4 * page) == page && records.pages.size() == 3);
             RequireConsistent(records);
             break;
         }
         ++failures;
+        Require(mappedRuns == 0);
         Require(Equal(records, before));
         RequireConsistent(records);
         Map(records, 4 * page, [&](std::uint64_t, std::uint64_t, std::uint64_t) {});
@@ -253,6 +256,61 @@ void TestAddPageFailures() {
     Require(failures >= 1);
 }
 
+void TestTryTakeRunNoAllocation() {
+    AmmPool::Records records;
+    records.pool.emplace(0, 3 * page);
+    std::uint64_t offset = page;
+    failingAllocation.store(0);
+    const bool taken = AmmPool::TryTakeRun(records, page, offset);
+    const long remainingAllocation = failingAllocation.load();
+    failingAllocation.store(-1);
+    Require(taken && offset == 0 && remainingAllocation == 0);
+    Require(records.pool.size() == 1 && records.pool.at(page) == 2 * page);
+    RequireConsistent(records);
+
+    AmmPool::Records exact;
+    exact.pool.emplace(0, page);
+    std::uint64_t exactOffset = page;
+    failingAllocation.store(0);
+    const bool exactTaken = AmmPool::TryTakeRun(exact, page, exactOffset);
+    const long exactRemaining = failingAllocation.load();
+    failingAllocation.store(-1);
+    Require(exactTaken && exactOffset == 0 && exactRemaining == 0);
+    Require(exact.pool.empty());
+    RequireConsistent(exact);
+}
+
+void TestReturnPagesCoalesceAndZeroBytes() {
+    AmmPool::Records records;
+    records.pool.emplace(2 * page, 2 * page);
+    failingAllocation.store(0);
+    AmmPool::ReturnPages(records, page, page);
+    const long rightCoalesceAllocation = failingAllocation.load();
+    failingAllocation.store(-1);
+    Require(rightCoalesceAllocation == 0);
+    Require(records.pool.size() == 1 && records.pool.at(page) == 3 * page);
+    RequireConsistent(records);
+
+    AmmPool::ReturnPages(records, 5 * page, page);
+    failingAllocation.store(0);
+    AmmPool::ReturnPages(records, 4 * page, page);
+    const long bothCoalesceAllocation = failingAllocation.load();
+    failingAllocation.store(-1);
+    Require(bothCoalesceAllocation == 0);
+    Require(records.pool.size() == 1 && records.pool.at(page) == 5 * page);
+    RequireConsistent(records);
+
+    AmmPool::ReturnPages(records, 7 * page, 0);
+    Require(records.pool.size() == 1 && records.pool.at(page) == 5 * page);
+    RequireConsistent(records);
+
+    AmmPool::Records gapped;
+    gapped.pool.emplace(4 * page, page);
+    AmmPool::ReturnPages(gapped, 2 * page, page);
+    Require(gapped.pool.size() == 2 && gapped.pool.at(2 * page) == page && gapped.pool.at(4 * page) == page);
+    RequireConsistent(gapped);
+}
+
 }
 
 int main() {
@@ -265,6 +323,8 @@ int main() {
         TestEveryAllocationFailsWithASplit();
         TestPrtAllocationShape();
         TestAddPageFailures();
+        TestTryTakeRunNoAllocation();
+        TestReturnPagesCoalesceAndZeroBytes();
         std::puts("AMM scattered pool pages published exactly once");
         return 0;
     } catch (const std::exception& error) {

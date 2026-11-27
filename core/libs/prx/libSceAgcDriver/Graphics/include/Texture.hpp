@@ -138,6 +138,7 @@ public:
     VkImageLayout Layout() const { return layout; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
     VkFormat ViewFormat() const { return viewFormat; }
+    const VkComponentMapping& ViewComponents() const { return viewComponents; }
     // Whether this texture is a view of a storage image (no snapshot of its own).
     bool ViewsStorageImage() const { return storageSource != nullptr; }
     const StorageTexture* StorageSource() const { return storageSource.get(); }
@@ -195,6 +196,7 @@ private:
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;
     VkFormat viewFormat = VK_FORMAT_UNDEFINED;
+    VkComponentMapping viewComponents{};
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
     std::unique_ptr<CommandBatch> upload;
@@ -544,6 +546,8 @@ public:
     // Results pending in images lying wholly inside the range are dead (a fill overwrites every
     // byte of them): they are dropped instead of stored. Returns how many images were.
     static std::size_t DiscardPendingInside(std::uint64_t address, std::size_t bytes);
+    static bool Created();
+    static void NoteUnmapped(std::uint64_t address, std::size_t bytes);
     struct OverwriteClaim {
         std::uint64_t baseAddress = 0;
         std::uint32_t width = 0;
@@ -824,6 +828,7 @@ private:
     // Marks `count` tracked layers from `first` pending and registers the image (MarkDirty's
     // registration; APS5_EAGER_WRITEBACK=1 stores at once instead).
     void markLayersPending(std::uint32_t first, std::uint32_t count);
+    std::optional<std::vector<bool>> withoutUnmapped(const std::vector<bool>& layers);
     // Registers or unregisters the image as its pending layers say (after a write-back).
     void reconcilePending();
     // Pending images whose surface shares one of the 64 KiB write-stamp blocks firstBlock..lastBlock
@@ -1013,6 +1018,8 @@ private:
     std::uint64_t zeroForgetEnd = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
+    std::vector<bool> layerUnmapped;
+    std::atomic<bool> anyUnmapped{false};
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;
