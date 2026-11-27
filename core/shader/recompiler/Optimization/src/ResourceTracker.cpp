@@ -2731,7 +2731,8 @@ private:
         image.adjustedSample = image.adjustedSample || (op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u);
         const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (addressedFlags == 0u || addressedFlags == RdnaImageSampleFlagLevelZero || addressedFlags == RdnaImageSampleFlagLod);
         const bool cubeFaceStore = op == IrOpcode::ImageWrite && !memory.imageHasMip;
-        image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore) && !memory.imagePacked && memory.imageByElements == 0u;
+        const bool cubeFaceGather = op == IrOpcode::ImageGatherRaw && (memory.imageSampleFlags == 0u || memory.imageSampleFlags == RdnaImageSampleFlagLevelZero);
+        image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore || cubeFaceGather) && !memory.imagePacked && memory.imageByElements == 0u;
         image.volumeArraySampleCompatible = image.volumeArraySampleCompatible && cubeFaceSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
         const bool flatVolumeLoad = op == IrOpcode::ImageRead && memory.imageSampleFlags == 0u;
         const bool flatVolumeSample = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;

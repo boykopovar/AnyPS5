@@ -1358,6 +1358,7 @@ int APS5_VABI strncmp_nid_postfix(const char* s1, const char* s2, size_t n);
 size_t APS5_VABI strlen_nid_postfix(const char* s);
 void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE5eraseEmm_nid_postfix(
     void* string, std::uint64_t position, std::uint64_t count);
+void* APS5_VABI _ZNSt3__19to_stringEf_nid_postfix(void* result, float value);
 char* APS5_VABI strcpy_nid_postfix(char* dest, const char* src);
 char* APS5_VABI strncpy_nid_postfix(char* dest, const char* src, size_t count);
 char* APS5_VABI strcat_nid_postfix(char* dest, const char* src);
@@ -1382,6 +1383,14 @@ unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr,
 double APS5_VABI strtod_nid_postfix(const char* str, char** endptr);
 double APS5_VABI atof_nid_postfix(const char* str);
 float APS5_VABI strtof_nid_postfix(const char* str, char** endptr);
+int APS5_VABI _ZNSt3__14stoiERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPmi_nid_postfix(
+    const void* value, std::uint64_t* index, int base);
+std::uint64_t APS5_VABI _ZNSt3__15stoulERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPmi_nid_postfix(
+    const void* value, std::uint64_t* index, int base);
+std::uint64_t APS5_VABI _ZNSt3__16stoullERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPmi_nid_postfix(
+    const void* value, std::uint64_t* index, int base);
+float APS5_VABI _ZNSt3__14stofERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPm_nid_postfix(
+    const void* value, std::uint64_t* index);
 long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr);
 int APS5_VABI atoi_nid_postfix(const char* str);
 std::int64_t APS5_VABI atol_nid_postfix(const char* str);
@@ -1764,6 +1773,10 @@ void APS5_VABI _ZNSt13runtime_errorD0Ev_nid_postfix(LibcException::ExceptionObje
 const char* APS5_VABI _ZNKSt13runtime_error4whatEv_nid_postfix(const LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt13runtime_errorC1EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message);
 void APS5_VABI _ZNSt13runtime_errorC2EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message);
+void APS5_VABI _ZNSt13runtime_errorC1ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE_nid_postfix(
+    LibcException::ExceptionObject* self, const void* message);
+void APS5_VABI _ZNSt13runtime_errorC2ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE_nid_postfix(
+    LibcException::ExceptionObject* self, const void* message);
 void APS5_VABI _ZNSt13runtime_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 void APS5_VABI _ZNSt13runtime_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 LibcException::ExceptionObject* APS5_VABI _ZNSt13runtime_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);

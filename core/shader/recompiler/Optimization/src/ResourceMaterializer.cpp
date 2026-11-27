@@ -165,7 +165,7 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
 }
 
 bool multisamplePlaneRead(const ImageResource& image) {
-    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible && !image.gathered;
 }
 
 DescriptorValue gcnTableImageWords(DescriptorValue descriptor) {
@@ -1884,13 +1884,13 @@ bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValu
 bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor, bool typedLoads) {
     const auto& buffer = plan.info.buffers[index];
     if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor, typedLoads)) return false;
-    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
+    const bool measuredLoads = decodeBufferDescriptor(descriptor).Type() != 0u && buffer.read;
     bool accessed = false;
     for (const auto& memory : plan.memoryInfo) {
         if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
         if (memory.typed || memory.gpuDescriptor) return false;
-        if (measuredOnly && memory.d16) return false;
-        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) {
+        if (measuredLoads && memory.d16) return false;
+        if (measuredLoads && (memory.dataDwords != 1u || memory.componentCount != 1u)) {
             if (!buffer.read || buffer.written || memory.formatted || memory.dataBits != 32u || memory.dataDwords < 2u || memory.dataDwords > 4u || memory.componentCount != memory.dataDwords) return false;
         }
         accessed = true;

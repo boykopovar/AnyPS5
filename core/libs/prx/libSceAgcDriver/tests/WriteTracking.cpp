@@ -2046,7 +2046,7 @@ void CheckImportWindowOtherThread() {
         });
         store.join();
         return true;
-    }), "the other-thread import window import failed");
+    }, true, false), "the other-thread import window import failed");
     const std::array<std::uint64_t, 2> generations{synced, synced};
     std::array<std::uint8_t, 2> changed{};
     std::array<std::uint8_t, 2> cpu{};

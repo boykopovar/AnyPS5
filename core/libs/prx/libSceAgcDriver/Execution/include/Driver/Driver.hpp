@@ -508,6 +508,7 @@ private:
     std::unordered_map<std::uint64_t, std::deque<std::uint64_t>> priorValueSets;
 
     std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawCache;
+    std::unordered_map<const ShaderRecompiler::RecompileResult*, std::size_t> drawCacheResultReferences;
     std::unordered_map<std::uint64_t, std::uint64_t> drawShapes;
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;

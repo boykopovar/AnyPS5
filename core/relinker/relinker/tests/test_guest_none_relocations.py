@@ -269,6 +269,8 @@ def check_output(data, system, rela, plt, initial, addend=FUNCTION):
 
 
 def valid_cases(sce):
+    for value in (0, 123):
+        yield f"symbolic-{value}", insert_dynamic_tag(module([RELATIVE], sce=sce), 16, value), [RELATIVE], [], UNCHANGED, FUNCTION
     for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
         for encoding in ("rela", "repeated", "relr"):
             image, initial = relative_module(addend, sce, encoding)
@@ -350,7 +352,6 @@ def invalid_cases(sce):
         yield "os-unmapped-fini", module([NOOP], sce=True, fini=0xffffffffffffffff, sce_lifecycle=True), "Unmapped or inaccessible guest address"
     yield "unsupported-dynamic-flags", insert_dynamic_tag(module([NOOP], sce=sce), 30, 1), "Unsupported guest dynamic flags"
     yield "unsupported-dynamic-tag-rpath", insert_dynamic_tag(module([NOOP], sce=sce), 15, 0), "Unsupported dynamic tag 15"
-    yield "unsupported-dynamic-tag-symbolic", insert_dynamic_tag(module([NOOP], sce=sce), 16, 0), "Unsupported dynamic tag 16"
     yield "unsupported-dynamic-tag-rel", insert_dynamic_tag(module([NOOP], sce=sce), 17, 0), "DT_REL relocations are not supported"
     yield "unsupported-dynamic-tag-rela", insert_dynamic_tag(module([NOOP], sce=sce), 18, 0), "DT_REL relocations are not supported"
     yield "unsupported-dynamic-tag-unused", insert_dynamic_tag(module([NOOP], sce=sce), 19, 0), "DT_REL relocations are not supported"
@@ -426,6 +427,8 @@ def main():
                     artifact = artifacts / f"{name}.prx.guest.prx"
                     try:
                         check_output(artifact.read_bytes(), system, rela, plt, initial, addend=addend)
+                        if name.startswith("symbolic-") and system == "linux":
+                            assert dynamic_tags(artifact.read_bytes())[30] & 2
                     except AssertionError as error:
                         raise AssertionError((sce, name, system, *error.args)) from error
                     if name in ("mixed", "plt-mixed"):

@@ -1612,7 +1612,7 @@ UEnumeration* APS5_VABI ucnv_openStandardNames_nid_postfix(const char*, const ch
 int APS5_VABI _ZN6icu_6810UnicodeSet13complementAllERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_iyqq4SUxrZs_nid_no_patch();
 int APS5_VABI ures_getStringByIndex_nid_postfix();
-int APS5_VABI ucnv_getStandard_nid_postfix();
+const char* APS5_VABI ucnv_getStandard_nid_postfix(std::uint16_t, std::int32_t*);
 int APS5_VABI _ZN6icu_6810UnicodeSetC1ERKS0_a_nid_postfix();
 int APS5_VABI _ZNK6icu_6810CharString13getDirSepCharEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_j5KwqH5Oo60_nid_no_patch();
@@ -1923,7 +1923,8 @@ int APS5_VABI sceIcuLegacyUnknown_sj9YiLphihc_nid_no_patch();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EE8copyFromERKS1_R10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIteratorC2ERKNS_13UnicodeStringER11UParseErrorR10UErrorCode_nid_postfix();
 int APS5_VABI uloc_getDisplayKeywordValue_nid_postfix();
-int APS5_VABI ures_countArrayItems_nid_postfix();
+std::int32_t APS5_VABI ures_countArrayItems_nid_postfix(
+    const UResourceBundle* resourceBundle, const char* resourceKey, std::int32_t* status);
 int APS5_VABI _ZN6icu_6811ReplaceableD2Ev_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSetC1ERKNS_13UnicodeStringER10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_svSitLIoR0M_nid_no_patch();

@@ -559,6 +559,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             try {
                 syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges, &routedStubs);
             } catch (const Domain::RelinkerException& error) {
+                if (!error.HasFailureOffset) throw;
                 const auto cause = DescribeReplacedPltStubReaching(replacedStubs, code, header.MappedAddress, error.FailureOffset);
                 if (cause.empty()) throw;
                 Domain::RelinkerException explained(error.what() + cause, error.FailureOffset);
