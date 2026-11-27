@@ -387,9 +387,9 @@ struct Context {
     const DeviceFunctions* Table() const { return dispatch != nullptr && functions == dispatch->patched ? dispatch->active.load(std::memory_order_acquire) : functions; }
 
     template<typename TFunction>
-    TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
+    TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name, std::source_location where = std::source_location::current()) const {
         if (const auto* table = Table(); table != nullptr && table->*member != nullptr) return table->*member;
-        return lookup<TFunction>(name.Value());
+        return lookup<TFunction>(name.Value(), where);
     }
 
     class ComputeBinder {
@@ -404,12 +404,12 @@ struct Context {
         PFN_vkCmdBindPipeline bind;
     };
 
-    ComputeBinder ComputeBinding() const {
-        return ComputeBinder(tracked(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline"));
+    ComputeBinder ComputeBinding(std::source_location where = std::source_location::current()) const {
+        return ComputeBinder(tracked(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline", where));
     }
 
-    void BindComputePipeline(VkCommandBuffer commands, VkPipeline pipeline) const {
-        ComputeBinding()(commands, pipeline);
+    void BindComputePipeline(VkCommandBuffer commands, VkPipeline pipeline, std::source_location where = std::source_location::current()) const {
+        ComputeBinding(where)(commands, pipeline);
     }
 
     std::uint32_t MemoryType(std::uint32_t mask, VkMemoryPropertyFlags flags) const {
@@ -529,9 +529,9 @@ private:
     }
 
     template<typename TFunction>
-    TFunction tracked(TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
+    TFunction tracked(TrackedFunction<TFunction> DeviceFunctions::*member, const char* name, std::source_location where = std::source_location::current()) const {
         if (const auto* table = Table(); table != nullptr && (table->*member).function != nullptr) return (table->*member).function;
-        return lookup<TFunction>(name);
+        return lookup<TFunction>(name, where);
     }
 };
 

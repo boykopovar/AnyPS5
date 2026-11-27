@@ -769,6 +769,44 @@ void WaitsAreAttributedToTheirCallSites() {
     Require(CommandEncoder::Describe(Site::At(Wait::Lookup, lookup)).find("WaitsAreAttributedToTheirCallSites:" + std::to_string(lookup.line())) != std::string::npos, "a call site is not described by its function and line: " + CommandEncoder::Describe(Site::At(Wait::Lookup, lookup)));
 }
 
+PFN_vkVoidFunction VKAPI_CALL ResolveEverything(VkDevice, const char*) {
+    return reinterpret_cast<PFN_vkVoidFunction>(&FakeDraw);
+}
+
+void ResolvedLookupsKeepTheirCallSites() {
+    using Wait = CommandEncoder::Wait;
+    using Site = CommandEncoder::WaitSite;
+    SetEnvironment("APS5_PROFILE_ENCODER", "1");
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x5a);
+    const auto attached = Attached(device, table);
+    auto& encoder = *attached;
+    AgcDriver::Graphics::Context context{};
+    context.device = device;
+    context.deviceProc = &ResolveEverything;
+    const auto commands = Handle<VkCommandBuffer>(0x1a00);
+    StalledReplay replay;
+    encoder.Open(commands, RecordingOf(commands));
+    const auto stalled = [&](std::uint32_t draw) {
+        table.cmdDraw(commands, draw, 1, 0, 0);
+        replay.StallNextPost();
+    };
+    stalled(1);
+    context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw"); const auto first = std::source_location::current();
+    stalled(2);
+    context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw"); const auto second = std::source_location::current();
+    stalled(3);
+    context.ComputeBinding(); const auto binding = std::source_location::current();
+    encoder.Close();
+    encoder.Quiesce();
+    const auto sites = encoder.WaitsBySite();
+    RequireSite(sites, Site::At(Wait::Lookup, first), 1, 1);
+    RequireSite(sites, Site::At(Wait::Lookup, second), 1, 1);
+    RequireSite(sites, Site::At(Wait::Lookup, binding), 1, 1);
+    Require(sites.size() == 3, "a lookup through the table fallback was attributed to a site other than its caller:" + CommandEncoder::Report(sites, sites.size()));
+}
+
 }
 
 void WaitOnTheEncoderThread() {
@@ -1551,6 +1589,7 @@ int main(int argc, char** argv) {
         EncoderParksBetweenSpacedPosts();
         ReplayFailureNeedsNoAllocation();
         WaitsAreAttributedToTheirCallSites();
+        ResolvedLookupsKeepTheirCallSites();
         SitesAreCountedOnlyWhenProfiled();
         HandoffPolicyFollowsItsMeasuredCost();
         HandoffChargesTheLastProbeBlocksBacklog();
