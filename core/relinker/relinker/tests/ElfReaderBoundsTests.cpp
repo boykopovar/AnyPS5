@@ -5,6 +5,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -422,6 +423,20 @@ int main() {
             Write<std::uint16_t>(zeroHeadersOobOffset, 56, 0);
             Write<std::uint64_t>(zeroHeadersOobOffset, 32, std::numeric_limits<std::uint64_t>::max());
             RejectProgramHeaders(std::move(zeroHeadersOobOffset), "FileByteOffset out of bounds", std::numeric_limits<std::uint64_t>::max());
+        }},
+        {"extended program header count", [] {
+            auto largest = Fixture();
+            largest.resize(64 + std::size_t{0xfffe} * 56);
+            Write<std::uint16_t>(largest, 56, 0xfffe);
+            const auto headers = Relinker::ElfReader(std::move(largest)).ReadProgramHeaders();
+            Require(headers.size() == 0xfffe && headers[0].Type == 1 && headers.back().Type == 0);
+            auto extended = Fixture();
+            extended.resize(64 + std::size_t{0xffff} * 56);
+            Write<std::uint16_t>(extended, 56, 0xffff);
+            RejectProgramHeaders(std::move(extended), "Extended program header counts are not supported", 0x38);
+            auto truncated = Fixture();
+            Write<std::uint16_t>(truncated, 56, 0xffff);
+            RejectProgramHeaders(std::move(truncated), "FileByteOffset out of bounds", 0x40);
         }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
@@ -1062,7 +1077,7 @@ int main() {
                 Write<std::uint32_t>(valid, 196, type);
                 Write<std::uint32_t>(valid, 232, 2);
                 if (type == 4) Write<std::uint64_t>(valid, 248, 24);
-                if (type == 9) Write<std::uint64_t>(valid, 248, 16);
+                if (type == 9 || type == 6) Write<std::uint64_t>(valid, 248, 16);
                 const auto sections = Relinker::ElfReader(std::move(valid)).ReadSectionHeaders();
                 Require(sections.size() == 3 && sections[1].Link == 2);
             }
@@ -1090,6 +1105,14 @@ int main() {
                 Write<std::uint32_t>(bytes, 196, 4);
                 Write<std::uint64_t>(bytes, 248, entrySize);
                 RejectSections(std::move(bytes));
+            }
+        }},
+        {"SHT_DYNAMIC section entry size mismatch", [] {
+            for (const std::uint64_t entrySize : std::initializer_list<std::uint64_t>{0ULL, 1ULL, 8ULL, 15ULL, 17ULL, 24ULL, 32ULL, 64ULL, std::numeric_limits<std::uint64_t>::max()}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, 6);
+                Write<std::uint64_t>(bytes, 248, entrySize);
+                RejectSections(std::move(bytes), "Invalid dynamic section entry size", 248);
             }
         }},
         {"SHT_REL section entry size mismatch", [] {

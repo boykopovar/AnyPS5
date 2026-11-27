@@ -2,6 +2,7 @@ import argparse
 import importlib
 import inspect
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,7 +62,10 @@ def main(argv=None):
     try:
         for name, data in images():
             for selector in selectors:
-                (arguments.output / f"{name}-{selector}").write_bytes(bytes([selector]) + data)
+                with tempfile.TemporaryDirectory(dir=arguments.output) as temporary:
+                    seed = Path(temporary) / "seed"
+                    seed.write_bytes(bytes([selector]) + data)
+                    seed.replace(arguments.output / f"{name}-{selector}")
                 count += 1
     except OSError as error:
         parser.error(str(error))

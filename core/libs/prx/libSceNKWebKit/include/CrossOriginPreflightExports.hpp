@@ -25,5 +25,7 @@ NKWebKit::WtfAbi::ExpectedVoidString APS5_VABI _ZN7WebCore25validatePreflightRes
     const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* request, const NKWebKit::WebCoreAbi::ResourceResponseBase* response,
     NKWebKit::WebCoreAbi::StoredCredentialsPolicy storedCredentialsPolicy, const NKWebKit::WebCoreAbi::SecurityOrigin* securityOrigin,
     const NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* checkDisabler);
+NKWebKit::WebCoreAbi::LegacyResourceRequestBase APS5_VABI _ZN7WebCore35createAccessControlPreflightRequestERKNS_15ResourceRequestERNS_14SecurityOriginERKN3WTF6StringE(
+    const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* request, NKWebKit::WebCoreAbi::SecurityOrigin* securityOrigin, const NKWebKit::WtfAbi::String* referrer);
 
 }

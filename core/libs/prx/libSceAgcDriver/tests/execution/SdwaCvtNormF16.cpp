@@ -253,6 +253,51 @@ void CheckRefused(AgcDriver::VulkanDevice& device) {
     }
 }
 
+constexpr std::uint32_t SweepGroups = 512u;
+constexpr std::uint32_t SweepLanes = SweepGroups * 64u;
+alignas(256) std::array<std::uint32_t, SweepLanes> SweepInput{};
+alignas(256) std::array<std::uint32_t, SweepLanes * 2u> SweepOutput{};
+
+void RunEveryHalf(AgcDriver::VulkanDevice& device, bool signedValue, std::uint32_t waveSize, bool keepDenormals) {
+    for (std::uint32_t lane = 0u; lane < SweepLanes; ++lane) SweepInput[lane] = (lane * 2u) | ((lane * 2u + 1u) << 16u);
+    SweepOutput.fill(0xdeadbeefu);
+    const std::uint32_t opcode = signedValue ? 0x63u : 0x64u;
+    const std::array<std::uint32_t, 19> code{
+        0x8f098608u, 0x4a020009u, 0x34040282u, 0xe0301000u, 0x80000402u, 0xbf8c3f70u,
+        0x7e0a0104u | (opcode << 9u),
+        0x7e0c00f9u | (opcode << 9u), 4u | (6u << 8u) | (5u << 16u),
+        0x34060283u, 0xe0701000u, 0x80010503u, 0xe0701004u, 0x80010603u,
+        0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+    };
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(SweepInput.data(), static_cast<std::uint32_t>(SweepInput.size()));
+    const auto output = BufferDescriptor(SweepOutput.data(), static_cast<std::uint32_t>(SweepOutput.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> words(code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(words.data()), std::as_bytes(words)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64u, 1, 1}, 0, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(words.data()), words, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{keepDenormals ? 0xc0u : 0x00u, true, false, false};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, SweepGroups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(words.data()));
+    device.WaitIdle();
+    for (std::uint32_t half = 0u; half < 0x10000u; ++half) {
+        const auto source = !keepDenormals && (half & 0x7c00u) == 0u ? half & 0x8000u : half;
+        const auto expected = NormF16Model(source, signedValue);
+        const auto actual = SweepOutput[half] & 0xffffu;
+        Require(actual == expected, std::string(signedValue ? "v_cvt_norm_i16_f16" : "v_cvt_norm_u16_f16") + (half & 1u ? " sdwa WORD_1" : "") + " wave" +
+            std::to_string(waveSize) + (keepDenormals ? " f16 denormals kept" : " f16 denormals flushed") + " of " + Hex(half) + " is " + Hex(actual) + ", expected " + Hex(expected));
+    }
+    std::printf("cvt norm f16 %s wave%u %s: 65536 halves passed\n", signedValue ? "i16" : "u16", waveSize, keepDenormals ? "denormals kept" : "denormals flushed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -267,6 +312,9 @@ int main(int argc, char** argv) {
         for (const bool signedValue : {true, false}) {
             RunNorm(*device, signedValue, waveSize);
             Check(signedValue, waveSize);
+        }
+        for (const bool signedValue : {true, false}) {
+            for (const bool keepDenormals : {true, false}) RunEveryHalf(*device, signedValue, waveSize, keepDenormals);
         }
         std::puts("sdwa cvt norm f16 tests passed");
         return 0;

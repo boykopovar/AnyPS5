@@ -85,6 +85,10 @@ def check_modules(relinker, root):
         module_dir = paths["module"].parent
         module_dir.rmdir()
         module_dir.parent.rmdir()
+        if target == "windows":
+            output_directory = case / "out" / "nested"
+            paths = {kind: output_directory / path.relative_to(case) for kind, path in paths.items()}
+            command[-1] = paths["executable"]
         before_files = {path for path in case.rglob("*") if path.is_file()}
         result = run(relinker, case, command)
         check_plan(result, paths.values())

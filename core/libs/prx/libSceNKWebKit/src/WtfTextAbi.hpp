@@ -23,9 +23,10 @@ struct StringBuilder {
 
 struct TextStream {
     StringBuilder text;
-    unsigned formattingFlags;
-    int indent;
-    bool multiLineMode;
+    int indent{0};
+    std::uint8_t formattingFlags{0};
+    bool multiLineMode{true};
+    unsigned containerSizeLimit{0};
 };
 
 void AppendString(StringBuilder& builder, const StringImpl* string);
@@ -56,8 +57,9 @@ static_assert(offsetof(StringBuilder, length) == 28);
 static_assert(offsetof(StringBuilder, is8Bit) == 32);
 static_assert(sizeof(TextStream) == 56);
 static_assert(offsetof(TextStream, text) == 0);
-static_assert(offsetof(TextStream, formattingFlags) == 40);
-static_assert(offsetof(TextStream, indent) == 44);
-static_assert(offsetof(TextStream, multiLineMode) == 48);
+static_assert(offsetof(TextStream, indent) == 40);
+static_assert(offsetof(TextStream, formattingFlags) == 44);
+static_assert(offsetof(TextStream, multiLineMode) == 45);
+static_assert(offsetof(TextStream, containerSizeLimit) == 48);
 
 }  // namespace NKWebKit::WtfAbi
