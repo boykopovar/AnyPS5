@@ -3594,6 +3594,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_mutexattr_protocol_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+endif()
+
+file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
+list(SORT libkernelTestFragments)
+foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
+    include(${libkernelTestFragment})
+endforeach()
 
     add_test_executable(guest_kernel_socket_type_error_readonly_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketTypeErrorReadonlyBounds.cpp)
     target_include_directories(guest_kernel_socket_type_error_readonly_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -3629,12 +3636,3 @@ endif()
         set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-endif()
-
-if(BUILD_TESTING)
-    file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
-    list(SORT libkernelTestFragments)
-    foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
-        include(${libkernelTestFragment})
-    endforeach()
-endif()
