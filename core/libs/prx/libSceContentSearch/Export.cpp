@@ -49,6 +49,12 @@ bool IsSortColumn(std::int32_t column) {
 
 bool IsConnector(std::int32_t connector) { return connector >= 0 && connector <= 2; }
 
+bool IsSpecialMetadataField(const char* field) {
+    return std::strcmp(field, "timestamp") == 0 ||
+           std::strcmp(field, "timeline_tag") == 0 ||
+           std::strcmp(field, "constant_tag") == 0;
+}
+
 template <typename T>
 bool ReadGuestElement(T& value, const T* elements, std::size_t index) {
     const auto base = reinterpret_cast<std::uintptr_t>(elements);
@@ -107,7 +113,7 @@ int APS5_VABI sceContentSearchEnableAvContentCreatedEvent(void) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     std::lock_guard lock(g_avEventMutex);
     if (!g_avEventConditionAdded) return ErrorAvEventState;
-    NotImplemented_nid_no_patch(__func__);
+    return ErrorServiceUnavailable;
 }
 
 int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent(const void* event, std::uint64_t* contentId) {
@@ -142,15 +148,23 @@ int APS5_VABI sceContentSearchCloseMetadata(std::int32_t metadataId) {
 int APS5_VABI sceContentSearchGetMetadataFieldInfo(std::int32_t metadataId, const char* field, std::int32_t* metadataType, std::int32_t* size) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (field == nullptr || metadataType == nullptr || size == nullptr) return ErrorInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (metadataId < 0 || metadataId >= 16) return ErrorInvalidArgument;
+    if (IsSpecialMetadataField(field)) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    }
+    return ErrorInvalidArgument;
 }
 
 int APS5_VABI sceContentSearchGetMetadataValue(std::int32_t metadataId, const char* field, void* value) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (field == nullptr || value == nullptr) return ErrorInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (metadataId < 0 || metadataId >= 16) return ErrorInvalidArgument;
+    if (IsSpecialMetadataField(field)) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    }
+    return ErrorInvalidArgument;
 }
 
 int APS5_VABI sceContentSearchOpenMetadata(const char* filePath, std::int32_t* metadataId) {
@@ -183,10 +197,10 @@ int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId)
 }
 
 int APS5_VABI sceContentSearchOpenMetadataByContentId(std::int64_t contentId, std::int32_t* metadataId) {
+    (void)contentId;
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (metadataId == nullptr) return ErrorInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorInvalidArgument;
 }
 
 int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* size, std::int64_t* lastUpdateId) {
@@ -212,8 +226,10 @@ int APS5_VABI sceContentSearchGetNumOfContent(const ContentSearchContentColumnSe
 }
 
 int APS5_VABI sceContentSearchTerm(void) {
+    std::lock_guard lock(g_avEventMutex);
     bool expected = true;
     if (!g_initialized.compare_exchange_strong(expected, false)) return ErrorNotInitialized;
+    g_avEventConditionAdded = false;
     return 0;
 }
 
@@ -253,8 +269,7 @@ int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index) {
     if (index == nullptr) return ErrorInvalidArgument;
     const std::int32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(index, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorServiceUnavailable;
 }
 int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::int64_t* numOfApplication, std::int64_t* lastUpdateId) {
     if (!g_initialized.load()) return ErrorNotInitialized;

@@ -118,7 +118,7 @@ bool HasGuestWideScan(const char* format) {
 }
 
 
-bool HasNarrowCharacterScan(const char* format) {
+bool HasNarrowScan(const char* format, const char* conversions) {
     if (format == nullptr) return false;
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
@@ -131,7 +131,8 @@ bool HasNarrowCharacterScan(const char* format) {
         while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
         const char* length = format;
         while (*format && std::strchr("hljztL", *format)) ++format;
-        if (*format == 'c' && !(format - length == 1 && *length == 'l')) return true;
+        if (*format != '\0' && std::strchr(conversions, *format) != nullptr &&
+                (*format != 'c' || !(format - length == 1 && *length == 'l'))) return true;
         if (*format == '[') {
             ++format;
             if (*format == '^') ++format;
@@ -143,9 +144,13 @@ bool HasNarrowCharacterScan(const char* format) {
     return false;
 }
 
-#ifdef _WIN32
+#ifndef _WIN32
+bool HasNarrowCharacterScan(const char* format) {
+    return HasNarrowScan(format, "c");
+}
+#else
 bool ScansInProcess(const char* format) {
-    return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
+    return HasGuestWideScan(format) || HasNarrowScan(format, "cxXipaAeEfFgG");
 }
 #endif
 
@@ -289,6 +294,12 @@ void StoreDefaultNaN(void* target, std::size_t bytes) {
     }
 }
 
+std::string ScanLength(const std::string& length, char conversion) {
+    if (length == "L" && std::strchr("diouxXn", conversion) != nullptr) return {};
+    if (std::strchr("aAeEfFgG", conversion) != nullptr && length != "l" && length != "L") return {};
+    return length;
+}
+
 class StringSource {
     const char* const start;
     const char* position;
@@ -415,9 +426,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const char first = *cursor++;
             if ((first == 'h' || first == 'l') && *cursor == first) ++cursor;
         }
-        const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
         if (conversion == '\0') return finish(assigned);
+        const std::string length = ScanLength(std::string(lengthStart, cursor), conversion);
         if (!secure && std::strchr("diouxXaAeEfFgGcspn[SC", conversion) == nullptr) return finish(assigned);
         std::string specifier(1, conversion);
         if (conversion == '[') {

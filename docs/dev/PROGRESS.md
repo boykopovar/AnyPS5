@@ -61,6 +61,8 @@ New or removed libraries show `Not present` on the missing side. Libraries whose
 
 Implemented definitions are also classified as behaviourally empty when their body holds only `(void)name;` discards and at most one constant return, bare `return;` or `throw`, including a return of a local wrapper that is itself behaviourally empty; wrapper calls whose arguments contain calls do not qualify. Comparisons list newly implemented behaviourally empty functions without changing any count. Older JSON snapshots without `inert_names` are accepted.
 - `tools/progress_diff.py <baseline> <candidate>` compares two progress snapshots as JSON: the symbol sets that were added and removed. Coverage is not game compatibility.
+  A symbol that changes from a stub to an implementation appears in `todo_names.removed` and `done_names.added`.
+  `change_percentage_points` is the candidate percentage minus the baseline percentage.
 
 ## One library
 

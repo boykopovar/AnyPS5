@@ -962,7 +962,7 @@ int APS5_VABI SSL_peek_nid_postfix(LibreSslSsl* ssl, void* buffer, int length);
 int APS5_VABI SSL_pending_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_read_nid_postfix(LibreSslSsl* ssl, void* buffer, int length);
 int APS5_VABI SSL_select_next_proto_nid_postfix(unsigned char** output, unsigned char* outputLength, const unsigned char* peer, std::uint32_t peerLength, const unsigned char* supported, std::uint32_t supportedLength);
-int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void);
+LibreSslCtx* APS5_VABI SSL_set_SSL_CTX_nid_postfix(LibreSslSsl* ssl, LibreSslCtx* ctx);
 int APS5_VABI SSL_set_bio_nid_postfix(void);
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value);
@@ -1088,5 +1088,15 @@ const char* APS5_VABI RAND_file_name_nid_postfix(char* buffer, std::size_t size)
 void* APS5_VABI CRYPTO_malloc_nid_postfix(int count, const char*, int);
 void APS5_VABI CRYPTO_free_nid_postfix(void* pointer);
 int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*);
+
+void* APS5_VABI NCONF_new_nid_no_patch(const void* method);
+int APS5_VABI NCONF_load_nid_no_patch(void* conf, const char* file, long* eline);
+void APS5_VABI NCONF_free_nid_no_patch(void* conf);
+void* APS5_VABI NCONF_get_section_nid_no_patch(void* conf, const char* section);
+const char* APS5_VABI NCONF_get_string_nid_no_patch(const void* conf, const char* section, const char* name);
+int APS5_VABI sk_CONF_VALUE_num_nid_no_patch(const void* section);
+void* APS5_VABI sk_CONF_VALUE_value_nid_no_patch(const void* section, int index);
+int APS5_VABI CONF_modules_load_nid_no_patch(const void* cnf, const char* appname, std::uint64_t flags);
+int APS5_VABI CONF_module_add_nid_no_patch(const char* name, int (*init)(void*, const void*), void (*finish)(void*));
 
 }
