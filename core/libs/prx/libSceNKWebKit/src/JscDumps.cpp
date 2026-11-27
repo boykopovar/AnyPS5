@@ -104,6 +104,7 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/JscDumpExports.hpp"
 
 #include <cstdarg>
@@ -126,9 +127,18 @@ using EndFunction = void (APS5_VABI*)(PrintStream*);
 static_assert(std::is_trivially_copyable_v<CellAttributes>);
 static_assert(std::is_trivially_copyable_v<HeapRange>);
 
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 template<typename TFunction>
 TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
     if (!out) throw std::invalid_argument("null WTF::PrintStream");
+    RequireReadableGuestBytes(out, sizeof(void*), function);
     void* const* vtablePtr = nullptr;
     if (!GuestCopyIn_nid_no_patch(&vtablePtr, out, sizeof(vtablePtr)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
@@ -137,12 +147,23 @@ TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
     const auto baseAddress = reinterpret_cast<std::uintptr_t>(vtablePtr);
     if (byteOffset > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const void* slotAddress = reinterpret_cast<const void*>(baseAddress + byteOffset);
+    RequireReadableGuestBytes(slotAddress, sizeof(void*), function);
     void* slotValue = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&slotValue, reinterpret_cast<const void*>(baseAddress + byteOffset), sizeof(slotValue)))
+    if (!GuestCopyIn_nid_no_patch(&slotValue, slotAddress, sizeof(slotValue)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (!slotValue) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return reinterpret_cast<TFunction>(slotValue);
 }
+
+struct PrintStreamScope {
+    PrintStream* out{nullptr};
+    EndFunction endFn{nullptr};
+
+    ~PrintStreamScope() {
+        if (endFn) endFn(out);
+    }
+};
 
 void APS5_VABI JscDumpPrintf_nid_no_patch(PrintStream* out, VprintfFunction vprintfFn, const char* format, ...) {
 #ifdef _WIN32
@@ -158,12 +179,6 @@ void APS5_VABI JscDumpPrintf_nid_no_patch(PrintStream* out, VprintfFunction vpri
 #endif
 }
 
-PrintStream* CheckedBegin(PrintStream* out, BeginFunction beginFn, const char* function) {
-    PrintStream* inner = beginFn(out);
-    static_cast<void>(ReadSlot<VprintfFunction>(inner, NKWebKit::WtfDumpAbi::PrintStreamVprintf, function));
-    return inner;
-}
-
 void PrintText(PrintStream* out, const char* text, const char* function) {
     const auto vprintfFn = ReadSlot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf, function);
     JscDumpPrintf_nid_no_patch(out, vprintfFn, "%s", text);
@@ -172,9 +187,9 @@ void PrintText(PrintStream* out, const char* text, const char* function) {
 void Print(PrintStream* out, const char* text, const char* function) {
     const auto beginFn = ReadSlot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin, function);
     const auto endFn = ReadSlot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd, function);
-    PrintStream* stream = CheckedBegin(out, beginFn, function);
+    PrintStream* stream = beginFn(out);
+    const PrintStreamScope scope{out, endFn};
     PrintText(stream, text, function);
-    endFn(out);
 }
 
 const char* DestructionModeName(std::int8_t mode) {
@@ -205,6 +220,7 @@ extern "C" {
 
 void APS5_VABI _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(const CellAttributes* self, PrintStream* out) {
     if (!self) throw std::invalid_argument("null JSC::CellAttributes");
+    RequireReadableGuestBytes(self, sizeof(CellAttributes), __func__);
     CellAttributes local{};
     if (!GuestCopyIn_nid_no_patch(&local, self, sizeof(local)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
@@ -212,17 +228,18 @@ void APS5_VABI _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(const CellAttr
     const auto endFn = ReadSlot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd, __func__);
     const char* destruction = DestructionModeName(local.destruction);
     const char* cellKind = CellKindName(local.cellKind);
-    PrintStream* stream = CheckedBegin(out, beginFn, __func__);
+    PrintStream* stream = beginFn(out);
+    const PrintStreamScope scope{out, endFn};
     PrintText(stream, "{", __func__);
     Print(stream, destruction, __func__);
     PrintText(stream, ", ", __func__);
     Print(stream, cellKind, __func__);
     PrintText(stream, "}", __func__);
-    endFn(out);
 }
 
 void APS5_VABI _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(const HeapRange* self, PrintStream* out) {
     if (!self) throw std::invalid_argument("null JSC::DOMJIT::HeapRange");
+    RequireReadableGuestBytes(self, sizeof(HeapRange), __func__);
     HeapRange local{};
     if (!GuestCopyIn_nid_no_patch(&local, self, sizeof(local)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);

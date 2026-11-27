@@ -219,6 +219,7 @@ void TestGuestPointers() {
     Require(ThrowsNotImplemented([&] {
         _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(&attributes, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(&badInnerStream));
     }, kCellSymbol));
+    Require(streams.log == "<YY>");
 
     Require(ThrowsNotImplemented([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(reinterpret_cast<const HeapRange*>(pages.Guard()), streams.Out()); }, kRangeSymbol));
     Require(ThrowsNotImplemented([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(reinterpret_cast<const HeapRange*>(pages.Guard() - 2), streams.Out()); }, kRangeSymbol));
