@@ -10490,6 +10490,8 @@ void verifyInt64AtomicCapabilities() {
     const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80010003u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80010003u, 0xe1685000u, 0x80010203u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80010003u, 0xe1645000u, 0x80010203u, 0xbf810000u};
+    const std::vector<std::uint32_t> globalSwap{0xdd418000u, 0x14080a03u, 0xbf810000u};
+    const std::vector<std::uint32_t> globalSwapBufferInc{0xdd418000u, 0x14080a03u, 0xe1705000u, 0x80012803u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
         const std::array<std::uint32_t, 6> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
@@ -10557,6 +10559,14 @@ void verifyInt64AtomicCapabilities() {
     const auto asksForLockTable = [](const RecompileResult& result) {
         return std::ranges::count_if(result.specialization, [](const PipelineSpecializationConstant& constant) { return PipelineSpecialization::IsAtomicLockTable(constant.id); }) == PipelineSpecialization::AtomicLockTableWords;
     };
+    for (const auto* code : {&globalSwap, &globalSwapBufferInc}) {
+        const auto lockedGlobal = compile(*code, spv::CapabilityShader);
+        require(!declares(lockedGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
+        require(asksForLockTable(lockedGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
+        const auto nativeGlobal = compile(*code, spv::CapabilityInt64Atomics);
+        require(declares(nativeGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 does not declare Int64Atomics");
+        require(!asksForLockTable(nativeGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled with shaderBufferInt64Atomics asks for the atomic lock table");
+    }
     const auto lockedBuffer = compile(bufferAtomic, spv::CapabilityShader);
     require(!declares(lockedBuffer.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
     require(asksForLockTable(lockedBuffer), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
