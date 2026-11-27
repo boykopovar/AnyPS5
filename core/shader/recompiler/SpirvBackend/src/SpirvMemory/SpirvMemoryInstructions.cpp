@@ -652,6 +652,7 @@ void LoadAddressWide(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint3
         return;
     }
     switch (mem.kind) {
+    case ResourceKind::ScalarAddress:
     case ResourceKind::Flat:
     case ResourceKind::Global:
         ctx.Define(inst, LoadBdaWide(ctx, inst, mem, components));
