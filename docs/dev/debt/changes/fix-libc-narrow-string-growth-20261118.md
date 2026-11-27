@@ -1,0 +1,5 @@
+# libSceLibcInternal
+
+## change [basic_string<char> erase, append, assign, _Xran and _Xlen]
+
+- [basic_string<char> erase, append, assign, _Xran and _Xlen](../../../core/libs/prx/libSceLibcInternal/BasicString.cpp) (libSceLibcInternal, NIDs `0Ir3jiT4V6Q`, `qiR-4jx1abE`, `QqBWUNEfIAo`, `xSxPHmpcNzY`, `pGxNI4JKfmY`, `ikjnoeemspQ`, `AzBnOt1DouU`, `pDtTdJ2sIz0`) follow ISO C++ string range and alias behavior on the 0x28-byte `GuestLocale::String`. Narrow append and assignment share insert's growth policy: round the request to fifteen, then use raw old+old/2 when old/2 exceeds rounded/3; rounded overflow uses the request, and geometric or padded allocation overflow reports bad_alloc. This follows PPSA07923's bundled libc ELF (SHA-256 `51ae8427c4a302abb1b6378fe65af69d4206d077006660eef4ee0e304e1e9e85`), including append's call to the common growth routine. No physical-console measurement was made. `max_size()` remains `SIZE_MAX - 1`; the `_Xran` and `_Xlen` messages remain `invalid string position` and `string too long`, without independent console verification.

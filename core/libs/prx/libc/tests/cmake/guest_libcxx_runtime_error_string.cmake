@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libcxx_runtime_error_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxRuntimeErrorString.cpp)
+    target_include_directories(guest_libcxx_runtime_error_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_runtime_error_string_tests PRIVATE libc)
+    configure_windows_unwind(guest_libcxx_runtime_error_string_tests)
+    add_test(NAME guest_libcxx_runtime_error_string COMMAND guest_libcxx_runtime_error_string_tests)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_runtime_error_string PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

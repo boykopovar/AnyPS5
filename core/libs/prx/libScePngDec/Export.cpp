@@ -74,7 +74,8 @@ constexpr std::uint32_t IMAGE_FLAG_ADAM7_INTERLACE = 1;
 constexpr std::uint32_t IMAGE_FLAG_TRNS_CHUNK_EXIST = 2;
 
 constexpr std::uint32_t BYTES_PER_PIXEL = 4;
-constexpr std::size_t OUTPUT_PALETTE_SIZE = 256 * BYTES_PER_PIXEL;
+constexpr int MAX_PALETTE_ENTRIES = 256;
+constexpr std::size_t OUTPUT_PALETTE_SIZE = MAX_PALETTE_ENTRIES * BYTES_PER_PIXEL;
 constexpr std::uint32_t MAX_PACKED_DIMENSION = 32767;
 
 struct Context {
@@ -147,7 +148,7 @@ constexpr std::size_t CHUNK_HEADER_SIZE = 8;
 constexpr std::size_t CHUNK_CRC_SIZE = 4;
 constexpr std::uint32_t IHDR_SIZE = 13;
 constexpr std::uint32_t MAX_CHUNK_LENGTH = 0x7FFFFFFF;
-constexpr std::uint32_t MAX_PALETTE_SIZE = 256 * 3;
+constexpr std::uint32_t MAX_PALETTE_SIZE = MAX_PALETTE_ENTRIES * 3;
 constexpr std::uint8_t ANCILLARY_BIT = 0x20;
 constexpr std::array<std::uint32_t, 256> CRC_TABLE = [] {
     std::array<std::uint32_t, 256> table{};
@@ -223,6 +224,7 @@ struct ChunkScan {
     std::int32_t headerResult = 0;
     std::int32_t imageResult = 0;
     std::vector<std::uint8_t> png;
+    std::span<const std::uint8_t> shortIdat;
 };
 
 bool validTransparency(const Chunk& chunk, std::uint8_t colorType, bool hasPalette, std::uint32_t paletteEntries) {
@@ -238,7 +240,7 @@ bool validTransparency(const Chunk& chunk, std::uint8_t colorType, bool hasPalet
     }
 }
 
-std::int32_t scanImageChunks(std::span<const std::uint8_t> png, std::size_t offset, std::vector<std::uint8_t>& output) {
+std::int32_t scanImageChunks(std::span<const std::uint8_t> png, std::size_t offset, ChunkScan& scan) {
     bool inImageData = true;
     std::int32_t result = 0;
     while (true) {
@@ -252,7 +254,11 @@ std::int32_t scanImageChunks(std::span<const std::uint8_t> png, std::size_t offs
                 result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
                 break;
             }
-            if (chunk->data.size() == chunk->length) appendChunk(output, "IDAT", chunk->data, chunk->complete ? std::optional<std::uint32_t>(chunk->crc) : std::nullopt);
+            if (chunk->data.size() == chunk->length) {
+                appendChunk(scan.png, "IDAT", chunk->data, chunk->complete ? std::optional<std::uint32_t>(chunk->crc) : std::nullopt);
+            } else {
+                scan.shortIdat = png.subspan(offset);
+            }
             if (!chunk->complete || !chunk->crcValid) {
                 result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
                 break;
@@ -272,7 +278,7 @@ std::int32_t scanImageChunks(std::span<const std::uint8_t> png, std::size_t offs
         }
         offset += CHUNK_HEADER_SIZE + chunk->length + CHUNK_CRC_SIZE;
     }
-    appendChunk(output, "IEND", {});
+    appendChunk(scan.png, "IEND", {});
     return result;
 }
 
@@ -287,6 +293,7 @@ ChunkScan scanChunks(std::span<const std::uint8_t> png, bool padPalette = true) 
     bool paletteSeen = false;
     bool hasPalette = false;
     bool hasTransparency = false;
+    std::uint8_t bitDepth = 0;
     std::uint32_t paletteEntries = 0;
     std::vector<std::uint8_t> palette;
     std::vector<std::uint8_t> transparency;
@@ -342,6 +349,7 @@ ChunkScan scanChunks(std::span<const std::uint8_t> png, bool padPalette = true) 
                 return scan;
             }
             colorType = chunk->data[9];
+            bitDepth = chunk->data[8];
             appendChunk(scan.png, "IHDR", chunk->data, chunk->crc);
         } else if (chunk->is("PLTE")) {
             paletteSeen = true;
@@ -358,10 +366,76 @@ ChunkScan scanChunks(std::span<const std::uint8_t> png, bool padPalette = true) 
         }
         offset += CHUNK_HEADER_SIZE + chunk->length + CHUNK_CRC_SIZE;
     }
+    if (hasPalette && !padPalette) {
+        const auto entries = std::min(paletteEntries, 1u << bitDepth);
+        palette.resize(entries * 3);
+        if (transparency.size() > entries) transparency.resize(entries);
+    }
     if (hasPalette) appendChunk(scan.png, "PLTE", palette);
     if (hasTransparency) appendChunk(scan.png, "tRNS", transparency);
-    scan.imageResult = scanImageChunks(png, offset, scan.png);
+    scan.imageResult = scanImageChunks(png, offset, scan);
     return scan;
+}
+
+struct PartialImage {
+    const Decoder::Png::Header& header;
+    const PngDecDecodeParam& param;
+    std::size_t pitch;
+    std::int32_t result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
+};
+
+void beginPartialImage(png_structp reader, png_infop info) {
+    const auto& image = *static_cast<const PartialImage*>(png_get_progressive_ptr(reader));
+    png_set_expand(reader);
+    png_set_strip_16(reader);
+    png_set_gray_to_rgb(reader);
+    if (!image.header.hasTransparency && !(png_get_color_type(reader, info) & PNG_COLOR_MASK_ALPHA)) {
+        const auto alpha = hasAlpha(image.header) ? 0xFF : image.param.alpha_value;
+        png_set_add_alpha(reader, alpha, PNG_FILLER_AFTER);
+    }
+    if (image.param.pixel_format == PIXEL_FORMAT_B8G8R8A8) png_set_bgr(reader);
+    png_read_update_info(reader, info);
+    if (png_get_rowbytes(reader, info) != static_cast<std::size_t>(image.header.width) * BYTES_PER_PIXEL) {
+        png_error(reader, "Unexpected PNG output row size");
+    }
+}
+
+void copyPartialRow(png_structp reader, png_bytep row, png_uint_32 rowNumber, int) {
+    auto& image = *static_cast<PartialImage*>(png_get_progressive_ptr(reader));
+    if (rowNumber >= image.header.height) png_error(reader, "Unexpected PNG output row");
+    auto* output = static_cast<std::uint8_t*>(image.param.image_mem_addr) + rowNumber * image.pitch;
+    if (!CopyOutPreservingErrno(output, row, static_cast<std::size_t>(image.header.width) * BYTES_PER_PIXEL)) {
+        image.result = SCE_PNG_DEC_ERROR_INVALID_ADDR;
+        png_error(reader, "Unwritable PNG output row");
+    }
+}
+
+void ignorePngWarning(png_structp, png_const_charp) {}
+
+void abortPartialImage(png_structp reader, png_const_charp) {
+    png_longjmp(reader, 1);
+}
+
+void readPartialRows(png_structp reader, png_infop info, const ChunkScan& scan, PartialImage& image) {
+    if (setjmp(png_jmpbuf(reader)) != 0) return;
+    png_set_user_limits(reader, image.header.width, image.header.height);
+    png_set_progressive_read_fn(reader, &image, beginPartialImage, copyPartialRow, nullptr);
+    png_process_data(reader, info, const_cast<png_bytep>(scan.png.data()), scan.png.size() - CHUNK_HEADER_SIZE - CHUNK_CRC_SIZE);
+    if (!scan.shortIdat.empty()) {
+        png_process_data(reader, info, const_cast<png_bytep>(scan.shortIdat.data()), scan.shortIdat.size());
+    }
+}
+
+std::int32_t decodePartialImage(const ChunkScan& scan, const Decoder::Png::Header& header,
+                                const PngDecDecodeParam& param, std::size_t pitch) {
+    if (header.interlaced) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+    png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, abortPartialImage, ignorePngWarning);
+    if (!reader) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+    png_infop info = png_create_info_struct(reader);
+    PartialImage image{header, param, pitch};
+    if (info) readPartialRows(reader, info, scan, image);
+    png_destroy_read_struct(&reader, &info, nullptr);
+    return image.result;
 }
 
 struct InputStream {
@@ -471,23 +545,71 @@ bool headerAvailable(const std::vector<std::uint8_t>& data) {
     return false;
 }
 
+void readPngMemory(png_structp reader, png_bytep output, png_size_t size) {
+    auto& remaining = *static_cast<std::span<const std::uint8_t>*>(png_get_io_ptr(reader));
+    if (size > remaining.size()) png_error(reader, "Incomplete PNG input");
+    std::memcpy(output, remaining.data(), size);
+    remaining = remaining.subspan(size);
+}
+
+int readIndexedImage(std::span<const std::uint8_t> png, const Decoder::Png::Header& header,
+                     std::uint8_t* indices, std::uint8_t* palette) {
+    const auto fail = [](png_structp reader, png_const_charp) { png_longjmp(reader, 1); };
+    const auto ignoreWarning = [](png_structp, png_const_charp) {};
+    png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, fail, ignoreWarning);
+    if (!reader) return 0;
+    png_infop info = png_create_info_struct(reader);
+    if (!info) {
+        png_destroy_read_struct(&reader, nullptr, nullptr);
+        return 0;
+    }
+    if (setjmp(png_jmpbuf(reader))) {
+        png_destroy_read_struct(&reader, &info, nullptr);
+        return 0;
+    }
+    png_set_read_fn(reader, &png, readPngMemory);
+    png_read_info(reader, info);
+    png_colorp colors = nullptr;
+    int entries = 0;
+    if (!png_get_PLTE(reader, info, &colors, &entries) || entries <= 0 || entries > MAX_PALETTE_ENTRIES) {
+        png_error(reader, "Invalid PNG palette");
+    }
+    png_bytep transparency = nullptr;
+    int alphaEntries = 0;
+    png_get_tRNS(reader, info, &transparency, &alphaEntries, nullptr);
+    for (int i = 0; i < entries; ++i) {
+        auto* entry = palette + i * BYTES_PER_PIXEL;
+        entry[0] = colors[i].red;
+        entry[1] = colors[i].green;
+        entry[2] = colors[i].blue;
+        entry[3] = i < alphaEntries ? transparency[i] : 0xFF;
+    }
+
+    png_set_packing(reader);
+    png_set_check_for_invalid_index(reader, 0);
+    const int passes = png_set_interlace_handling(reader);
+    png_read_update_info(reader, info);
+    if (png_get_rowbytes(reader, info) != header.width || png_get_image_height(reader, info) != header.height) {
+        png_error(reader, "Invalid indexed PNG dimensions");
+    }
+    for (int pass = 0; pass < passes; ++pass) {
+        for (std::size_t y = 0; y < header.height; ++y) {
+            png_read_row(reader, indices + y * header.width, nullptr);
+        }
+    }
+    png_read_end(reader, nullptr);
+    png_destroy_read_struct(&reader, &info, nullptr);
+    return entries;
+}
+
 std::int32_t decodeIndexedImage(std::span<const std::uint8_t> png, const Decoder::Png::Header& header,
                                 void* destination, std::size_t pitch) {
-    png_image native{};
-    native.version = PNG_IMAGE_VERSION;
-    const std::unique_ptr<png_image, decltype(&png_image_free)> cleanup(&native, png_image_free);
-    if (!png_image_begin_read_from_memory(&native, png.data(), png.size())
-        || native.width != header.width || native.height != header.height) {
-        return SCE_PNG_DEC_ERROR_DECODE_ERROR;
-    }
-    native.format = PNG_FORMAT_RGBA_COLORMAP;
     std::array<std::uint8_t, OUTPUT_PALETTE_SIZE> palette{};
     std::vector<std::uint8_t> indices(static_cast<std::size_t>(header.width) * header.height);
-    if (!png_image_finish_read(&native, nullptr, indices.data(), 0, palette.data())) {
-        return SCE_PNG_DEC_ERROR_DECODE_ERROR;
-    }
+    const int entries = readIndexedImage(png, header, indices.data(), palette.data());
+    if (entries == 0) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
     auto* output = static_cast<std::uint8_t*>(destination);
-    if (!CopyOutPreservingErrno(output, palette.data(), palette.size())) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyOutPreservingErrno(output, palette.data(), entries * BYTES_PER_PIXEL)) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     for (std::size_t y = 0; y < header.height; ++y) {
         if (!CopyOutPreservingErrno(output + palette.size() + y * pitch, indices.data() + y * header.width, header.width)) {
             return SCE_PNG_DEC_ERROR_INVALID_ADDR;
@@ -534,7 +656,8 @@ std::int32_t decodePngBytes(const Context& context, const PngDecDecodeParam& par
     }
 
     const std::optional<Decoder::Png::Image> image = Decoder::Png::Decode(png);
-    if (!image || image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+    if (!image) return decodePartialImage(scan, *header, param, static_cast<std::size_t>(pitch));
+    if (image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
 
     const bool swapRedBlue = param.pixel_format == PIXEL_FORMAT_B8G8R8A8;
     const bool fillAlpha = !hasAlpha(*header);

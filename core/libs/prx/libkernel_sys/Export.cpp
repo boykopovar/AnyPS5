@@ -1127,8 +1127,8 @@ int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
 int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interval) {
     constexpr int GuestEsrch = 3;
     const int self = getpid_nid_postfix();
-    if (pid != 0 && pid != self) return static_cast<int>(Fail(GuestEsrch));
-    const KernelTimespec quantum{0, 94000000};
+    if (pid != 0 && pid != 1 && pid != self) return static_cast<int>(Fail(GuestEsrch));
+    const KernelTimespec quantum{0, 4000000};
     if (interval == nullptr || !GuestCopyOut_nid_no_patch(interval, &quantum, sizeof(quantum))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }

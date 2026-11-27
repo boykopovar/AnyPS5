@@ -1,3 +1,4 @@
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include <functional>
@@ -124,10 +125,17 @@ std::uint32_t LoadSplitStateWord(SpirvEmitterState& state, std::uint32_t element
     return value;
 }
 
+std::uint32_t SplitSliceGroup(SpirvEmitterState& state) {
+    const auto launched = EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u);
+    const auto listed = EmitINotEqual32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupListDword)), ConstantU32(state, 0u));
+    const auto entry = LoadSplitStateWord(state, EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupListOffsetDword)), launched));
+    return EmitSelectU32(state, listed, entry, launched);
+}
+
 std::uint32_t SplitStateElement(SpirvEmitterState& state, std::uint32_t slot) {
     if (!state.splitState) throw std::runtime_error("split state is accessed in a program that has no split state buffer");
     const auto capacity = LoadSplitStateWord(state, ConstantU32(state, SplitStateCapacityDword));
-    const auto group = EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u);
+    const auto group = SplitSliceGroup(state);
     const auto index = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, TypeU32(state), index, InputVariableForKind(state, StageInputKind::LocalInvocationIndex));
     const auto invocation = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, MeshWindowInvocations(state))), index);

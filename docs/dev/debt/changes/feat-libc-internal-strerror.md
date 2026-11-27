@@ -1,8 +1,6 @@
 # libSceLibcInternal
 
-## change `_Strerror` (NID `4F11tHMpJa0`)
-
-- [Additional 3.20 imports](../../../core/libs/prx/libSceLibcInternal/InventoryExports2.cpp) (libSceLibcInternal) - `_Strcollx` (NID `v6rXYSx-WGA`), `_Strxfrmx` (NID `CpiD2ZXrhNo`); signatures and behavior are unverified and calls throw through `NotImplemented_nid_no_patch`.
+## remove `_Strerror` (NID `4F11tHMpJa0`)
 
 ## add Additional PS5 3.20 imports (xdCloudy #9511)
 

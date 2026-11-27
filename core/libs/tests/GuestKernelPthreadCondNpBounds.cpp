@@ -23,16 +23,6 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
-template <typename TFunc>
-bool ThrowsInvalidArgument(TFunc func) {
-    try {
-        func();
-    } catch (const std::invalid_argument&) {
-        return true;
-    }
-    return false;
-}
-
 struct WaitSync {
     PthreadMutex mutex = nullptr;
     PthreadCond cond = nullptr;
@@ -272,8 +262,8 @@ void TestCondSetnameNpBounds() {
 
     PthreadCond cond = nullptr;
     Require(pthread_cond_init_nid_postfix(&cond, nullptr) == 0);
+    Require(pthread_cond_setname_np_nid_postfix(&cond, nullptr) == GuestEinval);
     Require(pthread_cond_setname_np_nid_postfix(&cond, "Worker118Cond") == 0);
-    Require(ThrowsInvalidArgument([&] { return pthread_cond_setname_np_nid_postfix(&cond, nullptr); }));
 
     Require(pthread_cond_destroy_nid_postfix(&cond) == 0);
     Require(pthread_cond_setname_np_nid_postfix(&cond, "PostDestroy") == GuestEinval);
