@@ -166,6 +166,10 @@ void APS5_VABI WKBundlePageSetBottomOverhangImage(const void* pageRef, const voi
 void APS5_VABI WKBundlePageSetTopOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold(const void* pageRef, std::uint64_t threshold);
 bool APS5_VABI WKBundlePageHasLocalDataForURL(const void* pageRef, const void* urlRef);
+double APS5_VABI WKBundlePageGetPageZoomFactor(const void* pageRef);
+double APS5_VABI WKBundlePageGetTextZoomFactor(const void* pageRef);
+void APS5_VABI WKBundlePageSetPageZoomFactor(const void* pageRef, double zoomFactor);
+void APS5_VABI WKBundlePageSetTextZoomFactor(const void* pageRef, double zoomFactor);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
