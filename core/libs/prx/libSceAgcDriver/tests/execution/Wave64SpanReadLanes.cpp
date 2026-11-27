@@ -126,14 +126,18 @@ SpanFunctions Controls(std::span<const std::uint32_t> words) {
     std::vector<std::uint32_t> reads;
     std::vector<std::uint32_t> loads;
     SpanFunctions functions;
-    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0 && (words[at] >> 16u) <= words.size() - at; at += words[at] >> 16u) {
+        const std::size_t count = words[at] >> 16u;
         const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
-        if (op == spv::OpName) {
-            const std::string_view name(reinterpret_cast<const char*>(&words[at + 2]));
+        if (op == spv::OpName && count > 2u) {
+            const auto* text = reinterpret_cast<const char*>(&words[at + 2]);
+            const std::size_t bytes = (count - 2u) * sizeof(std::uint32_t);
+            const auto* end = static_cast<const char*>(std::memchr(text, 0, bytes));
+            const std::string_view name(text, end != nullptr ? static_cast<std::size_t>(end - text) : bytes);
             if (name.starts_with("read_bda_span")) reads.push_back(words[at + 1]);
             if (name.starts_with("load_bda_span")) loads.push_back(words[at + 1]);
         }
-        if (op != spv::OpFunction) continue;
+        if (op != spv::OpFunction || count < 5u) continue;
         const std::uint32_t control = words[at + 3];
         if (std::ranges::find(reads, words[at + 2]) != reads.end()) {
             ++functions.reads;
@@ -142,7 +146,7 @@ SpanFunctions Controls(std::span<const std::uint32_t> words) {
         }
         if (std::ranges::find(loads, words[at + 2]) != loads.end()) {
             ++functions.loads;
-            if ((control & spv::FunctionControlDontInlineMask) != 0u) ++functions.loadsDontInline;
+            if ((control & (spv::FunctionControlInlineMask | spv::FunctionControlDontInlineMask)) == spv::FunctionControlDontInlineMask) ++functions.loadsDontInline;
         }
     }
     return functions;
