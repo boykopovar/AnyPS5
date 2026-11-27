@@ -116,6 +116,11 @@ inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attri
     return records == 0;
 }
 
+inline bool VertexFetchUsesZeroBuffer(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    return VertexFetchOutOfRange(attribute) || (!NullVertexDescriptor(attribute) && stride != 0 && attribute.resource.fields[2] == 0 && VertexBufferOutOfBoundsSelect(attribute) == 0u);
+}
+
 inline VertexFormat ZeroVertexFormat(const ShaderRecompiler::VertexAttribute& attribute) {
     const auto decoded = DecodeVertexFormat(attribute);
     const auto format = std::strcmp(decoded.scalar, "u32") == 0 ? VK_FORMAT_R32G32B32A32_UINT : std::strcmp(decoded.scalar, "i32") == 0 ? VK_FORMAT_R32G32B32A32_SINT : VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -123,7 +128,7 @@ inline VertexFormat ZeroVertexFormat(const ShaderRecompiler::VertexAttribute& at
 }
 
 inline bool ZeroVertexChangesLayout(const ShaderRecompiler::VertexAttribute& attribute) {
-    return VertexFetchOutOfRange(attribute) && (((attribute.resource.fields[1] >> 16u) & 0x3fffu) != 0 || DecodeVertexFormat(attribute).format != ZeroVertexFormat(attribute).format);
+    return VertexFetchUsesZeroBuffer(attribute) && (((attribute.resource.fields[1] >> 16u) & 0x3fffu) != 0 || DecodeVertexFormat(attribute).format != ZeroVertexFormat(attribute).format);
 }
 
 inline std::string VertexAttributeSignature(const ShaderRecompiler::VertexAttribute& attribute) {
@@ -192,7 +197,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
     result.attributes.reserve(attributes.size());
     for (const auto& attribute : attributes) {
         const auto& fields = attribute.resource.fields;
-        const auto zero = VertexFetchOutOfRange(attribute);
+        const auto zero = VertexFetchUsesZeroBuffer(attribute);
         const auto format = zero ? ZeroVertexFormat(attribute) : DecodeVertexFormat(attribute);
         const auto duplicate = std::any_of(result.attributes.begin(), result.attributes.end(), [&](const auto& described) { return described.location == attribute.location; });
         Require(attribute.location < context.limits.maxVertexInputAttributes && !duplicate, "invalid or duplicate vertex attribute location");
@@ -225,7 +230,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
 
 inline void ValidateVertexAddresses(std::span<const ShaderRecompiler::VertexAttribute> attributes) {
     for (const auto& attribute : attributes) {
-        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) continue;
+        if (NullVertexDescriptor(attribute) || VertexFetchUsesZeroBuffer(attribute)) continue;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         if (address == 0 || address % DecodeVertexFormat(attribute).alignment != 0) Require(false, "unaligned vertex buffer");
@@ -556,11 +561,11 @@ inline std::vector<std::uint32_t> MeshRestartTable(std::span<const std::byte> in
     return starts;
 }
 
-inline std::vector<std::size_t> SoloZeroPaddedFetchIndices(const std::vector<VertexFetch>& fetches, const std::vector<std::size_t>& fetchValid) {
+inline std::vector<std::size_t> SoloZeroPaddedFetchIndices(const std::vector<VertexFetch>& fetches, const std::vector<std::size_t>& fetchValid, bool isolateAll = false) {
     Require(fetchValid.size() == fetches.size(), "fetch validity does not match the fetch count");
     std::vector<std::size_t> solo;
     for (std::size_t i = 0; i < fetches.size(); ++i) {
-        if (fetchValid[i] < fetches[i].end - fetches[i].begin) solo.push_back(i);
+        if (isolateAll || fetchValid[i] < fetches[i].end - fetches[i].begin) solo.push_back(i);
     }
     return solo;
 }
