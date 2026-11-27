@@ -4967,7 +4967,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto mappings = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         const bool remapped = proved.epoch != 0 && imagesRemapped(mappings);
         const bool stalePlanes = proved.epoch != 0 && stalePlanesRead();
-        const bool matched = stamp.epoch != 0 && proved == stamp && !remapped && !stalePlanes && !noFastRevalidate;
+        const bool matched = stamp.epoch != 0 && proved == stamp && !remapped && !stalePlanes && !noFastRevalidate && !(AuditEveryInterval() && TemplateAuditDue(lastFullWalk));
         const bool copies = matched && !refreshPerUseCopies();
         if (matched && !copies) {
             if (verifyingExits()) {

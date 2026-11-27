@@ -407,6 +407,7 @@ public:
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
     static bool EpochProofs();
+    void AgeLastFullWalkForTest(std::chrono::steady_clock::duration age) { lastFullWalk = std::chrono::steady_clock::now() - age; }
     bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
     bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }

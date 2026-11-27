@@ -24,6 +24,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -682,6 +683,38 @@ void EpochExitRetiredSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& bl
     resources.reset();
 }
 
+void EpochExitAuditCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto* base = block.At(EpochSurfaceOffset);
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    FillSlice(base, SliceBytes, Bits(0.75f), 4u);
+    const auto program = CompileLoad(device, base, shape, 0, output);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    ImportGuestBlockByUnrelatedLoad(device, block, output);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "audit epoch exit: epoch proofs are off");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable(), "audit epoch exit: the sampling build is not reusable");
+    Require(resources->Revalidate(shader), "audit epoch exit: the sampling build did not prove current");
+    const auto reuses = [] { return AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum(); };
+    ShaderResources::ProofReport report{};
+    auto reusesBefore = reuses();
+    Require(resources->Revalidate(shader, &report) && reuses() != reusesBefore && !report.audited, "audit epoch exit: an unchanged build did not take the exit before its audit was due");
+    resources->AgeLastFullWalkForTest(std::chrono::hours(1));
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    reusesBefore = reuses();
+    const bool proved = resources->Revalidate(shader, &report);
+    const bool exited = reuses() != reusesBefore;
+    std::printf("audit epoch exit: a requested audit past its interval %s the exit; the proof %s and %s\n", exited ? "took" : "did not take", proved ? "held" : "was refused", report.audited ? "counted as the audit" : "did not count as the audit");
+    Require(proofBefore == AgcDriver::GuestMemory::ProofSerial(), "audit epoch exit: the audit moved the proof serial, so the case tests nothing");
+    Require(proved && !exited && report.path == ShaderResources::ProofPath::Full, "audit epoch exit: a requested audit past its interval was skipped by the epoch exit");
+    reusesBefore = reuses();
+    Require(resources->Revalidate(shader, &report) && reuses() != reusesBefore && !report.audited, "audit epoch exit: the audit did not refresh the interval, so the next use did not take the exit");
+}
+
 void EpochExitPerUseCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     using AgcDriver::Graphics::ShaderResources;
     auto* base = block.At(EpochPerUseOffset);
@@ -977,6 +1010,11 @@ int main(int argc, char** argv) {
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit-retired") {
             EpochExitRetiredSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
             std::puts("retired depth surface epoch exit tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-audit") {
+            EpochExitAuditCase(*device, block, epochOutput);
+            std::puts("audit epoch exit tests passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit-per-use") {

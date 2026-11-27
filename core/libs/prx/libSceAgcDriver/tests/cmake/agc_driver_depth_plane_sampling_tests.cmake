@@ -31,6 +31,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_depth_plane_epoch_exit_retired PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_depth_plane_epoch_exit_audit COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit-audit)
+    set_tests_properties(agc_driver_depth_plane_epoch_exit_audit PROPERTIES ENVIRONMENT "APS5_TEMPLATE_AUDIT_ALWAYS=1;APS5_TEMPLATE_AUDIT_MS=600000" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_epoch_exit_audit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_depth_plane_epoch_exit_per_use COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit-per-use)
     set_tests_properties(agc_driver_depth_plane_epoch_exit_per_use PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_DEPTH_PLANE_REUSE=1" SKIP_RETURN_CODE 77 TIMEOUT 60
         PASS_REGULAR_EXPRESSION "per-use epoch exit: epoch proofs on, exit inputs kept, planes stored: an unchanged build over a texture remade per use did not take the exit \\(resource proofs reused 0\\) and proved current\n.*per-use epoch exit tests passed"
