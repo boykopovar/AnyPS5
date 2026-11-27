@@ -42,6 +42,9 @@ public:
         for (const auto& [slot, target] : Values) result.push_back(target);
         return result;
     }
+    std::map<Domain::VirtualAddress, Domain::VirtualAddress> SlotTargets() const override {
+        return Values;
+    }
 };
 
 constexpr std::uint16_t RegisterBit(const unsigned index) { return static_cast<std::uint16_t>(1u << index); }

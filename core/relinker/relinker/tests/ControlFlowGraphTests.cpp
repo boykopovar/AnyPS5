@@ -56,6 +56,10 @@ public:
         for (const auto& [slot, target] : Slots) targets.push_back(target);
         return targets;
     }
+
+    std::map<VirtualAddress, VirtualAddress> SlotTargets() const override {
+        return Slots;
+    }
 };
 
 void Require(bool condition, const std::string& message) {
