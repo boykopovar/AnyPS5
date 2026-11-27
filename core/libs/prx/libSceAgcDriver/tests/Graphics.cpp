@@ -15074,8 +15074,12 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         auto anchoredState = state;
         anchoredState.samples = 4;
         anchoredState.depth->samples = 2;
+        anchoredState.color.samples = 4;
+        for (auto& target : anchoredState.colors) target.samples = 4;
         anchoredState.depthTest = false;
         anchoredState.depthWrite = false;
+        anchoredState.stencilFront = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_LESS_OR_EQUAL, 0xff, 0xff, 1};
+        anchoredState.stencilBack = anchoredState.stencilFront;
         anchoredState.depthAnchorSamples = 2;
         anchoredState.depthAnchorMap = {0x76540010u, 0x76540110u, 0x76540010u, 0x76541010u};
         const auto anchoredRecipe = MakeGraphicsPipelineRecipe(anchoredState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
@@ -15083,6 +15087,15 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         const auto anchoredBytes = EncodeGraphicsPipelineRecipe(anchoredRecipe);
         GraphicsPipelineRecipe anchoredDecoded;
         Require(DecodeGraphicsPipelineRecipe(anchoredBytes, anchoredDecoded) && anchoredDecoded.state.depthAnchorSamples == 2 && anchoredDecoded.state.depth && anchoredDecoded.state.depth->samples == 2 && anchoredDecoded.state.samples == 4 && EncodeGraphicsPipelineRecipe(anchoredDecoded) == anchoredBytes, "the recipe of a color-writing draw over a depth target with fewer samples did not round-trip its stored sample count");
+        auto fullDepthState = anchoredState;
+        fullDepthState.depth->samples = 4;
+        fullDepthState.depthAnchorSamples = 0;
+        fullDepthState.depthAnchorMap = {};
+        std::vector<std::byte> anchoredKey, anchoredReplayed, fullDepthKey;
+        BuildPipelineStoreKey(anchoredKey, context, anchoredState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(anchoredReplayed, context, anchoredDecoded.state, anchoredDecoded.vertexInput, layouts.View(), shaders, anchoredDecoded.attachmentLayout);
+        BuildPipelineStoreKey(fullDepthKey, context, fullDepthState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        Require(anchoredKey != fullDepthKey && anchoredKey == anchoredReplayed, "the decoded state of a color-writing draw over a depth target with fewer samples keys another pipeline");
         auto lineState = state;
         lineState.stages.mesh = ShaderRecompiler::MeshConfiguration{1, 2, 2, 4, 4, 32, 64, 1, 4, 2};
         GraphicsPipelineRecipe lineDecoded;
