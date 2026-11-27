@@ -1567,13 +1567,14 @@ bool RequestGuestThreadPark(PthreadPrivate* thread) {
         DWORD64 image = 0;
         const auto running = FrozenCode(native, image);
         if (running == CodeKind::Guest && !HoldsSuspendAllSlot(thread)) {
-            thread->parked.store(1, std::memory_order_release);
-            thread->osParked.store(true, std::memory_order_seq_cst);
-            if (!thread->suspended.load(std::memory_order_seq_cst) && thread->osParked.exchange(false, std::memory_order_seq_cst)) {
-                thread->parked.store(0, std::memory_order_release);
-                ResumeThread(native);
+            const auto live = LockLiveGuestThread(thread);
+            if (live.owns_lock() && thread->parked.load(std::memory_order_seq_cst) == 0 && thread->suspended.load(std::memory_order_seq_cst)) {
+                thread->parked.store(1, std::memory_order_seq_cst);
+                thread->osParked.store(true, std::memory_order_seq_cst);
+                return true;
             }
-            return true;
+            ResumeThread(native);
+            return live.owns_lock();
         }
         if (!queued && thread->waitCount.load(std::memory_order_seq_cst) > 0) queued = QueueUserAPC(ParkApc, native, 0) != 0;
         ResumeThread(native);

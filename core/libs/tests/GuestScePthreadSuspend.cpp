@@ -58,6 +58,18 @@ static void* APS5_VABI Nap(void* opaque) {
     return FINISHED;
 }
 
+struct SuspendRequest {
+    Pthread target = nullptr;
+    std::atomic<bool> go{false};
+};
+
+static void* APS5_VABI SuspendTarget(void* opaque) {
+    auto* request = static_cast<SuspendRequest*>(opaque);
+    while (!request->go.load()) {}
+    Require(scePthreadSuspend(request->target) == SCE_OK, "a concurrent scePthreadSuspend did not return SCE_OK");
+    return FINISHED;
+}
+
 static void* APS5_VABI Record(void* opaque) {
     static_cast<Worker*>(opaque)->progress.fetch_add(1);
     return FINISHED;
@@ -137,6 +149,26 @@ static void SuspendRightAfterResumeStops() {
     for (std::size_t index = 0; index < threads.size(); ++index) Finish(threads[index], workers[index]);
 }
 
+static void ConcurrentSuspendsResumeOnce() {
+    std::array<Worker, 1> workers;
+    const Pthread spin = Start(Spin, workers[0], "spin");
+    WaitForProgress(workers[0], 0, "the spinner never started");
+    for (int round = 0; round < RACE_ROUNDS; ++round) {
+        SuspendRequest request;
+        request.target = spin;
+        std::array<Pthread, 2> suspenders{};
+        for (auto& suspender : suspenders) Require(scePthreadCreate(&suspender, nullptr, SuspendTarget, &request, "suspender") == SCE_OK, "scePthreadCreate failed");
+        request.go.store(true);
+        for (auto suspender : suspenders) Require(scePthreadJoin(suspender, nullptr) == SCE_OK, "joining a suspending thread failed");
+        const std::uint64_t stopped = workers[0].progress.load();
+        std::this_thread::sleep_for(RACE_WINDOW);
+        Require(workers[0].progress.load() == stopped, "a thread kept running after two concurrent scePthreadSuspend calls");
+        Require(scePthreadResume(spin) == SCE_OK, "scePthreadResume failed");
+        WaitForProgress(workers[0], stopped, "a thread suspended by two concurrent calls did not continue after one scePthreadResume");
+    }
+    Finish(spin, workers[0]);
+}
+
 static void SuspendErrorsThrow() {
     Worker recorded;
     const Pthread joined = Start(Record, recorded, "joined");
@@ -193,6 +225,7 @@ static void SuspendedThreadStaysStoppedThroughSuspendAll() {
 int main() {
     SuspendStopsOneThread();
     SuspendRightAfterResumeStops();
+    ConcurrentSuspendsResumeOnce();
     SuspendErrorsThrow();
     SuspendAllStopsEveryOtherThread();
     SingleStopsEveryOtherThread();
