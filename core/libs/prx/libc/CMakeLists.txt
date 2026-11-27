@@ -13,6 +13,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_emutls_tests PRIVATE libc)
     configure_windows_unwind(guest_emutls_tests)
     add_test(NAME guest_emutls COMMAND guest_emutls_tests)
+    add_asan_test_options(guest_emutls allocator_may_return_null=1)
     if(WIN32)
         set_tests_properties(guest_emutls PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
