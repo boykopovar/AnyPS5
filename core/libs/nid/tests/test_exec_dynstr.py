@@ -367,6 +367,7 @@ class ExecutableDynstrTests(unittest.TestCase):
     def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_layout_is_malformed(self):
         original = bytearray(executable("sce"))
         struct.pack_into("<Q", original, SHOFF + 4 * 64 + 32, 17)
+        struct.pack_into("<Q", original, SHOFF + 4 * 64 + 56, 0)
         original = bytes(original)
         result, after = patch(original)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -376,6 +377,7 @@ class ExecutableDynstrTests(unittest.TestCase):
         stale_dynamic_section = symbols.sections(after)[4]
         self.assertEqual(stale_dynamic_section[4], DYNAMIC_OFFSET)
         self.assertEqual(stale_dynamic_section[5], 17)
+        self.assertEqual(stale_dynamic_section[9], 0)
 
     def test_sce_dynlib_alignment_padding_is_bounded(self):
         original = bytearray(executable("sce"))
