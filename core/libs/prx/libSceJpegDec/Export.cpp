@@ -1,6 +1,7 @@
 #include "prx/libSceJpegDec/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -17,6 +18,7 @@
 #include "Decoder/Jpeg.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static_assert(sizeof(JpegDecCreateParam) == 0xC);
 static_assert(sizeof(JpegDecParseParam) == 0x10);
@@ -505,22 +507,32 @@ int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam* param, void* memory
     if (memorySize < workMemorySize(localParam)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
     if (!handle) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     const auto address = reinterpret_cast<std::uintptr_t>(memoryAddress);
+    if (address > UINTPTR_MAX - (HANDLE_ALIGNMENT - 1)) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
+    {
+        const int savedErrno = errno;
+        const GuestArena::HostWrite handleGuard(handle, sizeof(void*));
+        const bool handleWritable = handleGuard.Open() && GuestWritable_nid_no_patch(handle, sizeof(void*));
+        errno = savedErrno;
+        if (!handleWritable) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    }
+    auto* context = reinterpret_cast<Context*>(aligned);
+    Context prevContext{};
+    const bool hadPrevContext = GuestCopyIn_nid_no_patch(&prevContext, reinterpret_cast<const void*>(aligned), sizeof(prevContext));
     Context localContext{};
-    localContext.self = reinterpret_cast<Context*>(aligned);
+    localContext.self = context;
     localContext.attribute = localParam.attribute;
     localContext.maxImageWidth = (localParam.max_image_width + 31) & ~std::uint32_t{31};
     localContext.rowBufferCapacity = (localContext.maxImageWidth + 16) * (localParam.attribute == ATTRIBUTE_CSC_ORDINARY ? 24 : 80);
     if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &localContext, sizeof(localContext))) {
         return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     }
-    auto* context = reinterpret_cast<Context*>(aligned);
-    forgetStream(context);
     if (!GuestCopyOut_nid_no_patch(handle, &context, sizeof(context))) {
-        Context cleared{};
-        GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
+        const Context& restore = hadPrevContext ? prevContext : Context{};
+        GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &restore, sizeof(restore));
         return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     }
+    forgetStream(context);
     return 0;
 }
 

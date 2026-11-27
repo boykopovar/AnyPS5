@@ -46,7 +46,8 @@ bool ReadWord(const void* source, std::uint32_t& value) {
 
 extern "C" {
 
-int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void) {
+int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void* argument1) {
+    if (argument1 == nullptr) return Error0002;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -72,13 +73,12 @@ int APS5_VABI sceAvControlSetMonitorFakeMode(void) {
 }
 
 int APS5_VABI sceAvControlGetCurrentOutputSysMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlGetNativeHdmiMonitorInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlGetNativeHdmiMonitorInfo(std::uint64_t, void* info) {
+    if (info == nullptr) return Error0001;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlGetRawMonitorInfo(std::uint64_t argument1, void* info) {
@@ -515,29 +515,31 @@ int APS5_VABI sceAvSettingGetCurrentOutputMode_() {
     return 0;
 }
 
-int APS5_VABI sceAvSettingGetDetailedHdcpStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetDetailedHdcpStatus(void* status) {
+    if (status == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetDeviceInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetDeviceInfo(std::uint64_t argument1, void* info) {
+    if (info == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdcpStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdcpStatus(void* status) {
+    if (status == nullptr) return Error0002;
+    const std::uint32_t source = 7;
+    GuestCopyOut_nid_no_patch(status, &source, sizeof(source));
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdmiConnectDisconnectNum() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdmiConnectDisconnectNum(void* number) {
+    if (number == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdmiKsvList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdmiKsvList(std::uint64_t argument1, void* list) {
+    if (list == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingGetHdmiMonitorInfo() {
