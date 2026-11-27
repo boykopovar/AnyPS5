@@ -211,6 +211,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -500,7 +501,7 @@ String GetColumnText(SQLiteStatement& statement, int col, const char* function) 
 template<typename T> void GetColumnBlobAsVector(SQLiteStatement& statement, int col, Vector<T>* resultPtr, const char* function) {
     GuestWriteScope resultAccess(resultPtr, sizeof(Vector<T>), function, true);
     auto& result = *resultPtr;
-    if (result.size > result.capacity || (result.size > 0 && !result.buffer))
+    if (result.size > result.capacity || (result.capacity > 0 && !result.buffer) || (result.capacity == 0 && result.buffer != nullptr))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     const void* blob = HasColumn(statement, col, function) ? sqlite3_column_blob_nid_postfix(statement.statement, col) : nullptr;
     if (!blob) {
@@ -540,6 +541,7 @@ template<typename T> void GetColumnBlobAsVector(SQLiteStatement& statement, int 
 
 int BindBlob(SQLiteStatement& statement, int index, const void* blob, int size, const char* function) {
     if (!statement.statement) return SqliteError;
+    if (size < 0) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (blob && size > 0) {
         const auto bytes = static_cast<std::size_t>(size);
         RequireReadableGuestBytes(blob, bytes, function);
@@ -551,12 +553,18 @@ int BindBlob(SQLiteStatement& statement, int index, const void* blob, int size, 
     return sqlite3_bind_blob_nid_postfix(statement.statement, index, blob, size, SqliteTransient);
 }
 
+int CheckedUtf16BindBytes(std::size_t unitCount, const char* function) {
+    if (unitCount > static_cast<std::size_t>(std::numeric_limits<int>::max()) / sizeof(char16_t))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return static_cast<int>(unitCount * sizeof(char16_t));
+}
+
 int BindText(SQLiteStatement& statement, int index, const StringImpl* text, const char* function) {
     const auto copied = CopyGuestStringImpl(text, function);
+    const int byteCount = CheckedUtf16BindBytes(copied.units.size(), function);
     static const char16_t anyCharacter = 0;
     const char16_t* characters = copied.units.empty() ? &anyCharacter : copied.units.data();
-    return sqlite3_bind_text16_nid_postfix(statement.statement, index, characters,
-        static_cast<int>(sizeof(char16_t) * copied.units.size()), SqliteTransient);
+    return sqlite3_bind_text16_nid_postfix(statement.statement, index, characters, byteCount, SqliteTransient);
 }
 
 struct ScopedStatement {
@@ -688,14 +696,20 @@ bool OpenDatabase(SQLiteDatabase& db, const String& filename, int openMode, cons
     return db.db != nullptr;
 }
 
+bool TryCopyInGuest(void* destination, const void* source, std::size_t bytes) noexcept {
+    if (!bytes) return true;
+    if (!source) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+    return GuestReadable_nid_no_patch(source, bytes) && GuestCopyIn_nid_no_patch(destination, source, bytes);
+}
+
 int APS5_VABI CallCollationFunction(void* argument, int aLength, const void* a, int bLength, const void* b) {
     auto* callable = static_cast<CollationFunction*>(argument)->callableWrapper;
-    if (!callable) NotImplemented_nid_no_patch("WTF::Function::operator()");
+    if (!callable) return 0;
     CollationCallable callableCopy{};
-    CopyInGuest(&callableCopy, callable, sizeof(callableCopy), __func__);
+    if (!TryCopyInGuest(&callableCopy, callable, sizeof(callableCopy)) || !callableCopy.vtable) return 0;
     void* slot = nullptr;
-    CopyInGuest(&slot, callableCopy.vtable + NKWebKit::WebCoreAbi::CollationCallSlot, sizeof(slot), __func__);
-    if (!slot) NotImplemented_nid_no_patch("WTF::Function::operator()");
+    if (!TryCopyInGuest(&slot, callableCopy.vtable + NKWebKit::WebCoreAbi::CollationCallSlot, sizeof(slot)) || !slot) return 0;
     using Call = int (APS5_VABI*)(CollationCallable*, int, const void*, int, const void*);
     return reinterpret_cast<Call>(slot)(callable, aLength, a, bLength, b);
 }
@@ -704,10 +718,9 @@ void APS5_VABI DestroyCollationFunction(void* argument) {
     auto* function = static_cast<CollationFunction*>(argument);
     if (auto* callable = function->callableWrapper) {
         CollationCallable callableCopy{};
-        CopyInGuest(&callableCopy, callable, sizeof(callableCopy), __func__);
         void* slot = nullptr;
-        CopyInGuest(&slot, callableCopy.vtable + NKWebKit::WebCoreAbi::CollationDeletingDestructorSlot, sizeof(slot), __func__);
-        if (slot) {
+        if (TryCopyInGuest(&callableCopy, callable, sizeof(callableCopy)) && callableCopy.vtable &&
+            TryCopyInGuest(&slot, callableCopy.vtable + NKWebKit::WebCoreAbi::CollationDeletingDestructorSlot, sizeof(slot)) && slot) {
             using Destroy = void (APS5_VABI*)(CollationCallable*);
             reinterpret_cast<Destroy>(slot)(callable);
         }
@@ -925,12 +938,17 @@ void APS5_VABI _ZN7WebCore14SQLiteDatabase20setCollationFunctionERKN3WTF6StringE
     CollationCallable* callable = nullptr;
     CopyInGuest(&callable, collationFunction, sizeof(callable), __func__);
     if (!db.db) NotImplemented_nid_no_patch(__func__);
+    auto functionObject = std::make_unique<CollationFunction>(CollationFunction{callable});
     CollationCallable* cleared = nullptr;
     if (!GuestCopyOut_nid_no_patch(collationFunction, &cleared, sizeof(cleared)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    auto* functionObject = new CollationFunction{callable};
-    sqlite3_create_collation_v2_nid_postfix(db.db, Bytes(name), SqliteUtf8, functionObject, CallCollationFunction,
-        DestroyCollationFunction);
+    const int status = sqlite3_create_collation_v2_nid_postfix(db.db, Bytes(name), SqliteUtf8, functionObject.get(),
+        CallCollationFunction, DestroyCollationFunction);
+    if (status == SqliteOk) {
+        functionObject.release();
+    } else {
+        GuestCopyOut_nid_no_patch(collationFunction, &callable, sizeof(callable));
+    }
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase29setIsDatabaseOpeningForbiddenEb(bool isForbidden) {
@@ -989,18 +1007,19 @@ int APS5_VABI _ZN7WebCore15SQLiteStatement8bindBlobEiPKvi(SQLiteStatement* self,
 int APS5_VABI _ZN7WebCore15SQLiteStatement8bindBlobEiRKN3WTF6StringE(SQLiteStatement* self, int index, const String* text) {
     GuestWriteRef stmtAccess(self, __func__);
     const auto copied = CopyGuestString(text, __func__);
+    const int byteCount = CheckedUtf16BindBytes(copied.units.size(), __func__);
     static const char16_t anyCharacter = 0;
     const char16_t* characters = copied.units.empty() ? &anyCharacter : copied.units.data();
-    return BindBlob(stmtAccess.Ref(), index, characters, static_cast<int>(copied.units.size() * sizeof(char16_t)), __func__);
+    return BindBlob(stmtAccess.Ref(), index, characters, byteCount, __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement8bindTextEiRKN3WTF6StringE(SQLiteStatement* self, int index, const String* text) {
     GuestWriteRef stmtAccess(self, __func__);
     const auto copied = CopyGuestString(text, __func__);
+    const int byteCount = CheckedUtf16BindBytes(copied.units.size(), __func__);
     static const char16_t anyCharacter = 0;
     const char16_t* characters = copied.units.empty() ? &anyCharacter : copied.units.data();
-    return sqlite3_bind_text16_nid_postfix(stmtAccess.Ref().statement, index, characters,
-        static_cast<int>(sizeof(char16_t) * copied.units.size()), SqliteTransient);
+    return sqlite3_bind_text16_nid_postfix(stmtAccess.Ref().statement, index, characters, byteCount, SqliteTransient);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement7bindIntEii(SQLiteStatement* self, int index, int integer) {

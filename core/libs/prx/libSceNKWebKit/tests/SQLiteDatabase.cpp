@@ -406,12 +406,13 @@ struct GuardedPages {
 
 template<typename TCall>
 bool ThrowsNotImplemented(TCall&& call) {
+    const auto before = NotImplementedCalls_nid_no_patch();
     try {
         call();
     } catch (const std::invalid_argument&) {
         return false;
     } catch (const std::exception&) {
-        return true;
+        return NotImplementedCalls_nid_no_patch() > before;
     }
     return false;
 }
@@ -475,6 +476,7 @@ void CheckGuestPointers(Database& db) {
     Statement bindStmt(db, "SELECT ?");
     Require(bindStmt.Prepare() == SqliteOk);
     Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindBlobEiPKvi(bindStmt.get(), 1, pages.Guard(), 4); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindBlobEiPKvi(bindStmt.get(), 1, "x", -1); }));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindTextEiRKN3WTF6StringE(bindStmt.get(), 1, unmappedDataString); }));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement8bindBlobEiRKN3WTF6StringE(bindStmt.get(), 1, unmappedDataString); }));
     Require(ThrowsNotImplemented([&] { _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6StringEdEEE(bindStmt.get(), 1, reinterpret_cast<const SQLValue*>(pages.Guard())); }));
@@ -492,6 +494,13 @@ void CheckGuestPointers(Database& db) {
     Vector<unsigned char> readOnlyBufferVec;
     readOnlyBufferVec.buffer = pages.ReadOnly();
     readOnlyBufferVec.capacity = 16;
+    readOnlyBufferVec.size = 0;
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIhLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+            blobStmt.get(), 0, &readOnlyBufferVec);
+    }));
+    readOnlyBufferVec.buffer = pages.ReadOnly();
+    readOnlyBufferVec.capacity = 0;
     readOnlyBufferVec.size = 0;
     Require(ThrowsNotImplemented([&] {
         _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIhLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
