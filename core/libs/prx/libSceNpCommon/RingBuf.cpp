@@ -1,5 +1,6 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -98,24 +99,21 @@ bool CopyInGuest(void* destination, const void* source, std::size_t bytes) {
     return copied;
 }
 
-bool CopyOutGuest(void* destination, const void* source, std::size_t bytes) {
+bool CopyOutChecked(void* destination, const void* source, std::size_t bytes) {
     const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    const GuestArena::HostWrite guard(destination, bytes);
+    const bool ok = guard.Open() && GuestWritable_nid_no_patch(destination, bytes) &&
+        GuestCopyOut_nid_no_patch(destination, source, bytes);
     errno = savedErrno;
-    return copied;
+    return ok;
 }
 
 bool WriteRingBufFields(NpRingBuf* self, const NpRingBuf& ringBuf) {
     constexpr std::size_t offset = offsetof(NpRingBuf, buf);
     const auto address = reinterpret_cast<std::uintptr_t>(self);
     if (self == nullptr || address > UINTPTR_MAX - offset) return false;
-    auto* const destination = reinterpret_cast<void*>(address + offset);
-    const std::size_t bytes = sizeof(ringBuf) - offset;
-    const int savedErrno = errno;
-    const bool writable = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
-    if (!writable) return false;
-    return CopyOutGuest(destination, reinterpret_cast<const std::uint8_t*>(&ringBuf) + offset, bytes);
+    return CopyOutChecked(reinterpret_cast<void*>(address + offset),
+        reinterpret_cast<const std::uint8_t*>(&ringBuf) + offset, sizeof(ringBuf) - offset);
 }
 
 } // namespace
@@ -127,11 +125,7 @@ void APS5_VABI _ZN3sce2np7RingBufC1Ev(NpRingBuf* self) {
     NpRingBuf local{};
     local.vtable = &RingBufVtable[2];
     ClearFields(local);
-    const int savedErrno = errno;
-    const bool writable = GuestWritable_nid_no_patch(self, sizeof(local));
-    errno = savedErrno;
-    if (!writable) return;
-    (void)CopyOutGuest(self, &local, sizeof(local));
+    (void)CopyOutChecked(self, &local, sizeof(local));
 }
 
 void APS5_VABI _ZN3sce2np7RingBufC2Ev(NpRingBuf* self) {
@@ -141,7 +135,7 @@ void APS5_VABI _ZN3sce2np7RingBufC2Ev(NpRingBuf* self) {
 void APS5_VABI _ZN3sce2np7RingBufD1Ev(NpRingBuf* self) {
     if (self == nullptr) return;
     const void* const* vtable = &RingBufVtable[2];
-    (void)CopyOutGuest(self, &vtable, sizeof(vtable));
+    (void)CopyOutChecked(self, &vtable, sizeof(vtable));
 }
 
 void APS5_VABI _ZN3sce2np7RingBufD2Ev(NpRingBuf* self) {
