@@ -305,7 +305,7 @@ public:
     bool HasStagedCopies() const { return guestMemory.HasStagedCopies(); }
     const void* MemoryOwner() const { return &guestMemory; }
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
-    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
+    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out, bool dataWritten = true) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool StorePages() const;
     bool SpaceReuse() const { return spaceReuse; }
