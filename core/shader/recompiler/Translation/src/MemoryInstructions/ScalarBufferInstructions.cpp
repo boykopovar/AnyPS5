@@ -51,6 +51,50 @@ bool TranslationContext::sLoad(const RdnaInstruction& inst, bool raw) {
     return true;
 }
 
+bool TranslationContext::sStore(const RdnaInstruction& inst, bool raw) {
+    const MemoryInfo memory = scalarMemoryInfoFromInstruction(inst, raw);
+    const std::uint32_t baseCode = inst.source0.kind == RdnaOperandKind::VccLo ? 106u : inst.source0.reg;
+    IrValue* resource = raw ? getScalarAddressResource(baseCode) : getBufferResource(memory);
+    const IrU32 offset = readU32(inst.source1);
+    const IrU32 data = readU32(inst.destination);
+    IrValue* value = &data.Value();
+    IrOpcode opcode;
+    if (raw) {
+        opcode = memory.dataDwords == 1u ? IrOpcode::StoreAddressU32
+               : memory.dataDwords == 2u ? IrOpcode::StoreAddressU32x2
+                                        : IrOpcode::StoreAddressU32x4;
+    } else {
+        opcode = memory.dataDwords == 1u ? IrOpcode::StoreBufferU32
+               : memory.dataDwords == 2u ? IrOpcode::StoreBufferU32x2
+                                        : IrOpcode::StoreBufferU32x4;
+    }
+    if (memory.dataDwords != 1u) {
+        const IrU32 second = readU32(offsetOperand(inst.destination, 1u));
+        if (memory.dataDwords == 2u) {
+            value = &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {&data.Value(), &second.Value()});
+        } else {
+            const IrU32 third = readU32(offsetOperand(inst.destination, 2u));
+            const IrU32 fourth = readU32(offsetOperand(inst.destination, 3u));
+            value = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4,
+                             {&data.Value(), &second.Value(), &third.Value(), &fourth.Value()});
+        }
+    }
+    IrValue& exec = ir.GetExec();
+    if (raw) {
+        (void)ir.Emit(opcode, IrType::Void, {resource, &offset.Value(), &ir.Constant(0u), value, &exec},
+                      addMemoryInfo(memory, inst.programCounter));
+    } else {
+        (void)ir.Emit(opcode, IrType::Void,
+                      {resource, &ir.Constant(0u), &offset.Value(), &ir.Constant(0u), value, &exec},
+                      addMemoryInfo(memory, inst.programCounter));
+    }
+    return true;
+}
+
+bool TranslationContext::sScratchStore(const RdnaInstruction& /*inst*/) {
+    throw std::runtime_error("s_scratch_store not yet implemented: wave-uniform or swizzled scratch layout required");
+}
+
 bool TranslationContext::sScratchLoad(const RdnaInstruction& /*inst*/) {
     throw std::runtime_error("s_scratch_load not yet implemented: wave-uniform or swizzled scratch layout required");
 }

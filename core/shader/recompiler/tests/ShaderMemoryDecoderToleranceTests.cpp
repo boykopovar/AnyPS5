@@ -310,10 +310,59 @@ void TestGfx1013OnlyFormsDecode() {
 }
 
 
+void TestGfx1013OnlyFormsTranslate() {
+    const std::array<std::uint32_t, 2> storeWords = {(0x3Du << 26u) | (0x10u << 18u) | (3u << 6u) | 2u, 0x40u};
+    const RdnaInstruction store = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(storeWords), 0u);
+    {
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(store);
+        bool foundStore = false;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::StoreAddressU32) foundStore = true;
+        EXPECT_EQ(foundStore, true);
+    }
+
+    const std::array<std::uint32_t, 2> bufferStoreWords = {(0x3Du << 26u) | (0x18u << 18u) | (3u << 6u) | 2u, 0x40u};
+    const RdnaInstruction bufferStore = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(bufferStoreWords), 0u);
+    {
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(bufferStore);
+        bool foundStore = false;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::StoreBufferU32) foundStore = true;
+        EXPECT_EQ(foundStore, true);
+    }
+
+    const std::array<std::uint32_t, 2> src2Words = {(0x36u << 26u) | (0xC0u << 18u) | 2u, (4u << 24u) | (6u << 16u) | (5u << 8u) | 7u};
+    const RdnaInstruction src2 = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(src2Words), 0u);
+    {
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(src2);
+        bool foundLoad = false;
+        bool foundAtomic = false;
+        for (const auto* value : block.Instructions()) {
+            if (value->Opcode() == IrOpcode::LoadSharedU32x2) foundLoad = true;
+            if (value->Opcode() == IrOpcode::SharedAtomicIAdd64) foundAtomic = true;
+        }
+        EXPECT_EQ(foundLoad, true);
+        EXPECT_EQ(foundAtomic, true);
+    }
+}
+
 int main() {
     TestDsWriteAddtidTolerance();
     TestDsReadAddtidTolerance();
     Test64BitScalarDescriptorVccLoAndRefusals();
     TestGfx1013OnlyFormsDecode();
+    TestGfx1013OnlyFormsTranslate();
     return 0;
 }

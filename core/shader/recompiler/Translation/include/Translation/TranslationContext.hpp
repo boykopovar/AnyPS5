@@ -171,7 +171,9 @@ private:
     IrU32 widenSubdword(IrValue* value, std::uint32_t bits, bool sign);
     IrValue* narrowSubdword(IrU32 value, std::uint32_t bits);
     bool sLoad(const RdnaInstruction& inst, bool raw);
+    bool sStore(const RdnaInstruction& inst, bool raw);
     bool sScratchLoad(const RdnaInstruction& inst);
+    bool sScratchStore(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
     bool bufferLoadFormatD16(const RdnaInstruction& inst);
     bool bufferStoreFormatD16(const RdnaInstruction& inst);
@@ -179,6 +181,7 @@ private:
     bool bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool imageAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
+    bool dsSrc264(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsWrxchg2(const RdnaInstruction& inst);
     bool flatLoad(const RdnaInstruction& inst);
     bool flatStore(const RdnaInstruction& inst);

@@ -671,6 +671,7 @@ void StoreAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
             StoreSubword(ctx, inst, mem, bits);
         }
         return;
+    case ResourceKind::ScalarAddress:
     case ResourceKind::Flat:
     case ResourceKind::Global:
         EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
@@ -1786,7 +1787,7 @@ void EmitStoreAddressU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
 
 void StoreAddressWide(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t components) {
     const auto& mem = ctx.Memory(inst);
-    if (mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) ctx.Fail(inst, "must write a physical address resource");
+    if (mem.kind != ResourceKind::ScalarAddress && mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) ctx.Fail(inst, "must write a physical address resource");
     EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
         auto& state = ctx.state;
         const auto base = GuestAddressBase(ctx, inst, mem);
