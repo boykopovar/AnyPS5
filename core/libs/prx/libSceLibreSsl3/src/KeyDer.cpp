@@ -1499,7 +1499,10 @@ LibreSsl3Certificate* APS5_VABI d2i_X509_bio_nid_postfix(LibreSsl::Bio* bio, Lib
     std::span<const unsigned char> input(bytes);
     LibreSsl3Certificate* certificate = DecodeCertificate_nid_no_patch(input);
     if (!certificate) return nullptr;
-    ReplaceOutput(output, certificate, FreeCertificate_nid_no_patch);
+    if (output) {
+        if (*output) FreeCertificate_nid_no_patch(*output);
+        *output = certificate;
+    }
     return certificate;
 }
 
