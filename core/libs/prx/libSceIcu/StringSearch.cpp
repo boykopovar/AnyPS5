@@ -213,8 +213,9 @@ void APS5_VABI usearch_reset_nid_postfix(UStringSearch* search) {
 void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int32_t attribute, std::int32_t value, std::int32_t* status) {
     Icu::RequireStatus(status);
     const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    if (incoming > 0) return;
     if (value == AttributeValueCount) {
-        if (incoming <= 0 && search && attribute >= 0 && attribute < AttributeCount) {
+        if (search && attribute >= 0 && attribute < AttributeCount) {
             if (const auto state = FindRegistered(search)) {
                 const std::lock_guard lock(state->mutex);
                 auto outgoing = incoming;
@@ -226,7 +227,6 @@ void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int3
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    if (incoming > 0) return;
     if (!search) return;
     if (attribute < 0 || attribute >= AttributeCount) {
         WriteChangedStatus(status, incoming, Icu::IllegalArgument, __func__);

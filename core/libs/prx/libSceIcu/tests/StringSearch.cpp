@@ -256,7 +256,7 @@ void FailingStatus(UStringSearch* search, const char16_t* words) {
             usearch_setText_nid_postfix(target, nullptr, 0, &status);
             Require(status == incoming);
             usearch_setAttribute_nid_postfix(target, 0, AttributeValueCount, &status);
-            Require(status == IllegalArgument);
+            Require(status == incoming);
         }
     }
 }
@@ -347,7 +347,7 @@ void GuestPointers(UStringSearch* search, const char16_t* words) {
         usearch_setAttribute_nid_postfix(search, 0, 1, roFailing);
         usearch_setPattern_nid_postfix(nullptr, nullptr, 0, roFailing);
         usearch_setText_nid_postfix(nullptr, nullptr, 0, roFailing);
-        Rejects([&] { usearch_setAttribute_nid_postfix(search, 0, AttributeValueCount, roFailing); });
+        usearch_setAttribute_nid_postfix(search, 0, AttributeValueCount, roFailing);
         Require(errno == EINVAL);
         Require(*roFailing == IllegalArgument);
     }
