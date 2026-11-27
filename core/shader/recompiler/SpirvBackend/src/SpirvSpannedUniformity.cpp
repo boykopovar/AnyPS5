@@ -1,6 +1,7 @@
 #include "SpirvInstructionOperands.hpp"
 #include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -141,6 +142,42 @@ bool PerInvocationResult(spv::Op op) {
     }
 }
 
+std::size_t SubgroupResultOperand(const std::vector<std::uint32_t>& instruction) {
+    switch (Opcode(instruction)) {
+    case spv::OpGroupNonUniformAll:
+    case spv::OpGroupNonUniformAny:
+    case spv::OpGroupNonUniformAllEqual:
+    case spv::OpGroupNonUniformBroadcastFirst:
+    case spv::OpGroupNonUniformBallot:
+    case spv::OpGroupNonUniformBallotFindLSB:
+    case spv::OpGroupNonUniformBallotFindMSB:
+        return 0u;
+    case spv::OpGroupNonUniformBroadcast:
+    case spv::OpGroupNonUniformShuffle:
+        return instruction.size() > 5u ? 5u : SIZE_MAX;
+    case spv::OpGroupNonUniformBallotBitCount:
+    case spv::OpGroupNonUniformIAdd:
+    case spv::OpGroupNonUniformFAdd:
+    case spv::OpGroupNonUniformIMul:
+    case spv::OpGroupNonUniformFMul:
+    case spv::OpGroupNonUniformSMin:
+    case spv::OpGroupNonUniformUMin:
+    case spv::OpGroupNonUniformFMin:
+    case spv::OpGroupNonUniformSMax:
+    case spv::OpGroupNonUniformUMax:
+    case spv::OpGroupNonUniformFMax:
+    case spv::OpGroupNonUniformBitwiseAnd:
+    case spv::OpGroupNonUniformBitwiseOr:
+    case spv::OpGroupNonUniformBitwiseXor:
+    case spv::OpGroupNonUniformLogicalAnd:
+    case spv::OpGroupNonUniformLogicalOr:
+    case spv::OpGroupNonUniformLogicalXor:
+        return instruction.size() > 4u && instruction[4] == spv::GroupOperationReduce ? 0u : SIZE_MAX;
+    default:
+        return SIZE_MAX;
+    }
+}
+
 bool PrivateStorage(std::uint32_t storageClass) {
     return storageClass == spv::StorageClassFunction || storageClass == spv::StorageClassPrivate;
 }
@@ -167,7 +204,7 @@ bool ImageRead(spv::Op op) {
 
 class Analysis {
 public:
-    Analysis(const Module& module, std::span<const std::uint32_t> snapshotVariables) : module(module) {
+    Analysis(const Module& module, bool subgroupCollectives, std::span<const std::uint32_t> snapshotVariables) : module(module), subgroupCollectives(subgroupCollectives) {
         for (const auto variable : snapshotVariables) {
             if (module.nonWritable.contains(variable)) snapshots.insert(variable);
         }
@@ -412,6 +449,14 @@ private:
         return blocks;
     }
 
+    bool SubgroupUniform(const Instruction& instruction, bool inDivergentFlow) const {
+        if (!subgroupCollectives || inDivergentFlow || instruction.size() < 4u) return false;
+        const auto scope = module.constants.find(instruction[3]);
+        if (scope == module.constants.end() || scope->second != spv::ScopeSubgroup) return false;
+        const auto operand = SubgroupResultOperand(instruction);
+        return operand == 0u || (operand != SIZE_MAX && !NonUniform(instruction[operand]));
+    }
+
     std::uint32_t BaseVariable(std::uint32_t pointer, const std::unordered_map<std::uint32_t, std::uint32_t>& chains) const {
         for (std::size_t depth = 0u; depth < 64u; ++depth) {
             const auto found = chains.find(pointer);
@@ -578,6 +623,7 @@ private:
                     for (std::size_t operand = 4u; operand < instruction.size(); ++operand) inherit(instruction[operand]);
                     break;
                 default:
+                    if (SubgroupUniform(instruction, inDivergentFlow)) break;
                     if (PerInvocationResult(op)) {
                         varying = true;
                         root = "an atomic or subgroup instruction (opcode " + std::to_string(static_cast<std::uint32_t>(op)) + ")";
@@ -599,6 +645,7 @@ private:
     static constexpr std::uint32_t UnknownClass = 0xffffffffu;
 
     const Module& module;
+    const bool subgroupCollectives;
     std::unordered_map<std::uint32_t, std::uint32_t> types;
     std::unordered_set<std::uint32_t> written;
     std::unordered_set<std::uint32_t> barriers;
@@ -623,7 +670,12 @@ std::optional<std::string> SpannedBarrierInDivergentFlow(std::span<const std::ui
     for (std::size_t cursor = 5u; !barrier && cursor < words.size(); cursor += std::max(words[cursor] >> 16u, 1u)) barrier = (words[cursor] & 0xffffu) == spv::OpControlBarrier;
     if (!barrier) return std::nullopt;
     const auto module = Parse(words);
-    return Analysis(module, snapshotVariables).Run();
+    return Analysis(module, false, snapshotVariables).Run();
+}
+
+std::optional<std::string> SubgroupBarrierInDivergentFlow(std::span<const std::uint32_t> words) {
+    const auto module = Parse(words);
+    return Analysis(module, true, {}).Run();
 }
 
 }
