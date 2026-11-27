@@ -124,18 +124,26 @@ void TestRandomValues() {
     GuardedPages pages;
     unsigned char out[32]{};
     _ZN3WTF29cryptographicallyRandomValuesEPvm(out, sizeof(out));
-    _ZN3WTF29cryptographicallyRandomValuesEPvm(nullptr, 16);
+    _ZN3WTF29cryptographicallyRandomValuesEPvm(nullptr, 0);
     _ZN3WTF29cryptographicallyRandomValuesEPvm(pages.Guard(), 0);
 
+    RequireNotImplemented([&] {
+        _ZN3WTF29cryptographicallyRandomValuesEPvm(nullptr, 16);
+    });
     RequireNotImplemented([&] {
         _ZN3WTF29cryptographicallyRandomValuesEPvm(pages.Guard(), 16);
     });
     RequireNotImplemented([&] {
         _ZN3WTF29cryptographicallyRandomValuesEPvm(pages.ReadOnly(), 16);
     });
+    unsigned char* const prefix = pages.ReadOnly() - 4;
+    std::memset(prefix, 0x5A, 4);
     RequireNotImplemented([&] {
-        _ZN3WTF29cryptographicallyRandomValuesEPvm(pages.ReadOnly() - 4, 16);
+        _ZN3WTF29cryptographicallyRandomValuesEPvm(prefix, 16);
     });
+    for (std::size_t i = 0; i < 4; ++i) {
+        Require(prefix[i] == 0x5A);
+    }
 }
 
 void TestMappedFileAndFileSystem() {

@@ -130,10 +130,13 @@ struct MappedDataGuard {
     }
 };
 
-void PublishMappedResult(WTF::MappedFileData* self, const WTF::MappedFileData& previousSelf, MappedDataGuard& mapped, bool* success, bool ok, bool previousSuccess, const char* function) {
+void PublishMappedResult(WTF::MappedFileData* self, const WTF::MappedFileData& previousSelf, MappedDataGuard& mapped, bool* success, bool ok, unsigned char previousSuccess, const char* function) {
+    static_assert(sizeof(bool) == sizeof(unsigned char));
     if (!TryPublishGuestValue(self, mapped.mapped, previousSelf))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    if (!TryPublishGuestValue(success, ok, previousSuccess)) {
+    const unsigned char okByte = ok ? 1u : 0u;
+    if (!GuestCopyOut_nid_no_patch(success, &okByte, sizeof(okByte))) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(success, &previousSuccess, sizeof(previousSuccess)));
         const bool restoredSelf = GuestCopyOut_nid_no_patch(self, &previousSelf, sizeof(previousSelf));
         if (!restoredSelf) mapped.mapped = {};
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
@@ -153,7 +156,7 @@ std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv() {
 }
 
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length) {
-    if (!buffer || length == 0) return;
+    if (length == 0) return;
     RequireWritableGuestBytes(buffer, length, __func__);
     std::uint8_t chunk[4096];
     auto* const destination = static_cast<std::uint8_t*>(buffer);
@@ -245,7 +248,9 @@ void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14Mapp
     RequireReadableGuestBytes(&success, sizeof(bool), __func__);
     RequireWritableGuestBytes(&success, sizeof(bool), __func__);
     const WTF::MappedFileData previousSelf = ReadGuestValue(self, __func__);
-    const bool previousSuccess = ReadGuestValue(&success, __func__);
+    unsigned char previousSuccess = 0;
+    if (!GuestCopyIn_nid_no_patch(&previousSuccess, &success, sizeof(previousSuccess)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     const String hostPath = CopyGuestStringToHost(&path, __func__);
     int handle = _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(hostPath, 0, true, false);
     MappedDataGuard guard{};
@@ -261,7 +266,9 @@ void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0
     RequireReadableGuestBytes(&success, sizeof(bool), __func__);
     RequireWritableGuestBytes(&success, sizeof(bool), __func__);
     const WTF::MappedFileData previousSelf = ReadGuestValue(self, __func__);
-    const bool previousSuccess = ReadGuestValue(&success, __func__);
+    unsigned char previousSuccess = 0;
+    if (!GuestCopyIn_nid_no_patch(&previousSuccess, &success, sizeof(previousSuccess)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     MappedDataGuard guard{};
     const bool ok = _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(&guard.mapped, handle, openMode, mapMode);
     PublishMappedResult(self, previousSelf, guard, &success, ok, previousSuccess, __func__);
