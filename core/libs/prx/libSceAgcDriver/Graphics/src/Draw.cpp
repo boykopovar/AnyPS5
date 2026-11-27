@@ -4534,7 +4534,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 }
             }
             indirect.records = records;
-            if (std::none_of(records.begin(), records.end(), [](const Pm4::DrawArguments& record) { return record.count != 0 && record.instances != 0; })) {
+            if (std::none_of(records.begin(), records.end(), [&](const Pm4::DrawArguments& record) { return ResolveIndirectRecord(draw, inputs, *args, record).has_value(); })) {
                 CountIndirectDraw(indirect.path, indirect.readMs);
                 report(" indirect draw with empty records");
                 return false;
