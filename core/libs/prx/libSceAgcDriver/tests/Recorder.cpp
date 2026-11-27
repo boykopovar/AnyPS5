@@ -2367,6 +2367,69 @@ void storedBytesTests(Recorder& recorder) {
     Require(!served(ring + 0x100, out) && !Recorder::WideLabelIn(ring, 0x400), "stored bytes outlived their batch");
 }
 
+void ownLabelBytesTests(Recorder& recorder) {
+    constexpr std::size_t bytes = 65536;
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes, 65536));
+    if (memory == nullptr) {
+        std::cout << "no write watching: own label bytes are not tested\n";
+        return;
+    }
+    GuestAllocations::Mutation().Add(memory, bytes, true, true, false);
+    struct Cleanup {
+        std::uint8_t* memory;
+        ~Cleanup() {
+            GuestAllocations::Mutation().Remove(memory);
+            ReleaseWatched(memory, bytes);
+        }
+    } cleanup{memory};
+    using Lookup = Recorder::OwnLabelLookup;
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const std::array<std::byte, 4> two{std::byte{2}, std::byte{0}, std::byte{0}, std::byte{0}};
+    std::array<std::byte, 128> wide{};
+    std::array<std::byte, 4> out{};
+    std::array<std::byte, 8> pair{};
+    const auto close = [] { Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration()); };
+    recorder.Sync();
+    Require(Recorder::LookupOwnLabelBytes(base, out, tag) == Lookup::NotLabels, "own label bytes are served from an empty table");
+    recorder.NoteLabel(base, one, 300, tag);
+    close();
+    Require(Recorder::LookupOwnLabelBytes(base, out, tag) == Lookup::Served && out == one, "a label of the reading queue's open batch is not served");
+    Require(Recorder::LookupOwnLabelBytes(base, out, tag + 1) == Lookup::NotLabels, "a label of another queue is served as the reading queue's own");
+    Require(Recorder::LookupOwnLabelBytes(base, pair, tag) == Lookup::NotLabels, "a range reaching past the label is served");
+    Require(Recorder::LookupOwnLabelBytes(base + 2, out, tag) == Lookup::NotLabels, "an unaligned word is served");
+    recorder.NotePendingWrite(base, 4);
+    Require(Recorder::LookupOwnLabelBytes(base, out, tag) == Lookup::Refused, "a label a later pending write overwrites is served");
+    recorder.Sync();
+    recorder.NotePendingWrite(base + 0x40, 4);
+    recorder.NoteLabel(base + 0x40, one, 301, tag);
+    close();
+    Require(Recorder::LookupOwnLabelBytes(base + 0x40, out, tag) == Lookup::Refused, "a label over an earlier pending non-label write is served");
+    recorder.NoteLabel(base + 0x80, one, 302, tag);
+    close();
+    recorder.NoteLabel(base + 0x80, two, 303, tag);
+    close();
+    Require(Recorder::LookupOwnLabelBytes(base + 0x80, out, tag) == Lookup::Served && out == two, "the newest of two labels of the same queue is not served");
+    recorder.NoteLabel(base + 0xc0, one, 304, tag);
+    close();
+    std::memset(memory + 0xc0, 7, 4);
+    Require(Recorder::LookupOwnLabelBytes(base + 0xc0, out, tag) == Lookup::Refused, "a label is served after a CPU write over its dword");
+    Recorder::NoteQueuedLabel(base + 0x100, one, 305, tag);
+    Require(Recorder::LookupOwnLabelBytes(base + 0x100, out, tag) == Lookup::Refused, "a queued, unrecorded label is served");
+    Recorder::ForgetQueuedLabels();
+    recorder.NoteLabel(base + 0x200, wide, 306, tag);
+    close();
+    Require(Recorder::LookupOwnLabelBytes(base + 0x200, out, tag) == Lookup::NotLabels, "a store wider than the label table is served as a label");
+    recorder.NoteLabel(base + 0x300, one, 307, tag);
+    Require(Recorder::LookupOwnLabelBytes(base + 0x300, out, tag) == Lookup::Refused, "a label of an open record group is served");
+    close();
+    recorder.Submit();
+    Require(Recorder::LookupOwnLabelBytes(base + 0x300, out, tag) == Lookup::Refused, "a label is served after its batch was submitted, when the guest may have seen it and written over it");
+    recorder.Sync();
+    Require(Recorder::LookupOwnLabelBytes(base + 0x300, out, tag) == Lookup::NotLabels, "a label outlived its batch");
+}
+
 // (6) GuestMemory::UnchangedSinceCollected: false outside the watched arena, and around a
 // MarkWritten or a CPU write of the block inside it.
 void unchangedSinceTests() {
@@ -20172,6 +20235,7 @@ int main(int argc, char** argv) {
             lateLabelTests(recorder);
             largeLabelTests(recorder);
             storedBytesTests(recorder);
+            ownLabelBytesTests(recorder);
             unlandedOwnLabelTests(recorder);
             unlandedOwnStoreWaitTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
@@ -20548,6 +20612,7 @@ int main(int argc, char** argv) {
         lateLabelTests(recorder);
         largeLabelTests(recorder);
         storedBytesTests(recorder);
+        ownLabelBytesTests(recorder);
         unlandedOwnLabelTests(recorder);
         unlandedOwnStoreWaitTests(recorder);
         unchangedSinceTests();
