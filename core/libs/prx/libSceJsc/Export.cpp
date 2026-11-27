@@ -37,6 +37,8 @@ bool GuestTextLength(const char* text, std::size_t& length) {
 }
 
 bool GuestBufferReadable(const void* address, std::size_t size) {
+    if (size == 0) return true;
+    if (size - 1 > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(address)) return false;
     char chunk[4096];
     for (std::size_t offset = 0; offset < size;) {
         const auto current = reinterpret_cast<std::uintptr_t>(address) + offset;
@@ -48,6 +50,10 @@ bool GuestBufferReadable(const void* address, std::size_t size) {
         offset += step;
     }
     return true;
+}
+
+const GuestJSString* ReadableString(const GuestJSString* string) {
+    return string && GuestBufferReadable(string, sizeof(GuestJSString)) ? string : nullptr;
 }
 
 void ZeroGuestObject(void* self, std::size_t size, const char* function) {
@@ -149,8 +155,10 @@ GuestJSString* APS5_VABI JSStringCreateWithUTF8CString_nid_postfix(const char* t
 
 GuestJSString* APS5_VABI JSStringRetain_nid_postfix(GuestJSString* string) {
     if (!string) throw std::invalid_argument("JSStringRetain: null string");
-    string->references.fetch_add(1, std::memory_order_relaxed);
-    return string;
+    auto* checked = const_cast<GuestJSString*>(ReadableString(string));
+    if (!checked) throw std::invalid_argument("JSStringRetain: unreadable string");
+    checked->references.fetch_add(1, std::memory_order_relaxed);
+    return checked;
 }
 
 void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string) {
@@ -159,11 +167,13 @@ void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string) {
 }
 
 std::size_t APS5_VABI JSStringGetLength_nid_postfix(const GuestJSString* string) {
-    return string ? string->characters.size() - 1 : 0;
+    const auto* checked = ReadableString(string);
+    return checked ? checked->characters.size() - 1 : 0;
 }
 
 const std::uint16_t* APS5_VABI JSStringGetCharactersPtr_nid_postfix(const GuestJSString* string) {
-    return string && !string->nullString ? string->characters.data() : nullptr;
+    const auto* checked = ReadableString(string);
+    return checked && !checked->nullString ? checked->characters.data() : nullptr;
 }
 
 std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJSString* string) {

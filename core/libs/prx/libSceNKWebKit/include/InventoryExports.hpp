@@ -75,7 +75,6 @@ int APS5_VABI WKBundleNodeHandleCopyHTMLTableCellElementCellAbove();
 int APS5_VABI WKBundleNodeHandleCopySnapshotWithOptions();
 int APS5_VABI WKBundleNodeHandleCopyVisibleRange();
 int APS5_VABI WKBundleNodeHandleCreate();
-int APS5_VABI WKBundleNodeHandleGetElementBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled();
@@ -3113,8 +3112,6 @@ int APS5_VABI _ZN7WebCore30rejectPromiseWithThisTypeErrorERN3JSC14JSGlobalObject
 int APS5_VABI _ZN7WebCore30rejectPromiseWithThisTypeErrorERNS_15DeferredPromiseEPKcS3_();
 int APS5_VABI _ZN7WebCore30throwArgumentMustBeObjectErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEjPKcS6_S6_();
 int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD0Ev();
-int APS5_VABI _ZN7WebCore31CrossOriginPreflightResultCache5clearEv();
-int APS5_VABI _ZN7WebCore31CrossOriginPreflightResultCache9singletonEv();
 int APS5_VABI _ZN7WebCore31SimplifiedBackwardsTextIterator7advanceEv();
 int APS5_VABI _ZN7WebCore31SimplifiedBackwardsTextIteratorC1ERKNS_11SimpleRangeE();
 int APS5_VABI _ZN7WebCore31SimplifiedBackwardsTextIteratorC2ERKNS_11SimpleRangeE();

@@ -380,6 +380,7 @@ private:
         append(key, value.registrationWordLimit);
         append(key, value.vertexSubgroups);
         append(key, value.tessellationEvaluationSubgroups);
+        append(key, value.pixelWave32Subgroups);
         append(key, value.float16DenormPreserve);
         append(key, value.spannedWaves);
         append(key, value.spannedAnySubgroup);

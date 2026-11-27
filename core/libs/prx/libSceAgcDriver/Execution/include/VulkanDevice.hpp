@@ -128,6 +128,7 @@ public:
     // holds a shared_ptr to this device); ReapRecorded(serial) (under the mutex) runs the completions
     // of the batches up to it. CanWaitUnlocked is false without timeline semaphores: use WaitIdle.
     bool CanWaitUnlocked() const;
+    bool SubmittedWorkRunning() const;
     std::uint64_t SubmitAndEpoch();
     void WaitRecorded(std::uint64_t serial);
     std::uint64_t SubmittedEpoch() const;
