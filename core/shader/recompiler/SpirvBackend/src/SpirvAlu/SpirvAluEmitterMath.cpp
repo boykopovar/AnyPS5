@@ -1786,8 +1786,56 @@ std::uint32_t EmitBallot(SpirvValueEmitContext& ctx, const IrValue* predicate) {
     return ctx.Ballot(predicate);
 }
 
+std::uint32_t NarrowReadFirstLaneSlot(SpirvEmitterState& state, std::uint32_t index, std::uint32_t slots) {
+    if (state.narrowReadFirstLaneVariable == 0u) {
+        state.narrowReadFirstLaneVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, slots), spv::StorageClassWorkgroup);
+        state.module.AddName(state.narrowReadFirstLaneVariable, "wave32_readfirstlane_exchange");
+    }
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypeU32ElementPointer(state, spv::StorageClassWorkgroup), pointer, state.narrowReadFirstLaneVariable, index);
+    return pointer;
+}
+
+void NarrowReadFirstLaneBarrier(SpirvEmitterState& state) {
+    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup),
+        ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
+}
+
+std::uint32_t EmitNarrowReadFirstLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto* workgroup = ShaderWorkgroupInput(state);
+    const auto size = WorkgroupLocalSize(state, *workgroup);
+    const auto threads = size[0] * size[1] * size[2];
+    const auto waves = (threads + 31u) / 32u;
+    const auto slots = threads + waves;
+    const auto local = EmitLocalInvocationIndex(state);
+    const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), local, ConstantU32(state, 31u));
+    const auto wave = Binary(state, spv::OpShiftRightLogical, TypeU32(state), local, ConstantU32(state, 5u));
+    const auto base = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), wave, ConstantU32(state, 5u));
+    const auto firstPointer = NarrowReadFirstLaneSlot(state, EmitAddU32(state, ConstantU32(state, threads), wave), slots);
+    const auto scope = ConstantU32(state, spv::ScopeWorkgroup);
+    const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+    state.module.AddFunction(spv::OpAtomicStore, firstPointer, scope, relaxed, ConstantU32(state, 0xffffffffu));
+    NarrowReadFirstLaneBarrier(state);
+    state.module.AddFunction(spv::OpStore, NarrowReadFirstLaneSlot(state, local, slots), ctx.Arg(inst, 0));
+    const auto candidate = Select(state, TypeU32(state), ctx.Arg(inst, 1), lane, ConstantU32(state, 0xffffffffu));
+    const auto ignored = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicUMin, TypeU32(state), ignored, firstPointer, scope, relaxed, candidate);
+    NarrowReadFirstLaneBarrier(state);
+    const auto first = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), first, firstPointer);
+    const auto any = Binary(state, spv::OpINotEqual, TypeBool(state), first, ConstantU32(state, 0xffffffffu));
+    const auto safeFirst = Select(state, TypeU32(state), any, first, ConstantU32(state, 0u));
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, NarrowReadFirstLaneSlot(state, EmitAddU32(state, base, safeFirst), slots));
+    NarrowReadFirstLaneBarrier(state);
+    state.usedNarrowReadFirstLaneExchange = true;
+    return value;
+}
+
 std::uint32_t EmitReadFirstLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    if (state.narrowReadFirstLaneExchange) return EmitNarrowReadFirstLane(ctx, inst);
     const auto ballot = ctx.Ballot(inst.Argument(1));
     const auto low = state.module.AllocateId();
     const auto high = state.module.AllocateId();

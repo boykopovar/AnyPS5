@@ -12990,6 +12990,77 @@ void verifySpannedShuffleThroughMemory() {
     require(!SpannedBarrierInDivergentFlow(exchanged.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
 }
 
+void verifyNarrowWave32ReadFirstLaneExchange() {
+    using namespace ShaderRecompiler;
+    constexpr std::array<std::uint32_t, 9> capabilities{
+        spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
+        spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform,
+        spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    alignas(256) static std::array<std::uint32_t, 45u * 4u> output{};
+    alignas(256) static constexpr std::array<std::uint32_t, 16> code{
+        0x34020082u, 0x4a0400ffu, 0x00000100u, 0xbe94037eu, 0xbefe0380u, 0x7e100502u, 0xbefe03b0u, 0x7e120502u,
+        0xbefe0314u, 0x7e060208u, 0x7e080209u, 0xe0702000u, 0x80010301u, 0xe0702004u, 0x80010401u, 0xbf810000u};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    std::array<std::uint32_t, 8> userData{};
+    userData[4] = static_cast<std::uint32_t>(address);
+    userData[5] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u);
+    userData[6] = static_cast<std::uint32_t>(output.size());
+    userData[7] = 0x11016facu;
+    const auto compile = [&](std::uint32_t subgroupSize) {
+        const auto codeAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code.data()));
+        const std::array<MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(std::span{code})}}};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, codeAddress, code, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.userDataBaseRegister = 0u;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{45u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.context.memory = memory;
+        request.target = BufferTarget();
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024u;
+        request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+        request.target.supportedCapabilities = capabilities;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    struct Counts {
+        std::uint32_t shuffles = 0u;
+        std::uint32_t atomicMins = 0u;
+        std::uint32_t workgroupBarriers = 0u;
+        std::uint32_t workgroupVariables = 0u;
+    };
+    const auto count = [](std::span<const std::uint32_t> spirv) {
+        Counts result;
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (std::size_t cursor = 5u; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpConstant && (spirv[cursor] >> 16u) == 4u) constants[spirv[cursor + 2u]] = spirv[cursor + 3u];
+            if (op == spv::OpGroupNonUniformShuffle) ++result.shuffles;
+            if (op == spv::OpAtomicUMin) ++result.atomicMins;
+            if (op == spv::OpVariable && spirv[cursor + 3u] == spv::StorageClassWorkgroup) ++result.workgroupVariables;
+            if (op == spv::OpControlBarrier) {
+                const auto scope = constants.find(spirv[cursor + 1u]);
+                if (scope != constants.end() && scope->second == spv::ScopeWorkgroup) ++result.workgroupBarriers;
+            }
+        }
+        return result;
+    };
+    const auto narrow = compile(8u);
+    const auto narrowCounts = count(narrow.spirv);
+    require(narrowCounts.shuffles == 0u && narrowCounts.atomicMins >= 2u, "narrow readfirstlane: Wave32 on a subgroup-8 host still resolves each first lane through a host subgroup shuffle");
+    require(narrowCounts.workgroupVariables >= 1u && narrowCounts.workgroupBarriers >= 6u, "narrow readfirstlane: the two guest-wave reads do not exchange values through workgroup memory with complete barriers");
+    require(!SpannedBarrierInDivergentFlow(narrow.spirv).has_value(), "narrow readfirstlane: the convergent exchange was emitted inside divergent control flow");
+    const auto native = compile(32u);
+    const auto nativeCounts = count(native.spirv);
+    require(nativeCounts.atomicMins == 0u && nativeCounts.workgroupVariables == 0u && nativeCounts.shuffles >= 2u, "narrow readfirstlane: a Wave32 program that fits its host subgroup stopped using native subgroup shuffles");
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -13681,6 +13752,11 @@ int main(int argc, char** argv) {
             std::cout << "Spanned wave64 shuffles go through workgroup memory only when the target asks for it\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--narrow-readfirstlane") {
+            verifyNarrowWave32ReadFirstLaneExchange();
+            std::cout << "Narrow-host Wave32 readfirstlane exchanges convergent guest-wave values through workgroup memory\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
@@ -13940,6 +14016,7 @@ int main(int argc, char** argv) {
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
         verifySpannedShuffleThroughMemory();
+        verifyNarrowWave32ReadFirstLaneExchange();
         verifyPixelQuadPermReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS

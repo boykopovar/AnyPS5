@@ -14,6 +14,7 @@ IrShaderStage StageOf(const SpirvEmitterState& state);
 const ShaderVertexInputInfo& VertexInfo(const SpirvEmitterState& state);
 const ShaderPixelInputInfo& PixelInfo(const SpirvEmitterState& state);
 const ShaderWorkgroupInputInfo* ShaderWorkgroupInput(const SpirvEmitterState& state);
+std::array<std::uint32_t, 3> WorkgroupLocalSize(const ShaderWorkgroupInputInfo& workgroup, bool computeDerivatives, bool spannedWave, std::uint32_t laneCount);
 std::array<std::uint32_t, 3> WorkgroupLocalSize(const SpirvEmitterState& state, const ShaderWorkgroupInputInfo& workgroup);
 std::uint32_t MeshWindowInvocations(const SpirvEmitterState& state);
 const RdnaImageDimensionInfo& RdnaImageDimensionInfoFor(RdnaImageDimension dimension);

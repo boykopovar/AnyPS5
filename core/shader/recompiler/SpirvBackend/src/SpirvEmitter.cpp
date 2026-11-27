@@ -322,6 +322,14 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
     state.spannedAnySubgroup = state.spannedWave && target.spannedAnySubgroup;
     state.spannedShuffleThroughMemory = state.spannedWave && target.spannedShuffleThroughMemory;
+    const auto workgroupThreads = workgroup != nullptr ? [&] {
+        const auto size = WorkgroupLocalSize(state, *workgroup);
+        return size[0] * size[1] * size[2];
+    }() : 0u;
+    const bool faults = program.Info().usesDma || program.Info().usesFaultBuffer;
+    state.narrowReadFirstLaneExchange = target.narrowReadFirstLaneExchange && state.requirements.readFirstLane && !faults &&
+        program.Resources().stage == IrShaderStage::Compute && program.WaveSize() == 32u &&
+        target.subgroupSize > 0u && target.subgroupSize < 32u && workgroupThreads > target.subgroupSize;
     if (state.spannedWave) {
         state.requirements.subgroupLocalInvocationId = true;
         state.requirements.subgroupBallot = true;
@@ -339,13 +347,12 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
     // Stopped invocations would leave the wave LDS barriers incomplete.
-    state.bdaStopsInvocations = state.waveLdsScope == 0 && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
+    state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.narrowReadFirstLaneExchange && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
     state.meshWindowBuffer = target.meshWindowBuffer && program.Resources().stage == IrShaderStage::Mesh && program.Metadata().vectorWindowSize != 0u && state.laneCount * MeshWindowInvocations(state) * program.Metadata().vectorWindowSize <= MeshWindowSlotDwords;
     if (target.meshInlineFunctions && program.Resources().stage == IrShaderStage::Mesh) state.module.InlineFunctions();
     state.splitState = program.Metadata().splitState && program.Resources().stage == IrShaderStage::Compute;
     if (state.splitState && state.loopGuardLimit == 0) state.loopGuardLimit = SplitLoopGuardLimit;
     const bool waveOperations = state.laneCount != 1u || state.requirements.subgroupBallot || state.requirements.subgroupShuffle;
-    const bool faults = program.Info().usesDma || program.Info().usesFaultBuffer;
     state.bdaFaultMasksWrites = state.bdaStopsInvocations && faults && (waveOperations || state.spannedWave) && program.Resources().stage != IrShaderStage::Pixel;
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
@@ -356,6 +363,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         const std::uint32_t snapshotVariables[] = {state.flattenedSrtVariable};
         const auto snapshots = snapshotLoads && state.flattenedSrtVariable != 0u ? std::span<const std::uint32_t>(snapshotVariables) : std::span<const std::uint32_t>();
         if (auto reason = SpannedBarrierInDivergentFlow(words, snapshots)) throw SpannedWaveUnsupported(*reason);
+    } else if (state.usedNarrowReadFirstLaneExchange) {
+        if (auto reason = SpannedBarrierInDivergentFlow(words)) throw NarrowReadFirstLaneUnsupported(*reason);
     }
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;

@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -57,6 +58,42 @@ std::uint64_t workgroupBytes(std::span<const std::uint32_t> words) {
     return bytes;
 }
 
+std::uint64_t namedWorkgroupBytes(std::span<const std::uint32_t> words, std::string_view name) {
+    std::map<std::uint32_t, std::span<const std::uint32_t>> types;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::uint32_t named = 0;
+    std::uint32_t pointer = 0;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16u;
+        require(count != 0u && count <= words.size() - offset, "malformed SPIR-V instruction");
+        const auto instruction = words.subspan(offset, count);
+        const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffffu);
+        if (opcode == spv::OpTypeInt || opcode == spv::OpTypeFloat || opcode == spv::OpTypeVector || opcode == spv::OpTypeArray || opcode == spv::OpTypeStruct || opcode == spv::OpTypePointer) types.emplace(instruction[1], instruction);
+        if (opcode == spv::OpConstant) constants.emplace(instruction[2], instruction[3]);
+        if (opcode == spv::OpName && std::string_view(reinterpret_cast<const char*>(instruction.data() + 2)) == name) named = instruction[1];
+        if (opcode == spv::OpVariable && instruction[2] == named && instruction[3] == spv::StorageClassWorkgroup) pointer = instruction[1];
+        offset += count;
+    }
+    require(named != 0u, "named Workgroup variable is missing");
+    require(pointer != 0u, "named variable is not Workgroup storage");
+    const std::function<std::uint64_t(std::uint32_t)> size = [&](std::uint32_t id) -> std::uint64_t {
+        const auto type = types.at(id);
+        switch (static_cast<spv::Op>(type[0] & 0xffffu)) {
+        case spv::OpTypeInt: case spv::OpTypeFloat: return type[2] / 8u;
+        case spv::OpTypeVector: return size(type[2]) * type[3];
+        case spv::OpTypeArray: return size(type[2]) * constants.at(type[3]);
+        case spv::OpTypeStruct: {
+            std::uint64_t bytes = 0;
+            for (const auto member : type.subspan(2)) bytes += size(member);
+            return bytes;
+        }
+        default: throw std::runtime_error("unexpected named Workgroup variable type");
+        }
+    };
+    const auto pointerType = types.at(pointer);
+    require((pointerType[0] & 0xffffu) == spv::OpTypePointer, "named Workgroup variable is not a pointer");
+    return size(pointerType[3]);
+}
 std::set<std::uint32_t> compareExchangeWidths(std::span<const std::uint32_t> words) {
     std::map<std::uint32_t, std::uint32_t> widths;
     std::set<std::uint32_t> found;
@@ -117,6 +154,57 @@ void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
     require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
 }
 
+void verifyNarrowReadFirstLaneBudget() {
+    static constexpr std::array<std::uint32_t, 8> code{
+        0x7e020200u, 0xd8340000u, 0x00000100u, 0x7e100501u,
+        0x7e040208u, 0xd8340000u, 0x00000200u, 0xbf810000u
+    };
+    static constexpr std::array<std::uint32_t, 4> capabilities{
+        spv::CapabilityShader, spv::CapabilityGroupNonUniform,
+        spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    constexpr std::uint32_t threads = 128u;
+    constexpr std::uint32_t ldsDwords = 8064u;
+    constexpr std::uint32_t exchangeDwords = threads + (threads + 31u) / 32u;
+    constexpr std::uint32_t reservedDwords = 1u;
+    constexpr std::uint32_t combinedBoundary = (ldsDwords + exchangeDwords + reservedDwords) * 4u;
+    const auto compile = [&](std::uint32_t limit) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x21000u, code, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.compute = ShaderComputeStageInfo{{threads, 1u, 1u}, ldsDwords, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00403000u;
+        request.target.spirvVersion = 0x00010600u;
+        request.target.subgroupSize = 8u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024u;
+        request.target.maxWorkgroupSharedMemoryBytes = limit;
+        request.layout = {0, 0, 0, 128};
+        request.useCache = false;
+        return Recompile(request);
+    };
+    const auto fits = compile(combinedBoundary);
+    require(fits.workgroupMemoryDwords == 0u, "narrow readfirstlane budget: guest LDS left Workgroup memory at the combined boundary");
+    require(workgroupBytes(fits.spirv.Words()) <= combinedBoundary, "narrow readfirstlane budget: combined-boundary module exceeds its Workgroup limit");
+    require(namedWorkgroupBytes(fits.spirv.Words(), "wave32_readfirstlane_exchange") == exchangeDwords * 4u, "narrow readfirstlane budget: combined-boundary module lost the 528-byte exchange");
+    const auto spills = compile(32768u);
+    require(spills.workgroupMemoryDwords == ((ldsDwords + 2u) & ~1u), "narrow readfirstlane budget: guest LDS did not move to device memory when the exchange would exceed 32 KiB");
+    require(workgroupBytes(spills.spirv.Words()) <= 32768u, "narrow readfirstlane budget: 32 KiB module still exceeds its Workgroup limit");
+    require(namedWorkgroupBytes(spills.spirv.Words(), "wave32_readfirstlane_exchange") == exchangeDwords * 4u, "narrow readfirstlane budget: spilled module lost the 528-byte exchange");
+
+    ShaderWorkgroupInputInfo derivativeWorkgroup{};
+    derivativeWorkgroup.threadsNum[0] = 128u;
+    derivativeWorkgroup.threadsNum[1] = 0u;
+    derivativeWorkgroup.threadsNum[2] = 1u;
+    const auto derivativeSize = WorkgroupLocalSize(derivativeWorkgroup, true, false, 1u);
+    require(derivativeSize == std::array<std::uint32_t, 3>{128u, 2u, 1u}, "narrow readfirstlane budget: derivative defaults do not match the emitter's effective local size");
+    const std::uint32_t derivativeThreads = derivativeSize[0] * derivativeSize[1] * derivativeSize[2];
+    const std::uint32_t derivativeExchangeDwords = derivativeThreads + (derivativeThreads + 31u) / 32u;
+    constexpr std::uint32_t derivativeLdsDwords = 31744u / 4u;
+    require((derivativeLdsDwords + (128u + 4u) + reservedDwords) * 4u <= 32768u, "narrow readfirstlane budget: derivative boundary no longer distinguishes the raw thread count");
+    require((derivativeLdsDwords + derivativeExchangeDwords + reservedDwords) * 4u > 32768u, "narrow readfirstlane budget: derivative-expanded exchange unexpectedly fits in 32 KiB");
+}
+
 alignas(256) std::array<std::uint8_t, 32768> Texture{};
 
 void verifySpecializedImageWithoutBuffers() {
@@ -158,6 +246,14 @@ void verifySpecializedImageWithoutBuffers() {
 
 int main() {
     unsigned failures = 0;
+    try {
+        verifyNarrowReadFirstLaneBudget();
+        std::cout << "LDS lock budget: narrow readfirstlane exchange passed\n";
+    } catch (const std::exception& error) {
+        ++failures;
+        const std::string message(error.what());
+        std::cerr << "LDS lock budget: narrow readfirstlane exchange: " << message.substr(0, message.find("RecompileRequest:")) << '\n';
+    }
     try {
         verifySpecializedImageWithoutBuffers();
         std::cout << "LDS lock budget: specialized image program without buffers passed\n";

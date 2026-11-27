@@ -54,19 +54,23 @@ const ShaderWorkgroupInputInfo* ShaderWorkgroupInput(const SpirvEmitterState& st
     }
 }
 
-std::array<std::uint32_t, 3> WorkgroupLocalSize(const SpirvEmitterState& state, const ShaderWorkgroupInputInfo& workgroup) {
-    const std::uint32_t derivativeDefault = state.requirements.computeDerivatives ? 2u : 1u;
+std::array<std::uint32_t, 3> WorkgroupLocalSize(const ShaderWorkgroupInputInfo& workgroup, bool computeDerivatives, bool spannedWave, std::uint32_t laneCount) {
+    const std::uint32_t derivativeDefault = computeDerivatives ? 2u : 1u;
     std::array<std::uint32_t, 3> size {
         workgroup.threadsNum[0] != 0u ? workgroup.threadsNum[0] : derivativeDefault,
         workgroup.threadsNum[1] != 0u ? workgroup.threadsNum[1] : derivativeDefault,
         workgroup.threadsNum[2] != 0u ? workgroup.threadsNum[2] : 1u};
-    if (state.spannedWave) {
+    if (spannedWave) {
         size = {64u, 1u, 1u};
     }
-    if (state.laneCount == 2) {
+    if (laneCount == 2u) {
         size = {((size[0] * size[1] * size[2] + 63u) / 64u) * 32u, 1u, 1u};
     }
     return size;
+}
+
+std::array<std::uint32_t, 3> WorkgroupLocalSize(const SpirvEmitterState& state, const ShaderWorkgroupInputInfo& workgroup) {
+    return WorkgroupLocalSize(workgroup, state.requirements.computeDerivatives, state.spannedWave, state.laneCount);
 }
 
 std::uint32_t MeshWindowInvocations(const SpirvEmitterState& state) {
@@ -218,7 +222,7 @@ void DefineInputs(SpirvEmitterState& state) {
             }
         }
     }
-    if (state.laneCount == 2u || state.spannedWave) {
+    if (state.laneCount == 2u || state.spannedWave || state.narrowReadFirstLaneExchange) {
         addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");
         if (std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
             return input.kind == StageInputKind::GlobalInvocationId;

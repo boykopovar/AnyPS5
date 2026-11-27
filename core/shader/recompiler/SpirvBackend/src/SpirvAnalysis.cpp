@@ -526,6 +526,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             case IrOpcode::ReadLane: {
                 requirements.subgroupBallot = true;
                 requirements.subgroupShuffle = true;
+                requirements.readFirstLane = requirements.readFirstLane || inst->Opcode() == IrOpcode::ReadFirstLane;
                 if (inst->Opcode() == IrOpcode::DppMoveU32) {
                     requirements.subgroupLocalInvocationId = true;
                 }

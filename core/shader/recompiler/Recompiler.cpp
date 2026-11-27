@@ -56,6 +56,7 @@
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
 #include "Optimization/include/Optimization/TessellationLowering.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/include/SpirvBackend/SpirvEmitterHelpers.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -177,10 +178,19 @@ void ValidateRequestInputs(const RecompileRequest& request) {
     ValidateVertexStageInputs(stage, request.context, mesh, tessellation);
 }
 
-std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request) {
+std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request, std::uint32_t reservedWorkgroupBytes = 0u) {
     if (!request.context.compute.has_value()) return 0u;
     const auto bytes = static_cast<std::uint64_t>(request.context.compute->ldsSizeDwords) * 4u;
-    return bytes + 4u > request.target.maxWorkgroupSharedMemoryBytes ? static_cast<std::uint32_t>(bytes) : 0u;
+    return bytes + 4u + reservedWorkgroupBytes > request.target.maxWorkgroupSharedMemoryBytes ? static_cast<std::uint32_t>(bytes) : 0u;
+}
+
+std::uint32_t NarrowReadFirstLaneExchangeBytes(const RecompileRequest& request, const ShaderWorkgroupInputInfo& workgroup, bool computeDerivatives) {
+    if (request.context.waveSize != 32u || request.target.subgroupSize == 0u || request.target.subgroupSize >= 32u) return 0u;
+    const auto size = WorkgroupLocalSize(workgroup, computeDerivatives, false, 1u);
+    const std::uint64_t threads = static_cast<std::uint64_t>(size[0]) * size[1] * size[2];
+    if (threads <= request.target.subgroupSize) return 0u;
+    const auto waves = (threads + 31u) / 32u;
+    return static_cast<std::uint32_t>((threads + waves) * 4u);
 }
 
 bool HardwareFloat32Flush(const RecompileRequest& request) {
@@ -383,6 +393,21 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         }
     };
     simplify();
+    bool liveReadFirstLane = false;
+    bool computeDerivatives = false;
+    for (const IrBlock* block : program.BlockOrder()) {
+        for (const IrValue* value : block->Instructions()) {
+            liveReadFirstLane = liveReadFirstLane || value->Opcode() == IrOpcode::ReadFirstLane;
+            computeDerivatives = computeDerivatives || value->Opcode() == IrOpcode::ImageQueryLod;
+        }
+    }
+    const auto exchangeBytes = inputInfo.compute != nullptr && liveReadFirstLane ? NarrowReadFirstLaneExchangeBytes(request, *inputInfo.compute, computeDerivatives) : 0u;
+    if (translateOptions.sharedMemoryBytes == 0u && exchangeBytes != 0u && DeviceMemoryLdsBytes(request, exchangeBytes) != 0u) {
+        translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request, exchangeBytes);
+        program = translator.Translate(decoded, cfg, translateOptions);
+        if (emulatedBarycentrics) program.Metadata().barycentricEmulation = true;
+        simplify();
+    }
     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst;
     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst, !hostInterpolationFirst)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
@@ -924,6 +949,10 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.variantId = nextVariantId();
     SpirvEmitInfo emitted;
     try {
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+    } catch (const NarrowReadFirstLaneUnsupported& error) {
+        std::fprintf(stderr, "[wave-readfirstlane] 0x%llx falls back to subgroup-local shuffle: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
+        targetOptions.narrowReadFirstLaneExchange = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     } catch (const SpannedWaveUnsupported& error) {
         std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
