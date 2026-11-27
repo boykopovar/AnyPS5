@@ -3316,7 +3316,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         // layout, which a lean draw renders in: no transitions.
         if (!record.reordered.empty()) {
             RecordSampleOrder(context, rec, record.reorderPass, record.reordered, true, reorderKept);
-            for (const auto& object : reorderKept) recorder->Keep(object);
+            KeepSampleOrderOwners(*recorder, reorderKept);
         }
         for (const auto& write : record.staged) RecordStagedClear(context, cb, *write.temporary);
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
@@ -5196,6 +5196,15 @@ std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const 
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     const auto indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
     return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+}
+
+void RecordMeshArgumentsForTesting(const Context& context, VkCommandBuffer commands, Recorder& recorder, const State& state, const Pm4::DrawParameters& draw, const Pm4::DrawParameters::IndirectDraw& args, const HostImport& argumentImport, const std::function<void(std::uint32_t)>& countBarrier, std::shared_ptr<Buffer>& arguments) {
+    const IndirectRecord indirect{.args = &args, .path = IndirectDrawPath::Gpu, .argumentImport = &argumentImport};
+    recordMeshArguments(context, commands, &recorder, true, state, draw, indirect, countBarrier, {}, arguments);
+}
+
+void KeepSampleOrderOwners(Recorder& recorder, const std::vector<std::shared_ptr<void>>& owners) {
+    for (const auto& owner : owners) recorder.Keep(owner);
 }
 
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {

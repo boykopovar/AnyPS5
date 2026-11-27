@@ -54,6 +54,7 @@ if(BUILD_TESTING AND MINGW)
     target_sources(libSceAgcDriver PRIVATE tests/AllocationCounter.cpp)
     target_link_options(libSceAgcDriver PRIVATE LINKER:--wrap=_Znwy LINKER:--exclude-symbols=__wrap__Znwy)
     target_compile_definitions(agc_driver_graphics_tests PRIVATE APS5_AGC_ALLOCATION_COUNT=1)
+    target_compile_definitions(agc_driver_encoded_mesh_arguments_tests PRIVATE APS5_AGC_ALLOCATION_COUNT=1)
 endif()
 
 if(BUILD_TESTING)
