@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -84,7 +85,11 @@ void Backoff(std::uint32_t round) {
         return;
     }
     const auto shift = std::min<std::uint32_t>(round - 16, 6);
+#ifdef _WIN32
+    PreciseSleepUs(16u << shift);
+#else
     std::this_thread::sleep_for(std::chrono::microseconds(16u << shift));
+#endif
 }
 
 }

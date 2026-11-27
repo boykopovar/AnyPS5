@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_map_import_gate_backoff_tests tests/MapImportGateBackoff.cpp)
+    target_include_directories(agc_map_import_gate_backoff_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_map_import_gate_backoff_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(agc_map_import_gate_backoff_tests)
+    add_test(NAME agc_map_import_gate_backoff COMMAND agc_map_import_gate_backoff_tests)
+    set_tests_properties(agc_map_import_gate_backoff PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+    if(WIN32)
+        set_tests_properties(agc_map_import_gate_backoff PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
