@@ -1,5 +1,5 @@
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 import json
 import os
 from pathlib import Path
@@ -38,6 +38,46 @@ def report_compiler_cache():
         subprocess.run(["ccache", "--show-stats"], check=False)
     except OSError:
         pass
+
+
+def ninja_log_entries(build_dir):
+    try:
+        with (build_dir / ".ninja_log").open("rb") as log:
+            if log.readline().rstrip() in (b"# ninja log v5", b"# ninja log v6", b"# ninja log v7"):
+                return Counter(log)
+    except FileNotFoundError:
+        return Counter()
+    except OSError:
+        pass
+    return None
+
+
+def report_libs_ninja_steps(build_dir, previous):
+    if previous is None:
+        return
+    current = ninja_log_entries(build_dir)
+    if current is None:
+        return
+    steps = {}
+    for line in current - previous:
+        match = re.fullmatch(rb"(\d{1,10})\t(\d{1,10})\t-?\d+\t([^\t\r\n]+)\t([0-9a-fA-F]+)\r?\n", line)
+        if not match:
+            continue
+        start, end, output, command_hash = match.groups()
+        elapsed = int(end) - int(start)
+        if elapsed >= 0:
+            steps.setdefault((start, end, command_hash), (elapsed, output))
+    for elapsed, output in sorted(steps.values(), reverse=True)[:10]:
+        name = output.decode("utf-8", errors="backslashreplace")
+        print(f"[ci-timing] libs Ninja step: {elapsed} ms {name!a}", flush=True)
+
+
+def build_libs(build_dir):
+    previous = ninja_log_entries(build_dir)
+    try:
+        subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+    finally:
+        report_libs_ninja_steps(build_dir, previous)
 
 
 def reaches_libs(changed):
@@ -181,7 +221,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         return sorted({target["name"] for target in selected} | set(load_test), key=str.casefold)
     return [
         target["name"] for target in selected
-        if changed & host_only.target_reached_sources(target, targets, source_root)
+        if changed & host_only.target_reached_sources(target, targets, source_root, include_product_libraries=True)
     ] + load_test
 
 
@@ -276,7 +316,7 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=(), 
     total = time.perf_counter()
     started = time.perf_counter()
     try:
-        subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+        build_libs(build_dir)
     finally:
         phase_report("build libs", started)
     indices = set()

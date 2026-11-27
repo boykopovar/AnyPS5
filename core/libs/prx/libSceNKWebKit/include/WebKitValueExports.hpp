@@ -148,8 +148,10 @@ bool APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(con
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(const void* nodeHandleRef, std::uint8_t autoFillButtonType);
 std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(const void* nodeHandleRef);
 std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(const void* nodeHandleRef);
+NKWebKit::RectValue APS5_VABI WKBundleNodeHandleGetElementBounds(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
 const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
+bool APS5_VABI WKBundlePageCanShowMIMEType(const void* pageRef, const void* mimeTypeRef);
 double APS5_VABI WKBundlePageGetBackingScaleFactor(const void* pageRef);
 bool APS5_VABI WKBundlePageIsControlledByAutomation(const void* pageRef);
 bool APS5_VABI WKBundlePageIsSuspended(const void* pageRef);
@@ -212,6 +214,7 @@ bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
+void APS5_VABI WKFormSubmissionListenerContinue(const void* listenerRef);
 std::uint32_t APS5_VABI WKFrameGetTypeID();
 std::uint64_t APS5_VABI WKFrameHandleGetFrameID(const void* frameHandleRef);
 bool APS5_VABI WKFrameCanProvideSource(const void* frameRef);
@@ -401,6 +404,9 @@ std::uint32_t APS5_VABI WKOpenPanelResultListenerGetTypeID();
 bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef);
 bool APS5_VABI WKPageCanGoBack(const void* page);
 bool APS5_VABI WKPageCanGoForward(const void* page);
+void APS5_VABI WKPageGoBack(const void* page);
+void APS5_VABI WKPageGoForward(const void* page);
+void APS5_VABI WKPageGoToBackForwardListItem(const void* page, const void* itemRef);
 void APS5_VABI WKPageClearLoadedSubresourceDomains(const void* pageRef);
 void APS5_VABI WKPageClearUserMediaState(const void* pageRef);
 void APS5_VABI WKPageClearWheelEventTestMonitor(const void* pageRef);
@@ -712,5 +718,16 @@ const void* APS5_VABI WKPluginInformationPathKey();
 const void* APS5_VABI WKPluginInformationPluginURLKey();
 const void* APS5_VABI WKPluginInformationPluginspageAttributeURLKey();
 const void* APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey();
+
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsEnabled(const void* dataStore, bool enable);
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugMode(const void* dataStore, bool enable);
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugModeWithCompletionHandler(const void* dataStore, bool enable, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsPrevalentResourceForDebugMode(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTesting(const void* dataStore, bool value, std::uint32_t policy, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsShouldDowngradeReferrerForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDomainForTesting(const void* dataStore, const void* firstPartyURLString, const void* cnameURLString, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
 
 }

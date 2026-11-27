@@ -257,6 +257,7 @@ public:
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
     std::uint8_t htmlInputElementAutoFillButtonType = 0;
     std::uint8_t htmlInputElementLastAutoFillButtonType = 0;
+    RectValue elementBounds{{0.0, 0.0}, {0.0, 0.0}};
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
@@ -599,6 +600,12 @@ public:
 
     Decision decision = Decision::None;
     Retained<Object> policies;
+};
+
+class FormSubmissionListener final : public ObjectOf<ObjectType::FormSubmissionListener> {
+public:
+    std::function<void()> completionHandler;
+    bool continued = false;
 };
 
 }  // namespace NKWebKit

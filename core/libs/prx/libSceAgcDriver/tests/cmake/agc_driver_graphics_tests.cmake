@@ -50,6 +50,12 @@ target_link_libraries(agc_driver_graphics_tests PRIVATE
         libkernel
 )
 
+if(BUILD_TESTING AND MINGW)
+    target_sources(libSceAgcDriver PRIVATE tests/AllocationCounter.cpp)
+    target_link_options(libSceAgcDriver PRIVATE LINKER:--wrap=_Znwy LINKER:--exclude-symbols=__wrap__Znwy)
+    target_compile_definitions(agc_driver_graphics_tests PRIVATE APS5_AGC_ALLOCATION_COUNT=1)
+endif()
+
 if(BUILD_TESTING)
     add_test(NAME agc_driver_stencil_ref_export_push_budget COMMAND agc_driver_graphics_tests --stencil-ref-export)
     set_tests_properties(agc_driver_stencil_ref_export_push_budget PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30)
@@ -130,6 +136,18 @@ if(BUILD_TESTING)
     endif()
     set_tests_properties(agc_sparse_buffer_holes PROPERTIES TIMEOUT 30)
     add_test(NAME agc_pipeline_journal COMMAND agc_driver_graphics_tests --pipeline-journal)
+    foreach(case IN ITEMS negative overflow)
+        set(test agc_pipeline_journal_size_${case})
+        add_test(NAME ${test} COMMAND agc_driver_graphics_tests --pipeline-journal)
+        set_tests_properties(${test} PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            ENVIRONMENT_MODIFICATION "APS5_NO_PIPELINE_JOURNAL=set:0"
+            PASS_REGULAR_EXPRESSION "APS5_PIPELINE_JOURNAL_MAX_MIB must be between 0 and 17592186044415")
+        if(WIN32)
+            set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    set_tests_properties(agc_pipeline_journal_size_negative PROPERTIES ENVIRONMENT "APS5_PIPELINE_JOURNAL_MAX_MIB=-1")
+    set_tests_properties(agc_pipeline_journal_size_overflow PROPERTIES ENVIRONMENT "APS5_PIPELINE_JOURNAL_MAX_MIB=17592186044416")
     add_test(NAME agc_pipeline_journal_long_paths COMMAND agc_driver_graphics_tests --pipeline-journal-long-paths)
     set_tests_properties(agc_pipeline_journal_long_paths PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_pipeline_library_clear_waits_for_build COMMAND agc_driver_graphics_tests --pipeline-library-clear-waits-for-build)

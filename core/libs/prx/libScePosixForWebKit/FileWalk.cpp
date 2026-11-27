@@ -56,6 +56,8 @@ int Visit(Walk& walk, const std::string& path) {
             *__error_nid_postfix() = GuestEloop;
             return -1;
         }
+    const int before = Invoke(walk, path, status, FtwD);
+    if (before != 0) return before;
     void* handle = OpenDirectory_nid_no_patch(path.c_str());
     if (handle == nullptr) return Invoke(walk, path, status, FtwDnr);
     std::vector<std::string> names;
@@ -72,8 +74,6 @@ int Visit(Walk& walk, const std::string& path) {
         *__error_nid_postfix() = closeError;
         return -1;
     }
-    const int before = Invoke(walk, path, status, FtwD);
-    if (before != 0) return before;
     walk.ancestors.push_back(Identity{status.st_dev, status.st_ino});
     int result = 0;
     for (const std::string& name : names) {

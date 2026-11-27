@@ -92,7 +92,7 @@ inline std::u16string ClipboardUnits(const char* text, std::size_t size, bool mu
     const std::u32string points = DecodeUtf8Lenient(text, BoundedUtf8Size(text, size), false);
     for (std::size_t i = 0; i < points.size(); ++i) {
         const char32_t point = points[i];
-        const bool lineBreak = point == U'\n' || point == U'\r' || point == 0x85 || point == 0x2028 || point == 0x2029;
+        const bool lineBreak = point == U'\n' || point == U'\r' || point == U'\f' || point == U'\v' || point == 0x85 || point == 0x2028 || point == 0x2029;
         if (lineBreak) {
             if (point == U'\r' && i + 1 < points.size() && points[i + 1] == U'\n') ++i;
             if (multiline) units.push_back(u'\n');
