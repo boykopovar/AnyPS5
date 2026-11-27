@@ -412,7 +412,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             if (verifyHit && matched[i] != nullptr) {
                 const auto& words = stageData[i].compiled != nullptr ? stageData[i].words : matched[i]->words;
                 const auto& compiled = stageData[i].compiled != nullptr ? *stageData[i].compiled : *matched[i]->compiled;
-                if (!sameContent(*matched[i], words, *variant) || !sameForwardedWords(compiled, stageData[i].compiled == nullptr && !matched[i]->patchedPushConstants.empty() ? matched[i]->patchedPushConstants : compiled.pushConstants, *variant->compiled, programs[i].hiddenUserWords) || !sameBindings(compiled, *variant->compiled)) {
+                if (!sameContent(*matched[i], words, *variant) || !sameForwardedWords(compiled, matched[i]->patchedPushConstants.empty() ? compiled.pushConstants : matched[i]->patchedPushConstants, *variant->compiled, programs[i].hiddenUserWords) || !sameBindings(compiled, *variant->compiled)) {
                     ++mismatches;
                     static std::atomic<std::uint64_t> reports{0};
                     if (reports.fetch_add(1) < 20) std::fprintf(stderr, "[draw-cache] verify: stage %zu (program 0x%llx) of a hit captured differently: %zu runs / %zu words matched, %zu / %zu fresh\n", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), matched[i]->runs.size(), words.size(), variant->runs.size(), variant->words.size());
