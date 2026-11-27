@@ -396,7 +396,16 @@ int main(int argc, char** argv) {
         if (!shaderClamp) RunAndCheck(*device, GradientCode, 1u, Case{0x100u, 1u, 0xfffu, 1u, -128}, false);
         if (!shaderClamp) RunAndCheck(*device, GradientCode, 1u, Case{0x200u, 0u, 0xfffu, 1u, -256}, false);
         if (!shaderClamp) RunAndCheck(*device, Code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false);
-        RunAndCheck(*device, Code, 6u, Case{0x100u, 1u, 0xfffu, 1u, -192}, false);
+        const auto driverInfo = device->DriverInfo();
+        const auto mesa = driverInfo.find("Mesa ");
+        unsigned mesaMajor = 0u;
+        unsigned mesaMinor = 0u;
+        const bool clampsBeforeBias = device->DriverId() == VK_DRIVER_ID_MESA_LLVMPIPE && mesa != std::string::npos && std::sscanf(driverInfo.c_str() + mesa, "Mesa %u.%u", &mesaMajor, &mesaMinor) == 2 && (mesaMajor < 26u || (mesaMajor == 26u && mesaMinor < 1u));
+        if (clampsBeforeBias) {
+            std::printf("skipped, the device does not apply the S# LOD bias before an instruction's LOD clamp (lavapipe before Mesa 26.1 turns gradients into an explicit LOD that it clamps first), so the LOD bias -192 case is left out on %s\n", driverInfo.c_str());
+        } else {
+            RunAndCheck(*device, Code, 6u, Case{0x100u, 1u, 0xfffu, 1u, -192}, false);
+        }
         for (const auto& item : {Case{0x200u, 0u}, Case{0u, 0u}, Case{0x300u, 0u}, Case{0x200u, 1u}, Case{0x100u, 0u}}) RunAndCheck(*device, Code, 6u, item, true);
         for (const auto& item : {Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}}, Pairing{0x300u, 1u, {0u, 0u, 1u << 26u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, (1u << 20u) | (1u << 22u), 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0x3f00u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x300u, 4u}}) {
             RunPairing(*device, item);
