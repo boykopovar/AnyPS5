@@ -1478,6 +1478,14 @@ void verifyMayDecideSharedConditions() {
     require(Detail::Evaluator::MayDecide(plan, decided), "MayDecide did not decide 64 levels of shared conditions over a uniform conjunct");
     std::unordered_map<const IrValue*, bool> memo;
     require(!Detail::Evaluator::MayDecide(plan, undecided, memo) && Detail::Evaluator::MayDecide(plan, decided, memo), "MayDecide answered differently through a shared memo");
+    const auto uniformConjunct = [&] { return &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), &make(IrOpcode::IEqual32, IrType::Bool, {&input, &input})}); };
+    auto& copies = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), uniformConjunct()});
+    auto& lanes = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), varying()})});
+    auto& looped = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct()});
+    looped.AddArgument(&looped);
+    require(Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&copies})), "MayDecide did not decide a branch on a phi of two copies of a condition with a uniform conjunct");
+    require(!Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&lanes})), "MayDecide decided a phi of a decidable and an undecidable condition");
+    require(Detail::Evaluator::MayDecide(plan, &looped), "MayDecide did not decide a phi that carries one decidable condition around a loop");
 }
 
 void verifyEvaluatedValues() {
@@ -4184,6 +4192,99 @@ void verifyNestedSnapshotRetry(bool sampler) {
             "nested retry: an invalidation changed the captured keys, pointers, words or codes");
 }
 
+void verifyNestedParentScanBudget() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
+    constexpr std::uint32_t Leaves = 4u;
+    std::array<std::array<std::uint32_t, 8>, Leaves> first{};
+    std::array<std::array<std::uint32_t, 8>, Leaves> second{};
+    first.fill(TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
+    second.fill(TableT(reinterpret_cast<const void*>(0x100001000ull), TableFormat8888UNorm, TableType2D, 2u));
+    const auto firstChild = TableV(first.data(), 32u, Leaves);
+    const auto secondChild = TableV(second.data(), 32u, Leaves);
+    alignas(16) std::array<std::uint32_t, 8> block{};
+    std::copy(firstChild.begin(), firstChild.end(), block.begin());
+    std::copy(secondChild.begin(), secondChild.end(), block.begin() + 4u);
+    std::vector<std::uint64_t> shared(Parents, reinterpret_cast<std::uintptr_t>(block.data()));
+    std::vector<std::uint64_t> other(Parents, reinterpret_cast<std::uintptr_t>(block.data()));
+    std::vector<std::unique_ptr<IrValue>> values;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.resourceTrackingComplete = true;
+    plan.userDataCount = 0u;
+    const auto heap = [&](const std::vector<std::uint64_t>& records) {
+        const auto source = static_cast<std::uint32_t>(plan.descriptorSources.size());
+        plan.descriptorSources.emplace_back();
+        const auto words = TableV(records.data(), 8u, Parents);
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+            value->SetImmediateU32(words[word]);
+            plan.descriptorSources[source].dwords[word] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources[source].dwordCount = 4u;
+        return source;
+    };
+    const auto table = [&](std::uint32_t heapSource, std::uint32_t immediate) {
+        TableColumn parent;
+        parent.heapSource = heapSource;
+        parent.stride = 8u;
+        parent.dwordCount = 4u;
+        parent.indirect = true;
+        parent.buffer = true;
+        parent.indirectImmediate = immediate;
+        plan.descriptorSources.emplace_back().tableColumn = parent;
+        TableColumn nested;
+        nested.heapSource = static_cast<std::uint32_t>(plan.descriptorSources.size() - 1u);
+        nested.stride = 32u;
+        nested.dwordCount = 8u;
+        plan.descriptorSources.emplace_back().tableColumn = nested;
+        ImageResource image;
+        image.source = static_cast<std::uint32_t>(plan.descriptorSources.size() - 1u);
+        image.table = static_cast<std::uint32_t>(plan.info.images.size());
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        plan.materializationSources.push_back(image.source);
+    };
+    const auto sharedHeap = heap(shared);
+    table(sharedHeap, 0u);
+    table(sharedHeap, 16u);
+    table(heap(other), 0u);
+    struct Memory {
+        std::array<std::pair<std::uint64_t, std::size_t>, 5> ranges;
+    } memory{{{{reinterpret_cast<std::uintptr_t>(shared.data()), shared.size() * sizeof(shared[0])},
+               {reinterpret_cast<std::uintptr_t>(other.data()), other.size() * sizeof(other[0])},
+               {reinterpret_cast<std::uintptr_t>(block.data()), sizeof(block)},
+               {reinterpret_cast<std::uintptr_t>(first.data()), sizeof(first)},
+               {reinterpret_cast<std::uintptr_t>(second.data()), sizeof(second)}}}};
+    SrtRuntime runtime{};
+    runtime.userContext = &memory;
+    runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+        for (const auto& [base, size] : static_cast<Memory*>(context)->ranges) {
+            if (address >= base && address - base <= size - sizeof(*value)) {
+                std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                return true;
+            }
+        }
+        return false;
+    };
+    ResourceSnapshot snapshot;
+    ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+    const auto& tables = snapshot.tables.tables;
+    require(tables.size() == 3u && tables[0].keys == Parents, "nested parent scans: the first V# behind the parent records was truncated");
+    require(tables[1].keys == Parents,
+            std::string("nested parent scans: a second V# behind the same parent records was charged for them again (" + std::to_string(tables[1].keys) + " of " + std::to_string(Parents) + " keys)").c_str());
+    require(tables[1].pointers.size() == Parents && tables[1].pointers.at(Parents - 1u) == reinterpret_cast<std::uintptr_t>(block.data()) && (tables[1].codes.at(Parents - 1u) & ImageTableAbi::PoisonFlag) == 0u,
+            "nested parent scans: the last record behind the second V# was not captured");
+    require(snapshot.tables.nested.size() == 3u && snapshot.tables.nested.at(tables[0].codes.at(0)).base != snapshot.tables.nested.at(tables[1].codes.at(0)).base,
+            "nested parent scans: the two V#s behind one pointer did not keep their own child tables");
+    require(tables[2].keys == ImageTableAbi::MaxParentKeys - Parents,
+            std::string("nested parent scans: parent records of another heap were not charged to the shared budget (" + std::to_string(tables[2].keys) + " keys)").c_str());
+}
+
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -6221,6 +6322,36 @@ void verifyImageTableRegistration() {
     const auto colorRegions = colorMemory.Regions();
     colorRequest.context.memory = colorRegions;
     expectFailure([&] { static_cast<void>(Recompile(colorRequest, *colorCapture)); }, "comparison sampling of a color texture through a sampler table is not implemented", "image table registration: a color compare through a sampler table was accepted");
+    guest.heap[1] = guest.heap[0];
+    auto samplerCode = colorCompareCode;
+    samplerCode[9] = 0x20000020u;
+    samplerCode[10] = 0xf09c0f08u;
+    samplerCode.insert(samplerCode.begin() + 8, {0x8710ff10u, 0x30u});
+    const auto sampler = CompileTable(TableRequest(samplerCode, userData));
+    const auto& samplerSnapshot = sampler.capture->snapshot.tables.tables.at(0);
+    const auto samplerCodes = TableCodes(TableMap(*sampler.result), 0);
+    for (const std::uint32_t addend : {16u, 32u}) {
+        auto offsetCode = samplerCode;
+        offsetCode.insert(offsetCode.begin() + 10, {0x8110ff10u, addend});
+        const auto load = std::find(offsetCode.begin(), offsetCode.end(), 0xf4280202u);
+        require(load != offsetCode.end(), "sampler table masked addend: the descriptor load is missing");
+        load[1] = 0x20000000u | (32u - addend);
+        const auto offset = CompileTable(TableRequest(offsetCode, userData));
+        const auto& samplerInfo = offset.capture->plan->info.samplers.at(0);
+        const auto& column = *offset.capture->plan->descriptorSources.at(samplerInfo.source).tableColumn;
+        require(column.sampler && !column.address && column.stride == 16u && column.addend == addend && column.offset == 32u - addend && column.dwordCount == 4u, "sampler table masked addend: the column is wrong");
+        const auto& snapshot = offset.capture->snapshot.tables.tables.at(0);
+        require(snapshot.codes == samplerSnapshot.codes && snapshot.words.size() == samplerSnapshot.words.size(), "sampler table masked addend: the snapshot selected other records");
+        for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(snapshot.words[i].dwords == samplerSnapshot.words[i].dwords, "sampler table masked addend: the sampler words changed");
+        require(TableCodes(TableMap(*offset.result), 0) == samplerCodes, "sampler table masked addend: the map codes changed");
+    }
+    auto wrappedCode = samplerCode;
+    wrappedCode.insert(wrappedCode.begin() + 10, {0x8110ff10u, 0xfffffff0u});
+    const auto wrapped = CompileTable(TableRequest(wrappedCode, userData));
+    const auto& wrappedMap = TableMap(*wrapped.result);
+    require(wrapped.capture->snapshot.tables.tables.at(0).keys == 0u && TableCodes(wrappedMap, 0).empty(), "sampler table masked addend: an out-of-bounds start captured descriptors");
+    const auto outsideSampler = wrappedMap.at(Abi::TableHeader(0) + Abi::TableOutsideCode);
+    require(wrappedMap.at(Abi::TableHeader(0) + Abi::TableFault) == 0u && outsideSampler != Abi::NullCode && wrappedMap.at(outsideSampler + Abi::SamplerRecordFlags) == 0u, "sampler table masked addend: the out-of-bounds zero sampler is wrong");
 }
 
 bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, const void* pointer, std::size_t bytes) {
@@ -6365,6 +6496,27 @@ void verifyPointerImageTable() {
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, masked.target.vulkanVersion, masked.target.spirvVersion));
 #endif
+    for (const std::uint32_t addend : {32u, 64u}) {
+        auto offsetCode = maskedCode;
+        offsetCode.erase(offsetCode.begin() + 10, offsetCode.begin() + 13);
+        offsetCode.insert(offsetCode.begin() + 10, {0x8f128511u, 0x8712ff12u, 0x1fe0u, 0x8112ff12u, addend});
+        const auto load = std::find(offsetCode.begin(), offsetCode.end(), 0xf40c0900u);
+        require(load != offsetCode.end(), "pointer image table masked addend: the descriptor load is missing");
+        load[1] = 0x24000000u | (Palette - addend);
+        const auto offsetRequest = request(offsetCode, 0x36000u + addend);
+        const auto offsetPlan = GetResourcePlan(offsetRequest);
+        require(offsetPlan->info.images.size() == 1u && offsetPlan->info.images[0].table == 0u, "pointer image table masked addend: the T# was not planned as a table");
+        const auto& offsetColumn = *offsetPlan->descriptorSources.at(offsetPlan->info.images[0].source).tableColumn;
+        require(offsetColumn.address && offsetColumn.stride == 32u && offsetColumn.addend == addend && offsetColumn.offset == Palette - addend && offsetColumn.dwordCount == 8u && offsetColumn.unkeyed && offsetColumn.keyDomains.empty(), "pointer image table masked addend: the column is wrong");
+        const auto offsetCompiled = CompileTable(offsetRequest);
+        const auto& offsetSnapshot = offsetCompiled.capture->snapshot.tables.tables.at(0);
+        require(offsetSnapshot.codes.size() >= snapshot.codes.size() && std::equal(snapshot.codes.begin(), snapshot.codes.end(), offsetSnapshot.codes.begin()), "pointer image table masked addend: the snapshot selected other records");
+        for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(offsetSnapshot.words.at(i).dwords == snapshot.words[i].dwords, "pointer image table masked addend: the descriptor words changed");
+        require(TableCovered(offsetCompiled.regions, root + Palette / 4u, Entries * 32u), "pointer image table masked addend: the descriptor bytes were not captured");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv, offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
+#endif
+    }
 
     const std::vector<std::uint32_t> pointerCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4040500u, 0xfa000030u,
         0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c090au, 0x241fff00u, 0xf09c0f08u, 0x01090000u,
@@ -13618,6 +13770,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--nested-sampler-snapshot-retry") {
             verifyNestedSnapshotRetry(true);
             std::cout << "Nested sampler snapshot retry checks the descriptor epoch and preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-parent-scan-budget") {
+            verifyNestedParentScanBudget();
+            std::cout << "Nested parent records are charged once per scan, other heaps still share the budget\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
