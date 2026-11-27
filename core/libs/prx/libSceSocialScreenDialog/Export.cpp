@@ -23,18 +23,19 @@ int APS5_VABI sceSocialScreenDialogInitialize(void) {
 }
 
 int APS5_VABI sceSocialScreenDialogOpen(const void* param) {
-    const int status = g_status.load();
-    if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
-    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    std::uint8_t probe = 0;
-    const int savedErrno = errno;
-    if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) {
+    int status = g_status.load();
+    do {
+        if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+        if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
+        if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+        std::uint8_t probe = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) {
+            errno = savedErrno;
+            return COMMON_DIALOG_ERROR_ARG_NULL;
+        }
         errno = savedErrno;
-        return COMMON_DIALOG_ERROR_ARG_NULL;
-    }
-    errno = savedErrno;
-    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
     return 0;
 }
 
@@ -60,8 +61,10 @@ int APS5_VABI sceSocialScreenDialogGetResult(void* result) {
 }
 
 int APS5_VABI sceSocialScreenDialogClose(void) {
-    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    int status = g_status.load();
+    do {
+        if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
     return 0;
 }
 
