@@ -9,6 +9,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/System/include/FaultSignals.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include <vector>
 #include <algorithm>
@@ -175,14 +176,24 @@ bool FaultSignal(int signum) {
     return signum == SignalIllegal || signum == SignalFloatingPoint || signum == SignalBus || signum == SignalSegmentation;
 }
 
-void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext, const Trap& trap = {}) {
+bool SiginfoFault(int signum) {
+    return (signum == SignalSegmentation || signum == SignalBus) && SiginfoFaultHandlerInstalled(signum);
+}
+
+std::int32_t SiginfoCode(int signum, const Trap& trap, std::int32_t hostCode) {
+    if (signum == SignalSegmentation) return hostCode != 0 ? hostCode : (trap.error & PageProtection) != 0 ? 2 : 1;
+    return trap.number == TrapAlignment ? 1 : 3;
+}
+
+void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext, const Trap& trap = {}, bool siginfo = false, std::int32_t hostCode = 0) {
     auto& m = ucontext.mcontext;
     m.trapno = trap.number;
     m.addr = trap.address;
     m.err = trap.error;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
     LogGuestExceptionContext(signum, m);
-    handler(signum, &ucontext);
+    if (siginfo) RunSiginfoFaultHandler(signum, SiginfoCode(signum, trap, hostCode), trap.number == TrapPage ? trap.address : m.rip, trap.number, &ucontext);
+    else handler(signum, &ucontext);
     SetFpWord(m, MxcsrOffset, FpWord(m, MxcsrOffset) & (mxcsrMask != 0 ? mxcsrMask : DefaultMxcsrMask));
     SetFpWord(m, MxcsrMaskOffset, mxcsrMask);
 }
@@ -206,7 +217,7 @@ const bool SaveVectors = [] {
     return __builtin_cpu_supports("avx") != 0;
 }();
 
-void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const Trap& trap = {}) {
+void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const Trap& trap = {}, bool siginfo = false, std::int32_t hostCode = 0) {
     GuestUcontext ucontext{};
     auto& m = ucontext.mcontext;
     m.rdi = context.Rdi;
@@ -232,7 +243,7 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const 
     m.len = sizeof(GuestMcontext);
     static_assert(sizeof(context.FltSave) <= sizeof(m.fpstate));
     std::memcpy(m.fpstate, &context.FltSave, sizeof(context.FltSave));
-    CallHandler(handler, signum, ucontext, trap);
+    CallHandler(handler, signum, ucontext, trap, siginfo, hostCode);
     context.Rdi = m.rdi;
     context.Rsi = m.rsi;
     context.Rdx = m.rdx;
@@ -759,7 +770,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
         const bool restoring = RestoringContext(delivery.context.Rip);
         DWORD64 image = 0;
         const auto running = restoring ? CodeKind::Host : RunningCode(delivery.context.Rip, image);
-        if (running == CodeKind::Guest && arm != nullptr && arm->entry != nullptr && delivery.context.Rip == arm->at) {
+        if (running == CodeKind::Guest && ((arm != nullptr && arm->entry != nullptr && delivery.context.Rip == arm->at) || ArmedOnThread(GetThreadId(native), delivery.context.Rip))) {
             ResumeThread(native);
             return Attempt::Host;
         }
@@ -922,12 +933,19 @@ constexpr int MxcsrMaskShift = 7;
 
 struct PendingFault {
     GuestExceptionHandler handler;
+    bool siginfo;
     int signum;
+    std::int32_t code;
     Trap trap;
     CONTEXT context;
 };
 
 thread_local PendingFault pendingFault;
+
+std::int32_t SegvCode(ULONG_PTR address) {
+    MEMORY_BASIC_INFORMATION info{};
+    return VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT ? 2 : 1;
+}
 
 bool Committed(ULONG_PTR address) {
     MEMORY_BASIC_INFORMATION info{};
@@ -1009,11 +1027,14 @@ bool DeliverHostFault(void* exceptionPointers) noexcept {
     Fault fault{};
     if (!Classify(*info.ExceptionRecord, context, fault)) return false;
     const auto handler = Handler(fault.signum);
-    if (handler == nullptr || !GuestCode(context.Rip)) return false;
+    const bool siginfo = handler == nullptr && SiginfoFault(fault.signum);
+    if ((handler == nullptr && !siginfo) || !GuestCode(context.Rip)) return false;
     auto& pending = pendingFault;
-    if (pending.handler != nullptr) return false;
+    if (pending.handler != nullptr || pending.siginfo) return false;
     pending.handler = handler;
+    pending.siginfo = siginfo;
     pending.signum = fault.signum;
+    pending.code = siginfo && fault.signum == SignalSegmentation && fault.trap.number == TrapPage ? SegvCode(fault.trap.address) : 0;
     pending.trap = fault.trap;
     std::memcpy(&pending.context, &context, sizeof(CONTEXT));
     pending.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
@@ -1025,8 +1046,9 @@ bool DeliverHostFault(void* exceptionPointers) noexcept {
 [[noreturn]] void FaultEntry(const void* vectors) {
     const PendingFault pending = pendingFault;
     pendingFault.handler = nullptr;
+    pendingFault.siginfo = false;
     CONTEXT context = pending.context;
-    Deliver(pending.handler, pending.signum, context, pending.trap);
+    Deliver(pending.handler, pending.signum, context, pending.trap, pending.siginfo, pending.code);
     Aps5RedirectedExit(&context, SaveVectors ? vectors : nullptr, RtlRestoreContext);
 }
 
@@ -1257,13 +1279,15 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     const bool deliverable = info->si_code > 0 && Classify(hostSignal, host, fault);
     if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address)) return;
     const auto handler = deliverable ? Handler(fault.signum) : nullptr;
-    if (handler == nullptr || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
+    const bool siginfo = deliverable && handler == nullptr && SiginfoFault(fault.signum);
+    if ((handler == nullptr && !siginfo) || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
         ChainFault(hostSignal, info, context);
         return;
     }
     GuestUcontext ucontext{};
     FromHost(host, ucontext.mcontext);
-    CallHandler(handler, fault.signum, ucontext, fault.trap);
+    const bool hostClassified = hostSignal == SIGSEGV && fault.signum == SignalSegmentation && (info->si_code == SEGV_MAPERR || info->si_code == SEGV_ACCERR);
+    CallHandler(handler, fault.signum, ucontext, fault.trap, siginfo, hostClassified ? info->si_code : 0);
     ToHost(ucontext.mcontext, host);
 }
 
@@ -1431,6 +1455,12 @@ asm(".text\n"
     "    xorl %edx, %edx\n"
     "    jmp *%r8\n");
 #endif
+
+void InstallSiginfoFaultDelivery() {
+#if defined(_WIN32) || defined(__linux__)
+    InstallFaultDelivery();
+#endif
+}
 
 extern "C" {
 

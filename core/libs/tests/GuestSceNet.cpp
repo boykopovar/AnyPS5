@@ -431,6 +431,20 @@ static void CheckStatisticsInfo() {
     Require(std::memcmp(&again, &info, sizeof(info)) == 0);
 }
 
+static void CheckInterfaceStats() {
+    Require(Failed(sceNetGetInterfaceStats(reinterpret_cast<NetInterfaceStats*>(std::uintptr_t{0x10}), 0), 14));
+    Require(errno == 14);
+    NetInterfaceStats stats;
+    std::memset(&stats, 0xaa, sizeof(stats));
+    errno = 71;
+    Require(sceNetGetInterfaceStats(&stats, 0) == 0);
+    Require(errno == 71);
+    for (const std::uint32_t word : stats.reserved) Require(word == 0);
+    NetInterfaceStats later{};
+    Require(sceNetGetInterfaceStats(&later, 0) == 0);
+    Require(later.txBytes >= stats.txBytes && later.rxBytes >= stats.rxBytes);
+}
+
 static void CheckIfName() {
     constexpr std::array<const char*, 10> names = {
         "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
@@ -3201,6 +3215,7 @@ int main(int argc, char** argv) {
     CheckPoolStats();
     CheckPoolErrors();
     CheckStatisticsInfo();
+    CheckInterfaceStats();
     CheckIfName();
     CheckExForwards();
     CheckSysctl();

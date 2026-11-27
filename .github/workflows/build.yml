@@ -682,6 +682,7 @@ jobs:
       - name: Check that every test executable is registered with ctest
         run: python3 tools/check_test_registration.py build
       - if: ${{ inputs.select }}
+        id: test-graph-cache
         uses: actions/cache/restore@v6
         with:
           path: test-graph.json
@@ -691,8 +692,16 @@ jobs:
         if: ${{ inputs.select }}
         env:
           BASE: ${{ needs.eligibility.outputs.sha }}
+          GRAPH_KEY: ${{ steps.test-graph-cache.outputs.cache-matched-key }}
+        shell: bash
         run: |
-          git diff --name-only -z "$BASE" HEAD -- > changed.txt
+          graph_base=${GRAPH_KEY#test-graph-${RUNNER_OS}-}
+          if [[ ! "$graph_base" =~ ^[0-9a-f]{40}$ ]] || ! git merge-base --is-ancestor "$graph_base" "$BASE" 2>/dev/null; then
+            echo "Full run: no test graph cached at a commit in main history"
+            rm -f build/select.ninja build/select.tests
+            exit 0
+          fi
+          git diff --name-only -z "$graph_base" HEAD -- > changed.txt
           python3 tools/select_tests.py select build test-graph.json changed.txt
       - id: build
         run: |
@@ -888,6 +897,7 @@ jobs:
         shell: cmd
         run: python tools/check_test_registration.py build
       - if: ${{ inputs.select }}
+        id: test-graph-cache
         uses: actions/cache/restore@v6
         with:
           path: test-graph.json
@@ -897,9 +907,16 @@ jobs:
         if: ${{ inputs.select }}
         env:
           BASE: ${{ needs.eligibility.outputs.sha }}
-        shell: cmd
+          GRAPH_KEY: ${{ steps.test-graph-cache.outputs.cache-matched-key }}
+        shell: bash
         run: |
-          git diff --name-only -z %BASE% HEAD -- > changed.txt
+          graph_base=${GRAPH_KEY#test-graph-${RUNNER_OS}-}
+          if [[ ! "$graph_base" =~ ^[0-9a-f]{40}$ ]] || ! git merge-base --is-ancestor "$graph_base" "$BASE" 2>/dev/null; then
+            echo "Full run: no test graph cached at a commit in main history"
+            rm -f build/select.ninja build/select.tests
+            exit 0
+          fi
+          git diff --name-only -z "$graph_base" HEAD -- > changed.txt
           python tools/select_tests.py select build test-graph.json changed.txt
       - id: build
         if: github.event_name != 'pull_request'

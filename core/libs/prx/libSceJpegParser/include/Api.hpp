@@ -17,6 +17,7 @@ static_assert(sizeof(JpegParserThumbnail) == 0x38);
 
 extern "C" {
 
+int APS5_VABI libSceJpegParserReadMetadata_nid_no_patch(const void* path, void* request, void* output);
 int APS5_VABI libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(const void* config);
 int APS5_VABI libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch(const void* path, JpegParserThumbnail* thumbnail);
 

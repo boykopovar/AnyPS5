@@ -318,7 +318,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!device->Target().fragmentShaderBarycentricEnabled && !device->GeometryLimits()) {
-            std::puts("skipped, the device has neither fragmentShaderBarycentric nor geometryShader");
+            std::puts("skipped, the device has no fragmentShaderBarycentric and no geometryShader");
             return VulkanTestSkipped;
         }
         for (const auto waveSize : {64u, 32u}) {
