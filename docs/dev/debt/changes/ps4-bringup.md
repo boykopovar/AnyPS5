@@ -18,6 +18,12 @@
 
 - [INDEX_TYPE modifiers](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - the packet's low two bits select the index type, as the uconfig index-type path and shadPS4's decode do; the other bits are ignored. Heretic + Hexen (CUSA51664) sends 0x400 (16-bit with bit 10 set); what that bit selects is unmeasured. Closes when: the modifier bits are measured.
 
+# libSceNpToolkit
+
+## add Unknown function info
+
+- [NpToolkit Future](../../../core/libs/prx/libSceNpToolkit/Export.cpp) (libSceNpToolkit) - the four `sce::Toolkit::NP::Utilities` Future methods (`Future<NpUser>::get`, `~Future`, `FutureImpl::hasError`, `FutureImpl::hasResult`) throw as unimplemented, which Battlefield 1 (CUSA02429) imports from `libSceNpToolkit.prx` with no bundled provider; the class layout, call semantics and return values are unmeasured, as are the placeholder signatures. Closes when: measured on a console.
+
 # libSceNgs2.native
 
 ## change [NGS2 rack block limit]
