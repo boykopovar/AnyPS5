@@ -1,0 +1,9 @@
+# shader
+
+## change [2D accesses through a cube T#]
+
+- [2D accesses through a cube T#](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) (#4139) use the T#'s `BASE_ARRAY` face. `image_sample_lz`, plain `image_sample`, `image_sample_l`, `image_gather4`, `image_gather4_lz`, mip-less `image_load`, and mip-less `image_store` to a write-only image take this mode; converted stores take it after conversion, which Crimson Desert needs for `16_16_16_16_FLOAT`. This is measured on RDNA1 and RDNA2, including cube arrays, converted formats and wave32/wave64; see the [store measurements](https://github.com/boykopovar/AnyPS5/pull/22534) and [gather measurements](https://github.com/boykopovar/AnyPS5/pull/23519). At filtered face edges the hardware can read a neighbouring face while the translation stays within the selected face. The PS5's gfx1013 and Crimson Desert's tiled descriptor are unmeasured. Bias, comparison, offsets, derivatives, atomics, stores to an image also read, and mip loads and stores still throw.
+
+## add Functional
+
+- [2D gathers through a cube T#](../../../core/shader/recompiler/Optimization/src/ResourceTracker.cpp) (shader recompiler) - `image_gather4` and `image_gather4_lz` with DIM 2D through a cube T# gather the `BASE_ARRAY` face like the cube access with face coordinate 0, measured on RDNA2 (gfx1036, PC) with the [hardware oracle](../HW_ORACLE.md), not on the PS5's gfx1013: on a 64x64 32_FLOAT cube and a 12-face cube array at `BASE_ARRAY` 0, 6 and 7, DIM 2D equalled DIM CUBE on 32 coordinates in [1, 2] for each of the four gathered channels, and the translation through the cube mode matches the hardware on all of them with `DISABLE_CUBE_WRAP` 1. With `DISABLE_CUBE_WRAP` 0 it differs at the last texel of the face, where the hardware gathers from the neighbouring face, as samples do. Gathers with an LOD, bias, offset or comparison keep throwing.
