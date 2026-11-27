@@ -2,17 +2,21 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -33,7 +37,24 @@ struct Slot {
     alignas(256) volatile std::uint32_t done = 0;
 };
 
-std::array<Slot, 3> Slots;
+std::array<Slot, 4> Slots;
+std::atomic<unsigned> RenderingWaits{0};
+
+class ReadyWait final : public AgcDriver::IRenderingWait {
+public:
+    void Wait() override { RenderingWaits.fetch_add(1, std::memory_order_relaxed); }
+};
+
+class ReadyOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
+        throw std::runtime_error("unexpected flip in the rendering-wait prebuild fixture");
+    }
+    std::shared_ptr<AgcDriver::IRenderingWait> CaptureRenderingWait(std::uint32_t) override {
+        return std::make_shared<ReadyWait>();
+    }
+    void Fail(std::exception_ptr) noexcept override {}
+};
 
 std::uint32_t Low(const volatile void* pointer) {
     return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer));
@@ -86,12 +107,20 @@ void WaitDone(const Slot& slot, const char* what) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     using AgcDriver::VulkanDevice;
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
+        const bool renderingWait = argc == 2 && std::string_view(argv[1]) == "rendering-wait";
+        Require(argc == 1 || renderingWait, "unknown prebuild fixture mode");
+        constexpr std::uint32_t Handle = 7;
+        std::shared_ptr<ReadyOutput> output;
+        if (renderingWait) {
+            output = std::make_shared<ReadyOutput>();
+            AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+        }
         const bool prebuild = std::getenv("APS5_NO_GRAPHICS_QUEUE_PIPELINE_PREBUILD") == nullptr;
         Prepare(Slots[2], 0x9abcu);
         std::vector<std::uint32_t> warm;
@@ -103,6 +132,11 @@ int main() {
         Prepare(Slots[0], 0x1234u);
         Prepare(Slots[1], 0x5678u);
         std::vector<std::uint32_t> words;
+        if (renderingWait) {
+            Prepare(Slots[3], 0xabcd);
+            DispatchSlot(words, Slots[3], ReaderCode.data());
+            words.insert(words.end(), {AgcDriver::RenderingWaitPacketHeader, Handle, 0u, 0u});
+        }
         DispatchSlot(words, Slots[0], ReaderCode.data());
         words.insert(words.end(), {0xc0053c00u, 0x13u, Low(&Gate), High(&Gate), 1u, 0xffffffffu, 0x19u});
         DispatchSlot(words, Slots[1], NewReaderCode.data());
@@ -112,6 +146,10 @@ int main() {
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the graphics queue submit failed");
         WaitDone(Slots[0], "the dispatch before the wait did not finish");
         Require(Slots[0].output[0] == 0x1234u, "the dispatch before the wait stored " + std::to_string(Slots[0].output[0]));
+        if (renderingWait) {
+            Require(Slots[3].done == 1 && Slots[3].output[0] == 0xabcdu, "the dispatch before the rendering wait did not run");
+            Require(RenderingWaits.load(std::memory_order_relaxed) == 1, "the rendering wait was not executed");
+        }
         const auto start = std::chrono::steady_clock::now();
         const auto limit = prebuild ? std::chrono::seconds(60) : std::chrono::seconds(2);
         while (VulkanDevice::ComputePipelineCounts().created < before.created + 1 && std::chrono::steady_clock::now() - start < limit) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -131,6 +169,7 @@ int main() {
         Require(AgcDriverDispatchesAdoptedAhead_nid_postfix() == adopted, "queue 0 adopted a dispatch resolved ahead");
         std::cout << "graphics queue pipeline prebuild test passed (prebuild " << (prebuild ? "on" : "off") << ")\n";
         AgcDriverWaitIdle_nid_postfix();
+        if (output) AgcDriverUnregisterVideoOutput_nid_postfix(Handle, output);
         AgcDriverShutdown_nid_postfix();
         return 0;
     } catch (const std::exception& error) {

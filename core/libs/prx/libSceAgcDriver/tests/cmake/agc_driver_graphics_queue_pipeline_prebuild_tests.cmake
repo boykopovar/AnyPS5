@@ -1,4 +1,8 @@
 if(BUILD_TESTING)
     add_test(NAME agc_driver_graphics_queue_pipeline_prebuild_off COMMAND agc_driver_graphics_queue_pipeline_prebuild_tests)
     set_tests_properties(agc_driver_graphics_queue_pipeline_prebuild_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_GRAPHICS_QUEUE_PIPELINE_PREBUILD=1" SKIP_RETURN_CODE 77)
+    add_test(NAME agc_driver_graphics_queue_pipeline_prebuild_rendering_wait COMMAND agc_driver_graphics_queue_pipeline_prebuild_tests rendering-wait)
+    set_tests_properties(agc_driver_graphics_queue_pipeline_prebuild_rendering_wait PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
+    add_test(NAME agc_driver_graphics_queue_pipeline_prebuild_rendering_wait_off COMMAND agc_driver_graphics_queue_pipeline_prebuild_tests rendering-wait)
+    set_tests_properties(agc_driver_graphics_queue_pipeline_prebuild_rendering_wait_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_GRAPHICS_QUEUE_PIPELINE_PREBUILD=1" SKIP_RETURN_CODE 77)
 endif()
