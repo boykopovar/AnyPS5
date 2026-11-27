@@ -73,6 +73,7 @@ constexpr int GuestIpReceiveInterface = 20;
 constexpr int GuestIpReceiveTimeToLive = 65;
 constexpr std::uint32_t MulticastRequestWithIndex = 12;
 constexpr int GuestLocalPeerCredentials = 1;
+constexpr int GuestLocalConnectWait = 4;
 constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
 constexpr int ErrorAddressNotAvailable = 49;
@@ -580,13 +581,13 @@ int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void*
     return 0;
 }
 
-int GetLocalLevelOption(const LocalCredentials* credentials, bool stream, int option, void* value, std::uint32_t* length) {
+int GetLocalLevelOption(const LocalCredentials* credentials, bool stream, bool connectWait, int option, void* value, std::uint32_t* length) {
     if (option == GuestLocalPeerCredentials) {
         if (credentials == nullptr) return stream ? ErrorNotConnected : ErrorInvalid;
         return Copy(value, length, credentials, sizeof(*credentials));
     }
-    const int disabled = 0;
-    return Copy(value, length, &disabled, sizeof(disabled));
+    const int enabled = option == GuestLocalConnectWait && connectWait ? 1 : 0;
+    return Copy(value, length, &enabled, sizeof(enabled));
 }
 
 int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {

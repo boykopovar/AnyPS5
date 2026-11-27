@@ -40,6 +40,15 @@ alignas(256) constexpr std::array<std::uint32_t, 36> Code{
     0x80001201, 0xe070103c, 0x80001301, 0xbf810000,
 };
 
+constexpr std::array<std::uint32_t, 36> WithLoadWord(std::uint32_t word) {
+    auto code = Code;
+    code[16] = word;
+    return code;
+}
+
+alignas(256) constexpr auto ArrayLoadCode = WithLoadWord(0xf0001f28u);
+alignas(256) constexpr auto CubeLoadCode = WithLoadWord(0xf0001f18u);
+
 alignas(256) constexpr std::array<std::uint32_t, 16> ExplicitLodCode{
     0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
     0x80000501, 0xbf8c3f70, 0xf0900f10, 0x00610c02, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xbf810000,
@@ -177,13 +186,13 @@ void Expect(std::uint32_t tid, std::uint32_t result, const std::array<std::uint3
     }
 }
 
-void CheckPlane() {
+void CheckPlane(const std::string& load = "image_load 3d") {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto lane = LaneOf(tid);
         const std::array<std::uint32_t, 4> texel{SliceMarker(0), lane.x, lane.y, 255u};
         const auto z = PlaneZ[tid % PlaneZ.size()];
         Expect(tid, SampleResult, texel, "image_sample_lz 3d on a 2D texture with r " + std::to_string(PlaneR[tid % PlaneR.size()]));
-        Expect(tid, LoadResult, z == 0u ? texel : std::array<std::uint32_t, 4>{}, "image_load 3d on a 2D texture with z " + std::to_string(static_cast<std::int32_t>(z)));
+        Expect(tid, LoadResult, z == 0u ? texel : std::array<std::uint32_t, 4>{}, load + " on a 2D texture with z " + std::to_string(static_cast<std::int32_t>(z)));
     }
 }
 
@@ -222,6 +231,10 @@ int main() {
         FillInput(false);
         Run(*device, Code, PlaneDescriptor());
         CheckPlane();
+        Run(*device, ArrayLoadCode, PlaneDescriptor());
+        CheckPlane("image_load 2d array");
+        Run(*device, CubeLoadCode, PlaneDescriptor());
+        CheckPlane("image_load cube");
         FillTexture(Volume, VolumeDescriptor(), Depth);
         FillInput(true);
         Run(*device, Code, VolumeDescriptor());

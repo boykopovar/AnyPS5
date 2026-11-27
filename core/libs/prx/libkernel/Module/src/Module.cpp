@@ -335,10 +335,12 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  if (flags != 0 || opt != nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
  if (res && !StoreModuleResult(res, 0)) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
+ std::string guestPath;
+ if (CopyGuestPath_nid_no_patch(module_file_name, guestPath)) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  pendingModuleArgs = {args, argp};
  pendingModuleInitResult = 0;
- const auto systemLibrary = SystemLibraryPath(module_file_name);
- void* handle = dlopen_nid_postfix(systemLibrary ? systemLibrary->c_str() : module_file_name, kRtldNow);
+ const auto systemLibrary = SystemLibraryPath(guestPath);
+ void* handle = dlopen_nid_postfix(systemLibrary ? systemLibrary->c_str() : guestPath.c_str(), kRtldNow);
  const int started = pendingModuleInitResult;
  pendingModuleArgs = {};
  pendingModuleInitResult = 0;

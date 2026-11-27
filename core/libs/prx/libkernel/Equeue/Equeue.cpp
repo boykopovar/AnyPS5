@@ -122,7 +122,8 @@ void KernelEqueuePrivate::Close() {
 
 void KernelEqueuePrivate::TriggerExpiredTimers(uint64_t nowNs) {
     for (auto& ev : m_events) {
-        if (ev.enabled && ev.deadlineNs != 0 && ev.deadlineNs <= nowNs) {
+        const bool periodicTimer = ev.event.filter == EVFILT_TIMER && ev.intervalNs != 0;
+        if ((ev.enabled || periodicTimer) && ev.deadlineNs != 0 && ev.deadlineNs <= nowNs) {
             if (ev.event.filter == EVFILT_TIMER) {
                 const uint64_t count = ev.intervalNs == 0
                     ? (ev.triggered ? 0 : 1)
@@ -130,7 +131,7 @@ void KernelEqueuePrivate::TriggerExpiredTimers(uint64_t nowNs) {
                 ev.event.data += static_cast<intptr_t>(count);
                 ev.deadlineNs += count * ev.intervalNs;
             }
-            if (!ev.triggered) ++m_activations;
+            if (ev.enabled && !ev.triggered) ++m_activations;
             ev.triggered = true;
         }
     }
