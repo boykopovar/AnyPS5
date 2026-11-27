@@ -6,7 +6,7 @@
 
 ## change [expm1l]
 
-- [expm1l](../../../core/libs/prx/libc/src/Math.cpp) (libc) follows FreeBSD msun's ld80 [`s_expl.c`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_expl.c) (release/11.4.0), sharing the `k_expl.h` table and reduction constants with the port of it that `sinhl`, `coshl` and `tanhl` run over, so it no longer depends on the host's math library. It matches that source built on the host bit for bit, with the same exception flags (16 million inputs at 64-bit and at 53-bit precision, every branch covered). Unverified against the console's `libc.prx`: the 11.4.0 source is the only evidence. msun never touches `errno` (glibc sets `ERANGE`); the port keeps that. It runs at the caller's x87 precision.
+- [expm1l](../../../core/libs/prx/libc/src/MathExact.cpp) (libc) follows the `libc.prx` bundled with PPSA10122 01.101.000 (0x474c0): an argument within ±2^-66 is returned, below -ln 2 and from ln 5 up the result is `expl(x) - 1`, and between those a rational approximation is evaluated at `x`, `x - ln 2` or `x - 2 ln 2`. Overflow, and the underflow of the inner `expl` for a large negative argument, set `errno` to `ERANGE` as that code does. 500,000 arguments, a fifth of them raw 80-bit patterns, give the same bits, exception flags and `errno` as that code run natively on Windows at 64-, 53- and 24-bit precision and at 64-bit precision in each rounding direction. Other SDK versions and the system `libSceLibcInternal` are not compared
 
 ## add Functional
 
