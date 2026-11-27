@@ -1365,6 +1365,10 @@ std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const Shad
     return locations;
 }
 
+void ApplyInstanceStepRate(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex) {
+    vertex.instanceStepRate = state.stages.legacyVertex ? state.stages.instanceStepRate : 1u;
+}
+
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex) {
     if (!state.vertexPoints && !(state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u)) return;
     vertex.paClVsOutCntl |= state.paClVsOutCntl & (1u << 16u);
@@ -1423,12 +1427,16 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     };
     if (path == ShaderPath::Vertex && ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0) {
         validate(value == 0, "GCN vertex routing other than a plain VS is unsupported");
-        const auto unitStepRate = [&](std::uint32_t offset) {
+        const auto stepRate = [&](std::uint32_t offset) {
             const auto rate = find(queue.context, offset);
-            return rate == queue.context.end() || rate->second == 1u;
+            return rate == queue.context.end() ? 1u : rate->second;
         };
         const auto components = (read(queue.shader, 0x4a, RegisterBank::Shader) >> 24u) & 3u;
-        validate(components == 0 || (unitStepRate(0x2a8) && (components == 1 || unitStepRate(0x2a9))), "GCN vertex instance step rates other than 1 are not implemented");
+        if (components != 0) {
+            result.instanceStepRate = stepRate(0x2a8);
+            validate(result.instanceStepRate != 0, "GCN vertex instance step rate 0 of VGT_INSTANCE_STEP_RATE_0 is not implemented");
+        }
+        validate(components < 2 || stepRate(0x2a9) == 1u, "GCN vertex instance step rates other than 1 in VGT_INSTANCE_STEP_RATE_1 are not implemented");
         result.legacyVertex = true;
     } else if (path == ShaderPath::Vertex) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");

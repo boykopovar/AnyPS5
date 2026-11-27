@@ -214,6 +214,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage.pointSize = vertex.pointSize;
         vertexStorage.pointSizeMin = vertex.pointSizeMin;
         vertexStorage.pointSizeMax = vertex.pointSizeMax;
+        vertexStorage.instanceStepRate = vertex.instanceStepRate;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);

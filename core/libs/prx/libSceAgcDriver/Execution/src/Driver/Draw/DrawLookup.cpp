@@ -60,6 +60,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(std::bit_cast<std::uint32_t>(vertex.pointSize));
                 mix(std::bit_cast<std::uint32_t>(vertex.pointSizeMin));
                 mix(std::bit_cast<std::uint32_t>(vertex.pointSizeMax));
+                mix(vertex.instanceStepRate);
                 for (std::uint32_t r = 0; r < vertex.resourcesNum; ++r) {
                     for (const auto field : vertex.resources[r].fields) mix(field);
                     const auto& destination = vertex.resourcesDst[r];

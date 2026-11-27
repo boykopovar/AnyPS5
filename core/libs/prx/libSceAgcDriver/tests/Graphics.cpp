@@ -4049,6 +4049,67 @@ void gcnColorSliceTests() {
     expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "the color view ends before its first slice");
 }
 
+void gcnInstanceStepRateTests() {
+    using AgcDriver::Graphics::DecodeShaderStages;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    struct Restore {
+        ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } restore;
+    const auto legacy = [](std::uint32_t components) {
+        auto queue = makeState();
+        queue.context[0x2d5] = 0;
+        queue.shader[0x4a] = components << 24u;
+        return queue;
+    };
+    Require(DecodeShaderStages(legacy(1)).legacyVertex && DecodeShaderStages(legacy(1)).instanceStepRate == 1u, "a PS4 vertex program without VGT_INSTANCE_STEP_RATE_0 does not step once per instance");
+    for (const std::uint32_t rate : {1u, 2u, 3u, 0xffffffffu}) {
+        for (const std::uint32_t components : {1u, 2u, 3u}) {
+            auto queue = legacy(components);
+            queue.context[0x2a8] = rate;
+            const auto stages = DecodeShaderStages(queue);
+            Require(stages.legacyVertex && stages.instanceStepRate == rate, "a PS4 vertex program that reads its instance does not take VGT_INSTANCE_STEP_RATE_0");
+            AgcDriver::Graphics::State state{};
+            state.stages = stages;
+            ShaderRecompiler::ShaderVertexStageInfo vertex{};
+            AgcDriver::Graphics::ApplyInstanceStepRate(state, vertex);
+            Require(vertex.instanceStepRate == rate, "the vertex stage info does not carry VGT_INSTANCE_STEP_RATE_0");
+        }
+    }
+    auto unread = legacy(0);
+    unread.context[0x2a8] = 0;
+    unread.context[0x2a9] = 5;
+    Require(DecodeShaderStages(unread).instanceStepRate == 1u, "a PS4 vertex program that reads no instance takes the instance step rates");
+    auto zero = legacy(1);
+    zero.context[0x2a8] = 0;
+    expectFailure([&] { static_cast<void>(DecodeShaderStages(zero)); }, "GCN vertex instance step rate 0 of VGT_INSTANCE_STEP_RATE_0 is not implemented");
+    auto second = legacy(1);
+    second.context[0x2a9] = 4;
+    Require(DecodeShaderStages(second).instanceStepRate == 1u, "a PS4 vertex program that reads one instance VGPR refuses VGT_INSTANCE_STEP_RATE_1");
+    for (const std::uint32_t components : {2u, 3u}) {
+        auto queue = legacy(components);
+        queue.context[0x2a8] = 2;
+        queue.context[0x2a9] = 4;
+        expectFailure([&] { static_cast<void>(DecodeShaderStages(queue)); }, "GCN vertex instance step rates other than 1 in VGT_INSTANCE_STEP_RATE_1 are not implemented");
+    }
+    AgcDriver::Graphics::State agc{};
+    agc.stages.instanceStepRate = 2;
+    ShaderRecompiler::ShaderVertexStageInfo vertex{};
+    vertex.instanceStepRate = 7;
+    AgcDriver::Graphics::ApplyInstanceStepRate(agc, vertex);
+    Require(vertex.instanceStepRate == 1u, "a vertex program outside the PS4 legacy path takes an instance step rate");
+    ShaderRecompiler::RecompileRequest request{};
+    const std::array<std::uint32_t, 1> code{0xbf810000u};
+    request.shader = {ShaderRecompiler::ShaderStage::Vertex, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.vertex = ShaderRecompiler::ShaderVertexStageInfo{};
+    const auto unitHash = ShaderRecompiler::RecompileCacheKey::ContextHash(request);
+    request.context.vertex->instanceStepRate = 3;
+    Require(ShaderRecompiler::RecompileCacheKey::ContextHash(request) != unitHash, "VGT_INSTANCE_STEP_RATE_0 does not key the vertex program's variant");
+    const ShaderRecompiler::RequestSerializer serializer;
+    const auto back = serializer.Deserialize(serializer.Serialize(request));
+    Require(back.request.context.vertex->instanceStepRate == 3u && back.vertex->instanceStepRate == 3u, "VGT_INSTANCE_STEP_RATE_0 did not survive request serialization");
+}
+
 void cmaskTests() {
     using AgcDriver::Graphics::DecodeColorBuffer;
     using AgcDriver::Graphics::CmaskLayout;
@@ -16246,6 +16307,7 @@ int main(int argc, char** argv) {
         metadataPassTests();
         depthCopyPassTests();
         cmaskTests();
+        gcnInstanceStepRateTests();
         gcnColorSliceTests();
         uint16ExportTests();
         uint8x2TargetTests();

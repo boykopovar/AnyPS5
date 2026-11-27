@@ -292,6 +292,7 @@ private:
         append(key, std::bit_cast<std::uint32_t>(value.pointSize));
         append(key, std::bit_cast<std::uint32_t>(value.pointSizeMin));
         append(key, std::bit_cast<std::uint32_t>(value.pointSizeMax));
+        append(key, value.instanceStepRate);
         if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
         append(key, value.resourcesNum);
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {

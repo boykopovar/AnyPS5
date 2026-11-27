@@ -214,7 +214,7 @@ void Driver::traceDrawKeyLookup(const std::array<std::uint64_t, 5>& components, 
 }
 
 bool Driver::sameVertexInfo(const ShaderRecompiler::ShaderVertexStageInfo& a, const ShaderRecompiler::ShaderVertexStageInfo& b) {
-    if (a.resourcesNum != b.resourcesNum || a.fetchAttribReg != b.fetchAttribReg || a.fetchBufferReg != b.fetchBufferReg || a.fetchEmbedded != b.fetchEmbedded || a.paClVsOutCntl != b.paClVsOutCntl || a.pointList != b.pointList || a.pointSize != b.pointSize || a.pointSizeMin != b.pointSizeMin || a.pointSizeMax != b.pointSizeMax) return false;
+    if (a.resourcesNum != b.resourcesNum || a.fetchAttribReg != b.fetchAttribReg || a.fetchBufferReg != b.fetchBufferReg || a.fetchEmbedded != b.fetchEmbedded || a.paClVsOutCntl != b.paClVsOutCntl || a.pointList != b.pointList || a.pointSize != b.pointSize || a.pointSizeMin != b.pointSizeMin || a.pointSizeMax != b.pointSizeMax || a.instanceStepRate != b.instanceStepRate) return false;
     if (a.depthRemapMode != b.depthRemapMode) return false;
     for (std::uint32_t i = 0; i < a.resourcesNum && i < a.resources.size(); ++i) {
         if (a.resources[i].fields != b.resources[i].fields) return false;

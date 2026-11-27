@@ -289,6 +289,7 @@ struct ShaderVertexStageInfo {
     float pointSize = 1.0f;
     float pointSizeMin = 0.0f;
     float pointSizeMax = 0.0f;
+    std::uint32_t instanceStepRate = 1;
 };
 
 struct ShaderFloatMode {
