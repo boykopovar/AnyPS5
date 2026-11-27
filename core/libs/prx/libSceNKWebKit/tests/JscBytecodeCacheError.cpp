@@ -184,18 +184,18 @@ int main() {
                 SYSTEM_INFO info{};
                 GetSystemInfo(&info);
                 pageSize = info.dwPageSize;
-                base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
                 Require(base != nullptr);
                 DWORD previous = 0;
-                Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+                Require(VirtualProtect(base + pageSize * 3, pageSize, PAGE_NOACCESS, &previous) != 0);
 #else
                 const long size = sysconf(_SC_PAGESIZE);
                 Require(size > 0);
                 pageSize = static_cast<std::size_t>(size);
-                void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                void* mapped = mmap(nullptr, pageSize * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
                 Require(mapped != MAP_FAILED);
                 base = static_cast<unsigned char*>(mapped);
-                Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+                Require(mprotect(base + pageSize * 3, pageSize, PROT_NONE) == 0);
 #endif
             }
 
@@ -204,7 +204,7 @@ int main() {
 #ifdef _WIN32
                 VirtualFree(base, 0, MEM_RELEASE);
 #else
-                munmap(base, pageSize * 3);
+                munmap(base, pageSize * 4);
 #endif
             }
 
@@ -218,7 +218,7 @@ int main() {
             }
 
             unsigned char* ReadOnly() const { return base + pageSize; }
-            unsigned char* Guard() const { return base + pageSize * 2; }
+            unsigned char* Guard() const { return base + pageSize * 3; }
         };
 
         auto requireNotImplemented = [](auto&& function) {
@@ -290,6 +290,56 @@ int main() {
         Require(Same(parserWithRoMsg, roMsgOriginal));
         requireNotImplemented([&] { _ZN3JSC18BytecodeCacheErroraSERKNS0_10WriteErrorE(&parserWithRoMsg, &write); });
         Require(Same(parserWithRoMsg, roMsgOriginal));
+
+        struct SubstringBuffer {
+            StringImpl header;
+            StringImpl* owner;
+        };
+        static_assert(sizeof(SubstringBuffer) == 32);
+
+        SubstringBuffer guardOwnerSub{StringImpl{2, 0, nullptr, 2}, reinterpret_cast<StringImpl*>(pages.Guard())};
+        BytecodeCacheError parserWithGuardOwner = Parser(2, &guardOwnerSub.header);
+        const BytecodeCacheError guardOwnerOriginal = parserWithGuardOwner;
+        requireNotImplemented([&] { _ZN3JSC18BytecodeCacheErroraSERKNS0_13StandardErrorE(&parserWithGuardOwner, &standard); });
+        Require(Same(parserWithGuardOwner, guardOwnerOriginal));
+        requireNotImplemented([&] { _ZN3JSC18BytecodeCacheErroraSERKNS0_10WriteErrorE(&parserWithGuardOwner, &write); });
+        Require(Same(parserWithGuardOwner, guardOwnerOriginal));
+
+        unsigned char* const truncatedSubAddr = pages.Guard() - 24;
+        const StringImpl truncatedSubHeader{2, 0, nullptr, 2};
+        std::memcpy(truncatedSubAddr, &truncatedSubHeader, sizeof(truncatedSubHeader));
+        BytecodeCacheError parserWithTruncatedSub = Parser(2, reinterpret_cast<StringImpl*>(truncatedSubAddr));
+        const BytecodeCacheError truncatedSubOriginal = parserWithTruncatedSub;
+        requireNotImplemented([&] { _ZN3JSC18BytecodeCacheErroraSERKNS0_13StandardErrorE(&parserWithTruncatedSub, &standard); });
+        Require(Same(parserWithTruncatedSub, truncatedSubOriginal));
+        requireNotImplemented([&] { _ZN3JSC18BytecodeCacheErroraSERKNS0_10WriteErrorE(&parserWithTruncatedSub, &write); });
+        Require(Same(parserWithTruncatedSub, truncatedSubOriginal));
+
+        SubstringBuffer sharedRefSub{StringImpl{4, 0, nullptr, 2}, reinterpret_cast<StringImpl*>(pages.Guard())};
+        BytecodeCacheError parserWithSharedRef = Parser(2, &sharedRefSub.header);
+        Require(_ZN3JSC18BytecodeCacheErroraSERKNS0_13StandardErrorE(&parserWithSharedRef, &standard) == &parserWithSharedRef);
+        Require(parserWithSharedRef.index == 1 && parserWithSharedRef.standardError.error == 5 && sharedRefSub.header.refCount == 2);
+
+        SubstringBuffer sharedRefSubWrite{StringImpl{4, 0, nullptr, 2}, reinterpret_cast<StringImpl*>(pages.Guard())};
+        BytecodeCacheError parserWithSharedRefWrite = Parser(2, &sharedRefSubWrite.header);
+        Require(_ZN3JSC18BytecodeCacheErroraSERKNS0_10WriteErrorE(&parserWithSharedRefWrite, &write) == &parserWithSharedRefWrite);
+        Require(parserWithSharedRefWrite.index == 2 && parserWithSharedRefWrite.writeError.written == 7 && parserWithSharedRefWrite.writeError.expected == 8 && sharedRefSubWrite.header.refCount == 2);
+
+        StringImpl liveOwner{4, 0, nullptr, 0};
+        auto* const heapSubStandard = static_cast<SubstringBuffer*>(_ZN3WTF10fastMallocEm(sizeof(SubstringBuffer)));
+        heapSubStandard->header = StringImpl{2, 0, nullptr, 2};
+        heapSubStandard->owner = &liveOwner;
+        BytecodeCacheError parserWithLiveSub = Parser(2, &heapSubStandard->header);
+        Require(_ZN3JSC18BytecodeCacheErroraSERKNS0_13StandardErrorE(&parserWithLiveSub, &standard) == &parserWithLiveSub);
+        Require(parserWithLiveSub.index == 1 && parserWithLiveSub.standardError.error == 5 && liveOwner.refCount == 2);
+
+        StringImpl liveOwnerWrite{4, 0, nullptr, 0};
+        auto* const heapSubWrite = static_cast<SubstringBuffer*>(_ZN3WTF10fastMallocEm(sizeof(SubstringBuffer)));
+        heapSubWrite->header = StringImpl{2, 0, nullptr, 2};
+        heapSubWrite->owner = &liveOwnerWrite;
+        BytecodeCacheError parserWithLiveSubWrite = Parser(2, &heapSubWrite->header);
+        Require(_ZN3JSC18BytecodeCacheErroraSERKNS0_10WriteErrorE(&parserWithLiveSubWrite, &write) == &parserWithLiveSubWrite);
+        Require(parserWithLiveSubWrite.index == 2 && parserWithLiveSubWrite.writeError.written == 7 && parserWithLiveSubWrite.writeError.expected == 8 && liveOwnerWrite.refCount == 2);
     }
     return 0;
 }

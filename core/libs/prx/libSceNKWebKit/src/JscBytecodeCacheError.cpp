@@ -79,6 +79,9 @@ constexpr std::uint32_t WriteErrorIndex = 2;
 constexpr std::uint32_t ValuelessIndex = 0xFF;
 constexpr std::uint8_t ErrorNone = 0;
 constexpr unsigned kMaxSubstringDepth = 64u;
+constexpr std::size_t kSubstringOwnerOffset = 24u;
+constexpr std::size_t kSubstringHeaderBytes = kSubstringOwnerOffset + sizeof(StringImpl*);
+static_assert(kSubstringHeaderBytes == 32u);
 
 template<typename T>
 T ReadGuestValue(const T* pointer, const char* function) {
@@ -133,8 +136,10 @@ void ValidateReleasableStringImpl(StringImpl* impl, const char* function) {
         if (header.refCount != 2) return;
         if ((header.hashAndFlags & 48u) || (header.hashAndFlags & 3u) == 3u) return;
         if ((header.hashAndFlags & 3u) != 2u) return;
+        RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
+        RequireWritableGuestBytes(impl, kSubstringHeaderBytes, function);
         StringImpl* owner = nullptr;
-        if (!GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(impl) + 24, sizeof(owner)))
+        if (!GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(impl) + kSubstringOwnerOffset, sizeof(owner)))
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         impl = owner;
         ++depth;
@@ -155,8 +160,12 @@ void ReleaseChainWithHostWrite(StringImpl* root, StringImpl* current, unsigned d
         StringImpl header{};
         if (!GuestCopyIn_nid_no_patch(&header, current, sizeof(header))) return;
         if (header.refCount == 2 && !(header.hashAndFlags & 48u) && (header.hashAndFlags & 3u) == 2u) {
+            const GuestArena::HostWrite extendedGuard(current, kSubstringHeaderBytes);
+            if (!extendedGuard.Open() || !GuestWritable_nid_no_patch(current, kSubstringHeaderBytes)) return;
+            GuestArena::GuestArenaPrepareHostRead_nid_no_patch(current, kSubstringHeaderBytes);
+            if (!GuestReadable_nid_no_patch(current, kSubstringHeaderBytes)) return;
             StringImpl* owner = nullptr;
-            if (GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(current) + 24, sizeof(owner)) && owner) {
+            if (GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(current) + kSubstringOwnerOffset, sizeof(owner)) && owner) {
                 ReleaseChainWithHostWrite(root, owner, depth + 1);
                 return;
             }
