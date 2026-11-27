@@ -12,6 +12,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -377,67 +378,6 @@ ChunkScan scanChunks(std::span<const std::uint8_t> png, bool padPalette = true) 
     return scan;
 }
 
-struct PartialImage {
-    const Decoder::Png::Header& header;
-    const PngDecDecodeParam& param;
-    std::size_t pitch;
-    std::int32_t result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
-};
-
-void beginPartialImage(png_structp reader, png_infop info) {
-    const auto& image = *static_cast<const PartialImage*>(png_get_progressive_ptr(reader));
-    png_set_expand(reader);
-    png_set_strip_16(reader);
-    png_set_gray_to_rgb(reader);
-    if (!image.header.hasTransparency && !(png_get_color_type(reader, info) & PNG_COLOR_MASK_ALPHA)) {
-        const auto alpha = hasAlpha(image.header) ? 0xFF : image.param.alpha_value;
-        png_set_add_alpha(reader, alpha, PNG_FILLER_AFTER);
-    }
-    if (image.param.pixel_format == PIXEL_FORMAT_B8G8R8A8) png_set_bgr(reader);
-    png_read_update_info(reader, info);
-    if (png_get_rowbytes(reader, info) != static_cast<std::size_t>(image.header.width) * BYTES_PER_PIXEL) {
-        png_error(reader, "Unexpected PNG output row size");
-    }
-}
-
-void copyPartialRow(png_structp reader, png_bytep row, png_uint_32 rowNumber, int) {
-    auto& image = *static_cast<PartialImage*>(png_get_progressive_ptr(reader));
-    if (rowNumber >= image.header.height) png_error(reader, "Unexpected PNG output row");
-    auto* output = static_cast<std::uint8_t*>(image.param.image_mem_addr) + rowNumber * image.pitch;
-    if (!CopyOutPreservingErrno(output, row, static_cast<std::size_t>(image.header.width) * BYTES_PER_PIXEL)) {
-        image.result = SCE_PNG_DEC_ERROR_INVALID_ADDR;
-        png_error(reader, "Unwritable PNG output row");
-    }
-}
-
-void ignorePngWarning(png_structp, png_const_charp) {}
-
-void abortPartialImage(png_structp reader, png_const_charp) {
-    png_longjmp(reader, 1);
-}
-
-void readPartialRows(png_structp reader, png_infop info, const ChunkScan& scan, PartialImage& image) {
-    if (setjmp(png_jmpbuf(reader)) != 0) return;
-    png_set_user_limits(reader, image.header.width, image.header.height);
-    png_set_progressive_read_fn(reader, &image, beginPartialImage, copyPartialRow, nullptr);
-    png_process_data(reader, info, const_cast<png_bytep>(scan.png.data()), scan.png.size() - CHUNK_HEADER_SIZE - CHUNK_CRC_SIZE);
-    if (!scan.shortIdat.empty()) {
-        png_process_data(reader, info, const_cast<png_bytep>(scan.shortIdat.data()), scan.shortIdat.size());
-    }
-}
-
-std::int32_t decodePartialImage(const ChunkScan& scan, const Decoder::Png::Header& header,
-                                const PngDecDecodeParam& param, std::size_t pitch) {
-    if (header.interlaced) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
-    png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, abortPartialImage, ignorePngWarning);
-    if (!reader) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
-    png_infop info = png_create_info_struct(reader);
-    PartialImage image{header, param, pitch};
-    if (info) readPartialRows(reader, info, scan, image);
-    png_destroy_read_struct(&reader, &info, nullptr);
-    return image.result;
-}
-
 struct InputStream {
     PngDecInputCallback input = nullptr;
     void* argument = nullptr;
@@ -552,11 +492,60 @@ void readPngMemory(png_structp reader, png_bytep output, png_size_t size) {
     remaining = remaining.subspan(size);
 }
 
+void abortPngRead(png_structp reader, png_const_charp) {
+    png_longjmp(reader, 1);
+}
+
+void checkImageDataWarning(png_structp reader, png_const_charp message) {
+    const std::string_view warning{message};
+    if (warning.starts_with("IDAT: ") && warning != "IDAT: Extra compressed data" && warning != "IDAT: Too much image data") {
+        png_error(reader, message);
+    }
+}
+
+std::int32_t decodeImageRows(ChunkScan& scan, const Decoder::Png::Header& header, const PngDecDecodeParam& param, std::size_t pitch) {
+    if (!scan.shortIdat.empty()) {
+        scan.png.resize(scan.png.size() - CHUNK_HEADER_SIZE - CHUNK_CRC_SIZE);
+        appendChunk(scan.png, "IDAT", scan.shortIdat.subspan(CHUNK_HEADER_SIZE));
+        appendChunk(scan.png, "IEND", {});
+    }
+    std::span<const std::uint8_t> data = scan.png;
+    std::vector<std::uint8_t> row(static_cast<std::size_t>(header.width) * BYTES_PER_PIXEL);
+    png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, abortPngRead, checkImageDataWarning);
+    if (!reader) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+    png_infop info = png_create_info_struct(reader);
+    if (!info || setjmp(png_jmpbuf(reader))) {
+        png_destroy_read_struct(&reader, &info, nullptr);
+        return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+    }
+    png_set_user_limits(reader, header.width, header.height);
+    png_set_read_fn(reader, &data, readPngMemory);
+    png_read_info(reader, info);
+    png_set_expand(reader);
+    png_set_strip_16(reader);
+    png_set_gray_to_rgb(reader);
+    if (!header.hasTransparency && !(png_get_color_type(reader, info) & PNG_COLOR_MASK_ALPHA)) {
+        png_set_add_alpha(reader, hasAlpha(header) ? 0xFF : param.alpha_value, PNG_FILLER_AFTER);
+    }
+    if (param.pixel_format == PIXEL_FORMAT_B8G8R8A8) png_set_bgr(reader);
+    png_read_update_info(reader, info);
+    if (png_get_rowbytes(reader, info) != row.size()) png_error(reader, "Unexpected PNG output row size");
+    auto* output = static_cast<std::uint8_t*>(param.image_mem_addr);
+    for (std::size_t y = 0; y < header.height; ++y) {
+        png_read_row(reader, row.data(), nullptr);
+        if (!CopyOutPreservingErrno(output + y * pitch, row.data(), row.size())) {
+            png_destroy_read_struct(&reader, &info, nullptr);
+            return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+        }
+    }
+    png_destroy_read_struct(&reader, &info, nullptr);
+    return scan.imageResult;
+}
+
 int readIndexedImage(std::span<const std::uint8_t> png, const Decoder::Png::Header& header,
                      std::uint8_t* indices, std::uint8_t* palette) {
-    const auto fail = [](png_structp reader, png_const_charp) { png_longjmp(reader, 1); };
     const auto ignoreWarning = [](png_structp, png_const_charp) {};
-    png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, fail, ignoreWarning);
+    png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, abortPngRead, ignoreWarning);
     if (!reader) return 0;
     png_infop info = png_create_info_struct(reader);
     if (!info) {
@@ -620,7 +609,7 @@ std::int32_t decodeIndexedImage(std::span<const std::uint8_t> png, const Decoder
 
 std::int32_t decodePngBytes(const Context& context, const PngDecDecodeParam& param, std::span<const std::uint8_t> pngBytes, PngDecImageInfo* imageInfo) {
     const bool indexed = param.pixel_format == PIXEL_FORMAT_CLUT;
-    const ChunkScan scan = scanChunks(pngBytes, !indexed);
+    ChunkScan scan = scanChunks(pngBytes, !indexed);
     if (scan.headerResult != 0) return scan.headerResult;
     const std::span<const std::uint8_t> png = scan.png;
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(png);
@@ -655,8 +644,12 @@ std::int32_t decodePngBytes(const Context& context, const PngDecDecodeParam& par
         return scan.imageResult != 0 ? scan.imageResult : dimensions;
     }
 
+    if (!header->interlaced) {
+        const auto result = decodeImageRows(scan, *header, param, static_cast<std::size_t>(pitch));
+        return result != 0 ? result : dimensions;
+    }
     const std::optional<Decoder::Png::Image> image = Decoder::Png::Decode(png);
-    if (!image) return decodePartialImage(scan, *header, param, static_cast<std::size_t>(pitch));
+    if (!image) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
     if (image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
 
     const bool swapRedBlue = param.pixel_format == PIXEL_FORMAT_B8G8R8A8;

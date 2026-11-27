@@ -355,6 +355,40 @@ static void CheckShortIdat(void* handle) {
     }
 }
 
+static void CheckIdatChecksum(void* handle) {
+    constexpr auto decodeError = static_cast<std::int32_t>(0x80690012);
+    constexpr std::size_t width = 4;
+    constexpr std::size_t height = 4;
+    constexpr std::size_t rowSize = width * 4;
+    std::vector<std::uint8_t> pixels(rowSize * height);
+    for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<std::uint8_t>(i + 1);
+    auto chunks = SplitChunks(Decoder::Png::Encode(pixels, width, height, 4, {0, Decoder::Png::FILTER_NONE}));
+    Require(chunks.size() == 3 && std::strcmp(chunks[1].type, "IDAT") == 0);
+    auto& compressed = chunks[1].data;
+    Require(compressed.size() >= 4);
+    std::vector<std::uint8_t> image(pixels.size() + rowSize);
+    PngDecImageInfo info{};
+    compressed.push_back(0);
+    Require(DecodeWith(handle, JoinChunks(chunks), image, info) == (width << 16 | height));
+    Require(std::equal(pixels.begin(), pixels.end(), image.begin()));
+    compressed.pop_back();
+
+    for (auto byte = compressed.end() - 4; byte != compressed.end(); ++byte) *byte ^= 0x55;
+    std::fill(pixels.end() - rowSize, pixels.end(), 0xCC);
+    pixels.resize(image.size(), 0xCC);
+    for (std::size_t trailer = 0; trailer <= 4; ++trailer) {
+        auto input = chunks;
+        if (trailer != 0) {
+            const auto split = compressed.end() - trailer;
+            input[1].data.resize(compressed.size() - trailer);
+            input.insert(input.begin() + 2, PngChunk{"IDAT", {split, compressed.end()}});
+        }
+        Require(DecodeWith(handle, JoinChunks(input), image, info) == decodeError);
+        Require(info.image_width == width && info.image_height == height);
+        Require(image == pixels);
+    }
+}
+
 static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPng) {
     constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
     constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
@@ -842,6 +876,7 @@ int main() {
 
     CheckChunkRules(handle, rgbPng);
     CheckShortIdat(handle);
+    CheckIdatChecksum(handle);
 
     Require(scePngDecDelete(nullptr) == invalidHandle);
     Require(scePngDecDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);
