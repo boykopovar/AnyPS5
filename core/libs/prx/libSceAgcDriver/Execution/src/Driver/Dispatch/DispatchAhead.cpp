@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "ThreadOwned.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
@@ -58,10 +59,16 @@ std::size_t& PreviewedUntil() {
     return until;
 }
 
+std::size_t& PrebuiltUntil() {
+    static thread_local std::size_t until = 0;
+    return until;
+}
+
 }
 
 void Driver::clearResolvedAhead() {
     PreviewedUntil() = 0;
+    PrebuiltUntil() = 0;
     auto& resolved = resolvedAhead();
     if (resolved.empty()) return;
     groupCaptureStats().stale += resolved.size();
@@ -122,8 +129,10 @@ bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, cons
 
 void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from) {
     static const bool allQueues = std::getenv("APS5_GROUP_CAPTURE_ALL_QUEUES") != nullptr;
-    if (!allQueues && submission.queue == 0) return;
-    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu, "group_ahead");
+    static const bool prebuildGraphicsQueue = std::getenv("APS5_NO_GRAPHICS_QUEUE_PIPELINE_PREBUILD") == nullptr;
+    const bool prebuildOnly = submission.queue == 0 && (!allQueues || pipelineDispatch());
+    if (prebuildOnly && (!prebuildGraphicsQueue || AsyncDrawCompile() || from < PrebuiltUntil())) return;
+    if (!prebuildOnly && submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu, "group_ahead");
     auto& resolved = resolvedAhead();
     const auto localDevice = device.Load();
     if (resolved.contains(from) || localDevice == nullptr) return;
@@ -248,7 +257,8 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
             }
         }
     }
-    for (std::size_t cursor = from; cursor < commands.size();) {
+    std::size_t cursor = from;
+    while (cursor < commands.size()) {
         const auto header = commands[cursor];
         if (Pm4::FillerPacket(header)) {
             ++cursor;
@@ -261,9 +271,26 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
         const auto next = cursor + count;
         if (header == FlipPacketHeader || header == RenderingWaitPacketHeader || opcode == 0x22 || (Pm4::Predicated(header) && scratch.predication.operation != 0)) break;
         if (opcode == 0x3c || opcode == 0x93) {
-            if (!Pm4::WaitSatisfiedUnchecked(packet) && !WrittenByRun(packet, labels)) break;
+            if (!prebuildOnly && !Pm4::WaitSatisfiedUnchecked(packet) && !WrittenByRun(packet, labels)) break;
         } else if (opcode == 0x15 || opcode == 0x16) {
             if (count < (opcode == 0x15 ? 5u : 3u) || resolved.contains(cursor)) break;
+            if (prebuildOnly) {
+                currentPacketOffset() = cursor;
+                try {
+                    if (opcode == 0x15) dispatch(scratch, packet, submission);
+                    else dispatchIndirect(scratch, packet, submission);
+                } catch (const std::exception&) {
+                    ++stats.failures;
+                }
+                resolved.erase(cursor);
+                try {
+                    Pm4::NoteDispatchRegisters(packet, scratch);
+                } catch (const std::exception&) {
+                    break;
+                }
+                cursor = next;
+                continue;
+            }
             if (opcode == 0x16) {
                 std::uint64_t arguments = 0;
                 try {
@@ -326,12 +353,24 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                 ++stats.unknownWrites;
                 break;
             }
+        } else if (prebuildOnly && Pm4::IndirectRegisterOpcode(opcode)) {
+            const auto found = submission.registerLists.find(cursor);
+            if (count != 5 || found == submission.registerLists.end() || found->second.size() != static_cast<std::size_t>(packet[4]) * 2 || !Pm4::IndirectRegistersValid(found->second)) break;
+            Pm4::ExecuteIndirectRegisters(packet, found->second, scratch);
         } else if (opcode == 0x37 || opcode == 0x49) {
             const auto label = Pm4::DecodeLabelWrite(packet);
+            if (!label && prebuildOnly) {
+                cursor = next;
+                continue;
+            }
             if (!label) break;
             NoteLabel(labels, label->address, label->Bytes());
             writes.emplace_back(label->address, label->address + label->Bytes().size());
         } else if (opcode != 0x3f && opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
+            if (Pm4::AccessesMemory(header) && prebuildOnly) {
+                cursor = next;
+                continue;
+            }
             if (Pm4::AccessesMemory(header)) break;
             try {
                 Pm4::Execute(packet, scratch);
@@ -341,6 +380,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
         }
         cursor = next;
     }
+    if (prebuildOnly) PrebuiltUntil() = std::max(cursor, from + 1);
     const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
     stats.resolveMs += ms;
     stats.resolveMaxMs = std::max(stats.resolveMaxMs, ms);
