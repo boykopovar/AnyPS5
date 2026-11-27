@@ -9,6 +9,7 @@
 namespace {
 
 constexpr int ErrorParam = static_cast<int>(0x802E0000u);
+constexpr int ErrorNotInit = static_cast<int>(0x802E0002u);
 constexpr int ErrorNotOpen = static_cast<int>(0x802E0004u);
 constexpr int ErrorFormatUnknown = static_cast<int>(0x802E0007u);
 constexpr int ErrorNotConnected = static_cast<int>(0x802E0010u);
@@ -197,12 +198,17 @@ int main() {
     Require(sceCameraIsAttached(1) == 0, "camera 1 must be reported as not attached");
     Require(sceCameraIsAttached(2) == ErrorParam, "camera index 2 must be rejected");
     Require(sceCameraIsAttached(-1) == ErrorParam, "a negative camera index must be rejected");
+    Require(sceCameraGetDeviceID() == ErrorNotInit, "the device id must report NOT_INIT before opening");
+    Require(sceCameraGetDeviceIDWithoutOpen() == ErrorNotConnected, "the device id without open must report NOT_CONNECTED");
+    Require(sceCameraGetCalibData() == ErrorNotConnected, "calibration data must report NOT_CONNECTED before opening");
+    Require(sceCameraIsConfigChangeDone() == 0, "a finished configuration change is reported before opening");
     CheckClosed();
     CheckOpen();
+    RequireNotImplemented([] { sceCameraGetDeviceID(); }, "sceCameraGetDeviceID");
     CheckStart();
     CheckFrames();
     CheckClose();
     Require(sceCameraSetVideoSync() == ErrorParam, "set video sync before open must report PARAM");
-    RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
+    Require(sceCameraGetCalibData() == ErrorNotConnected, "calibration data must report NOT_CONNECTED after closing");
     return 0;
 }
