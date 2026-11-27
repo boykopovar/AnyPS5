@@ -1,0 +1,18 @@
+add_test_executable(agc_recording_pool_allocation_tests EXCLUDE_FROM_ALL tests/RecordingPoolAllocation.cpp)
+target_sources(agc_recording_pool_allocation_tests PRIVATE Graphics/src/RecordingPool.cpp tests/AllocationFailure.cpp)
+target_include_directories(agc_recording_pool_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_recording_pool_allocation_tests PRIVATE libSceAgcDriver libc)
+set_target_properties(agc_recording_pool_allocation_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_recording_pool_allocation_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_recording_pool_allocation_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    foreach(mode publish release failed-record)
+        add_test(NAME agc_recording_pool_allocation_${mode} COMMAND agc_recording_pool_allocation_tests --${mode})
+        set_tests_properties(agc_recording_pool_allocation_${mode} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL:" TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(agc_recording_pool_allocation_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()
