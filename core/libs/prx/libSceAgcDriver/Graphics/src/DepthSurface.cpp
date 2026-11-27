@@ -5084,8 +5084,9 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire)) continue;
         const auto& target = surface->target;
-        const bool touched = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
-        if (touched || surface->Overlaps(address, bytes) || (target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes)) surface->expanded = false;
+        const bool touched = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes && planeMappedUnder(surface->active, range, address, bytes); });
+        const bool htileUnmapped = surface->samplingActive && surface->sampling.initial.size() > 1u && !planeMappedUnder(surface->active, surface->sampling.initial[1], address, bytes);
+        if (touched || surface->Overlaps(address, bytes) || (target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes && !htileUnmapped)) surface->expanded = false;
         if (surface->samplingActive && target.stencilAddress != 0u && !target.htileStencil && target.htileDepthOnly && surface->sampling.initial.size() > 2u) {
             const auto& plane = surface->sampling.initial[2];
             if (address < plane.address + plane.bytes && plane.address < address + bytes && planeMappedUnder(surface->active, plane, address, bytes)) {
@@ -5108,7 +5109,8 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
                 }
             }
         }
-        const bool overlaps = target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes && (!surface->samplingActive || surface->sampling.initial.size() < 2u || planeMappedUnder(surface->active, surface->sampling.initial[1], address, bytes));
+        const bool overlaps = target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes;
+        if (overlaps && htileUnmapped) continue;
         if (overlaps && surface->samplingActive && HtileFillCovers(target.htileAddress, target.extent, address, bytes)) {
             const auto& metadata = surface->sampling.initial[1];
             if (!GuestMemory::Accessible(reinterpret_cast<const void*>(metadata.address), metadata.bytes) || !GuestMemory::Watched(metadata.address, metadata.bytes)) surface->sampling.Refuse("native multisample depth metadata fill over unwatched memory is not implemented");

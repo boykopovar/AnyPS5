@@ -2434,6 +2434,10 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         NoteDepthMetadataFill(target.htileAddress, metadataBytes - 4u, clearWord);
         Require(CachedSampledTexture(context, words) == texture, "a fill over an unmapped HTILE plane replaced the sampled view");
         sample(fetch, nullptr, 0.0f, 0.25f);
+        NoteDepthMetadataFill(target.htileAddress, metadataBytes, clearWord);
+        Require(CachedSampledTexture(context, words) == texture, "a whole fill over an unmapped HTILE plane replaced the sampled view");
+        sample(fetch, nullptr, 0.0f, 0.25f);
+        sample(bareFetch, nullptr, 0.0f, 0.25f);
     }
     const bool htileFill = fill == PlaneFill::Htile || fill == PlaneFill::Both;
     const bool stencilFill = fill == PlaneFill::Stencil || fill == PlaneFill::Both;
