@@ -283,8 +283,7 @@ private:
             if (!decodedRoots.insert(target).second) continue;
             auto& region = owner(target);
             if (region.Instructions.contains(target)) continue;
-            const auto limit = trusted ? rootLimit(target) : region.End;
-            decodeFrom(target, region, limit, !trusted);
+            decodeFrom(target, region, rootLimit(target), !trusted);
             for (const auto edge : region.Edges) enqueueRoot(edge, true);
             enqueueAddressTaken();
         }

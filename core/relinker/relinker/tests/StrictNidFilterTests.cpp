@@ -112,6 +112,12 @@ void trustedRootUsesTextLimitBeyondInferredRegion() {
     require(result.Instructions.contains(0x1002), "Trusted root was not decoded from its own address");
     require(result.Instructions.contains(0x1007), "Trusted root was still bounded by another stream's inferred region");
     require(result.Instructions.contains(0x100C), "Trusted root instruction extending past the inferred region was not decoded");
+
+    auto untrusted = fixture();
+    emit(untrusted, 0, {0x48, 0xB8, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xBB, 0x00, 0x00, 0xC3, 0x00, 0xC3});
+    untrusted.Pointers.emplace(0x2000, 0x1002);
+    const auto untrustedResult = AnalyzeStrictReachability(untrusted);
+    require(untrustedResult.Instructions.contains(0x100C), "Untrusted root instruction extending past the inferred region was not decoded");
 }
 
 void untrustedRootWithOutOfCodeBranchFallsBackConservatively() {
@@ -120,6 +126,12 @@ void untrustedRootWithOutOfCodeBranchFallsBackConservatively() {
     input.Pointers.emplace(0x2000, 0x1001);
     const auto result = AnalyzeStrictReachability(input);
     require(result.ImportSlots == input.ImportSlots, "An out-of-code branch from an untrusted root did not preserve all imports");
+
+    auto trusted = fixture();
+    emit(trusted, 0, {0xB8, 0xEB, 0x7F, 0x90, 0x90, 0xC3});
+    trusted.Entries.push_back(0x1001);
+    requireFailureMessage([&] { AnalyzeStrictReachability(trusted); }, "direct branch leaves code",
+                          "Trusted root with an out-of-code branch was accepted");
 }
 
 void ud1DeadTail() {
