@@ -69,6 +69,7 @@ enum class Decoder {
     OcspNonce,
     AuthorityKeyId,
     GeneralNames,
+    AuthorityInfoAccess,
     Null,
 };
 
@@ -100,7 +101,7 @@ constexpr Method Methods[] = {
     {140, Decoder::Integer},
     {141, Decoder::Enumerated},
     {142, Decoder::GeneralizedTime},
-    {177, Decoder::Unsupported},
+    {177, Decoder::AuthorityInfoAccess},
     {290, Decoder::Unsupported},
     {291, Decoder::Unsupported},
     {366, Decoder::OcspNonce},
@@ -108,7 +109,7 @@ constexpr Method Methods[] = {
     {368, Decoder::Unsupported},
     {370, Decoder::GeneralizedTime},
     {371, Decoder::Unsupported},
-    {398, Decoder::Unsupported},
+    {398, Decoder::AuthorityInfoAccess},
     {401, Decoder::Unsupported},
     {430, Decoder::Object},
     {666, Decoder::Unsupported},
@@ -556,6 +557,7 @@ bool EndsDefiniteContent(std::span<const unsigned char> body) {
     return true;
 }
 
+constexpr int FieldMissing = 121;
 constexpr int NoMatchingChoiceType = 143;
 constexpr int ExplicitTagNotConstructed = 120;
 constexpr std::uint32_t OtherNameTag = 0;
@@ -782,6 +784,26 @@ void FreeObjectStack(LibreSslStack* objects) {
     sk_free_nid_postfix(objects);
 }
 
+Asn1Object_nid_no_patch* ReadObject(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, ObjectTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (header.constructed) {
+        PutHeaderError(TypeNotPrimitive);
+        return nullptr;
+    }
+    auto* object = static_cast<Asn1Object_nid_no_patch*>(NewObject(input.first(header.length)));
+    if (!object) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    input = input.subspan(header.length);
+    return object;
+}
+
 void* NewExtendedKeyUsage(std::span<const unsigned char> value) {
     std::span<const unsigned char> body;
     if (!SequenceBody(value, true, "EXTENDED_KEY_USAGE indefinite length", body)) return nullptr;
@@ -793,29 +815,104 @@ void* NewExtendedKeyUsage(std::span<const unsigned char> value) {
     std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> usages(allocated, FreeObjectStack);
     while (!body.empty()) {
         if (EndsDefiniteContent(body)) return nullptr;
-        Header header;
-        if (CheckTag(body, ObjectTag, 0, false, header) != TagCheck::Present) {
-            PutError(NestedAsn1Error);
-            PutError(NestedAsn1Error);
-            return nullptr;
-        }
-        if (header.constructed) {
-            PutHeaderError(TypeNotPrimitive);
-            return nullptr;
-        }
-        void* object = NewObject(body.first(header.length));
-        if (!object) {
-            PutError(NestedAsn1Error);
-            return nullptr;
-        }
-        body = body.subspan(header.length);
+        Asn1Object_nid_no_patch* object = ReadObject(body);
+        if (!object) return nullptr;
         if (sk_push_nid_postfix(usages.get(), object) == 0) {
-            ASN1_OBJECT_free_nid_postfix(static_cast<Asn1Object_nid_no_patch*>(object));
+            ASN1_OBJECT_free_nid_postfix(object);
             PutError(MallocFailure);
             return nullptr;
         }
     }
     return usages.release();
+}
+
+struct AccessDescription {
+    Asn1Object_nid_no_patch* method;
+    LibreSslGeneralName* location;
+};
+
+static_assert(sizeof(AccessDescription) == 16 && offsetof(AccessDescription, location) == 8);
+
+void FreeAccessDescription(AccessDescription* description) {
+    if (!description) return;
+    GENERAL_NAME_free_nid_postfix(description->location);
+    ASN1_OBJECT_free_nid_postfix(description->method);
+    free_nid_postfix(description);
+}
+
+void FreeAuthorityInfoAccess(LibreSslStack* info) {
+    if (!info) return;
+    for (int index = 0; index < info->num; ++index)
+        FreeAccessDescription(reinterpret_cast<AccessDescription*>(info->data[index]));
+    sk_free_nid_postfix(info);
+}
+
+AccessDescription* NewAccessDescription(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("ACCESS_DESCRIPTION indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<AccessDescription*>(calloc_nid_postfix(1, sizeof(AccessDescription)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<AccessDescription, void (*)(AccessDescription*)> description(allocated, FreeAccessDescription);
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    description->method = ReadObject(content);
+    if (!description->method) return nullptr;
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    description->location = NewGeneralName(content);
+    if (!description->location) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return description.release();
+}
+
+void* NewAuthorityInfoAccess(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, true, "AUTHORITY_INFO_ACCESS indefinite length", body)) return nullptr;
+    LibreSslStack* allocated = sk_new_nid_postfix(nullptr);
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> info(allocated, FreeAuthorityInfoAccess);
+    while (!body.empty()) {
+        if (EndsDefiniteContent(body)) return nullptr;
+        AccessDescription* description = NewAccessDescription(body);
+        if (!description) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (sk_push_nid_postfix(info.get(), description) == 0) {
+            FreeAccessDescription(description);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return info.release();
 }
 
 struct UsagePeriodValue {
@@ -914,6 +1011,8 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
         return NewAuthorityKeyId(value);
     case Decoder::GeneralNames:
         return NewGeneralNamesExtension(value);
+    case Decoder::AuthorityInfoAccess:
+        return NewAuthorityInfoAccess(value);
     case Decoder::Null:
         return NewNull(value);
     case Decoder::Unsupported:

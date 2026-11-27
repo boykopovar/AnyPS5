@@ -1041,6 +1041,214 @@ void TestGeneralNames() {
     for (const std::vector<int>& queue : directoryFailures) Require(!queue.empty());
 }
 
+struct AccessDescription {
+    Asn1Object_nid_no_patch* method;
+    LibreSslGeneralName* location;
+};
+
+void FreeAuthorityInfoAccess(void* value) {
+    sk_pop_free_nid_postfix(static_cast<LibreSslStack*>(value), +[](void* pointer) APS5_VABI {
+        auto* description = static_cast<AccessDescription*>(pointer);
+        if (!description) return;
+        GENERAL_NAME_free_nid_postfix(description->location);
+        ASN1_OBJECT_free_nid_postfix(description->method);
+        free_nid_postfix(description);
+    });
+}
+
+LibreSslStack* DecodeAuthorityInfoAccess(int nid, const Bytes& bytes) {
+    auto* info = static_cast<LibreSslStack*>(DecodeValue(nid, bytes));
+    Require(info != nullptr);
+    RequireQueue({});
+    return info;
+}
+
+const AccessDescription* AccessDescriptionAt(const LibreSslStack* info, int index, const Bytes& methodEncoding, int methodNid,
+    int locationType) {
+    const auto* description = static_cast<const AccessDescription*>(sk_value_nid_postfix(info, index));
+    Require(description != nullptr && description->method != nullptr && description->location != nullptr);
+    Require(description->method->length == static_cast<int>(methodEncoding.size()));
+    Require(std::memcmp(description->method->data, methodEncoding.data(), methodEncoding.size()) == 0);
+    Require(description->method->nid == 0 && description->method->flags == 0x09);
+    Require(OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(description->method)) == methodNid);
+    Require(description->location->type == locationType && description->location->value != nullptr);
+    return description;
+}
+
+void TestAuthorityInfoAccess() {
+    static_assert(sizeof(AccessDescription) == 16 && offsetof(AccessDescription, location) == 8);
+    for (const Bytes& empty : {FromHex("3000"), FromHex("30005a"), FromHex("1000"), FromHex("308100")}) {
+        LibreSslStack* info = DecodeAuthorityInfoAccess(177, empty);
+        Require(sk_num_nid_postfix(info) == 0);
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* info = DecodeAuthorityInfoAccess(398, FromHex("3000"));
+        Require(sk_num_nid_postfix(info) == 0);
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    const Bytes ocspMethod{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01};
+    const Bytes caIssuersMethod{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x02};
+    const Bytes caRepositoryMethod{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x05};
+    const Bytes privateMethod{0x2a, 0x03};
+
+    const Bytes singleAia = FromHex("3010300e06082b0601050507300186026162");
+    LibreSslStack* info = DecodeAuthorityInfoAccess(177, singleAia);
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    const Bytes singleSia = FromHex("3010300e06082b0601050507300586026364");
+    info = DecodeAuthorityInfoAccess(398, singleSia);
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, caRepositoryMethod, 785, 6)->location->value, 22, {'c', 'd'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    const Bytes multiAia = FromHex(
+        "303a300f06082b060105050730028603757269300906022a038203646e73300a06022a038704c0000201"
+        "300806022a0388022a03300606022a03a300");
+    info = DecodeAuthorityInfoAccess(177, multiAia);
+    Require(sk_num_nid_postfix(info) == 5);
+    RequireString(AccessDescriptionAt(info, 0, caIssuersMethod, 179, 6)->location->value, 22, {'u', 'r', 'i'});
+    RequireString(AccessDescriptionAt(info, 1, privateMethod, 0, 2)->location->value, 22, {'d', 'n', 's'});
+    RequireString(AccessDescriptionAt(info, 2, privateMethod, 0, 7)->location->value, 4, {192, 0, 2, 1});
+    const auto* rid = static_cast<const Asn1Object_nid_no_patch*>(
+        AccessDescriptionAt(info, 3, privateMethod, 0, 8)->location->value);
+    Require(rid->length == 2 && rid->flags == 0x09 && std::memcmp(rid->data, "\x2a\x03", 2) == 0);
+    RequireString(AccessDescriptionAt(info, 4, privateMethod, 0, 3)->location->value, 16, {0xa3, 0x00});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    const Bytes dirAia = FromHex("3017301506022a03a40f300d310b300906035504030c024341");
+    info = DecodeAuthorityInfoAccess(177, dirAia);
+    Require(sk_num_nid_postfix(info) == 1);
+    const auto* dirName = static_cast<const LibreSslX509Name*>(
+        AccessDescriptionAt(info, 0, privateMethod, 0, 4)->location->value);
+    Require(sk_num_nid_postfix(dirName->entries) == 1);
+    const auto* entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(dirName->entries, 0));
+    Require(entry != nullptr && entry->value != nullptr);
+    RequireString(entry->value, 12, {'C', 'A'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    static unsigned char aiaOid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01};
+    Fixture resolvedAia(0, aiaOid, sizeof(aiaOid), {0x30, 0x10, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07,
+        0x30, 0x01, 0x86, 0x02, 'a', 'b'});
+    info = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedAia.extension));
+    Require(info != nullptr && sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+
+    static unsigned char siaOid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x0b};
+    Fixture resolvedSia(0, siaOid, sizeof(siaOid), {0x30, 0x10, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07,
+        0x30, 0x05, 0x86, 0x02, 'c', 'd'});
+    info = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedSia.extension));
+    Require(info != nullptr && sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, caRepositoryMethod, 785, 6)->location->value, 22, {'c', 'd'});
+    FreeAuthorityInfoAccess(info);
+
+    struct ConfCase {
+        int nid;
+        const char* value;
+        Bytes method;
+        int methodNid;
+        Bytes expected;
+    };
+    for (const ConfCase& item : {
+             ConfCase{177, "DER:3010300e06082b0601050507300186026162", ocspMethod, 178, {'a', 'b'}},
+             ConfCase{398, "DER:3010300e06082b0601050507300586026364", caRepositoryMethod, 785, {'c', 'd'}}}) {
+        LibreSsl3X509Extension* built = X509V3_EXT_conf_nid_nid_postfix(nullptr, nullptr, item.nid, item.value);
+        Require(built != nullptr);
+        info = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(built));
+        Require(info != nullptr && sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, item.method, item.methodNid, 6)->location->value, 22, item.expected);
+        FreeAuthorityInfoAccess(info);
+        X509_EXTENSION_free_nid_postfix(built);
+    }
+    Require(allocations.empty());
+    RequireQueue({});
+
+    const std::vector<MalformedValue> malformed{
+        {{}, {102, 58}},
+        {FromHex("30"), {102, 58}},
+        {FromHex("3100"), {168, 58}},
+        {FromHex("0000"), {168, 58}},
+        {FromHex("1080"), {102, 58}},
+        {FromHex("30053000"), {155, 58}},
+        {FromHex("30020000"), {159}},
+        {FromHex("30023100"), {168, 58, 58}},
+        {FromHex("30020500"), {168, 58, 58}},
+        {FromHex("30021000"), {149, 58}},
+        {FromHex("300130"), {102, 58, 58}},
+        {FromHex("30011f"), {102, 58, 58}},
+        {FromHex("300230ff"), {102, 58, 58}},
+        {FromHex("30023005"), {155, 58, 58}},
+        {FromHex("30023000"), {121, 58}},
+        {FromHex("300430020000"), {159, 58}},
+        {FromHex("3008300606042b060105"), {121, 58}},
+        {FromHex("300a300806042b0601050000"), {159, 58}},
+        {FromHex("3012300e06082b06010505073001860261620000"), {159}},
+        {FromHex("300430020500"), {168, 58, 58, 58}},
+        {FromHex("300430028600"), {168, 58, 58, 58}},
+        {FromHex("3003300106"), {102, 58, 58, 58}},
+        {FromHex("300330011f"), {102, 58, 58, 58}},
+        {FromHex("300430020680"), {102, 58, 58, 58}},
+        {FromHex("3004300206ff"), {102, 58, 58, 58}},
+        {FromHex("300430020605"), {155, 58, 58, 58}},
+        {FromHex("300430022600"), {231, 58, 58}},
+        {FromHex("300430020600"), {216, 58, 58}},
+        {FromHex("3006300406028001"), {216, 58, 58}},
+        {FromHex("30053003060180"), {216, 58, 58}},
+        {FromHex("3006300406022a83"), {216, 58, 58}},
+        {FromHex("300a300806042b0601058900"), {143, 58, 58}},
+        {FromHex("3009300706042b0601051f"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("300a300806042b0601058201"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("300b300906042b060105830161"), {156, 58, 58, 58, 58}},
+        {FromHex("300a300806042b0601058400"), {120, 58, 58, 58}},
+        {FromHex("300a300806042b060105a400"), {102, 58, 58, 58, 58, 58, 58}},
+        {FromHex("301a301806042b060105a410300d310b300906035504030c02434100"), {148, 58, 58, 58}},
+        {FromHex("300a300806042b0601058800"), {216, 58, 58, 58, 58}},
+        {FromHex("300d300b06042b060105a803060101"), {231, 58, 58, 58, 58}},
+        {FromHex("300b300906042b060105800100"), {149, 58, 58, 58, 58}},
+        {FromHex("300b300906042b060105850100"), {149, 58, 58, 58, 58}},
+        {FromHex("300d300b06042b0601058601790500"), {148, 58}},
+        {FromHex("300d300b06042b0601058601790000"), {148, 58}},
+        {FromHex("3018300e06082b0601050507300186026162300606022a038900"), {143, 58, 58}},
+    };
+    RequireMalformed(177, malformed);
+    RequireMalformed(398, malformed);
+
+    const std::vector<Bytes> unmodelled{
+        FromHex("30800000"),
+        FromHex("30023080"),
+        FromHex("300430800000"),
+        FromHex("3012301006022a03a00a06032a0304a003160178"),
+        FromHex("300e300c06022a03a506a1040c026162"),
+        FromHex("300a300806022a03a1028000"),
+        FromHex("300a300806022a03a3800000"),
+        FromHex("301a300e06082b0601050507300186026162300806022a03a1028000"),
+    };
+    RequireUnmodelled(177, unmodelled);
+    RequireUnmodelled(398, unmodelled);
+
+    Require(DistinctQueues(AllocationFailures(177, FromHex("3000"), FreeAuthorityInfoAccess)) ==
+        std::vector<std::vector<int>>{{65}});
+    Require(DistinctQueues(AllocationFailures(177, singleAia, FreeAuthorityInfoAccess)) ==
+        std::vector<std::vector<int>>{{58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 58, 58, 58, 58},
+            {65, 65, 58, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(177, multiAia, FreeAuthorityInfoAccess)) ==
+        std::vector<std::vector<int>>{{58, 58}, {58, 58, 58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58},
+            {65, 58, 58, 58, 58}, {65, 65, 58, 58, 58, 58}});
+    const std::vector<std::vector<int>> directoryFailures = AllocationFailures(177, dirAia, FreeAuthorityInfoAccess);
+    Require(!directoryFailures.empty());
+    for (const std::vector<int>& queue : directoryFailures) Require(!queue.empty());
+}
+
 void TestUnsupported() {
     Fixture certificatePolicies(89, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&certificatePolicies.extension); });
@@ -1238,6 +1446,7 @@ int main() {
     TestStructuredRoundTrips();
     TestNidResolution();
     TestGeneralNames();
+    TestAuthorityInfoAccess();
     TestUnsupported();
     TestUnknownExtensions();
     TestMethodTable();
