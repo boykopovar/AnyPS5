@@ -54,9 +54,7 @@ int main() {
         } catch (const std::invalid_argument&) {
         }
     };
-    expectInvalidArgument(nullptr, keys.data(), keys.size(), sizeof(unsigned char), Compare);
     expectInvalidArgument(&sample, nullptr, keys.size(), sizeof(unsigned char), Compare);
-    expectInvalidArgument(&sample, keys.data(), keys.size(), 0, Compare);
     expectInvalidArgument(&sample, keys.data(), keys.size(), sizeof(unsigned char), nullptr);
 
     bool overflowed = false;

@@ -41,7 +41,7 @@ IrU32 TranslationContext::readPackedU16Source(const RdnaOperand& operand) {
     if (operand.opSel && !operand.opSelHi) {
         packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&ir.ShiftRightLogical(raw.Value(), ir.Constant(16u)), &raw.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
     } else if (!operand.opSel && !operand.opSelHi) {
-        packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&raw.Value(), &raw.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
+        packed = IrU32(ir.Emit(IrOpcode::SplatLowU16x2, IrType::U32, {&raw.Value()}));
     } else if (operand.opSel && operand.opSelHi) {
         packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&raw.Value(), &ir.ShiftRightLogical(raw.Value(), ir.Constant(16u)), &ir.Constant(0u), &ir.Constant(16u)}));
     }

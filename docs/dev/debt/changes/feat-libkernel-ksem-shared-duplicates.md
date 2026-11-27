@@ -1,0 +1,5 @@
+# libkernel
+
+## change [ksem_init, ksem_post, ksem_wait, ksem_trywait, ksem_timedwait, ksem_getvalue and ksem_destroy]
+
+- [ksem_init, ksem_post, ksem_wait, ksem_trywait, ksem_timedwait, ksem_getvalue and ksem_destroy](../../../core/libs/prx/libkernel/Semaphore/src/Ksem.cpp) (libkernel) - a guest signal does not interrupt a wait with `EINTR`. Otherwise they follow FreeBSD 11 `uipc_sem.c`: each semaphore is kept in a table keyed by a descriptor reserved on the host null device, as a ksem id is a descriptor there; `dup`, `dup2` and `fcntl` `F_DUPFD` give the new descriptor the same semaphore, and `ksem_destroy` marks it dead, so its other descriptors fail with `EINVAL` as `ksem_get` does for `KS_DEAD`; a guest `close`, or `dup2` over the id, drops it through libkernel's close notification; `ksem_init` fails with `ENOSPC` when no descriptor is left or 30 semaphores (`SEM_MAX`) exist, each counted once until its last descriptor closes; ksem_getvalue rejects an unwritable value pointer with EFAULT (14) via checked guest copy, as FreeBSD's sys_ksem_getvalue does through copyout

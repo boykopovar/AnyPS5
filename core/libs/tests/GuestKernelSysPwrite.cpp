@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <chrono>
 #include <cstdint>
@@ -61,7 +62,7 @@ static Function LoadFunction(void* module, const char* name, bool patched, const
 
 int main(int argc, char** argv) {
     Require(argc == 3);
-    const auto directory = std::filesystem::absolute(argv[1]);
+    const auto directory = std::filesystem::absolute(ArgumentPath(argv, 1));
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     auto* sys = LoadLibraryFile(directory / "libkernel_sys.prx");
     auto* kernel = LoadLibraryFile(directory / "libkernel.prx");
