@@ -84,6 +84,26 @@ void deadTailAndExplicitEntry() {
     require(live.ImportSlots == std::set<std::uint64_t>{0x2000}, "Explicit entry after UD2 lost its import");
 }
 
+void explicitEntryInsideLinearSweepPadding() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    std::fill(input.Text.begin() + 1, input.Text.begin() + 16, 0);
+    ripOperand(input, 16, {0xFF, 0x15}, 0x2000);
+    input.Entries.push_back(0x1010);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.Instructions.contains(0x1010), "Explicit export root was not decoded from its own address");
+    require(result.ImportSlots == std::set<std::uint64_t>{0x2000}, "Padding consumed an absolute export root and dropped its import");
+    require(result.IndirectTransfers == 1, "Decoding an interior root double-counted or skipped its indirect call");
+
+    auto aligned = fixture();
+    emit(aligned, 0, {0xC3});
+    importThunk(aligned, 16, 0x2000);
+    aligned.Entries.push_back(0x1010);
+    const auto alignedResult = AnalyzeStrictReachability(aligned);
+    require(alignedResult.ImportSlots == std::set<std::uint64_t>{0x2000}, "An already aligned explicit root changed behavior");
+    require(alignedResult.IndirectTransfers == 1, "An already decoded root was counted twice");
+}
+
 void ud1DeadTail() {
     auto input = fixture();
     emit(input, 0, {0x0F, 0xB9, 0xC0});
@@ -1684,6 +1704,7 @@ int main() {
     try {
         defaultFilterExtraLandingPadRoots();
         deadTailAndExplicitEntry();
+        explicitEntryInsideLinearSweepPadding();
         ud1DeadTail();
         conditionalTailCall();
         fallthroughAfterZeroPadding();
