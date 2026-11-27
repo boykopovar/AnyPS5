@@ -249,6 +249,7 @@ public:
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
     bool SamplerMirrorClampToEdge() const;
+    bool BorderColorSwizzle() const;
     bool ConservativeRasterization() const;
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;

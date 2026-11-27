@@ -804,6 +804,8 @@ private:
         bool singleLevelImage = false;
         bool mipmappedImage = false;
         std::optional<std::uint32_t> pinnedLod;
+        std::vector<OpaqueBlackPairing> opaqueBlackPairings;
+        std::optional<BorderComponentMapping> borderMapping;
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
