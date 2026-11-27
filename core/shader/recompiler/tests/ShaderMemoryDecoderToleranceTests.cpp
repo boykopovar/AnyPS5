@@ -4,6 +4,15 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Optimization/BindingAllocator.hpp"
+#include "Optimization/ShaderStageInputInfo.hpp"
+#include "Optimization/SsaBuilder.hpp"
+#include "Optimization/SrtWalker.hpp"
+#include "Optimization/ResourceTracker.hpp"
+#include "Optimization/ShaderInfoCollector.hpp"
+#include "BdaAbi.hpp"
+#include <spirv/unified1/spirv.hpp>
+#include "SpirvBackend/SpirvEmitter.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +21,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 using namespace ShaderRecompiler;
 
@@ -421,11 +431,80 @@ void TestGfx1013OnlyFormsTranslate() {
     }
 }
 
+
+std::vector<std::uint32_t> EmitCompute(const RdnaInstruction& inst) {
+    IrProgram program;
+    program.SetWaveSize(64);
+    program.Resources().stage = IrShaderStage::Compute;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    BlockInfo info;
+    info.id = block.Id();
+    program.Metadata().blockInfo.push_back(info);
+    TranslationContext context(program, block, 256);
+    context.TranslateInstruction(inst);
+    SsaBuilder{}.Rewrite(program);
+    SrtWalker{}.BuildPlan(program);
+    ResourceTracker{}.Track(program);
+    ShaderComputeInputInfo compute;
+    compute.threadsNum[0] = 64u;
+    compute.threadsNum[1] = 1u;
+    compute.threadsNum[2] = 1u;
+    ShaderStageInputInfo inputs;
+    inputs.compute = &compute;
+    ShaderInfoCollector{}.Collect(program, inputs);
+    const auto bindings = BindingAllocator{}.Allocate(program, BindingLayout{});
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance, spv::CapabilityInt64Atomics};
+    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    SpirvTargetOptions target{};
+    target.vulkanVersion = 0x00401000u;
+    target.spirvVersion = 0x00010300u;
+    target.subgroupSize = 64u;
+    target.bdaAbiVersion = BdaAbi::Version;
+    target.supportedCapabilities = capabilities;
+    target.supportedExtensions = extensions;
+    return SpirvEmitter().Emit(program, inputs, bindings, target);
+}
+
+void TestGfx1013FormsEmit() {
+    const auto smem = [](std::uint32_t opcode, std::uint32_t sdst, std::uint32_t sbase) {
+        return (0x3Du << 26u) | (opcode << 18u) | (sdst << 6u) | sbase;
+    };
+    const std::array<std::pair<const char*, std::array<std::uint32_t, 2>>, 11> cases{{
+        {"S_ATOMIC_ADD", {smem(0x82u, 3u, 1u), 0x10u}},
+        {"S_ATOMIC_CMPSWAP", {smem(0x81u, 3u, 1u), 0x10u}},
+        {"S_ATOMIC_ADD_X2", {smem(0xa2u, 4u, 1u), 0x10u}},
+        {"S_STORE_DWORD", {smem(0x10u, 3u, 1u), 0x10u}},
+        {"S_STORE_DWORDX4", {smem(0x12u, 4u, 1u), 0x10u}},
+        {"S_BUFFER_STORE_DWORD", {smem(0x18u, 2u, 1u), 0x10u}},
+        {"S_BUFFER_STORE_DWORDX2", {smem(0x19u, 2u, 1u), 0x10u}},
+        {"S_BUFFER_ATOMIC_ADD", {smem(0x42u, 2u, 1u), 0x10u}},
+        {"S_BUFFER_ATOMIC_ADD_X2", {smem(0x62u, 4u, 1u), 0x10u}},
+        {"S_BUFFER_ATOMIC_CMPSWAP_X2", {smem(0x61u, 4u, 1u), 0x10u}},
+        {"S_BUFFER_ATOMIC_ADD with GLC", {smem(0x42u, 2u, 1u) | (1u << 16u), 0x10u}},
+    }};
+    for (const auto& [name, words] : cases) {
+        const RdnaInstruction inst = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        try {
+            const auto spirv = EmitCompute(inst);
+            if (spirv.empty()) {
+                std::fprintf(stderr, "EmitCompute produced no words for %s\n", name);
+                std::abort();
+            }
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "EmitCompute threw for %s: %s\n", name, error.what());
+            std::abort();
+        }
+    }
+}
+
 int main() {
     TestDsWriteAddtidTolerance();
     TestDsReadAddtidTolerance();
     Test64BitScalarDescriptorVccLoAndRefusals();
     TestGfx1013OnlyFormsDecode();
     TestGfx1013OnlyFormsTranslate();
+    TestGfx1013FormsEmit();
     return 0;
 }
