@@ -11,6 +11,10 @@
 #include <string>
 
 struct CairoFontFace;
+struct _cairo_font_face;
+
+CairoFontFace* CairoFontFaceFromBackend_nid_no_patch(_cairo_font_face* face);
+_cairo_font_face* CairoFontFaceBackend_nid_no_patch(CairoFontFace* face, const char* function);
 
 struct CairoFtFontFaceKey {
     bool fromFace{};

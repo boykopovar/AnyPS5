@@ -1,10 +1,17 @@
+#include "Translation/InstructionTranslator.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ShaderRecompiler {
 
@@ -100,6 +107,159 @@ bool RayTracingMiss() {
         return text != nullptr && std::strcmp(text, "miss") == 0;
     }();
     return miss;
+}
+
+const NanSpeculationConfig& NanSpeculation() {
+    static const NanSpeculationConfig config = [] {
+        NanSpeculationConfig result;
+        const char* enabled = std::getenv("APS5_NAN_SPECULATION");
+        result.enabled = enabled != nullptr && *enabled != '\0' && std::strcmp(enabled, "0") != 0;
+        const auto number = [](const char* text, std::uint32_t fallback) {
+            if (text == nullptr || *text == '\0') return fallback;
+            char* end = nullptr;
+            const auto value = std::strtoul(text, &end, 10);
+            return end != text && *end == '\0' && value > 0u && value <= 4096u ? static_cast<std::uint32_t>(value) : fallback;
+        };
+        constexpr std::array<std::pair<std::string_view, ShaderStageKind>, 6> names{{{"compute", ShaderStageKind::Compute}, {"vertex", ShaderStageKind::Vertex}, {"pixel", ShaderStageKind::Pixel}, {"fetch", ShaderStageKind::Fetch}, {"mesh", ShaderStageKind::Mesh}, {"unknown", ShaderStageKind::Unknown}}};
+        if (const char* stages = std::getenv("APS5_NAN_SPECULATION_STAGES"); stages != nullptr && *stages != '\0') {
+            result.stageMask = 0u;
+            std::string_view rest(stages);
+            while (!rest.empty()) {
+                const auto comma = rest.find(',');
+                const auto name = rest.substr(0u, comma);
+                rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1u);
+                for (const auto& [text, kind] : names) {
+                    if (name == text || name == "all") result.stageMask |= 1u << static_cast<std::uint32_t>(kind);
+                }
+            }
+        }
+        const char* minimum = std::getenv("APS5_NAN_SPECULATION_MIN");
+        if (const auto all = minimum != nullptr && std::strchr(minimum, ':') == nullptr ? number(minimum, 0u) : 0u; all != 0u) result.stageMinimum.fill(all);
+        if (minimum != nullptr && std::strchr(minimum, ':') != nullptr) {
+            std::string_view rest(minimum);
+            while (!rest.empty()) {
+                const auto comma = rest.find(',');
+                const auto entry = rest.substr(0u, comma);
+                rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1u);
+                const auto colon = entry.find(':');
+                if (colon == std::string_view::npos) continue;
+                const auto name = entry.substr(0u, colon);
+                const std::string digits(entry.substr(colon + 1u));
+                char* end = nullptr;
+                const auto value = std::strtoul(digits.c_str(), &end, 10);
+                if (end == digits.c_str() || *end != '\0' || value == 0u || value > 4096u) continue;
+                for (const auto& [text, kind] : names) {
+                    if (name == text || name == "all") result.stageMinimum[static_cast<std::size_t>(kind)] = static_cast<std::uint32_t>(value);
+                }
+            }
+        }
+        std::uint32_t lowest = result.stageMinimum[0];
+        for (const auto value : result.stageMinimum) lowest = std::min(lowest, value);
+        result.minimumVectorInstructions = lowest;
+        result.maximumVectorInstructions = std::max(*std::ranges::max_element(result.stageMinimum), number(std::getenv("APS5_NAN_SPECULATION_MAX"), result.maximumVectorInstructions));
+        const auto percent = [](const char* text, std::uint32_t fallback) {
+            if (text == nullptr || *text == '\0') return fallback;
+            char* end = nullptr;
+            const auto value = std::strtoul(text, &end, 10);
+            return end != text && *end == '\0' && value <= 4096u ? static_cast<std::uint32_t>(value) : fallback;
+        };
+        result.minimumFastOps = percent(std::getenv("APS5_NAN_SPECULATION_MIN_OPS"), result.minimumFastOps);
+        result.minimumDensityPercent = percent(std::getenv("APS5_NAN_SPECULATION_MIN_DENSITY"), result.minimumDensityPercent);
+        return result;
+    }();
+    return config;
+}
+
+namespace {
+
+std::mutex& RegistryMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::atomic<std::uint32_t>& SuppressedCount() {
+    static std::atomic<std::uint32_t> count{0u};
+    return count;
+}
+
+std::vector<std::uint64_t>& SuppressedAddresses() {
+    static std::vector<std::uint64_t> addresses;
+    return addresses;
+}
+
+}
+
+namespace {
+
+std::array<std::array<std::atomic<std::uint32_t>, 4>, NanSpeculationStageCount>& StageStats() {
+    static std::array<std::array<std::atomic<std::uint32_t>, 4>, NanSpeculationStageCount> stats{};
+    return stats;
+}
+
+}
+
+void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declined) {
+    if (stage >= NanSpeculationStageCount) return;
+    StageStats()[stage][0].fetch_add(1u, std::memory_order_relaxed);
+    if (speculated) StageStats()[stage][1].fetch_add(1u, std::memory_order_relaxed);
+    if (declined) StageStats()[stage][2].fetch_add(1u, std::memory_order_relaxed);
+}
+
+void NoteNanSpeculationFallback(std::uint32_t stage) {
+    if (stage < NanSpeculationStageCount) StageStats()[stage][3].fetch_add(1u, std::memory_order_relaxed);
+}
+
+NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage) {
+    if (stage >= NanSpeculationStageCount) return {};
+    const auto& row = StageStats()[stage];
+    return {row[0].load(std::memory_order_relaxed), row[1].load(std::memory_order_relaxed), row[2].load(std::memory_order_relaxed), row[3].load(std::memory_order_relaxed)};
+}
+
+bool NanSpeculationSuppressed(std::uint64_t address) {
+    if (SuppressedCount().load(std::memory_order_acquire) == 0u) return false;
+    const std::lock_guard lock(RegistryMutex());
+    return std::ranges::find(SuppressedAddresses(), address) != SuppressedAddresses().end();
+}
+
+bool SuppressNanSpeculation(std::uint64_t address) {
+    const std::lock_guard lock(RegistryMutex());
+    if (std::ranges::find(SuppressedAddresses(), address) != SuppressedAddresses().end()) return false;
+    SuppressedAddresses().push_back(address);
+    SuppressedCount().fetch_add(1u, std::memory_order_release);
+    return true;
+}
+
+namespace {
+
+std::vector<std::uint64_t>& AppliedAddresses() {
+    static std::vector<std::uint64_t> addresses;
+    return addresses;
+}
+
+}
+
+void MarkNanSpeculationApplied(std::uint64_t address) {
+    const std::lock_guard lock(RegistryMutex());
+    auto& addresses = AppliedAddresses();
+    if (std::ranges::find(addresses, address) == addresses.end()) addresses.push_back(address);
+}
+
+bool NanSpeculationApplied(std::uint64_t address) {
+    const std::lock_guard lock(RegistryMutex());
+    return std::ranges::find(AppliedAddresses(), address) != AppliedAddresses().end();
+}
+
+void RestoreNanSpeculation(std::uint64_t address) {
+    const std::lock_guard lock(RegistryMutex());
+    auto& addresses = SuppressedAddresses();
+    const auto found = std::ranges::find(addresses, address);
+    if (found == addresses.end()) return;
+    addresses.erase(found);
+    SuppressedCount().fetch_sub(1u, std::memory_order_release);
+}
+
+std::uint32_t NanSpeculationFallbacks() {
+    return SuppressedCount().load(std::memory_order_acquire);
 }
 
 bool ExactF32Arithmetic() {

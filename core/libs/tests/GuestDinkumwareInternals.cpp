@@ -9,8 +9,19 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <xmmintrin.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -30,6 +41,44 @@ void Require(bool condition, const char* message) {
         std::exit(1);
     }
 }
+
+template<typename TValue>
+struct ReadOnlyScalar {
+    void* page = nullptr;
+    std::size_t bytes = 0;
+
+    explicit ReadOnlyScalar(TValue initial) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        page = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(page != nullptr, "VirtualAlloc failed");
+        std::memcpy(page, &initial, sizeof(initial));
+        DWORD previous = 0;
+        Require(VirtualProtect(page, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect failed");
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0, "sysconf(_SC_PAGESIZE) failed");
+        bytes = static_cast<std::size_t>(pageSize);
+        page = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED, "mmap failed");
+        std::memcpy(page, &initial, sizeof(initial));
+        Require(mprotect(page, bytes, PROT_READ) == 0, "mprotect failed");
+#endif
+    }
+
+    ~ReadOnlyScalar() {
+        if (!page) return;
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, bytes);
+#endif
+    }
+
+    TValue* Data() const { return static_cast<TValue*>(page); }
+};
 
 void CheckStod(const char* text, std::int64_t pten, double expected, long consumed, int error, const char* message) {
     *__error_nid_postfix() = 0;
@@ -429,6 +478,33 @@ void TestIntegerErrors() {
     checkUnsigned(_Stoullx_nid_postfix);
 }
 
+void TestIntegerOutputsUnmapped() {
+    const auto throws = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    auto* const unmappedError = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    auto** const unmappedEnd = reinterpret_cast<char**>(std::uintptr_t{0x10});
+    char* end = nullptr;
+    int error = 7;
+    Require(throws([&] { _Stollx_nid_postfix("12", &end, 10, unmappedError); }), "_Stollx with an unwritable error output throws");
+    Require(throws([&] { _Stoullx_nid_postfix("12", &end, 10, unmappedError); }), "_Stoullx with an unwritable error output throws");
+    Require(throws([&] { _Stoulx_nid_postfix("12", &end, 10, unmappedError); }), "_Stoulx with an unwritable error output throws");
+    Require(throws([&] { _Stolx_nid_postfix("12", &end, 10, unmappedError); }), "_Stolx with an unwritable error output throws");
+    Require(throws([&] { _Stollx_nid_postfix("12", unmappedEnd, 1, &error); }), "_Stollx with an invalid base and an unwritable end throws");
+    Require(throws([&] { _Stolx_nid_postfix("12", unmappedEnd, 37, &error); }), "_Stolx with an invalid base and an unwritable end throws");
+    *__error_nid_postfix() = 77;
+    Require(throws([&] { _Stollx_nid_postfix("12", &end, 10, unmappedError); }) && *__error_nid_postfix() == 77, "an unwritable error output keeps errno");
+    *__error_nid_postfix() = 77;
+    Require(throws([&] { _Stoullx_nid_postfix("12", unmappedEnd, 1, &error); }) && *__error_nid_postfix() == 77, "an unwritable end keeps errno");
+    error = 7;
+    Require(_Stolx_nid_postfix("12", &end, 10, &error) == 12 && error == 0, "_Stolx still converts after the failures");
+}
+
 void TestFloatingRounds() {
     GuestFloatingPointEnvironment saved;
     Require(fegetenv_nid_postfix(&saved) == 0, "save floating environment");
@@ -598,6 +674,23 @@ void TestDoubleHelpers() {
     CheckFExp(-0x1.fd4b92p+5f, 1.0f, -3, 0x1.1d1806p-95f, Finite, 0, FE_INEXACT, "_FExp rounds a scaled small result as titles do");
     CheckFExp(0x1.5e147ap+4f, 2.0f, 3, 0x1.7b078cp+35f, Finite, 0, FE_INEXACT, "_FExp rounds a large product as titles do");
     CheckFExp(0x1.0644b8p-24f, 0.25f, 2, 0x1.000002p+0f, Finite, 0, FE_INEXACT, "_FExp evaluates arguments above half an epsilon");
+    const auto requireInvalidArgument = [](auto&& action, std::string_view expectedMessage, const char* label) {
+        bool threw = false;
+        try { action(); } catch (const std::invalid_argument& error) { threw = std::string_view(error.what()) == expectedMessage; }
+        Require(threw, label);
+    };
+    requireInvalidArgument([] { _Exp_nid_postfix(nullptr, 1.0, 0); }, "_Exp: null value", "_Exp rejects null value");
+    requireInvalidArgument([] { _Exp_nid_postfix(reinterpret_cast<double*>(0x10), 1.0, 0); }, "_Exp: unreadable value", "_Exp rejects unreadable value");
+    {
+        ReadOnlyScalar<double> readOnlyDouble(1.0);
+        requireInvalidArgument([&] { _Exp_nid_postfix(readOnlyDouble.Data(), 1.0, 0); }, "_Exp: unwritable value", "_Exp rejects unwritable value");
+    }
+    requireInvalidArgument([] { _FExp_nid_postfix(nullptr, 1.0f, 0); }, "_FExp: null value", "_FExp rejects null value");
+    requireInvalidArgument([] { _FExp_nid_postfix(reinterpret_cast<float*>(0x10), 1.0f, 0); }, "_FExp: unreadable value", "_FExp rejects unreadable value");
+    {
+        ReadOnlyScalar<float> readOnlyFloat(1.0f);
+        requireInvalidArgument([&] { _FExp_nid_postfix(readOnlyFloat.Data(), 1.0f, 0); }, "_FExp: unwritable value", "_FExp rejects unwritable value");
+    }
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
@@ -866,6 +959,7 @@ int main() {
     TestFloatErrors();
     TestScaledNan();
     TestIntegerErrors();
+    TestIntegerOutputsUnmapped();
     TestArithmetic();
     TestDispatch();
     TestLongDoubleHelpers();

@@ -1815,6 +1815,11 @@ int main() {
     PadData earlyPadData{};
     Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
+    for (const int earlyHandle : {earlyPad, 0x999}) {
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 1) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, &earlyPadData, 0) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 0) == PAD_ERROR_NOT_INITIALIZED);
+    }
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     for (const int earlyHandle : {earlyPad, 0x999}) {
@@ -2017,7 +2022,15 @@ int main() {
     Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
     Require(p2DataMotion.acceleration_x > 0.49f && p2DataMotion.acceleration_x < 0.51f);
 
+    std::uint32_t p2Seq = 0;
+    PadOutputState p2Out{};
+    PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out);
+
     Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
+    Require(p2Out.motionEnabled == false);
+    Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(!PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
     Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
     Require(p2DataMotion.angular_velocity_x == 0.0f && p2DataMotion.angular_velocity_y == 0.0f && p2DataMotion.angular_velocity_z == 0.0f);
     Require(p2DataMotion.acceleration_x == 0.0f);
@@ -2027,6 +2040,10 @@ int main() {
     Require(p0DataMotion.angular_velocity_x == 0.5f && p0DataMotion.angular_velocity_y == 0.5f && p0DataMotion.angular_velocity_z == 0.5f);
 
     Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
+    Require(p2Out.motionEnabled == true);
+    Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(!PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
     Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
     Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
 
