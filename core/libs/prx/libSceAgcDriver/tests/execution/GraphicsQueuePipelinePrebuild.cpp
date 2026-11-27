@@ -39,6 +39,23 @@ struct Slot {
 
 std::array<Slot, 4> Slots;
 std::atomic<unsigned> RenderingWaits{0};
+std::atomic<unsigned> FlipCalls{0};
+std::atomic<bool> FlipProceed{false};
+alignas(64) volatile std::uint32_t FlipLabel = 0u;
+
+void ReleaseFlip() {
+    FlipProceed.store(true, std::memory_order_release);
+    FlipProceed.notify_all();
+}
+
+class BlockingFlip final : public AgcDriver::IFlipRequest {
+public:
+    void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override {
+        FlipCalls.fetch_add(1, std::memory_order_release);
+        FlipProceed.wait(false, std::memory_order_acquire);
+    }
+    void Fail(std::exception_ptr) noexcept override { ReleaseFlip(); }
+};
 
 class ReadyWait final : public AgcDriver::IRenderingWait {
 public:
@@ -47,13 +64,18 @@ public:
 
 class ReadyOutput final : public AgcDriver::IVideoOutput {
 public:
+    explicit ReadyOutput(bool eopFlip) : eopFlip(eopFlip) {}
     std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
-        throw std::runtime_error("unexpected flip in the rendering-wait prebuild fixture");
+        if (!eopFlip) throw std::runtime_error("unexpected flip in the rendering-wait prebuild fixture");
+        return std::make_shared<BlockingFlip>();
     }
     std::shared_ptr<AgcDriver::IRenderingWait> CaptureRenderingWait(std::uint32_t) override {
         return std::make_shared<ReadyWait>();
     }
-    void Fail(std::exception_ptr) noexcept override {}
+    void Fail(std::exception_ptr) noexcept override { ReleaseFlip(); }
+
+private:
+    bool eopFlip;
 };
 
 std::uint32_t Low(const volatile void* pointer) {
@@ -114,11 +136,12 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         device.reset();
         const bool renderingWait = argc == 2 && std::string_view(argv[1]) == "rendering-wait";
-        Require(argc == 1 || renderingWait, "unknown prebuild fixture mode");
+        const bool eopFlip = argc == 2 && std::string_view(argv[1]) == "eop-flip";
+        Require(argc == 1 || renderingWait || eopFlip, "unknown prebuild fixture mode");
         constexpr std::uint32_t Handle = 7;
         std::shared_ptr<ReadyOutput> output;
-        if (renderingWait) {
-            output = std::make_shared<ReadyOutput>();
+        if (renderingWait || eopFlip) {
+            output = std::make_shared<ReadyOutput>(eopFlip);
             AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
         }
         const bool prebuild = std::getenv("APS5_NO_GRAPHICS_QUEUE_PIPELINE_PREBUILD") == nullptr;
@@ -132,10 +155,16 @@ int main(int argc, char** argv) {
         Prepare(Slots[0], 0x1234u);
         Prepare(Slots[1], 0x5678u);
         std::vector<std::uint32_t> words;
-        if (renderingWait) {
+        if (renderingWait || eopFlip) {
             Prepare(Slots[3], 0xabcd);
             DispatchSlot(words, Slots[3], ReaderCode.data());
-            words.insert(words.end(), {AgcDriver::RenderingWaitPacketHeader, Handle, 0u, 0u});
+            if (renderingWait) {
+                words.insert(words.end(), {AgcDriver::RenderingWaitPacketHeader, Handle, 0u, 0u});
+            } else {
+                const auto token = AgcDriverReserveEopFlip_nid_postfix({Handle, -1, 1u, 0});
+                Require(token >= AgcDriver::EopFlipTokenBase && token <= AgcDriver::EopFlipTokenLimit, "the EOP flip was not reserved");
+                words.insert(words.end(), {0xc0064900u, 0x514u, (1u << 29u) | (2u << 24u), Low(&FlipLabel), High(&FlipLabel), 1u, 0u, token});
+            }
         }
         DispatchSlot(words, Slots[0], ReaderCode.data());
         words.insert(words.end(), {0xc0053c00u, 0x13u, Low(&Gate), High(&Gate), 1u, 0xffffffffu, 0x19u});
@@ -144,12 +173,26 @@ int main(int argc, char** argv) {
         const auto adopted = AgcDriverDispatchesAdoptedAhead_nid_postfix();
         Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the graphics queue submit failed");
+        if (eopFlip) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (FlipCalls.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            Require(FlipCalls.load(std::memory_order_acquire) == 1, "the reserved EOP flip did not reach its callback");
+            const auto observation = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (VulkanDevice::ComputePipelineCounts().created == before.created && std::chrono::steady_clock::now() < observation) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            Require(VulkanDevice::ComputePipelineCounts().created == before.created, "queue 0 built the post-flip pipeline before the EOP callback was released");
+            Require(Slots[0].done == 0 && Slots[1].done == 0, "a dispatch ran while the EOP flip was held");
+            ReleaseFlip();
+        }
         WaitDone(Slots[0], "the dispatch before the wait did not finish");
         Require(Slots[0].output[0] == 0x1234u, "the dispatch before the wait stored " + std::to_string(Slots[0].output[0]));
-        if (renderingWait) {
-            Require(Slots[3].done == 1 && Slots[3].output[0] == 0xabcdu, "the dispatch before the rendering wait did not run");
-            Require(RenderingWaits.load(std::memory_order_relaxed) == 1, "the rendering wait was not executed");
+        if (renderingWait || eopFlip) {
+            Require(Slots[3].done == 1 && Slots[3].output[0] == 0xabcdu, "the dispatch before the submission boundary did not run");
         }
+        if (renderingWait) Require(RenderingWaits.load(std::memory_order_relaxed) == 1, "the rendering wait was not executed");
         const auto start = std::chrono::steady_clock::now();
         const auto limit = prebuild ? std::chrono::seconds(60) : std::chrono::seconds(2);
         while (VulkanDevice::ComputePipelineCounts().created < before.created + 1 && std::chrono::steady_clock::now() - start < limit) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -169,11 +212,13 @@ int main(int argc, char** argv) {
         Require(AgcDriverDispatchesAdoptedAhead_nid_postfix() == adopted, "queue 0 adopted a dispatch resolved ahead");
         std::cout << "graphics queue pipeline prebuild test passed (prebuild " << (prebuild ? "on" : "off") << ")\n";
         AgcDriverWaitIdle_nid_postfix();
+        if (eopFlip) Require(FlipLabel == 1u && FlipCalls.load(std::memory_order_acquire) == 1, "the EOP release or flip did not complete");
         if (output) AgcDriverUnregisterVideoOutput_nid_postfix(Handle, output);
         AgcDriverShutdown_nid_postfix();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
+        ReleaseFlip();
         Gate = 1;
         try {
             AgcDriverShutdown_nid_postfix();
