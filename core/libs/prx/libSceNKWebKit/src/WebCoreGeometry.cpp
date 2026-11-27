@@ -315,7 +315,10 @@ void APS5_VABI _ZN7WebCore9FloatRect6extendERKNS_10FloatPointE(WebCore::FloatRec
     WebCore::StoreGuest(guestSelf, selfValue, __func__);
 }
 
-void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* self, const WebCore::FloatRect& other) {
+void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* guestSelf, const WebCore::FloatRect& guestOther) {
+    auto selfValue = WebCore::LoadGuest(guestSelf, __func__);
+    auto* self = &selfValue;
+    const auto other = WebCore::LoadGuest(&guestOther, __func__);
     float l = std::max(self->m_location.m_x, other.m_location.m_x);
     float t = std::max(self->m_location.m_y, other.m_location.m_y);
     float r = std::min(self->m_location.m_x + self->m_size.m_width, other.m_location.m_x + other.m_size.m_width);
@@ -327,6 +330,7 @@ void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* self, c
         self->m_location = {l, t};
         self->m_size = {r - l, b - t};
     }
+    WebCore::StoreGuest(guestSelf, selfValue, __func__);
 }
 
 void APS5_VABI _ZN7WebCore9FloatRectC1ERKNS_7IntRectE(WebCore::FloatRect* guestSelf, const WebCore::IntRect& guestR) {

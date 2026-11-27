@@ -153,6 +153,8 @@ int main() {
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect5scaleEff(reinterpret_cast<WebCore::FloatRect*>(std::uintptr_t{0x10}), 1, 1)); return 0; }, "_ZN7WebCore9FloatRect5scaleEff"));
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect5uniteERKS0_(reinterpret_cast<WebCore::FloatRect*>(std::uintptr_t{0x10}), Good<WebCore::FloatRect>())); return 0; }, "_ZN7WebCore9FloatRect5uniteERKS0_"));
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect5uniteERKS0_(&Good<WebCore::FloatRect>(), *reinterpret_cast<const WebCore::FloatRect*>(std::uintptr_t{0x10}))); return 0; }, "_ZN7WebCore9FloatRect5uniteERKS0_"));
+    Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect9intersectERKS0_(reinterpret_cast<WebCore::FloatRect*>(std::uintptr_t{0x10}), Good<WebCore::FloatRect>())); return 0; }, "_ZN7WebCore9FloatRect9intersectERKS0_"));
+    Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect9intersectERKS0_(&Good<WebCore::FloatRect>(), *reinterpret_cast<const WebCore::FloatRect*>(std::uintptr_t{0x10}))); return 0; }, "_ZN7WebCore9FloatRect9intersectERKS0_"));
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect6extendERKNS_10FloatPointE(reinterpret_cast<WebCore::FloatRect*>(std::uintptr_t{0x10}), Good<WebCore::FloatPoint>())); return 0; }, "_ZN7WebCore9FloatRect6extendERKNS_10FloatPointE"));
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRect6extendERKNS_10FloatPointE(&Good<WebCore::FloatRect>(), *reinterpret_cast<const WebCore::FloatPoint*>(std::uintptr_t{0x10}))); return 0; }, "_ZN7WebCore9FloatRect6extendERKNS_10FloatPointE"));
     Require(FaultsAsNotImplemented([&] { static_cast<void>(_ZN7WebCore9FloatRectC1ERKNS_7IntRectE(reinterpret_cast<WebCore::FloatRect*>(std::uintptr_t{0x10}), Good<WebCore::IntRect>())); return 0; }, "_ZN7WebCore9FloatRectC1ERKNS_7IntRectE"));
@@ -244,6 +246,7 @@ int main() {
     std::memcpy(before, page, sizeof(before));
     ProtectReadOnly(page);
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore9FloatRect5uniteERKS0_(readOnlyRect, WebCore::FloatRect{{0.0f, 0.0f}, {5.0f, 5.0f}}); return 0; }, "_ZN7WebCore9FloatRect5uniteERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore9FloatRect9intersectERKS0_(readOnlyRect, WebCore::FloatRect{{0.0f, 0.0f}, {5.0f, 5.0f}}); return 0; }, "_ZN7WebCore9FloatRect9intersectERKS0_"));
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore9FloatRect5scaleEff(readOnlyRect, 2.0f, 2.0f); return 0; }, "_ZN7WebCore9FloatRect5scaleEff"));
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore7IntRect9intersectERKS0_(readOnlyIntRect, WebCore::IntRect{{0, 0}, {1, 1}}); return 0; }, "_ZN7WebCore7IntRect9intersectERKS0_"));
     Require(std::memcmp(before, page, sizeof(before)) == 0);
