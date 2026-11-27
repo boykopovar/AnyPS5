@@ -132,6 +132,7 @@
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
 #include "prx/libSceNKWebKit/include/HtmlSpaceTrimExports.hpp"
+#include "prx/libSceNKWebKit/include/UserContentURLPatternExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorBindingTraitsExports.hpp"
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
