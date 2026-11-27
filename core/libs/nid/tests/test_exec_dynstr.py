@@ -191,7 +191,11 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertIn(nid("sceB").encode() + b"\0", strings)
 
     def test_sce_dynamic_string_tags_extend_dynlib_segment(self):
-        result, after = patch(executable("sce"))
+        original = executable("sce")
+        original_dynlib = next(
+            header for header in program_headers(original) if header[0] == PT_SCE_DYNLIBDATA
+        )
+        result, after = patch(original)
         self.assertEqual(result.returncode, 0, result.stderr)
         tags = dict(dynamic_tags(after))
         dynstr = symbols.sections(after)[2]
@@ -204,7 +208,19 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertEqual(phdr[5], phnum * phentsize)
         dynlib = next(header for header in headers if header[0] == PT_SCE_DYNLIBDATA)
         self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
+        self.assertGreaterEqual(dynlib[2], len(original))
+        self.assertEqual(tags[DT_OS_STRTAB], original_dynlib[5])
+        self.assertEqual(dynlib[5], original_dynlib[5] + dynstr[5])
         self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
+        self.assertEqual(dynlib[2] + dynlib[5], len(after))
+        copied_dynamic_offset = dynlib[2] + DYNAMIC_OFFSET - original_dynlib[2]
+        copied_dynamic = []
+        for index in range(16):
+            entry = struct.unpack_from("<qQ", after, copied_dynamic_offset + index * 16)
+            copied_dynamic.append(entry)
+            if entry[0] == 0:
+                break
+        self.assertEqual(copied_dynamic, dynamic_tags(after))
         self.assertLessEqual(dynlib[2] + tags[DT_OS_STRTAB] + tags[DT_OS_STRSZ], dynlib[2] + dynlib[5])
         self.assertLessEqual(dynlib[2] + tags[DT_OS_STRTAB] + tags[DT_OS_STRSZ], dynlib[2] + dynlib[6])
         load = next(
