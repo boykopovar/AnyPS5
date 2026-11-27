@@ -1,0 +1,5 @@
+# libSceAgc
+
+## change [sceAgcDcbDrawIndexIndirectMulti, sceAgcDcbDrawIndirectMulti]
+
+- [sceAgcDcbDrawIndexIndirectMulti, sceAgcDcbDrawIndirectMulti](../../../core/libs/prx/libSceAgc/DcbDraw/src/DrawIndexed.cpp) (libSceAgc) - the count-indirect bit of the control word follows bit 0 of the count selector: [prosper's console measurements](https://github.com/mattias800/prosper/blob/d44c89db977a162af271d986a8d1febbc31e702f/prosper/tests/data/console_oracle/agcbuild.golden.tsv) (captured 2026-10-08) only have selectors with bit 0 clear; a PS5 (firmware 11.60, payload process; a title process may differ) set the bit for 1, 3, 5, 7, 0x11111111, 0x22222223 and 0x80000001 and left it clear for 0x22222222, 2 and 0x80000000 in two runs, without a signal. Only selector 1 checks the count address; a null address with another odd selector was not measured. The offset, count, count address and stride are written unchanged, as measured. Each selector was tried with the modifiers 0 and 1. The driver's handling of unaligned offsets and short strides is unchanged.
