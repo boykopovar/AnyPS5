@@ -209,7 +209,6 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
         } catch (...) {
             std::lock_guard lock(heapMutex);
             heapFailure = std::current_exception();
-            heapApi = {};
             heapFinalize = nullptr;
             heapKind.store(0, std::memory_order_release);
             publishedApi.store(nullptr, std::memory_order_release);
