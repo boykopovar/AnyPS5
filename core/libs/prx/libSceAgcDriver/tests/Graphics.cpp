@@ -12608,6 +12608,27 @@ void unorm4_4_4_4TargetTests() {
     const auto packings = AgcDriver::Graphics::ExportPackings(state);
     Require(packings[0] == ColorExportPacking::Unorm4_4_4_4 && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the 4_4_4_4 unorm packing");
     Require(state.color.partialWriteMask == 0u && state.blends[0].colorWriteMask == 0xfu && AgcDriver::Graphics::ExportTargetMerges(state).empty(), "a full write of a 4_4_4_4 unorm target merged into the target");
+
+    {
+        auto blending = queue;
+        blending.context[0x31c] = (blending.context.at(0x31c) & ~((3u << 11u) | 0x10000u)) | (1u << 11u);
+        blending.context[0x8e] = 0xfu;
+        blending.context[0x1e0] = 0x61010001u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(blending); }, "blending into a 4_4_4_4 unorm color target is unsupported");
+
+        blending.context[0x8e] = 7u;
+        const auto rgbOnly = AgcDriver::Graphics::DecodeState(blending);
+        Require(!rgbOnly.blend.blendEnable && rgbOnly.color.partialWriteMask == 0x0fffu, "a 4_4_4_4 write that excludes alpha must replace RGB and preserve the alpha nibble");
+
+        blending.context[0x8e] = 0xfu;
+        blending.context[0x1e0] = 0x60010001u;
+        Require(!AgcDriver::Graphics::DecodeState(blending).blend.blendEnable, "a 4_4_4_4 replacement equation must disable blending");
+
+        blending.context[0x31d] = 0x20000u;
+        blending.context[0x1e0] = 0x67060001u;
+        Require(!AgcDriver::Graphics::DecodeState(blending).blend.blendEnable, "a 4_4_4_4 replacement equation with an opaque destination must disable blending");
+    }
+
     auto changed = queue;
     for (const auto& [targetMask, wordMask] : {std::pair{1u, 0xf000u}, std::pair{7u, 0xfff0u}, std::pair{8u, 0x000fu}, std::pair{0xau, 0x0f0fu}}) {
         changed.context[0x8e] = targetMask;
