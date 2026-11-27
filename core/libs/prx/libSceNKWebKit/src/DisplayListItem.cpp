@@ -33,6 +33,8 @@
 #include <iterator>
 #include <limits>
 
+#include "prx/libc/include/GuestArena.hpp"
+
 namespace {
 
 using namespace NKWebKit::DisplayListAbi;
@@ -111,6 +113,68 @@ const ItemVtable ItemVtableInstance{ItemCompleteDestructor, ItemDeletingDestruct
 const DrawingItemVtable DrawingItemVtableInstance{{DrawingItemCompleteDestructor, DrawingItemDeletingDestructor, PureApply, IsDrawingItem},
     DefaultLocalBounds, DefaultGlobalBounds};
 
+constexpr std::size_t kItemInitializedBytes = offsetof(Item, type) + sizeof(std::uint8_t);
+static_assert(kItemInitializedBytes == 13);
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const GuestArena::HostWrite guard(pointer, size);
+    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void ConstructItemGuest(Item* self, const void* vtable, ItemType type, const char* invalidArgLabel, const char* function) {
+    if (!self) throw std::invalid_argument(std::string(invalidArgLabel) + " requires an object");
+    RequireWritableGuestBytes(self, sizeof(Item), function);
+    unsigned char bytes[kItemInitializedBytes]{};
+    const std::uint32_t refCount = 1;
+    const std::uint8_t rawType = static_cast<std::uint8_t>(type);
+    std::memcpy(bytes + offsetof(Item, vptr), &vtable, sizeof(vtable));
+    std::memcpy(bytes + offsetof(Item, refCount), &refCount, sizeof(refCount));
+    std::memcpy(bytes + offsetof(Item, type), &rawType, sizeof(rawType));
+    if (!GuestCopyOut_nid_no_patch(self, bytes, sizeof(bytes)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void ConstructDrawingItemGuest(DrawingItem* self, const void* vtable, ItemType type, const char* invalidArgLabel, const char* function) {
+    if (!self) throw std::invalid_argument(std::string(invalidArgLabel) + " requires an object");
+    RequireWritableGuestBytes(self, sizeof(DrawingItem), function);
+    constexpr std::size_t kEngagedOffset = offsetof(DrawingItem, extent) + offsetof(OptionalFloatRect, engaged);
+    constexpr std::size_t kValueOffset = offsetof(DrawingItem, extent) + offsetof(OptionalFloatRect, value);
+    constexpr std::size_t kTouchEnd = kValueOffset + 1;
+    unsigned char bytes[kTouchEnd]{};
+    const std::uint32_t refCount = 1;
+    const std::uint8_t rawType = static_cast<std::uint8_t>(type);
+    if (GuestCopyIn_nid_no_patch(bytes, self, sizeof(bytes))) {
+        std::memcpy(bytes + offsetof(Item, vptr), &vtable, sizeof(vtable));
+        std::memcpy(bytes + offsetof(Item, refCount), &refCount, sizeof(refCount));
+        std::memcpy(bytes + offsetof(Item, type), &rawType, sizeof(rawType));
+        bytes[kEngagedOffset] = 0;
+        bytes[kValueOffset] = 0;
+        if (!GuestCopyOut_nid_no_patch(self, bytes, sizeof(bytes)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        return;
+    }
+    std::memcpy(bytes + offsetof(Item, vptr), &vtable, sizeof(vtable));
+    std::memcpy(bytes + offsetof(Item, refCount), &refCount, sizeof(refCount));
+    std::memcpy(bytes + offsetof(Item, type), &rawType, sizeof(rawType));
+    const unsigned char zero = 0;
+    auto* rawSelf = reinterpret_cast<unsigned char*>(self);
+    if (!GuestCopyOut_nid_no_patch(rawSelf, bytes, kItemInitializedBytes)
+        || !GuestCopyOut_nid_no_patch(rawSelf + kEngagedOffset, &zero, sizeof(zero))
+        || !GuestCopyOut_nid_no_patch(rawSelf + kValueOffset, &zero, sizeof(zero)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void DestroyItemGuest(void* self, std::size_t objectSize, const char* invalidArgLabel, const char* function) {
+    if (!self) throw std::invalid_argument(std::string(invalidArgLabel) + " requires an object");
+    RequireWritableGuestBytes(self, objectSize, function);
+    const void* const vtable = &ItemVtableInstance;
+    if (!GuestCopyOut_nid_no_patch(self, &vtable, sizeof(vtable)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 }  // namespace
 
 namespace NKWebKit::DisplayListAbi {
@@ -161,7 +225,9 @@ bool APS5_VABI IsNotDrawingItem(const void*) {
 }
 
 void APS5_VABI ApplyWithoutGraphicsContext(const void* self, void*) {
-    const std::uint8_t type = static_cast<const Item*>(self)->type;
+    std::uint8_t type = 0;
+    if (!self || !GuestCopyIn_nid_no_patch(&type, static_cast<const unsigned char*>(self) + offsetof(Item, type), sizeof(type)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     NotImplemented_nid_no_patch(type < std::size(ApplyNames) ? ApplyNames[type] : "WebCore::DisplayList::Item::apply");
 }
 
@@ -212,37 +278,36 @@ void DestroyVectorStorage(void* vector) {
 extern "C" {
 
 void APS5_VABI _ZN7WebCore11DisplayList4ItemC2ENS0_8ItemTypeE(Item* self, ItemType type) {
-    ConstructItem(Checked(self, "WebCore::DisplayList::Item::Item"), &ItemVtableInstance, type);
+    ConstructItemGuest(self, &ItemVtableInstance, type, "WebCore::DisplayList::Item::Item", __func__);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList4ItemD1Ev(Item* self) {
-    DestroyItem(Checked(self, "WebCore::DisplayList::Item::~Item"));
+    DestroyItemGuest(self, sizeof(Item), "WebCore::DisplayList::Item::~Item", __func__);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList4ItemD2Ev(Item* self) {
-    DestroyItem(Checked(self, "WebCore::DisplayList::Item::~Item"));
+    DestroyItemGuest(self, sizeof(Item), "WebCore::DisplayList::Item::~Item", __func__);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList4ItemD0Ev(Item* self) {
-    DestroyItem(Checked(self, "WebCore::DisplayList::Item::~Item"));
+    DestroyItemGuest(self, sizeof(Item), "WebCore::DisplayList::Item::~Item", __func__);
     DeleteItem(self);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList11DrawingItemC2ENS0_8ItemTypeE(DrawingItem* self, ItemType type) {
-    auto& item = Checked(self, "WebCore::DisplayList::DrawingItem::DrawingItem");
-    ConstructDrawingItem(item.item, item.extent, &DrawingItemVtableInstance, type);
+    ConstructDrawingItemGuest(self, &DrawingItemVtableInstance, type, "WebCore::DisplayList::DrawingItem::DrawingItem", __func__);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList11DrawingItemD1Ev(DrawingItem* self) {
-    DestroyItem(Checked(self, "WebCore::DisplayList::DrawingItem::~DrawingItem").item);
+    DestroyItemGuest(self, sizeof(DrawingItem), "WebCore::DisplayList::DrawingItem::~DrawingItem", __func__);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList11DrawingItemD2Ev(DrawingItem* self) {
-    DestroyItem(Checked(self, "WebCore::DisplayList::DrawingItem::~DrawingItem").item);
+    DestroyItemGuest(self, sizeof(DrawingItem), "WebCore::DisplayList::DrawingItem::~DrawingItem", __func__);
 }
 
 void APS5_VABI _ZN7WebCore11DisplayList11DrawingItemD0Ev(DrawingItem* self) {
-    DestroyItem(Checked(self, "WebCore::DisplayList::DrawingItem::~DrawingItem").item);
+    DestroyItemGuest(self, sizeof(DrawingItem), "WebCore::DisplayList::DrawingItem::~DrawingItem", __func__);
     DeleteItem(self);
 }
 
