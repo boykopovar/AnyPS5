@@ -179,6 +179,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ComplexLog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp

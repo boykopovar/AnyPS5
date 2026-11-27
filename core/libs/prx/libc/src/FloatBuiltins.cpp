@@ -667,11 +667,6 @@ __complex__ double APS5_VABI cexp_nid_postfix(__complex__ double z) {
     return MakeComplex(result.real(), result.imag());
 }
 
-__complex__ double APS5_VABI clog_nid_postfix(__complex__ double z) {
-    const auto result = std::log(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
 __complex__ double APS5_VABI csin_nid_postfix(__complex__ double z) {
     const auto result = std::sin(std::complex<double>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
