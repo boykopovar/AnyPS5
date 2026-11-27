@@ -63,7 +63,7 @@ int main() {
         Require(page != nullptr);
         result = &pwd;
         Require(getpwnam_r_nid_postfix(page, &pwd, buffer, sizeof(buffer), &result) == 14);
-        Require(result == &pwd);
+        Require(result == nullptr);
 #ifdef _WIN32
         VirtualFree(page, 0, MEM_RELEASE);
 #else
