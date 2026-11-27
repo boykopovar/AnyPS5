@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static constexpr int SCE_RAZOR_CPU_ERROR_NOT_INITIALIZED = static_cast<int>(0x80580000);
 static constexpr int SCE_RAZOR_CPU_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80580001);
@@ -124,22 +125,26 @@ int APS5_VABI sceRazorCpuInitDataTags(void* buffer, size_t size) {
   return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
  }
  const int savedErrno = errno;
- if (!GuestWritable_nid_no_patch(buffer, size)) {
-  errno = savedErrno;
-  return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
- }
- std::array<std::uint8_t, 256> zeros{};
- size_t offset = 0;
- while (offset < size) {
-  const size_t chunk = size - offset < zeros.size() ? size - offset : zeros.size();
-  if (!GuestCopyOut_nid_no_patch(static_cast<std::uint8_t*>(buffer) + offset, zeros.data(), chunk)) {
-   errno = savedErrno;
-   return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
+ bool ok = true;
+ {
+  const GuestArena::HostWrite write(buffer, size);
+  if (!write.Open() || !GuestWritable_nid_no_patch(buffer, size)) {
+   ok = false;
+  } else {
+   std::array<std::uint8_t, 256> zeros{};
+   size_t offset = 0;
+   while (offset < size) {
+    const size_t chunk = size - offset < zeros.size() ? size - offset : zeros.size();
+    if (!GuestCopyOut_nid_no_patch(static_cast<std::uint8_t*>(buffer) + offset, zeros.data(), chunk)) {
+     ok = false;
+     break;
+    }
+    offset += chunk;
+   }
   }
-  offset += chunk;
  }
  errno = savedErrno;
- return 0;
+ return ok ? 0 : SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceRazorCpuShutdownDataTags(void) {
