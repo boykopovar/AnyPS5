@@ -215,6 +215,7 @@ public:
     bool ProfilesSites() const { return profiled; }
     static void SetDelayForTesting(std::function<void()> delay);
     static void SetBlockedHookForTesting(std::function<void()> blocked);
+    static void SetClockForTesting(std::uint64_t (*clock)());
     static void FailNextWorkerStartsForTest(unsigned count);
     static std::size_t LiveChunks();
     class UnwindQuiesce {
@@ -269,6 +270,7 @@ private:
     void await(const WaitSite& site, bool flushed) noexcept;
     void awaitSpare() noexcept;
     void note(const WaitSite& site, std::uint64_t ns, bool waited, bool flushed) noexcept;
+    static std::uint64_t clockNs() noexcept;
     DeviceFunctions& table;
     DeviceFunctions real;
     DeviceDispatch* dispatch = nullptr;
@@ -313,7 +315,7 @@ private:
     HandoffPolicy policy;
     std::uint32_t inlineDepth = 0;
     bool timedWindow = false;
-    std::chrono::steady_clock::time_point windowStart;
+    std::uint64_t windowStart = 0;
     std::uint64_t waitsAtWindowEnd = 0;
     std::atomic<std::uint64_t> encodedDecisions{0};
     std::atomic<std::uint64_t> inlineDecisions{0};

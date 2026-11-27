@@ -5,6 +5,7 @@
 #include <atomic>
 #include <csignal>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <optional>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -1222,10 +1224,99 @@ double NanosecondsSince(std::chrono::steady_clock::time_point start) {
     return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
+std::atomic<bool> simulated{false};
+std::atomic<std::uint64_t> simulatedNs{0};
+
+std::uint64_t SimulatedNow() {
+    return simulatedNs.load(std::memory_order_acquire);
+}
+
+void Spend(std::uint64_t ns) {
+    if (simulated.load(std::memory_order_acquire)) simulatedNs.fetch_add(ns, std::memory_order_acq_rel);
+    else BusyFor(std::chrono::nanoseconds(ns));
+}
+
+class SimulatedTime {
+public:
+    SimulatedTime(const CommandEncoder& encoder, VkCommandBuffer commands, std::uint64_t handoffNs, std::uint64_t replayDelayNs = 0) : encoder(encoder), commands(commands), handoffNs(handoffNs), replayDelayNs(replayDelayNs) {
+        simulatedNs.store(0, std::memory_order_release);
+        simulated.store(true, std::memory_order_release);
+        CommandEncoder::SetClockForTesting(&SimulatedNow);
+        CommandEncoder::SetDelayForTesting([this] { replay(); });
+        CommandEncoder::SetBlockedHookForTesting([this] { blocked(); });
+    }
+
+    SimulatedTime(const SimulatedTime&) = delete;
+    SimulatedTime& operator=(const SimulatedTime&) = delete;
+
+    ~SimulatedTime() {
+        CommandEncoder::SetBlockedHookForTesting({});
+        CommandEncoder::SetDelayForTesting({});
+        CommandEncoder::SetClockForTesting(nullptr);
+        simulated.store(false, std::memory_order_release);
+    }
+
+    void RequireReleased() const {
+        std::lock_guard lock(mutex);
+        Require(!stuck, "the encoder thread replayed a chunk that no wait released, or a wait was not met within 10 s");
+    }
+
+    std::uint64_t ForeignWaits() const {
+        std::lock_guard lock(mutex);
+        return foreignWaits;
+    }
+
+private:
+    static constexpr auto GiveUp = std::chrono::seconds(10);
+
+    void replay() {
+        {
+            std::unique_lock lock(mutex);
+            if (!release.wait_for(lock, GiveUp, [&] { return started < releasedPosts; })) stuck = true;
+            ++started;
+        }
+        Spend(replayDelayNs);
+    }
+
+    void blocked() {
+        const auto posted = encoder.Counts().posts;
+        {
+            std::lock_guard lock(mutex);
+            if (std::this_thread::get_id() != producer) ++foreignWaits;
+            if (posted > releasedPosts) {
+                releasedPosts = posted;
+                Spend(handoffNs);
+            }
+        }
+        release.notify_all();
+        const auto giveUp = std::chrono::steady_clock::now() + GiveUp;
+        while (encoder.Behind(commands)) {
+            if (std::chrono::steady_clock::now() >= giveUp) {
+                std::lock_guard lock(mutex);
+                stuck = true;
+                return;
+            }
+            std::this_thread::yield();
+        }
+    }
+
+    const CommandEncoder& encoder;
+    const VkCommandBuffer commands;
+    const std::uint64_t handoffNs;
+    const std::uint64_t replayDelayNs;
+    const std::thread::id producer = std::this_thread::get_id();
+    mutable std::mutex mutex;
+    std::condition_variable release;
+    std::uint64_t releasedPosts = 0;
+    std::uint64_t started = 0;
+    std::uint64_t foreignWaits = 0;
+    bool stuck = false;
+};
+
 std::atomic<std::uint64_t> replayNs{0};
 
 VKAPI_ATTR void VKAPI_CALL BurnDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
-    BusyFor(std::chrono::nanoseconds(replayNs.load(std::memory_order_relaxed)));
+    Spend(replayNs.load(std::memory_order_relaxed));
 }
 
 DeviceFunctions BurnTable() {
@@ -1241,18 +1332,21 @@ struct Pattern {
     std::uint64_t encodeNs;
     bool waitsInWindow = false;
     std::uint64_t replayDelayNs = 0;
+    std::uint64_t handoffNs = 0;
 };
 
-double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::uint32_t draws, CommandEncoder::Statistics& counts) {
+double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::uint32_t draws, CommandEncoder::Statistics& counts, bool simulate = false) {
     const auto commands = Handle<VkCommandBuffer>(0x1700);
     auto table = BurnTable();
     replayNs.store(pattern.encodeNs, std::memory_order_relaxed);
-    if (pattern.replayDelayNs != 0) CommandEncoder::SetDelayForTesting([delay = pattern.replayDelayNs] { BusyFor(std::chrono::nanoseconds(delay)); });
+    if (!simulate && pattern.replayDelayNs != 0) CommandEncoder::SetDelayForTesting([delay = pattern.replayDelayNs] { BusyFor(std::chrono::nanoseconds(delay)); });
     const auto attached = Attached(Handle<VkDevice>(0x57), table);
     auto& encoder = *attached;
+    std::optional<SimulatedTime> time;
+    if (simulate) time.emplace(encoder, commands, pattern.handoffNs, pattern.replayDelayNs);
     const auto start = std::chrono::steady_clock::now();
     for (std::uint32_t index = 0; index < draws; ++index) {
-        BusyFor(std::chrono::nanoseconds(pattern.workNs));
+        Spend(pattern.workNs);
         const bool encoded = encoder.Admit(handoff);
         if (encoded) encoder.Open(commands, RecordingOf(commands));
         table.cmdDraw(commands, 3, 1, 0, 0);
@@ -1263,6 +1357,8 @@ double RunPattern(const Pattern& pattern, CommandEncoder::Handoff handoff, std::
     }
     encoder.Quiesce();
     const double ns = NanosecondsSince(start) / draws;
+    if (time) time->RequireReleased();
+    time.reset();
     CommandEncoder::SetDelayForTesting({});
     counts = encoder.Counts();
     return ns;
@@ -1293,7 +1389,7 @@ int HandoffBench() {
 }
 
 VKAPI_ATTR void VKAPI_CALL BurnInstanceDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t microseconds) {
-    BusyFor(std::chrono::microseconds(microseconds));
+    Spend(std::uint64_t{microseconds} * 1000);
 }
 
 void HandoffChargesTheLastProbeBlocksBacklog() {
@@ -1306,24 +1402,29 @@ void HandoffChargesTheLastProbeBlocksBacklog() {
     constexpr std::uint64_t Backlogged = 12;
     constexpr std::uint64_t Windows = 2 * CommandEncoder::ProbeWindows + CommandEncoder::SettledSpanMin + 256;
     std::uint64_t inlined = 0;
-    for (std::uint64_t index = 0; index < Windows; ++index) {
-        const bool encoded = encoder.Admit(CommandEncoder::Handoff::Adaptive);
-        const bool backlogged = index % CommandEncoder::ProbeBlock >= CommandEncoder::ProbeBlock - Backlogged;
-        if (encoded) encoder.Open(commands, RecordingOf(commands));
-        table.cmdDraw(commands, 3, 1, 0, encoded ? (backlogged ? 2000u : 0u) : 50u);
-        if (encoded) {
-            encoder.Close();
-        } else {
-            encoder.EndInline();
-            ++inlined;
+    {
+        const SimulatedTime time(encoder, commands, 0);
+        for (std::uint64_t index = 0; index < Windows; ++index) {
+            const bool encoded = encoder.Admit(CommandEncoder::Handoff::Adaptive);
+            const bool backlogged = index % CommandEncoder::ProbeBlock >= CommandEncoder::ProbeBlock - Backlogged;
+            if (encoded) encoder.Open(commands, RecordingOf(commands));
+            table.cmdDraw(commands, 3, 1, 0, encoded ? (backlogged ? 2000u : 0u) : 50u);
+            if (encoded) {
+                encoder.Close();
+            } else {
+                encoder.EndInline();
+                ++inlined;
+            }
         }
+        encoder.Quiesce();
+        time.RequireReleased();
     }
-    encoder.Quiesce();
     Require(inlined == Windows - CommandEncoder::ProbeWindows, "the adaptive hand-off recorded " + std::to_string(inlined) + " of " + std::to_string(Windows) + " windows inline, not the " + std::to_string(Windows - CommandEncoder::ProbeWindows) + " outside its encoded probe blocks, so the backlog left by a probe's last encoded block was not charged to it");
 }
 
 void HandoffPolicyFollowsItsMeasuredCost() {
     constexpr std::uint32_t Draws = 6000;
+    constexpr std::uint64_t Encoded = 3 * CommandEncoder::ProbeWindows / 2;
     CommandEncoder::Statistics counts{};
     Reset();
     RunPattern({"never", 2, 1000, 0}, CommandEncoder::Handoff::Never, Draws, counts);
@@ -1332,11 +1433,11 @@ void HandoffPolicyFollowsItsMeasuredCost() {
     RunPattern({"always", 2, 1000, 0}, CommandEncoder::Handoff::Always, Draws, counts);
     Require(counts.inlined == 0 && counts.posts == Draws, "an always-handoff draw was recorded inline");
     Reset();
-    RunPattern({"short batches", 2, 1000, 0}, CommandEncoder::Handoff::Adaptive, Draws, counts);
-    Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 7, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although each batch cost more to wait for than to record");
+    RunPattern({"short batches", 2, 1000, 0, false, 0, 5000}, CommandEncoder::Handoff::Adaptive, Draws, counts, true);
+    Require(counts.inlined == Draws - Encoded, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder, not the " + std::to_string(Encoded) + " of its three probes, although each batch cost more to wait for than to record");
     Reset();
-    RunPattern({"waits in every window", 1000000, 0, 0, true, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts);
-    Require(counts.inlined * 10 >= static_cast<std::uint64_t>(Draws) * 9, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder although every window waited for the encoder thread's own time");
+    RunPattern({"waits in every window", 1000000, 0, 0, true, 20000}, CommandEncoder::Handoff::Adaptive, Draws, counts, true);
+    Require(counts.inlined == Draws - Encoded, "the adaptive hand-off kept " + std::to_string(Draws - counts.inlined) + " of " + std::to_string(Draws) + " draws on the encoder, not the " + std::to_string(Encoded) + " of its three probes, although every window waited for the encoder thread's own time");
     Reset();
     RunPattern({"first block", 64, 0, 0}, CommandEncoder::Handoff::Adaptive, CommandEncoder::ProbeBlock, counts);
     Require(counts.inlined == 0, "the adaptive hand-off recorded " + std::to_string(counts.inlined) + " draws of its first probe block inline");
@@ -1463,62 +1564,36 @@ void HandoffPolicyDecidesFromTheCostItIsGiven() {
 
 void HandoffIgnoresAnotherThreadsWaits() {
     Reset();
-    auto table = BurnTable();
-    replayNs.store(0, std::memory_order_relaxed);
     const auto device = Handle<VkDevice>(0x5b);
     const auto commands = Handle<VkCommandBuffer>(0x1b00);
+    DeviceFunctions table{};
+    table.cmdDraw = &BurnInstanceDraw;
     const auto attached = Attached(device, table);
     auto& encoder = *attached;
-    std::atomic<bool> held{false};
-    std::atomic<bool> waiting{false};
-    CommandEncoder::SetDelayForTesting([&] { held.wait(true, std::memory_order_acquire); });
-    CommandEncoder::SetBlockedHookForTesting([&] {
-        waiting.store(true, std::memory_order_release);
-        waiting.notify_all();
-    });
-    const auto release = [&] {
-        held.store(false, std::memory_order_release);
-        held.notify_all();
-    };
-    const auto lookUpElsewhere = [&] {
-        waiting.store(false, std::memory_order_release);
-        std::thread other([&] { AgcDriver::Graphics::BeforeCommandLookup(device); });
-        const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (!waiting.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < give_up) std::this_thread::yield();
-        const bool blocked = waiting.load(std::memory_order_acquire);
-        if (blocked) std::this_thread::sleep_for(std::chrono::milliseconds(30));
-        release();
-        other.join();
-        Require(blocked, "a lookup on another thread did not wait for the queued replay");
-    };
+    constexpr std::uint32_t ForeignWaitUs = 30000;
     constexpr std::uint64_t Windows = CommandEncoder::ProbeWindows + 600;
+    constexpr std::uint64_t EncodedProbeBlocks = CommandEncoder::ProbeWindows / CommandEncoder::ProbeBlock / 2;
     std::uint64_t inlined = 0;
-    try {
+    {
+        const SimulatedTime time(encoder, commands, 0);
         for (std::uint64_t window = 0; window < Windows; ++window) {
             const bool encoded = encoder.Admit(CommandEncoder::Handoff::Adaptive);
             const bool lastOfEncodedBlock = window < CommandEncoder::ProbeWindows && encoded && window % CommandEncoder::ProbeBlock == CommandEncoder::ProbeBlock - 1;
             if (encoded) encoder.Open(commands, RecordingOf(commands));
-            table.cmdDraw(commands, 3, 1, 0, 0);
-            if (lastOfEncodedBlock) held.store(true, std::memory_order_release);
+            table.cmdDraw(commands, 3, 1, 0, encoded ? (lastOfEncodedBlock ? ForeignWaitUs : 0u) : 50u);
             if (encoded) {
                 encoder.Close();
             } else {
-                BusyFor(std::chrono::microseconds(50));
                 encoder.EndInline();
                 ++inlined;
             }
-            if (lastOfEncodedBlock) lookUpElsewhere();
+            if (lastOfEncodedBlock) std::thread([&] { AgcDriver::Graphics::BeforeCommandLookup(device); }).join();
         }
-    } catch (...) {
-        release();
-        CommandEncoder::SetBlockedHookForTesting({});
-        CommandEncoder::SetDelayForTesting({});
-        throw;
+        encoder.Quiesce();
+        time.RequireReleased();
+        Require(time.ForeignWaits() == EncodedProbeBlocks, "lookups on another thread waited " + std::to_string(time.ForeignWaits()) + " times for the replay of the " + std::to_string(EncodedProbeBlocks) + " encoded probe blocks");
     }
-    encoder.Quiesce();
-    CommandEncoder::SetBlockedHookForTesting({});
-    CommandEncoder::SetDelayForTesting({});
-    Require(inlined < Windows / 2, "the adaptive hand-off recorded " + std::to_string(inlined) + " of " + std::to_string(Windows) + " windows inline because another thread's wait for the encoder was charged to the producer's encoded windows");
+    Require(inlined == CommandEncoder::ProbeWindows / 2, "the adaptive hand-off recorded " + std::to_string(inlined) + " of " + std::to_string(Windows) + " windows inline, not the " + std::to_string(CommandEncoder::ProbeWindows / 2) + " of its probe's inline blocks, because another thread's wait for the encoder was charged to the producer's encoded windows");
 }
 
 void InlineSpansRunOnTheOriginalTable() {

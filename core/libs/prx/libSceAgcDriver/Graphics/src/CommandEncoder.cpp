@@ -79,6 +79,7 @@ struct TestDelay {
 
 std::atomic<std::size_t> liveChunks{0};
 std::atomic<unsigned> injectedWorkerStartFailures{0};
+std::atomic<std::uint64_t (*)()> testClock{nullptr};
 
 TestDelay& testDelay() {
     static TestDelay value;
@@ -713,12 +714,12 @@ void CommandEncoder::EndInline() noexcept {
 void CommandEncoder::startTimedWindow() noexcept {
     policy.ChargeOutside(producerWaitNs.load(std::memory_order_relaxed) - waitsAtWindowEnd);
     timedWindow = true;
-    windowStart = std::chrono::steady_clock::now();
+    windowStart = clockNs();
 }
 
 void CommandEncoder::endTimedWindow() noexcept {
     timedWindow = false;
-    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - windowStart).count());
+    const auto ns = clockNs() - windowStart;
     waitsAtWindowEnd = producerWaitNs.load(std::memory_order_relaxed);
     policy.Charge(ns);
 }
@@ -762,12 +763,12 @@ void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
         if (flushed) note(site, 0, false, true);
         return;
     }
+    const auto start = clockNs();
     runBlockedHook();
-    const auto start = std::chrono::steady_clock::now();
     if (!SpinUntil(HandoffSpinWindow(), [&] { return executed.load(std::memory_order_acquire) >= through; })) {
         for (auto seen = executed.load(std::memory_order_acquire); seen < through; seen = executed.load(std::memory_order_acquire)) executed.wait(seen, std::memory_order_acquire);
     }
-    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    const auto ns = clockNs() - start;
     waitCount.fetch_add(1, std::memory_order_relaxed);
     waitNs.fetch_add(ns, std::memory_order_relaxed);
     if (owner.load(std::memory_order_relaxed) == std::this_thread::get_id()) producerWaitNs.fetch_add(ns, std::memory_order_relaxed);
@@ -808,7 +809,7 @@ void CommandEncoder::printSites(bool final) noexcept {
 
 void CommandEncoder::awaitSpare() noexcept {
     refuseEncoderThread();
-    const auto start = std::chrono::steady_clock::now();
+    const auto start = clockNs();
     const auto seen = executed.load(std::memory_order_acquire);
     {
         std::lock_guard lock(queueMutex);
@@ -816,7 +817,7 @@ void CommandEncoder::awaitSpare() noexcept {
     }
     runBlockedHook();
     executed.wait(seen, std::memory_order_acquire);
-    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    const auto ns = clockNs() - start;
     waitCount.fetch_add(1, std::memory_order_relaxed);
     waitNs.fetch_add(ns, std::memory_order_relaxed);
     producerWaitNs.fetch_add(ns, std::memory_order_relaxed);
@@ -930,6 +931,15 @@ CommandEncoder::Chunk::~Chunk() {
 
 void CommandEncoder::freeChunks(Chunk*& list) noexcept {
     while (list != nullptr) delete std::exchange(list, list->next);
+}
+
+std::uint64_t CommandEncoder::clockNs() noexcept {
+    if (auto* clock = testClock.load(std::memory_order_relaxed)) [[unlikely]] return clock();
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void CommandEncoder::SetClockForTesting(std::uint64_t (*clock)()) {
+    testClock.store(clock, std::memory_order_release);
 }
 
 void CommandEncoder::FailNextWorkerStartsForTest(unsigned count) {
