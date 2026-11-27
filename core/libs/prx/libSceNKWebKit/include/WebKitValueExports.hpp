@@ -522,6 +522,7 @@ std::uint32_t APS5_VABI WKProtectionSpaceGetTypeID();
 const void* APS5_VABI WKRectCreate(NKWebKit::RectValue rect);
 std::uint32_t APS5_VABI WKRectGetTypeID();
 NKWebKit::RectValue APS5_VABI WKRectGetValue(const void* rectRef);
+const void* APS5_VABI WKRegistrableDomainCreate(const void* urlRef);
 void APS5_VABI WKRelease(const void* object);
 const void* APS5_VABI WKRenderLayerCopyElementID(const void* layerRef);
 const void* APS5_VABI WKRenderLayerCopyElementTagName(const void* layerRef);

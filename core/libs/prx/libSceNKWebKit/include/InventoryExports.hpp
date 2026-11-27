@@ -335,7 +335,6 @@ int APS5_VABI WKPageTryClose();
 int APS5_VABI WKPageTryRestoreScrollPosition();
 int APS5_VABI WKPageValidateCommand();
 int APS5_VABI WKPreferencesGetQTKitEnabled();
-int APS5_VABI WKRegistrableDomainCreate();
 
 int APS5_VABI WKUserMediaPermissionRequestAudioDeviceUIDs();
 int APS5_VABI WKUserMediaPermissionRequestVideoDeviceUIDs();
