@@ -2060,12 +2060,16 @@ bool isF32DivisionStepOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VDivFmasF32 || opcode == RdnaOpcode::VDivFixupF32;
 }
 
+bool isF64ToIntegerConversion(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VCvtI32F64 || opcode == RdnaOpcode::VCvtU32F64;
+}
+
 bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
     if (isNativeVop3F16TernaryOpcode(opcode)) {
         return true;
     }
-    return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || usesIntegerSaturateClamp(opcode) ||
-        isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
+    return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || isF64ToIntegerConversion(opcode) ||
+        usesIntegerSaturateClamp(opcode) || isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
 }
 
 bool readsVop2Accumulator(RdnaOpcode opcode) {
@@ -2153,7 +2157,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     const bool sourceModifiers = supportsNativeVop3SourceModifiers(opcode);
     const bool resultModifiers = supportsNativeVop3ResultModifiers(opcode);
     const bool clampModifier = supportsNativeVop3Clamp(opcode);
-    const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16;
+    const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16 || isF64ToIntegerConversion(opcode);
     if (sourceModifiers) {
         const bool unmeasuredAccumulatorModifiers = ((abs | neg) & 0x4u) != 0u && readsVop2Accumulator(opcode) && encodedOpcode != 0x12bu && encodedOpcode != 0x136u;
         if (opSel != 0u || (omod != 0u && !resultModifiers && !ignoresOutputModifiers) || (clamp != 0u && !clampModifier && !ignoresOutputModifiers) || unmeasuredAccumulatorModifiers) {
