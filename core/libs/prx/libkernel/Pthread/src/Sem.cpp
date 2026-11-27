@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -32,14 +31,10 @@ struct ResolvedSem {
 ResolvedSem resolveSem(PthreadSem* sem) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
-    const int savedErrno = errno;
     std::shared_lock lock(semRegistryMutex);
     PthreadSem current = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&current, sem, sizeof(current))) {
-        errno = savedErrno;
+    if (!GuestCopyIn_nid_no_patch(&current, sem, sizeof(current)))
         return {nullptr, SCE_KERNEL_ERROR_EFAULT};
-    }
-    errno = savedErrno;
     if (!current || current == destroyedSem())
         throw std::runtime_error("Semaphore is not initialized or has been destroyed");
     const auto it = semRegistry.find(current);
@@ -89,12 +84,8 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
     auto replacement = std::make_shared<PthreadSemPrivate>(value);
     PthreadSem handle = replacement.get();
     std::unique_lock lock(semRegistryMutex);
-    const int savedErrno = errno;
-    if (!GuestCopyOut_nid_no_patch(sem, &handle, sizeof(handle))) {
-        errno = savedErrno;
+    if (!GuestCopyOut_nid_no_patch(sem, &handle, sizeof(handle)))
         return SCE_KERNEL_ERROR_EFAULT;
-    }
-    errno = savedErrno;
     semRegistry.emplace(handle, std::move(replacement));
     return 0;
 }
@@ -245,12 +236,8 @@ int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
     if (owner->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
     const int count = owner->_count;
-    const int savedErrno = errno;
-    if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count))) {
-        errno = savedErrno;
+    if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count)))
         return SCE_KERNEL_ERROR_EFAULT;
-    }
-    errno = savedErrno;
     return 0;
 }
 
