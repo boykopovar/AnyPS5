@@ -263,6 +263,7 @@ private:
         std::optional<KeyDomain> keyDomain;
         std::vector<IrValue*> heapLive;
         std::vector<IrValue*> heapPlanned;
+        std::vector<const IrValue*> adjustedWords;
     };
 
     struct DescriptorGuard {
@@ -296,7 +297,7 @@ private:
         }
     }
 
-    IrValue* canonicalizeSampleAdjustDword3(IrValue* value) {
+    IrValue* canonicalizeSampleAdjustDword3(IrValue* value, std::vector<const IrValue*>* stripped = nullptr) {
         for (;;) {
             value = value->Resolve();
             if ((possibleU32Bits(value) & ~samplerDword3ReservedMask) == 0u) {
@@ -309,24 +310,24 @@ private:
             IrValue* right = value->Argument(1)->Resolve();
             const bool leftReserved = (possibleU32Bits(left) & ~samplerDword3ReservedMask) == 0u;
             const bool rightReserved = (possibleU32Bits(right) & ~samplerDword3ReservedMask) == 0u;
-            if (leftReserved) {
-                value = right;
-            } else if (rightReserved) {
-                value = left;
-            } else {
+            if (!leftReserved && !rightReserved) {
                 return value;
             }
+            if (stripped != nullptr) {
+                stripped->push_back(value);
+            }
+            value = leftReserved ? right : left;
         }
     }
 
-    IrValue* tableSamplerDword3(IrValue& handle, IrValue* word) {
-        if (word->Opcode() != IrOpcode::BitwiseOr32) return word;
+    IrValue* tableSamplerDword3(IrValue& handle, IrValue* word, std::vector<const IrValue*>& stripped) {
+        if (word->Resolve()->Opcode() != IrOpcode::BitwiseOr32) return word;
         const auto onlyAdjusted = std::ranges::all_of(handle.Uses(), [&](const IrValue* use) {
             if (!ImageOpcodeInfoOf(use->Opcode()).needsSampler || use->ArgumentCount() < 2u || use->Argument(1)->Resolve() != &handle) return false;
             const auto index = use->Flags<MemoryFlags>().index;
             return index < m_program.Resources().memoryInfo.size() && (m_program.Resources().memoryInfo[index].imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u;
         });
-        return onlyAdjusted ? canonicalizeSampleAdjustDword3(word) : word;
+        return onlyAdjusted ? canonicalizeSampleAdjustDword3(word, &stripped) : word;
     }
 
     bool ValidateSource(const DescriptorSource& descriptor, std::uint32_t& badDword) const {
@@ -861,9 +862,11 @@ private:
         FirstLaneOffset baseLane;
         bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
-            IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
+            IrValue* word = handle.Argument(dword);
+            if (sampler && dword == 3u) word = tableSamplerDword3(handle, word, plan.adjustedWords);
+            IrValue* read = ResolveInvariantPhi(m_program.Resources(), word);
             if (read == nullptr) return false;
-            if (sampler && dword == 3u) read = tableSamplerDword3(handle, read);
+            if (sampler && dword == 3u) read = tableSamplerDword3(handle, read, plan.adjustedWords);
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
@@ -2399,12 +2402,15 @@ private:
                 }
             }
         }
+        const auto plannedUses = [&](const TableColumnPlan& plan, const IrValue& value, auto&& self) -> bool {
+            return std::ranges::all_of(value.Uses(), [&](const IrValue* user) {
+                return FindTableColumn(*user) != nullptr || (std::ranges::find(plan.adjustedWords, user) != plan.adjustedWords.end() && self(plan, *user, self));
+            });
+        };
         for (const auto& plan : m_tableColumns) {
             for (std::size_t index = 0; index < plan.reads.size(); index++) {
                 const IrValue* read = plan.reads[index];
-                const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return FindTableColumn(*user) != nullptr;
-                });
+                const bool planned = plannedUses(plan, *read, plannedUses);
                 if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
                     m_tablePlanningReads.push_back(read);
                     m_tablePlanningMemory.push_back(plan.memory[index]);
