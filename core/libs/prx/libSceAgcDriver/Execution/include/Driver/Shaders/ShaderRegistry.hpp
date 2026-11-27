@@ -363,7 +363,7 @@ struct SplitTableCallPart {
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
 };
-std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount);
+std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount, void (*beforeGuestReads)() = nullptr);
 std::size_t SplitTableCallPartCount(const SplitTableCallParts& parts);
 std::uint32_t SplitTableCallStateSlots(const SplitTableCallParts& parts);
 bool SplitTableCallContinues(const SplitTableCallParts& parts);

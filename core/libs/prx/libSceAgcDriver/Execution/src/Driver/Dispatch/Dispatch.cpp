@@ -478,7 +478,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     };
     if (const auto rsrc1 = queue.shader.find(0x212); !fromAhead && rsrc1 != queue.shader.end()) {
         const auto vectorGranule = request.context.waveSize == 32u ? 8u : 4u;
-        if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule)) {
+        constexpr auto drainQueuedDraws = [] {
+            if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+        };
+        if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule, resolving ? nullptr : +drainQueuedDraws)) {
             if (resolving) return;
             dispatchSplitTableCall(queue, packet, submission, indirectArguments, *split, request, memory, address, compute, threadGroup, localDevice);
             return;
