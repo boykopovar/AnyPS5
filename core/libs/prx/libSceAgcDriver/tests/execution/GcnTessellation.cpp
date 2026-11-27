@@ -390,6 +390,8 @@ int main() {
         ExpectConstantsRequired(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipInputs, domainUsers, 0u);
         const auto outputDomainUsers = ConstantBuffer(OutputConstants);
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipBelowOutputs, "at a computed offset that can fall below the hull shader's on-chip output control points", outputDomainUsers, OutputConstants);
+        ExpectRefusal(target, ShaderStage::TessellationControl, GcnHullOnChipComputedOutputRead, "a pass-through hull shader on chip reads LDS after it may have written it there", hullUsers, PassthroughConstants);
+        RequirePatches(*device, GcnHullOnChipOutputs, GcnDomainOnChipInputs, true, "GCN on-chip pass-through LS-HS-VS draw whose hull reads its input control points before it writes them", PassthroughConstants);
         auto narrowOutputs = target;
         narrowOutputs.tessellation->maxControlPerVertexOutputComponents = 2u;
         ExpectRefusal(narrowOutputs, ShaderStage::TessellationControl, GcnHullOnChipPassthrough, "the pass-through hull shader's control points exceed the device limits (4 input and 4 output components per control point", hullUsers, PassthroughConstants);
