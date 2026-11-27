@@ -282,6 +282,7 @@ bool DepthStencilTests(const State& state);
 std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
 bool RasterizesPointsOrLines(const State& state);
+bool CollapsedViewportDrawsNothing(const State& state);
 bool PartialSampleMask(const State& state);
 bool UniformSampleMask(const State& state);
 VkSampleMask HostSampleMask(const State& state);

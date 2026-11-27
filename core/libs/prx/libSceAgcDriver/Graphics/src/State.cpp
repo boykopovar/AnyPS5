@@ -2047,7 +2047,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
         }
     }
-    const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    const bool areaFree = CollapsedViewportDrawsNothing(result);
     bool collapsed = false;
     if (viewportControl == 0u && !viewportProgrammed(cx)) {
         result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
@@ -2445,6 +2445,12 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state) {
         masks[pixel] = static_cast<std::uint16_t>(mask == full ? 0xffffu : mask);
     }
     return masks;
+}
+
+bool CollapsedViewportDrawsNothing(const State& state) {
+    if (state.stages.path != ShaderPath::Vertex) return false;
+    if (state.stages.legacyGeometry && state.stages.legacyGeometry->outputTopology != 2u) return false;
+    return state.rectList || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
 }
 
 bool RasterizesPointsOrLines(const State& state) {

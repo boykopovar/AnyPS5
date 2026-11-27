@@ -347,6 +347,15 @@ void RequireStageDecode() {
     Require(!AgcDriver::Graphics::RasterizesPointsOrLines(points), "triangle strips a GCN geometry program makes from points were classified as points or lines, so a line polygon mode would draw them filled");
     points.stages.legacyGeometry->outputTopology = 1u;
     Require(AgcDriver::Graphics::RasterizesPointsOrLines(points), "line strips from a GCN geometry program were not classified as lines");
+    AgcDriver::Graphics::State triangles{};
+    triangles.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    Require(AgcDriver::Graphics::CollapsedViewportDrawsNothing(triangles), "a zero-width viewport no longer collapses a plain triangle list draw");
+    triangles.stages.legacyGeometry = Points();
+    Require(AgcDriver::Graphics::CollapsedViewportDrawsNothing(triangles), "a zero-width viewport no longer collapses triangle strips from a GCN geometry program");
+    triangles.stages.legacyGeometry->outputTopology = 1u;
+    Require(!AgcDriver::Graphics::CollapsedViewportDrawsNothing(triangles), "a zero-width viewport was taken as drawing nothing for line strips a GCN geometry program makes from triangles, which still cover pixels");
+    triangles.stages.legacyGeometry->outputTopology = 0u;
+    Require(!AgcDriver::Graphics::CollapsedViewportDrawsNothing(triangles), "a zero-width viewport was taken as drawing nothing for points a GCN geometry program makes from triangles");
     refuses(0x2e5, 1u, "stream-out");
     refuses(0x290, 0x00200033u, "VGT_GS_MODE");
     refuses(0x2d8, 4u, "vertex streams 1-3");
