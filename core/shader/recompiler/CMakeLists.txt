@@ -110,6 +110,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/QuadHelperProof.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ImageOverwriteProof.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
@@ -269,6 +270,7 @@ function(add_shader_recompiler target runtimeTarget)
             DepthBitsTextureWidth
             ExactF32Arithmetic
             HashBytes
+            ImageOverwriteCovers
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
             NativeCachePath_nid_no_patch
@@ -286,6 +288,7 @@ function(add_shader_recompiler target runtimeTarget)
             RayTracingStrict
             RayTracingMiss
             ReadWholeFile
+            RetargetTableCallPointer
             SetDiagnosticSink
             Recompile
             RecompileCacheKey::ContextHash

@@ -196,8 +196,7 @@ bool IsEngineLimit(std::string_view message) {
 std::uint8_t* Compile(const Units& pattern, int flags) {
     if (RejectedByYarr(pattern)) return nullptr;
     const std::string encoded = EncodePattern(pattern, (flags & LRE_FLAG_UNICODE) != 0);
-    char marker = 0;
-    EngineState state{&marker, 0};
+    EngineState state{static_cast<const char*>(__builtin_frame_address(0)), 0};
     char message[128] = "";
     int length = 0;
     std::uint8_t* bytecode = lre_compile(&length, message, sizeof(message), encoded.c_str(), encoded.size(), flags, &state);
@@ -223,8 +222,7 @@ int Match(RegularExpressionPrivate& d, const StringReference* string, int startF
     static const std::uint8_t empty[2] = {};
     const auto* buffer = input.data ? static_cast<const std::uint8_t*>(input.data) : empty;
     if (input.length <= static_cast<unsigned>(INT_MAX) && static_cast<unsigned>(startFrom) <= input.length) {
-        char marker = 0;
-        EngineState state{&marker, 0};
+        EngineState state{static_cast<const char*>(__builtin_frame_address(0)), 0};
         const int type = input.is8Bit ? 0 : 1;
         const int result = lre_exec(captures, bytecode, buffer, startFrom, static_cast<int>(input.length), type, &state);
         if (result == LRE_RET_MEMORY_ERROR) throw std::bad_alloc();
@@ -304,6 +302,14 @@ int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE(const R
 
 bool APS5_VABI _ZNK3JSC4Yarr17RegularExpression7isValidEv(const RegularExpression* self) {
     return Checked(self, "JSC::Yarr::RegularExpression::isValid: null this").d->regExpByteCode != nullptr;
+}
+
+void APS5_VABI JscRegularExpressionConstruct_nid_no_patch(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
+    Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode);
+}
+
+int APS5_VABI JscRegularExpressionMatch_nid_no_patch(const RegularExpression* self, const StringReference* string, int startFrom, int* matchLength) {
+    return _ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi(self, string, startFrom, matchLength);
 }
 
 void APS5_VABI JscRegularExpressionRelease_nid_no_patch(RegularExpressionPrivate* d) {

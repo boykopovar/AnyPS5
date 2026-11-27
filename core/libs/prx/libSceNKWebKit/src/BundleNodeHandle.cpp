@@ -18,6 +18,11 @@ const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const 
     return handle->htmlIFrameElementContentFrame ? NKWebKit::ToRef(handle->htmlIFrameElementContentFrame) : nullptr;
 }
 
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(const void* nodeHandleRef, bool autoFillAvailable) {
+    auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    handle->htmlInputElementAutoFillAvailable = autoFillAvailable;
+}
+
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilled(const void* nodeHandleRef, bool autoFilled) {
     auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
     handle->htmlInputElementAutoFilled = autoFilled;
@@ -67,6 +72,25 @@ bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(const 
 bool APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(const void* nodeHandleRef) {
     const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
     return handle->htmlTextAreaElementLastChangeWasUserEdit;
+}
+
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(const void* nodeHandleRef, std::uint8_t autoFillButtonType) {
+    auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    if (handle->htmlInputElementAutoFillButtonType == autoFillButtonType) {
+        return;
+    }
+    handle->htmlInputElementLastAutoFillButtonType = handle->htmlInputElementAutoFillButtonType;
+    handle->htmlInputElementAutoFillButtonType = autoFillButtonType;
+}
+
+std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(const void* nodeHandleRef) {
+    const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    return handle->htmlInputElementAutoFillButtonType;
+}
+
+std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(const void* nodeHandleRef) {
+    const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    return handle->htmlInputElementLastAutoFillButtonType;
 }
 
 }

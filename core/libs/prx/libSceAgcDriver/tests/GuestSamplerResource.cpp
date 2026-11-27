@@ -180,9 +180,18 @@ void RunSamplerReductionTests(const Fields& base) {
     linearMip.xyMinFilter = 0;
     rejectFields(linearMip, "min or max reduction with a linear mip filter");
 
-    Fields badFilterMode = base;
-    badFilterMode.filterMode = 3;
-    rejectFields(badFilterMode, "unknown reduction filter mode 3");
+    for (const std::uint32_t mip : {1u, 2u}) {
+        Fields blendMode = base;
+        blendMode.filterMode = 3;
+        blendMode.xyMagFilter = 1;
+        blendMode.xyMinFilter = 1;
+        blendMode.mipFilter = mip;
+        const auto decoded = DecodeSamplerResource(pack(blendMode));
+        Require(decoded.reductionMode == VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT, "filter mode 3 did not decode to a weighted average");
+        const auto created = createSampler(context, decoded);
+        Require(created.created && created.next == nullptr, "a filter mode 3 sampler chained a reduction mode");
+        Require(!Sampler(context, decoded).RequiresFilterMinmax(), "a filter mode 3 sampler requires min/max filtering");
+    }
     Fields anisoReduction = base;
     anisoReduction.maxAnisoRatio = 2;
     anisoReduction.mipFilter = 1;
