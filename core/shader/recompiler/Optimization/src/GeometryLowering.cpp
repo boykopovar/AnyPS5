@@ -455,6 +455,7 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
             exports.push_back(copy);
             continue;
         }
+        if (family == RdnaInstructionFamily::MUBUF || family == RdnaInstructionFamily::MTBUF || family == RdnaInstructionFamily::FLAT || family == RdnaInstructionFamily::DS || family == RdnaInstructionFamily::MIMG) FailCopy("a memory access other than a GSVS ring read in a copy program", pc);
         Forget(vectors, scalars, instruction);
     }
     bool position = false;
