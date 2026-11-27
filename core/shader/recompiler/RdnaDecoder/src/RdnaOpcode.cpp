@@ -713,6 +713,7 @@ bool IsScalarMemoryOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::SStoreDword:
         case RdnaOpcode::SStoreDwordx2:
         case RdnaOpcode::SStoreDwordx4:
+            return true;
         default:
             return false;
     }
