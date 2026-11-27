@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <new>
 #include <source_location>
 #include <stdexcept>
 #include <thread>
@@ -76,4 +78,40 @@ int main() {
     Reject([&] { __emutls_get_address_nid_postfix(&badAlignment); });
     GuestEmutlsControl badTemplate{8, 8, 0, reinterpret_cast<const void*>(1)};
     Reject([&] { __emutls_get_address_nid_postfix(&badTemplate); });
+
+    GuestEmutlsControl tooLarge{std::numeric_limits<std::uintptr_t>::max() / 2, 64, 0, nullptr};
+    bool allocationFailed = false;
+    try { __emutls_get_address_nid_postfix(&tooLarge); }
+    catch (const std::bad_alloc&) { allocationFailed = true; }
+    Require(allocationFailed);
+
+    const auto assignedIndex = tooLarge.index;
+    tooLarge.size = 16;
+    auto* retried = static_cast<std::byte*>(__emutls_get_address_nid_postfix(&tooLarge));
+    Require(assignedIndex != 0 && tooLarge.index == assignedIndex);
+    Require(retried && reinterpret_cast<std::uintptr_t>(retried) % 64 == 0);
+    for (std::size_t i = 0; i < tooLarge.size; ++i) Require(retried[i] == std::byte{});
+    Require(__emutls_get_address_nid_postfix(&tooLarge) == retried);
+
+    constexpr std::size_t controlCount = 12;
+    std::array<GuestEmutlsControl, controlCount> controls{};
+    for (auto& entry : controls) {
+        entry.size = 1;
+        Require(__emutls_get_address_nid_postfix(&entry) != nullptr);
+    }
+    Require(__emutls_get_address_nid_postfix(&control) == first);
+    std::thread reverseOrder([&] {
+        std::array<void*, controlCount> reverseAddresses{};
+        for (std::size_t i = controls.size(); i-- > 0;) {
+            auto* bytes = static_cast<std::byte*>(__emutls_get_address_nid_postfix(&controls[i]));
+            Require(bytes && bytes[0] == std::byte{});
+            bytes[0] = static_cast<std::byte>(i + 1);
+            reverseAddresses[i] = bytes;
+        }
+        for (std::size_t i = 0; i < controls.size(); ++i) {
+            auto* bytes = static_cast<std::byte*>(__emutls_get_address_nid_postfix(&controls[i]));
+            Require(bytes == reverseAddresses[i] && bytes[0] == static_cast<std::byte>(i + 1));
+        }
+    });
+    reverseOrder.join();
 }
