@@ -132,11 +132,12 @@ int main() {
         const __complex__ long double circular = catanl_nid_postfix(Make(large.y, large.x));
         Require(Close(__imag__ circular, large.real) && Close(__real__ circular, std::copysign(pi / 2, large.y)));
     }
-    const __complex__ long double tiny = Make(1e-12L, -1e-12L);
+    const long double small = std::fmin(1e-12L, std::sqrt(LDBL_EPSILON) / 4);
+    const __complex__ long double tiny = Make(small, -small);
     const __complex__ long double tinyResult = catanhl_nid_postfix(tiny);
     Require(__real__ tinyResult == __real__ tiny && __imag__ tinyResult == __imag__ tiny);
     const __complex__ long double nearOne = catanhl_nid_postfix(Make(1.0L, 1e-30L));
-    Require(Close(__real__ nearOne, (std::log(2.0L) - std::log(1e-30L)) / 2) && Close(__imag__ nearOne, pi / 4));
+    Require(Close(__real__ nearOne, (std::log(2.0L) - std::log(1e-30L)) / 2) && Close(__imag__ nearOne, pi / 4 + std::atan(1e-30L / 2) / 2));
     const __complex__ long double infiniteReal = catanhl_nid_postfix(Make(infinity, 1.0L));
     Require(__real__ infiniteReal == 0.0L && Close(__imag__ infiniteReal, pi / 2));
     const __complex__ long double infiniteImaginaryArc = catanhl_nid_postfix(Make(2.0L, -infinity));
