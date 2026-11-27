@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl3/include/ExtraDigests.hpp"
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -170,21 +171,21 @@ const void* Resolve(Digest digest) {
     case Digest::Md4:
         Missing("EVP_md4");
     case Digest::Md5Sha1:
-        Missing("EVP_md5_sha1");
+        return LibreSsl3::Md5Sha1Digest();
     case Digest::Ripemd160:
-        Missing("EVP_ripemd160");
+        return LibreSsl3::Ripemd160Digest();
     case Digest::Sha512_224:
-        Missing("EVP_sha512_224");
+        return LibreSsl3::Sha512_224Digest();
     case Digest::Sha512_256:
         return EVP_sha512_256_nid_postfix();
     case Digest::Sha3_224:
-        Missing("EVP_sha3_224");
+        return LibreSsl3::Sha3_224Digest();
     case Digest::Sha3_256:
-        Missing("EVP_sha3_256");
+        return LibreSsl3::Sha3_256Digest();
     case Digest::Sha3_384:
-        Missing("EVP_sha3_384");
+        return LibreSsl3::Sha3_384Digest();
     case Digest::Sha3_512:
-        Missing("EVP_sha3_512");
+        return LibreSsl3::Sha3_512Digest();
     case Digest::Sm3:
         Missing("EVP_sm3");
     }

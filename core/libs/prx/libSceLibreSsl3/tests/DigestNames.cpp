@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl3/include/ExtraDigests.hpp"
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -5,6 +6,7 @@
 
 #include <mbedtls/md.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -163,17 +165,69 @@ struct Available {
     const char* getter;
     const void* digest;
     mbedtls_md_type_t reference;
+    std::vector<unsigned char> expected;
+};
+
+const std::vector<unsigned char> Sha512_256Expected {
+    0xdd, 0x9d, 0x67, 0xb3, 0x71, 0x51, 0x9c, 0x33, 0x9e, 0xd8, 0xdb, 0xd2, 0x5a, 0xf9, 0x0e, 0x97,
+    0x6a, 0x1e, 0xee, 0xfd, 0x4a, 0xd3, 0xd8, 0x89, 0x00, 0x5e, 0x53, 0x2f, 0xc5, 0xbe, 0xf0, 0x4d,
+};
+
+const std::vector<unsigned char> Sha512_224Expected {
+    0x94, 0x4c, 0xd2, 0x84, 0x7f, 0xb5, 0x45, 0x58, 0xd4, 0x77, 0x5d, 0xb0, 0x48, 0x5a, 0x50, 0x00,
+    0x31, 0x11, 0xc8, 0xe5, 0xda, 0xa6, 0x3f, 0xe7, 0x22, 0xc6, 0xaa, 0x37,
+};
+
+const std::vector<unsigned char> Ripemd160Expected {
+    0x37, 0xf3, 0x32, 0xf6, 0x8d, 0xb7, 0x7b, 0xd9, 0xd7, 0xed, 0xd4, 0x96, 0x95, 0x71, 0xad, 0x67,
+    0x1c, 0xf9, 0xdd, 0x3b,
+};
+
+const std::vector<unsigned char> Md5Sha1Expected {
+    0x9e, 0x10, 0x7d, 0x9d, 0x37, 0x2b, 0xb6, 0x82, 0x6b, 0xd8, 0x1d, 0x35, 0x42, 0xa4, 0x19, 0xd6,
+    0x2f, 0xd4, 0xe1, 0xc6, 0x7a, 0x2d, 0x28, 0xfc, 0xed, 0x84, 0x9e, 0xe1, 0xbb, 0x76, 0xe7, 0x39,
+    0x1b, 0x93, 0xeb, 0x12,
+};
+
+const std::vector<unsigned char> Sha3_224Expected {
+    0xd1, 0x5d, 0xad, 0xce, 0xaa, 0x4d, 0x5d, 0x7b, 0xb3, 0xb4, 0x8f, 0x44, 0x64, 0x21, 0xd5, 0x42,
+    0xe0, 0x8a, 0xd8, 0x88, 0x73, 0x05, 0xe2, 0x8d, 0x58, 0x33, 0x57, 0x95,
+};
+
+const std::vector<unsigned char> Sha3_256Expected {
+    0x69, 0x07, 0x0d, 0xda, 0x01, 0x97, 0x5c, 0x8c, 0x12, 0x0c, 0x3a, 0xad, 0xa1, 0xb2, 0x82, 0x39,
+    0x4e, 0x7f, 0x03, 0x2f, 0xa9, 0xcf, 0x32, 0xf4, 0xcb, 0x22, 0x59, 0xa0, 0x89, 0x7d, 0xfc, 0x04,
+};
+
+const std::vector<unsigned char> Sha3_384Expected {
+    0x70, 0x63, 0x46, 0x5e, 0x08, 0xa9, 0x3b, 0xce, 0x31, 0xcd, 0x89, 0xd2, 0xe3, 0xca, 0x8f, 0x60,
+    0x24, 0x98, 0x69, 0x6e, 0x25, 0x35, 0x92, 0xed, 0x26, 0xf0, 0x7b, 0xf7, 0xe7, 0x03, 0xcf, 0x32,
+    0x85, 0x81, 0xe1, 0x47, 0x1a, 0x7b, 0xa7, 0xab, 0x11, 0x9b, 0x1a, 0x9e, 0xbd, 0xf8, 0xbe, 0x41,
+};
+
+const std::vector<unsigned char> Sha3_512Expected {
+    0x01, 0xde, 0xdd, 0x5d, 0xe4, 0xef, 0x14, 0x64, 0x24, 0x45, 0xba, 0x5f, 0x5b, 0x97, 0xc1, 0x5e,
+    0x47, 0xb9, 0xad, 0x93, 0x13, 0x26, 0xe4, 0xb0, 0x72, 0x7c, 0xd9, 0x4c, 0xef, 0xc4, 0x4f, 0xff,
+    0x23, 0xf0, 0x7b, 0xf5, 0x43, 0x13, 0x99, 0x39, 0xb4, 0x91, 0x28, 0xca, 0xf4, 0x36, 0xdc, 0x1b,
+    0xde, 0xe5, 0x4f, 0xcb, 0x24, 0x02, 0x3a, 0x08, 0xd9, 0x40, 0x3f, 0x9b, 0x4b, 0xf0, 0xd4, 0x50,
 };
 
 std::vector<Available> AvailableDigests() {
     return {
-        {"EVP_md5", EVP_md5_nid_postfix(), MBEDTLS_MD_MD5},
-        {"EVP_sha1", EVP_sha1_nid_postfix(), MBEDTLS_MD_SHA1},
-        {"EVP_sha224", EVP_sha224_nid_postfix(), MBEDTLS_MD_SHA224},
-        {"EVP_sha256", EVP_sha256_nid_postfix(), MBEDTLS_MD_SHA256},
-        {"EVP_sha384", EVP_sha384_nid_postfix(), MBEDTLS_MD_SHA384},
-        {"EVP_sha512", EVP_sha512_nid_postfix(), MBEDTLS_MD_SHA512},
-        {"EVP_sha512_256", EVP_sha512_256_nid_postfix(), MBEDTLS_MD_NONE},
+        {"EVP_md5", EVP_md5_nid_postfix(), MBEDTLS_MD_MD5, {}},
+        {"EVP_sha1", EVP_sha1_nid_postfix(), MBEDTLS_MD_SHA1, {}},
+        {"EVP_sha224", EVP_sha224_nid_postfix(), MBEDTLS_MD_SHA224, {}},
+        {"EVP_sha256", EVP_sha256_nid_postfix(), MBEDTLS_MD_SHA256, {}},
+        {"EVP_sha384", EVP_sha384_nid_postfix(), MBEDTLS_MD_SHA384, {}},
+        {"EVP_sha512", EVP_sha512_nid_postfix(), MBEDTLS_MD_SHA512, {}},
+        {"EVP_sha512_256", EVP_sha512_256_nid_postfix(), MBEDTLS_MD_NONE, Sha512_256Expected},
+        {"EVP_sha512_224", LibreSsl3::Sha512_224Digest(), MBEDTLS_MD_NONE, Sha512_224Expected},
+        {"EVP_ripemd160", LibreSsl3::Ripemd160Digest(), MBEDTLS_MD_NONE, Ripemd160Expected},
+        {"EVP_md5_sha1", LibreSsl3::Md5Sha1Digest(), MBEDTLS_MD_NONE, Md5Sha1Expected},
+        {"EVP_sha3_224", LibreSsl3::Sha3_224Digest(), MBEDTLS_MD_NONE, Sha3_224Expected},
+        {"EVP_sha3_256", LibreSsl3::Sha3_256Digest(), MBEDTLS_MD_NONE, Sha3_256Expected},
+        {"EVP_sha3_384", LibreSsl3::Sha3_384Digest(), MBEDTLS_MD_NONE, Sha3_384Expected},
+        {"EVP_sha3_512", LibreSsl3::Sha3_512Digest(), MBEDTLS_MD_NONE, Sha3_512Expected},
     };
 }
 
@@ -184,11 +238,17 @@ const Available* Find(const char* getter) {
     return nullptr;
 }
 
+template <typename Callable>
+bool Throws(Callable&& call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 void CheckEveryName() {
-    static const unsigned char Sha512_256Expected[32] {
-        0xdd, 0x9d, 0x67, 0xb3, 0x71, 0x51, 0x9c, 0x33, 0x9e, 0xd8, 0xdb, 0xd2, 0x5a, 0xf9, 0x0e, 0x97,
-        0x6a, 0x1e, 0xee, 0xfd, 0x4a, 0xd3, 0xd8, 0x89, 0x00, 0x5e, 0x53, 0x2f, 0xc5, 0xbe, 0xf0, 0x4d,
-    };
     const unsigned char data[] = "The quick brown fox jumps over the lazy dog";
     int available = 0;
     for (const auto& entry : Table) {
@@ -199,8 +259,8 @@ void CheckEveryName() {
             std::uint32_t length = 0;
             Require(EVP_Digest_nid_postfix(data, sizeof(data) - 1, output, &length, static_cast<const EvpMd*>(found), nullptr) == 1);
             if (digest->reference == MBEDTLS_MD_NONE) {
-                Require(length == sizeof(Sha512_256Expected));
-                Require(std::memcmp(output, Sha512_256Expected, length) == 0);
+                Require(length == digest->expected.size());
+                Require(std::memcmp(output, digest->expected.data(), length) == 0);
             } else {
                 const mbedtls_md_info_t* info = mbedtls_md_info_from_type(digest->reference);
                 unsigned char expected[64];
@@ -209,9 +269,74 @@ void CheckEveryName() {
                 Require(std::memcmp(output, expected, length) == 0);
             }
             ++available;
+        } else {
+            Require(Throws([&] { EVP_get_digestbyname_nid_postfix(entry.name); }));
         }
     }
-    Require(available == 47);
+    Require(available == 83);
+}
+
+struct Metadata {
+    const EvpMd* digest;
+    std::int32_t type;
+    std::int32_t pkeyType;
+    std::int32_t size;
+    std::uint64_t flags;
+    std::int32_t blockSize;
+    std::int32_t contextSize;
+};
+
+void CheckMetadata() {
+    const Metadata expected[] {
+        {LibreSsl3::Sha512_224Digest(), 1029, 1025, 28, 0x8, 128, 224},
+        {LibreSsl3::Ripemd160Digest(), 117, 119, 20, 0, 64, 104},
+        {LibreSsl3::Md5Sha1Digest(), 114, 114, 36, 0, 64, 196},
+        {LibreSsl3::Sha3_224Digest(), 1031, 1049, 28, 0x8, 144, 232},
+        {LibreSsl3::Sha3_256Digest(), 1032, 1050, 32, 0x8, 136, 232},
+        {LibreSsl3::Sha3_384Digest(), 1033, 1051, 48, 0x8, 104, 232},
+        {LibreSsl3::Sha3_512Digest(), 1034, 1052, 64, 0x8, 72, 232},
+    };
+    for (const auto& entry : expected) {
+        Require(entry.digest->type == entry.type && entry.digest->pkeyType == entry.pkeyType);
+        Require(entry.digest->mdSize == entry.size && entry.digest->flags == entry.flags);
+        Require(entry.digest->blockSize == entry.blockSize && entry.digest->contextSize == entry.contextSize);
+        Require(!entry.digest->copy && !entry.digest->cleanup && !entry.digest->control);
+    }
+}
+
+void CheckStreaming() {
+    std::vector<unsigned char> data(1280);
+    for (std::size_t index = 0; index < data.size(); ++index) data[index] = static_cast<unsigned char>(index);
+    const Available sha512_224 {"", LibreSsl3::Sha512_224Digest(), MBEDTLS_MD_NONE, {
+        0x3e, 0x50, 0x80, 0x92, 0x9a, 0x0e, 0x5b, 0x04, 0xfd, 0x5d, 0xf7, 0x76, 0x5c, 0x2d, 0x2e, 0x1a,
+        0xc4, 0x00, 0x9c, 0x1c, 0x75, 0x7f, 0x4b, 0x95, 0xde, 0x35, 0x92, 0x00}};
+    const Available ripemd160 {"", LibreSsl3::Ripemd160Digest(), MBEDTLS_MD_NONE, {
+        0x7d, 0x9d, 0xb3, 0xac, 0x93, 0x55, 0xaa, 0xb2, 0xae, 0xd9, 0x28, 0xba, 0x9b, 0xe2, 0xc3, 0xbf,
+        0x0e, 0x8c, 0x9d, 0x48}};
+    const Available md5Sha1 {"", LibreSsl3::Md5Sha1Digest(), MBEDTLS_MD_NONE, {
+        0x82, 0x82, 0x9f, 0x1f, 0x3f, 0x2b, 0xb0, 0xf1, 0x8b, 0x25, 0xf2, 0x78, 0xe5, 0xbb, 0xa8, 0xbd,
+        0xe3, 0x7a, 0x04, 0xcb, 0x23, 0x53, 0x30, 0x9f, 0x5c, 0xff, 0x4e, 0xe0, 0x36, 0xcf, 0xb9, 0x1a,
+        0x5e, 0x31, 0xce, 0xfd}};
+    const Available sha3_256 {"", LibreSsl3::Sha3_256Digest(), MBEDTLS_MD_NONE, {
+        0xfe, 0x0f, 0xf5, 0x04, 0xc7, 0x9e, 0x25, 0x1a, 0xed, 0xec, 0x1e, 0x83, 0xdd, 0x99, 0x63, 0x7b,
+        0x93, 0x65, 0x0f, 0x1a, 0x15, 0x05, 0x31, 0x0a, 0xcd, 0x4e, 0x77, 0xb0, 0x34, 0xff, 0xdf, 0xca}};
+    for (const Available* digest : {&sha512_224, &ripemd160, &md5Sha1, &sha3_256}) {
+        EvpMdContext* context = EVP_MD_CTX_create_nid_postfix();
+        Require(context != nullptr);
+        for (int round = 0; round < 2; ++round) {
+            Require(EVP_DigestInit_ex_nid_postfix(context, static_cast<const EvpMd*>(digest->digest), nullptr) == 1);
+            for (std::size_t offset = 0, chunk = 1; offset < data.size(); offset += chunk, chunk = chunk * 3 + 1) {
+                const std::size_t length = std::min(chunk, data.size() - offset);
+                Require(EVP_DigestUpdate_nid_postfix(context, data.data() + offset, length) == 1);
+            }
+            unsigned char output[64];
+            std::uint32_t length = 0;
+            Require(EVP_DigestFinal_ex_nid_postfix(context, output, &length) == 1);
+            Require(length == digest->expected.size());
+            Require(std::memcmp(output, digest->expected.data(), length) == 0);
+        }
+        EVP_MD_CTX_destroy_nid_postfix(context);
+    }
 }
 
 void CheckUnknownNames() {
@@ -460,6 +585,8 @@ int main() {
                    reinterpret_cast<void*>(&PosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api);
     CheckEveryName();
+    CheckMetadata();
+    CheckStreaming();
     CheckUnknownNames();
     CheckLongName();
     CheckRepeatable();

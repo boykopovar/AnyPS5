@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [SHA-512/224, RIPEMD-160, MD5-SHA1 and SHA-3 digests](../../../core/libs/prx/libSceLibreSsl3/src/ExtraDigests.cpp) (libSceLibreSsl3) - nothing is checked on the console, and none is a known PS5 export, so only the digest-name lookup in `DigestNames.cpp` returns them. Types, signature types, sizes, flags, block and context sizes follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `m_sha1.c`, `m_ripemd.c`, `m_md5_sha1.c` and `m_sha3.c`. SHA-512/224 runs libSceLibreSsl's SHA-512 from the FIPS 180-4 initial hash and MD5-SHA1 keeps LibreSSL's MD5 and SHA-1 contexts; RIPEMD-160 and SHA-3 keep mbedtls contexts inside LibreSSL's context size, so their state bytes differ from LibreSSL's. The required key types of the port's 2.5.4-shaped `EVP_MD`, which 4.0.0 no longer has, are RSA as for `EVP_sha512_256`, and none for MD5-SHA1.
