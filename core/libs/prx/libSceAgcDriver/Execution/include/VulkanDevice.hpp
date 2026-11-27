@@ -90,6 +90,7 @@ public:
     std::string DriverInfo() const;
     VkDriverId DriverId() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
+    bool SupportsVertexBufferFormat(VkFormat format) const;
     bool BdaAtomicsUsable() const;
     bool RasterOrderGroupUsable() const;
     bool CalibrateClock(double& gpuNs, std::chrono::steady_clock::time_point& cpu) const;
