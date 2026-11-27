@@ -195,6 +195,14 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         for (const auto& header : codeHeaders) if (header.Type == 1 && (header.Flags & 1) != 0 && address >= header.MappedAddress && address - header.MappedAddress < header.FileSize) return true;
         return false;
     };
+    const auto isFileBackedCodeRange = [&](std::uint64_t address, std::uint64_t size) {
+        for (const auto& header : headers) {
+            if (header.Type != 1 || (header.Flags & 1) == 0 || address < header.MappedAddress) continue;
+            const auto offset = address - header.MappedAddress;
+            if (offset < header.FileSize && size <= header.FileSize - offset) return true;
+        }
+        return false;
+    };
     std::map<std::uint64_t, std::uint64_t> tags;
     std::optional<std::uint64_t> sceBase;
     bool hasDynamic = false;
@@ -464,13 +472,17 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         for (std::uint64_t index = 0; index < symbolCount; ++index) {
             const auto offset = symbols + index * 24;
             const auto section = Io::ReadU16(bytes, offset + 6);
-            if ((bytes[offset + 4] & 15) == 2 && section != 0 && section != Elfpatcher::SHN_ABS) {
+            if ((bytes[offset + 4] & 15) == 2 && section != 0) {
                 const auto address = Io::ReadU64(bytes, offset + 8);
+                const auto size = Io::ReadU64(bytes, offset + 16);
+                const auto extent = section == Elfpatcher::SHN_ABS || !functionSymbolRoots
+                    ? std::max<std::uint64_t>(size, 1) : 1;
+                if (section == Elfpatcher::SHN_ABS && (!isCode(address) || !isFileBackedCodeRange(address, extent))) continue;
                 if (functionSymbolRoots && !isCode(address))
                     throw Domain::RelinkerException("Code analysis: function entry is not executable and file-backed", address);
                 if (functionSymbolRoots) functionEntries.insert(address);
                 addRoot(address);
-                if (!functionSymbolRoots) addFunction(address, Io::ReadU64(bytes, offset + 16), true);
+                if (!functionSymbolRoots) addFunction(address, size, true);
             }
         }
     }

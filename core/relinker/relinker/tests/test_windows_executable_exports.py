@@ -10,22 +10,46 @@ from guest_import_fixtures import dynamic
 from test_guest_intel_trampolines import main_fixture, pe_sections
 
 
-def fixture(symbols, tls=False):
+def fixture(symbols, tls=False, strict_import=False):
     image = main_fixture()
     image[0x4020:0x4026] = b'\xb8\x2b\0\0\0\xc3'
-    struct.pack_into('<Q', image, 0x4f00, 0x123456789abcdef0)
+    image[0x4030:0x4036] = b'\xb8\x2c\0\0\0\xc3'
+    struct.pack_into('<QQ', image, 0x4f00, 0x123456789abcdef0, 0xfedcba9876543210)
     strings = bytearray(b'\0')
     table = bytearray(24)
     for name, info, visibility, section, value, size in symbols:
         offset = len(strings)
         strings.extend(name.encode() + b'\0')
         table.extend(struct.pack('<IBBHQQ', offset, info, visibility, section, value, size))
+    import_index = None
+    if strict_import:
+        import_name = len(strings)
+        strings.extend(b'strict_only_import\0')
+        needed_name = len(strings)
+        strings.extend(b"libstrict.so" + bytes(1))
+        import_index = len(table) // 24
+        table.extend(struct.pack('<IBBHQQ', import_name, 0x12, 0, 0, 0, 0))
+        slot = 0x5f10
+        struct.pack_into('<IIQQQQQQ', image, 64 + 5 * 56, 1, 6, 0x5000, 0x5000, 0x5000,
+                         0x1000, 0x1000, 0x1000)
+        image[0x4030:0x4037] = b'\xff\x15' + struct.pack('<i', slot - (0x4030 + 6)) + b'\xc3'
+        struct.pack_into('<QQq', image, 0x4700, slot, (import_index << 32) | 6, 0)
     image[0x4800:0x4800 + len(strings)] = strings
     image[0x4a00:0x4a00 + len(table)] = table
     struct.pack_into('<II', image, 0x4e00, 1, len(table) // 24)
     tags = [(5, 0x4800), (10, len(strings)), (6, 0x4a00), (11, 24),
             (4, 0x4e00), (0x6100003f, len(table)), (7, 0x4700), (8, 0), (9, 24)]
+    if strict_import:
+        tags.insert(0, (1, needed_name))
     dynamic(image, 0x4600, 120, tags)
+    if strict_import:
+        for position in range(0x4600, 0x4700, 16):
+            tag, _ = struct.unpack_from('<qQ', image, position)
+            if tag == 8:
+                struct.pack_into('<Q', image, position + 8, 24)
+                break
+        else:
+            raise AssertionError('DT_RELASZ is missing')
     if tls:
         struct.pack_into('<IIQQQQQQ', image, 176, 7, 4, 0x4f80, 0x4f80, 0x4f80, 8, 64, 16)
     return image
@@ -64,12 +88,14 @@ def native_lookup(output):
     module = kernel.LoadLibraryExW(str(output), None, 1)
     assert module, ctypes.get_last_error()
     try:
-        for name, value in ((b'alpha', 42), (b'weak', 43), (b'zeta', 42)):
+        for name, value in ((b'alpha', 42), (b'weak', 43), (b'zeta', 42), (b'absolute_function', 44)):
             function = kernel.GetProcAddress(module, name)
             assert function, name
             assert ctypes.WINFUNCTYPE(ctypes.c_int)(function)() == value, name
         data = kernel.GetProcAddress(module, b'data')
         assert data and ctypes.c_uint64.from_address(data).value == 0x123456789abcdef0
+        absolute_data = kernel.GetProcAddress(module, b'absolute_data')
+        assert absolute_data and ctypes.c_uint64.from_address(absolute_data).value == 0xfedcba9876543210
         assert not kernel.GetProcAddress(module, b'hidden')
     finally:
         assert kernel.FreeLibrary(module)
@@ -79,10 +105,17 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-main-exports-') as directory:
         work = Path(directory)
-        def convert(label, symbols, tls=False):
+        def convert(label, symbols, tls=False, options=(), strict_import=False):
             source = work / (label + '.elf')
             output = work / (label + '.exe')
-            source.write_bytes(fixture(symbols, tls))
+            source.write_bytes(fixture(symbols, tls, strict_import))
+            result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', *options,
+                                     str(source), str(output)], capture_output=True, text=True, timeout=10)
+            return result, output
+        def convert_image(label, image):
+            source = work / (label + '.elf')
+            output = work / (label + '.exe')
+            source.write_bytes(image)
             result = subprocess.run([str(relinker), '--windows', '--skip-sce-module',
                                      str(source), str(output)], capture_output=True, text=True, timeout=10)
             return result, output
@@ -95,14 +128,66 @@ def main():
                    ('hidden', 0x12, 2, 1, 0x4000, 6),
                    ('internal', 0x12, 1, 1, 0x4000, 6),
                    ('local', 0x02, 0, 1, 0x4000, 6),
-                   ('absolute', 0x10, 0, 0xfff1, 1, 0)]
+                   ('absolute', 0x10, 0, 0xfff1, 1, 0),
+                   ('absolute_function', 0x12, 0, 0xfff1, 0x4030, 6),
+                   ('absolute_data', 0x11, 0, 0xfff1, 0x4f08, 8),
+                   ('absolute_outside', 0x12, 0, 0xfff1, 0x9000, 6)]
         result, output = convert('lookup', symbols)
         assert result.returncode == 0, (result.stdout, result.stderr)
         actual = exports(output.read_bytes())
-        assert actual == {'alpha': 0x10000, 'data': 0x10f00,
-                                                'protected': 0x10000, 'weak': 0x10020, 'zeta': 0x10000}, actual
+        assert actual == {'absolute_data': 0x10f08, 'absolute_function': 0x10030,
+                          'alpha': 0x10000, 'data': 0x10f00,
+                          'protected': 0x10000, 'weak': 0x10020, 'zeta': 0x10000}, actual
         if os.name == 'nt':
             native_lookup(output)
+        result, rooted_output = convert('function-roots', symbols, options=('--function-symbol-roots', 'unused-filter=1'))
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        rooted_exports = exports(rooted_output.read_bytes())
+        assert rooted_exports == actual, rooted_exports
+        strict_symbols = [(name, info, visibility, section, value,
+                           7 if name == 'absolute_function' else size)
+                          for name, info, visibility, section, value, size in symbols]
+        result, strict_output = convert('strict-absolute-root', strict_symbols,
+                                        options=('--registry', 'unused-filter=2'), strict_import=True)
+        assert result.returncode == 0 and strict_output.exists(), (result.stdout, result.stderr)
+        assert 'Strict filtering total: 1 -> 1; filtered=0' in result.stdout, result.stdout
+        assert exports(strict_output.read_bytes())['absolute_function'] == 0x10030
+        crossing_symbols = [(name, info, visibility, section, value,
+                             0xfd1 if name == 'absolute_function' else size)
+                            for name, info, visibility, section, value, size in symbols]
+        result, crossing_output = convert('strict-crossing-absolute-root', crossing_symbols,
+                                          options=('--registry', 'unused-filter=2'), strict_import=True)
+        assert result.returncode == 0 and crossing_output.exists(), (result.stdout, result.stderr)
+        assert 'Strict filtering total: 1 -> 0; filtered=1' in result.stdout, result.stdout
+        assert 'absolute_function' not in exports(crossing_output.read_bytes())
+        result, rooted_crossing_output = convert(
+            'strict-crossing-absolute-root-symbol-roots', crossing_symbols,
+            options=('--function-symbol-roots', '--registry', 'unused-filter=2'), strict_import=True)
+        assert result.returncode == 0 and rooted_crossing_output.exists(), (result.stdout, result.stderr)
+        assert 'Strict filtering total: 1 -> 0; filtered=1' in result.stdout, result.stdout
+        assert 'absolute_function' not in exports(rooted_crossing_output.read_bytes())
+        overlapping_symbols = [(name, info, visibility, section,
+                                0x4ff0 if name == 'absolute_function' else value,
+                                0x20 if name == 'absolute_function' else size)
+                               for name, info, visibility, section, value, size in symbols]
+        overlapping_image = fixture(overlapping_symbols)
+        struct.pack_into('<QQ', overlapping_image, 64 + 32, 0x2000, 0x2000)
+        struct.pack_into('<IIQQQQQQ', overlapping_image, 64 + 2 * 56, 1, 5, 0x5000, 0x5000, 0x5000,
+                         0x1000, 0x1000, 0x1000)
+        result, overlapping_output = convert_image('overlapping-absolute-function', overlapping_image)
+        assert result.returncode == 0 and overlapping_output.exists(), (result.stdout, result.stderr)
+        assert 'absolute_function' not in exports(overlapping_output.read_bytes())
+        nonexec_overlap_symbols = [(name, info, visibility, section,
+                                    0x5010 if name == 'absolute_function' else value,
+                                    0x20 if name == 'absolute_function' else size)
+                                   for name, info, visibility, section, value, size in symbols]
+        nonexec_overlap_image = fixture(nonexec_overlap_symbols)
+        struct.pack_into('<QQ', nonexec_overlap_image, 64 + 32, 0x2000, 0x2000)
+        struct.pack_into('<IIQQQQQQ', nonexec_overlap_image, 64 + 2 * 56, 1, 4, 0x5000, 0x5000, 0x5000,
+                         0x1000, 0x1000, 0x1000)
+        result, nonexec_overlap_output = convert_image('nonexec-overlap-absolute-function', nonexec_overlap_image)
+        assert result.returncode == 0 and nonexec_overlap_output.exists(), (result.stdout, result.stderr)
+        assert 'absolute_function' not in exports(nonexec_overlap_output.read_bytes())
         for label, changed, expected in (
                 ('conflict', symbols[:2] + [('alpha#C#B', 0x12, 0, 1, 0x4020, 6)], 'Conflicting executable exports after stripping #: alpha'),
                 ('unmapped', [('bad', 0x11, 0, 1, 0x9000, 6)], 'does not fit inside a PT_LOAD segment'),

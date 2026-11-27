@@ -57,10 +57,31 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
             if (first.Info != symbol.Info || first.Visibility != symbol.Visibility || first.Section != symbol.Section || first.Value != symbol.Value || first.Size != symbol.Size) throw Domain::RelinkerException("Duplicate executable export: " + symbolName);
             continue;
         }
-        if (section == Relinker::AbsoluteSection) continue;
-        if (section >= 0xff00) throw Domain::RelinkerException("Unsupported executable export section: " + symbolName);
         const auto type = info & 15;
+        if (type != 0 && type != 1 && type != 2 && type != 6) throw Domain::RelinkerException("Unsupported executable export type: " + symbolName);
         std::uint32_t rva = 0;
+        if (section == Relinker::AbsoluteSection) {
+            if (type == 6) throw Domain::RelinkerException("Unsupported executable TLS export section: " + symbolName);
+            const auto extent = std::max<std::uint64_t>(symbol.Size, 1);
+            const std::uint32_t flags = type == 2 ? 1 : 0;
+            const bool mapped = std::any_of(headers.begin(), headers.end(), [&](const auto& header) {
+                if (header.Type != 1 || (header.Flags & flags) != flags || symbol.Value < header.MappedAddress) return false;
+                const auto offset = symbol.Value - header.MappedAddress;
+                const auto segmentSize = type == 2 ? header.FileSize : header.MemorySize;
+                return offset < segmentSize && extent <= segmentSize - offset;
+            });
+            if (!mapped) continue;
+            try {
+                rva = image.GetRva(symbol.Value, extent);
+            } catch (const Domain::RelinkerException&) {
+                continue;
+            }
+            if (type == 2 && !image.IsExecutableRange(symbol.Value, extent))
+                continue;
+            exports.emplace(symbolName, rva);
+            continue;
+        }
+        if (section >= 0xff00) throw Domain::RelinkerException("Unsupported executable export section: " + symbolName);
         if (type == 6) {
             const auto tls = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 7; });
             if (tlsIndex == 0 || tls == headers.end()) throw Domain::RelinkerException("Executable TLS export has no TLS block: " + symbolName);

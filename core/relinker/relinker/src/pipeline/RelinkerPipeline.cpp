@@ -668,10 +668,18 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
-                exportedFunctions.push_back(value);
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC) {
+                const auto absoluteFunctionExtent = std::max<std::uint64_t>(size, 1);
+                const bool absoluteFunctionMapped = section != SHN_ABS || std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& header) {
+                    if (header.Type != PT_LOAD || (header.Flags & PF_X) == 0 || value < header.MappedAddress) return false;
+                    const auto offset = value - header.MappedAddress;
+                    return offset < header.FileSize && absoluteFunctionExtent <= header.FileSize - offset;
+                });
+                if (absoluteFunctionMapped) exportedFunctions.push_back(value);
+            }
         }
     }
+    const auto strictExportRoots = exportedFunctions;
     for (const auto& function : unwindFunctions) {
         for (const auto target : function.ExtraTargets) exportedFunctions.push_back(target);
     }
@@ -684,7 +692,7 @@ RelinkResult RelinkerPipeline::Relink() {
     if (unusedFilterLevel == 2) {
         if (executableSegments.size() > 1)
             throw RelinkerException("Strict NID filtering does not support multiple executable segments");
-        nidRefs = unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
+        nidRefs = unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr, strictExportRoots);
         if (nidRefs.size() > originalNidCount) throw RelinkerException("Strict NID filter increased the reference count");
         { std::ostringstream message; message << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n"; progress.Message(message.str()); }
     } else if (unusedFilterLevel == 1) {
