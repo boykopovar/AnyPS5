@@ -215,7 +215,9 @@ public:
     bool ProfilesSites() const { return profiled; }
     static void SetDelayForTesting(std::function<void()> delay);
     static void SetBlockedHookForTesting(std::function<void()> blocked);
+#ifdef APS5_ENCODER_TEST_CLOCK
     static void SetClockForTesting(std::uint64_t (*clock)());
+#endif
     static void FailNextWorkerStartsForTest(unsigned count);
     static std::size_t LiveChunks();
     class UnwindQuiesce {
