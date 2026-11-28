@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -65,5 +66,8 @@ int main() {
     for (const int type : {0, 2, -1, 17}) Require(sceAudioOutSysGetHdmiMonitorInfo(type, buffer.data(), infoSize) == static_cast<int>(0x8026000C), "unsupported type");
     Require(Throws(0x10, infoSize,
         "sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported"), "unimplemented device query");
+    errno = 71;
+    Require(sceAudioOutSysGetHdmiMonitorInfo(monitorTypeHdmi, reinterpret_cast<void*>(0x10), infoSize) == invalidPointer, "an unwritable output is rejected");
+    Require(errno == 71, "errno is preserved for an unwritable output");
     return 0;
 }
