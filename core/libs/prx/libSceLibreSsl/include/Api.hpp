@@ -240,6 +240,16 @@ struct LibreSslX509 {
     void* signature;
     std::int32_t valid;
     std::int32_t references;
+    char* name;
+    void* exData;
+    std::int64_t pathLength;
+    std::int64_t proxyPathLength;
+    std::uint64_t extensionFlags;
+    std::uint64_t keyUsage;
+    std::uint64_t extendedKeyUsage;
+    std::uint64_t netscapeCertType;
+    Asn1String* subjectKeyId;
+    void* authorityKeyId;
 };
 
 inline constexpr int LibreSslX509LookupFail = 0;
@@ -1022,7 +1032,7 @@ int APS5_VABI X509_STORE_set_flags_nid_postfix(LibreSslX509Store* store, std::ui
 int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length);
 int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(LibreSslX509VerifyParam* param, const char* text);
 void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyParam* param, std::uint32_t flags);
-int APS5_VABI X509_check_issued_nid_postfix(void);
+int APS5_VABI X509_check_issued_nid_postfix(LibreSslX509* issuer, LibreSslX509* subject);
 int APS5_VABI X509_free_nid_postfix(void);
 int APS5_VABI X509_get_ext_d2i_nid_postfix(void);
 void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate);
