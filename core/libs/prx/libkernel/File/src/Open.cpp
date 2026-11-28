@@ -235,6 +235,12 @@ static int MapFlags(int sceFlags) {
     if (sceFlags & SCE_KERNEL_O_SYNC) f |= O_SYNC;
     if (sceFlags & SCE_KERNEL_O_DIRECTORY) f |= O_DIRECTORY;
     if (sceFlags & SCE_KERNEL_O_CLOEXEC) f |= O_CLOEXEC;
+#ifdef __APPLE__
+    if (sceFlags & (SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_EXLOCK)) {
+        f |= (sceFlags & SCE_KERNEL_O_EXLOCK) ? O_EXLOCK : O_SHLOCK;
+        if (sceFlags & SCE_KERNEL_O_NONBLOCK) f |= O_NONBLOCK;
+    }
+#endif
     return f;
 }
 #endif
@@ -287,26 +293,27 @@ static int CreationThroughSeparatorError(const std::filesystem::path& native, in
 }
 #endif
 
-static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
-    if ((flags & SCE_KERNEL_O_DIRECTORY) != 0) flags &= ~SCE_KERNEL_O_CREAT;
+static int OpenNative(const std::filesystem::path& native, int requestedFlags, std::uint16_t mode, bool* lockedAtOpen = nullptr) {
+    if ((requestedFlags & SCE_KERNEL_O_DIRECTORY) != 0) requestedFlags &= ~SCE_KERNEL_O_CREAT;
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
         const auto status = std::filesystem::status(native, error);
         const bool hostDirectory = !error && std::filesystem::is_directory(status);
         if (hostDirectory || AppArchiveOnly_nid_no_patch(native)) {
-            if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY ||
-                (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)) != 0) return SceErrorFromErrno(EISDIR);
+            if ((requestedFlags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY ||
+                (requestedFlags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)) != 0) return SceErrorFromErrno(EISDIR);
             const int fd = File::OpenDirectoryDescriptor(native);
             if (fd < 0) return SceErrorFromErrno(errno);
-            File::RememberDescriptor(fd, flags);
+            File::RememberDescriptor(fd, requestedFlags);
             return fd;
         }
     }
-    if (const auto archived = File::OpenArchivedFile(native, flags)) {
+    if (const auto archived = File::OpenArchivedFile(native, requestedFlags)) {
         if (*archived < 0) return SceErrorFromErrno(-*archived);
-        File::RememberDescriptor(*archived, flags);
+        File::RememberDescriptor(*archived, requestedFlags);
         return *archived;
     }
+    int flags = lockedAtOpen ? requestedFlags & ~SCE_KERNEL_O_TRUNC : requestedFlags;
 #ifdef _WIN32
     std::error_code pathError;
     const auto metadataOpenPath = NativeMetadataPath(native, pathError);
@@ -342,9 +349,16 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     if (separatorError == 2) errno = ENOENT;
     else fd = NativeOpen(openNative, MapFlags(flags), mode);
 #else
+#ifdef __APPLE__
+    if (lockedAtOpen) {
+        flags = requestedFlags;
+        *lockedAtOpen = true;
+    }
+#endif
     int fd = NativeOpen(native, MapFlags(flags), mode);
 #endif
 #ifdef __APPLE__
+    if (fd < 0 && lockedAtOpen && errno == EWOULDBLOCK) return SCE_KERNEL_ERROR_EWOULDBLOCK;
     if (fd >= 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == SCE_KERNEL_O_CREAT) {
         struct stat opened{};
         if (::fstat(fd, &opened) == 0 && S_ISDIR(opened.st_mode)) {
@@ -391,6 +405,37 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         RecordWrittenPath_nid_no_patch(native);
     File::RememberDescriptor(fd, flags);
     return fd;
+}
+
+static int OpenNativeLocked(const std::filesystem::path& native, int flags, std::uint16_t mode) {
+    if ((flags & (SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_EXLOCK)) == 0) return OpenNative(native, flags, mode);
+    constexpr int GuestEisdir = 21;
+    const bool truncate = (flags & SCE_KERNEL_O_TRUNC) != 0;
+    bool lockedAtOpen = false;
+    const int fd = OpenNative(native, flags, mode, &lockedAtOpen);
+    if (fd < 0 || lockedAtOpen) return fd;
+    const int operation = ((flags & SCE_KERNEL_O_EXLOCK) != 0 ? 2 : 1) | ((flags & SCE_KERNEL_O_NONBLOCK) != 0 ? 4 : 0);
+    int error = 0;
+    try {
+        if (truncate && (flags & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDONLY) {
+            FileStat opened{};
+            if (File::IsDirectoryDescriptor(fd) || (sceKernelFstat(fd, &opened) == 0 && (opened.st_mode & 0170000) == 0040000))
+                error = GuestEisdir;
+            else if (flock_nid_postfix(fd, operation) != 0)
+                error = *__error_nid_postfix();
+            else
+                NotImplemented_nid_no_patch("open with O_RDONLY, O_TRUNC and O_SHLOCK or O_EXLOCK");
+        } else {
+            if (File::IsVirtualDirectoryDescriptor(fd)) NotImplemented_nid_no_patch("open with O_SHLOCK or O_EXLOCK on a directory read from app0.zar");
+            if (flock_nid_postfix(fd, operation) != 0 || (truncate && ftruncate_nid_postfix(fd, 0) != 0)) error = *__error_nid_postfix();
+        }
+    } catch (...) {
+        sceKernelClose(fd);
+        throw;
+    }
+    if (error == 0) return fd;
+    sceKernelClose(fd);
+    return SceKernelError(error);
 }
 
 void File::ForgetClosedDescriptor(int descriptor) {
@@ -444,6 +489,7 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
     if (path != nullptr && File::IsRandomDevicePath(path)) {
         if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string(__func__) + ": writing to " + path + " is not implemented");
+        if ((flags & (SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_EXLOCK)) != 0) NotImplemented_nid_no_patch("sceKernelOpen with O_SHLOCK or O_EXLOCK on the random device");
         const int fd = File::OpenRandomDevice();
         if (fd < 0) return File::KernelFileResult(savedErrno, SceErrorFromErrno(errno));
         File::RememberDescriptor(fd, flags);
@@ -456,7 +502,7 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
         APS5_LOG_ERR("open failed path=%s resolveError=%d result=0x%08X", path != nullptr ? path : "<null>", error, static_cast<unsigned>(result));
         return File::KernelFileResult(savedErrno, result);
     }
-    const int result = OpenNative(native, flags, mode);
+    const int result = OpenNativeLocked(native, flags, mode);
     if (result < 0) {
         const auto resolved = native.u8string();
         APS5_LOG_ERR("open failed path=%s resolvedPath=%s result=0x%08X", path != nullptr ? path : "<null>", reinterpret_cast<const char*>(resolved.c_str()), static_cast<unsigned>(result));
@@ -469,7 +515,7 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(directory, &error);
     if (base == nullptr) return SceErrorFromErrno(error);
-    return OpenNative(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path)), flags, mode);
+    return OpenNativeLocked(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path)), flags, mode);
 }
 
 int APS5_VABI sceKernelClose(int d) {
