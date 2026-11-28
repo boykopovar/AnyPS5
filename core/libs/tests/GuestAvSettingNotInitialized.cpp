@@ -124,6 +124,18 @@ void CheckConsoleMeasuredGetters(void* buffer) {
         threw = true;
     }
     Require(threw, "GetPuTypeByMonitorInfo still throws for writable pointers");
+    Expect(sceAvSettingGetHdmiMonitorInfo(0, nullptr), Error0002, "SettingGetHdmiMonitorInfo checks the second argument");
+    Expect(sceAvSettingGetHdmiMonitorInfo(0, buffer), NotInitialized, "SettingGetHdmiMonitorInfo ignores its first argument and reports not initialized");
+    Expect(sceAvSettingGetHdmiRawEdid(nullptr), Error0002, "SettingGetHdmiRawEdid checks the first argument");
+    Expect(sceAvSettingGetHdmiRawEdid(buffer), NotInitialized, "SettingGetHdmiRawEdid reports not initialized");
+    Expect(sceAvSettingGetMorpheusPuStatus(), NotInitialized, "GetMorpheusPuStatus reports not initialized without checking arguments");
+    Expect(sceAvSettingGetNativeHdmiMonitorInfo(0, nullptr), Error0002, "SettingGetNativeHdmiMonitorInfo checks the second argument");
+    Expect(sceAvSettingGetNativeHdmiMonitorInfo(0, buffer), NotInitialized, "SettingGetNativeHdmiMonitorInfo ignores its first argument and reports not initialized");
+    Expect(sceAvSettingGetRawHdmiMonitorInfo(nullptr), Error0002, "SettingGetRawHdmiMonitorInfo checks the first argument");
+    Expect(sceAvSettingGetRawHdmiMonitorInfo(buffer), NotInitialized, "SettingGetRawHdmiMonitorInfo reports not initialized");
+    Expect(sceAvControlIsSuspendedProcessOutputModeAvailable(), static_cast<int>(0x802A00FFu), "IsSuspendedProcessOutputModeAvailable answers its constant");
+    Expect(sceAvControlCheckCallback(), static_cast<int>(0x802A0011u), "CheckCallback answers its constant");
+    Expect(sceAvControlIsVideoOutModeSupportedByMonitorInfo(), NotInitialized, "IsVideoOutModeSupportedByMonitorInfo reports not initialized for any arguments");
 }
 
 void CheckControlSetters() {
