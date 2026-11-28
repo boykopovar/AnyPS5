@@ -175,21 +175,27 @@ State drawState(const ColorTarget& color, const DrawOptions& options) {
     return state;
 }
 
-void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawOptions& options = {}) {
+struct CoverShaders {
     ShaderRecompiler::RecompileResult vertex;
-    vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
-    vertex.variantId = 1;
     ShaderRecompiler::RecompileResult fragment;
-    fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
-    fragment.variantId = 2;
-    const std::array<CompiledShader, 2> shaders{{
+    const std::array<CompiledShader, 2> stages{{
         {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
         {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}
     }};
+    CoverShaders() {
+        vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
+        vertex.variantId = 1;
+        fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
+        fragment.variantId = 2;
+    }
+};
+
+void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawOptions& options = {}) {
+    const CoverShaders cover;
     const auto state = drawState(color, options);
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
     if (options.prepareOnly) SetDrawStopAfterResolveForTest(DrawStopForTest::ReturnAfterResolve);
-    device.Draw(state, {0, 3, 0, 1, 0, false}, shaders);
+    device.Draw(state, {0, 3, 0, 1, 0, false}, cover.stages);
 }
 
 bool memoSwitchedOff() {
@@ -1629,16 +1635,8 @@ void recipeViews(AgcDriver::VulkanDevice& device) {
     colorB.surfaceAddress = colorB.address;
     reset(device, colorA);
     reset(device, colorB);
-    ShaderRecompiler::RecompileResult vertex;
-    vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
-    vertex.variantId = 1;
-    ShaderRecompiler::RecompileResult fragment;
-    fragment.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
-    fragment.variantId = 2;
-    const std::array<CompiledShader, 2> shaders{{
-        {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
-        {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}
-    }};
+    const CoverShaders cover;
+    const auto& shaders = cover.stages;
     const auto stateA = drawState(colorA, {});
     const auto stateB = drawState(colorB, {});
     const AgcDriver::Pm4::DrawParameters params{0, 3, 0, 1, 0, false};
@@ -1680,8 +1678,86 @@ void recipeViews(AgcDriver::VulkanDevice& device) {
     expect(device, colorA, [](std::uint32_t x) { return leftOver(x, Old); }, "recipe draw after view change");
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 18> R3Scenarios{{
+void multisampleRecipe(AgcDriver::VulkanDevice& device) {
+    auto color = colorTarget();
+    color.address = address(MultisampleStorage.data());
+    color.surfaceAddress = color.address;
+    color.samples = color.coverageSamples = 4;
+    const auto bytes = MultisampledColorBytes(color);
+    Require(bytes <= MultisampleStorage.size(), "multisample recipe storage is too small");
+    AgcDriver::GuestMemory::Write(color.address, std::vector<std::byte>(bytes));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto state = drawState(color, {});
+    state.blend.blendEnable = VK_TRUE;
+    state.blend.srcColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_COLOR;
+    state.blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    state.blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.blends = {state.blend};
+    state.blendConstants.fill(32.0f / 255.0f);
+    state.quadSampleMask.fill(0x5u);
+
+    const CoverShaders cover;
+    const AgcDriver::Pm4::DrawParameters draw{0, 3, 0, 1, 0, false};
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+    unsigned draws = 0;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        while (recipe == nullptr && draws < 3) {
+            device.Draw(state, draw, cover.stages, {}, &recipe);
+            ++draws;
+        }
+        Require(recipe != nullptr, "the native multisample color draw did not build a recipe");
+        Require(device.DrawFromRecipe(state, draw, cover.stages, {}, recipe) == AgcDriver::RecipeOutcome::Recorded,
+                "the native multisample color draw did not replay");
+        ++draws;
+        device.WaitIdle();
+    }
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto samples = ReadMultisampleTargetSamples_nid_no_patch(context, color);
+    Require(samples.size() == Width * Height * color.samples * 4u, "multisample recipe readback size");
+    for (unsigned pixel = 0; pixel < Width * Height; ++pixel) {
+        for (unsigned sample = 0; sample < color.samples; ++sample) {
+            std::uint32_t value;
+            std::memcpy(&value, samples.data() + (pixel * color.samples + sample) * sizeof(value), sizeof(value));
+            const auto expected = pixel % Width < LeftWidth && (sample == 0 || sample == 2) ? 32u * draws * 0x01010101u : 0u;
+            Require(value == expected, "multisample recipe changed sample " + std::to_string(sample) + " at pixel " + std::to_string(pixel));
+        }
+    }
+    const auto destination = colorTarget();
+    reset(device, destination);
+    ColorMetadataPass resolve{};
+    resolve.mode = ColorMetadataPass::Mode::Resolve;
+    resolve.source = color;
+    resolve.targets = {destination};
+    device.ColorMetadataPass(resolve);
+    expect(device, destination, [&](unsigned x) { return x < LeftWidth ? 16u * draws * 0x01010101u : 0u; }, "multisample recipe resolve");
+
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    device.WaitIdle();
+    const auto alias = MultisampleColorTargetOver(color.address, static_cast<std::size_t>(bytes));
+    Require(alias.has_value(), "the multisample test target has no live owner");
+    RetireMultisampleColorTarget(alias->active);
+    Require(device.DrawFromRecipe(state, draw, cover.stages, {}, recipe) == AgcDriver::RecipeOutcome::Rebuild,
+            "a recipe replayed a retired multisample attachment");
+    std::shared_ptr<const AgcDriver::DrawRecipe> replacement;
+    device.Draw(state, draw, cover.stages, {}, &replacement);
+    Require(replacement != nullptr, "the new multisample owner did not produce a replacement recipe");
+    Require(device.DrawFromRecipe(state, draw, cover.stages, {}, recipe) == AgcDriver::RecipeOutcome::Rebuild,
+            "a recipe replayed a replacement owner at the same guest address");
+    Require(device.DrawFromRecipe(state, draw, cover.stages, {}, replacement) == AgcDriver::RecipeOutcome::Recorded,
+            "the replacement owner's recipe did not record");
+    device.WaitIdle();
+    std::shared_ptr<void> heldOwner;
+    MultisampleTargetView(context, color, heldOwner);
+    ClearMultisampleTargets(context.device);
+    Require(device.DrawFromRecipe(state, draw, cover.stages, {}, replacement) == AgcDriver::RecipeOutcome::Rebuild,
+            "a live framebuffer owner remained replayable after the target list was cleared");
+}
+
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 19> R3Scenarios{{
     {"memo-order", memoOrder},
+    {"multisample-recipe", multisampleRecipe},
     {"recipe-views", recipeViews},
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},

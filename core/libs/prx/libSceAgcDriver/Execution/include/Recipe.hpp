@@ -70,12 +70,17 @@ enum class RecipeOutcome { Recorded, Rebuild };
 // pipeline stages. Built at the end of a recorded, cacheable, reusable, non-indirect draw and
 // attached to the draw entry's matched stage variants; immutable.
 struct DrawRecipe {
+    struct MultisampleAttachment {
+        std::weak_ptr<void> owner;
+        VkImage image;
+    };
     VkDevice device = VK_NULL_HANDLE;
     std::weak_ptr<Graphics::ShaderResources> templateRef;
     Graphics::ResourceCache::Key key;
     std::weak_ptr<Graphics::Pipeline> pipeline;
     std::weak_ptr<Graphics::Framebuffer> framebuffer;
     std::vector<std::weak_ptr<Graphics::StorageTexture>> targets;
+    std::vector<MultisampleAttachment> multisampleAttachments;
     std::vector<VkImageView> targetViews;
     std::uint64_t passKey = 0;
     Graphics::VertexInputLayout vertexInput;
