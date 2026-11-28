@@ -364,6 +364,17 @@ Pad::InputScript* Script() {
     return script.get();
 }
 
+Pad::InputScript::Frame scriptFrame;
+
+void MergeScriptFrame(Pad::InputCommandFile::Input& injected) {
+    injected.buttons |= scriptFrame.buttons;
+    if (scriptFrame.hasSticks && !injected.hasSticks) {
+        injected.hasSticks = true;
+        injected.sticks = scriptFrame.sticks;
+        injected.stickMask = scriptFrame.stickMask;
+    }
+}
+
 Pad::InputCommandFile::Input InjectedInput(std::uint64_t now, bool titleRead = false) {
     static Pad::InputCommandFile::Input lastInjected;
     auto injected = InjectedCommands().Poll(now);
@@ -376,12 +387,8 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now, bool titleRead = f
         }
         for (const auto& error : report.errors) std::fprintf(stderr, "%s\n", error.c_str());
         if (!report.fired.empty() || !report.errors.empty()) std::fflush(stderr);
-        injected.buttons |= frame.buttons;
-        if (frame.hasSticks && !injected.hasSticks) {
-            injected.hasSticks = true;
-            injected.sticks = frame.sticks;
-            injected.stickMask = frame.stickMask;
-        }
+        scriptFrame = frame;
+        MergeScriptFrame(injected);
     }
     if (injected != lastInjected) {
         lastInjected = injected;
@@ -411,7 +418,10 @@ std::filesystem::path EnvironmentPath(const wchar_t* wide, const char* narrow) {
     return path ? std::filesystem::path(path) : std::filesystem::path{};
 }
 
-void ApplyRecording(PadData& data, std::uint64_t now) {
+void ApplyRecording(PadData& data, std::uint64_t sampleTime) {
+    static std::uint64_t recordedAt = 0;
+    recordedAt = std::max(recordedAt, sampleTime);
+    const std::uint64_t now = recordedAt;
     static std::optional<std::pair<Pad::RecordingPlayer, std::filesystem::path>> replay;
     if (!replay) {
         auto path = EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY");
@@ -498,9 +508,10 @@ int Pad::Read(PadData* data, int num, int port) {
         int count = 0;
         for (std::size_t index = first; index < changes.size(); ++index) {
             auto change = changes[index].second;
+            MergeScriptFrame(change);
             change.buttons &= ~injectedHeldThroughCapture;
             data[count] = BuildData(slot, slot.state, changes[index].first, changes[index].first, change, port);
-            ApplyRecording(data[count++], now);
+            ApplyRecording(data[count++], changes[index].first);
         }
         data[count] = BuildData(slot, slot.state, now, now, injected, port);
         if (port == 0) ApplyRecording(data[count], now);
