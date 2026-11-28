@@ -56,7 +56,7 @@ void testUnusedFields() {
     std::array<std::uint32_t, 64> words{};
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
     auto* packet = sceAgcCbBranch(&buffer, 1, 0, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x0000002233445564ull), 0x123u, 0, nullptr, 0);
-    const std::array expected{0xc00c3f00u, 0x1u, 0x34567894u, 0x12u, 0u, 0u, 0u, 0u, 0x33445564u, 0x22u, 0x123u, 0u, 0u, 0u};
+    const std::array expected{0xc00c3f00u, 0x1u, 0x34567890u, 0x12u, 0u, 0u, 0u, 0u, 0x33445564u, 0x22u, 0x123u, 0u, 0u, 0u};
     check(std::equal(expected.begin(), expected.end(), packet), "an always-taken branch without an else target was not written");
     packet = sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 0, 0, nullptr, 0);
     check(packet[1] == 1u && packet[2] == 0u && packet[8] == 0u && packet[10] == 0u, "an empty always-taken branch was not written");
@@ -80,6 +80,15 @@ void testConsoleArguments() {
     expectBranch(1, 2, 3, 4, 5, std::array{0xc00c3f00u, 0x201u, 0u, 0u, 4u, 0u, 5u, 0u});
     expectBranch(0x22, 0x44, 0, 0, 0, std::array{0xc00c3f00u, 0x402u, 0u, 0u, 0u, 0u, 0u, 0u});
     expectBranch(1, 3, 0x0000001234567894ull, 0, 0, std::array{0xc00c3f00u, 0x301u, 0x34567890u, 0x12u});
+}
+
+void testLowAddressBits() {
+    for (const std::uint32_t offset : {0u, 1u, 3u, 4u, 7u, 8u, 12u, 15u}) {
+        const std::uint32_t low = offset < 8u ? 0x146c0u : 0x146c8u;
+        for (const std::uint32_t function : {0u, 2u, 4u}) {
+            expectBranch(1, static_cast<std::uint8_t>(function), 0x2000146c0ull + offset, 0x1111111111111111ull, 0x2222222222222222ull, std::array{0xc00c3f00u, 0x1u | (function << 8u), low, 2u, 0x11111111u, 0x11111111u, 0x22222222u, 0x22222222u});
+        }
+    }
 }
 
 void testCompareAddress() {
@@ -170,6 +179,7 @@ int main() {
         testWriter();
         testUnusedFields();
         testConsoleArguments();
+        testLowAddressBits();
         testCompareAddress();
         testUnmappedCompareAddressPacket();
         testTarget(sceAgcBranchPatchSetThenTarget, 8, 0x10000000u, "then target setter wrote the wrong words");
