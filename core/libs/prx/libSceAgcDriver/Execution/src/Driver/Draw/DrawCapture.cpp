@@ -66,6 +66,7 @@ struct PendingMaterialize {
     std::mutex mutex;
     std::condition_variable finishedCv;
     bool finished = false;
+    bool waited = false;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
     std::exception_ptr failure;
 };
@@ -153,6 +154,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground
             job->finishedCv.notify_all();
         });
     }
+    AwaitBackgroundJob(job->mutex, job->finished, job->waited);
     {
         std::unique_lock lock(job->mutex);
         if (!job->finished) {

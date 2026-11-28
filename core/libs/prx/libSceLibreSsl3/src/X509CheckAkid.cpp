@@ -36,9 +36,7 @@ static_assert(offsetof(LibreSsl3CertificateInfo, serialNumber) == 8 && offsetof(
 }
 
 void ReadGuest(void* destination, const void* source, std::size_t size, const char* what) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) Fail(what);
 }
 

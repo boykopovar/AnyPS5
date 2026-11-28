@@ -1,6 +1,6 @@
 add_library(libSceVoiceQoS SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceVoiceQoS PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceVoiceQoS PRIVATE libSceVoice)
+target_link_libraries(libSceVoiceQoS PRIVATE libSceVoice libkernel)
 configure_windows_unwind(libSceVoiceQoS)
 
 if(BUILD_TESTING)

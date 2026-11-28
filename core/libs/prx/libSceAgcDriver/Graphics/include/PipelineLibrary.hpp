@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -57,9 +58,13 @@ struct PipelineLibraryCounters {
     std::array<std::uint64_t, 4> built{};
     std::uint64_t linked = 0;
     std::uint64_t optimized = 0;
+    std::array<std::uint64_t, 4> builtLocked{};
+    std::uint64_t linkedLocked = 0;
 };
 
 PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device);
+
+std::array<std::uint64_t, 5> GraphicsPipelineLibraryLockedTotals();
 
 }
 

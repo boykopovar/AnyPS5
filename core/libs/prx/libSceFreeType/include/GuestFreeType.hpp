@@ -14,6 +14,9 @@ inline constexpr std::int32_t NormalizeAngle_nid_no_patch(std::int64_t angle) {
 
 struct GuestLibrary;
 struct GuestMemoryRec;
+struct GuestFaceRec;
+
+using GuestFaceRequester = int (APS5_VABI *)(void*, GuestLibrary*, void*, GuestFaceRec**);
 
 struct GuestStreamRec;
 
@@ -75,6 +78,28 @@ struct GuestCharMapRec {
     std::uint16_t platform_id;
     std::uint16_t encoding_id;
 };
+
+struct GuestCMap;
+struct GuestCMapClass {
+    std::uint64_t size;
+    int (APS5_VABI *init)(GuestCMap*, void*);
+    void (APS5_VABI *done)(GuestCMap*);
+    std::uint32_t (APS5_VABI *index)(GuestCMap*, std::uint32_t);
+    std::uint32_t (APS5_VABI *next)(GuestCMap*, std::uint32_t*);
+    std::uint32_t (APS5_VABI *variantIndex)(GuestCMap*, GuestCMap*, std::uint32_t, std::uint32_t);
+    int (APS5_VABI *variantDefault)(GuestCMap*, std::uint32_t, std::uint32_t);
+    std::uint32_t* (APS5_VABI *variants)(GuestCMap*, GuestMemoryRec*);
+    std::uint32_t* (APS5_VABI *charVariants)(GuestCMap*, GuestMemoryRec*, std::uint32_t);
+    std::uint32_t* (APS5_VABI *variantChars)(GuestCMap*, GuestMemoryRec*, std::uint32_t);
+};
+
+struct GuestCMap {
+    GuestCharMapRec charmap;
+    const GuestCMapClass* clazz;
+};
+
+static_assert(sizeof(GuestCMap) == 24 && offsetof(GuestCMap, clazz) == 16);
+static_assert(sizeof(GuestCMapClass) == 80 && offsetof(GuestCMapClass, next) == 32);
 
 struct GuestSfntName {
     std::uint16_t platform_id;

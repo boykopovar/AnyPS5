@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NanSpeculationCounters.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -10,6 +11,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -42,6 +44,7 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #endif
 #ifdef __linux__
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
@@ -188,8 +191,17 @@ bool committedWritable(std::uint64_t address, std::uint64_t bytes) {
 }
 
 void commit(const FrameMemoryChunk& chunk) {
-    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
-    const auto bytes = static_cast<std::size_t>(chunk.bytes);
+    auto first = chunk.address;
+    auto last = chunk.address + chunk.bytes;
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::uint64_t windowsPage = system.dwPageSize;
+    first &= ~(windowsPage - 1);
+    last = (last + windowsPage - 1) & ~(windowsPage - 1);
+#endif
+    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(first));
+    const auto bytes = static_cast<std::size_t>(last - first);
 #ifdef __linux__
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto begin = chunk.address & ~(page - 1);
@@ -1287,18 +1299,19 @@ int usage() {
     return 2;
 }
 
-Dump parseDump(std::string_view text) {
+Dump parseDump(const std::filesystem::path& argument) {
+    const auto& text = argument.native();
     const auto first = text.find(':');
-    const auto second = first == std::string_view::npos ? std::string_view::npos : text.find(':', first + 1);
-    if (second == std::string_view::npos) throw std::invalid_argument("frame replay: --dump takes <address>:<bytes>:<file>");
-    const auto number = [](std::string_view part) {
-        const std::string value(part);
+    const auto second = first == text.npos ? text.npos : text.find(':', first + 1);
+    if (second == text.npos) throw std::invalid_argument("frame replay: --dump takes <address>:<bytes>:<file>");
+    const auto number = [](const auto& part) {
+        const auto value = std::filesystem::path(part).string();
         char* end = nullptr;
         const auto parsed = std::strtoull(value.c_str(), &end, 0);
         if (value.empty() || end != value.c_str() + value.size()) throw std::invalid_argument("frame replay: '" + value + "' is not a number");
         return static_cast<std::uint64_t>(parsed);
     };
-    return {number(text.substr(0, first)), number(text.substr(first + 1, second - first - 1)), std::filesystem::path(std::string(text.substr(second + 1)))};
+    return {number(text.substr(0, first)), number(text.substr(first + 1, second - first - 1)), std::filesystem::path(text.substr(second + 1))};
 }
 
 void writeDump(const Dump& dump) {
@@ -1755,6 +1768,7 @@ int run(const Options& options) {
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
                 static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
     std::fflush(stdout);
+    AgcDriver::ReportNanSpeculationCounters("replay");
     return replay.unfinished == 0 ? 0 : 3;
 }
 
@@ -1772,32 +1786,48 @@ void configureEnvironment(const Options& options) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    int wideCount = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &wideCount);
+    if (wide == nullptr) return usage();
+    const std::vector<std::filesystem::path> paths(wide, wide + wideCount);
+    LocalFree(wide);
+#else
+    const std::vector<std::filesystem::path> paths(argv, argv + argc);
+#endif
+    std::vector<std::string> arguments;
+    for (const auto& path : paths) {
+        std::string argument;
+        for (const auto unit : path.native()) argument.push_back(static_cast<unsigned>(unit) < 0x80 ? static_cast<char>(unit) : '\x7f');
+        arguments.push_back(std::move(argument));
+    }
+    const int count = static_cast<int>(arguments.size());
     Options options;
     if (const char* fault = std::getenv("APS5_REPLAY_RESET_FAULT_FOR_TEST"); fault != nullptr) options.resetFault = std::string_view(fault) == "owners" ? ResetFault::KeepOwners : std::string_view(fault) == "bytes" ? ResetFault::WrongByte : std::string_view(fault) == "omit" ? ResetFault::OmitOwners : std::string_view(fault) == "remap" ? ResetFault::Remap : ResetFault::None;
-    for (int index = 1; index < argc; ++index) {
-        const std::string_view argument = argv[index];
+    for (int index = 1; index < count; ++index) {
+        const std::string_view argument = arguments[index];
         if (argument == "--no-pace") options.pace = false;
         else if (argument == "--no-release") options.release = false;
         else if (argument == "--no-synthesize") options.synthesize = false;
-        else if (argument == "--pace-timeout-ms" && index + 1 < argc) options.paceTimeout = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
-        else if (argument == "--release-after-ms" && index + 1 < argc) options.releaseAfter = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
+        else if (argument == "--pace-timeout-ms" && index + 1 < count) options.paceTimeout = std::chrono::milliseconds(std::strtoll(arguments[++index].c_str(), nullptr, 10));
+        else if (argument == "--release-after-ms" && index + 1 < count) options.releaseAfter = std::chrono::milliseconds(std::strtoll(arguments[++index].c_str(), nullptr, 10));
         else if (argument == "--strict") options.strict = true;
         else if (argument == "--verify-reset") options.verifyReset = true;
-        else if (argument == "--repeat" && index + 1 < argc) options.repeat = std::max<std::size_t>(1, std::strtoull(argv[++index], nullptr, 10));
+        else if (argument == "--repeat" && index + 1 < count) options.repeat = std::max<std::size_t>(1, std::strtoull(arguments[++index].c_str(), nullptr, 10));
         else if (argument == "--shaders") options.shaders = true;
-        else if (argument == "--shader-code" && index + 1 < argc) {
+        else if (argument == "--shader-code" && index + 1 < count) {
             options.shaders = true;
-            options.shaderCode = argv[++index];
+            options.shaderCode = paths[++index];
         }
-        else if (argument == "--submits" && index + 1 < argc) {
-            const std::string_view value = argv[++index];
+        else if (argument == "--submits" && index + 1 < count) {
+            const std::string_view value = arguments[++index];
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), options.submits);
             if (error != std::errc{} || end != value.data() + value.size() || options.submits == 0) return usage();
         } else if (argument == "--trace-serials") options.traceSerials = true;
         else if (argument == "--cold-pipelines") options.coldPipelines = true;
-        else if (argument == "--dump" && index + 1 < argc) options.dumps.push_back(parseDump(argv[++index]));
-        else if (argument == "--frames" && index + 1 < argc) options.frames = argv[++index];
-        else if (!argument.starts_with("-") && options.directory.empty()) options.directory = argument;
+        else if (argument == "--dump" && index + 1 < count) options.dumps.push_back(parseDump(paths[++index]));
+        else if (argument == "--frames" && index + 1 < count) options.frames = paths[++index];
+        else if (!argument.starts_with("-") && options.directory.empty()) options.directory = paths[index];
         else return usage();
     }
     if (options.directory.empty()) return usage();
@@ -1816,8 +1846,9 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "agc_frame_replay: %s\n", error.what());
             if (code == 0) code = 2;
         }
-        if (code == 0) return 0;
     }
+    LibcRunReportFinishExit_nid_no_patch(code);
+    if (!listing && code == 0) return 0;
     std::fflush(stdout);
     std::fflush(stderr);
     std::_Exit(code);

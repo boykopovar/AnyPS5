@@ -219,6 +219,8 @@ extern "C" {
 WebRtcRefCountedI420Buffer** APS5_VABI _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(WebRtcRefCountedI420Buffer** result, int width, int height, int strideY, int strideU, int strideV) {
     if (!result)
         throw std::invalid_argument("I420Buffer::Create requires a result");
+    if (!GuestWritable_nid_no_patch(result, sizeof(*result)))
+        throw std::invalid_argument("I420Buffer::Create requires a writable result");
     auto* storage = _Znwm_nid_postfix(sizeof(WebRtcRefCountedI420Buffer));
     std::uint8_t* data;
     try {

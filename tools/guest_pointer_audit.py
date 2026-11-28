@@ -14,11 +14,14 @@ SAFE = {"GuestCopyIn_nid_no_patch": (0, 1), "GuestCopyOut_nid_no_patch": (0, 1),
         "CopyGuestPath_nid_no_patch": (0,), "CopyGuestEnvironment_nid_no_patch": (0,)}
 UNEVALUATED = ("sizeof", "alignof", "decltype", "noexcept")
 RAW_CALLS = {
-    "memcpy": (0, 1), "memmove": (0, 1), "memset": (0,), "memcmp": (0, 1),
+    "memcpy": (0, 1), "memmove": (0, 1), "memset": (0,), "memcmp": (0, 1), "memchr": (0,),
     "strcpy": (0, 1), "strncpy": (0, 1), "strlen": (0,), "strnlen": (0,), "strcmp": (0, 1), "strncmp": (0, 1),
+    "strcat": (0, 1), "strncat": (0, 1), "strchr": (0,), "strrchr": (0,), "strstr": (0, 1), "strpbrk": (0, 1),
+    "strspn": (0, 1), "strcspn": (0, 1), "strtoll": (0, 1),
     "snprintf": (0, 2), "sprintf": (0, 1), "copy": (0, 1, 2), "copy_n": (0, 2), "fill": (0, 1), "fill_n": (0,),
 }
 PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(\w+)\s*$")
+ARRAY_PARAMETER = re.compile(r"[A-Za-z_][\w:<>,\s*]*[\s*](\w+)\s*\[[^\]]*\]$")
 RAW_CALL = re.compile(rf"\b(?:std::|::)?({'|'.join(RAW_CALLS)})\s*\(")
 QUIET_CALL = re.compile(rf"\b({'|'.join((*SAFE, *UNEVALUATED))})\s*\(")
 CAST = re.compile(r"^(?:\(\s*[\w\s:*<>]+\)(?=\s*\S)|(?:reinterpret|static|const)_cast\s*<[^>]*>|\()\s*")
@@ -37,12 +40,12 @@ _OPERAND = rf"(?<![.>:])(?:\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\
 _ACCESS_PATTERNS = (
     ("member", re.compile(rf"{_OPERAND}\s*->")),
     ("index", re.compile(rf"{_OPERAND}\s*\[")),
-    ("dereference", re.compile(rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{_OPERAND}")),
+    ("dereference", re.compile(rf"(?:^|[=(),;{{}}!&|?:+\-]|\breturn)\s*\*\s*{_OPERAND}(?!\s*(?:->|\[))")),
 )
 _SIMPLE_ACCESS_PATTERNS = (
     ("member", "->", re.compile(r"(?<![.>:])\b(?P<direct>\w+)\b\s*->")),
     ("index", "[", re.compile(r"(?<![.>:])\b(?P<direct>\w+)\b\s*\[")),
-    ("dereference", "*", re.compile(r"(?:^|[=(,;{}!&|?:+\-]|\breturn)\s*\*\s*(?<![.>:])\b(?P<direct>\w+)\b")),
+    ("dereference", "*", re.compile(r"(?:^|[=(),;{}!&|?:+\-]|\breturn)\s*\*\s*(?<![.>:])\b(?P<direct>\w+)\b(?!\s*(?:->|\[))")),
 )
 _DEREF_PATTERN = _ACCESS_PATTERNS[2][1]
 _SIMPLE_DEREF_PATTERN = _SIMPLE_ACCESS_PATTERNS[2][2]
@@ -84,12 +87,15 @@ def closing(text, open_paren):
 
 
 def pointer_parameters(signature):
-    if "*" not in signature:
+    if "*" not in signature and "[" not in signature:
         return []
     names = []
     for _, part in split_top_level(signature):
         part = part.split("=")[0].strip()
         if "(" in part or "&" in part:
+            continue
+        if array := ARRAY_PARAMETER.match(part):
+            names.append(array.group(1))
             continue
         match = PARAMETER.match(part)
         if match and "*" in match.group(1):
@@ -250,7 +256,7 @@ def parameter_patterns(name):
     operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = tuple((kind, re.compile(pattern)) for kind, pattern in (
         ("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
-        ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")))
+        ("dereference", rf"(?:^|[=(),;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}(?!\s*(?:->|\[))")))
     return re.compile(rf"\(?\s*{word}\b"), found
 
 

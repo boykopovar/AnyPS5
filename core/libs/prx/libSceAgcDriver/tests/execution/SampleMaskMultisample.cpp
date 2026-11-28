@@ -106,7 +106,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     auto pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     Require(pixel.sampleShading == pass.perSample, "the pixel inputs did not select the requested shading rate");
     pixel.quadPixelMask = AgcDriver::Graphics::QuadPixelMask(state);
-    pixel.quadSampleMask = AgcDriver::Graphics::QuadSampleMasks(state);
+    pixel.quadSampleMask = AgcDriver::Graphics::QuadSampleMasks(state, {}, device.graphicsContext().staticSampleMaskStopsShading);
     pixel.iteratesSamples = state.perSampleShading;
     pixel.sampleLocations = AgcDriver::Graphics::PixelSampleLocations(state, pixel);
     std::vector<std::uint32_t> pixelUserData(4, 0u);

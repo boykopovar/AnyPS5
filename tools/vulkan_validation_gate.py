@@ -81,7 +81,7 @@ def positive(value):
 
 def git(source, *arguments):
     return subprocess.run(["git", "-C", str(source), *arguments], capture_output=True,
-                          text=True, check=True).stdout.strip()
+                          text=True, encoding="utf-8", check=True).stdout.strip()
 
 
 def identity(source, expected):
@@ -133,9 +133,11 @@ def guard():
         raise
 
 
-def contain(pid):
+def contain(pid, prepare=None):
     job = new_job()
     try:
+        if prepare is not None:
+            prepare(job)
         process = win32("OpenProcess", PROCESS_SET_QUOTA_AND_TERMINATE, False, pid)
         try:
             win32("AssignProcessToJobObject", job, process)
@@ -289,7 +291,7 @@ def check_timeouts(tests, limit):
                 raise GateError(f"{test['name']}: TIMEOUT_AFTER_MATCH can restart the requested test timeout")
             if prop["name"] == "TIMEOUT":
                 value = prop["value"]
-                if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= limit:
+                if type(value) not in (int, float) or not 0 < value <= limit or not math.isfinite(value):
                     raise GateError(f"{test['name']}: TIMEOUT must be positive and at most {limit} seconds")
 
 

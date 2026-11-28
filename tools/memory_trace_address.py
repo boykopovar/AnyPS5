@@ -9,7 +9,8 @@ from pathlib import Path
 
 
 TRACE_PREFIX = re.compile(r"^\[memory\]\s+")
-RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+|\(nil\))\+(?P<size>0x[0-9a-fA-F]+)")
+RANGE = re.compile(r"\s*(?P<address>(?:0[xX])?[0-9a-fA-F]+|\(nil\))\+(?P<size>0[xX][0-9a-fA-F]+)(?=\s|$)")
+ADDRESS_LIMIT = 1 << 64
 OPERATIONS = (
     "remap fixed",
     "map direct",
@@ -46,27 +47,31 @@ def iter_events(lines):
         operation = next((item for item in OPERATIONS if detail.startswith(item + " ")), None)
         if operation is None:
             continue
-        address = RANGE.search(detail)
+        address = RANGE.match(detail, len(operation) + 1)
         if address is None:
             raise ValueError(f"line {number}: {operation} event has no address range")
         start = 0 if address["address"] == "(nil)" else int(address["address"], 16)
-        yield MappingEvent(number, operation, start, int(address["size"], 16), detail)
+        size = int(address["size"], 16)
+        if start >= ADDRESS_LIMIT or size >= ADDRESS_LIMIT or start + size > ADDRESS_LIMIT:
+            raise ValueError(f"line {number}: {operation} event range must fit in unsigned 64-bit addresses")
+        yield MappingEvent(number, operation, start, size, detail)
+
+
+def parse_number(value):
+    if value.strip().lstrip("+-").lower().startswith("0x"):
+        return int(value, 16)
+    return int(value, 10)
 
 
 def parse_range(address, size):
     try:
-        def parse_number(value):
-            if re.fullmatch(r"[+-]?[0-9](?:_?[0-9])*", value.strip()):
-                return int(value, 10)
-            return int(value, 0)
-
         start = parse_number(address)
         length = parse_number(size)
     except ValueError as error:
         raise ValueError("address and byte count must be decimal or 0x-prefixed integers") from error
-    if start < 0 or start >= 1 << 64:
+    if not 0 <= start < ADDRESS_LIMIT:
         raise ValueError("address must be an unsigned 64-bit value")
-    if length <= 0 or length >= 1 << 64 or start + length > 1 << 64:
+    if not 0 < length < ADDRESS_LIMIT or start + length > ADDRESS_LIMIT:
         raise ValueError("byte count must be positive and the queried range must fit in 64 bits")
     return start, length
 
@@ -99,8 +104,13 @@ def render_events(events, path, start, size, limit):
 
 
 def decode_trace(source):
-    bom = source.peek(2)[:2]
-    encoding = "utf-16" if bom in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE) else "utf-8-sig"
+    bom = source.peek(4)[:4]
+    if bom in (codecs.BOM_UTF32_BE, codecs.BOM_UTF32_LE):
+        encoding = "utf-32"
+    elif bom[:2] in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE):
+        encoding = "utf-16"
+    else:
+        encoding = "utf-8-sig"
     return TextIOWrapper(source, encoding=encoding, errors="replace")
 
 
@@ -120,7 +130,10 @@ def main(argv=None):
     try:
         start, size = parse_range(args.address, args.length)
         with args.trace.open("rb") as raw, decode_trace(raw) as source:
-            output = render_events(iter_events(source), args.trace, start, size, args.limit)
+            try:
+                output = render_events(iter_events(source), args.trace, start, size, args.limit)
+            except ValueError as error:
+                raise ValueError(f"{args.trace}: {error}") from error
         sys.stdout.write(output)
     except (OSError, ValueError) as error:
         parser.error(str(error))

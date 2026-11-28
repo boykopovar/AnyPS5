@@ -796,6 +796,19 @@ static void CheckFmalFarApartDirected() {
     }
 }
 
+static void CheckFmalSubnormalStepErrno() {
+    const int saved = std::fegetround();
+    const int savedError = errno;
+    Require(std::fesetround(FE_DOWNWARD) == 0 && std::feclearexcept(FE_ALL_EXCEPT) == 0);
+    errno = 97;
+    const long double result = fmal_nid_postfix(Extended(0x1f51, 0x8a418d0c40da77ffull), Extended(0x9f95, 0xe33ba935df33d6a8ull), Extended(0x0000, 0x0000000000000f3bull));
+    const int exceptions = std::fetestexcept(FE_UNDERFLOW | FE_INEXACT);
+    const int error = errno;
+    Require(std::fesetround(saved) == 0);
+    errno = savedError;
+    Require(SameBits(result, Extended(0x0000, 0x0000000000000f3aull)) && exceptions == (FE_UNDERFLOW | FE_INEXACT) && error == ERANGE);
+}
+
 static void CheckExpSpecialValues() {
     Require(exp_nid_postfix(0.0) == 1.0 && exp_nid_postfix(-0.0) == 1.0);
     Require(exp_nid_postfix(INFINITY) == INFINITY);
@@ -1049,6 +1062,7 @@ int main(int argc, char** argv) {
     CheckFmalExactResults();
     CheckFmalDirectedZero();
     CheckFmalFarApartDirected();
+    CheckFmalSubnormalStepErrno();
     CheckExpSpecialValues();
     CheckExpOffsetsBeyond16Bits();
     CheckPowlBitsFlagsAndErrno();

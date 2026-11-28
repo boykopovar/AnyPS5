@@ -1,0 +1,5 @@
+# libSceLibcInternal
+
+## change [std::_MP_Get, _MP_Add, _MP_Mul and _MP_Rem]
+
+- [std::_MP_Get, _MP_Add, _MP_Mul and _MP_Rem](../../../core/libs/prx/libSceLibcInternal/MultiPrecision.cpp) (libSceLibcInternal, NIDs `lrQSsTRMMr4`, `QfPuSqhub7o`, `Gav1Xt1Ce+c` and `Ozk+Z6QnlTY`) are unverified on the console: firmware 13.42's `libSceLibcInternal.sprx` exports all four ([#14936](https://github.com/boykopovar/AnyPS5/pull/14936#pullrequestreview-5731406143)), but their code was not run and no title was seen calling them. Parameters come from the mangled names, the rest from the first MSVC STL release's [multprec.cpp](https://github.com/microsoft/STL/blob/219514876ea86491de191ceaa88632616bbc0f19/stl/src/multprec.cpp), Dinkumware's code: five 64-bit words of base 2^32 digits, with its results for words wider than a digit, a carry into the fifth word and a borrow past the top digit. A null, unreadable or unwritable array throws `std::invalid_argument` while preserving `errno`, and `_MP_Rem` throws where that code reads outside its arrays: a zero divisor or value, a nonzero fifth word, or a nonzero quotient digit for a divisor below 2^32

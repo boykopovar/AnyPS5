@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 
 #include FT_GLYPH_H
+#include FT_STROKER_H
 
 #include <algorithm>
 #include <bit>
@@ -31,7 +32,39 @@ struct Glyph {
 
     GuestGlyphRec* Root() { return isBitmap ? &bitmap.root : &outline.root; }
 
-    void Publish(const GuestOutline& source, const char* function) {
+    void Sync(const char* function) {
+        auto* root = Root();
+        if (root->format != static_cast<std::uint32_t>(host->format)) NotImplemented_nid_no_patch(function);
+        host->advance.x = Count<FT_Pos>(root->advance.x, function);
+        host->advance.y = Count<FT_Pos>(root->advance.y, function);
+        if (isBitmap) {
+            auto* native = reinterpret_cast<FT_BitmapGlyph>(host.get());
+            auto& guest = bitmap;
+            if (guest.bitmap.buffer != native->bitmap.buffer) NotImplemented_nid_no_patch(function);
+            native->left = guest.left;
+            native->top = guest.top;
+            native->bitmap = {guest.bitmap.rows, guest.bitmap.width, guest.bitmap.pitch, guest.bitmap.buffer,
+                              guest.bitmap.num_grays, guest.bitmap.pixel_mode, guest.bitmap.palette_mode, guest.bitmap.palette};
+            return;
+        }
+        auto& guest = outline.outline;
+        auto& native = reinterpret_cast<FT_OutlineGlyph>(host.get())->outline;
+        const auto nativePoints = Count<std::uint16_t>(native.n_points, function);
+        const auto nativeContours = Count<std::uint16_t>(native.n_contours, function);
+        if (guest.n_points != nativePoints || guest.n_contours != nativeContours || guest.points != (points.empty() ? nullptr : points.data()) ||
+            static_cast<const void*>(guest.tags) != static_cast<const void*>(native.tags) ||
+            static_cast<const void*>(guest.contours) != static_cast<const void*>(native.contours) ||
+            (guest.flags & FT_OUTLINE_OWNER) != (native.flags & FT_OUTLINE_OWNER)) {
+            NotImplemented_nid_no_patch(function);
+        }
+        if (native.n_points && (!native.points || !guest.points)) NotImplemented_nid_no_patch(function);
+        for (std::size_t index = 0; index < points.size(); ++index) {
+            native.points[index] = {Count<FT_Pos>(guest.points[index].x, function), Count<FT_Pos>(guest.points[index].y, function)};
+        }
+        native.flags = guest.flags;
+    }
+
+    void Publish(const char* function, const GuestOutline* source = nullptr) {
         *Root() = {library, host->clazz, static_cast<std::uint32_t>(host->format), {host->advance.x, host->advance.y}};
         if (isBitmap) {
             const auto* native = reinterpret_cast<FT_BitmapGlyph>(host.get());
@@ -41,11 +74,20 @@ struct Glyph {
             bitmap.bitmap = {image.rows, image.width, image.pitch, image.buffer, image.num_grays, image.pixel_mode, image.palette_mode, image.palette};
         } else {
             const auto& native = reinterpret_cast<FT_OutlineGlyph>(host.get())->outline;
-            std::copy_n(source.points, points.size(), points.begin());
+            points.resize(native.n_points);
+            if (native.n_points && !native.points) NotImplemented_nid_no_patch(function);
+            for (std::size_t index = 0; index < points.size(); ++index) {
+                points[index] = source ? source->points[index]
+                                       : GuestVector{static_cast<std::int64_t>(native.points[index].x), static_cast<std::int64_t>(native.points[index].y)};
+            }
             outline.outline = {Count<std::uint16_t>(native.n_contours, function), Count<std::uint16_t>(native.n_points, function),
                                points.empty() ? nullptr : points.data(), reinterpret_cast<unsigned char*>(native.tags),
                                reinterpret_cast<std::uint16_t*>(native.contours), native.flags};
         }
+    }
+
+    void Publish(const GuestOutline& source, const char* function) {
+        Publish(function, &source);
     }
 };
 
@@ -73,7 +115,11 @@ struct Outline {
         native = {Count<decltype(native.n_contours)>(outline.n_contours, function), Count<decltype(native.n_points)>(outline.n_points, function), nullptr,
                   reinterpret_cast<decltype(native.tags)>(outline.tags), reinterpret_cast<decltype(native.contours)>(outline.contours), outline.flags};
         if (outline.n_contours > outline.n_points) return;
+        if (outline.n_points && !outline.points) NotImplemented_nid_no_patch(function);
         points.resize(outline.n_points);
+        for (std::size_t index = 0; index < points.size(); ++index) {
+            points[index] = {static_cast<FT_Pos>(outline.points[index].x), static_cast<FT_Pos>(outline.points[index].y)};
+        }
         native.points = points.empty() ? nullptr : points.data();
     }
 };
@@ -93,6 +139,54 @@ Glyph& Register(GuestLibrary* library, bool isBitmap, std::size_t pointCount) {
     owner->points.resize(pointCount);
     auto* address = owner->Root();
     return *glyphs.emplace(address, std::move(owner)).first->second;
+}
+
+template <typename TOperation> FT_Error Replace(GuestGlyphRec** glyph, bool destroy, const char* function, TOperation operation) {
+    const FT_Bool nativeDestroy = destroy ? 1 : 0;
+    if (!glyph) return operation(nullptr, nativeDestroy);
+    if (!*glyph) {
+        FT_Glyph empty = nullptr;
+        return operation(&empty, nativeDestroy);
+    }
+    std::lock_guard lock(glyphMutex);
+    auto* oldRoot = *glyph;
+    auto& oldOwner = Find(oldRoot, function);
+    oldOwner.Sync(function);
+    const auto oldLibrary = oldOwner.library;
+    const FT_Glyph oldHost = oldOwner.host.get();
+    FT_Glyph result = oldHost;
+    const FT_Error error = operation(&result, nativeDestroy);
+    if (error) {
+        if (result && result != oldHost) NotImplemented_nid_no_patch(function);
+        oldOwner.Publish(function);
+        if (!result) *glyph = nullptr;
+        return error;
+    }
+    if (!result) NotImplemented_nid_no_patch(function);
+    if (result == oldHost) {
+        oldOwner.Publish(function);
+        return error;
+    }
+    std::unique_ptr<FT_GlyphRec, decltype(&FT_Done_Glyph)> resultOwner(result, &FT_Done_Glyph);
+    if (destroy) {
+        static_cast<void>(oldOwner.host.release());
+        glyphs.erase(oldRoot);
+    }
+    auto replacement = std::make_unique<Glyph>();
+    replacement->library = oldLibrary;
+    replacement->isBitmap = result->format == FT_GLYPH_FORMAT_BITMAP;
+    if (result->format != FT_GLYPH_FORMAT_BITMAP && result->format != FT_GLYPH_FORMAT_OUTLINE) NotImplemented_nid_no_patch(function);
+    replacement->host.reset(resultOwner.release());
+    if (!replacement->isBitmap) {
+        const auto& outline = reinterpret_cast<FT_OutlineGlyph>(result)->outline;
+        replacement->points.resize(outline.n_points);
+    }
+    replacement->Publish(function);
+    auto* newRoot = replacement->Root();
+    const bool inserted = glyphs.emplace(newRoot, std::move(replacement)).second;
+    if (!inserted) NotImplemented_nid_no_patch(function);
+    *glyph = newRoot;
+    return error;
 }
 
 }
@@ -172,7 +266,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
         return error;
     }
     owner.host.reset(result);
-    owner.Publish(slot->outline, __func__);
+    owner.Publish(__func__, native.format == FT_GLYPH_FORMAT_OUTLINE ? &slot->outline : nullptr);
     *target = address;
     return 0;
 }
@@ -204,24 +298,24 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
         return error;
     }
     copy.host.reset(result);
-    copy.Publish(original.outline.outline, __func__);
+    copy.Publish(__func__, original.isBitmap ? nullptr : &original.outline.outline);
     address->advance = advance;
     *target = address;
     return 0;
 }
 
-void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
+void APS5_VABI FreeTypeGlyphGetCBox_nid_no_patch(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
     if (!box) return;
     *box = {};
     if (!glyph || !glyph->clazz) return;
     std::lock_guard lock(glyphMutex);
-    auto& owner = Find(glyph, __func__, false);
+    auto& owner = Find(glyph, "FT_Glyph_Get_CBox_nid_postfix", false);
     if (owner.isBitmap) {
         const auto& image = owner.bitmap;
         const auto fits = [](std::int32_t bearing) {
             return bearing >= std::numeric_limits<std::int32_t>::min() / 64 && bearing <= std::numeric_limits<std::int32_t>::max() / 64;
         };
-        if (!fits(image.left) || !fits(image.top)) NotImplemented_nid_no_patch(__func__);
+        if (!fits(image.left) || !fits(image.top)) NotImplemented_nid_no_patch("FT_Glyph_Get_CBox_nid_postfix");
         box->xMin = static_cast<std::int64_t>(image.left) * 64;
         box->xMax = box->xMin + static_cast<std::int64_t>(image.bitmap.width * std::uint32_t{64});
         box->yMax = static_cast<std::int64_t>(image.top) * 64;
@@ -246,6 +340,10 @@ void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t
     }
 }
 
+void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
+    FreeTypeGlyphGetCBox_nid_no_patch(glyph, mode, box);
+}
+
 void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
     if (!glyph) return;
     std::lock_guard lock(glyphMutex);
@@ -253,4 +351,54 @@ void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
     glyphs.erase(glyph);
 }
 
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationToBitmapHost_nid_no_patch(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin,
+                                                           std::uint8_t destroy, const char* function) {
+    FT_Vector nativeOrigin{};
+    const FT_Vector* nativeOriginPointer = nullptr;
+    if (origin) {
+        nativeOrigin = {Count<FT_Pos>(origin->x, function), Count<FT_Pos>(origin->y, function)};
+        nativeOriginPointer = &nativeOrigin;
+    }
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native, FT_Bool nativeDestroy) {
+        return FT_Glyph_To_Bitmap(native, static_cast<FT_Render_Mode>(renderMode), nativeOriginPointer, nativeDestroy);
+    });
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationTransformHost_nid_no_patch(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta,
+                                                             const char* function) {
+    if (!glyph) return FT_Glyph_Transform(nullptr, nullptr, nullptr);
+    FT_Matrix nativeMatrix{};
+    const FT_Matrix* nativeMatrixPointer = nullptr;
+    if (matrix) {
+        nativeMatrix = {Count<FT_Fixed>(matrix->xx, function), Count<FT_Fixed>(matrix->xy, function),
+                        Count<FT_Fixed>(matrix->yx, function), Count<FT_Fixed>(matrix->yy, function)};
+        nativeMatrixPointer = &nativeMatrix;
+    }
+    FT_Vector nativeDelta{};
+    const FT_Vector* nativeDeltaPointer = nullptr;
+    if (delta) {
+        nativeDelta = {Count<FT_Pos>(delta->x, function), Count<FT_Pos>(delta->y, function)};
+        nativeDeltaPointer = &nativeDelta;
+    }
+    std::lock_guard lock(glyphMutex);
+    auto& owner = Find(glyph, function);
+    owner.Sync(function);
+    const FT_Error error = FT_Glyph_Transform(owner.host.get(), nativeMatrixPointer, nativeDeltaPointer);
+    if (!error) owner.Publish(function);
+    return error;
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationStrokeHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function) {
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native, FT_Bool nativeDestroy) {
+        return FT_Glyph_Stroke(native, static_cast<FT_Stroker>(FreeTypeHostStroker_nid_no_patch(stroker)), nativeDestroy);
+    });
+}
+
+extern "C" int FreeType::FreeTypeGlyphMutationStrokeBorderHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside,
+                                                               std::uint8_t destroy, const char* function) {
+    return Replace(glyph, destroy != 0, function, [&](FT_Glyph* native, FT_Bool nativeDestroy) {
+        return FT_Glyph_StrokeBorder(native, static_cast<FT_Stroker>(FreeTypeHostStroker_nid_no_patch(stroker)), static_cast<FT_Bool>(inside), nativeDestroy);
+    });
 }

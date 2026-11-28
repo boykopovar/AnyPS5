@@ -442,6 +442,45 @@ void TestRevalidation() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestRevalidationPrefixExclusions() {
+    Exchange exchange{sceHttpCacheInit(0)};
+    Cached(exchange,
+           "http://prefix/a",
+           {{"Cache-Control", "max-age=60"},
+            {"ETag", "e1"},
+            {"Content-Type", "text/plain"},
+            {"Content-Length", "8"},
+            {"X-Content-Type-Options", "nosniff"},
+            {"X-WebKit-CSP", "default-src 'self'"},
+            {"Content", "old"}},
+           "old body");
+    Advance(120);
+    Require(exchange.Retrieve("http://prefix/a") == 0 && exchange.result == 2);
+    Require(exchange.Revalidate(304,
+                                {{"Cache-Control", "max-age=600"},
+                                 {"Content-Type", "application/json"},
+                                 {"content-length", "999"},
+                                 {"X-Content-Type-Options", "changed"},
+                                 {"X-WebKit-CSP", "changed"},
+                                 {"Content", "new"}}) == 0 &&
+            exchange.result == 1);
+    Require(Value(exchange.response, "Cache-Control") == "max-age=600");
+    Require(Value(exchange.response, "Content-Type") == "text/plain");
+    Require(Value(exchange.response, "Content-Length") == "8");
+    Require(Value(exchange.response, "X-Content-Type-Options") == "nosniff");
+    Require(Value(exchange.response, "X-WebKit-CSP") == "default-src 'self'");
+    Require(Value(exchange.response, "Content") == "new");
+    exchange.Done();
+    Require(exchange.Retrieve("http://prefix/a") == 0 && exchange.result == 1);
+    Require(Value(exchange.response, "Content-Type") == "text/plain");
+    Require(Value(exchange.response, "Content-Length") == "8");
+    Require(Value(exchange.response, "X-Content-Type-Options") == "nosniff");
+    Require(Value(exchange.response, "X-WebKit-CSP") == "default-src 'self'");
+    Require(Value(exchange.response, "Content") == "new");
+    exchange.Done();
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
 void TestSystemLifecycle() {
     Require(sceHttpCacheSystemInit("/data/cache") == 0);
     Require(sceHttpCacheSystemInit("/data/other") == 0);
@@ -641,6 +680,7 @@ int main() {
     TestStoreAndHit();
     TestLifetimeOrder();
     TestRevalidation();
+    TestRevalidationPrefixExclusions();
     TestSystemLifecycle();
     TestSystemPathMemory();
     TestPublicResponses();

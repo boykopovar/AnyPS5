@@ -108,6 +108,7 @@ static void CheckTitleWorkaround() {
         enabled = -1;
         Require(sceKernelTitleWorkaroundIsEnabled(&workaround, refused, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
     }
+
 }
 
 int main() {
