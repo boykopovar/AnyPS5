@@ -38,6 +38,7 @@ static constexpr int GuestEopnotsupp = 45;
 static constexpr int GuestEbadf = 9;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
+static constexpr int GuestEnobufs = 55;
 static constexpr int SetStatusFlags = 4;
 static constexpr int NonBlocking = 0x0004;
 static constexpr std::int64_t PipeAtomic = 512;
@@ -1013,6 +1014,78 @@ static void LowWaterMarks() {
     Require(write_nid_postfix(pipe[1], "e", 1) == 1);
     Require(Poll(kq, events, 4) == 1 && events[0].data == 1);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void SocketWriteLowWaterBelowOne() {
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const auto writer = static_cast<std::uintptr_t>(pair[1]);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == writer && events[0].filter == EvfiltWrite && events[0].data > 0);
+    Require(fcntl_nid_postfix(pair[1], SetStatusFlags, NonBlocking) == 0);
+    const std::string chunk(4096, 'x');
+    int filled = 0;
+    while (send_nid_postfix(pair[1], chunk.data(), chunk.size(), 0) > 0)
+        ++filled;
+    Require(filled > 0 && *__error_nid_postfix() == GuestEagain);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == writer && events[0].data == 0 && (events[0].flags & EvEof) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, -5)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == writer && events[0].data == 0 && (events[0].flags & EvEof) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 1)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
+#if defined(__linux__) || defined(_WIN32)
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd | EvClear, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == writer && events[0].data == 0 && (events[0].flags & EvClear) != 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
+#endif
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+#ifdef __linux__
+    int datagrams[2];
+    Require(socketpair_nid_postfix(Unix, 2, 0, datagrams) == 0);
+    const auto sender = static_cast<std::uintptr_t>(datagrams[1]);
+    const std::string record(1024, 'x');
+    int sent = 0;
+    while (send_nid_postfix(datagrams[1], record.data(), record.size(), 0) > 0)
+        ++sent;
+    Require(sent > 0 && *__error_nid_postfix() == GuestEnobufs);
+    Require(Apply(kq, Change(sender, EvfiltWrite, EvAdd, NoteLowat, 1)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(sender, EvfiltWrite, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == sender && events[0].data == 0 && (events[0].flags & EvEof) == 0);
+    Require(close_nid_postfix(datagrams[0]) == 0 && close_nid_postfix(datagrams[1]) == 0);
+#endif
+    const int listener = socket_nid_postfix(Inet, Stream, 0);
+    Require(listener >= 0);
+    unsigned char address[16]{16, Inet, 0, 0, 127, 0, 0, 1};
+    std::uint32_t addressSize = sizeof(address);
+    Require(bind_nid_postfix(listener, address, sizeof(address)) == 0 && listen_nid_postfix(listener, 4) == 0);
+    Require(getsockname_nid_postfix(listener, address, &addressSize) == 0);
+    const int tcp = socket_nid_postfix(Inet, Stream, 0);
+    Require(tcp >= 0);
+    const auto client = static_cast<std::uintptr_t>(tcp);
+    Require(Apply(kq, Change(client, EvfiltWrite, EvAdd, NoteLowat, 0)) == 0);
+#ifdef __linux__
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == client && (events[0].flags & EvEof) != 0);
+#else
+    Require(Poll(kq, events, 4) == 0);
+#endif
+    Require(connect_nid_postfix(tcp, address, sizeof(address)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == client && events[0].filter == EvfiltWrite && events[0].data >= 0 && (events[0].flags & EvEof) == 0);
+    const auto listening = static_cast<std::uintptr_t>(listener);
+    Require(Apply(kq, Change(listening, EvfiltWrite, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == client);
+    Require(close_nid_postfix(tcp) == 0 && close_nid_postfix(listener) == 0);
+    const int udp = socket_nid_postfix(Inet, 2, 0);
+    Require(udp >= 0);
+    const auto datagram = static_cast<std::uintptr_t>(udp);
+    Require(Apply(kq, Change(datagram, EvfiltWrite, EvAdd, NoteLowat, -5)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == datagram && events[0].filter == EvfiltWrite && events[0].data >= 0);
+    Require(close_nid_postfix(udp) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -2116,6 +2189,7 @@ int main(int argc, char** argv) {
     ReportedKnotesMoveToTail();
     Errors();
     LowWaterMarks();
+    SocketWriteLowWaterBelowOne();
     ClearedKqueue();
     ClearedKqueueRechecksTheWatchedCount();
     FileWatch();

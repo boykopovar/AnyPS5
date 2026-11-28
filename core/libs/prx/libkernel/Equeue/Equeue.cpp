@@ -1044,7 +1044,7 @@ KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t
         std::int64_t data = 0;
         bool eof = false;
         if (!GuestSockets::Ready(static_cast<int>(e->event.ident), e->event.filter == EVFILT_WRITE, &data, &eof)) {
-            if (!e->lowWaterAlwaysMet || GuestSockets::Listening(static_cast<int>(e->event.ident))) {
+            if (!e->lowWaterAlwaysMet || GuestSockets::Listening(static_cast<int>(e->event.ident)) || (e->event.filter == EVFILT_WRITE && !GuestSockets::Sendable(static_cast<int>(e->event.ident)))) {
                 return false;
             }
             data = 0;

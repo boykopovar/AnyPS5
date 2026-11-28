@@ -758,6 +758,16 @@ bool GuestSockets::Listening(int descriptor) {
     }
     return Listening(*socket);
 }
+bool GuestSockets::Sendable(int descriptor) {
+    std::shared_ptr<Socket> socket;
+    {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end()) return false;
+        socket = found->second;
+    }
+    return socket->type == 2 || PeerConnected(*socket);
+}
 
 extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor) {
     return GuestSockets::IsOpen(descriptor);
