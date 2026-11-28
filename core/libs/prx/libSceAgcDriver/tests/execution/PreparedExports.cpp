@@ -9,6 +9,7 @@
 #include <array>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -20,6 +21,46 @@ alignas(256) std::array<std::uint32_t, Extent * Extent * 4> pixels{};
 alignas(256) std::array<std::uint32_t, Extent * Extent * 4> otherPixels{};
 constexpr std::array<std::array<float, 4>, 3> positions{{{-1, -1, 0, 1}, {3, -1, 0, 1}, {-1, 3, 0, 1}}};
 constexpr std::array<std::uint32_t, 6> vertexCode{0xe0382000u, 0x80000005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
+
+void CheckPackedRtzExport(AgcDriver::VulkanDevice& device, const RecompileResult& vertex, AgcDriver::Graphics::State state, const AgcDriver::Pm4::DrawParameters& draw, bool predicated) {
+    constexpr std::array<std::array<std::uint32_t, 6>, 8> cases{{
+        {0x38800000u, 0xb8801fffu, 0xc77fffffu, 0x477fffffu, 0x84000400u, 0x7bfffbffu},
+        {0x00000000u, 0x80000000u, 0x337fffffu, 0xb3800000u, 0x80000000u, 0x80010000u},
+        {0x3f801fffu, 0xbf801fffu, 0x3f802000u, 0xbf802001u, 0xbc003c00u, 0xbc013c01u},
+        {0x387fffffu, 0xb87fffffu, 0x38800000u, 0xb8800000u, 0x83ff03ffu, 0x84000400u},
+        {0x47800000u, 0xc7800000u, 0x7f7fffffu, 0xff7fffffu, 0xfbff7bffu, 0xfbff7bffu},
+        {0x7f800000u, 0xff800000u, 0x7f800001u, 0xffd23456u, 0xfc007c00u, 0xfe917e00u},
+        {0x477fdfffu, 0x477fe000u, 0x3f7fffffu, 0x3f800001u, 0x7bff7bfeu, 0x3c003bffu},
+        {0x7fa56789u, 0xff800001u, 0x00000001u, 0x807fffffu, 0xfe007f2bu, 0x80000000u},
+    }};
+    alignas(256) std::array<std::array<std::uint32_t, 8>, Extent> inputs{};
+    for (std::size_t x = 0; x < inputs.size(); ++x) {
+        std::ranges::copy(cases[x % cases.size()], inputs[x].begin());
+        if (predicated && x >= cases.size()) std::fill_n(inputs[x].begin(), 4, 0x44000fffu);
+    }
+    const auto address = reinterpret_cast<std::uintptr_t>(inputs.data());
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), sizeof(inputs), 0x31016facu};
+    std::vector<std::uint32_t> code{
+        0x7e000f00u, 0x34020085u, 0xe0381000u, 0x80000401u, 0xe0341010u, 0x80000801u, 0xbf8c3f70u,
+        0x5e140b04u, 0x5e160f06u,
+    };
+    if (predicated) code.insert(code.end(), {0x7d880088u, 0x02141508u, 0x02161709u});
+    code.insert(code.end(), {0xf800140fu, 0x00000b0au, 0xf8001c3fu, 0x00000908u, 0xbf810000u});
+    state.colors[0].componentMapping = state.colors[1].componentMapping = 0xe4u;
+    const AgcDriver::Registers registers{{0x1b6, 0x8000}, {0x1b3, 0x100u}, {0x1b4, 0x100u}, {0x203, 0}, {0x1c5, 0x4004u}};
+    const auto pixel = AgcDriver::Graphics::DecodePixelStageInfo(registers, AgcDriver::Graphics::ExportMappings(state));
+    RecompileRequest request{{ShaderStage::Fragment, 0x30000, code, 0, {}}, {32, 0, descriptor, {}, pixel, {}, {}}, device.Target(), PixelPushLayout(0u, device.Target())};
+    request.useCache = false;
+    request.context.floatMode = ShaderFloatMode{0xc0u, true, false, false};
+    const auto fragment = Recompile(request);
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Fragment, &fragment, PixelPushOffset(0u, device.Target())}}};
+    pixels.fill(0xdeadbeefu);
+    otherPixels.fill(0xbaadf00du);
+    device.Draw(state, draw, shaders);
+    device.WaitIdle();
+    Require(pixels[0] == 0x38800000u && pixels[2] == 0xc77fe000u && pixels[4] == 0 && pixels[8] == 0x3f800000u, "compressed export did not draw the expected input columns");
+    Require(pixels == otherPixels, "RTZ color export differs from an independently supplied pair of half words");
+}
 
 void Run(AgcDriver::VulkanDevice& device, bool integer) {
     const auto address = reinterpret_cast<std::uintptr_t>(positions.data());
@@ -108,6 +149,9 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
             Require(pixels[i] == values[(mapping >> shift) & 3u], "fragment exported the wrong channel");
             Require(otherPixels[i] == values[((mapping ^ 0xffu) >> shift) & 3u], "fragment used the wrong MRT mapping");
         }
+    }
+    if (!integer) {
+        for (const bool predicated : {false, true}) CheckPackedRtzExport(device, vertex, state, draw, predicated);
     }
 }
 

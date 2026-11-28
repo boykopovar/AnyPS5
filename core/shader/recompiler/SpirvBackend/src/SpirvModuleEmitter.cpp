@@ -898,6 +898,60 @@ std::uint32_t ExportVector(SpirvValueEmitContext& ctx, std::uint32_t data, const
     return vector;
 }
 
+std::uint32_t EmitRtzColorExport(SpirvValueEmitContext& ctx, const IrValue& inst, const ExportInfo& exp, bool uintOutput) {
+    auto& state = ctx.state;
+    const auto* data = inst.Argument(0)->Resolve();
+    if (!exp.compr || exp.en != 15u || MrtOutputMode(state, exp) != 4u || data->Opcode() != IrOpcode::CompositeConstructU32x4 || data->UseCount() != 1u) {
+        return ExportVector(ctx, ctx.Arg(inst, 0), exp, uintOutput);
+    }
+    const auto* first = data->Argument(0)->Resolve();
+    const auto* predicate = first->Opcode() == IrOpcode::SelectU32 ? first->Argument(0)->Resolve() : nullptr;
+    std::array<std::uint32_t, 2> previous{};
+    std::array<std::uint32_t, 4> sources{};
+    for (std::size_t pair = 0; pair < 2u; ++pair) {
+        const auto* packed = data->Argument(pair)->Resolve();
+        if (predicate != nullptr) {
+            if (packed->Opcode() != IrOpcode::SelectU32 || packed->Argument(0)->Resolve() != predicate || packed->UseCount() != 1u) {
+                return ExportVector(ctx, ctx.Arg(inst, 0), exp, uintOutput);
+            }
+            previous[pair] = ctx.Arg(*packed, 2);
+            packed = packed->Argument(1)->Resolve();
+        }
+        if (packed->Opcode() != IrOpcode::PackFloat2x16Rtz || packed->UseCount() != 1u || packed->Flags<std::uint64_t>() != 0u) {
+            return ExportVector(ctx, ctx.Arg(inst, 0), exp, uintOutput);
+        }
+        sources[pair * 2u] = ctx.Arg(*packed, 0);
+        sources[pair * 2u + 1u] = ctx.Arg(*packed, 1);
+    }
+    const auto f32x4 = TypeF32Vector(state, 4u);
+    const auto u32x4 = TypeU32Vector(state, 4u);
+    const auto splat = [&](std::uint32_t value) {
+        const auto word = ConstantU32(state, value);
+        return state.module.Constant(spv::OpConstantComposite, u32x4, word, word, word, word);
+    };
+    const auto color = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, f32x4, color, std::span<const std::uint32_t>(sources));
+    const auto bits = Unary(state, spv::OpBitcast, u32x4, color);
+    const auto mag = Binary(state, spv::OpBitwiseAnd, u32x4, bits, splat(0x7fffffffu));
+    const auto offset = Binary(state, spv::OpISub, u32x4, mag, splat(0x38800000u));
+    const auto normals = Binary(state, spv::OpULessThan, TypeBoolVector(state, 4u), offset, splat(0x47800000u - 0x38800000u));
+    const auto selected = predicate != nullptr ? ctx.Def(predicate) : 0u;
+    auto direct = Unary(state, spv::OpAll, TypeBool(state), normals);
+    if (selected != 0u) direct = Binary(state, spv::OpLogicalAnd, TypeBool(state), selected, direct);
+    return EmitValueIfElse(state, direct, f32x4, [&] {
+        return Unary(state, spv::OpBitcast, f32x4, Binary(state, spv::OpBitwiseAnd, u32x4, bits, splat(0xffffe000u)));
+    }, [&] {
+        std::array<std::uint32_t, 2> words{};
+        for (std::size_t pair = 0; pair < words.size(); ++pair) {
+            const auto halfPair = EmitPackFloat2x16Rtz(state, sources[pair * 2u], sources[pair * 2u + 1u]);
+            words[pair] = selected != 0u ? Select(state, TypeU32(state), selected, halfPair, previous[pair]) : halfPair;
+        }
+        const auto packed = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, u32x4, packed, words[0], words[1], ConstantU32(state, 0u), ConstantU32(state, 0u));
+        return ExportVector(ctx, packed, exp, uintOutput);
+    });
+}
+
 float PointSizeFloor(const ShaderVertexInputInfo& vertex) {
     return std::max(vertex.pointSizeMin, std::numeric_limits<float>::min());
 }
@@ -2438,7 +2492,7 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
         }
         const bool uintOutput = MrtOutputMode(state, exp) == 7u;
         const auto vectorType = uintOutput ? TypeU32Vector(state, 4u) : TypeF32Vector(state, 4u);
-        auto value = ExportVector(ctx, data, exp, uintOutput);
+        auto value = EmitRtzColorExport(ctx, inst, exp, uintOutput);
         if (state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt) {
             if (exp.index >= 8u) throw std::runtime_error("fragment export target exceeds the runtime mapping table");
             const auto exported = value;
