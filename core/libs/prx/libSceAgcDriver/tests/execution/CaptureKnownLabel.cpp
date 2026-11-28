@@ -93,6 +93,10 @@ private:
     std::uint8_t* block = nullptr;
 };
 
+bool LabelWordWatched(const GuestBlock& block, std::uint64_t offset) {
+    return AgcDriver::GuestMemory::Watched(block.Address() + offset, sizeof(std::uint32_t));
+}
+
 void CollectSetupStores(const GuestBlock& block) {
     static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(block.Address(), BlockBytes));
 }
@@ -223,10 +227,12 @@ int Check(const GuestBlock& block, const char* name, const Scenario& off, const 
         std::cout << name << ": the label was not recorded on the GPU, so the capture had nothing to wait for\n";
         return 0;
     }
-    if (servedExpected) Require(after.served > before.served, std::string("capture known label, ") + name + ": the label word was not served from the label (" + std::to_string(after.served) + " served, " + std::to_string(before.served) + " with the switch off)");
+    const bool provable = LabelWordWatched(block, on.labelOffset);
+    if (servedExpected && !provable) std::cout << name << ": the label's memory is compared after its host import instead of write-watched, so no CPU store over the word can be ruled out and the word is not served" << '\n';
+    if (servedExpected && provable) Require(after.served > before.served, std::string("capture known label, ") + name + ": the label word was not served from the label (" + std::to_string(after.served) + " served, " + std::to_string(before.served) + " with the switch off)");
     if (fewerSyncs && servedExpected) {
         Require(after.syncs <= before.syncs, std::string("capture known label, ") + name + ": known labels added hook syncs (" + std::to_string(after.syncs) + ", " + std::to_string(before.syncs) + " with the switch off)");
-        if (after.syncs == before.syncs) std::cout << name << ": the label word was served without waiting, and another access in the same run synced as it did with the switch off" << '\n';
+        if (after.syncs == before.syncs && provable) std::cout << name << ": the label word was served without waiting, and another access in the same run synced as it did with the switch off" << '\n';
     } else if (fewerSyncs) Require(after.syncs < before.syncs, std::string("capture known label, ") + name + ": the capture still waited for the GPU (" + std::to_string(after.syncs) + " hook syncs, " + std::to_string(before.syncs) + " with the switch off)");
     else Require(after.syncs >= before.syncs || after.served == before.served, std::string("capture known label, ") + name + ": a word with a later non-label write was served without waiting");
     std::cout << name << ": " << after.syncs << " hook syncs and " << after.served << " served words with known labels, " << before.syncs << " and " << before.served << " with the switch off\n";
@@ -278,8 +284,8 @@ int CheckSubmittedBeforeWait(const GuestBlock& block) {
         std::cout << "a label the capture recorded: the label was not recorded on the GPU, so nothing could hold it back\n";
         return 0;
     }
-    Require(reached, "capture known label, a label the capture recorded: the label stayed in the open batch while another thread held the GPU mutex and the queue waited behind it");
-    std::cout << "a label the capture recorded reached memory while another thread held the GPU mutex\n";
+    Require(reached, "capture known label, a label the capture recorded: the label stayed in the open batch while another thread held the GPU mutex, letting only blocking callers through, and the queue waited behind it");
+    std::cout << "a label the capture recorded reached memory while another thread held the GPU mutex, letting only blocking callers through\n";
     return 0;
 }
 
@@ -386,7 +392,7 @@ HeldOutcome RunBesideHeldWrite(const GuestBlock& block, const std::string& name,
     Require(released == VK_SUCCESS, prefix + ": the held batch could not be released");
     Require(synced, prefix + ": the capture did not wait for the word the held write covers, so it was served without its bytes");
     Require(absentWhileWaiting, prefix + ": the held write's bytes were already in memory when the capture waited for them");
-    Require(reached, prefix + ": the capture's own label did not reach memory while another thread held the GPU mutex and the queue waited behind it");
+    Require(reached, prefix + ": the capture's own label did not reach memory while another thread held the GPU mutex, letting only blocking callers through, and the queue waited behind it");
     HeldOutcome outcome;
     outcome.syncs = AgcDriver::Graphics::Recorder::HookSyncCount() - syncsBefore;
     outcome.served = AgcDriver::ShaderMemory::KnownValues().served - knownBefore.served;
@@ -405,6 +411,8 @@ int CheckBesideHeldWrite(const GuestBlock& block, const std::string& name, std::
     constexpr int expected = 191;
     Require(Near(before.brightest, expected), "capture known label, a label beside another queue's held write " + name + ": the draw wrote " + std::to_string(before.brightest) + " with the switch off, expected " + std::to_string(expected));
     Require(after.brightest == before.brightest, "capture known label, a label beside another queue's held write " + name + ": the draw wrote " + std::to_string(after.brightest) + " with known labels and " + std::to_string(before.brightest) + " with the switch off");
+    if (LabelWordWatched(block, onOffset)) Require(after.served > before.served, "capture known label, a label beside another queue's held write " + name + ": the label word was not served from the label (" + std::to_string(after.served) + " served, " + std::to_string(before.served) + " with the switch off)");
+    else std::cout << "a label beside another queue's held write " << name << ": the label's memory is compared after its host import instead of write-watched, so the label word is not served" << '\n';
     std::cout << "a label beside another queue's held write " << name << ": " << after.syncs << " hook syncs and " << after.served << " served words with known labels, " << before.syncs << " and " << before.served << " with the switch off" << '\n';
     return 0;
 }
