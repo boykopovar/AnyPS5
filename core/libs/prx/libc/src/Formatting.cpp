@@ -762,6 +762,11 @@ int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaLis
 }
 
 int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) {
+        errno = 22;
+        return -1;
+    }
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);

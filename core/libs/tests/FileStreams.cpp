@@ -1376,9 +1376,9 @@ static int FcloseallChild(const std::string& base) {
     if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 30;
     if (_Stdout_nid_postfix.IsOpen() || _Stderr_nid_postfix.IsOpen()) return 31;
     errno = 0;
-    if (fputc_nid_postfix('x', __stdoutp_nid_postfix) != -1 || errno != 9) return 32;
+    if (fputc_nid_postfix('x', __stdoutp_nid_postfix) != -1 || errno != 0) return 32;
     errno = 0;
-    if (fputc_nid_postfix('x', __stderrp_nid_postfix) != -1 || errno != 9) return 33;
+    if (fputc_nid_postfix('x', __stderrp_nid_postfix) != -1 || errno != 0) return 33;
 
     fcloseall_nid_postfix();
     if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen()) return 34;

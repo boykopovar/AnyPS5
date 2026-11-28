@@ -1273,7 +1273,7 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     const FileStreamOperation_nid_no_patch operation(stream);
-    if (stream && !operation.Open()) { errno = 9; return -1; }
+    if (stream && !operation.Open()) return -1;
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (*str != '\0' && !stream->SwitchToWriting()) return -1;
