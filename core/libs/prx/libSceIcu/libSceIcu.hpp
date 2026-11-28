@@ -25,6 +25,7 @@
 #include "prx/libSceIcu/include/DataSwap.hpp"
 #include "prx/libSceIcu/include/InvariantChars.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
+#include "prx/libSceIcu/include/DataMemory.hpp"
 #include "Space.hpp"
 #include "LocaleMap.hpp"
 #include "Unescape.hpp"
