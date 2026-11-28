@@ -29,43 +29,69 @@
 
 #include "prx/libc/include/Api.hpp"
 #include <cmath>
+#include <limits>
 
 namespace {
 
-constexpr long double LargeMagnitude = 26.0L;
+template <class T> struct ComplexOf;
+template <> struct ComplexOf<double> { using Type = __complex__ double; };
+template <> struct ComplexOf<long double> { using Type = __complex__ long double; };
+template <class T> using Complex = typename ComplexOf<T>::Type;
 
-__complex__ long double Make(long double real, long double imaginary) {
-    __complex__ long double result;
+static_assert(std::numeric_limits<double>::digits == 53);
+static_assert(std::numeric_limits<long double>::digits == 53 || std::numeric_limits<long double>::digits == 64 || std::numeric_limits<long double>::digits == 113);
+
+template <class T> constexpr T LargeMagnitude = std::numeric_limits<T>::digits == 53 ? 22 : std::numeric_limits<T>::digits == 64 ? 26 : 43;
+
+double Tan(double x) { return tan_nid_postfix(x); }
+long double Tan(long double x) { return tanl_nid_postfix(x); }
+double Sin(double x) { return sin_nid_postfix(x); }
+long double Sin(long double x) { return sinl_nid_postfix(x); }
+double Cos(double x) { return cos_nid_postfix(x); }
+long double Cos(long double x) { return cosl_nid_postfix(x); }
+double Sinh(double x) { return sinh_nid_postfix(x); }
+long double Sinh(long double x) { return sinhl_nid_postfix(x); }
+double Exp(double x) { return exp_nid_postfix(x); }
+long double Exp(long double x) { return expl_nid_postfix(x); }
+double Sqrt(double x) { return sqrt_nid_postfix(x); }
+long double Sqrt(long double x) { return sqrtl_nid_postfix(x); }
+
+template <class T> Complex<T> Make(T real, T imaginary) {
+    Complex<T> result;
     __real__ result = real;
     __imag__ result = imaginary;
     return result;
+}
+
+template <class T> Complex<T> Swap(Complex<T> z) {
+    return Make<T>(__imag__ z, __real__ z);
+}
+
+template <class T> Complex<T> Ctanh(Complex<T> z) {
+    const T x = __real__ z;
+    const T y = __imag__ z;
+    if (std::isnan(x)) return Make<T>((x + 0) * (y + 0), y == 0 ? y : (x + 0) * (y + 0));
+    if (std::isinf(x)) return Make<T>(std::copysign(T(1), x), std::copysign(T(0), std::isinf(y) ? y : Sin(y) * Cos(y)));
+    if (!std::isfinite(y)) return Make<T>(y - y, y - y);
+    if (std::fabs(x) >= LargeMagnitude<T>) {
+        const T exponential = Exp(-std::fabs(x));
+        return Make<T>(std::copysign(T(1), x), 4 * Sin(y) * Cos(y) * exponential * exponential);
+    }
+    const T t = Tan(y);
+    const T beta = 1 + t * t;
+    const T s = Sinh(x);
+    const T rho = Sqrt(1 + s * s);
+    const T denominator = 1 + beta * s * s;
+    return Make<T>(beta * rho * s / denominator, t / denominator);
 }
 
 }
 
 extern "C" {
 
-__complex__ long double APS5_VABI ctanhl_nid_postfix(__complex__ long double z) {
-    const long double x = __real__ z;
-    const long double y = __imag__ z;
-    if (std::isnan(x)) return Make((x + 0) * (y + 0), y == 0 ? y : (x + 0) * (y + 0));
-    if (std::isinf(x)) return Make(std::copysign(1.0L, x), std::copysign(0.0L, std::isinf(y) ? y : sinl_nid_postfix(y) * cosl_nid_postfix(y)));
-    if (!std::isfinite(y)) return Make(y - y, y - y);
-    if (std::fabs(x) >= LargeMagnitude) {
-        const long double exponential = expl_nid_postfix(-std::fabs(x));
-        return Make(std::copysign(1.0L, x), 4 * sinl_nid_postfix(y) * cosl_nid_postfix(y) * exponential * exponential);
-    }
-    const long double t = tanl_nid_postfix(y);
-    const long double beta = 1 + t * t;
-    const long double s = sinhl_nid_postfix(x);
-    const long double rho = sqrtl_nid_postfix(1 + s * s);
-    const long double denominator = 1 + beta * s * s;
-    return Make(beta * rho * s / denominator, t / denominator);
-}
-
-__complex__ long double APS5_VABI ctanl_nid_postfix(__complex__ long double z) {
-    const __complex__ long double result = ctanhl_nid_postfix(Make(__imag__ z, __real__ z));
-    return Make(__imag__ result, __real__ result);
-}
+__complex__ double APS5_VABI ctanh_nid_postfix(__complex__ double z) { return Ctanh<double>(z); }
+__complex__ long double APS5_VABI ctanhl_nid_postfix(__complex__ long double z) { return Ctanh<long double>(z); }
+__complex__ double APS5_VABI ctan_nid_postfix(__complex__ double z) { return Swap<double>(Ctanh<double>(Swap<double>(z))); }
+__complex__ long double APS5_VABI ctanl_nid_postfix(__complex__ long double z) { return Swap<long double>(Ctanh<long double>(Swap<long double>(z))); }
 
 }

@@ -187,6 +187,7 @@
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 #include "prx/libc/include/General.hpp"
@@ -5829,6 +5830,225 @@ long double APS5_VABI atan2l_nid_postfix(long double y, long double x) {
     if (quadrant == 1) return -z;
     if (quadrant == 2) return Pi - (z - PiLow);
     return (z - PiLow) - Pi;
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_ccosh.c, s_csinh.c, s_cexp.c and k_exp.c: https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/msun/src/s_ccosh.c */
+/*-
+ * Copyright (c) 2005 Bruce D. Evans and Steven G. Kargl
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice unmodified, this list of conditions, and the following
+ *    disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/* Adapted from FreeBSD lib/msun/ld80/s_cexpl.c and k_expl.h (0dd5a5603e7a): https://github.com/freebsd/freebsd-src/blob/0dd5a5603e7a33d976f8e6015620bbc79839c609/lib/msun/ld80/s_cexpl.c */
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2011 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * src/s_cexp.c converted to long double complex by Steven G. Kargl
+ */
+extern "C++" {
+template<typename T>
+using ComplexExponentialValue = std::conditional_t<std::is_same_v<T, double>, __complex__ double, __complex__ long double>;
+
+template<typename T>
+static ComplexExponentialValue<T> ComplexExponentialMake(T real, T imaginary) {
+    ComplexExponentialValue<T> result;
+    __real__ result = real;
+    __imag__ result = imaginary;
+    return result;
+}
+
+static double ComplexExponentialCos(double x) { return cos_nid_postfix(x); }
+static long double ComplexExponentialCos(long double x) { return CoslMsun(x); }
+static double ComplexExponentialSin(double x) { return sin_nid_postfix(x); }
+static long double ComplexExponentialSin(long double x) { return SinlMsun(x); }
+static double ComplexExponentialCosh(double x) { return cosh_nid_postfix(x); }
+static long double ComplexExponentialCosh(long double x) { return CoshlMsun(x); }
+static double ComplexExponentialSinh(double x) { return sinh_nid_postfix(x); }
+static long double ComplexExponentialSinh(long double x) { return SinhlMsun(x); }
+static double ComplexExponentialExp(double x) { return exp_nid_postfix(x); }
+static long double ComplexExponentialExp(long double x) { return ExplMsun(x); }
+
+template<typename T>
+struct ComplexExponentialLimits;
+
+template<>
+struct ComplexExponentialLimits<double> {
+    static constexpr double Large = 22;
+    static constexpr double ScaledStart = 0x1.62e42p+9;
+    static constexpr double ScaledEnd = 0x1.6b8e5p+10;
+    static constexpr double HyperbolicScaledEnd = 0x1.6bbaap+10;
+    static constexpr double Huge = 0x1p1023;
+};
+
+template<>
+struct ComplexExponentialLimits<long double> {
+    static constexpr long double Large = 64;
+    static constexpr long double ScaledStart = 0xb17217f7d1cf79adp-50L;
+    static constexpr long double ScaledEnd = 0xb1c6a8573de9768cp-49L;
+    static constexpr long double HyperbolicScaledEnd = ScaledEnd + 0xb17217f7d1cf79acp-64L;
+    static constexpr long double Huge = 0x1p16383L;
+};
+
+static void ScaledComplexExponential(double x, double y, int exponent, double& real, double& imaginary) {
+    constexpr int Reduction = 1799;
+    constexpr double ReductionLn2 = 1246.97177782734161156;
+    int reducedExponent;
+    const double mantissa = std::frexp(exp_nid_postfix(x - ReductionLn2), &reducedExponent);
+    const double value = std::ldexp(mantissa, 1024);
+    exponent += reducedExponent - 1024 + Reduction;
+    const double scale1 = std::ldexp(1.0, exponent / 2);
+    const double scale2 = std::ldexp(1.0, exponent - exponent / 2);
+    real = cos_nid_postfix(y) * value * scale1 * scale2;
+    imaginary = sin_nid_postfix(y) * value * scale1 * scale2;
+}
+
+static void ScaledComplexExponential(long double x, long double y, int exponent, long double& real, long double& imaginary) {
+    const ExplReduced reduced = ExplKernel(x);
+    const long double value = (reduced.lo + reduced.hi) * 0x1p16382L;
+    exponent += reduced.k - 16382;
+    const long double scale1 = ExplPowerOfTwo(exponent / 2);
+    const long double scale2 = ExplPowerOfTwo(exponent - exponent / 2);
+    real = CoslMsun(y) * value * scale1 * scale2;
+    imaginary = SinlMsun(y) * value * scale1 * scale2;
+}
+
+template<typename T>
+static ComplexExponentialValue<T> ComplexCosh(T x, T y) {
+    using Limits = ComplexExponentialLimits<T>;
+    if (std::isfinite(x) && std::isfinite(y)) {
+        if (y == 0) return ComplexExponentialMake(ComplexExponentialCosh(x), x * y);
+        const T magnitude = std::fabs(x);
+        if (magnitude < Limits::Large) return ComplexExponentialMake(ComplexExponentialCosh(x) * ComplexExponentialCos(y), ComplexExponentialSinh(x) * ComplexExponentialSin(y));
+        if (magnitude < Limits::ScaledStart) {
+            const T half = ComplexExponentialExp(magnitude) * T(0.5);
+            return ComplexExponentialMake(half * ComplexExponentialCos(y), std::copysign(half, x) * ComplexExponentialSin(y));
+        }
+        if (magnitude < Limits::HyperbolicScaledEnd) {
+            T real;
+            T imaginary;
+            ScaledComplexExponential(magnitude, y, -1, real, imaginary);
+            return ComplexExponentialMake(real, imaginary * std::copysign(T(1), x));
+        }
+        const T huge = Limits::Huge * x;
+        return ComplexExponentialMake(huge * huge * ComplexExponentialCos(y), huge * ComplexExponentialSin(y));
+    }
+    if (x == 0) return ComplexExponentialMake(y - y, x * std::copysign(T(0), y));
+    if (y == 0) return ComplexExponentialMake(x * x, std::copysign(T(0), x) * y);
+    if (std::isfinite(x)) return ComplexExponentialMake(y - y, x * (y - y));
+    if (std::isinf(x)) {
+        if (!std::isfinite(y)) return ComplexExponentialMake(std::numeric_limits<T>::infinity(), x * (y - y));
+        return ComplexExponentialMake(std::numeric_limits<T>::infinity() * ComplexExponentialCos(y), x * ComplexExponentialSin(y));
+    }
+    return ComplexExponentialMake((x * x) * (y - y), (x + x) * (y - y));
+}
+
+template<typename T>
+static ComplexExponentialValue<T> ComplexSinh(T x, T y) {
+    using Limits = ComplexExponentialLimits<T>;
+    if (std::isfinite(x) && std::isfinite(y)) {
+        if (y == 0) return ComplexExponentialMake(ComplexExponentialSinh(x), y);
+        const T magnitude = std::fabs(x);
+        if (magnitude < Limits::Large) return ComplexExponentialMake(ComplexExponentialSinh(x) * ComplexExponentialCos(y), ComplexExponentialCosh(x) * ComplexExponentialSin(y));
+        if (magnitude < Limits::ScaledStart) {
+            const T half = ComplexExponentialExp(magnitude) * T(0.5);
+            return ComplexExponentialMake(std::copysign(half, x) * ComplexExponentialCos(y), half * ComplexExponentialSin(y));
+        }
+        if (magnitude < Limits::HyperbolicScaledEnd) {
+            T real;
+            T imaginary;
+            ScaledComplexExponential(magnitude, y, -1, real, imaginary);
+            return ComplexExponentialMake(real * std::copysign(T(1), x), imaginary);
+        }
+        const T huge = Limits::Huge * x;
+        return ComplexExponentialMake(huge * ComplexExponentialCos(y), huge * huge * ComplexExponentialSin(y));
+    }
+    if (x == 0) return ComplexExponentialMake(x, y - y);
+    if (y == 0) return ComplexExponentialMake(x + x, y);
+    if (std::isfinite(x)) return ComplexExponentialMake(y - y, y - y);
+    if (std::isinf(x)) {
+        if (!std::isfinite(y)) return ComplexExponentialMake(x, y - y);
+        return ComplexExponentialMake(x * ComplexExponentialCos(y), std::numeric_limits<T>::infinity() * ComplexExponentialSin(y));
+    }
+    return ComplexExponentialMake((x + x) * (y - y), (x * x) * (y - y));
+}
+
+template<typename T>
+static ComplexExponentialValue<T> ComplexExp(T x, T y) {
+    using Limits = ComplexExponentialLimits<T>;
+    if (y == 0) return ComplexExponentialMake(ComplexExponentialExp(x), y);
+    if (x == 0) return ComplexExponentialMake(ComplexExponentialCos(y), ComplexExponentialSin(y));
+    if (!std::isfinite(y)) {
+        if (!std::isinf(x)) return ComplexExponentialMake(y - y, y - y);
+        if (x < 0) return ComplexExponentialMake(T(0), T(0));
+        return ComplexExponentialMake(x, y - y);
+    }
+    if (x >= Limits::ScaledStart && x < Limits::ScaledEnd) {
+        T real;
+        T imaginary;
+        ScaledComplexExponential(x, y, 0, real, imaginary);
+        return ComplexExponentialMake(real, imaginary);
+    }
+    const T exponential = ComplexExponentialExp(x);
+    return ComplexExponentialMake(exponential * ComplexExponentialCos(y), exponential * ComplexExponentialSin(y));
+}
+}
+__complex__ double APS5_VABI ccosh_nid_postfix(__complex__ double z) { return ComplexCosh(__real__ z, __imag__ z); }
+__complex__ double APS5_VABI csinh_nid_postfix(__complex__ double z) { return ComplexSinh(__real__ z, __imag__ z); }
+__complex__ double APS5_VABI cexp_nid_postfix(__complex__ double z) { return ComplexExp(__real__ z, __imag__ z); }
+__complex__ double APS5_VABI ccos_nid_postfix(__complex__ double z) { return ComplexCosh(-__imag__ z, __real__ z); }
+__complex__ double APS5_VABI csin_nid_postfix(__complex__ double z) {
+    const __complex__ double result = ComplexSinh(__imag__ z, __real__ z);
+    return ComplexExponentialMake(__imag__ result, __real__ result);
+}
+__complex__ long double APS5_VABI ccoshl_nid_postfix(__complex__ long double z) { return ComplexCosh(__real__ z, __imag__ z); }
+__complex__ long double APS5_VABI csinhl_nid_postfix(__complex__ long double z) { return ComplexSinh(__real__ z, __imag__ z); }
+__complex__ long double APS5_VABI cexpl_nid_postfix(__complex__ long double z) { return ComplexExp(__real__ z, __imag__ z); }
+__complex__ long double APS5_VABI ccosl_nid_postfix(__complex__ long double z) { return ComplexCosh(-__imag__ z, __real__ z); }
+__complex__ long double APS5_VABI csinl_nid_postfix(__complex__ long double z) {
+    const __complex__ long double result = ComplexSinh(__imag__ z, __real__ z);
+    return ComplexExponentialMake(__imag__ result, __real__ result);
 }
 long double APS5_VABI sinl_nid_postfix(long double x) { return SinlMsun(x); }
 long double APS5_VABI cosl_nid_postfix(long double x) { return CoslMsun(x); }
