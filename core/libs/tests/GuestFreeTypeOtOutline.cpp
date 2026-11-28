@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <stdexcept>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -33,6 +34,7 @@ struct Recorder {
     std::vector<void*> blocks;
     std::vector<void*> freed;
     int failAt = -1;
+    int throwAt = -1;
 };
 
 void Require(bool condition, const char* message) {
@@ -48,6 +50,7 @@ Recorder* Owner(GuestMemoryRec* memory) {
 void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     auto* recorder = Owner(memory);
     recorder->sizes.push_back(size);
+    if (recorder->throwAt == static_cast<int>(recorder->sizes.size())) throw std::runtime_error("outline allocation failure");
     if (recorder->failAt == static_cast<int>(recorder->sizes.size())) return nullptr;
     void* block = std::malloc(static_cast<std::size_t>(size));
     std::memset(block, 0xAA, static_cast<std::size_t>(size));
@@ -170,6 +173,34 @@ void Failures(const Api& api) {
     Require(api.newOutline(&recorder.memory, 4, 1, &outline) == 0x40 && recorder.freed == recorder.blocks && recorder.freed.size() == 2 && Empty(outline), "a failed contour allocation frees points and tags");
 }
 
+void AllocationExceptions(const Api& api) {
+    for (int throwAt = 1; throwAt <= 3; ++throwAt) {
+        Recorder recorder;
+        Reset(recorder);
+        recorder.throwAt = throwAt;
+        GuestOutline outline = Sentinel();
+        bool caught = false;
+        try {
+            api.newOutline(&recorder.memory, 4, 1, &outline);
+        } catch (const std::runtime_error& error) {
+            caught = std::strcmp(error.what(), "outline allocation failure") == 0;
+        }
+        Require(caught, "the original allocation exception propagates");
+        Require(recorder.sizes.size() == static_cast<std::size_t>(throwAt), "no allocation follows the throwing callback");
+        Require(recorder.blocks.size() == static_cast<std::size_t>(throwAt - 1) && recorder.freed == recorder.blocks,
+                "every completed allocation is released after a callback throws");
+        Require(Empty(outline), "an allocation exception clears the outline");
+        Require(api.doneOutline(&recorder.memory, &outline) == 0 && recorder.freed == recorder.blocks,
+                "cleanup after an allocation exception does not free twice");
+        recorder.throwAt = -1;
+        Require(api.newOutline(&recorder.memory, 4, 1, &outline) == 0 && outline.n_points == 4 && outline.n_contours == 1,
+                "allocation can be retried after an exception");
+        Require(Zero(outline.points, 64) && Zero(outline.tags, 4) && Zero(outline.contours, 2), "retry arrays are cleared");
+        Require(api.doneOutline(&recorder.memory, &outline) == 0 && recorder.freed == recorder.blocks && Empty(outline),
+                "retry cleanup releases every block exactly once");
+    }
+}
+
 void Ownership(const Api& api) {
     Recorder recorder;
     Reset(recorder);
@@ -233,6 +264,7 @@ int main(int count, char** arguments) {
     NullArguments(api);
     Allocation(api);
     Failures(api);
+    AllocationExceptions(api);
     Ownership(api);
     HostMemory(api);
     std::puts("FreeType Ot outline: all checks passed");

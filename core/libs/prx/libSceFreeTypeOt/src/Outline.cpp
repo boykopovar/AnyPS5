@@ -40,9 +40,17 @@ int APS5_VABI FT_Outline_New_Internal_nid_postfix(FreeType::GuestMemoryRec* memo
     if (!GuestWritable_nid_no_patch(anoutline, sizeof(*anoutline))) return InvalidArgument;
     FreeType::GuestOutline localOutline{};
     std::int32_t error = 0;
-    localOutline.points = NewArray<FreeType::GuestVector>(memory, numPoints, &error);
-    if (!error) localOutline.tags = NewArray<unsigned char>(memory, numPoints, &error);
-    if (!error) localOutline.contours = NewArray<std::uint16_t>(memory, numContours, &error);
+    try {
+        localOutline.points = NewArray<FreeType::GuestVector>(memory, numPoints, &error);
+        if (!error) localOutline.tags = NewArray<unsigned char>(memory, numPoints, &error);
+        if (!error) localOutline.contours = NewArray<std::uint16_t>(memory, numContours, &error);
+    } catch (...) {
+        FreeType::OtMemFree(memory, localOutline.points);
+        FreeType::OtMemFree(memory, localOutline.tags);
+        const FreeType::GuestOutline empty{};
+        GuestCopyOut_nid_no_patch(anoutline, &empty, sizeof(empty));
+        throw;
+    }
     localOutline.flags |= OutlineOwner;
     if (error) {
         if (localOutline.flags & OutlineOwner) {
