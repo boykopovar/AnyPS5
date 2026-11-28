@@ -2,3 +2,4 @@
 
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "prx/libSceNpUniversalDataSystem/include/InventoryExports.hpp"
+#include "prx/libSceNpUniversalDataSystem/include/LegacyExports.hpp"
