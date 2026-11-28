@@ -7,7 +7,6 @@
 ## add Functional
 
 - [Mesh compute readback cache](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) (libSceAgcDriver) - `MeshComputeStages` keeps built readback vertex shaders in a static map keyed by mesh variant id with no trim or eviction. Fine for a fallback path with few distinct mesh programs; a title cycling many mesh variants would grow it without bound. Follow-up: bound it (LRU or cap with `Require`) and add a metric.
-- [Mesh compute multi-record indirect](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) (libSceAgcDriver) - a mesh-path indirect draw with more than one CPU-read record that runs through the compute fallback throws: `recordMeshArguments` resolves only one record into one argument buffer and `recordMeshCompute` makes one output and one dispatch. Follow-up: resolve each record into its own arguments and output, or dispatch once per record.
 
 # shader
 
