@@ -125,6 +125,7 @@ void TestPushParserChunks() {
 
     ParserEvents events;
     NKWebKit::GuestSAXHandler sax{};
+    sax.initialized = XML_SAX2_MAGIC;
     sax.startDocument = SaxStartDoc;
     sax.endDocument = SaxEndDoc;
     sax.startElementNs = SaxStartElementNs;
@@ -171,11 +172,81 @@ void TestPushParserChunks() {
     xmlFreeParserCtxt_nid_postfix(ctxt);
 }
 
+using DeclarationLog = std::vector<std::string>;
+
+void APS5_VABI RecordStartDocument(void* ctx) {
+    static_cast<DeclarationLog*>(ctx)->emplace_back("startDocument");
+}
+
+void APS5_VABI RecordElement(void* ctx, const uint8_t* name, int32_t type, void* content) {
+    auto& log = *static_cast<DeclarationLog*>(ctx);
+    log.emplace_back(reinterpret_cast<const char*>(name));
+    if (type == XML_ELEMENT_TYPE_ELEMENT) {
+        const auto* node = static_cast<const xmlElementContent*>(content);
+        AssertTrue(node && node->type == XML_ELEMENT_CONTENT_ELEMENT, "expected a child element");
+        log.emplace_back(reinterpret_cast<const char*>(node->name));
+    } else {
+        AssertTrue(type == XML_ELEMENT_TYPE_EMPTY && !content, "expected an empty element");
+    }
+}
+
+void APS5_VABI RecordAttribute(void* ctx, const uint8_t* element, const uint8_t* name, int32_t type,
+                               int32_t def, const uint8_t* value, void* tree) {
+    AssertTrue(type == XML_ATTRIBUTE_ENUMERATION && def == XML_ATTRIBUTE_NONE, "wrong attribute type or default");
+    auto& log = *static_cast<DeclarationLog*>(ctx);
+    for (const auto* text : {element, name, value}) log.emplace_back(reinterpret_cast<const char*>(text));
+    auto* choices = static_cast<xmlEnumerationPtr>(tree);
+    for (auto* option = choices; option; option = option->next) log.emplace_back(reinterpret_cast<const char*>(option->name));
+    xmlFreeEnumeration(choices);
+}
+
+void APS5_VABI RecordNotation(void* ctx, const uint8_t* name, const uint8_t* publicId, const uint8_t* systemId) {
+    AssertTrue(publicId && !systemId, "wrong notation identifiers");
+    auto& log = *static_cast<DeclarationLog*>(ctx);
+    log.emplace_back(reinterpret_cast<const char*>(name));
+    log.emplace_back(reinterpret_cast<const char*>(publicId));
+}
+
+void APS5_VABI RecordUnparsedEntity(void* ctx, const uint8_t* name, const uint8_t* publicId,
+                                    const uint8_t* systemId, const uint8_t* notation) {
+    AssertTrue(!publicId && systemId, "wrong entity identifiers");
+    auto& log = *static_cast<DeclarationLog*>(ctx);
+    for (const auto* text : {name, systemId, notation}) log.emplace_back(reinterpret_cast<const char*>(text));
+}
+
+void TestSaxDeclarations() {
+    constexpr char doc[] = "<!DOCTYPE root [<!ELEMENT root (child)><!ELEMENT child EMPTY>"
+                           "<!ATTLIST child color (blue|red) 'red'><!NOTATION img PUBLIC 'picture'>"
+                           "<!ENTITY logo SYSTEM 'logo.bmp' NDATA img>]><root><child/></root>";
+    const DeclarationLog expected{"startDocument", "root", "child", "child", "child", "color", "red", "blue", "red",
+                                  "img", "picture", "logo", "logo.bmp", "img"};
+    for (const auto version : {0u, static_cast<unsigned>(XML_SAX2_MAGIC)}) {
+        DeclarationLog events;
+        NKWebKit::GuestSAXHandler sax{};
+        sax.initialized = version;
+        sax.startDocument = RecordStartDocument;
+        sax.elementDecl = RecordElement;
+        sax.attributeDecl = RecordAttribute;
+        sax.notationDecl = RecordNotation;
+        sax.unparsedEntityDecl = RecordUnparsedEntity;
+        auto* ctxt = xmlCreatePushParserCtxt_nid_postfix(&sax, &events, nullptr, 0, nullptr);
+        AssertTrue(ctxt != nullptr, "could not create DTD parser");
+        sax = {};
+        for (size_t pos = 0; pos < sizeof(doc) - 1; ++pos) {
+            const int result = xmlParseChunk_nid_postfix(ctxt, doc + pos, 1, pos == sizeof(doc) - 2);
+            AssertTrue(result == 0, "could not parse DTD");
+        }
+        AssertTrue(events == expected, "declaration callbacks must retain the supplied handler and deliver DTD fields in order");
+        xmlFreeParserCtxt_nid_postfix(ctxt);
+    }
+}
+
 void TestErrorHandling() {
     const char badXml[] = "<root><unclosed></root>";
 
     ParserEvents events;
     NKWebKit::GuestSAXHandler sax{};
+    sax.initialized = XML_SAX2_MAGIC;
     sax.serror = SaxSerror;
     sax.error = SaxError;
 
@@ -675,6 +746,7 @@ int main() {
     if (!TestCallbackContext()) return 1;
     TestBasicStringsAndDict();
     TestPushParserChunks();
+    TestSaxDeclarations();
     TestErrorHandling();
     TestMemoryParserAndEntities();
     TestDocumentOutlivesContext();
