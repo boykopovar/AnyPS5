@@ -191,6 +191,31 @@ void TestOpus(std::uint32_t context, std::uint32_t mappingFamily = 0) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestOpusWholeInput(std::uint32_t context) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &instance) == 0);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::int64_t initResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), initResult) == 0);
+    std::uint32_t id = 0;
+    AjmBatchError error{};
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0 && sceAjmBatchWait(context, id, 0, &error) == 0);
+    Require(initResult[0] == 0);
+
+    std::size_t packets = 0;
+    for (std::size_t offset = 0; offset < sizeof(OPUS_STEREO); ++packets) offset += 2 + (OPUS_STEREO[offset] | (std::size_t{OPUS_STEREO[offset + 1]} << 8u));
+    Require(packets > 1);
+    std::vector<std::int16_t> pcm((packets + 1) * 960 * 2);
+    DecodeSideband sideband{};
+    RunDecode(context, instance, OPUS_STEREO, sizeof(OPUS_STEREO), pcm.data(), pcm.size() * sizeof(std::int16_t), sideband);
+    Require(sideband.result == 0 && static_cast<std::size_t>(sideband.inputConsumed) == sizeof(OPUS_STEREO));
+    Require(static_cast<std::size_t>(sideband.outputWritten) == packets * 960 * 2 * 2 && sideband.totalDecodedSamples == packets * 960);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 void TestOpusSurround(std::uint32_t context, std::uint32_t channels, std::size_t activeStream) {
     std::uint32_t instance = 0;
     Require(sceAjmInstanceCreate(context, 24, 0, &instance) == 0);
@@ -3189,6 +3214,7 @@ int main(int argc, char** argv) {
     TestMp3(context);
     TestOpus(context);
     TestOpus(context, 1);
+    TestOpusWholeInput(context);
     TestOpusMonoFamily255(context);
     TestOpusMultistreamFamily255(context);
     TestOpusFamilyZeroChannels(context);
