@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
@@ -61,11 +62,7 @@ constexpr std::uint32_t computeStartY = 0x205;
 constexpr std::uint32_t computeStartZ = 0x206;
 
 bool DispatchItemsEnabled() {
-    static const bool enabled = [] {
-        const char* text = std::getenv("APS5_PIPELINE_DISPATCH");
-        return text != nullptr && text[0] != '\0' && text[0] != '0';
-    }();
-    return enabled;
+    return !Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::NoPipelineDispatch);
 }
 
 enum class ItemFallback : std::size_t { Miss, Reads, NoRecipe, Writes, Verify, Count };
@@ -133,7 +130,7 @@ void Driver::SetDispatchItemHook(void (*hook)(std::span<const Graphics::GuestMem
 }
 
 bool Driver::pipelineDispatch() {
-    return DispatchItemsEnabled();
+    return DispatchItemsEnabled() && DrawPipeline::Depth() != 0;
 }
 
 void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments, SplitTableCallParts& split, const ShaderRecompiler::RecompileRequest& request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::array<std::uint32_t, 3>& threadGroup, const std::shared_ptr<VulkanDevice>& localDevice) {
@@ -481,7 +478,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     };
     if (const auto rsrc1 = queue.shader.find(0x212); !fromAhead && rsrc1 != queue.shader.end()) {
         const auto vectorGranule = request.context.waveSize == 32u ? 8u : 4u;
-        if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule)) {
+        constexpr auto drainQueuedDraws = [] {
+            if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+        };
+        if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule, resolving ? nullptr : +drainQueuedDraws)) {
             if (resolving) return;
             dispatchSplitTableCall(queue, packet, submission, indirectArguments, *split, request, memory, address, compute, threadGroup, localDevice);
             return;
@@ -619,13 +619,15 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     bool recipeLess = false;
     const char* drainSite = "cache_miss";
     if (pipelineCandidate) {
-        std::vector<ShaderRecompiler::MemoryRegion> reads;
+        struct EntryReadsStorage {};
+        auto& reads = HostThreadLocal<std::vector<DrawPipeline::Range>, EntryReadsStorage>();
+        reads.clear();
         bool entryFound = false;
         {
             std::lock_guard cacheLock(dispatchCacheMutex);
             if (const auto found = dispatchCache.find(key); found != dispatchCache.end()) {
                 entryFound = true;
-                for (const auto& variant : found->second->variants) appendEntryRegions(*variant, reads);
+                for (const auto& variant : found->second->variants) reads.insert(reads.end(), variant->runs.begin(), variant->runs.end());
             }
         }
         if (!entryFound && queueMisses) {
@@ -637,7 +639,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             NoteItemFallback(ItemFallback::Verify);
             drainSite = "verify_data";
         } else {
-            readsClear = std::none_of(reads.begin(), reads.end(), [](const auto& region) { return DrawPipeline::Queue0().Overlaps(region.guestAddress, region.bytes.size()); });
+            readsClear = reads.empty() || !DrawPipeline::Queue0().OverlapsAny(reads);
             if (!readsClear) NoteItemFallback(ItemFallback::Reads);
             drainSite = "reads_queued";
         }
@@ -670,7 +672,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (readsClear) {
         if (cached && keepVariant != nullptr && keepVariant->recipe.load(std::memory_order_acquire) != nullptr) {
             bool bounded = false;
-            itemWrites = DispatchWriteRanges(*compiledResult, bounded);
+            itemWrites = DispatchWriteRanges(*compiledResult, bounded, DrawPipeline::SpareWrites());
             pipelined = bounded;
             if (!bounded) NoteItemFallback(ItemFallback::Writes);
             drainSite = "writes_unbounded";
@@ -890,7 +892,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         if (queued) {
             bool bounded = false;
-            itemWrites = DispatchWriteRanges(*compiledResult, bounded);
+            itemWrites = DispatchWriteRanges(*compiledResult, bounded, DrawPipeline::SpareWrites());
             pipelined = bounded;
             if (!bounded) NoteItemFallback(ItemFallback::Writes);
             drainSite = "item_writes_unbounded";
@@ -911,7 +913,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask, shaderMemory, registeredShader] {
+        DrawPipeline::Queue0().EnqueuePooled(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask, shaderMemory, registeredShader] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(0x15, queueId);
             if (const auto hook = dispatchItemHook.load(std::memory_order_acquire)) hook(snapshots);

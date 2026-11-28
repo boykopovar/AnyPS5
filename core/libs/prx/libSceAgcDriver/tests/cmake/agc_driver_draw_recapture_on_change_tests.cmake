@@ -4,7 +4,7 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_draw_recapture_on_change_finisher COMMAND agc_driver_draw_recapture_on_change_tests)
     set_tests_properties(agc_driver_draw_recapture_on_change_finisher PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_dispatch_recapture_on_change_items COMMAND agc_driver_dispatch_recapture_on_change_tests)
-    set_tests_properties(agc_driver_dispatch_recapture_on_change_items PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=1;APS5_PIPELINE_DISPATCH=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(agc_driver_dispatch_recapture_on_change_items PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_recorded_draw_stage_groups
         COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:agc_driver_draw_recapture_on_change_tests>

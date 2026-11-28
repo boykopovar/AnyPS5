@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DRAW_DRAWPIPELINE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DRAW_DRAWPIPELINE_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -56,11 +58,26 @@ public:
     void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void Enqueue(CommitKind kind, Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes);
+    template<typename TCommit>
+    void EnqueuePooled(CommitKind kind, TCommit commit, std::vector<Range> writes) {
+        auto* slot = CommitPool<TCommit>::Take(std::move(commit));
+        Item item{[slot] { (**slot)(); }, std::move(writes)};
+        item.kind = kind;
+        item.pooled = {slot, &CommitPool<TCommit>::Give};
+        enqueue(std::move(item));
+    }
+    static std::vector<Range> SpareWrites();
     static void NoteDrawKey(std::uint64_t key, std::uint64_t shape);
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100, const char* site = nullptr);
     void Stop();
     void ReleaseRetired();
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
+    struct HandoffCounts {
+        std::uint64_t committerWakes = 0;
+        std::uint64_t fullWaits = 0;
+        std::uint64_t producerWakes = 0;
+    };
+    static HandoffCounts Handoffs();
     static std::uint64_t DrainRequestsByReason(DrainReason reason);
     bool Busy() const;
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
@@ -89,6 +106,41 @@ public:
     static std::uint64_t PipelinedMetadataPasses();
     static std::uint64_t CommitClockReads();
 private:
+    template<typename TCommit>
+    class CommitPool {
+    public:
+        using Slot = std::optional<TCommit>;
+        static Slot* Take(TCommit&& commit) {
+            auto& pool = Get();
+            Slot* slot = nullptr;
+            {
+                std::lock_guard lock(pool.mutex);
+                if (pool.idle.empty()) {
+                    slot = &pool.slots.emplace_back();
+                } else {
+                    slot = pool.idle.back();
+                    pool.idle.pop_back();
+                }
+            }
+            slot->emplace(std::move(commit));
+            return slot;
+        }
+        static void Give(void* released) {
+            auto* slot = static_cast<Slot*>(released);
+            slot->reset();
+            auto& pool = Get();
+            std::lock_guard lock(pool.mutex);
+            pool.idle.push_back(slot);
+        }
+    private:
+        static CommitPool& Get() {
+            static auto* pool = new CommitPool;
+            return *pool;
+        }
+        AgcDriver::Mutex mutex;
+        std::deque<Slot> slots;
+        std::vector<Slot*> idle;
+    };
     struct Item {
         Commit commit;
         std::vector<Range> writes;
@@ -98,9 +150,11 @@ private:
         bool draw = false;
         bool store = false;
         CommitKind kind = CommitKind::Other;
+        std::unique_ptr<void, void (*)(void*)> pooled{nullptr, nullptr};
     };
     DrawPipeline() = default;
     void enqueue(Item item);
+    static void keepSpareWrites(std::vector<Item>& reclaimed);
     void run();
     void rethrowFailure();
     void report(std::chrono::steady_clock::time_point now);
@@ -123,6 +177,8 @@ private:
     std::atomic<std::uint64_t> retiredItems{0};
     std::atomic<std::uint64_t> producerWaits{0};
     std::atomic<std::uint64_t> drainWaits{0};
+    std::atomic<std::uint64_t> committerWakes{0};
+    std::atomic<std::uint64_t> producerWakes{0};
     std::atomic<std::uint64_t> decodeDrains{0};
     std::atomic<std::uint64_t> decodeDrainSkips{0};
     std::uint64_t reportedDecodeDrains = 0;

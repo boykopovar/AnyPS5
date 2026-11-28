@@ -64,6 +64,11 @@ struct ClearOnExit {
     ~ClearOnExit() { items.clear(); }
 };
 
+std::vector<std::vector<DrawPipeline::Range>>& spareWriteLists() {
+    struct Storage {};
+    return HostThreadLocal<std::vector<std::vector<DrawPipeline::Range>>, Storage>();
+}
+
 }
 
 namespace {
@@ -528,14 +533,37 @@ void DrawPipeline::enqueue(Item item) {
         });
         runningCommitters.fetch_add(1, std::memory_order_acq_rel);
     }
-    if (committerWaiting) {
+    const bool wakeCommitter = committerWaiting;
+    if (wakeCommitter) {
         ++wakes;
-        wake.notify_one();
+        committerWakes.fetch_add(1, std::memory_order_relaxed);
     }
     static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr;
-    if (!profile && !stats) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastReport >= std::chrono::seconds(10)) report(now);
+    if (profile || stats) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastReport >= std::chrono::seconds(10)) report(now);
+    }
+    lock.unlock();
+    if (wakeCommitter) wake.notify_one();
+    keepSpareWrites(reclaim);
+}
+
+void DrawPipeline::keepSpareWrites(std::vector<Item>& reclaimed) {
+    auto& spares = spareWriteLists();
+    for (auto& item : reclaimed) {
+        if (spares.size() >= Depth()) return;
+        if (item.writes.capacity() == 0) continue;
+        item.writes.clear();
+        spares.push_back(std::move(item.writes));
+    }
+}
+
+std::vector<DrawPipeline::Range> DrawPipeline::SpareWrites() {
+    auto& spares = spareWriteLists();
+    if (spares.empty()) return {};
+    auto writes = std::move(spares.back());
+    spares.pop_back();
+    return writes;
 }
 
 void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
@@ -629,7 +657,7 @@ void DrawPipeline::run() {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
         }
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
         countWrites(items.front().writes, false);
         const auto kindIndex = static_cast<std::size_t>(items.front().kind);
         kindCommits[kindIndex].fetch_add(1, std::memory_order_relaxed);
@@ -642,9 +670,14 @@ void DrawPipeline::run() {
         if (failed) ++commitErrors;
         if (fatal != nullptr && failure == nullptr) failure = fatal;
         outstanding.fetch_sub(1, std::memory_order_release);
-        if ((producersWaiting != 0 && items.size() <= ResumeDepth()) || (drainersWaiting != 0 && items.empty())) {
+        const bool wakeWaiters = (producersWaiting != 0 && items.size() <= ResumeDepth()) || (drainersWaiting != 0 && items.empty());
+        if (wakeWaiters) {
             producersWaiting = 0;
             drainersWaiting = 0;
+        }
+        lock.unlock();
+        if (wakeWaiters) {
+            producerWakes.fetch_add(1, std::memory_order_relaxed);
             idle.notify_all();
         }
     }
@@ -694,6 +727,11 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode, const char* s
     rethrowFailure();
     lock.unlock();
     if (trace != nullptr) trace->Add(DrainScopes[index], site, start, std::chrono::steady_clock::now());
+}
+
+DrawPipeline::HandoffCounts DrawPipeline::Handoffs() {
+    auto& pipeline = Queue0();
+    return {pipeline.committerWakes.load(std::memory_order_relaxed), pipeline.producerWaits.load(std::memory_order_relaxed), pipeline.producerWakes.load(std::memory_order_relaxed)};
 }
 
 std::uint64_t DrawPipeline::DrainRequestsByOpcode(std::uint32_t opcode) {

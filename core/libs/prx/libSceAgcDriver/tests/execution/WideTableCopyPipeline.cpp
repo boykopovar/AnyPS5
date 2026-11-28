@@ -133,7 +133,6 @@ void Round(std::uint32_t stale, std::uint32_t fresh) {
 
 int main() {
     SetEnvironment("APS5_PIPELINED_DRAWS", "1");
-    SetEnvironment("APS5_PIPELINE_DISPATCH", "1");
     try {
         if (std::getenv("APS5_NO_COPY_HLE") != nullptr || std::getenv("APS5_NO_WIDE_TABLE_COPY_HLE") != nullptr) {
             std::puts("skipped, the wide table copy replacement is switched off");

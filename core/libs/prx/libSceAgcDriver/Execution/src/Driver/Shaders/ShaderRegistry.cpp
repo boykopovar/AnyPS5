@@ -1391,7 +1391,7 @@ std::uint64_t HashWords(std::uint64_t hash, std::span<const std::uint32_t> words
 
 }
 
-std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount) {
+std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount, void (*beforeGuestReads)()) {
     if (!SplitTableCallsEnabled() || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return nullptr;
     const auto code = request.shader.code;
     if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return nullptr;
@@ -1423,6 +1423,7 @@ std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompil
     if (!site->call.has_value()) return nullptr;
     const auto& program = site->program;
     const auto& call = *site->call;
+    if (beforeGuestReads != nullptr) beforeGuestReads();
     std::vector<ShaderRecompiler::TableCallee> callees;
     try {
         std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies;

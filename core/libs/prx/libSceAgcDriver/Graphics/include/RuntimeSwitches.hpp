@@ -30,6 +30,7 @@ enum class RuntimeSwitch : std::size_t {
     NoStagePoolReuse,
     IndexInPlaceBehindWriter,
     WideLibraryKeys,
+    NoPipelineDispatch,
     NoWideTableCopyHle,
     NoSampledLookupMemo,
     NoDccMipFastClear,

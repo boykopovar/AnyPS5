@@ -53,9 +53,9 @@ void Driver::noteWrittenBuffers(std::uint64_t program, std::uint32_t queue, cons
     });
 }
 
-std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const ShaderRecompiler::RecompileResult& compiled, bool& bounded) {
+std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const ShaderRecompiler::RecompileResult& compiled, bool& bounded, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) {
     bounded = true;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    ranges.clear();
     constexpr std::uint64_t UnknownImageBytes = 64ull * 1024 * 1024;
     for (const auto& binding : compiled.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && (compiled.bdaWrites || Graphics::ShaderStoresThroughAddresses(compiled.spirv))) bounded = false;
