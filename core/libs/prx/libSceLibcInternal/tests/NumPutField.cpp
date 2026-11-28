@@ -1,6 +1,8 @@
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -9,6 +11,16 @@
 #include <exception>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -219,6 +231,119 @@ void CheckWidePut() {
     Require(out.failed && full.accepted == u"hél" && full.offered == static_cast<int>(hello.size()), "_Put marks the iterator failed and keeps offering");
 }
 
+void CheckGuardedGuestPointers() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr, "allocate guarded pages");
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED, "allocate guarded pages");
+            base = static_cast<unsigned char*>(mapped);
+#endif
+        }
+
+        void Protect() {
+#ifdef _WIN32
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect read-only page");
+            Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+#else
+            Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0, "protect read-only page");
+            Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 3);
+#endif
+        }
+
+        unsigned char* ReadOnly() const { return base + pageSize; }
+        unsigned char* Guard() const { return base + pageSize * 2; }
+    };
+
+    GuardedPages pages;
+    GuestLocale::LocinfoStorage info{};
+    GuestLocale::Facet validFacet{};
+    _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&validFacet, &info, 1);
+
+    auto* roSlots = reinterpret_cast<GuestLocale::Facet**>(pages.ReadOnly());
+    roSlots[0] = nullptr;
+    roSlots[1] = &validFacet;
+    auto* roStream = reinterpret_cast<GuestLocale::IosBase*>(pages.ReadOnly() + 64);
+    roStream->locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+    roStream->width = 4;
+    pages.Protect();
+
+    auto narrow = MakeNarrow(16);
+    auto wide = MakeWide(16);
+    char digits[] = "42";
+    GuestLocale::IosBase badLocaleStream{};
+    badLocaleStream.locale = reinterpret_cast<GuestLocale::Implementation**>(pages.Guard());
+    GuestLocale::IosBase validStream{};
+    validStream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+
+    errno = 61;
+    Require(Throws([&] { IntegerPut(nullptr, GuestLocale::OutputIterator{false, &narrow.buffer}, reinterpret_cast<GuestLocale::IosBase*>(pages.Guard()), ' ', digits, 2); }),
+        "_Iput rejects guard stream");
+    Require(Throws([&] { IntegerPut(nullptr, GuestLocale::OutputIterator{false, &narrow.buffer}, roStream, ' ', digits, 2); }),
+        "_Iput rejects read-only stream");
+    Require(Throws([&] { IntegerPut(nullptr, GuestLocale::OutputIterator{false, &narrow.buffer}, &badLocaleStream, ' ', digits, 2); }),
+        "_Iput rejects guard stream locale pointer");
+    Require(Throws([&] { IntegerPut(nullptr, GuestLocale::OutputIterator{false, &narrow.buffer}, &validStream, ' ', reinterpret_cast<char*>(pages.Guard()), 2); }),
+        "_Iput rejects guard digits");
+    Require(Throws([&] { IntegerPut(nullptr, GuestLocale::OutputIterator{false, &narrow.buffer}, &validStream, ' ', reinterpret_cast<char*>(pages.Guard()), std::size_t{1} << 40); }),
+        "_Iput rejects huge unreadable digits without OOM");
+
+    Require(Throws([&] { WidePut(nullptr, GuestLocale::OutputIterator{false, &wide.buffer}, reinterpret_cast<const std::uint16_t*>(pages.Guard()), 4); }),
+        "_Put rejects guard wide elements");
+
+    Require(Throws([&] { _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(
+        reinterpret_cast<GuestLocale::Facet*>(pages.Guard()), &info, 1); }),
+        "num_put<wchar_t>::C2 rejects guard object");
+    Require(Throws([&] { _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(
+        reinterpret_cast<GuestLocale::Facet*>(pages.ReadOnly()), &info, 1); }),
+        "num_put<wchar_t>::C2 rejects read-only object");
+    Require(Throws([&] { _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(
+        &validFacet, reinterpret_cast<const GuestLocale::LocinfoStorage*>(pages.Guard()), 1); }),
+        "num_put<wchar_t>::C2 rejects guard _Locinfo");
+
+    Require(Throws([&] { _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(
+        reinterpret_cast<GuestLocale::Facet**>(pages.Guard()), nullptr); }),
+        "num_put<wchar_t>::_Getcat rejects guard facet slot");
+    Require(Throws([&] { _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(
+        &roSlots[0], nullptr); }),
+        "num_put<wchar_t>::_Getcat rejects read-only null facet slot");
+    Require(_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(
+        &roSlots[1], nullptr) == 4,
+        "num_put<wchar_t>::_Getcat accepts read-only populated facet slot");
+
+    Require(Throws([&] { validFacet.vtable->retain(reinterpret_cast<GuestLocale::Facet*>(pages.Guard())); }),
+        "num_put<wchar_t>::retain rejects guard object");
+    Require(Throws([&] { validFacet.vtable->retain(reinterpret_cast<GuestLocale::Facet*>(pages.ReadOnly())); }),
+        "num_put<wchar_t>::retain rejects read-only object");
+    Require(Throws([&] { validFacet.vtable->release(reinterpret_cast<GuestLocale::Facet*>(pages.Guard())); }),
+        "num_put<wchar_t>::release rejects guard object");
+    Require(Throws([&] { validFacet.vtable->release(reinterpret_cast<GuestLocale::Facet*>(pages.ReadOnly())); }),
+        "num_put<wchar_t>::release rejects read-only object");
+
+    Require(errno == 61, "guarded pointer checks preserve errno");
+}
+
 }
 
 int main() {
@@ -228,6 +353,7 @@ int main() {
         reinterpret_cast<void*>(&TestAlign), reinterpret_cast<void*>(&TestRealign),
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    CheckGuardedGuestPointers();
     CheckIputAdjustment();
     CheckIputGrouping();
     CheckIputFailure();
