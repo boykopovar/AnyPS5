@@ -139,6 +139,8 @@ def summarize(samples, max_spread_pct):
     if not values:
         raise ValueError("no FPS samples were collected")
     median = statistics.median(values)
+    if math.isinf(median):
+        median = statistics.median(value / 2 for value in values) * 2
     spread_pct = (max(values) - min(values)) / median * 100 if median else math.inf
     if spread_pct > max_spread_pct:
         raise ValueError(f"measurement spread {spread_pct:.2f}% exceeds the {max_spread_pct:.2f}% limit")

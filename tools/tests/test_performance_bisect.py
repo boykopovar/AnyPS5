@@ -190,6 +190,14 @@ class MeasurementStabilityTests(unittest.TestCase):
         self.assertEqual(result["median_fps"], 60.0)
         self.assertAlmostEqual(result["spread_pct"], 200 / 60)
 
+    def test_median_stays_finite_for_large_finite_samples(self):
+        high = sys.float_info.max
+        low = high / 2
+        samples = [{"fps": value, "identity": IDENTITY} for value in (low, high, high, low)]
+        result = performance_bisect.summarize(samples, 70)
+        self.assertEqual(result["median_fps"], low / 2 + high / 2)
+        self.assertAlmostEqual(result["spread_pct"], 200 / 3)
+
     def test_rejects_noisy_samples_and_identity_drift(self):
         for samples, limit in (([], 5), ([{"fps": value, "identity": IDENTITY} for value in (50, 60, 70)], 5),
                                ([{"fps": 60, "identity": IDENTITY}, {"fps": 60, "identity": dict(IDENTITY, gpu="Other")}], 5)):
