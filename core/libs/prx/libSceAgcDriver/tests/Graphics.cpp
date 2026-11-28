@@ -2639,8 +2639,14 @@ void Color1555TargetTests() {
     for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
     queue.context[0x1e0] = (1u << 30u) | 13u;
     Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 1_5_5_5 target did not exchange its red and blue blend constants with the export");
+    queue.context[0x31c] |= 1u << 11u;
+    const auto alternate = AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::ExportMappings(alternate)[0] == 0xe4u, "the alternate 1_5_5_5 target reordered its color exports");
+    Require(alternate.blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "the alternate 1_5_5_5 target reordered its blend constants");
+    queue.context[0x8e] = 0x9u;
+    Require(AgcDriver::Graphics::DecodeState(queue).blends[0].colorWriteMask == (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_A_BIT), "the alternate 1_5_5_5 target did not preserve its red and alpha write mask");
     queue.context[0x1e0] = 0;
-    for (const auto& [number, swap] : {std::pair{1u, 0u}, std::pair{4u, 0u}, std::pair{0u, 1u}}) {
+    for (const auto& [number, swap] : {std::pair{1u, 0u}, std::pair{4u, 0u}, std::pair{1u, 1u}, std::pair{0u, 2u}, std::pair{0u, 3u}}) {
         queue.context[0x31c] = (queue.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 17 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
     }

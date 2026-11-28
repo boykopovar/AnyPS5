@@ -138,11 +138,11 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, std::uint32_t componentSwap) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Color1555Info;
+    cx[0x31c] = Color1555Info | (componentSwap << 11u);
     cx[0x31d] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
@@ -250,7 +250,7 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const Co
 void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind) {
     const ColorTargetLayout layout(Width, Height, mode, 2);
     Require(layout.Bytes() == block.bytes, "the test surface size disagrees with its layout");
-    const auto color = DecodeTarget(block, attrib3);
+    const auto color = DecodeTarget(block, attrib3, 0);
     auto before = Fill(block);
     struct Case {
         Color color;
@@ -278,6 +278,10 @@ void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t at
         before = ReadBack(device, block);
         programCount = 0;
     }
+    const auto alternate = DecodeTarget(block, attrib3, 1);
+    Draw(device, alternate, Float32Export, Program({3.0f / 31.0f, 10.0f / 31.0f, 21.0f / 31.0f, 1.0f}));
+    ExpectSurface(device, block, layout, before, 0x8d55u, std::string("an alternate 1_5_5_5 export into a ") + kind + " target");
+    programCount = 0;
 }
 
 }
