@@ -35,7 +35,7 @@ int main() {
             return VulkanTestSkipped;
         }
         const auto before = recorder->StreamOps();
-        const std::array<std::uint32_t, 7> rules{};
+        const std::array<std::uint32_t, 8> rules{};
         bool recorded = false;
         const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT};
         context.functions->cmdPipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
