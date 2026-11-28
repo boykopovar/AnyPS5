@@ -5037,8 +5037,6 @@ int APS5_VABI _ZNK7WebCore5Range12comparePointERNS_4NodeEj();
 int APS5_VABI _ZNK7WebCore5Range14intersectsNodeERNS_4NodeE();
 int APS5_VABI _ZNK7WebCore5Range8toStringEv();
 int APS5_VABI _ZNK7WebCore6Chrome10windowRectEv();
-int APS5_VABI _ZNK7WebCore6Cookie4hashEv();
-int APS5_VABI _ZNK7WebCore6CookieeqERKS0_();
 void APS5_VABI _ZNK7WebCore6Cursor19setAsPlatformCursorEv();
 int APS5_VABI _ZNK7WebCore6Editor11textCheckerEv();
 int APS5_VABI _ZNK7WebCore6Editor12selectedTextEv();

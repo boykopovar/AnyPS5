@@ -25876,14 +25876,6 @@ int APS5_VABI _ZNK7WebCore6Chrome10windowRectEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore6Cookie4hashEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore6CookieeqERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI _ZNK7WebCore6Editor11textCheckerEv() {
     NotImplemented_nid_no_patch(__func__);
