@@ -174,6 +174,30 @@ bool CheckBindings(AgcDriver::VulkanDevice& device, const Block& block, bool dat
         }
         CheckPixels(state.color, {255, 0, 0, 255});
     }
+    device.WaitIdle();
+    context.recorder->Sync();
+    context.recorder->FlushDeferredReleases();
+    SharedResourceCache().Clear();
+    Require(recipe->templateRef.expired(), "clearing the resource cache did not expire the recipe template");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto miss = DrawWithRecipe(context, state, triangle, shaders, {}, *recipe);
+        Require(!miss.recorded && miss.miss == DrawRecipeMiss::TemplateGone, "an expired recipe found a template before its replacement was cached");
+    }
+    std::shared_ptr<const AgcDriver::DrawRecipe> replacement;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Draw(context, state, triangle, shaders, {}, &replacement);
+    }
+    WaitForOptimizedPipelines(context.device);
+    Require(replacement != nullptr && !replacement->templateRef.expired(), "the replacement draw did not cache a reusable template");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto hit = DrawWithRecipe(context, state, triangle, shaders, {}, *recipe);
+        Require(hit.recorded, "a recipe whose original template expired did not adopt the same-key replacement");
+    }
+    CheckPixels(state.color, {255, 0, 0, 255});
+
     for (const bool second : {true, true, false}) {
         select(second);
         {
