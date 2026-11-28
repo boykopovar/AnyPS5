@@ -9,6 +9,7 @@
 #include <algorithm>
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include <bit>
 #include <cstdlib>
 #include <initializer_list>
@@ -238,10 +239,10 @@ void Driver::fillClearCount(const Graphics::StorageTexture::FillCoverage& covera
         std::snprintf(text, sizeof(text), " 0x%02x:%llu", code, static_cast<unsigned long long>(count));
         line += text;
     }
-    std::fprintf(stderr, "%s\n", line.c_str());
+    AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str());
     line = "[fill-clear] " + std::to_string(clears) + " fills cleared on resident images (" + std::to_string(clearedBytes >> 20u) + " MiB not stored, " + std::to_string(layerClears) + " one array layer); covers refused:";
     for (const auto& [reason, count] : refusals) line += " " + reason + " " + std::to_string(count);
-    std::fprintf(stderr, "%s\n", line.c_str());
+    AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str());
 }
 
 namespace {
@@ -456,7 +457,7 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
                 std::snprintf(text, sizeof(text), " %s %llu/%.0f", coverNames[i], static_cast<unsigned long long>(holdByCover[i]), holdByCoverMs[i]);
                 line += text;
             }
-            std::fprintf(stderr, "[fill] %llu buffer fills (%.0f MiB), %llu stored by the CPU; hold phases ms (cumulative):%s; pre-store flushes %llu (%llu stored an image); stored on the GPU: uniform %llu (%.0f MiB), pattern %llu (%.0f MiB), chain copies %llu\n", static_cast<unsigned long long>(fills.load()), filledBytes.load() / 1048576.0, static_cast<unsigned long long>(cpuFills.load()), line.c_str(), static_cast<unsigned long long>(flushes), static_cast<unsigned long long>(flushed), static_cast<unsigned long long>(uniformFills), uniformBytes / 1048576.0, static_cast<unsigned long long>(patternFills), patternBytes / 1048576.0, static_cast<unsigned long long>(chainCopies));
+            AgcDriver::ProfilePrint_nid_no_patch("[fill] %llu buffer fills (%.0f MiB), %llu stored by the CPU; hold phases ms (cumulative):%s; pre-store flushes %llu (%llu stored an image); stored on the GPU: uniform %llu (%.0f MiB), pattern %llu (%.0f MiB), chain copies %llu\n", static_cast<unsigned long long>(fills.load()), filledBytes.load() / 1048576.0, static_cast<unsigned long long>(cpuFills.load()), line.c_str(), static_cast<unsigned long long>(flushes), static_cast<unsigned long long>(flushed), static_cast<unsigned long long>(uniformFills), uniformBytes / 1048576.0, static_cast<unsigned long long>(patternFills), patternBytes / 1048576.0, static_cast<unsigned long long>(chainCopies));
         }
     }
     };

@@ -6532,7 +6532,7 @@ void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space)
     if (!verify && !profile) return;
     const bool report = count % 65536u == 0u || (count & (count - 1u)) == 0u;
     if (report) {
-        std::fprintf(stderr, "[epoch-mirrors] address space uses: %llu reused the epoch's refresh, %llu refreshed; verify: %llu blocks compared, %llu differ\n",
+        AgcDriver::ProfilePrint_nid_no_patch("[epoch-mirrors] address space uses: %llu reused the epoch's refresh, %llu refreshed; verify: %llu blocks compared, %llu differ\n",
                      static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(refreshes.load()), static_cast<unsigned long long>(compared.load()), static_cast<unsigned long long>(differing.load()));
     }
 }
@@ -6950,7 +6950,7 @@ public:
         std::lock_guard lock(mutex);
         if (!stampsRequested) {
             Recorder::RequestBatchStamps();
-            policy.report = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
+            policy.report = [](const std::string& line) { AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str()); };
             stampsRequested = true;
         }
         const auto [frames, busyMs] = Recorder::FrameGpuBusy();
