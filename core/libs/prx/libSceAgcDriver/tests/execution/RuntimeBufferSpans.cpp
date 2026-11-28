@@ -201,7 +201,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t compo
         for (std::uint32_t component = 0; component < components; ++component) {
             const std::uint32_t offset = (test.wrappedIndex ? 0xfffffff8u : test.wrap ? 0xfffffffcu : test.stride != 0u ? 0u : lane * 16u) + component * 4u;
             std::uint32_t value = 0;
-            const bool inBounds = test.stride != 0u ? lane < test.records && offset < test.stride : test.records >= 4u && offset <= test.records - 4u && (!test.swizzle || test.wrappedIndex || offset <= 1020u);
+            const bool inBounds = test.stride != 0u ? lane < test.records && offset + 4u <= test.stride : test.records >= 4u && offset <= test.records - 4u && (!test.swizzle || test.wrappedIndex || offset <= 1020u);
             if (inBounds) {
                 const auto physical = test.base + (test.wrappedIndex ? offset + 8u : test.stride != 0u ? lane * test.stride + offset : offset * (test.swizzle ? 8u : 1u));
                 std::memcpy(&value, reinterpret_cast<const std::byte*>(expected.data()) + physical, 4u);
