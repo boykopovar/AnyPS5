@@ -34,6 +34,8 @@ static_assert(offsetof(PosixForWebKitPasswd, pw_fields) == 72);
 extern "C" {
 
 PosixForWebKitPasswd* APS5_VABI getpwuid_nid_postfix(std::uint32_t uid);
+int APS5_VABI getpwuid_r_nid_postfix(std::uint32_t uid, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result);
+int APS5_VABI getpwnam_r_nid_postfix(const char* name, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result);
 PosixForWebKitPasswd* APS5_VABI getpwnam_nid_postfix(const char* name);
 PosixForWebKitPasswd* APS5_VABI getpwent_nid_postfix();
 void APS5_VABI setpwent_nid_postfix();
