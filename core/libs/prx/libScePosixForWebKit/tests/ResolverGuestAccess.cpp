@@ -10,6 +10,7 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -196,6 +197,44 @@ void HostEntry() {
     Require(result == nullptr && errno == 34);
 }
 
+void StringLimits() {
+    Pages boundary;
+    char* longest = boundary.End(1024);
+    std::fill_n(longest, 1023, '0');
+    longest[1023] = '\0';
+    boundary.ReadOnly();
+    const auto* accepted = gethostbyname_nid_postfix(longest);
+    Require(accepted && std::strlen(accepted->name) == 1023);
+
+    GuestResolver::AddressInfo hints{};
+    hints.flags = 12;
+    hints.family = 2;
+    hints.socketType = 1;
+    for (const std::size_t length : {1024, 8192}) {
+        const std::string text(length, '0');
+        GuestResolver::AddressInfo* address = reinterpret_cast<GuestResolver::AddressInfo*>(1);
+        errno = 77;
+        Require(getaddrinfo_nid_postfix(text.c_str(), "80", &hints, &address) == 4 && address == nullptr);
+        Require(errno == 77);
+        address = reinterpret_cast<GuestResolver::AddressInfo*>(1);
+        Require(getaddrinfo_nid_postfix("127.0.0.1", text.c_str(), &hints, &address) == 4 && address == nullptr);
+        Require(errno == 77);
+        Reject([&] { gethostbyname_nid_postfix(text.c_str()); });
+        Require(errno == 77);
+
+        GuestResolver::HostEntry entry{};
+        const auto before = entry;
+        GuestResolver::HostEntry* result = reinterpret_cast<GuestResolver::HostEntry*>(1);
+        std::array<char, 128> buffer;
+        buffer.fill('X');
+        int hostError = 99;
+        Reject([&] { scePosixForWebKit_gethostbyname_r(text.c_str(), &entry, buffer.data(), buffer.size(), &result, &hostError); });
+        Require(result == nullptr && hostError == 99 && errno == 77);
+        Require(std::memcmp(&entry, &before, sizeof(entry)) == 0);
+        Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 'X'; }));
+    }
+}
+
 void FreeAddressInfo() {
     Pages nodes;
     errno = 77;
@@ -249,6 +288,7 @@ int main() {
     AddressInfo();
     NumericCanonicalNames();
     HostEntry();
+    StringLimits();
     FreeAddressInfo();
     std::puts("resolver checked guest access tests passed");
 }
