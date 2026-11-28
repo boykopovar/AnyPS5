@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -825,11 +826,14 @@ void testSmallCopyBehindPendingSource() {
     }
     std::fill(destination, destination + smallWords, 0u);
     const auto before = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    const auto pipelinedBefore = AgcDriver::DriverDetail::pipelinedCopiesBehindPendingSources.load();
     submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(destination, source, smallBytes), writeData(&copied, 1)));
     waitFor(&copied, 1, "the label after a small copy behind a pending source never landed");
     AgcDriverWaitIdle_nid_postfix();
     check(std::equal(destination, destination + smallWords, produced), "a small copy did not see the GPU copy into its source before it");
     check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before, "a small copy queued behind the pipeline write into its source was recorded inline");
+    const bool copySync = std::getenv("APS5_COPY_SYNC") != nullptr;
+    check(AgcDriver::DriverDetail::pipelinedCopiesBehindPendingSources.load() == pipelinedBefore + (copySync ? 0u : 1u), copySync ? "a small copy queued behind the pipeline write into its source went on the GPU under APS5_COPY_SYNC" : "a small copy queued behind the pipeline write into its source was not recorded on the GPU behind it");
     std::fill(destination, destination + smallWords, 0u);
     const auto settled = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
     submit(0, commands(memoryCopy(destination, produced, smallBytes), writeData(&settledCopied, 1)));
