@@ -164,7 +164,8 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto target = device->Target();
+        auto target = device->Target();
+        target.float32FlushExcludesFloat16Modes = false;
         const auto supports = [&](spv::Capability capability) {
             return std::ranges::find(target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != target.supportedCapabilities.end();
         };

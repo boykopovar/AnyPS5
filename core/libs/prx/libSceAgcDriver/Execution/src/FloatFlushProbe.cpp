@@ -132,6 +132,12 @@ constexpr std::uint32_t MixedTinyRows[Threads][Inputs] = {
     {0x80800001u, 0x3bff3bffu, 0x80000000u, 0x80008000u},
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 20> Float16Code{
+    0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x06140b04u, 0x08160b04u, 0x10180b04u,
+    0xd54b000du, 0x041a0b04u, 0x7e1c1505u, 0x5e1e0b04u, 0x7e200306u, 0x56200b04u, 0x0a220d04u, 0xe0781000u,
+    0x80010a02u, 0xe0781010u, 0x80010e02u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 18> TranscendentalCode{
     0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e144f04u, 0x7e166704u, 0x7e185d04u,
     0x7e1a5504u, 0x7e1c4b05u, 0x7e1e4f05u, 0x7e206705u, 0x7e225505u, 0xe0781000u, 0x80010a02u, 0xe0781010u,
@@ -231,22 +237,34 @@ void CompareTranscendental(FloatFlushProbeResult& result, const std::vector<std:
     }
 }
 
-}
+using FlushProgram = std::pair<std::span<const std::uint32_t>, const std::uint32_t (*)[Inputs]>;
 
-FloatFlushProbeResult ProbeFloat32FlushToZero(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+FloatFlushProbeResult CompareFlush(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const FlushProgram> programs) {
     FloatFlushProbeResult result;
     const std::array<std::optional<ShaderRecompiler::ShaderFloatMode>, 3> modes{std::nullopt, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false}};
-    const std::array<std::pair<std::span<const std::uint32_t>, const std::uint32_t (*)[Inputs]>, 3> programs{{{MixedCode, MixedRows}, {TinyCode, TinyRows}, {MixedTinyCode, MixedTinyRows}}};
     for (const auto& mode : modes) {
         for (const auto& [code, rows] : programs) {
             auto software = target;
             software.float32FlushToZero = false;
-            auto hardware = target;
+            software.float32FlushExcludesFloat16Modes = false;
+            auto hardware = software;
             hardware.float32FlushToZero = true;
             Compare(result, Run(device, software, mode, code, rows), Run(device, hardware, mode, code, rows));
         }
     }
     return result;
+}
+
+}
+
+FloatFlushProbeResult ProbeFloat32FlushToZero(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+    const std::array<FlushProgram, 3> programs{{{MixedCode, MixedRows}, {TinyCode, TinyRows}, {MixedTinyCode, MixedTinyRows}}};
+    return CompareFlush(device, target, programs);
+}
+
+FloatFlushProbeResult ProbeFloat32FlushBesideFloat16(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+    const std::array<FlushProgram, 2> programs{{{Float16Code, MixedRows}, {Float16Code, TinyRows}}};
+    return CompareFlush(device, target, programs);
 }
 
 FloatFlushProbeResult ProbeFloat32DenormPreserve(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
