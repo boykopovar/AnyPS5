@@ -60,4 +60,23 @@ void APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherC1ERNS_14FrontendR
 void APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherC2ERNS_14FrontendRouterE(void* self, std::uintptr_t value);
 void APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcherC1ERNS_14FrontendRouterE(void* self, std::uintptr_t value);
 void APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcherC2ERNS_14FrontendRouterE(void* self, std::uintptr_t value);
+void APS5_VABI _ZN3JSC17DeferredWorkTimer16stopRunningTasksEv(void* self);
+void APS5_VABI _ZN3JSC18GCActivityCallback10setEnabledEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN3JSC22FullGCActivityCallback16setDidGCRecentlyEv(void* self);
+void APS5_VABI _ZN7WebCore10ScrollView23setPaintsEntireContentsEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore12EventHandler23setImmediateActionStageENS_20ImmediateActionStageE(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore15DatabaseManager14setIsAvailableEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore18TextureMapperLayer5setIDEj(void* self, std::uint32_t value);
+void APS5_VABI _ZN7WebCore19InspectorController26setInspectorFrontendClientEPNS_23InspectorFrontendClientE(void* self, std::uintptr_t value);
+void APS5_VABI _ZN7WebCore21NetworkStorageSession31setThirdPartyCookieBlockingModeENS_28ThirdPartyCookieBlockingModeE(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore21NetworkStorageSession32setResourceLoadStatisticsEnabledEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore21NetworkStorageSession44setResourceLoadStatisticsDebugLoggingEnabledEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore4Page19setDelegatesScalingEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore4Page27enableICECandidateFilteringEv(void* self);
+void APS5_VABI _ZN7WebCore4Page28disableICECandidateFilteringEv(void* self);
+void APS5_VABI _ZN7WebCore4Page37setInLowQualityImageInterpolationModeEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore8Document24setShouldCreateRenderersEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore9FrameView16setPaintBehaviorEN3WTF9OptionSetINS_13PaintBehaviorEEE(void* self, std::uint16_t value);
+void APS5_VABI _ZN7WebCore9FrameView29setShouldUpdateWhileOffscreenEb(void* self, std::uint8_t value);
+void APS5_VABI _ZN9Inspector15InspectorTarget5pauseEv(void* self);
 }
