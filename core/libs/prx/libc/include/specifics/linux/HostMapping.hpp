@@ -1,6 +1,7 @@
 #ifndef PRX_LIBC_INCLUDE_SPECIFICS_LINUX_HOSTMAPPING_HPP
 #define PRX_LIBC_INCLUDE_SPECIFICS_LINUX_HOSTMAPPING_HPP
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -14,7 +15,6 @@
 #include <string>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <utility>
 #include <vector>
 #if __has_include(<linux/fs.h>)
 #include <linux/fs.h>
@@ -91,57 +91,82 @@ inline std::mutex& ScanLock() {
     return lock;
 }
 
+inline constexpr std::size_t ScanBufferBytes = 16384;
+
+inline char* ScanBuffer() {
+    static char buffer[ScanBufferBytes];
+    return buffer;
+}
+
 template <typename Line>
 void ScanLines(const char* caller, Line&& line) {
     const std::lock_guard guard(ScanLock());
     const int fd = MapsFd();
     if (fd < 0) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
-    std::string pending;
-    char chunk[4096];
+    char* const buffer = ScanBuffer();
+    std::size_t held = 0;
     for (off_t offset = 0;;) {
-        const ssize_t got = pread(fd, chunk, sizeof(chunk), offset);
+        if (held == ScanBufferBytes - 1) throw std::runtime_error(std::string(caller) + ": /proc/self/maps line longer than the scan buffer");
+        const ssize_t got = pread(fd, buffer + held, ScanBufferBytes - 1 - held, offset);
         if (got < 0 && errno == EINTR) continue;
         if (got < 0) throw std::runtime_error(std::string(caller) + ": failed to read /proc/self/maps");
         if (got == 0) break;
         offset += got;
-        pending.append(chunk, static_cast<std::size_t>(got));
+        held += static_cast<std::size_t>(got);
         std::size_t begin = 0;
-        for (auto newline = pending.find('\n'); newline != std::string::npos; newline = pending.find('\n', begin)) {
-            if (!line(pending.substr(begin, newline - begin))) return;
-            begin = newline + 1;
+        while (auto* newline = static_cast<char*>(std::memchr(buffer + begin, '\n', held - begin))) {
+            const auto bytes = static_cast<std::size_t>(newline - (buffer + begin));
+            *newline = '\0';
+            if (!line(buffer + begin, bytes)) return;
+            begin += bytes + 1;
         }
-        pending.erase(0, begin);
+        std::memmove(buffer, buffer + begin, held - begin);
+        held -= begin;
     }
-    if (!pending.empty()) line(pending);
+    if (held != 0) {
+        buffer[held] = '\0';
+        line(buffer, held);
+    }
 }
 
-inline std::optional<Mapping> ParseMapsLine(const std::string& line) {
+struct MapsLine {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
     char perms[8] = {};
+    std::uint64_t inode = 0;
+    const char* path = nullptr;
+    std::size_t pathBytes = 0;
+};
+
+inline bool ParseMapsLine(const char* text, std::size_t bytes, MapsLine& line) {
     std::uint64_t offset = 0;
     unsigned int devMajor = 0;
     unsigned int devMinor = 0;
-    std::uint64_t inode = 0;
     int prefix = 0;
-    const int parsed = std::sscanf(line.c_str(), "%llx-%llx %7s %llx %x:%x %llu%n",
-        (unsigned long long*)&start, (unsigned long long*)&end, perms,
-        (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&inode, &prefix);
-    if (parsed < 7 || std::strlen(perms) < 4) return std::nullopt;
-    std::string path;
-    if (prefix > 0 && static_cast<std::size_t>(prefix) < line.size()) {
-        const std::size_t begin = line.find_first_not_of(" \t", static_cast<std::size_t>(prefix));
-        if (begin != std::string::npos) path = line.substr(begin, 4095);
+    const int parsed = std::sscanf(text, "%llx-%llx %7s %llx %x:%x %llu%n",
+        (unsigned long long*)&line.start, (unsigned long long*)&line.end, line.perms,
+        (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&line.inode, &prefix);
+    if (parsed < 7 || std::strlen(line.perms) < 4) return false;
+    auto begin = static_cast<std::size_t>(prefix > 0 ? prefix : 0);
+    while (begin < bytes && (text[begin] == ' ' || text[begin] == '\t')) ++begin;
+    if (prefix > 0 && begin < bytes) {
+        line.path = text + begin;
+        line.pathBytes = std::min<std::size_t>(bytes - begin, 4095);
     }
-    return Mapping{start, end, path, perms[0] == 'r', perms[1] == 'w', perms[2] == 'x', perms[3] == 's', inode};
+    return true;
+}
+
+inline Mapping FromLine(const MapsLine& line) {
+    return Mapping{line.start, line.end, line.path != nullptr ? std::string(line.path, line.pathBytes) : std::string(), line.perms[0] == 'r',
+        line.perms[1] == 'w', line.perms[2] == 'x', line.perms[3] == 's', line.inode};
 }
 
 inline std::optional<Mapping> ScanMaps(std::uint64_t address, const char* caller) {
     std::optional<Mapping> found;
-    ScanLines(caller, [&](const std::string& line) {
-        auto mapping = ParseMapsLine(line);
-        if (!mapping || address < mapping->start || address >= mapping->end) return true;
-        found = std::move(mapping);
+    ScanLines(caller, [&](const char* text, std::size_t bytes) {
+        MapsLine line;
+        if (!ParseMapsLine(text, bytes, line) || address < line.start || address >= line.end) return true;
+        found = FromLine(line);
         return false;
     });
     return found;
@@ -190,12 +215,12 @@ void Walk(std::uint64_t begin, std::uint64_t end, const char* caller, Visit&& vi
         return;
     }
     std::vector<Mapping> mappings;
-    ScanLines(caller, [&](const std::string& line) {
-        auto mapping = ParseMapsLine(line);
-        if (!mapping) throw std::runtime_error(std::string(caller) + ": unexpected /proc/self/maps line: " + line);
-        if (mapping->end <= begin) return true;
-        if (mapping->start >= end) return false;
-        mappings.push_back(std::move(*mapping));
+    ScanLines(caller, [&](const char* text, std::size_t bytes) {
+        MapsLine line;
+        if (!ParseMapsLine(text, bytes, line)) throw std::runtime_error(std::string(caller) + ": unexpected /proc/self/maps line: " + text);
+        if (line.end <= begin) return true;
+        if (line.start >= end) return false;
+        mappings.push_back(FromLine(line));
         return true;
     });
     for (const auto& mapping : mappings) visit(mapping);
