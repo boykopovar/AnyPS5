@@ -1,13 +1,14 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketHistory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 
 namespace AgcDriver::DriverDetail {
 
 void PacketHistory::Print(std::FILE* file, const char* format) const {
     const auto shown = std::min(count, offsets.size());
     const auto first = count > shown ? count % offsets.size() : 0;
-    for (std::size_t i = 0; i < shown; ++i) std::fprintf(file, format, Format(offsets[(first + i) % offsets.size()]).c_str());
+    for (std::size_t i = 0; i < shown; ++i) WriteLogLine(file, format, Format(offsets[(first + i) % offsets.size()]).c_str());
 }
 
 void PacketHistory::Record(std::size_t offset) {

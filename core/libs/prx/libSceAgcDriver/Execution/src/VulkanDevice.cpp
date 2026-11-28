@@ -3685,7 +3685,7 @@ bool AliasCopy(const Graphics::Context& context, std::uint64_t destination, std:
             copyAliasShape.fetch_add(1, std::memory_order_relaxed);
         } else {
             static std::atomic<int> reported{0};
-            if (reported.fetch_add(1) < 8) std::fprintf(stderr, "[copy] image copy 0x%llx -> 0x%llx (0x%zx bytes) refused: %s\n", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, plan.refusal);
+            if (reported.fetch_add(1) < 8) WriteLogLine(stderr, "[copy] image copy 0x%llx -> 0x%llx (0x%zx bytes) refused: %s\n", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, plan.refusal);
             copyAliasRefused.fetch_add(1, std::memory_order_relaxed);
         }
         return false;
