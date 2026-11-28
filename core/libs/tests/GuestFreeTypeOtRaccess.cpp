@@ -367,6 +367,12 @@ void GuestPointers() {
                 FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, newNames.data(), offsets.data(), reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}));
             }),
             "guess refuses an unmapped errors array");
+    std::vector<char> oversizedBase(65538, 'a');
+    oversizedBase.back() = '\0';
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, oversizedBase.data(), newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses an oversized baseName");
     Require(session.recorder.allocs == 0 && *readOnlyLong == readOnlySentinel, "rejected guess calls allocate nothing and keep read-only memory untouched");
 
     UnmapPages(pages, 3 * pageSize);

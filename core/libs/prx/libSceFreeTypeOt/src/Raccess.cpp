@@ -34,6 +34,7 @@ constexpr std::int64_t RefSize = 16;
 constexpr std::int64_t LongMax = std::numeric_limits<std::int64_t>::max();
 constexpr std::int64_t LongMin = std::numeric_limits<std::int64_t>::min();
 constexpr std::size_t Chunk = 4096;
+constexpr std::size_t MaxBaseNameLength = 65536;
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* function) {
     const int savedErrno = errno;
@@ -70,7 +71,7 @@ void Write(T* destination, const T& value, const char* function) {
 
 std::string ReadText(const char* source, const char* function) {
     if (!source) NotImplemented_nid_no_patch(function);
-    const std::size_t limit = static_cast<std::size_t>(IntMax) + 1;
+    const std::size_t limit = MaxBaseNameLength + 1;
     std::string text;
     std::array<char, Chunk> buffer;
     auto address = reinterpret_cast<std::uintptr_t>(source);
@@ -357,10 +358,10 @@ void APS5_VABI FT_Raccess_Guess_nid_postfix(GuestRaccessLibrary* library, GuestS
     const GuestRaccessLibrary guestLibrary = Read(library, function);
     if (!guestLibrary.memory) NotImplemented_nid_no_patch(function);
     Read(guestLibrary.memory, function);
-    const std::string base = ReadText(baseName, function);
     RequireWritable(newNames, RuleCount * sizeof(*newNames), function);
     RequireWritable(offsets, RuleCount * sizeof(*offsets), function);
     RequireWritable(errors, RuleCount * sizeof(*errors), function);
+    const std::string base = ReadText(baseName, function);
     for (int rule = 0; rule < RuleCount; ++rule) {
         Write(newNames + rule, static_cast<char*>(nullptr), function);
         const std::int32_t seekError = stream ? FT_Stream_Seek_nid_postfix(stream, 0) : 0;
@@ -370,9 +371,9 @@ void APS5_VABI FT_Raccess_Guess_nid_postfix(GuestRaccessLibrary* library, GuestS
         std::int64_t guessedOffset = 0;
         const std::int32_t ruleError = GuessRule(rule, library, guestLibrary.memory, stream, base, &guessedName, &guessedOffset, function);
         try {
-            if (guessedName) Write(newNames + rule, guessedName, function);
             if (!ruleError) Write(offsets + rule, guessedOffset, function);
             Write(errors + rule, ruleError, function);
+            if (guessedName) Write(newNames + rule, guessedName, function);
         } catch (...) {
             if (guessedName) OtMemFree(guestLibrary.memory, guessedName);
             throw;
