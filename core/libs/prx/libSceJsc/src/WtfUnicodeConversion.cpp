@@ -50,6 +50,7 @@ constexpr std::size_t ByteChunkUnits = 4096;
 constexpr std::size_t Utf16ChunkUnits = 2048;
 
 template<typename T> void RequireRange(const T* start, const T* end, const char* function) {
+    if (!start && end) throw std::invalid_argument(std::string(function) + ": null buffer");
     if (end - start > std::numeric_limits<int>::max()) throw std::length_error(std::string(function) + ": range above INT_MAX");
 }
 
