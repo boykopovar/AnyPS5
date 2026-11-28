@@ -66,7 +66,7 @@ static int Run() {
     return 0;
 }
 
-int main() {
+static int GuestMain(int, char**) {
     try {
         return Run();
     } catch (const std::exception& error) {
@@ -74,3 +74,5 @@ int main() {
         return 1;
     }
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

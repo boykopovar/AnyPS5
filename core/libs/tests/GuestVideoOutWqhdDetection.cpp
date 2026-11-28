@@ -26,7 +26,7 @@ static bool SameStatus(const VideoOutOutputStatus& a, const VideoOutOutputStatus
     return std::memcmp(&a, &b, sizeof(a)) == 0;
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     int handle = 0;
     try {
@@ -56,4 +56,7 @@ int main() {
     Require(sceVideoOutClose(handle) == 0);
     Require(RejectsHandle(handle));
     LibcRunShutdown_nid_postfix();
+    return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

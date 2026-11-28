@@ -39,7 +39,7 @@ static bool RejectsOutputStatus(int handle, VideoOutOutputStatus* status) {
     return false;
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     int handle = 0;
     try {
@@ -129,4 +129,7 @@ int main() {
     Require(sceVideoOutGetOutputStatusWithVrr(handle, vrr.data()) == static_cast<int>(0x8029000Bu));
     Require(sceVideoOutGetOutputStatusWithVrr(handle, nullptr) == static_cast<int>(0x80290002u));
     LibcRunShutdown_nid_postfix();
+    return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

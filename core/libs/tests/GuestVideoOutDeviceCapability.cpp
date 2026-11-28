@@ -16,7 +16,7 @@ static constexpr int INVALID_HANDLE = static_cast<int>(0x8029000B);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     std::array<std::uint8_t, 64> mode{};
     mode.fill(0xAA);
@@ -54,3 +54,5 @@ int main() {
     Require(sceVideoOutGetDeviceCapabilityInfo_(handle, info.data(), 8) == INVALID_HANDLE);
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

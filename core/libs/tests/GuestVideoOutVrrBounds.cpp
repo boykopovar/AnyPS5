@@ -35,7 +35,7 @@ static bool RejectsUnpeg(int handle) {
     return false;
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
 
     Require(sceVideoOutAddVrrStatusFlagsPrivilege() == 0);
@@ -75,3 +75,5 @@ int main() {
     LibcRunShutdown_nid_postfix();
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

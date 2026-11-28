@@ -26,7 +26,7 @@ static double Measure(int handle) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
-int main(int argc, char** argv) {
+static int GuestMain(int argc, char** argv) {
     const bool requireDisplay = argc > 1 && std::strcmp(argv[1], "--require-high-frame-rate") == 0;
 #ifdef _WIN32
     Require(SDL_Init(SDL_INIT_VIDEO) == 0, SDL_GetError());
@@ -110,4 +110,7 @@ int main(int argc, char** argv) {
     Require(normal / fast > 1.7 && restored / fast > 1.7, "high-frame-rate mode did not double vblank frequency");
     Require(sceVideoOutClose(handle) == 0, "close failed");
     LibcRunShutdown_nid_postfix();
+    return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }
