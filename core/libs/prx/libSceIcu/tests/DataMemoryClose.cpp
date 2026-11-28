@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/DataMemoryOwnership.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include <array>
 #include <cerrno>
@@ -47,6 +48,16 @@ void RequireInitialized(const UDataMemory& data) {
     UDataMemory expected{};
     expected.length = -1;
     Require(std::memcmp(&data, &expected, sizeof(data)) == 0);
+}
+
+void ThrowUnreadable() {
+    const std::uint64_t unreadable = 0x1;
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(reinterpret_cast<UDataMemory*>(unreadable)); });
+    errno = 0x7f;
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(reinterpret_cast<UDataMemory*>(~0ull)); });
+    Require(errno == 0x7f);
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(reinterpret_cast<UDataMemory*>(0x1ull)); });
+    Require(errno == 0x7f);
 }
 
 void Null() {
@@ -100,9 +111,11 @@ void Mapping() {
 
     MEMORY_BASIC_INFORMATION information{};
     Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
-    Require(information.State == MEM_FREE);
+    Require(information.State != MEM_FREE);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
 }
 #else
 void Mapping() {
@@ -120,17 +133,84 @@ void Mapping() {
     udata_close_nid_postfix(&guarded.data);
 
     errno = 0;
-#if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
-#else
     unsigned char residency = 0;
-    Require(mincore(mapping, pageSize, &residency) == -1);
-#endif
-    Require(errno == ENOMEM);
+    Require(mincore(mapping, pageSize, &residency) == 0);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
+    Require(munmap(mapping, pageSize) == 0);
 }
 #endif
+
+void ReadOnlyWriteback() {
+#if defined(_WIN32)
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READONLY, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 4096);
+    Require(view != nullptr);
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(static_cast<UDataMemory*>(view)); });
+    auto* data = static_cast<UDataMemory*>(view);
+    Require(data->heapAllocated == 0);
+    Require(data->length == 0);
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
+#else
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* data = static_cast<UDataMemory*>(mapping);
+    std::memset(data, 0, sizeof(*data));
+    data->length = 42;
+    Require(mprotect(mapping, pageSize, PROT_READ) == 0);
+    IcuRecoveredTest::RequireThrows([&] { udata_close_nid_postfix(data); });
+    UDataMemory after{};
+    std::memcpy(&after, data, sizeof(after));
+    Require(after.length == 42);
+    Require(after.heapAllocated == 0);
+    Require(munmap(mapping, pageSize) == 0);
+#endif
+}
+
+void TrustedDoubleCloseAndErrno() {
+    errno = 0;
+    UErrorCode status = U_ZERO_ERROR;
+    UDataMemory* data = UDataMemory_createNewInstance(&status);
+    Require(status == U_ZERO_ERROR);
+    Require(data != nullptr);
+#if defined(_WIN32)
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4096);
+    Require(view != nullptr);
+    IcuDataMemoryOwnership::Register(data, view, view, mapping);
+    data->pHeader = static_cast<const DataHeader*>(view);
+    data->mapAddr = view;
+    data->map = mapping;
+#else
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    IcuDataMemoryOwnership::Register(data, mapping, mapping, static_cast<char*>(mapping) + pageSize);
+    data->pHeader = static_cast<const DataHeader*>(mapping);
+    data->mapAddr = mapping;
+    data->map = static_cast<char*>(mapping) + pageSize;
+#endif
+    errno = 0x41;
+    udata_close_nid_postfix(data);
+    Require(errno == 0x41);
+    Require(IcuDataMemoryOwnership::IsFreed(data));
+    udata_close_nid_postfix(data);
+#if defined(_WIN32)
+    MEMORY_BASIC_INFORMATION information{};
+    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
+    Require(information.State == MEM_FREE);
+    CloseHandle(mapping);
+#else
+    errno = 0;
+    unsigned char residency = 0;
+    Require(mincore(mapping, pageSize, &residency) == -1);
+    Require(errno == ENOMEM);
+#endif
+}
 
 void Heap() {
     UErrorCode status = U_ZERO_ERROR;
@@ -138,16 +218,19 @@ void Heap() {
     Require(status == U_ZERO_ERROR);
     Require(data != nullptr);
     Require(data->heapAllocated);
-
 #if defined(_WIN32)
     HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
     Require(mapping != nullptr);
     void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4096);
     Require(view != nullptr);
+    IcuDataMemoryOwnership::Register(data, view, view, mapping);
     data->pHeader = static_cast<const DataHeader*>(view);
     data->mapAddr = view;
     data->map = mapping;
     data->length = 4096;
+    data->pHeader = static_cast<const DataHeader*>(nullptr);
+    data->map = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1));
+    data->length = 12345;
     udata_close_nid_postfix(data);
 
     MEMORY_BASIC_INFORMATION information{};
@@ -157,31 +240,114 @@ void Heap() {
     const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
     void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(mapping != MAP_FAILED);
+    IcuDataMemoryOwnership::Register(data, mapping, mapping, static_cast<char*>(mapping) + pageSize);
     data->pHeader = static_cast<const DataHeader*>(mapping);
     data->mapAddr = mapping;
     data->map = static_cast<char*>(mapping) + pageSize;
     data->length = static_cast<std::int32_t>(pageSize);
+    data->pHeader = static_cast<const DataHeader*>(nullptr);
+    data->mapAddr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1));
+    data->map = static_cast<char*>(nullptr);
+    data->length = 12345;
     udata_close_nid_postfix(data);
 
     errno = 0;
-#if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
-#else
     unsigned char residency = 0;
     Require(mincore(mapping, pageSize, &residency) == -1);
-#endif
     Require(errno == ENOMEM);
 #endif
 }
 
+void ForgedOwnershipFlag() {
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.heapAllocated = 1;
+    guarded.data.length = 42;
+    udata_close_nid_postfix(&guarded.data);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
 }
+
+void UnregisteredGarbage() {
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.heapAllocated = 1;
+    guarded.data.length = 101;
+    udata_close_nid_postfix(&guarded.data);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
+}
+
+#if !defined(_WIN32)
+void ForgedMapping() {
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.pHeader = static_cast<const DataHeader*>(mapping);
+    guarded.data.mapAddr = mapping;
+    guarded.data.map = static_cast<char*>(mapping) + pageSize;
+    guarded.data.length = static_cast<std::int32_t>(pageSize);
+
+    udata_close_nid_postfix(&guarded.data);
+
+    errno = 0;
+    unsigned char residency = 0;
+    Require(mincore(mapping, pageSize, &residency) == 0);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
+    Require(munmap(mapping, pageSize) == 0);
+}
+#else
+void ForgedMapping() {
+   HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4096);
+    Require(view != nullptr);
+
+    GuardedData guarded{};
+    guarded.before.fill(0xa5);
+    guarded.after.fill(0x5a);
+    std::memset(&guarded.data, 0, sizeof(guarded.data));
+    guarded.data.pHeader = static_cast<const DataHeader*>(view);
+    guarded.data.mapAddr = view;
+    guarded.data.map = mapping;
+    guarded.data.length = 4096;
+
+    udata_close_nid_postfix(&guarded.data);
+
+    MEMORY_BASIC_INFORMATION information{};
+    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
+    Require(information.State != MEM_FREE);
+    RequireInitialized(guarded.data);
+    RequireGuards(guarded);
+    UnmapViewOfFile(view);
+    CloseHandle(mapping);
+}
+#endif
 
 void Run() {
     Null();
+    ThrowUnreadable();
+    TrustedDoubleCloseAndErrno();
     Stack();
     Parity();
     Mapping();
+    ReadOnlyWriteback();
     Heap();
+    ForgedOwnershipFlag();
+    ForgedMapping();
+    UnregisteredGarbage();
+}
+
 }
 
 }
