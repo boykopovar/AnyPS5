@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/Bidi.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "ubidi_props.h"
 #include "unicode/ubidi.h"
 #include <algorithm>
@@ -49,10 +50,18 @@ void LeaveStatus(std::int32_t* error, UErrorCode status, std::int32_t previous, 
     if (updated != previous && !GuestCopyOut_nid_no_patch(error, &updated, sizeof(updated))) throw std::runtime_error(caller);
 }
 
+void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guard(destination, bytes);
+    const bool writable = guard.Open() && GuestWritable_nid_no_patch(destination, bytes);
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error(caller);
+}
+
 template <typename TFirst, typename TSecond>
 void CommitOutputs(TFirst* first, const TFirst& hostFirst, TSecond* second, const TSecond& hostSecond,
                    const char* caller) {
-    if (first && second && !GuestWritable_nid_no_patch(second, sizeof(*second))) throw std::runtime_error(caller);
+    if (first && second) RequireWritable(second, sizeof(*second), caller);
     if (first && !GuestCopyOut_nid_no_patch(first, &hostFirst, sizeof(hostFirst))) throw std::runtime_error(caller);
     if (second && !GuestCopyOut_nid_no_patch(second, &hostSecond, sizeof(hostSecond))) throw std::runtime_error(caller);
 }
@@ -162,8 +171,8 @@ void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClas
         LeaveStatus(error, U_ILLEGAL_ARGUMENT_ERROR, previous, __func__);
         return;
     }
-    if (oldFunction && !GuestWritable_nid_no_patch(oldFunction, sizeof(*oldFunction))) throw std::runtime_error(__func__);
-    if (oldContext && !GuestWritable_nid_no_patch(oldContext, sizeof(*oldContext))) throw std::runtime_error(__func__);
+    if (oldFunction) RequireWritable(oldFunction, sizeof(*oldFunction), __func__);
+    if (oldContext) RequireWritable(oldContext, sizeof(*oldContext), __func__);
 
     std::lock_guard lock(classCallbackMutex);
     auto& callback = classCallbacks[bidi];
