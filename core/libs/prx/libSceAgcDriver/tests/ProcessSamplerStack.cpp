@@ -12,6 +12,12 @@
 
 namespace {
 
+#if defined(__SEH__)
+constexpr bool NativeUnwindFixture = true;
+#else
+constexpr bool NativeUnwindFixture = false;
+#endif
+
 std::atomic<bool> ready{false};
 std::atomic<bool> done{false};
 std::atomic<std::uint64_t> caller{0};
@@ -107,9 +113,9 @@ int main() {
     target.join();
     const auto pc = caller.load();
     DWORD64 imageBase = 0;
-    if (RtlLookupFunctionEntry(pc, &imageBase, nullptr) != nullptr) {
+    if ((RtlLookupFunctionEntry(pc, &imageBase, nullptr) != nullptr) != NativeUnwindFixture) {
         std::filesystem::remove(path);
-        std::fprintf(stderr, "fixture unexpectedly has native Windows unwind metadata\n");
+        std::fprintf(stderr, "fixture unexpectedly %s native Windows unwind metadata\n", NativeUnwindFixture ? "lacks" : "has");
         return 1;
     }
     HMODULE module = nullptr;

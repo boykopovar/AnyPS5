@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -400,16 +401,47 @@ void Http2FlushCookies(int cookieBoxId) {
 
 namespace {
 
-bool ReadCookieText(const char* cookie, std::size_t length, std::string& host) {
-    constexpr std::size_t Chunk = 64 * 1024;
+bool ReadCookieTextLoop(const char* cookie, std::size_t length, std::string& host) {
+    constexpr std::size_t Page = 4096;
     host.clear();
     for (std::size_t done = 0; done < length;) {
-        const std::size_t step = std::min(Chunk, length - done);
+        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(cookie) + done;
+        const std::size_t step = std::min(Page - (addr & (Page - 1)), length - done);
         host.resize(done + step);
-        if (!Http2Guest::CopyIn(host.data() + done, cookie + done, step)) return false;
+        if (Http2Guest::CopyIn(host.data() + done, cookie + done, step)) {
+            if (const void* nul = std::memchr(host.data() + done, '\0', step)) {
+                host.resize(static_cast<const char*>(nul) - host.data());
+                return true;
+            }
+            done += step;
+            continue;
+        }
+        if (step == 1) {
+            host.clear();
+            return false;
+        }
+        for (std::size_t i = 0; i < step; ++i) {
+            char ch = '\0';
+            if (!Http2Guest::CopyIn(&ch, cookie + done + i, 1)) {
+                host.clear();
+                return false;
+            }
+            if (ch == '\0') {
+                host.resize(done + i);
+                return true;
+            }
+            host[done + i] = ch;
+        }
         done += step;
     }
     return true;
+}
+
+bool ReadCookieText(const char* cookie, std::size_t length, std::string& host) {
+    const int savedErrno = errno;
+    const bool ok = ReadCookieTextLoop(cookie, length, host);
+    errno = savedErrno;
+    return ok;
 }
 
 }

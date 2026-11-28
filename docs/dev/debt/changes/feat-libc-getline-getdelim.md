@@ -1,0 +1,5 @@
+# libc
+
+## add Functional
+
+- [getdelim and getline](../../../core/libs/prx/libc/src/StandardStreams.cpp) (libc) - console behavior is unverified. Implemented from POSIX.1-2008 over the stream's `fgetc` path with the stream locked. The delimiter is compared as an unsigned char, as FreeBSD's `memchr` compares it. At end of file with nothing read, the caller's buffer receives an empty string, allocated with one byte if it was null, and the call returns -1. A null argument sets `EINVAL`, an allocation failure `ENOMEM` and an unwritable guest pointer `EFAULT`, and a read error mid-line returns -1 without writing the output. When the caller's buffer is too small, a new one replaces it and the old one is freed only after both pointers are updated; a failed guest write leaves the caller's pointer and capacity unchanged. Differences from FreeBSD 11.4 that remain: the capacity after a read is the exact line size rather than a power of two, and a read that fails after partial data does not return that data.

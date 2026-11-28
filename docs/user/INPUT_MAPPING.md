@@ -155,7 +155,7 @@ The runtime evaluates scheduled events at each controller read, including their 
 
 ## Recording and replaying controller input
 
-Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
+Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. Replay replaces port 0's buttons, sticks and analog triggers on normal reads and keeps the last recorded state after the final change. When a system dialog or the IME intercepts input, the title receives the intercepted state. Playback time keeps advancing during interception. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
 
 ```sh
 APS5_PAD_RECORD=/tmp/fight.txt ./app.elf
@@ -226,6 +226,8 @@ Cross = KEY:F
 ## Mouse as an analog stick
 
 `ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the analog stick selected by `MouseStickTarget` (`Right` by default) from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
+
+An on-screen notice shows the mouse-as-stick state and an available `ToggleMouse` binding for four seconds after a toggle. If losing focus released the mouse, the notice returns when the game window regains focus. Press the displayed binding to capture the mouse again.
 
 The stick tilts in the direction the mouse moves, and further the faster it moves. Speed is measured in counts per second over the time between updates, so the same hand speed gives the same tilt at any frame rate. Any movement tilts the stick at least `MouseDeadzoneOffset`, so slow movement isn't lost inside the game's own deadzone. When the mouse stops, the stick eases back and is centered `MouseDecayMs` after the last movement.
 

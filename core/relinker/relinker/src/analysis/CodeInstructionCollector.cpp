@@ -3,6 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -41,6 +42,9 @@ public:
         std::vector<Domain::VirtualAddress> result;
         for (const auto& [slot, target] : Values) result.push_back(target);
         return result;
+    }
+    std::map<Domain::VirtualAddress, Domain::VirtualAddress> SlotTargets() const override {
+        return Values;
     }
 };
 
@@ -263,6 +267,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     std::set<std::uint64_t> roots;
     std::set<std::uint64_t> functionEntries;
     std::map<std::uint64_t, std::uint64_t> functions;
+    std::set<std::uint64_t> unwindBegins;
     std::map<std::uint64_t, std::uint64_t> tables;
     const auto inTable = [&](std::uint64_t address) { const auto after = tables.upper_bound(address); return after != tables.begin() && address < std::prev(after)->second; };
     const auto addRoot = [&](std::uint64_t address) { if (isCode(address) && !inTable(address)) roots.insert(address); };
@@ -383,8 +388,12 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         }
         if (!mapped) throw Domain::RelinkerException("Code analysis: function is not file-backed", begin);
         const auto [position, inserted] = functions.emplace(begin, begin + size);
-        if (!inserted && !symbolAlias && position->second != begin + size)
-            throw Domain::RelinkerException("Code analysis: conflicting function ranges", begin);
+        if (!inserted && !symbolAlias && position->second != begin + size) {
+            if (position->second < begin + size || unwindBegins.contains(begin))
+                throw Domain::RelinkerException("Code analysis: conflicting function ranges", begin);
+            position->second = begin + size;
+        }
+        if (!symbolAlias) unwindBegins.insert(begin);
         position->second = std::max(position->second, begin + size);
         roots.insert(begin);
     };
@@ -455,6 +464,9 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }
+        } else {
+            const auto symbolOffset = table(6, 0x61000039, symbolCount * 24);
+            symbolCount = ElfReader(bytes).ReadDynamicSymbolCount(symbolOffset, firstSymbol);
         }
     }
     std::uint64_t symbols = 0;

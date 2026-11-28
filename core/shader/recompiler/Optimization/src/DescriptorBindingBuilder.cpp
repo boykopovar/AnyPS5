@@ -409,7 +409,8 @@ std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, st
 }
 
 bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter) {
-    return ((word0 >> 29u) & 3u) != 0u && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
+    const auto reduction = (word0 >> 29u) & 3u;
+    return (reduction == 1u || reduction == 2u) && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
 }
 
 std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter) {
@@ -559,19 +560,9 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& image = info.images[index];
         if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;
         const auto code = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
-        const auto format = code >= 1u && code <= 77u ? GetFormatInfo(static_cast<IrBufferFormat>(code)) : SpirvBufferFormatInfo{};
-        const bool snorm = format.type == SpirvFormatComponentType::Snorm;
-        const auto bits = format.componentBits[0];
-        const bool uniform = format.componentCount != 0u && !format.packedBitfield && bits >= 2u && bits <= 16u && std::all_of(format.componentBits, format.componentBits + format.componentCount, [&](std::uint32_t width) { return width == bits; });
-        const bool quantized = uniform && (format.type == SpirvFormatComponentType::Unorm || snorm);
-        const auto scale = quantized ? static_cast<float>((1u << (snorm ? bits - 1u : bits)) - 1u) : 1.0f;
-        auto reciprocal = 1.0f / scale;
-        while (static_cast<double>(reciprocal) * static_cast<double>(scale) < 1.0) reciprocal = std::nextafter(reciprocal, 2.0f);
+        const auto values = StoreQuantizeValues(code);
         const auto quantize = PipelineSpecialization::StoreQuantizeBase + index * PipelineSpecialization::StoreQuantizeWords;
-        plan.specialization.push_back({quantize, quantized ? 1u : 0u});
-        plan.specialization.push_back({quantize + 1u, std::bit_cast<std::uint32_t>(scale)});
-        plan.specialization.push_back({quantize + 2u, std::bit_cast<std::uint32_t>(reciprocal)});
-        plan.specialization.push_back({quantize + 3u, quantized && snorm ? 1u : 0u});
+        for (std::uint32_t word = 0; word < values.size(); ++word) plan.specialization.push_back({quantize + word, values[word]});
     }
     for (std::uint32_t target = 0; target < exportMappings.size() && !registrationModules; ++target) {
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({PipelineSpecialization::ExportBase + target * 4u + component, (exportMappings[target] >> (component * 2u)) & 3u});

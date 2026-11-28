@@ -340,6 +340,30 @@ void branchAcrossSignedBoundary() {
     require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
+void fsAccessAfterShortAmdOnlySite() {
+    TestProgress progress;
+    const Relinker::Conversion converter(progress);
+    const std::array<std::uint8_t, 14> code{0xc5, 0xf8, 0x53, 0xe2, 0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, 0xc3};
+    for (const auto target : {Relinker::TargetSystem::Windows, Relinker::TargetSystem::Linux}) {
+        Relinker::ConversionOptions options;
+        options.Target = target;
+        options.ToIntel = true;
+        auto source = input();
+        std::copy(code.begin(), code.end(), source.Executable.begin() + 0x1000);
+        Io::WriteU64(source.Executable, 64 + 32, code.size());
+        Io::WriteU64(source.Executable, 64 + 40, code.size());
+        const std::size_t tls = 64 + 3 * 56;
+        Io::WriteU32(source.Executable, tls, 7);
+        Io::WriteU32(source.Executable, tls + 4, 4);
+        for (const std::size_t field : {8u, 16u, 24u}) Io::WriteU64(source.Executable, tls + field, 0x2800);
+        Io::WriteU64(source.Executable, tls + 32, 0);
+        Io::WriteU64(source.Executable, tls + 40, 0x10);
+        Io::WriteU64(source.Executable, tls + 48, 0x10);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Executable.front() == (target == Relinker::TargetSystem::Windows ? 'M' : 0x7f), "An FS access after a short AMD-only instruction did not convert");
+    }
+}
+
 void fsAccessAfterLongZeroPadding() {
     constexpr std::uint64_t base = 0x1000;
     const std::array<std::uint8_t, 9> fsRead{0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
@@ -663,6 +687,7 @@ int main() {
         scanning();
         branchAcrossSignedBoundary();
         fsAccessAfterLongZeroPadding();
+        fsAccessAfterShortAmdOnlySite();
         diagnosticContext();
         cancellation();
         baseRelocations();
