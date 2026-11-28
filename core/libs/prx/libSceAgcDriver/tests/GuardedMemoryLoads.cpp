@@ -268,7 +268,7 @@ private:
         case spv::OpLoad:
             require(!isGuestPointer(instruction[3]), "guest data unexpectedly controls a fixture access");
             require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]) == "scratch_pool_slot" || rootName(instruction[3]) == "gl_LocalInvocationIndex" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
-            return 0;
+            return rootName(instruction[3]) == "vsharp" ? misalignment : 0;
         default: throw std::runtime_error("unsupported opcode in access condition: " + std::to_string(opcode));
         }
     }

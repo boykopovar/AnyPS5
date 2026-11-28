@@ -31,6 +31,10 @@ struct BufferResource {
     bool operator==(const BufferResource& other) const = default;
 };
 
+inline bool ReadsBaseMisalignmentAtRunTime(const BufferResource& buffer) {
+    return !buffer.written && !buffer.atomic;
+}
+
 enum class ImageMipMode { None, DynamicStorage };
 
 namespace EmulatedCompare {

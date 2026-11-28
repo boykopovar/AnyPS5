@@ -7361,6 +7361,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 MovedBuffer entry{index, address, static_cast<std::size_t>(size)};
                 const bool pending = recorder.PendingWriteOverlaps(begin, bytes);
                 if (pending && !movedInPlace(recorder, item, address, size, entry)) return std::nullopt;
+                if (!pending && (address & 3u) != (item.adjustment & 3u)) return std::nullopt;
                 if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back(entry);
                 if (!pending) movedBytes += bytes;
@@ -7457,6 +7458,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
                 inPlace = movedInPlace(*recorder, item, address, size, entry, false) && entry.adjustment == 0;
                 if (!inPlace) entry = MovedBuffer{kept->allocations[element], address, static_cast<std::size_t>(size)};
             }
+            if (!inPlace && (address & 3u) != (item.adjustment & 3u)) return refuse(MoveRefusal::Shape);
             const auto begin = address - item.adjustment;
             const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
             if (!inPlace && maxBytes != 0 && proof.bytes + bytes > maxBytes) return refuse(MoveRefusal::Limit);

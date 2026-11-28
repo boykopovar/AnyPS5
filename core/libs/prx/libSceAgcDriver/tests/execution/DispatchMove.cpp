@@ -59,6 +59,20 @@ alignas(256) constexpr std::array<std::uint32_t, 15> Code{
     0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 16> ScalarCode{
+    Vop2(0x1au, 1u, 0x82u, 0u),
+    0xf4080100u, 0xfa000000u,
+    0xbf8cc07fu,
+    0xf4200202u, 0xfa000000u,
+    0xbf8cc07fu,
+    0x7e040208u,
+    0xf4080100u, 0xfa000010u,
+    0xbf8cc07fu,
+    Vop2(0x25u, 2u, 0xffu, 2u), Constant,
+    0xe0701000u, BufferOperands,
+    0xbf810000u,
+};
+
 class GuestBlock {
 public:
     GuestBlock() {
@@ -124,14 +138,13 @@ void Reset(std::uint32_t* output) {
     std::fill(output, output + Words, Sentinel);
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const std::uint32_t* input, std::uint32_t inputBytes, const std::uint32_t* output) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const void* input, std::uint32_t inputBytes, const std::uint32_t* output, std::span<const std::uint32_t> code = Code) {
     const auto in = BufferDescriptor(input, inputBytes);
     const auto out = BufferDescriptor(output, Bytes);
     std::copy(in.begin(), in.end(), Table.begin());
     std::copy(out.begin(), out.end(), Table.begin() + 4);
     const auto table = reinterpret_cast<std::uintptr_t>(Table.data());
     const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u)};
-    const std::span<const std::uint32_t> code(Code);
     const std::span<const std::uint32_t> tableWords(Table);
     const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {table, std::as_bytes(tableWords)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
@@ -145,7 +158,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& compiled, const std::uint32_t* input, std::uint32_t inputBytes, const std::uint32_t* output, bool wait) {
+void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& compiled, const void* input, std::uint32_t inputBytes, const std::uint32_t* output, bool wait, std::span<const std::uint32_t> code = Code) {
     auto result = compiled;
     std::size_t elements = 0;
     for (auto& binding : result.bindings) {
@@ -157,7 +170,7 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResul
         }
     }
     Require(elements == 2, "dispatch move: the program does not bind an input and an output");
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     if (wait) device.WaitIdle();
 }
 
@@ -166,6 +179,10 @@ void Expect(const std::uint32_t* input, const std::uint32_t* output, std::uint32
         const auto expected = input[tid] + added;
         Require(output[tid] == expected, "dispatch move: " + what + ": lane " + std::to_string(tid) + " is " + Hex(output[tid]) + ", expected " + Hex(expected));
     }
+}
+
+void ExpectAll(const std::uint32_t* output, std::uint32_t expected, const std::string& what) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Require(output[tid] == expected, "dispatch move: " + what + ": lane " + std::to_string(tid) + " is " + Hex(output[tid]) + ", expected " + Hex(expected));
 }
 
 struct Step {
@@ -179,6 +196,23 @@ Step Since(const AgcDriver::VulkanDevice::DispatchMoveCount& before) {
 
 void Print(const char* what, const Step& step) {
     std::printf("dispatch move: %s: checked %llu, exact %llu, moved %llu, refused %llu\n", what, static_cast<unsigned long long>(step.checked), static_cast<unsigned long long>(step.exact), static_cast<unsigned long long>(step.moved), static_cast<unsigned long long>(step.refused));
+}
+
+void RunScalarTests(AgcDriver::VulkanDevice& device, const GuestBlock& guest, bool templates) {
+    Fill(guest.InputB(), 0xb000u);
+    Fill(guest.InputC(), 0xc000u);
+    const auto* unaligned = reinterpret_cast<const std::uint8_t*>(guest.InputC()) + 2;
+    const auto compiled = Compile(device, unaligned, Bytes - 4u, guest.OutputO(), ScalarCode);
+    Reset(guest.OutputO());
+    Run(device, compiled, unaligned, Bytes - 4u, guest.OutputO(), true, ScalarCode);
+    ExpectAll(guest.OutputO(), guest.InputC()[0] + Constant, "a scalar load through a V# two bytes past a DWORD");
+    const auto start = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    Reset(guest.OutputO());
+    Run(device, compiled, guest.InputB(), Bytes, guest.OutputO(), true, ScalarCode);
+    ExpectAll(guest.OutputO(), guest.InputB()[0] + Constant, "a scalar load after its buffer moved from a base two bytes past a DWORD to an aligned one");
+    const auto moved = Since(start);
+    Print("a scalar input moved to a base with other low bits", moved);
+    if (templates) Require(moved.checked == 1 && moved.moved == 0 && moved.refused == 1, "dispatch move: the copy of a template onto a base with other low two bits was not refused");
 }
 
 bool RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
@@ -265,6 +299,7 @@ bool RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
     }
     const auto total = AgcDriver::VulkanDevice::DispatchMoveCounts();
     std::printf("dispatch move: in total: checked %llu, exact %llu, moved %llu, refused %llu, dropped by stage A %llu\n", static_cast<unsigned long long>(total.checked), static_cast<unsigned long long>(total.exact), static_cast<unsigned long long>(total.moved), static_cast<unsigned long long>(total.refused), static_cast<unsigned long long>(total.filtered));
+    RunScalarTests(device, guest, templates);
     return templates;
 }
 
