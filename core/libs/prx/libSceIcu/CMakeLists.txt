@@ -838,6 +838,7 @@ set(ICU_RECOVERED_SOURCES
     FieldPositionIterator.cpp
     FormattedValue.cpp
     Idna.cpp
+    IdnaBackend.cpp
     ListFormatter.cpp
     LocaleDisplayNames.cpp
     NumberFormat.cpp

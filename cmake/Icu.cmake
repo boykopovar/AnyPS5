@@ -5,7 +5,7 @@ set(ICU_NORMALIZATION_SOURCE ${ICU_NORMALIZATION_DIR}/CommonData.cpp)
 file(MAKE_DIRECTORY ${ICU_NORMALIZATION_DIR})
 set(ICU_NORMALIZATION_DECLARATIONS "")
 set(ICU_NORMALIZATION_ENTRIES "")
-set(ICU_NORMALIZATION_FILES nfkc.nrm nfkc_cf.nrm uemoji.icu ulayout.icu)
+set(ICU_NORMALIZATION_FILES nfkc.nrm nfkc_cf.nrm uemoji.icu ulayout.icu uts46.nrm)
 list(LENGTH ICU_NORMALIZATION_FILES ICU_NORMALIZATION_COUNT)
 foreach(ICU_NORMALIZATION_FILE IN LISTS ICU_NORMALIZATION_FILES)
     string(MAKE_C_IDENTIFIER ${ICU_NORMALIZATION_FILE} ICU_NORMALIZATION_NAME)
@@ -126,14 +126,17 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
     ${ICU_SOURCE_DIR}/common/locresdata.cpp
     ${ICU_SOURCE_DIR}/common/lsr.cpp
+    ${ICU_SOURCE_DIR}/common/punycode.cpp
     ${ICU_SOURCE_DIR}/common/resource.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
+    ${ICU_SOURCE_DIR}/common/uidna.cpp
     ${ICU_SOURCE_DIR}/common/uloc.cpp
     ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
     ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
     ${ICU_SOURCE_DIR}/common/uresbund.cpp
     ${ICU_SOURCE_DIR}/common/uresdata.cpp
     ${ICU_SOURCE_DIR}/common/ustrenum.cpp
+    ${ICU_SOURCE_DIR}/common/uts46.cpp
     ${ICU_SOURCE_DIR}/common/utypes.cpp)
 if(WIN32)
     target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/wintz.cpp)

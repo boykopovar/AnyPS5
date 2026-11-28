@@ -283,12 +283,37 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { uidna_openUTS46_nid_postfix(0, &status); });
-        Require(status == incoming);
+        if (auto* idna = uidna_openUTS46_nid_postfix(0, &status)) uidna_close_nid_postfix(idna);
 
         status = incoming;
-        RequireThrows([&] { uidna_openUTS46_nid_postfix(0xffffffffu, &status); });
-        Require(status == incoming);
+        if (auto* idna = uidna_openUTS46_nid_postfix(0xffffffffu, &status)) uidna_close_nid_postfix(idna);
+    }
+
+    {
+        std::int32_t status = 0;
+        auto* idna = uidna_openUTS46_nid_postfix(0, &status);
+        Require(idna != nullptr && status <= 0);
+        std::array<std::int16_t, 8> info{16, 0, 0, 0, 0, 0, 0, 0};
+        auto* pInfo = reinterpret_cast<UIDNAInfo*>(info.data());
+        const std::array<char16_t, 12> domain{u'e', u'x', u'a', u'm', u'p', u'l', u'e', u'.', u'o', u'r', u'g', 0};
+        std::array<char16_t, 32> out{};
+        const std::int32_t asciiLen = uidna_nameToASCII_nid_postfix(idna, domain.data(), 11, out.data(), 32, pInfo, &status);
+        Require(asciiLen == 11 && status <= 0 && info[2] == 0 && info[3] == 0);
+        Require(std::memcmp(out.data(), domain.data(), 12 * sizeof(char16_t)) == 0);
+        status = 0;
+        std::array<char16_t, 32> uni{};
+        const std::int32_t uniLen = uidna_nameToUnicode_nid_postfix(idna, domain.data(), 11, uni.data(), 32, pInfo, &status);
+        Require(uniLen == 11 && status <= 0 && info[2] == 0 && info[3] == 0);
+        Require(std::memcmp(uni.data(), domain.data(), 12 * sizeof(char16_t)) == 0);
+        std::array<std::int16_t, 12> extInfo{};
+        extInfo.fill(0x5a5a);
+        extInfo[0] = 24;
+        status = 0;
+        const std::int32_t extLen = uidna_nameToASCII_nid_postfix(
+            idna, domain.data(), 11, out.data(), 32, reinterpret_cast<UIDNAInfo*>(extInfo.data()), &status);
+        Require(extLen == 11 && status <= 0 && extInfo[0] == 24);
+        for (std::size_t i = 1; i < extInfo.size(); ++i) Require(extInfo[i] == 0);
+        uidna_close_nid_postfix(idna);
     }
 
     RequireThrows([&] { uidna_openUTS46_nid_postfix(0, nullptr); });
