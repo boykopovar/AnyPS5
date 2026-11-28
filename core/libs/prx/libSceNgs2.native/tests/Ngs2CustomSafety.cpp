@@ -136,6 +136,78 @@ static void TestRouting(std::uint32_t oldBuffers) {
     Require(sceNgs2SystemDestroy(system, nullptr) == 0);
 }
 
+#ifdef APS5_NGS2_NATIVE_LIBRARY_TESTS
+
+#include "prx/libc/include/GuestArena.hpp"
+
+#include <cstring>
+
+namespace {
+
+constexpr std::size_t QueueEnumPage = 0x1000;
+constexpr std::uint32_t ProtectionReadOnly = 0x02;
+constexpr std::uint32_t ProtectionReadWrite = 0x04;
+
+struct QueueEnumFixture {
+    std::uint8_t* base = nullptr;
+
+    QueueEnumFixture() {
+        Require(GuestArena::GuestArenaAvailable_nid_postfix());
+        base = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(3 * QueueEnumPage, QueueEnumPage));
+        Require(base != nullptr);
+        GuestArena::GuestArenaCommit_nid_postfix(base, 3 * QueueEnumPage, ProtectionReadWrite, QueueEnumPage);
+        std::memset(base, 0, 3 * QueueEnumPage);
+        const auto ringAddress = reinterpret_cast<std::uint64_t>(base + QueueEnumPage);
+        std::memcpy(base + 0x08, &ringAddress, sizeof(ringAddress));
+        const std::uint64_t count = 3;
+        const std::uint64_t first = 4;
+        std::memcpy(base + 0x18, &count, sizeof(count));
+        std::memcpy(base + 0x20, &first, sizeof(first));
+        const std::uint32_t itemSize = 4;
+        const std::uint32_t ringLength = 5;
+        std::memcpy(base + 0x50, &itemSize, sizeof(itemSize));
+        std::memcpy(base + 0x54, &ringLength, sizeof(ringLength));
+        const std::uint32_t slots[5] = {0x11111111, 0x22222222, 0x33333333, 0x00000000, 0x44444444};
+        std::memcpy(base + QueueEnumPage, slots, sizeof(slots));
+    }
+
+    ~QueueEnumFixture() {
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(base), QueueEnumPage, ProtectionReadWrite);
+        GuestArena::GuestArenaReset_nid_postfix(base, 3 * QueueEnumPage);
+        GuestArena::GuestArenaRelease_nid_postfix(base, 3 * QueueEnumPage);
+    }
+
+    std::uint32_t* Lock() const { return reinterpret_cast<std::uint32_t*>(base + 0x48); }
+    std::uint32_t* Output() const { return reinterpret_cast<std::uint32_t*>(base + 2 * QueueEnumPage); }
+};
+
+void TestQueueEnumWritableLock() {
+    QueueEnumFixture fixture;
+    *fixture.Lock() = 0;
+    auto* out = fixture.Output();
+    out[0] = 0xdeadbeef;
+    out[1] = 0xdeadbeef;
+    out[2] = 0xdeadbeef;
+    Require(sceNgs2ModuleQueueEnumItems(fixture.base, out, 3) == 3);
+    Require(out[0] == 0x44444444 && out[1] == 0x11111111 && out[2] == 0x22222222);
+    Require(*fixture.Lock() == 0);
+}
+
+void TestQueueEnumReadonlyLock() {
+    QueueEnumFixture fixture;
+    auto* out = fixture.Output();
+    out[0] = 0xdeadbeef;
+    out[1] = 0xdeadbeef;
+    out[2] = 0xdeadbeef;
+    GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(fixture.base), QueueEnumPage, ProtectionReadOnly);
+    Require(sceNgs2ModuleQueueEnumItems(fixture.base, out, 3) == 0);
+    Require(out[0] == 0xdeadbeef && out[1] == 0xdeadbeef && out[2] == 0xdeadbeef);
+}
+
+}
+
+#endif
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     const std::string_view test = argv[1];
@@ -144,6 +216,10 @@ int main(int argc, char** argv) {
     else if (test == "configured_gain") TestConfiguredGain();
     else if (test == "routing_one_buffer") TestRouting(1);
     else if (test == "routing_two_buffers") TestRouting(2);
+#ifdef APS5_NGS2_NATIVE_LIBRARY_TESTS
+    else if (test == "queue_enum_writable_lock") TestQueueEnumWritableLock();
+    else if (test == "queue_enum_readonly_lock") TestQueueEnumReadonlyLock();
+#endif
     else return 1;
     return 0;
 }
