@@ -140,7 +140,7 @@ Node* ReadRoot(void* const* rootp) {
 
 void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!rootp) return nullptr;
-    if (!key || !compare) throw std::invalid_argument("tsearch: invalid arguments");
+    if (!compare) throw std::invalid_argument("tsearch: null comparison function");
     if (!GuestWritable_nid_no_patch(rootp, sizeof(void*))) throw std::invalid_argument("tsearch: unwritable root");
     Node* root = ReadRoot(rootp);
     Node* found = nullptr;
@@ -156,7 +156,7 @@ void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VAB
 
 void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!rootp) return nullptr;
-    if (!key || !compare) throw std::invalid_argument("tfind: invalid arguments");
+    if (!compare) throw std::invalid_argument("tfind: null comparison function");
     Node* node = ReadRoot(rootp);
     while (node != nullptr) {
         const int order = compare(key, node->key);
@@ -168,7 +168,7 @@ void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5
 
 void* APS5_VABI tdelete_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!rootp) return nullptr;
-    if (!key || !compare) throw std::invalid_argument("tdelete: invalid arguments");
+    if (!compare) throw std::invalid_argument("tdelete: null comparison function");
     if (!GuestWritable_nid_no_patch(rootp, sizeof(void*))) throw std::invalid_argument("tdelete: unwritable root");
     Node* root = ReadRoot(rootp);
     Node* parent = nullptr;

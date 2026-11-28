@@ -40,6 +40,12 @@ void RegisterAllocator() {
     ApplicationHeapRegister_nid_no_patch(api.data());
 }
 
+int APS5_VABI CompareAddresses(const void* left, const void* right) {
+    const auto a = reinterpret_cast<std::uintptr_t>(left);
+    const auto b = reinterpret_cast<std::uintptr_t>(right);
+    return (a > b) - (a < b);
+}
+
 int APS5_VABI CompareInts(const void* left, const void* right) {
     const int a = *static_cast<const int*>(left);
     const int b = *static_cast<const int*>(right);
@@ -139,12 +145,25 @@ int main() {
     Require(tsearch_nid_postfix(&lone, &single, CompareInts) != nullptr);
     Require(tdelete_nid_postfix(&lone, &single, CompareInts) == &single && single == nullptr);
 
-    Require(Throws([&] { tsearch_nid_postfix(nullptr, &root, CompareInts); }));
+    {
+        void* addresses = nullptr;
+        for (std::uintptr_t key = 0; key < 4; ++key) {
+            void* const* slot = static_cast<void* const*>(tsearch_nid_postfix(reinterpret_cast<const void*>(key), &addresses, CompareAddresses));
+            Require(slot != nullptr && *slot == reinterpret_cast<void*>(key));
+        }
+        void* const* zero = static_cast<void* const*>(tfind_nid_postfix(nullptr, &addresses, CompareAddresses));
+        Require(zero != nullptr && *zero == nullptr);
+        Require(tdelete_nid_postfix(nullptr, &addresses, CompareAddresses) != nullptr);
+        Require(tfind_nid_postfix(nullptr, &addresses, CompareAddresses) == nullptr);
+        for (std::uintptr_t key = 1; key < 4; ++key) Require(tdelete_nid_postfix(reinterpret_cast<const void*>(key), &addresses, CompareAddresses) != nullptr);
+        Require(addresses == nullptr);
+    }
     Require(tsearch_nid_postfix(&missing, nullptr, CompareInts) == nullptr);
     Require(tfind_nid_postfix(&missing, nullptr, CompareInts) == nullptr);
     Require(tdelete_nid_postfix(&missing, nullptr, CompareInts) == nullptr);
     Require(Throws([&] { tfind_nid_postfix(&missing, &root, nullptr); }));
-    Require(Throws([&] { tdelete_nid_postfix(nullptr, &root, CompareInts); }));
+    Require(Throws([&] { tsearch_nid_postfix(&missing, &root, nullptr); }));
+    Require(Throws([&] { tdelete_nid_postfix(&missing, &root, nullptr); }));
     twalk_nid_postfix(root, nullptr);
     Require(root != nullptr);
     {
