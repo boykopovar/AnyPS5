@@ -1,11 +1,23 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace GuestCLocale;
 
@@ -145,7 +157,76 @@ static void CheckDateOrder() {
     Require(_Getdateorder_nid_postfix() == 2);
 }
 
+static void CheckGuardedPointers() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr);
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0);
+            Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED);
+            base = static_cast<unsigned char*>(mapped);
+            Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+            Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 3);
+#endif
+        }
+
+        char* ReadOnly() const { return reinterpret_cast<char*>(base + pageSize); }
+        char* Guard() const { return reinterpret_cast<char*>(base + pageSize * 2); }
+    };
+
+    const auto requireThrows = [](auto&& action) {
+        bool threw = false;
+        try {
+            action();
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    };
+
+    GuardedPages pages;
+    const char valid[] = "abcd";
+    char dest[8]{};
+
+    errno = 61;
+    requireThrows([&] { _Strcoll_nid_postfix(pages.Guard(), pages.Guard() + 4, valid, valid + 4, nullptr); });
+    requireThrows([&] { _Strcoll_nid_postfix(valid, valid + 4, pages.Guard(), pages.Guard() + 4, nullptr); });
+    requireThrows([&] { _Strcoll_nid_postfix(pages.Guard() - 2, pages.Guard() + 2, valid, valid + 4, nullptr); });
+    requireThrows([&] { _Strcoll_nid_postfix(valid + 4, valid, valid, valid + 4, nullptr); });
+
+    requireThrows([&] { _Strxfrm_nid_postfix(dest, dest + 8, pages.Guard(), pages.Guard() + 4, nullptr); });
+    requireThrows([&] { _Strxfrm_nid_postfix(dest, dest + 8, pages.Guard() - 2, pages.Guard() + 2, nullptr); });
+    requireThrows([&] { _Strxfrm_nid_postfix(pages.ReadOnly(), pages.ReadOnly() + 8, valid, valid + 4, nullptr); });
+    requireThrows([&] { _Strxfrm_nid_postfix(pages.Guard(), pages.Guard() + 8, valid, valid + 4, nullptr); });
+    requireThrows([&] { _Strxfrm_nid_postfix(dest + 8, dest, valid, valid + 4, nullptr); });
+    requireThrows([&] { _Strxfrm_nid_postfix(dest, dest + 8, valid + 4, valid, nullptr); });
+    Require(errno == 61);
+}
+
 int main() {
+    CheckGuardedPointers();
     CheckCollation();
     CheckTransform();
     CheckCtype();
