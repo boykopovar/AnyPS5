@@ -349,6 +349,35 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
         self.assertIn(f"git merge-base failed: {expected}", result.stderr)
         self.assertNotIn("no common ancestor", result.stderr)
 
+    def test_a_head_that_looks_like_an_option_is_read_as_a_revision(self):
+        for head in ("--octopus", "-a", "--is-ancestor", "--"):
+            with self.subTest(head=head):
+                result = run_tool(self.repo.path, f"--head={head}")
+                expected = subprocess.run(
+                    ["git", "-C", str(self.repo.path), "merge-base", "--end-of-options", "main", head],
+                    capture_output=True,
+                    encoding="utf-8",
+                ).stderr.strip()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"git merge-base failed: {expected}", result.stderr)
+                self.assertNotIn("usage: git", result.stderr)
+
+
+    def test_refs_whose_names_start_with_a_dash_are_compared_as_revisions(self):
+        self.repo.git("update-ref", "refs/tags/-a", "HEAD")
+        self.repo.git("update-ref", "refs/heads/-b", "main")
+        result = run_tool(self.repo.path, "--head=-a")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith("-a is 0 ahead and 0 behind main"), result.stdout)
+        result = subprocess.run([sys.executable, str(TOOL), "--repo", str(self.repo.path), "--base=-b", "--head", "main"],
+                                capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith("main is 0 ahead and 0 behind -b"), result.stdout)
+
+    def test_a_commit_message_search_head_is_resolved(self):
+        result = run_tool(self.repo.path, "--head=:/initial")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith(":/initial is 0 ahead and 0 behind main"), result.stdout)
 
     def test_git_without_write_tree_names_the_version_it_needs(self):
         def old_git(repo, *args, check=True):

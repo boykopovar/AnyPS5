@@ -29,9 +29,18 @@ def names(repo, *args):
     return [name for name in git(repo, *args).stdout.split("\0") if name]
 
 
+def end_of_options(*names):
+    return ("--end-of-options",) if any(name.startswith("-") for name in names) else ()
+
+
+def commit_id(repo, name):
+    found = git(repo, "rev-parse", "--verify", *end_of_options(name), name).stdout.strip()
+    return git(repo, "rev-parse", "--verify", f"{found}^{{commit}}").stdout.strip()
+
+
 def resolve_base(repo, name):
     for candidate in (name,) if name else BASES:
-        if git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^0", check=False).returncode == 0:
+        if git(repo, "rev-parse", "--verify", "--quiet", *end_of_options(candidate), f"{candidate}^0", check=False).returncode == 0:
             return candidate
     raise RuntimeError(f"no base ref found ({name or ', '.join(BASES)}); fetch the upstream remote first")
 
@@ -67,16 +76,17 @@ def merged_pull_requests(repo, mergebase, base, paths):
 
 def report(repo, base, head):
     repo = git(repo, "rev-parse", "--show-toplevel").stdout.removesuffix("\n")
-    found = git(repo, "merge-base", base, head, check=False)
+    found = git(repo, "merge-base", *end_of_options(base, head), base, head, check=False)
     if found.returncode == 1:
         raise RuntimeError(f"{head} and {base} have no common ancestor")
     if found.returncode:
         raise RuntimeError(f"git merge-base failed: {found.stderr.strip()}")
     mergebase = found.stdout.strip()
-    behind = int(git(repo, "rev-list", "--count", f"{head}..{base}", "--").stdout)
-    ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}", "--").stdout)
-    mine = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, head, "--"))
-    theirs = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, base, "--"))
+    base_id, head_id = commit_id(repo, base), commit_id(repo, head)
+    behind = int(git(repo, "rev-list", "--count", f"{head_id}..{base_id}", "--").stdout)
+    ahead = int(git(repo, "rev-list", "--count", f"{base_id}..{head_id}", "--").stdout)
+    mine = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, head_id, "--"))
+    theirs = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, base_id, "--"))
     shared = sorted(mine & theirs)
     return {
         "base": base,
@@ -84,9 +94,9 @@ def report(repo, base, head):
         "mergebase": mergebase,
         "behind": behind,
         "ahead": ahead,
-        "conflicts": conflicts(repo, base, head),
+        "conflicts": conflicts(repo, base_id, head_id),
         "shared": shared,
-        "pulls": merged_pull_requests(repo, mergebase, base, shared),
+        "pulls": merged_pull_requests(repo, mergebase, base_id, shared),
     }
 
 
