@@ -14,6 +14,7 @@
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libSceAudioOut/include/HostPause.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <algorithm>
 #include <array>
@@ -1087,6 +1088,95 @@ void testFrameLimit() {
     LibcRunShutdown_nid_postfix();
 }
 
+unsigned displayWindowId() {
+    for (unsigned id = 1; id < 64; ++id) {
+        if (SDL_GetWindowFromID(id) != nullptr) return id;
+    }
+    throw std::runtime_error("the display window was not found");
+}
+
+void pushKey(unsigned windowId, SDL_Scancode key) {
+    SDL_Event event{};
+    event.type = SDL_KEYDOWN;
+    event.key.windowID = windowId;
+    event.key.keysym.scancode = key;
+    check(SDL_PushEvent(&event) == 1, "the key event was not queued");
+}
+
+bool waitForAudioPause(bool paused) {
+    for (int i = 0; i < 500; ++i) {
+        if (AudioOutHostPaused_nid_no_patch() == paused) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+void testHostPause() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::vector<std::byte> allocation(6 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    fillBuffer(storage, 259, 137);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    const auto flipCount = [&] {
+        std::lock_guard lock(cfg->mutex);
+        return cfg->flipStatus.count;
+    };
+    const auto waitForCount = [&](std::uint64_t target) {
+        std::unique_lock lock(cfg->mutex);
+        const bool reached = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == target; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        return reached;
+    };
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the first flip was refused");
+    check(waitForCount(1), "the first flip did not present");
+    const unsigned windowId = displayWindowId();
+    check(!AudioOutHostPaused_nid_no_patch(), "the audio is paused before any key");
+
+    pushKey(windowId, SDL_SCANCODE_F7);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    check(!AudioOutHostPaused_nid_no_patch(), "a key other than the pause key paused the audio");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 2) == 0 && waitForCount(2), "a flip did not present after an unrelated key");
+
+    pushKey(windowId, SDL_SCANCODE_F9);
+    check(waitForAudioPause(true), "the pause key did not pause the audio");
+    const auto held = flipCount();
+    std::uint64_t submitted = 0;
+    for (int i = 0; i < static_cast<int>(VIDEO_OUT_FLIP_QUEUE_CAPACITY); ++i) {
+        check(sceVideoOutSubmitFlip(handle, 0, 1, 100 + i) == 0, "a flip within the queue capacity was refused during the pause");
+        ++submitted;
+    }
+    check(submitted == VIDEO_OUT_FLIP_QUEUE_CAPACITY, "the flip queue did not fill to its capacity during the pause");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    check(flipCount() == held, "a flip presented during the pause");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipStatus.flipPendingNum == static_cast<int>(submitted), "the queued flips are not all pending during the pause");
+    }
+    std::atomic<int> waitingResult{-1};
+    std::thread waiting([&] { waitingResult.store(sceVideoOutSubmitFlip(handle, 0, 1, 100 + static_cast<int>(submitted))); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    check(waitingResult.load() == -1, "a flip past the queue capacity returned during the pause");
+
+    pushKey(windowId, SDL_SCANCODE_F9);
+    check(waitForAudioPause(false), "the pause key did not resume the audio");
+    waiting.join();
+    check(waitingResult.load() == 0, "the flip that waited for room during the pause was refused after the resume");
+    ++submitted;
+    check(waitForCount(held + submitted), "the queued flips did not present after the resume");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipStatus.flipPendingNum == 0 && cfg->flipStatus.flipArg == static_cast<std::int64_t>(100 + submitted - 1), "the resumed flips left the wrong status");
+    }
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 3) == 0 && waitForCount(held + submitted + 1), "a flip did not present after the resume");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 void testFlipBacklog() {
     const char* limit = std::getenv("ANYPS5_FPS_LIMIT");
     check(limit != nullptr && std::string(limit) == "20", "the flip backlog test runs with ANYPS5_FPS_LIMIT=20");
@@ -1719,6 +1809,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
         else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
         else if (argc == 2 && std::string(argv[1]) == "fresh") testFreshHandleCalls();
+        else if (argc == 2 && std::string(argv[1]) == "hostpause") testHostPause();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;

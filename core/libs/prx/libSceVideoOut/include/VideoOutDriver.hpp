@@ -23,6 +23,7 @@
 #include "prx/libSceVideoOut/include/HostDisplayMode.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
 #endif
+#include "prx/libSceVideoOut/include/PresentHold.hpp"
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -218,6 +219,7 @@ struct FlipQueue {
     TimedWait::Condition changed;
     std::list<std::shared_ptr<FlipRequest>> requests;
     std::atomic<std::size_t> reservations = 0;
+    PresentHold hold;
     std::exception_ptr failure;
     bool stopping = false;
 };
