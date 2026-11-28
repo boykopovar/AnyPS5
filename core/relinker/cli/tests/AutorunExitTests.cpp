@@ -83,11 +83,12 @@ int main(int, char* argv[]) {
     int result = 0;
     std::vector<std::filesystem::path> aliases;
     try {
-#ifdef _WIN32
         std::filesystem::copy_file(executable, child);
-#else
-        std::filesystem::create_symlink(executable, child);
+#ifndef _WIN32
         const auto changed = changeTime(executable);
+        constexpr auto executeBits = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+        std::filesystem::permissions(child, executeBits, std::filesystem::perm_options::add);
+        const auto fixtureChanged = changeTime(child);
 #endif
         for (const char* value : {"1", "0", "yes", "", "10", "1 "}) {
             SetNoPause(value);
@@ -179,6 +180,7 @@ int main(int, char* argv[]) {
         std::ofstream(script) << "#!/bin/sh\nexit 42\n";
         std::filesystem::permissions(script, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
         if (Cli::Autorun(script.string(), false) != 42) throw std::runtime_error("Autorun did not make a non-executable output executable");
+        if (changeTime(child) != fixtureChanged) throw std::runtime_error("Autorun changed the ctime of the prepared child executable");
 #endif
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
