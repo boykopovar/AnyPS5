@@ -492,6 +492,23 @@ bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
     return true;
 }
 
+VkDeviceSize ReleaseRetainedImageMemory(const Context& context, VkDeviceSize bytes) {
+    return context.bufferPool != nullptr ? context.bufferPool->ReleaseRetainedImages(bytes) : 0;
+}
+
+VkDeviceSize BufferPool::ReleaseRetainedImages(VkDeviceSize bytes) {
+    if (bytes == 0) return 0;
+    std::vector<BufferAllocation> evicted;
+    {
+        std::lock_guard lock(mutex);
+        VkDeviceSize selected = 0;
+        while (selected < bytes && imageSlots != 0 && evictOldestImage(evicted)) selected += evicted.back().allocationBytes;
+    }
+    VkDeviceSize released = 0;
+    for (const auto& gone : evicted) released += destroy(gone, true);
+    return released;
+}
+
 VkDeviceSize BufferPool::ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now) {
     if (bytes == 0) return 0;
     const auto heaps = std::min<std::uint32_t>(memoryProperties.memoryHeapCount, VK_MAX_MEMORY_HEAPS);
