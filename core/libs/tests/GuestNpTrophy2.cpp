@@ -14,30 +14,31 @@ static void Require(bool value) { if (!value) std::abort(); }
 static void APS5_VABI OnUnlock(int, int, void*) {}
 
 static void ResolvePendingExports(const char* path) {
+    using ExportFn = int (APS5_VABI*)(void);
     struct Export {
-        int (APS5_VABI* function)(void);
+        ExportFn function;
         const char* name;
     };
     const Export exports[] = {
-        {sceNpTrophy2SystemAbortHandle, "sceNpTrophy2SystemAbortHandle"},
-        {sceNpTrophy2SystemBuildGroupIconUri, "sceNpTrophy2SystemBuildGroupIconUri"},
-        {sceNpTrophy2SystemBuildRewardIconUri, "sceNpTrophy2SystemBuildRewardIconUri"},
-        {sceNpTrophy2SystemBuildTrophyIconUri, "sceNpTrophy2SystemBuildTrophyIconUri"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemAbortHandle), "sceNpTrophy2SystemAbortHandle"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemBuildGroupIconUri), "sceNpTrophy2SystemBuildGroupIconUri"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemBuildRewardIconUri), "sceNpTrophy2SystemBuildRewardIconUri"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemBuildTrophyIconUri), "sceNpTrophy2SystemBuildTrophyIconUri"},
         {sceNpTrophy2SystemCheckCallback, "sceNpTrophy2SystemCheckCallback"},
         {sceNpTrophy2SystemCheckNetSyncTitles, "sceNpTrophy2SystemCheckNetSyncTitles"},
-        {sceNpTrophy2SystemCreateHandle, "sceNpTrophy2SystemCreateHandle"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemCreateHandle), "sceNpTrophy2SystemCreateHandle"},
         {sceNpTrophy2SystemDebugLockTrophy, "sceNpTrophy2SystemDebugLockTrophy"},
         {sceNpTrophy2SystemDebugUnlockTrophy, "sceNpTrophy2SystemDebugUnlockTrophy"},
-        {sceNpTrophy2SystemDestroyContext, "sceNpTrophy2SystemDestroyContext"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemDestroyContext), "sceNpTrophy2SystemDestroyContext"},
         {sceNpTrophy2SystemGetTrophyDetails, "sceNpTrophy2SystemGetTrophyDetails"},
         {sceNpTrophy2SystemGetTrophyGroupConf, "sceNpTrophy2SystemGetTrophyGroupConf"},
         {sceNpTrophy2SystemGetTrophySetArray, "sceNpTrophy2SystemGetTrophySetArray"},
         {sceNpTrophy2SystemGetTrophyTitleConf, "sceNpTrophy2SystemGetTrophyTitleConf"},
         {sceNpTrophy2SystemGetTrophyTitleDetails, "sceNpTrophy2SystemGetTrophyTitleDetails"},
         {sceNpTrophy2SystemGetTrpIconByUri, "sceNpTrophy2SystemGetTrpIconByUri"},
-        {sceNpTrophy2SystemIsServerAvailable, "sceNpTrophy2SystemIsServerAvailable"},
-        {sceNpTrophy2SystemRegisterTitleSyncedCallback, "sceNpTrophy2SystemRegisterTitleSyncedCallback"},
-        {sceNpTrophy2SystemRegisterTitleUpdateCallback, "sceNpTrophy2SystemRegisterTitleUpdateCallback"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemIsServerAvailable), "sceNpTrophy2SystemIsServerAvailable"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemRegisterTitleSyncedCallback), "sceNpTrophy2SystemRegisterTitleSyncedCallback"},
+        {reinterpret_cast<ExportFn>(&sceNpTrophy2SystemRegisterTitleUpdateCallback), "sceNpTrophy2SystemRegisterTitleUpdateCallback"},
         {sceNpTrophy2SystemRemoveAll, "sceNpTrophy2SystemRemoveAll"},
         {sceNpTrophy2SystemRemoveTitleData, "sceNpTrophy2SystemRemoveTitleData"},
         {sceNpTrophy2SystemRemoveUserData, "sceNpTrophy2SystemRemoveUserData"},
