@@ -6010,6 +6010,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
         prepared->describedLayoutKey = described.mainKey;
         prepared->objects = computePipeline(context, shader, described.layouts.main, described.mainKey, pushStages, programAddress);
     }
+    if (prepared->objects != nullptr && prepared->objects->storePages) static_cast<void>(specializedComputePipeline(context, shader, *prepared->objects, {0u, 0u, 0u}, true));
     return prepared;
 }
 
