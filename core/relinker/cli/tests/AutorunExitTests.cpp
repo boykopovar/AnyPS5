@@ -60,6 +60,7 @@ int main(int, char* argv[]) {
     const auto name = executable.stem().string();
     if (name.starts_with("anyps5-autorun-child-")) {
         if (name.find("signal") != std::string::npos) std::raise(SIGILL);
+        if (name.find("environment") != std::string::npos) return std::getenv("DYLD_FALLBACK_LIBRARY_PATH") ? 42 : 43;
         return 42;
     }
     auto child = std::filesystem::temp_directory_path() / ("anyps5-autorun-child-" +
@@ -67,6 +68,7 @@ int main(int, char* argv[]) {
 #ifndef _WIN32
     const auto signaled = child.parent_path() / ("anyps5-autorun-child-signal-" + child.filename().string());
     const auto script = child.parent_path() / ("anyps5-autorun-script-" + child.filename().string());
+    const auto environmentChild = child.parent_path() / ("anyps5-autorun-child-environment-" + child.filename().string());
     const auto changeTime = [](const std::filesystem::path& path) {
         struct stat info {};
         if (stat(path.c_str(), &info) != 0) throw std::runtime_error("Cannot stat " + path.string());
@@ -175,6 +177,11 @@ int main(int, char* argv[]) {
         std::filesystem::create_symlink(child, signaled);
         const int code = Cli::Autorun(signaled.string(), false);
         if (code != 128 + SIGILL) throw std::runtime_error("Autorun lost the child signal");
+        std::filesystem::create_symlink(child, environmentChild);
+        if (setenv("DYLD_FALLBACK_LIBRARY_PATH", "/usr/lib", 1) != 0) throw std::runtime_error("Cannot set the dyld environment");
+        const int environmentCode = Cli::Autorun(environmentChild.string(), false);
+        unsetenv("DYLD_FALLBACK_LIBRARY_PATH");
+        if (environmentCode != 42) throw std::runtime_error("Autorun dropped DYLD_FALLBACK_LIBRARY_PATH");
         if (changeTime(executable) != changed) throw std::runtime_error("Autorun changed the mode of an output that was already executable");
         std::ofstream(script) << "#!/bin/sh\nexit 42\n";
         std::filesystem::permissions(script, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
@@ -189,6 +196,7 @@ int main(int, char* argv[]) {
     std::filesystem::remove(child);
 #ifndef _WIN32
     std::filesystem::remove(signaled);
+    std::filesystem::remove(environmentChild);
     std::filesystem::remove(script);
 #endif
     return result;
