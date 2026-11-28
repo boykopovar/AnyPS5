@@ -237,8 +237,81 @@ static int32_t EncoderRefusal(PKImageEncode* pIE, int lookup, int header) {
     return JXR_WMP_ACCEPTED;
 }
 
+static int32_t RowSpanBytes(const PKPixelFormatGUID* format, uint64_t width, uint64_t lines, uint64_t stride,
+                            size_t* bytes, int32_t* overflow) {
+    PKPixelInfo info;
+    uint64_t rowBytes = 0;
+    uint64_t effectiveRows = lines;
+    uint64_t span = 0;
+    *bytes = 0;
+    *overflow = 0;
+    memset(&info, 0, sizeof(info));
+    info.pGUIDPixFmt = format;
+    if (Failed(PixelFormatLookup(&info, LOOKUP_FORWARD))) return 0;
+    if (width == 0 || lines == 0) return 1;
+    if (info.cfColorFormat == YUV_420) {
+        const uint64_t pairs = (width + 1) / 2;
+        if (pairs > UINT64_MAX / 6) {
+            *overflow = 1;
+            return 1;
+        }
+        rowBytes = pairs * 6;
+        effectiveRows = (lines + 1) / 2;
+    } else if (info.cfColorFormat == YUV_422) {
+        const uint64_t pairs = (width + 1) / 2;
+        if (pairs > UINT64_MAX / 4) {
+            *overflow = 1;
+            return 1;
+        }
+        rowBytes = pairs * 4;
+    } else {
+        if (info.cbitUnit != 0 && width > (UINT64_MAX - 7) / info.cbitUnit) {
+            *overflow = 1;
+            return 1;
+        }
+        rowBytes = (width * info.cbitUnit + 7) / 8;
+    }
+    if (effectiveRows > 1 && stride > (UINT64_MAX - rowBytes) / (effectiveRows - 1)) {
+        *overflow = 1;
+        return 1;
+    }
+    span = (effectiveRows - 1) * stride + rowBytes;
+    if (span > SIZE_MAX) {
+        *overflow = 1;
+        return 1;
+    }
+    *bytes = (size_t)span;
+    return 1;
+}
+
 size_t JxrWmpEncodeParameterSize_nid_no_patch(void) {
     return sizeof(CWMIStrCodecParam);
+}
+
+int32_t JxrWmpEncodePixelSpan_nid_no_patch(const void* encoder, uint32_t lines, uint32_t stride, size_t* bytes,
+                                           int32_t* overflow) {
+    const PKImageEncode* pIE = (const PKImageEncode*)encoder;
+    return RowSpanBytes(&pIE->guidPixFormat, pIE->uWidth, lines, stride, bytes, overflow);
+}
+
+int32_t JxrWmpDecodePixelSpan_nid_no_patch(const void* decoder, int32_t height, uint32_t stride,
+                                           size_t* bytes, int32_t* overflow) {
+    const PKImageDecode* pID = (const PKImageDecode*)decoder;
+    CWMImageInfo info = pID->WMP.wmiI;
+    CWMIStrCodecParam parameters = pID->WMP.wmiSCP;
+    if (height <= 0) {
+        *bytes = 0;
+        *overflow = 0;
+        return 1;
+    }
+#ifdef REENTRANT_MODE
+    if (pID->WMP.DecoderCurrMBRow == 0)
+#endif
+    {
+        if (parameters.pWStream == NULL || WMPhotoValidate(&info, &parameters) != ICERR_OK) return 0;
+    }
+    const uint64_t width = info.oOrientation >= O_RCW ? info.cROIHeight : info.cROIWidth;
+    return RowSpanBytes(&pID->guidPixFormat, width, (uint64_t)height, stride, bytes, overflow);
 }
 
 int64_t JxrWmpEncodeInitialize_nid_no_patch(void* encoder, void* stream, void* parameters, size_t size) {

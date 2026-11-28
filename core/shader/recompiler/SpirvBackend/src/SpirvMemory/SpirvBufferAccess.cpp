@@ -180,6 +180,16 @@ std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t inde
     return pointer;
 }
 
+std::uint32_t EmitQwordAtomicLockPointer(SpirvEmitterState& state, std::uint32_t guest) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto qword = Binary(state, spv::OpShiftRightLogical, u64, guest, ConstantU32(state, 3u));
+    const auto low = Unary(state, spv::OpUConvert, u32, qword);
+    const auto high = Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, u64, qword, ConstantU32(state, 32u)));
+    const auto mixed = Binary(state, spv::OpBitwiseXor, u32, Binary(state, spv::OpIMul, u32, low, ConstantU32(state, 0x9e3779b1u)), Binary(state, spv::OpIMul, u32, high, ConstantU32(state, 0x85ebca77u)));
+    return EmitAtomicLockPointer(state, Binary(state, spv::OpBitwiseXor, u32, mixed, Binary(state, spv::OpShiftRightLogical, u32, mixed, ConstantU32(state, 16u))));
+}
+
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem) {
     MemoryResourceAccess access;
     access.kind = mem.kind;

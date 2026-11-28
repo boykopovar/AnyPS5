@@ -107,7 +107,7 @@ int main() {
         setWorkers.reserve(8);
         for (int i = 0; i < 8; ++i) {
             setWorkers.emplace_back([&, i] {
-                while (!startSet.load(std::memory_order_acquire)) {}
+                while (!startSet.load(std::memory_order_acquire)) { std::this_thread::yield(); }
                 for (int iter = 0; iter < 50; ++iter) {
                     if (sceCoredumpSetUserDataType(static_cast<std::int32_t>(i * 1000 + iter)) != 0) {
                         errorCount.fetch_add(1, std::memory_order_relaxed);
@@ -120,6 +120,71 @@ int main() {
             w.join();
         }
         Require(errorCount.load() == 0);
+    }
+
+    for (int round = 0; round < 128; ++round) {
+        std::atomic<int> readyReg{0};
+        std::atomic<bool> startReg{false};
+        std::atomic<int> regOkCount{0};
+        std::atomic<int> regAlreadyCount{0};
+        std::atomic<int> regUnexpectedCount{0};
+        std::vector<std::thread> regWorkers;
+        regWorkers.reserve(8);
+        for (int i = 0; i < 8; ++i) {
+            regWorkers.emplace_back([&, i] {
+                readyReg.fetch_add(1, std::memory_order_release);
+                while (!startReg.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+                const int rc = sceCoredumpRegisterCoredumpHandler(
+                    reinterpret_cast<std::uint64_t>(&DummyHandler),
+                    0x4000,
+                    static_cast<std::uint64_t>(i));
+                if (rc == 0) {
+                    regOkCount.fetch_add(1, std::memory_order_relaxed);
+                } else if (rc == CoredumpAlreadyRegistered) {
+                    regAlreadyCount.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    regUnexpectedCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        while (readyReg.load(std::memory_order_acquire) < 8) { std::this_thread::yield(); }
+        startReg.store(true, std::memory_order_release);
+        for (auto& w : regWorkers) {
+            w.join();
+        }
+        Require(regOkCount.load() == 1);
+        Require(regAlreadyCount.load() == 7);
+        Require(regUnexpectedCount.load() == 0);
+
+        std::atomic<int> readyUnreg{0};
+        std::atomic<bool> startUnreg{false};
+        std::atomic<int> unregOkCount{0};
+        std::atomic<int> unregNotRegCount{0};
+        std::atomic<int> unregUnexpectedCount{0};
+        std::vector<std::thread> unregWorkers;
+        unregWorkers.reserve(8);
+        for (int i = 0; i < 8; ++i) {
+            unregWorkers.emplace_back([&] {
+                readyUnreg.fetch_add(1, std::memory_order_release);
+                while (!startUnreg.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+                const int rc = sceCoredumpUnregisterCoredumpHandler();
+                if (rc == 0) {
+                    unregOkCount.fetch_add(1, std::memory_order_relaxed);
+                } else if (rc == CoredumpNotRegistered) {
+                    unregNotRegCount.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    unregUnexpectedCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        while (readyUnreg.load(std::memory_order_acquire) < 8) { std::this_thread::yield(); }
+        startUnreg.store(true, std::memory_order_release);
+        for (auto& w : unregWorkers) {
+            w.join();
+        }
+        Require(unregOkCount.load() == 1);
+        Require(unregNotRegCount.load() == 7);
+        Require(unregUnexpectedCount.load() == 0);
     }
 
     return 0;

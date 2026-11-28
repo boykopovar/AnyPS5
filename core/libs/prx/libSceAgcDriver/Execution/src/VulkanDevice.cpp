@@ -3,6 +3,7 @@
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CompileBudget.hpp"
@@ -703,6 +704,8 @@ struct VulkanDevice::State {
     bool samplerFilterMinmax = false;
     bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
+    bool borderColorSwizzle = false;
+    bool borderColorSwizzleFromImage = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
@@ -1326,6 +1329,7 @@ struct VulkanDevice::State {
                 destroyPool(device, pool, nullptr);
             }
             if (settlePool != VK_NULL_HANDLE) destroyPool(device, settlePool, nullptr);
+            Graphics::DestroyRecordingPools(context);
             Graphics::DestroyDeferredObjects(device);
             destroyDevice(device, nullptr);
             Graphics::MemoryAccounting::ForgetDevice(device);
@@ -2089,6 +2093,20 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (state->nonSeamlessCubeMap) deviceExtensions.push_back(VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME);
     }
     nonSeamlessCubeFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT};
+    VkPhysicalDeviceBorderColorSwizzleFeaturesEXT borderColorSwizzleFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT};
+    if (hasExtension(VK_EXT_BORDER_COLOR_SWIZZLE_EXTENSION_NAME) && hasExtension(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &borderColorSwizzleFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->borderColorSwizzle = borderColorSwizzleFeatures.borderColorSwizzle == VK_TRUE;
+        state->borderColorSwizzleFromImage = state->borderColorSwizzle && borderColorSwizzleFeatures.borderColorSwizzleFromImage == VK_TRUE;
+        if (state->borderColorSwizzle) {
+            deviceExtensions.push_back(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
+            deviceExtensions.push_back(VK_EXT_BORDER_COLOR_SWIZZLE_EXTENSION_NAME);
+        }
+    }
+    borderColorSwizzleFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT};
+    borderColorSwizzleFeatures.borderColorSwizzle = state->borderColorSwizzle ? VK_TRUE : VK_FALSE;
+    borderColorSwizzleFeatures.borderColorSwizzleFromImage = state->borderColorSwizzleFromImage ? VK_TRUE : VK_FALSE;
     VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
     const bool portabilitySubset = hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
     if (portabilitySubset) {
@@ -2422,6 +2440,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (state->nonSeamlessCubeMap) {
         nonSeamlessCubeFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &nonSeamlessCubeFeatures;
+    }
+    if (state->borderColorSwizzle) {
+        borderColorSwizzleFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
+        deviceInfo.pNext = &borderColorSwizzleFeatures;
     }
     if (portabilitySubset) {
         portabilityFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
@@ -2883,6 +2905,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
         state->scaler = std::make_unique<PresentationScaler>(graphicsContext(), VK_FORMAT_B8G8R8A8_UNORM, state->surfaceFormat);
         state->presentation = std::make_unique<PresentationPass>(graphicsContext(), state->presentSlots.size());
+        if (PresentationStretches_nid_postfix()) std::fprintf(stderr, "[present] ANYPS5_ASPECT=stretch: the display buffer fills the window, without keeping its aspect ratio\n");
         const auto upscale = SelectUpscaleMode(std::getenv("ANYPS5_UPSCALE"), std::getenv("ANYPS5_FSR_SHARPNESS"));
         if (upscale.fsr) {
             state->upscaler = std::make_unique<PresentationUpscaler>(graphicsContext(), state->presentSlots.size(), upscale.sharpness);
@@ -3173,15 +3196,36 @@ bool OpportunisticReap() {
     return enabled;
 }
 
+constexpr std::uint64_t SettledLabelFlips = 3;
+
+bool LabelMappingSettled(const GuestAllocations::Range& range) {
+    struct FirstLabel {
+        std::uint64_t serial;
+        std::uint64_t flip;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<std::uint64_t, FirstLabel> labelled;
+    const auto flip = Graphics::StorageTexture::FlipSerial();
+    std::lock_guard lock(mutex);
+    if (labelled.size() >= 4096) labelled.clear();
+    const auto [entry, inserted] = labelled.try_emplace(range.allocationAddress, FirstLabel{range.backingSerial, flip});
+    if (inserted || entry->second.serial != range.backingSerial) {
+        entry->second = FirstLabel{range.backingSerial, flip};
+        return false;
+    }
+    return flip - entry->second.flip >= SettledLabelFlips;
 }
 
-void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
-    if (!Graphics::StorageTexture::AnyPending()) return;
+}
+
+bool VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
+    if (!Graphics::StorageTexture::AnyPending()) return true;
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", GuestMemory::YieldToGpuMutexWaiters(stop), state->device));
+    const bool finished = Graphics::StorageTexture::FlushAllPendingUntil("idle", GuestMemory::YieldToGpuMutexWaiters(stop), state->device);
     SubmitRecorded(reapFirst);
+    return finished;
 }
 
 void VulkanDevice::SubmitRecorded(bool reapFirst) {
@@ -3296,11 +3340,12 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     const auto* import = Graphics::ExistingHostImportFor(context, address, bytes.size());
     std::shared_ptr<Graphics::HostImport> unregistered;
     if (import == nullptr) {
+        std::shared_ptr<const GuestAllocations::Range> guestRange;
         const bool syncGuest = syncUnimported && [&] {
-            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
-            return range != nullptr && range->address < address + bytes.size();
+            guestRange = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
+            return guestRange != nullptr && guestRange->address < address + bytes.size();
         }();
-        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size())) {
+        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size()) && !LabelMappingSettled(*guestRange)) {
             import = Graphics::HostImportFor(context, address, bytes.size(), Graphics::ImportRequester::Label);
             if (import == nullptr) return unimported();
         }
@@ -4541,7 +4586,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     const auto blendPlaneInto = [&](VkImage image, VkFormat format, VkExtent2D extent) {
         if (plane == nullptr) return;
         bindPlane();
-        state->planePass->RecordOverlay(commands, planeSlot, image, format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        state->planePass->RecordOverlay(commands, planeSlot, image, format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
     };
     if (!drawn && !upscaled) {
         pipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -4648,7 +4693,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (plane != nullptr) {
         bindPlane();
-        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, false);
         if (planeSource.resident != nullptr) {
             planeBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
             planeBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -4914,6 +4959,10 @@ bool VulkanDevice::SupportsImageFormat(VkFormat format, VkImageUsageFlags usage)
     return query(state->physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &properties) == VK_SUCCESS;
 }
 
+bool VulkanDevice::SupportsVertexBufferFormat(VkFormat format) const {
+    return Graphics::QueryVertexBufferFormat(graphicsContext(), format);
+}
+
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
     auto target = state->shaderProfile->Target();
@@ -4950,7 +4999,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.robustBufferAccess2 = state->robustBufferAccess2;
     target.exactRobustLoads = state->exactRobustLoads;
     target.waveLdsMemoryBarriers = !state->subgroupControlBarriers;
-    target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY || state->driverId == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+    target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY || state->driverId == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS || state->driverId == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
     target.ldsLockFences = state->ldsLockFences;
@@ -4958,6 +5007,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
     target.meshInlineFunctions = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_INLINE_FUNCTIONS") == nullptr;
     target.spannedShuffleThroughMemory = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_SPANNED_SHUFFLE_EXCHANGE") == nullptr;
+    target.spannedUnreachableStays = std::getenv("APS5_SPANNED_UNREACHABLE_STAYS") != nullptr;
+    target.spannedUnreachableVerify = std::getenv("APS5_VERIFY_SPANNED_UNREACHABLE_STAYS") != nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.maxImageArrayLayers = limits.maxImageArrayLayers;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
@@ -4995,6 +5046,10 @@ bool VulkanDevice::SamplerFilterMinmax() const {
 
 bool VulkanDevice::SamplerMirrorClampToEdge() const {
     return state->samplerMirrorClampToEdge;
+}
+
+bool VulkanDevice::BorderColorSwizzle() const {
+    return state->borderColorSwizzle;
 }
 
 bool VulkanDevice::ConservativeRasterization() const {
@@ -5090,6 +5145,8 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.samplerFilterMinmax = state->samplerFilterMinmax;
     context.samplerMirrorClampToEdge = state->samplerMirrorClampToEdge;
     context.nonSeamlessCubeMap = state->nonSeamlessCubeMap;
+    context.borderColorSwizzle = state->borderColorSwizzle;
+    context.borderColorSwizzleFromImage = state->borderColorSwizzleFromImage;
     context.mergedCoverageSampleCounts = state->mergedCoverageSampleCounts;
     context.truncatedCoverageSampleCounts = state->truncatedCoverageSampleCounts;
     context.mixedAttachmentSamples = state->mixedAttachmentSamples;
@@ -5246,7 +5303,7 @@ std::vector<std::uint32_t> VulkanDevice::DrawContentKey(const Graphics::State& g
     return Graphics::DrawResourceContentKey(state->context, graphics, draw, shaders);
 }
 
-void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+Graphics::DrawResult VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -5257,8 +5314,9 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     if (traceDraws) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
-    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape, contentKey);
+    const auto result = Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape, contentKey);
     if (traceDraws) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
+    return result;
 }
 
 bool VulkanDevice::DrawInputsInPlace() const {
@@ -6228,7 +6286,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const auto* groupLimit = state->properties.limits.maxComputeWorkGroupCount;
     const bool overlapCapable = !split && overlapQueue != 0 && Graphics::Recorder::DispatchOverlapEnabled() && arguments == 0 && argumentImport == nullptr && record.threadGroup == std::array<std::uint32_t, 3>{} && record.shader->program->workgroupMemoryDwords == 0 && state->checkpointMarker == nullptr && state->bufferMarker == nullptr && record.x <= groupLimit[0] && record.y <= groupLimit[1] && record.z <= groupLimit[2] && !resources.HasHostGpuCopies();
     std::vector<Graphics::Recorder::RunAccess> runAccesses;
-    if (overlapCapable) resources.RunAccesses(runAccesses);
+    if (overlapCapable) resources.RunAccesses(runAccesses, record.dataRefresh != RecordedDispatch::DataRefresh::None);
     VkAccessFlags covered = 0;
     bool overlapped = false;
     const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};
