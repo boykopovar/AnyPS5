@@ -1292,6 +1292,24 @@ void SpecializedStreamersKeepEveryArgument() {
     Require(stream.Ops() == commands, "the stream counted " + std::to_string(stream.Ops()) + " ops for " + std::to_string(commands) + " commands");
 }
 
+void StreamHandlesAreNeverExecutedAsSecondaries() {
+    const auto exact = exactFunctions();
+    const auto execute = exactThunk<CommandId::CmdExecuteCommands>();
+    CommandStream secondaryStream(exact);
+    const std::array<VkCommandBuffer, 2> secondaries{FakeCommandBuffer(72), secondaryStream.Handle()};
+    for (const bool demoted : {false, true}) {
+        const std::string what = demoted ? "a demoted stream" : "a stream";
+        FakeMaterializer materializer(FakeCommandBuffer(71));
+        CommandStream stream(exact, nullptr, &materializer);
+        if (demoted) stream.Demote("vkCmdExecuteCommands test");
+        captured.clear();
+        Require(Throws<std::logic_error>([&] { execute(stream.Handle(), static_cast<std::uint32_t>(secondaries.size()), secondaries.data()); }), what + " executed a stream handle as a secondary command buffer");
+        Require(captured.empty() && stream.Ops() == 0, what + " recorded the refused vkCmdExecuteCommands");
+        execute(stream.Handle(), 1, secondaries.data());
+        Require(demoted ? !captured.empty() : stream.Ops() == 1, what + " did not record the execution of a real secondary command buffer");
+    }
+}
+
 VKAPI_ATTR void VKAPI_CALL emptyDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
 
 struct CommandCosts {
@@ -1525,6 +1543,7 @@ int main(int argc, char** argv) {
         StreamReplayRecordsWhatDirectRecords();
         DemotionReplaysThePrefixInOrder();
         SpecializedStreamersKeepEveryArgument();
+        StreamHandlesAreNeverExecutedAsSecondaries();
         PushDescriptorsDemoteOnlyWhatTheyCannotCopy();
         DemotionWithoutAMaterializerPoisons();
         EntryPointsBeyondTheSlotsAreKeyedByDevice();

@@ -630,8 +630,13 @@ struct Streamer<CommandId::CmdPushDescriptorSetKHR> : Copies {
     }
 };
 
+void refuseStreamSecondaries(std::uint32_t count, const VkCommandBuffer* buffers) {
+    if (std::any_of(buffers, buffers + count, &CommandStream::IsHandle)) throw std::logic_error("AGC graphics: vkCmdExecuteCommands was given a stream handle as a secondary command buffer; a secondary must be a command buffer that has finished recording");
+}
+
 template<CommandId Id, typename... A>
 void toStream(VkCommandBuffer commands, A... arguments) {
+    if constexpr (Id == CommandId::CmdExecuteCommands) refuseStreamSecondaries(arguments...);
     auto& stream = CommandStream::From(commands);
     if (const auto target = stream.Materialized(); target != VK_NULL_HANDLE) {
         (stream.Functions().*Command<Id>::member)(target, arguments...);
