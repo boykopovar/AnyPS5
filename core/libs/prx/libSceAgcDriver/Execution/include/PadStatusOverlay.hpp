@@ -40,10 +40,12 @@ public:
 
     bool Observe(Clock::time_point now, const PadStatusSnapshot& snapshot);
     void Request(Clock::time_point now);
+    void ShowMouseMode(Clock::time_point now, const char* shortcut, bool enabled);
     bool Visible(Clock::time_point now) const;
     bool Wants(Clock::time_point now) const;
     bool Poll(Clock::time_point now, const PadStatusProvider& provider);
     std::vector<std::string> Lines() const;
+    std::optional<std::vector<std::string>> OverlayLines(Clock::time_point now) const;
 
 private:
     PadStatusMode mode;
@@ -51,11 +53,14 @@ private:
     std::array<bool, PadStatusSlots> seen{};
     std::optional<Clock::time_point> shownUntil;
     std::optional<PadStatusSnapshot> polled;
+    Clock::time_point mouseModeUntil{};
+    std::vector<std::string> mouseModeLines;
 };
 
 }
 
 extern "C" void AgcDriverPadStatusPoll_nid_postfix(const AgcDriver::PadStatusProvider* provider);
 extern "C" void AgcDriverPadStatusShow_nid_postfix();
+extern "C" void AgcDriverPadStatusMouseMode_nid_postfix(const char* shortcut, bool enabled);
 
 #endif

@@ -179,8 +179,6 @@ int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int 
     return LibreSslBioWrite_nid_no_patch(bio, source, size);
 }
 
-void APS5_VABI CONF_modules_free_nid_postfix(void) {}
-
 int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
     void* expected = nullptr;
     return threadIdCallback.compare_exchange_strong(expected, callback) ? 1 : 0;
@@ -270,8 +268,6 @@ int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response,
 }
 
 void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}
-
-void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {}
 
 int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);

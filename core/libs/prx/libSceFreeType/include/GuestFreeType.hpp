@@ -14,6 +14,9 @@ inline constexpr std::int32_t NormalizeAngle_nid_no_patch(std::int64_t angle) {
 
 struct GuestLibrary;
 struct GuestMemoryRec;
+struct GuestFaceRec;
+
+using GuestFaceRequester = int (APS5_VABI *)(void*, GuestLibrary*, void*, GuestFaceRec**);
 
 struct GuestStreamRec;
 
