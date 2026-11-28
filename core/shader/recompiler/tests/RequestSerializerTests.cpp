@@ -1303,7 +1303,7 @@ void VerifySplitState() {
         }
         Require(rejected);
     }
-    bytes.resize(bytes.size() - 8u - 4u * state.size());
+    bytes.resize(bytes.size() - 9u - 4u * state.size());
     bytes[4] = 63u;
     Require(serializer.Deserialize(EncodeBase64(bytes)).request.context.splitState.empty());
 }
