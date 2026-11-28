@@ -45,54 +45,45 @@ constexpr int Enter = 1;
 
 int main() {
     RegisterAllocator();
+    errno = 0;
     Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("alpha"), nullptr}, Find) == nullptr && errno == 3);
+    int marker = 0;
+    HsearchEntry* lazy = hsearch_nid_postfix(HsearchEntry{const_cast<char*>("alpha"), &marker}, Enter);
+    Require(lazy != nullptr && lazy->data == &marker);
 
     Require(hcreate_nid_postfix(0) == 1);
-    {
-        int marker = 0;
-        std::array<char[8], 17> minimum{};
-        for (int index = 0; index < 17; ++index) std::snprintf(minimum[index], sizeof(minimum[index]), "m%02d", index);
-        for (int index = 0; index < 16; ++index) Require(hsearch_nid_postfix(HsearchEntry{minimum[index], &marker}, Enter) != nullptr);
-        errno = 0;
-        Require(hsearch_nid_postfix(HsearchEntry{minimum[16], &marker}, Enter) == nullptr && errno == 12);
-        hdestroy_nid_postfix();
-        Require(hcreate_nid_postfix(0) == 1);
-    }
-    Require(hcreate_nid_postfix(10) == 0 && errno == 17);
-    hdestroy_nid_postfix();
     Require(hcreate_nid_postfix(10) == 1);
+    Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("alpha"), nullptr}, Find) == lazy);
+    hdestroy_nid_postfix();
+    hdestroy_nid_postfix();
+    errno = 0;
+    Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("alpha"), nullptr}, Find) == nullptr && errno == 3);
 
-    std::array<char[8], 8> keys{"k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"};
-    int payloads[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-    for (int index = 0; index < 8; ++index) {
+    Require(hcreate_nid_postfix(4) == 1);
+    constexpr int Count = 1000;
+    static char keys[Count][8];
+    static int payloads[Count];
+    for (int index = 0; index < Count; ++index) {
+        std::snprintf(keys[index], sizeof(keys[index]), "k%03d", index);
+        payloads[index] = index;
         HsearchEntry* entry = hsearch_nid_postfix(HsearchEntry{keys[index], &payloads[index]}, Enter);
-        Require(entry != nullptr && entry->data == &payloads[index]);
+        Require(entry != nullptr && entry->key == keys[index] && entry->data == &payloads[index]);
     }
-    for (int index = 0; index < 8; ++index) {
+    for (int index = 0; index < Count; ++index) {
         char probe[8];
         std::memcpy(probe, keys[index], sizeof(probe));
         HsearchEntry* entry = hsearch_nid_postfix(HsearchEntry{probe, nullptr}, Find);
-        Require(entry != nullptr && entry->data == &payloads[index] && std::strcmp(entry->key, keys[index]) == 0);
+        Require(entry != nullptr && entry->key == keys[index] && entry->data == &payloads[index]);
     }
 
     int replacement = 99;
-    HsearchEntry* again = hsearch_nid_postfix(HsearchEntry{const_cast<char*>("k3"), &replacement}, Enter);
+    HsearchEntry* again = hsearch_nid_postfix(HsearchEntry{keys[3], &replacement}, Enter);
     Require(again != nullptr && again->data == &payloads[3]);
     errno = 0;
-    Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("absent"), nullptr}, Find) == nullptr && errno == 0);
-
-    std::array<char[8], 24> extra{};
-    for (int index = 0; index < 24; ++index) std::snprintf(extra[index], sizeof(extra[index]), "x%02d", index);
-    errno = 0;
-    for (int index = 0; index < 24; ++index) Require(hsearch_nid_postfix(HsearchEntry{extra[index], &replacement}, Enter) != nullptr);
-    Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("overflow"), &replacement}, Enter) == nullptr && errno == 12);
-
-    hdestroy_nid_postfix();
-    hdestroy_nid_postfix();
-    Require(hsearch_nid_postfix(HsearchEntry{keys[0], nullptr}, Find) == nullptr && errno == 3);
-    Require(hcreate_nid_postfix(4) == 1);
-    Require(hsearch_nid_postfix(HsearchEntry{keys[0], nullptr}, Find) == nullptr);
-    Require(hsearch_nid_postfix(HsearchEntry{keys[0], &payloads[0]}, 7) == nullptr && errno == 22);
+    Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("absent"), nullptr}, Find) == nullptr && errno == 3);
+    HsearchEntry* other = hsearch_nid_postfix(HsearchEntry{const_cast<char*>("other"), &replacement}, 7);
+    Require(other != nullptr && other->data == &replacement);
+    Require(hsearch_nid_postfix(HsearchEntry{const_cast<char*>("other"), nullptr}, Find) == other);
     hdestroy_nid_postfix();
     return 0;
 }
