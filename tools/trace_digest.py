@@ -572,6 +572,18 @@ def validate_interval(record):
         raise ValueError("graphics_track must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
+    details = record.get("trace_dropped_threads", {})
+    if not isinstance(details, dict):
+        raise ValueError("trace_dropped_threads must be an object")
+    for name, thread in details.items():
+        field = f"trace_dropped_threads.{name}"
+        if not isinstance(thread, dict):
+            raise ValueError(f"{field} must be an object")
+        events_lost = thread.get("events_lost", 0)
+        if type(events_lost) is not int or events_lost < 0:
+            raise ValueError(f"{field}.events_lost must be a non-negative integer")
+        if type(thread.get("totals_full", False)) is not bool:
+            raise ValueError(f"{field}.totals_full must be a boolean")
     for field in INTERVAL_IDENTITY_STRINGS:
         if field in record and not isinstance(record[field], str):
             raise ValueError(f"{field} must be a string")
@@ -605,6 +617,10 @@ def digest_intervals(lines):
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
                      "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
                      "graphics_track": line.get("graphics_track")})
+        if line.get("trace_dropped") is None:
+            threads = line.get("trace_dropped_threads", {})
+            inferred = any(thread.get("events_lost") or thread.get("totals_full") for thread in threads.values())
+            rows[-1]["trace_dropped"] = True if inferred else None
     first = lines[0] if lines else {}
     keys = INTERVAL_IDENTITY_KEYS
     changed = [index for index in range(1, len(lines)) if any(lines[index].get(key) != lines[index - 1].get(key) for key in keys)]
@@ -626,7 +642,8 @@ def markdown_intervals(result):
         frame = row["frame_ms"]
         worker = f"{row['busiest_worker']['pct']:.0f} %" if row["busiest_worker"] else "-"
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
-        lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
+        loss_note = {True: " (dropped)", False: "", None: " (drop status unknown)"}[row["trace_dropped"]]
+        lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{loss_note} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
     count_names = sorted({name for row in rows for name in (row["owned_draw_counts"] or {})})
     if count_names:
