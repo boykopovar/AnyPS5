@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_PIPELINECACHE_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,7 @@ namespace AgcDriver::Graphics {
 class PipelineCache {
 public:
     static constexpr int SaveIntervalSeconds = 10;
+    static constexpr int SkippedSaveRetryMilliseconds = 100;
 
     PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties, bool loadFromFile = true);
     ~PipelineCache();
@@ -65,6 +67,7 @@ private:
     std::mutex mutex;
     std::condition_variable wake;
     bool stopping = false;
+    std::atomic<bool> skippedSave{false};
     std::thread saver;
 };
 

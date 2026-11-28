@@ -206,13 +206,25 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
 
 void PipelineCache::save(bool final, bool waitForPipelines) try {
     if (path.empty()) return;
+    const bool retried = skippedSave.exchange(false, std::memory_order_acq_rel);
+    const auto skipped = [&] {
+        if (waitForPipelines) return;
+        {
+            std::lock_guard guard(mutex);
+            skippedSave.store(true, std::memory_order_release);
+        }
+        wake.notify_all();
+    };
     std::lock_guard pathLock(pathMutex(path));
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     const auto snapshot = [&] { return waitForPipelines ? synchronization.LockForSnapshot() : synchronization.TryLockForSnapshot(); };
     std::size_t liveBytes = 0;
     {
         auto synchronizationLock = snapshot();
-        if (!synchronizationLock.owns_lock()) return;
+        if (!synchronizationLock.owns_lock()) {
+            skipped();
+            return;
+        }
         if (getData(context.device, cache, &liveBytes, nullptr) != VK_SUCCESS || liveBytes == 0) return;
     }
     const auto onDisk = readHeader();
@@ -259,7 +271,10 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
     std::vector<std::byte>().swap(disk.contents);
     if (merged != VK_NULL_HANDLE) {
         auto synchronizationLock = snapshot();
-        if (!synchronizationLock.owns_lock()) return;
+        if (!synchronizationLock.owns_lock()) {
+            skipped();
+            return;
+        }
         const auto result = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, merged, 1, &cache);
         if (result != VK_SUCCESS) {
             std::fprintf(stderr, "[pipeline-cache] cannot merge into %s (Vulkan result %d); not saving over it\n", path.string().c_str(), static_cast<int>(result));
@@ -271,7 +286,10 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
     std::vector<std::byte> file;
     {
         auto synchronizationLock = source == cache ? snapshot() : PipelineCacheSynchronization::SnapshotLock{};
-        if (source == cache && !synchronizationLock.owns_lock()) return;
+        if (source == cache && !synchronizationLock.owns_lock()) {
+            skipped();
+            return;
+        }
         if (getData(context.device, source, &size, nullptr) != VK_SUCCESS || size == 0) return;
         if (merged != VK_NULL_HANDLE && size == disk.header.dataBytes) {
             settle(disk.header);
@@ -295,7 +313,8 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
         return;
     }
     settle(header);
-    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", final ? " (teardown)" : "");
+    if (retried) std::fprintf(stderr, "[pipeline-cache] saved after a skipped save: %.1f KiB to %s in %.1f ms\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    else if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", final ? " (teardown)" : "");
 } catch (const std::bad_alloc&) {
     std::fputs("[pipeline-cache] save skipped: host memory exhausted\n", stderr);
 }
@@ -310,7 +329,13 @@ void PipelineCache::SaveUnlessBusy() {
 
 void PipelineCache::run() {
     std::unique_lock lock(mutex);
-    while (!wake.wait_for(lock, std::chrono::seconds(SaveIntervalSeconds), [&] { return stopping; })) {
+    for (;;) {
+        if (skippedSave.load(std::memory_order_acquire)) {
+            static_cast<void>(wake.wait_for(lock, std::chrono::milliseconds(SkippedSaveRetryMilliseconds), [&] { return stopping; }));
+        } else if (wake.wait_for(lock, std::chrono::seconds(SaveIntervalSeconds), [&] { return stopping || skippedSave.load(std::memory_order_acquire); }) && !stopping) {
+            continue;
+        }
+        if (stopping) break;
         lock.unlock();
         save(false, false);
         lock.lock();
