@@ -240,7 +240,7 @@ int main() {
     CHECK_THROWS_AS(std::runtime_error, encoder->initialize(encoder, encodeStream, pages.unmapped, parameters.size()));
     CHECK_THROWS_AS(std::runtime_error, encoder->initialize(encoder, encodeStream, boundaryParams, parameters.size()));
     CHECK(encoder->initialize(encoder, encodeStream, parameters.data(), parameters.size()) == 0);
-    CHECK(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    CHECK(encoder->setPixelFormat(encoder, GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     CHECK(encoder->setSize(encoder, Width, Height) == 0);
 
     auto* boundaryPixels = reinterpret_cast<std::uint8_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 64);
@@ -279,7 +279,7 @@ int main() {
     Jxr::ImageEncode* bandedEncoder = nullptr;
     CHECK(PKImageEncode_Create_WMP_nid_postfix(&bandedEncoder) == 0 && bandedEncoder != nullptr);
     CHECK(bandedEncoder->initialize(bandedEncoder, bandedStream, parameters.data(), parameters.size()) == 0);
-    CHECK(bandedEncoder->setPixelFormat(bandedEncoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    CHECK(bandedEncoder->setPixelFormat(bandedEncoder, GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     CHECK(bandedEncoder->setSize(bandedEncoder, Width, Height) == 0);
     CHECK(bandedEncoder->writePixelsBandedBegin(bandedEncoder, nullptr) == 0);
     CHECK_THROWS_AS(std::runtime_error, bandedEncoder->writePixelsBanded(bandedEncoder, 16, nullptr, Stride, 0));
