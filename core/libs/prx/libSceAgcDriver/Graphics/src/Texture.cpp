@@ -2700,7 +2700,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) alias = nullptr;
         for (std::uint32_t unit = 0; alias != nullptr && unit < trackedLayers; ++unit) {
             if (!alias->layerPending[unit]) continue;
-            if (alias->layerGeneration[unit] == 0 || (aliasStamped[unit] == GuestMemory::BlockUnchanged && layerPending[unit])) {
+            if (alias->layerGeneration[unit] == 0 || alias->discardingUnits[unit] || (aliasStamped[unit] == GuestMemory::BlockUnchanged && layerPending[unit])) {
                 alias = nullptr;
                 break;
             }
@@ -2917,8 +2917,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                 changed[unit] = true;
                 unchanged = false;
             }
-            const bool outsideDiscards = discardingUnits.AnyIn(0, firstLayer) || discardingUnits.AnyIn(lastLayer, trackedLayers - lastLayer);
-            if (!outsideDiscards) storesMayDiscard.store(false, std::memory_order_release);
         }
         direct = keys == DccKeys::Uncompressed && (HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr || (blockUnits && !importSegments().empty()));
         if (alias != nullptr && direct) {
@@ -3056,9 +3054,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             if (borrowed[unit]) {
                 layerGeneration[unit] = currentFor(unit);
                 forgetUnwatchHash(unit, 1);
-                if (unit >= alias->discardingUnits.size() || !alias->discardingUnits[unit]) continue;
-                discardingUnits[unit] = true;
-                storesMayDiscard.store(true, std::memory_order_release);
             }
         }
         refreshGeneration();
@@ -3644,6 +3639,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             }
         }
         if (unsettled) anyBaselineDue.store(true, std::memory_order_relaxed);
+        if (!discardingUnits.Any()) storesMayDiscard.store(false, std::memory_order_release);
         refreshGeneration();
     };
     uploadedKeys = ProvedClearKeys(descriptor, guestBytes, keyProof);
