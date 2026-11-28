@@ -659,7 +659,22 @@ void UnprovenProgramsAtSubmit() {
         std::atomic_ref<std::uint32_t>(rewound[1]).store(0x80000000u, std::memory_order_release);
         AgcDriverWaitIdle_nid_postfix();
         while (!ran.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        Require(rewindWaited, "a submission ending in a REWIND did not wait for the queued preparations, though its tail is not scanned");
+        Require(!rewindWaited, "a submission ending in a REWIND waited for queued preparations its pre-REWIND commands do not bind");
+    }
+    alignas(4) static std::array<std::uint32_t, 7> rewoundUnproven{0xc0017600u, 0x20cu, low, 0xc0005900u, 0, 0xc0001000u, 0};
+    {
+        std::atomic<bool> ran{false};
+        AgcDriver::DriverDetail::SubmitRegistrationPreparation([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            ran.store(true, std::memory_order_release);
+        });
+        Packet packet{rewoundUnproven.data(), static_cast<std::uint32_t>(rewoundUnproven.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "a REWIND submission with a half-written program address failed");
+        const bool rewindWaited = ran.load(std::memory_order_acquire);
+        std::atomic_ref<std::uint32_t>(rewoundUnproven[4]).store(0x80000000u, std::memory_order_release);
+        AgcDriverWaitIdle_nid_postfix();
+        while (!ran.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Require(rewindWaited, "a REWIND submission with a half-written program address did not wait for the queued preparations");
     }
     commands = pair;
     waited = SubmitBehindSlowPreparation(commands, done);
@@ -744,7 +759,7 @@ void UnsupportedTypeRegistration() {
     header.shader.code = code.data();
     header.shader.sh_registers = header.registers.data();
     header.shader.num_sh_registers = header.registers.size();
-    header.shader.type = 8;
+    header.shader.type = 9;
     AgcDriverRegisterShader_nid_postfix(&header.shader);
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
@@ -1247,6 +1262,28 @@ std::string Logged(TAction action) {
         throw;
     }
     return capture.Finish();
+}
+
+void FetchShaderRegistration() {
+    alignas(256) static const std::array<std::uint32_t, 1> fetchCode{0xbf810000u};
+    alignas(256) static const std::array<std::uint32_t, 1> unknownCode{0xbf810000u};
+    struct Header {
+        Shader shader{};
+    } fetch, unknown;
+    for (auto* header : {&fetch, &unknown}) {
+        header->shader.file_header = 0x34333231u;
+        header->shader.version = 0x18;
+        header->shader.header_size = sizeof(Header);
+        header->shader.shader_size = sizeof(fetchCode);
+    }
+    fetch.shader.code = fetchCode.data();
+    fetch.shader.type = 8;
+    unknown.shader.code = unknownCode.data();
+    unknown.shader.type = 9;
+    const auto fetchLog = Logged([&] { AgcDriverRegisterShader_nid_postfix(&fetch.shader); });
+    Require(fetchLog.find("unsupported registered shader type") == std::string::npos, "a fetch shader was logged as an unsupported registered shader type");
+    const auto unknownLog = Logged([&] { AgcDriverRegisterShader_nid_postfix(&unknown.shader); });
+    Require(unknownLog.find("unsupported registered shader type 9") != std::string::npos, "an unknown registered shader type was not logged");
 }
 
 void SettleResolvedAbis() {
@@ -2182,6 +2219,7 @@ int main(int argc, char** argv) {
         UnprovenProgramsAtSubmit();
         RegistrationRetry();
         RegistrationWithoutSpecials();
+        FetchShaderRegistration();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
         return 0;

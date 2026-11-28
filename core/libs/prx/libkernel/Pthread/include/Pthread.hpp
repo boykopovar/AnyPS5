@@ -86,6 +86,8 @@ struct PthreadCondattrPrivate {
 struct PthreadCondPrivate {
     std::shared_ptr<TimedWait::Condition> _cv = std::make_shared<TimedWait::Condition>();
     int _clockid = 0;
+    std::string _name;
+    bool _named = false;
 };
 
 struct PthreadSemPrivate {
@@ -188,6 +190,8 @@ struct PthreadPrivate {
 
     explicit PthreadPrivate(const PthreadAttrPrivate* attr = nullptr);
     ~PthreadPrivate();
+    static void* operator new(std::size_t bytes);
+    static void operator delete(void* pointer) noexcept;
     PthreadPrivate(const PthreadPrivate&) = delete;
     PthreadPrivate& operator=(const PthreadPrivate&) = delete;
 };
@@ -209,6 +213,7 @@ GuestCpusetTarget FindGuestCpuset(std::int64_t id);
 bool GuestThreadIsLive(const PthreadPrivate* thread);
 std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread);
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);
+std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread);
 extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread);
 #ifdef _WIN32
 extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);

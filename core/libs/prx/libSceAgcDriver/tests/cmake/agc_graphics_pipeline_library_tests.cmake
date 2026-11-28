@@ -1,0 +1,9 @@
+add_test_executable(agc_graphics_pipeline_library_tests EXCLUDE_FROM_ALL tests/GraphicsPipelineLibrary.cpp)
+target_include_directories(agc_graphics_pipeline_library_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+set_target_properties(agc_graphics_pipeline_library_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_graphics_pipeline_library_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_graphics_pipeline_library_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_graphics_pipeline_library COMMAND agc_graphics_pipeline_library_tests)
+endif()
