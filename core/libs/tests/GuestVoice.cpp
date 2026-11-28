@@ -10,6 +10,12 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -96,6 +102,40 @@ int main() {
     Require(sceVoiceSetThreadsParams(&threads) == notInitialized);
     VoiceInitParam init{};
     Require(sceVoiceInit(nullptr, 100) == invalidArgument);
+    errno = 71;
+    Require(sceVoiceInit(reinterpret_cast<const VoiceInitParam*>(0x10), 100) == invalidArgument);
+    Require(errno == 71);
+#ifdef _WIN32
+    SYSTEM_INFO pageInfo{};
+    GetSystemInfo(&pageInfo);
+    const std::size_t pageBytes = pageInfo.dwPageSize;
+    auto* const pages = static_cast<char*>(VirtualAlloc(nullptr, 2 * pageBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(pages + pageBytes, pageBytes, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    const auto pageBytes = static_cast<std::size_t>(pageSize);
+    auto* const pages = static_cast<char*>(mmap(nullptr, 2 * pageBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageBytes, pageBytes, PROT_NONE) == 0);
+#endif
+    auto* const tailParam = reinterpret_cast<VoiceInitParam*>(pages + pageBytes - sizeof(std::int32_t));
+    tailParam->app_type = 1;
+    errno = 71;
+    Require(sceVoiceInit(tailParam, 100) == invalidArgument);
+    Require(errno == 71);
+    tailParam->app_type = 0x10000000;
+    errno = 71;
+    Require(sceVoiceInit(tailParam, 100) == 0);
+    Require(errno == 71);
+    Require(sceVoiceEnd_nid_postfix() == 0);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageBytes) == 0);
+#endif
     for (const auto mode : {-1, 0, 1, 3, 5, 0x07ffffff, 0x08000001, 0x10000001, 0x20000001, INT32_MAX}) {
         init.app_type = mode;
         Require(sceVoiceInit(&init, 100) == invalidArgument);
