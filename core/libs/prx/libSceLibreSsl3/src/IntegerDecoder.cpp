@@ -282,11 +282,13 @@ extern "C" {
 
 int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int64_t* length,
                                         int* tag, int* tagClass, std::int64_t maximum) {
-    if (!input || !length || !tag || !tagClass || maximum < 0)
+    if (!input || !length || !tag || !tagClass)
         throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
     const unsigned char* const start = GuestLoad(input, "ASN1_get_object");
     if (!start && maximum != 0) throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
-    GuestInput remaining(start, static_cast<std::size_t>(maximum), "ASN1_get_object");
+    const std::size_t bound = maximum < 0 ? std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(start)
+                                          : static_cast<std::size_t>(maximum);
+    GuestInput remaining(start, bound, "ASN1_get_object");
     RequireWritable(input, sizeof(*input), "ASN1_get_object");
     RequireWritable(tagClass, sizeof(*tagClass), "ASN1_get_object");
     RequireWritable(tag, sizeof(*tag), "ASN1_get_object");

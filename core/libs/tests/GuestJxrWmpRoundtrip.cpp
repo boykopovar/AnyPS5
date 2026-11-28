@@ -369,10 +369,10 @@ void RunAllTests() {
         bool strided;
     };
     const FormatCase formats[] = {
-        {0, 3, JxrGuest_GUID_PKPixelFormat24bppRGB_nid_no_patch, 0},
-        {1, 4, JxrGuest_GUID_PKPixelFormat32bppBGRA_nid_no_patch, 0},
-        {1, 4, JxrGuest_GUID_PKPixelFormat32bppBGRA_nid_no_patch, 2},
-        {2, 1, JxrGuest_GUID_PKPixelFormat8bppGray_nid_no_patch, 0},
+        {0, 3, GUID_PKPixelFormat24bppRGB_nid_no_patch, 0},
+        {1, 4, GUID_PKPixelFormat32bppBGRA_nid_no_patch, 0},
+        {1, 4, GUID_PKPixelFormat32bppBGRA_nid_no_patch, 2},
+        {2, 1, GUID_PKPixelFormat8bppGray_nid_no_patch, 0},
     };
     const SizeCase sizes[] = {
         {32, 32, true},

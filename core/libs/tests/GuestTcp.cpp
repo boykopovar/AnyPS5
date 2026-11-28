@@ -204,9 +204,17 @@ static void ReceiveAnsweredWithoutTheHost() {
     sender.fill(0xaa);
     std::uint32_t senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, &byte, 0, 0, sender.data(), &senderSize) == 0 && senderSize == 0);
+    KernelIovec empty{&byte, 0};
+    GuestMsghdr zero{nullptr, 0, &empty, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(unconnected, &zero, DontWait) == -1 && *__error_nid_postfix() == 57);
+    Require(recvmsg_nid_postfix(unconnected, &zero, 0) == -1 && *__error_nid_postfix() == 57);
+    Require(recvmsg_nid_postfix(accepted, &zero, DontWait) == 0);
+    Require(recvmsg_nid_postfix(accepted, &zero, 0) == 0);
 
     char received[4];
     Require(send_nid_postfix(client, "x", 1, 0) == 1);
+    Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
+    Require(recvmsg_nid_postfix(accepted, &zero, 0) == 0);
     Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
     Require(shutdown_nid_postfix(accepted, 0) == 0);
     int queued = -1;

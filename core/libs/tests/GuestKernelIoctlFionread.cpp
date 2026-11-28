@@ -1,11 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 
 namespace {
 
@@ -17,7 +19,9 @@ constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
+constexpr int ErrorNotConnected = 57;
 constexpr int DirectoryFlag = 0x00020000;
+constexpr int ErrorAddressNotAvailable = 49;
 constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
@@ -29,11 +33,16 @@ constexpr std::uint64_t WriteQueueRequest = 0x40046677;
 constexpr std::uint64_t WriteSpaceRequest = 0x40046676;
 constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
 constexpr std::uint64_t ForeignGroupRequest = 0x80047801;
+constexpr std::uint64_t ForeignWideRequest = 0x80087801;
 constexpr std::uint64_t ForeignIntegerRequest = 0xa0047801;
+constexpr std::uint64_t ForeignOutputRequest = 0x40047801;
+constexpr std::uint64_t TerminalInputRequest = 0x80047401;
+constexpr std::uint64_t SetOwnerRequest = 0x8004667c;
+constexpr std::uint64_t GetOwnerRequest = 0x4004667b;
 
-void Require(bool condition, const char* message) {
+void Require(bool condition, const char* message, const std::source_location location = std::source_location::current()) {
     if (condition) return;
-    std::fprintf(stderr, "%s (errno %d)\n", message, *__error_nid_postfix());
+    std::fprintf(stderr, "%s (errno %d) at %s:%u\n", message, *__error_nid_postfix(), location.file_name(), location.line());
     std::abort();
 }
 
@@ -132,6 +141,26 @@ void AuditNullAndFaultPointers() {
         "_ioctl FIONREAD with unmapped pointer must fail with EFAULT (14)");
 
     Require(close_nid_postfix(sock) == 0, "close socket failed");
+
+    *__error_nid_postfix() = 0;
+    Require(ioctl_nid_postfix(sock, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
+        "ioctl FIONBIO null pointer on closed descriptor must fail with EFAULT (14)");
+    Require(_ioctl_nid_postfix(sock, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
+        "_ioctl FIONBIO null pointer on closed descriptor must fail with EFAULT (14)");
+    Require(ioctl_nid_postfix(sock, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "ioctl FIONREAD null pointer on closed descriptor must fail with EBADF (9)");
+    Require(_ioctl_nid_postfix(sock, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "_ioctl FIONREAD null pointer on closed descriptor must fail with EBADF (9)");
+
+    *__error_nid_postfix() = 0;
+    Require(ioctl_nid_postfix(-1, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
+        "ioctl FIONBIO null pointer on -1 descriptor must fail with EFAULT (14)");
+    Require(_ioctl_nid_postfix(-1, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
+        "_ioctl FIONBIO null pointer on -1 descriptor must fail with EFAULT (14)");
+    Require(ioctl_nid_postfix(-1, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "ioctl FIONREAD null pointer on -1 descriptor must fail with EBADF (9)");
+    Require(_ioctl_nid_postfix(-1, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "_ioctl FIONREAD null pointer on -1 descriptor must fail with EBADF (9)");
 
     const int dgram = socket_nid_postfix(2, Datagram, 0);
     Require(dgram >= 0, "datagram socket creation failed");
@@ -276,7 +305,13 @@ void AuditEmptySocketReadableQuery() {
         "server socket FIONREAD must return written byte count");
 
     char recvBuffer[16]{};
-    Require(recv_nid_postfix(server, recvBuffer, sizeof(recvBuffer), 0) == payloadSize, "recv payload failed");
+    Require(recv_nid_postfix(server, recvBuffer, 3, 0) == 3, "partial recv payload failed");
+
+    queuedBytes = -1;
+    Require(ioctl_nid_postfix(server, ReadableRequest, &queuedBytes) == 0 && queuedBytes == payloadSize - 3,
+        "server socket FIONREAD after partial read must return remaining byte count");
+
+    Require(recv_nid_postfix(server, recvBuffer + 3, payloadSize - 3, 0) == payloadSize - 3, "remaining recv payload failed");
     Require(std::memcmp(recvBuffer, payload, payloadSize) == 0, "payload mismatch");
 
     queuedBytes = -1;
@@ -303,6 +338,40 @@ void AuditEmptySocketReadableQuery() {
         "empty dgram socket _ioctl FIONREAD must return 0");
 
     Require(close_nid_postfix(dgram) == 0, "close dgram failed");
+
+    const int udpReceiver = socket_nid_postfix(2, Datagram, 0);
+    Require(udpReceiver >= 0, "udp receiver creation failed");
+    std::array<std::uint8_t, 16> udpAddr{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(udpReceiver, udpAddr.data(), udpAddr.size()) == 0, "bind udp receiver failed");
+    std::uint32_t udpAddrLen = udpAddr.size();
+    Require(getsockname_nid_postfix(udpReceiver, udpAddr.data(), &udpAddrLen) == 0, "getsockname udp receiver failed");
+
+    const int udpSender = socket_nid_postfix(2, Datagram, 0);
+    Require(udpSender >= 0, "udp sender creation failed");
+
+    const char udpPayload[] = "udp123";
+    constexpr std::int64_t udpPayloadSize = 6;
+    Require(sendto_nid_postfix(udpSender, udpPayload, udpPayloadSize, 0, udpAddr.data(), udpAddr.size()) == udpPayloadSize,
+        "sendto udp payload failed");
+
+    GuestPollDescriptor udpArrival{udpReceiver, PollIn, 0};
+    Require(poll_nid_postfix(&udpArrival, 1, 5000) == 1, "udp payload did not arrive");
+
+    int udpQueued = -1;
+    Require(ioctl_nid_postfix(udpReceiver, ReadableRequest, &udpQueued) == 0 && udpQueued == udpPayloadSize,
+        "udp receiver FIONREAD must return queued datagram byte count");
+
+    char udpRecvBuf[16]{};
+    Require(recvfrom_nid_postfix(udpReceiver, udpRecvBuf, sizeof(udpRecvBuf), 0, nullptr, nullptr) == udpPayloadSize,
+        "recvfrom udp payload failed");
+    Require(std::memcmp(udpRecvBuf, udpPayload, udpPayloadSize) == 0, "udp payload mismatch");
+
+    udpQueued = -1;
+    Require(ioctl_nid_postfix(udpReceiver, ReadableRequest, &udpQueued) == 0 && udpQueued == 0,
+        "drained udp receiver FIONREAD must return 0");
+
+    Require(close_nid_postfix(udpReceiver) == 0, "close udp receiver failed");
+    Require(close_nid_postfix(udpSender) == 0, "close udp sender failed");
 }
 
 void AuditEmptyPipeReadableQuery() {
@@ -386,12 +455,42 @@ void AuditNonblockingModeQueries() {
     Require(_ioctl_nid_postfix(server, NonblockingRequest, &customNonzero) == 0,
         "set FIONBIO with nonzero value via _ioctl failed");
 
+    int largeFionbio = 0x12345678;
+    Require(ioctl_nid_postfix(server, NonblockingRequest, &largeFionbio) == 0,
+        "set FIONBIO with large value failed");
+
     int blocking = 0;
     Require(ioctl_nid_postfix(server, NonblockingRequest, &blocking) == 0, "clear FIONBIO nonblocking failed");
 
     Require(close_nid_postfix(client) == 0, "close client failed");
     Require(close_nid_postfix(server) == 0, "close server failed");
     Require(close_nid_postfix(listener) == 0, "close listener failed");
+
+    constexpr int Inet6 = 28;
+    const int v6Stream = socket_nid_postfix(Inet6, Stream, 0);
+    if (v6Stream >= 0) {
+        int v6Large = 42;
+        Require(ioctl_nid_postfix(v6Stream, NonblockingRequest, &v6Large) == 0, "set FIONBIO on v6 stream failed");
+        Require(read_nid_postfix(v6Stream, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == ErrorNotConnected,
+            "read on unconnected nonblocking v6 stream must return ENOTCONN (57)");
+        int v6Clear = 0;
+        Require(ioctl_nid_postfix(v6Stream, NonblockingRequest, &v6Clear) == 0, "clear FIONBIO on v6 stream failed");
+        Require(close_nid_postfix(v6Stream) == 0, "close v6 stream failed");
+    }
+
+    const int v6Dgram = socket_nid_postfix(Inet6, Datagram, 0);
+    if (v6Dgram >= 0) {
+        std::array<std::uint8_t, 28> any6{28, 28};
+        Require(bind_nid_postfix(v6Dgram, any6.data(), any6.size()) == 0, "bind v6 dgram to [::]:0 failed");
+        int v6Large = 42;
+        Require(ioctl_nid_postfix(v6Dgram, NonblockingRequest, &v6Large) == 0, "set FIONBIO on v6 dgram failed");
+        const auto received = recv_nid_postfix(v6Dgram, buffer, sizeof(buffer), 0);
+        const int error = *__error_nid_postfix();
+        Require(received == -1 && error == ErrorAgain, "recv on nonblocking v6 dgram must fail with EWOULDBLOCK");
+        int v6Clear = 0;
+        Require(ioctl_nid_postfix(v6Dgram, NonblockingRequest, &v6Clear) == 0, "clear FIONBIO on v6 dgram failed");
+        Require(close_nid_postfix(v6Dgram) == 0, "close v6 dgram failed");
+    }
 
     int pipeFds[2]{-1, -1};
     Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
@@ -418,11 +517,66 @@ void AuditNonblockingModeQueries() {
     Require(close_nid_postfix(pipeFds[1]) == 0, "close pipe write-end failed");
 }
 
+void AuditInputCopiedBeforeDispatch() {
+    void* const unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    constexpr std::size_t Page = 0x4000;
+    auto* const pages = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, 2 * Page, 3, 0x1002, -1, 0));
+    Require(pages != reinterpret_cast<unsigned char*>(static_cast<std::uintptr_t>(-1)) && mprotect_nid_postfix(pages + Page, Page, 0) == 0,
+        "guard page setup failed");
+    for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+        Require(call(9999, NonblockingRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable input argument must fail with EFAULT (14) before the descriptor is looked up, as sys_ioctl copies it in first");
+        Require(call(9999, ForeignWideRequest, pages + Page - 4) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an input argument whose last bytes are unreadable must fail with EFAULT (14), as sys_ioctl copies the whole length in");
+        Require(call(9999, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+            "an output request on a closed descriptor must fail with EBADF (9), as nothing is copied before kern_ioctl");
+        const int queue = kqueue_nid_postfix();
+        Require(queue >= 0, "kqueue creation failed");
+        Require(call(queue, ForeignGroupRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable input argument on a kqueue must fail with EFAULT (14) before ENOTTY");
+        Require(close_nid_postfix(queue) == 0, "close kqueue failed");
+        int pipeFds[2]{-1, -1};
+        Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
+        Require(call(pipeFds[0], TerminalInputRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable termios input argument must fail with EFAULT (14) before ENOTTY");
+        Require(close_nid_postfix(pipeFds[0]) == 0 && close_nid_postfix(pipeFds[1]) == 0, "close pipe failed");
+        const int sock = socket_nid_postfix(2, Datagram, 0);
+        Require(sock >= 0, "socket creation failed");
+        Require(call(sock, ForeignGroupRequest, unmapped) == -1 && *__error_nid_postfix() == ErrorFault,
+            "an unreadable input argument on a socket must fail with EFAULT (14) before the request is refused");
+        Require(call(sock, ForeignOutputRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorAddressNotAvailable,
+            "an output request in_control refuses must fail with EADDRNOTAVAIL (49) with a null argument, as nothing is copied out on an error");
+        Require(call(sock, ForeignIntegerRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorAddressNotAvailable,
+            "an IOC_VOID request passes its argument by value, so a null argument gets the EADDRNOTAVAIL (49) of in_control");
+        Require(close_nid_postfix(sock) == 0, "close socket failed");
+    }
+    Require(munmap_nid_postfix(pages, 2 * Page) == 0, "guard page release failed");
+}
+
+void AuditRandomDeviceRequests() {
+    for (const char* path : {"/dev/random", "/dev/urandom"}) {
+        const int device = sceKernelOpen(path, 0, 0);
+        Require(device >= 0, "opening the random device failed");
+        for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+            for (const std::uint64_t request : {WriteQueueRequest, WriteSpaceRequest, ForeignGroupRequest, SetOwnerRequest, GetOwnerRequest}) {
+                int argument = 0x5a5a5a5a;
+                Require(call(device, request, &argument) == -1 && *__error_nid_postfix() == ErrorNotTerminal && argument == 0x5a5a5a5a,
+                    "a request randomdev_ioctl does not handle must fail with ENOTTY (25) and leave its argument alone");
+            }
+            Require(call(device, ForeignIntegerRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorNotTerminal,
+                "an IOC_VOID request randomdev_ioctl does not handle must fail with ENOTTY (25)");
+        }
+        Require(close_nid_postfix(device) == 0, "close random device failed");
+    }
+}
+
 } // namespace
 
 int main() {
     AuditInvalidDescriptors();
     AuditNullAndFaultPointers();
+    AuditInputCopiedBeforeDispatch();
+    AuditRandomDeviceRequests();
     AuditInvalidRequestCodes();
     AuditEmptySocketReadableQuery();
     AuditEmptyPipeReadableQuery();

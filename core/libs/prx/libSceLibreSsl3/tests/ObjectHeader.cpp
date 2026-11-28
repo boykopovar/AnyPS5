@@ -155,9 +155,9 @@ int main() {
     longest[0] = 4;
     longest[1] = 0xfe;
     Check(longest, 0, 128, 0, 4, 0);
-    for (int fault = 0; fault < 7; ++fault) {
+    for (int fault = 0; fault < 6; ++fault) {
         const unsigned char bytes[]{4, 0};
-        const unsigned char* input = fault == 5 ? nullptr : fault == 6 ? reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 1) : bytes;
+        const unsigned char* input = fault == 4 ? nullptr : fault == 5 ? reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 1) : bytes;
         std::int64_t length = 123;
         int tag = 456;
         int tagClass = 789;
@@ -165,11 +165,20 @@ int main() {
         try {
             ASN1_get_object_nid_postfix(fault == 0 ? nullptr : &input,
                 fault == 1 ? nullptr : &length, fault == 2 ? nullptr : &tag,
-                fault == 3 ? nullptr : &tagClass, fault == 4 ? -1 : 2);
+                fault == 3 ? nullptr : &tagClass, 2);
         } catch (const std::invalid_argument&) {
             threw = true;
         }
         Require(threw && length == 123 && tag == 456 && tagClass == 789);
+    }
+    for (const std::int64_t maximum : {std::int64_t{-1}, std::numeric_limits<std::int64_t>::min()}) {
+        const unsigned char header[]{0x30, 0x03, 0x02, 0x01, 0x05};
+        const unsigned char* cursor = header;
+        std::int64_t headerLength = 123;
+        int headerTag = 456;
+        int headerClass = 789;
+        Require(ASN1_get_object_nid_postfix(&cursor, &headerLength, &headerTag, &headerClass, maximum) == 0x20);
+        Require(cursor == header + 2 && headerLength != 123 && headerTag != 456 && headerClass != 789);
     }
     const unsigned char bytes[]{0xc2, 0};
     const unsigned char* input = bytes;

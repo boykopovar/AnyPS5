@@ -503,7 +503,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             port.format = format;
             port.channels = channelsForFormat(format);
             port.lastDataOutputTime = 0;
-            port.hostGain = HostGainRamp(freq / 100);
+            port.hostGain = HostGainRamp(freq / 100, HostVolumeGain_nid_no_patch());
             port.virtualQueueEnd = sceKernelGetProcessTime();
             port.mixLevel = type == PORT_TYPE_PADSPK ? DEFAULT_PADSPK_MIX_LEVEL : DEFAULT_VOLUME;
             if (type == PORT_TYPE_VIBRATION) {

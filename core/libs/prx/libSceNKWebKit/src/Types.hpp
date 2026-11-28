@@ -257,6 +257,7 @@ public:
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
     std::uint8_t htmlInputElementAutoFillButtonType = 0;
     std::uint8_t htmlInputElementLastAutoFillButtonType = 0;
+    RectValue elementBounds{{0.0, 0.0}, {0.0, 0.0}};
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
@@ -309,6 +310,7 @@ public:
     Retained<Object> topOverhangImage;
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
+    bool hasLocalDataForURL = false;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

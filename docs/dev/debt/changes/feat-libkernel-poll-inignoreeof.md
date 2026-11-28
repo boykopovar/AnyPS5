@@ -1,0 +1,5 @@
+# libkernel
+
+## add Functional
+
+- [poll with POLLINIGNEOF](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) - differs from FreeBSD 11.4's `sopoll_generic` and `pipe_poll`: an unconnected stream socket on Linux reports `POLLOUT`; a zero-length record on a Linux `SOCK_SEQPACKET` socket is not reported; a pipe closed by another thread during the call throws or counts the descriptor that took its number instead of reporting `POLLNVAL`; on Windows a reset stream keeps reporting `POLLIN` after `recv` returned the error, and after the guest's own `SHUT_RD` a socket error is not reported, as Windows also resets a connection shut with data queued. `SO_RCVLOWAT` above 1 throws on a datagram or sequenced-packet socket, whose `sbavail` counts the sender address, is honoured only here, not without `POLLINIGNEOF`, and a mark above the host's receive buffer never completes. While only dropped readiness is reported, `poll` checks again after each 1 or 10 ms slice instead of waiting on the host
