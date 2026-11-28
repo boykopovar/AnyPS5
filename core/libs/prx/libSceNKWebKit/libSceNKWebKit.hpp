@@ -19,6 +19,7 @@
 #include "prx/libSceNKWebKit/include/CrossOriginAccessControlExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyProtectionSpaceBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
+#include "prx/libSceNKWebKit/include/IdentifierRepExports.hpp"
 #include "prx/libSceNKWebKit/include/CustomHeaderFieldsExports.hpp"
 #include "prx/libSceNKWebKit/include/DisplayListNativeImageExports.hpp"
 #include "prx/libSceNKWebKit/include/DOMRectListExports.hpp"
