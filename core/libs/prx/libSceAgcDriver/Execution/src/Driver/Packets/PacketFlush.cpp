@@ -54,7 +54,7 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
     if (DrawPipeline::Active() && (submit || record || capped || recordAtLock)) {
         static const bool committerSubmits = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
         if (committerSubmits && !record && !recordAtLock && DrawPipeline::Queue0().Busy()) return;
-        DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Flush);
+        DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Flush, 0x100, record || recordAtLock ? "record" : capped ? "capped" : "submit");
     }
     std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::defer_lock);
 

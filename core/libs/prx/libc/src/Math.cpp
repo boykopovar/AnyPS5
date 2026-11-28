@@ -1577,14 +1577,6 @@ long double APS5_VABI log1pl_nid_postfix(long double x) {
     return _LLog_nid_postfix(u, 0) + correction;
 }
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
-long double APS5_VABI lgammal_nid_postfix(long double x) {
-    long double integral = x;
-    if (_LDint_nid_postfix(&integral, 0) == 0 && x <= 0.0L) {
-        _Feraise_nid_postfix(0x04);
-        return std::numeric_limits<long double>::infinity();
-    }
-    return std::lgamma(x);
-}
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {

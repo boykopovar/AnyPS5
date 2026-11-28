@@ -237,7 +237,7 @@ if(BUILD_TESTING)
             "stall-watchdog-invalid|APS5_STALL_WATCHDOG_SECS=1x" "stall-watchdog-rewind|APS5_STALL_WATCHDOG_SECS=1" "stall-watchdog-order|APS5_STALL_WATCHDOG_SECS=1" "stall-clock|APS5_STALL_WATCHDOG_SECS=1"
             "stall-prompt-invalid|ANYPS5_STALL_PROMPT=2" "stall-prompt-off|APS5_STALL_WATCHDOG_SECS=1" "stall-prompt-zero|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=0" "stall-prompt-rearm|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-real|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-reentry|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-quit|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1"
             "stall-prompt-lock|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-lock-unavailable|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1"
-            "order-signal|ANYPS5_NO_SHADER_CACHE=1")
+            "order-signal|APS5_ORDER_HOLD_WAIT_US=50000" "order-hold-wait-invalid|APS5_ORDER_HOLD_WAIT_US=50x" "order-hold-wait-zero|APS5_ORDER_HOLD_WAIT_US=0")
     if(WIN32)
         list(APPEND pm4RingCases "ring-report-heap|APS5_PM4_RING=2")
     endif()
@@ -248,7 +248,7 @@ if(BUILD_TESTING)
         string(REPLACE "," ";" pm4RingEnvironment "${pm4RingEnvironment}")
         string(REPLACE "-" "_" pm4RingTest "agc_driver_pm4_${pm4RingMode}")
         if(pm4RingMode MATCHES "^stall-prompt-(quit|lock)$")
-            add_test(NAME ${pm4RingTest} COMMAND ${CMAKE_COMMAND} -DTEST=$<TARGET_FILE:agc_driver_pm4_tests> -DMODE=${pm4RingMode} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/Pm4StallQuit.cmake)
+            add_test(NAME ${pm4RingTest} COMMAND ${CMAKE_COMMAND} -DTEST=$<TARGET_FILE:agc_driver_pm4_tests> -DMODE=${pm4RingMode} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/Pm4StallQuit.cmake -- $<TARGET_FILE:agc_driver_pm4_tests>)
         else()
             add_test(NAME ${pm4RingTest} COMMAND agc_driver_pm4_tests ${pm4RingMode})
         endif()

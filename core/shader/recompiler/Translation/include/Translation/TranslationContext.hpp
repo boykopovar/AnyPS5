@@ -130,6 +130,7 @@ private:
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
+    IrValue& ldexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
@@ -174,6 +175,7 @@ private:
     bool sLoad(const RdnaInstruction& inst, bool raw);
     bool sScratchLoad(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
+    void bufferLoadToLds(const RdnaInstruction& inst, const MemoryInfo& memory, IrOpcode opcode, IrValue* resource, const BufferAddress& address);
     bool bufferLoadFormatD16(const RdnaInstruction& inst);
     bool bufferStoreFormatD16(const RdnaInstruction& inst);
     bool bufferStore(const RdnaInstruction& inst);
