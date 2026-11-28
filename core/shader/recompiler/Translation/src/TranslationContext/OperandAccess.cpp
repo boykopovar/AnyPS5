@@ -462,6 +462,21 @@ IrU32 TranslationContext::quietNan16(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x0200u))) : bits;
 }
 
+IrU32 TranslationContext::nanResultF16(IrU32 result, std::initializer_list<IrU32> sources) {
+    const auto isNan = [&](const IrU32& bits) { return IrU1(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u))); };
+    if (nanFast) {
+        noteNan(isNan(result).Value(), result.Value(), NanCheckLowHalf);
+        return result;
+    }
+    ++program.Metadata().nanSpeculationRepairedOps;
+    IrU32 nan(ir.Constant(0xfe00u));
+    for (auto index = sources.size(); index-- > 0u;) {
+        const IrU32& source = sources.begin()[index];
+        nan = IrU32(ir.Select(isNan(source).Value(), quietNan16(source).Value(), nan.Value()));
+    }
+    return IrU32(ir.Select(isNan(result).Value(), nan.Value(), result.Value()));
+}
+
 std::array<IrU32, 2> TranslationContext::quietNan64(const std::array<IrU32, 2>& bits) {
     return ieeeMode ? std::array<IrU32, 2>{bits[0], IrU32(ir.BitwiseOr(bits[1].Value(), ir.Constant(0x00080000u)))} : bits;
 }

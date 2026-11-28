@@ -277,6 +277,10 @@ void TranslationContext::writeF16Conversion(const RdnaOperand& operand, IrF32 va
 }
 
 void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid) {
+    write16Bits(operand, clampF16Bits(operand, f16ResultBits(value, sources, invalid)));
+}
+
+IrU32 TranslationContext::f16ResultBits(IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid) {
     const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&clampF16Overflow(value, sources).Value()}));
     const IrU16 bits(ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&half.Value()}));
     IrU32 word(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&bits.Value()}));
@@ -286,7 +290,7 @@ void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value, std::
         const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(word.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u)));
         word = IrU32(ir.Select(ir.LogicalAnd(nan.Value(), *invalid), ir.Constant(0xfe00u), word.Value()));
     }
-    write16Bits(operand, clampF16Bits(operand, word));
+    return word;
 }
 
 }
