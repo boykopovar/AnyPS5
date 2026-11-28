@@ -13,6 +13,8 @@
 
 namespace AgcDriver {
 
+struct NativeDepthSnapshot;
+
 void Submit(const Packet* packet, std::uint32_t queue);
 
 struct AwaitedWait {
@@ -30,6 +32,11 @@ struct RetiredOwners {
     std::uint64_t depthPlanes = 0;
 };
 
+void PreflightNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
+void InvalidateNativeDepthMetadataForReplay_nid_no_patch(std::uint64_t address, std::size_t bytes);
+RetiredOwners DiscardNativeDepthForReplay_nid_no_patch();
+void RestoreNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots);
+
 }
 
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes);
@@ -42,6 +49,7 @@ extern "C" void AgcDriverOmitGpuOwnersForTest_nid_no_patch(bool omit);
 extern "C" void AgcDriverGuestMemoryTransaction_nid_no_patch(void (*body)(void* context), void* context, std::exception_ptr* failure);
 extern "C" void AgcDriverSetGuestMemoryTransactionHookForTest_nid_no_patch(void (*hook)());
 extern "C" void AgcDriverWaitIdle_nid_postfix();
+extern "C" std::size_t AgcDriverRestoreNativeDepthCapture_nid_no_patch(const char* directory);
 extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords);
 extern "C" void AgcDriverUseGcnShaders_nid_postfix();
 extern "C" void AgcDriverRaiseWorkerThreadPriority_nid_postfix(const char* role);

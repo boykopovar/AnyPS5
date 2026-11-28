@@ -706,10 +706,10 @@ int main() {
         run.IdleRemaps();
         run.RecordedRemap();
         run.SampledRemap();
+        run.SampledReinterpretation();
         run.LiveBinds();
         run.ReplacedPlane();
         run.ReplacedCmask();
-        run.SampledReinterpretation();
         const bool storage = context.storageImageMultisample;
         if (storage) run.StorageRemap();
         run.StorageSrgbTwin();

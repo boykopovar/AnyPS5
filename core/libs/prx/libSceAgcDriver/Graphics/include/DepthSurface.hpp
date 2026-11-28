@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+namespace AgcDriver { struct NativeDepthSnapshot; }
+
 namespace AgcDriver::Graphics {
 
 class Texture;
@@ -65,10 +67,15 @@ struct RetiredDepth {
     std::size_t surfaces = 0;
     std::size_t planes = 0;
 };
+void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes);
 RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device);
 std::size_t ResidentDepthOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly);
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled);
 void ClearDepthSurfaces(VkDevice device);
+std::vector<NativeDepthSnapshot> CaptureNativeDepthSurfaces(VkDevice device);
+void PreflightNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots);
+void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots);
 void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t bytes);
 struct WrittenStorageExtent {
     std::uint64_t address;

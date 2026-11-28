@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Execution/include/NanSpeculationCounters.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -615,11 +616,12 @@ void verifyReset(const FrameCaptureReader& reader, const ResetPlan& plan, std::s
     if (wrong.load() != 0) throw std::runtime_error("frame replay: guest memory at " + std::to_string(wrong.load()) + " differs from the captured contents after the reset");
 }
 
-ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped, std::uint64_t& since, ResetFault fault, bool verify) {
+ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped, std::uint64_t& since, ResetFault fault, bool verify, const std::vector<AgcDriver::NativeDepthSnapshot>* nativeDepth = nullptr) {
     const auto plan = planReset(reader, skipped);
     ResetResult result;
     result.rangeBytes = plan.rangeBytes;
     exclusive([&] {
+        if (nativeDepth != nullptr) AgcDriver::PreflightNativeDepthForReplay_nid_no_patch(*nativeDepth);
         const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         struct Omission {
             explicit Omission(bool omit) : omit(omit) { if (omit) AgcDriverOmitGpuOwnersForTest_nid_no_patch(true); }
@@ -645,6 +647,12 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
             static_cast<void>(changedSince(range.address, range.bytes, previous, changed));
             candidates[index] = candidateRuns(range, changed, owned[index]);
             retire(candidates[index]);
+        }
+        if (nativeDepth != nullptr && fault != ResetFault::KeepOwners && fault != ResetFault::OmitOwners) {
+            const auto retired = AgcDriver::DiscardNativeDepthForReplay_nid_no_patch();
+            result.retired.depthOwners += retired.depthOwners;
+            result.retired.depthSurfaces += retired.depthSurfaces;
+            result.retired.depthPlanes += retired.depthPlanes;
         }
         for (const auto* range : plan.ranges) {
             AgcDriverFlushGuestMemory_nid_no_patch(range->address, static_cast<std::size_t>(range->bytes), &failure);
@@ -680,10 +688,15 @@ ResetResult resetMemory(const FrameCaptureReader& reader, const Skipped& skipped
         if (fault == ResetFault::Remap) std::thread([] { GuestAllocations::Mutation mutation; }).join();
         for (const auto& [begin, end] : replaced) since = std::max(since, changedSince(begin, end - begin, std::numeric_limits<std::uint64_t>::max(), changed));
         if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != mapping) throw std::runtime_error("frame replay: guest memory was mapped or unmapped during the reset, which the reset excludes");
-        if (!verify) return;
-        const auto verifyStart = Clock::now();
-        verifyReset(reader, plan, candidates);
-        result.verifySeconds = std::chrono::duration<double>(Clock::now() - verifyStart).count();
+        if (verify) {
+            const auto verifyStart = Clock::now();
+            verifyReset(reader, plan, candidates);
+            result.verifySeconds = std::chrono::duration<double>(Clock::now() - verifyStart).count();
+        }
+        if (nativeDepth != nullptr) {
+            for (const auto* range : plan.ranges) AgcDriver::InvalidateNativeDepthMetadataForReplay_nid_no_patch(range->address, static_cast<std::size_t>(range->bytes));
+            AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(*nativeDepth);
+        }
     });
     return result;
 }
@@ -1672,6 +1685,11 @@ int run(const Options& options) {
     AgcDriverTrackRewindTails_nid_postfix();
     auto skipped = restoreMemory(reader);
     auto resetSince = options.repeat > 1 ? watchBaseline(reader, skipped) : 0;
+    const auto nativeDepthPath = options.directory / AgcDriver::NativeDepthCaptureName;
+    const bool hasNativeDepth = std::filesystem::exists(nativeDepthPath);
+    const auto nativeDepth = AgcDriver::ReadNativeDepthCapture(nativeDepthPath);
+    const auto nativeDepthSurfaces = nativeDepth.size();
+    if (!nativeDepth.empty()) exclusive([&] { AgcDriver::RestoreNativeDepthForReplay_nid_no_patch(nativeDepth); });
     const auto loaded = Clock::now();
     Replay replay{options, reader};
     replay.skipped = std::move(skipped);
@@ -1694,7 +1712,7 @@ int run(const Options& options) {
         double resetSeconds = 0.0;
         if (pass > 0) {
             const auto resetStart = Clock::now();
-            reset = resetMemory(reader, replay.skipped, resetSince, options.resetFault, options.verifyReset);
+            reset = resetMemory(reader, replay.skipped, resetSince, options.resetFault, options.verifyReset, hasNativeDepth ? &nativeDepth : nullptr);
             resetSeconds = std::chrono::duration<double>(Clock::now() - resetStart).count() - reset.verifySeconds;
             replay.pass = pass;
             replay.recording = false;
@@ -1759,14 +1777,14 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"kept_words\":%llu,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"kept_words\":%llu,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"native_depth_surfaces\":%llu,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
                 static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.keptWords.load()), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
                 replay.paceWaitedSeconds(), static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
-                static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
+                static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, static_cast<unsigned long long>(nativeDepthSurfaces), std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
     std::fflush(stdout);
     AgcDriver::ReportNanSpeculationCounters("replay");
     return replay.unfinished == 0 ? 0 : 3;

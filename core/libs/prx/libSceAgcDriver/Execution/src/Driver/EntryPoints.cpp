@@ -2,9 +2,11 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
@@ -16,6 +18,22 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver {
+
+void PreflightNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots) {
+    DriverDetail::Driver::Get().PreflightNativeDepthForReplay(snapshots);
+}
+
+void InvalidateNativeDepthMetadataForReplay_nid_no_patch(std::uint64_t address, std::size_t bytes) {
+    Graphics::InvalidateDepthMetadataForReplay(address, bytes);
+}
+
+RetiredOwners DiscardNativeDepthForReplay_nid_no_patch() {
+    return DriverDetail::Driver::Get().DiscardNativeDepthForReplay();
+}
+
+void RestoreNativeDepthForReplay_nid_no_patch(std::span<const NativeDepthSnapshot> snapshots) {
+    DriverDetail::Driver::Get().RestoreNativeDepthForReplay(snapshots);
+}
 
 void Submit(const Packet* packet, std::uint32_t queue) try {
     KernelNoteGpuSubmit_nid_no_patch();
@@ -131,6 +149,13 @@ extern "C" void AgcDriverRequestScreenshot_nid_postfix() {
 
 extern "C" void AgcDriverTracePresent_nid_postfix(std::uint32_t width, std::uint32_t height) {
     AgcDriver::DriverDetail::Driver::Get().TracePresent(width, height);
+}
+
+extern "C" std::size_t AgcDriverRestoreNativeDepthCapture_nid_no_patch(const char* directory) {
+    if (directory == nullptr) throw std::invalid_argument("native depth capture: null capture directory");
+    const auto snapshots = AgcDriver::ReadNativeDepthCapture(std::filesystem::path(directory) / AgcDriver::NativeDepthCaptureName);
+    if (!snapshots.empty()) AgcDriver::DriverDetail::Driver::Get().RestoreNativeDepth(snapshots);
+    return snapshots.size();
 }
 
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
