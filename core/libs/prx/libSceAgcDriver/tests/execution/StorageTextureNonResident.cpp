@@ -134,8 +134,8 @@ void ReleaseSurface(std::uint32_t* texels) {
     GuestArena::GuestArenaReset_nid_postfix(texels, SurfaceBytes);
     GuestArena::GuestArenaRelease_nid_postfix(texels, SurfaceBytes);
 #else
-    munmap(texels, SurfaceBytes);
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(texels, SurfaceBytes);
+    munmap(texels, SurfaceBytes);
 #endif
 }
 
