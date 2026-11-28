@@ -5,6 +5,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
+#include <freetype/internal/ftobjs.h>
 
 #include <cerrno>
 #include <cstdint>
@@ -48,9 +49,30 @@ static void APS5_VABI CountingRelease(GuestMemoryRec*, void*) {
 
 static void TestModuleWrapperGuestPointers() {
     auto* unmappedLibrary = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
-    errno = 71;
-    REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(unmappedLibrary) == 0x21);
-    REQUIRE(errno == 71);
+    alignas(GuestLibrary) unsigned char rawLibrary[sizeof(GuestLibrary) + alignof(GuestLibrary)];
+    std::memset(rawLibrary, 0xAA, sizeof(rawLibrary));
+    void* misalignedLibrary = rawLibrary + 1;
+
+    using SupportFn = int (APS5_VABI*)(void*);
+    const SupportFn supportHelpers[] = {
+        sceFreeTypeOlFtaSupportModules_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatCid_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatType1_nid_postfix,
+        sceFreeTypeOlFtaSupportFormatType42_nid_postfix,
+    };
+    for (const auto fn : supportHelpers) {
+        errno = 71;
+        REQUIRE(fn(unmappedLibrary) == 0x21);
+        REQUIRE(errno == 71);
+        errno = 71;
+        REQUIRE(fn(misalignedLibrary) == 0x21);
+        REQUIRE(errno == 71);
+    }
 
     auto* unmappedSlot = reinterpret_cast<FreeType::GuestGlyphSlotRec*>(static_cast<std::uintptr_t>(0x10));
     errno = 71;
@@ -136,6 +158,22 @@ int main() {
     REQUIRE(sceFreeTypeOlFtaSupportFormatBdf_nid_postfix(&invalidLibrary) == 0x21);
     REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(nullptr) == 0x21);
     REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatCid_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatCid_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType1_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType1_nid_postfix(&invalidLibrary) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType42_nid_postfix(nullptr) == 0x21);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType42_nid_postfix(&invalidLibrary) == 0x21);
 
     for (const auto& entry : cases) {
         REQUIRE(entry.remove(library) == 0);
@@ -155,6 +193,75 @@ int main() {
     REQUIRE(sceFreeTypeOlFtaSupportHinterAutoFitter_nid_postfix(library) == 0);
     REQUIRE(sceFreeTypeOlFtaSupportRendererRaster1_nid_postfix(library) == 0);
     REQUIRE(sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatCid_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType1_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType42_nid_postfix(library) == 0);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleT1cid_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "t1cid") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatCid_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "t1cid") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleCff_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "cff") == nullptr);
+    REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "cff") != nullptr);
+    REQUIRE(FT_Get_Module(native, "truetype") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleCff_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "cff") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeOtf_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "cff") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenTypeTtf_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleGxvalid_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
+    REQUIRE(FT_Get_Module(native, "gxvalid") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "truetype") != nullptr);
+    REQUIRE(FT_Get_Module(native, "gxvalid") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleGxvalid_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "gxvalid") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "gxvalid") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleType1_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "type1") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType1_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "type1") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleType42_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "type42") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType42_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "type42") != nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleType42_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "type42") == nullptr);
+    REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType42_nid_postfix(library) == FT_Err_Missing_Module);
+    REQUIRE(FT_Get_Module(native, "type42") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueType_nid_postfix(library) == 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatType42_nid_postfix(library) == 0);
+    REQUIRE(FT_Get_Module(native, "type42") != nullptr);
 
     GuestMemoryRec memory{};
     memory.alloc = Allocate;
@@ -193,6 +300,63 @@ int main() {
     REQUIRE(FT_Done_Face_nid_postfix(face) == 0);
 
     REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+    GuestFaceRec* openTypeFace = nullptr;
+    REQUIRE(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &openTypeFace) != 0);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(library) == 0);
+    REQUIRE(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &openTypeFace) == 0);
+    REQUIRE(openTypeFace != nullptr && openTypeFace->glyph != nullptr);
+    REQUIRE(FT_Select_Charmap_nid_postfix(openTypeFace, FT_ENCODING_UNICODE) == 0);
+    REQUIRE(FT_Get_Char_Index_nid_postfix(openTypeFace, 'A') != 0);
+    REQUIRE(FT_Done_Face_nid_postfix(openTypeFace) == 0);
+
+    GuestLibrary* fullLib = nullptr;
+    REQUIRE(FT_Init_FreeType_nid_postfix(&fullLib) == 0);
+    REQUIRE(fullLib != nullptr && fullLib->host != nullptr);
+    FT_Library fullNative = fullLib->host;
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleCff_nid_postfix(fullLib) == 0);
+
+    std::vector<FT_Module_Class> dummies;
+    dummies.reserve(32);
+    std::vector<std::string> dummyNames;
+    dummyNames.reserve(32);
+    while (fullNative->num_modules < 32) {
+        dummyNames.push_back("dummy_" + std::to_string(fullNative->num_modules));
+        FT_Module_Class dummy{};
+        dummy.module_size = sizeof(FT_ModuleRec);
+        dummy.module_name = dummyNames.back().c_str();
+        dummy.module_version = 0x10000;
+        dummies.push_back(dummy);
+        REQUIRE(FT_Add_Module(fullNative, &dummies.back()) == 0);
+    }
+    REQUIRE(fullNative->num_modules == 32);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(fullLib) == 0x30);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(fullLib) == 0);
+    REQUIRE(fullNative->num_modules == 31);
+    REQUIRE(FT_Get_Module(fullNative, "cff") == nullptr);
+    REQUIRE(FT_Get_Module(fullNative, "truetype") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatOpenType_nid_postfix(fullLib) == 0x30);
+    REQUIRE(FT_Get_Module(fullNative, "cff") != nullptr);
+    REQUIRE(FT_Get_Module(fullNative, "truetype") == nullptr);
+    REQUIRE(fullNative->num_modules == 32);
+
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(fullLib) == 0x30);
+    REQUIRE(FT_Get_Module(fullNative, "truetype") == nullptr);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleCff_nid_postfix(fullLib) == 0);
+    REQUIRE(fullNative->num_modules == 31);
+    REQUIRE(FT_Get_Module(fullNative, "gxvalid") == nullptr);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(fullLib) == 0x30);
+    REQUIRE(FT_Get_Module(fullNative, "truetype") != nullptr);
+    REQUIRE(FT_Get_Module(fullNative, "gxvalid") == nullptr);
+    REQUIRE(fullNative->num_modules == 32);
+    REQUIRE(sceFreeTypeOlFtaSupportFormatTrueTypeGx_nid_postfix(fullLib) == 0x30);
+
+    REQUIRE(FT_Done_FreeType_nid_postfix(fullLib) == 0);
+
+    REQUIRE(sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(library) == 0);
+
     REQUIRE(sceFreeTypeOlFtaRemoveModuleCff_nid_postfix(library) == 0);
     REQUIRE(sceFreeTypeOlFtaRemoveModuleType1_nid_postfix(library) == 0);
     REQUIRE(FT_Get_Module(native, "truetype") == nullptr);
@@ -231,6 +395,9 @@ int main() {
     };
 #endif
     REQUIRE(lookup("oM0zMNCfXKM"));
+    for (const char* nid : {"JuzrPZClLew", "sylevnx-fqk", "0RSuGozMl9o", "J3HnvW8FJV8", "YpxR8CqGMIM", "83qtpn8+XnA", "g2p7fkJpuC0", "xqjAbn8VNGo"}) {
+        REQUIRE(lookup(nid));
+    }
 
     struct ExportCase {
         const char* name;
