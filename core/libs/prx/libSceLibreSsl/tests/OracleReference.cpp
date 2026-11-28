@@ -11,7 +11,9 @@
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -90,6 +92,30 @@ void AddAllAlgorithms() { OPENSSL_add_all_algorithms_noconf(); }
 void LoadBuiltinModules() { OPENSSL_load_builtin_modules(); }
 void ConfModulesFree() { CONF_modules_free(); }
 int I2tAsn1Object(char* buffer, int length, const void* object) { return i2t_ASN1_OBJECT(buffer, length, const_cast<ASN1_OBJECT*>(static_cast<const ASN1_OBJECT*>(object))); }
+void* D2iX509(void** certificate, const unsigned char** in, long length) { return d2i_X509(reinterpret_cast<X509**>(certificate), in, length); }
+void X509Free(void* certificate) { X509_free(static_cast<X509*>(certificate)); }
+void* X509GetExtD2i(void* certificate, int nid, int* critical, int* index) { return X509_get_ext_d2i(static_cast<X509*>(certificate), nid, critical, index); }
+std::string ExtensionDer(int nid, void* value) {
+    const X509V3_EXT_METHOD* method = X509V3_EXT_get_nid(nid);
+    if (!method->it) {
+        const int length = method->i2d(value, nullptr);
+        if (length < 0) return "encode failed";
+        std::string encoded(static_cast<std::size_t>(length), '\0');
+        unsigned char* out = reinterpret_cast<unsigned char*>(encoded.data());
+        method->i2d(value, &out);
+        return encoded;
+    }
+    unsigned char* out = nullptr;
+    const int length = ASN1_item_i2d(static_cast<ASN1_VALUE*>(value), &out, ASN1_ITEM_ptr(method->it));
+    std::string encoded = length < 0 ? std::string("encode failed") : std::string(reinterpret_cast<const char*>(out), static_cast<std::size_t>(length));
+    free(out);
+    return encoded;
+}
+void ExtensionFree(int nid, void* value) {
+    const X509V3_EXT_METHOD* method = X509V3_EXT_get_nid(nid);
+    if (method->it) ASN1_item_free(static_cast<ASN1_VALUE*>(value), ASN1_ITEM_ptr(method->it));
+    else method->ext_free(value);
+}
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
 
