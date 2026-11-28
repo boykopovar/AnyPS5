@@ -20,6 +20,9 @@ void SiginfoTestReadSite();
 void SiginfoTestReadResume();
 std::uint64_t APS5_VABI SiginfoTestWrite(std::uintptr_t address, std::uint64_t value);
 void SiginfoTestWriteSite();
+std::uint64_t APS5_VABI SiginfoTestDivide(std::int32_t dividend, std::int32_t divisor);
+void SiginfoTestDivideSite();
+void SiginfoTestDivideResume();
 }
 
 asm(".text\n"
@@ -38,6 +41,16 @@ asm(".text\n"
     APS5_ASM_SYMBOL("SiginfoTestWriteSite") ":\n"
     "    movq %rsi, (%rdi)\n"
     "    movq (%rdi), %rax\n"
+    "    ret\n"
+    ".globl " APS5_ASM_SYMBOL("SiginfoTestDivide") "\n"
+    APS5_ASM_SYMBOL("SiginfoTestDivide") ":\n"
+    "    movl %edi, %eax\n"
+    "    cltd\n"
+    ".globl " APS5_ASM_SYMBOL("SiginfoTestDivideSite") "\n"
+    APS5_ASM_SYMBOL("SiginfoTestDivideSite") ":\n"
+    "    idivl %esi\n"
+    ".globl " APS5_ASM_SYMBOL("SiginfoTestDivideResume") "\n"
+    APS5_ASM_SYMBOL("SiginfoTestDivideResume") ":\n"
     "    ret\n");
 
 static void RequireFailed(const char* expression, const char* file, int line) {
@@ -48,12 +61,15 @@ static void RequireFailed(const char* expression, const char* file, int line) {
 
 #define Require(...) do { if (!(__VA_ARGS__)) RequireFailed(#__VA_ARGS__, __FILE__, __LINE__); } while (false)
 
+static constexpr int GuestSigfpe = 8;
 static constexpr int GuestSigsegv = 11;
 static constexpr int SaNodefer = 0x10;
 static constexpr int SaSiginfo = 0x40;
 static constexpr std::int32_t SegvMaperr = 1;
 static constexpr std::int32_t SegvAccerr = 2;
 static constexpr std::uint32_t TrapPage = 12;
+static constexpr std::uint32_t TrapDivide = 18;
+static constexpr std::int32_t FpeIntdiv = 2;
 static constexpr std::uint64_t PageProtection = 0x1;
 static constexpr std::uint64_t PageWrite = 0x2;
 static constexpr std::size_t InfoCode = 8;
@@ -161,13 +177,27 @@ static void APS5_VABI SiginfoHandler(int signum, void* info, void* context) {
     MakeWritable(readOnlyPage);
 }
 
-static void Install() {
+static void APS5_VABI FpeHandler(int signum, void* info, void* context) {
+    calls.fetch_add(1);
+    const auto site = reinterpret_cast<std::uintptr_t>(&SiginfoTestDivideSite);
+    Require(signum == GuestSigfpe);
+    Require(Field<std::int32_t>(info, 0) == GuestSigfpe);
+    Require(Field<std::int32_t>(info, InfoCode) == FpeIntdiv);
+    Require(Field<std::uintptr_t>(info, InfoAddress) == site);
+    Require(Field<std::int32_t>(info, InfoTrap) == static_cast<std::int32_t>(TrapDivide));
+    Require(Field<std::uint32_t>(context, TrapnoOffset) == TrapDivide);
+    Require(Field<std::uint64_t>(context, RipOffset) == site);
+    SetField<std::uint64_t>(context, RipOffset, reinterpret_cast<std::uintptr_t>(&SiginfoTestDivideResume));
+    SetField<std::uint64_t>(context, RaxOffset, Resumed);
+}
+
+static void Install(int guest, std::uintptr_t handler) {
     GuestSigaction action{};
-    action.handler = reinterpret_cast<std::uintptr_t>(&SiginfoHandler);
+    action.handler = handler;
     action.flags = SaSiginfo | SaNodefer;
-    Require(sigaction_nid_postfix(GuestSigsegv, &action, nullptr) == 0);
+    Require(sigaction_nid_postfix(guest, &action, nullptr) == 0);
     GuestSigaction installed{};
-    Require(sigaction_nid_postfix(GuestSigsegv, nullptr, &installed) == 0);
+    Require(sigaction_nid_postfix(guest, nullptr, &installed) == 0);
     Require(installed.handler == action.handler && installed.flags == action.flags);
 }
 
@@ -218,13 +248,39 @@ static void TestContextMask() {
     Require(sigprocmask_nid_postfix(GuestSigsetmask, original, nullptr) == 0);
 }
 
+static void TestDivide(std::int32_t dividend, std::int32_t divisor) {
+    calls.store(0);
+    Require(SiginfoTestDivide(dividend, divisor) == Resumed);
+    Require(calls.load() == 1);
+}
+
+static void APS5_VABI PlainFpeHandler(int) {
+    std::abort();
+}
+
+static void TestIntegerDivide() {
+    Install(GuestSigfpe, reinterpret_cast<std::uintptr_t>(&FpeHandler));
+    TestDivide(1, 0);
+    TestDivide(INT32_MIN, -1);
+    for (const std::uintptr_t previous : {std::uintptr_t{0}, std::uintptr_t{1}, reinterpret_cast<std::uintptr_t>(&PlainFpeHandler)}) {
+        GuestSigaction other{};
+        other.handler = previous;
+        Require(sigaction_nid_postfix(GuestSigfpe, &other, nullptr) == 0);
+        Install(GuestSigfpe, reinterpret_cast<std::uintptr_t>(&FpeHandler));
+        TestDivide(1, 0);
+    }
+    GuestSigaction reset{};
+    Require(sigaction_nid_postfix(GuestSigfpe, &reset, nullptr) == 0);
+}
+
 int main() {
-    Install();
+    Install(GuestSigsegv, reinterpret_cast<std::uintptr_t>(&SiginfoHandler));
     TestUnmappedRead();
     TestWriteToReadOnly();
     TestWriteToUntouchedReadOnly();
     TestReadNoAccess();
     TestContextMask();
+    TestIntegerDivide();
     GuestSigaction reset{};
     Require(sigaction_nid_postfix(GuestSigsegv, &reset, nullptr) == 0);
     std::puts("guest siginfo fault tests passed");

@@ -46,6 +46,7 @@ constexpr int GuestSigkill = 9;
 constexpr int GuestSigstop = 17;
 constexpr std::uint32_t UnblockableSignals = (1u << (GuestSigkill - 1)) | (1u << (GuestSigstop - 1));
 constexpr int GuestSigalrm = 14;
+constexpr int GuestSigfpe = 8;
 constexpr int GuestSigbus = 10;
 constexpr int GuestSigsegv = 11;
 constexpr int GuestSigcont = 19;
@@ -426,9 +427,12 @@ bool Install(int guest, const GuestSigaction& action) {
     handlerFlags[guest].store(action.flags);
     const bool siginfo = action.handler > 1 && (action.flags & SaSiginfo) != 0;
     siginfoHandlers[guest].store(siginfo ? action.handler : 0);
-    if (siginfo && (guest == GuestSigbus || guest == GuestSigsegv)) {
+    if (siginfo && (guest == GuestSigfpe || guest == GuestSigbus || guest == GuestSigsegv)) {
         handlers[guest].store(nullptr);
-        InstallSiginfoFaultDelivery();
+#ifndef __linux__
+        if (guest == GuestSigfpe) std::signal(SIGFPE, SIG_DFL);
+#endif
+        InstallSiginfoFaultDelivery(guest);
         return true;
     }
     const int native = NativeSignal(guest);
