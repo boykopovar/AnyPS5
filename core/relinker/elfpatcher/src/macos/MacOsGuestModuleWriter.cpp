@@ -40,7 +40,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbolIndex = info >> 32;
             const auto& symbol = guest.Symbols.at(symbolIndex);
-            const bool imported = symbolIndex != 0 && symbol.Section == 0;
+            const bool ownTls = symbolIndex == 0 || (symbol.Section == 0 && symbol.Name.empty() && symbol.Info == 6);
+            const bool imported = symbolIndex != 0 && symbol.Section == 0 && !ownTls;
             const bool tlsSymbol = (symbol.Info & 15) == 6;
             const auto rva = image.GetRva(target, 8);
             for (const auto& header : guest.Headers) {

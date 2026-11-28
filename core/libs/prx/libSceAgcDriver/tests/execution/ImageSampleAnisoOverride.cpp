@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -56,12 +57,6 @@ constexpr Levelled SingleLevel{0, 0};
 constexpr Levelled Mipmapped{Levels - 1u, Levels - 1u};
 constexpr Levelled ClampedToOneLevel{Levels - 1u, 0};
 
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 AgcDriver::Graphics::TileMipLayout BaseLevel(std::uint32_t format, std::uint32_t levels) {
     const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format, Size, Size, levels);
     Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= Storage{}.size(), "image sample aniso override: a texture does not fit its storage");
@@ -89,11 +84,6 @@ void Fill(Storage& integers, Storage& colors, std::uint32_t levels) {
             color[3] = 255u;
         }
     }
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t format, std::uint32_t swizzle, Levelled levels) {

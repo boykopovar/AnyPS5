@@ -53,9 +53,15 @@
  */
 
 #include "prx/libSceNKWebKit/include/AccessibilityObjectExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -204,35 +210,59 @@ constexpr char16_t toAsciiLower(char16_t ch) {
     return ch;
 }
 
-template <typename CharT>
-bool equalsAsciiIgnoreCase(const CharT* data, std::size_t length, std::string_view expectedLowerAscii) {
+bool equalsAsciiIgnoreCase(const char16_t* data, std::size_t length, std::string_view expectedLowerAscii) {
     if (length != expectedLowerAscii.size())
         return false;
     for (std::size_t i = 0; i < length; ++i) {
-        if (toAsciiLower(static_cast<char16_t>(data[i])) != static_cast<char16_t>(static_cast<unsigned char>(expectedLowerAscii[i])))
+        if (toAsciiLower(data[i]) != static_cast<char16_t>(static_cast<unsigned char>(expectedLowerAscii[i])))
             return false;
     }
     return true;
 }
 
-template <typename CharT>
-AccessibilityRole lookupAriaRoleTokens(const CharT* data, std::uint32_t length) {
-    std::uint32_t index = 0;
-    while (index < length) {
-        while (index < length && data[index] == static_cast<CharT>(' '))
-            ++index;
-        if (index >= length)
-            break;
-        const std::uint32_t tokenStart = index;
-        while (index < length && data[index] != static_cast<CharT>(' '))
-            ++index;
-        const std::size_t tokenLength = index - tokenStart;
-        for (const auto& entry : kAriaRoleEntries) {
-            if (equalsAsciiIgnoreCase(data + tokenStart, tokenLength, entry.name))
-                return entry.role;
-        }
+constexpr std::size_t longestAriaRoleName() {
+    std::size_t longest = 0;
+    for (const auto& entry : kAriaRoleEntries)
+        longest = std::max(longest, entry.name.size());
+    return longest;
+}
+
+constexpr std::size_t kLongestAriaRoleName = longestAriaRoleName();
+constexpr std::size_t kGuestPageSize = 4096;
+
+class AriaRoleTokens {
+    char16_t token[kLongestAriaRoleName]{};
+    std::size_t length = 0;
+
+public:
+    bool push(char16_t unit, AccessibilityRole& role) {
+        if (unit == u' ')
+            return finish(role);
+        if (length < kLongestAriaRoleName)
+            token[length] = unit;
+        ++length;
+        return false;
     }
-    return AccessibilityRole::Unknown;
+
+    bool finish(AccessibilityRole& role) {
+        const std::size_t tokenLength = length;
+        length = 0;
+        if (tokenLength == 0 || tokenLength > kLongestAriaRoleName)
+            return false;
+        for (const auto& entry : kAriaRoleEntries) {
+            if (equalsAsciiIgnoreCase(token, tokenLength, entry.name)) {
+                role = entry.role;
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+void requireCopied(bool copied, int savedErrno, const char* what) {
+    errno = savedErrno;
+    if (!copied)
+        throw std::invalid_argument(std::string("ariaRoleToWebCoreRole: unreadable ") + what);
 }
 
 bool IsARIAInputRole(AccessibilityRole ariaRole) {
@@ -288,15 +318,42 @@ AccessibilityRole APS5_VABI _ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreR
     if (!value)
         throw std::invalid_argument("ariaRoleToWebCoreRole: null string pointer");
 
-    const NKWebKit::WtfAbi::StringImpl* impl = value->impl;
-    if (!impl || impl->length == 0)
+    const int savedErrno = errno;
+    const NKWebKit::WtfAbi::StringImpl* guestImpl = nullptr;
+    requireCopied(GuestCopyIn_nid_no_patch(&guestImpl, &value->impl, sizeof(guestImpl)), savedErrno, "string");
+    if (!guestImpl)
         return AccessibilityRole::Unknown;
-    if (!impl->data)
+    NKWebKit::WtfAbi::StringImpl impl{};
+    requireCopied(GuestCopyIn_nid_no_patch(&impl, guestImpl, sizeof(impl)), savedErrno, "string implementation");
+    if (impl.length == 0)
+        return AccessibilityRole::Unknown;
+    if (!impl.data)
         throw std::invalid_argument("ariaRoleToWebCoreRole: null string data");
 
-    if ((impl->hashAndFlags & kStringImplIs8BitFlag) != 0)
-        return lookupAriaRoleTokens(static_cast<const std::uint8_t*>(impl->data), impl->length);
-    return lookupAriaRoleTokens(static_cast<const char16_t*>(impl->data), impl->length);
+    const std::size_t width = (impl.hashAndFlags & kStringImplIs8BitFlag) != 0 ? 1 : 2;
+    const auto* cursor = static_cast<const unsigned char*>(impl.data);
+    std::uint64_t remaining = std::uint64_t{impl.length} * width;
+    unsigned char chunk[kGuestPageSize];
+    AriaRoleTokens tokens;
+    AccessibilityRole role = AccessibilityRole::Unknown;
+    while (remaining) {
+        std::size_t size = kGuestPageSize - reinterpret_cast<std::uintptr_t>(cursor) % kGuestPageSize;
+        size = static_cast<std::size_t>(std::min<std::uint64_t>(size, remaining));
+        size -= size % width;
+        if (!size)
+            size = width;
+        requireCopied(GuestCopyIn_nid_no_patch(chunk, cursor, size), savedErrno, "string characters");
+        for (std::size_t offset = 0; offset < size; offset += width) {
+            char16_t unit = chunk[offset];
+            if (width == 2)
+                std::memcpy(&unit, chunk + offset, sizeof(unit));
+            if (tokens.push(unit, role))
+                return role;
+        }
+        cursor += size;
+        remaining -= size;
+    }
+    return tokens.finish(role) ? role : AccessibilityRole::Unknown;
 }
 
 }

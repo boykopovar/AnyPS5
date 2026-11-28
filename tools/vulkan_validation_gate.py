@@ -19,8 +19,9 @@ FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_NO_SHADER_CACHE": "1",
           "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LOADER_DEBUG": "layer"}
 PUBLIC_ENV = ("ANYPS5_GPU", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "VK_LAYER_PATH")
 DIAGNOSTIC = re.compile(r"\b(VUID-[A-Za-z0-9_-]+|SYNC-HAZARD-[A-Za-z0-9_-]+)")
-UNASSIGNED = re.compile(r"\[\s*(UNASSIGNED-[^]\r\n]+?)\s*\]|Validation (?:Error|(?:Performance )?Warning):\s*\[\s*((?!\s|VUID-|SYNC-HAZARD-|UNASSIGNED-)[^]\r\n]+?)\s*\]")
-MESSAGE = re.compile(r"Validation (?:Error|(?:Performance )?Warning):|(?:VUID-|SYNC-HAZARD-)[\w-]+\s*\((?:ERROR|WARNING)\s*/")
+VALIDATION_ID = re.compile(
+    r"Validation (?:Error|(?:Performance )?Warning):\s*\[\s*([^]\r\n]+?)\s*\]"
+    rf"|{DIAGNOSTIC.pattern}\s*\((?:ERROR|WARNING)\s*/")
 MISSING_LAYER = "was not found but was requested by env var VK_INSTANCE_LAYERS"
 INSERTED_LAYER = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
 
@@ -133,9 +134,11 @@ def guard():
         raise
 
 
-def contain(pid):
+def contain(pid, prepare=None):
     job = new_job()
     try:
+        if prepare is not None:
+            prepare(job)
         process = win32("OpenProcess", PROCESS_SET_QUOTA_AND_TERMINATE, False, pid)
         try:
             win32("AssignProcessToJobObject", job, process)
@@ -269,7 +272,12 @@ def artifact_hashes(build, tests, runtime):
         if not path.is_relative_to(build) or not path.exists():
             raise GateError(f"runtime path must exist inside the build: {relative}")
         if path.is_dir():
-            paths.update(p.resolve() for p in path.rglob("*") if p.is_file())
+            for entry in path.rglob("*"):
+                resolved = entry.resolve()
+                if not resolved.is_relative_to(build):
+                    raise GateError(f"runtime path resolves outside the build: {entry}")
+                if resolved.is_file():
+                    paths.add(resolved)
         else:
             paths.add(path)
     hashes = {}
@@ -307,14 +315,15 @@ def parse_report(path, expected):
         inserted = False
         for channel in ("system-out", "system-err"):
             for line in (case.findtext(channel) or "").splitlines():
-                if MESSAGE.search(line):
-                    messages.update(DIAGNOSTIC.findall(line))
-                    messages.update(first or other for first, other in UNASSIGNED.findall(line))
+                if match := VALIDATION_ID.search(line):
+                    diagnostic = (match.group(1) or match.group(2)).strip()
+                    if diagnostic:
+                        messages[diagnostic] += 1
                 if MISSING_LAYER in line:
                     missing.append(line)
                 inserted = inserted or INSERTED_LAYER in line
         failed = (case.find("failure") is not None or case.find("error") is not None
-                  or case.find("skipped") is not None or case.get("status") in ("disabled", "notrun"))
+                  or case.find("skipped") is not None or case.get("status", "run") != "run")
         if failed or missing or not inserted:
             problems.append(name)
         results[name] = {"diagnostics": dict(messages), "missing_layers": missing, "layer_inserted": inserted,
