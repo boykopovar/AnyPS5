@@ -35,6 +35,7 @@
 #include <string>
 #include <string_view>
 #include <typeinfo>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -129,6 +130,7 @@ struct DrawTail {
     std::array<double, DrawDriverPhaseCount> phaseMs{};
     std::uint64_t captures = 0;
     std::chrono::steady_clock::time_point phaseLap{};
+    std::chrono::steady_clock::time_point handedAt{};
     DrawPhaseTiming phaseTiming{false, phaseMs, phaseLap};
     Pm4::DrawParameters drawParameters{};
     Pm4::DrawParameters resolvedParameters{};
@@ -375,7 +377,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto& indirect = *drawParameters.indirect;
         auto& pipeline = DrawPipeline::Queue0();
         const bool overlaps = pipeline.Busy() && (pipeline.Overlaps(indirect.arguments, static_cast<std::size_t>(std::max<std::uint64_t>(indirect.RangeBytes(), indirect.recordBytes))) || (indirect.countIndirect && pipeline.Overlaps(indirect.countAddress, 4)));
-        if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect);
+        if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect, 0x100, overlaps ? "arguments_queued" : "unpipelined");
     }
     auto& traceIndirect = tail.traceIndirect;
     if (const auto verdict = precheckDraw(queue, submission, packetOffset, packet, drawParameters, rejected, traceIndirect)) {
@@ -767,7 +769,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.dumpTarget = dumpTarget;
     tail.dumpSlot1 = dumpSlot1;
     tail.packetOffset = packetOffset;
-    const bool handOff = pipelined && !drawParameters.indirect && !profile && !lockedPrepare && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && !tracePrograms && !verifyDrawDataHits() && deferredLabels().labels.empty() && DrawFinisher::Enabled();
+    const bool handOff = pipelined && !drawParameters.indirect && !lockedPrepare && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && !tracePrograms && !verifyDrawDataHits() && deferredLabels().labels.empty() && DrawFinisher::Enabled();
     if (handOff) {
         tail.epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         tail.submissionSerial = submission.serial;
@@ -776,13 +778,26 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (DrawTableSnapshotEnabled()) KeepUserDataTables(*shaderMemory, programs);
         DrawFinisher::Pending held;
         if (DrawFinisher::Overlap()) held = heldWrites(tail);
+        const auto handedVerdict = drawn();
+        if (profile) tail.handedAt = std::chrono::steady_clock::now();
         DrawFinisher::Get().Enqueue([this, tailHolder] {
             auto& job = *tailHolder;
+            const auto pickedAt = job.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            PendingDrawPhases outer{};
+            if (job.profile) {
+                job.phaseMs = {};
+                job.captures = 0;
+                job.phaseLap = pickedAt;
+                outer = std::exchange(pendingDrawPhases(), PendingDrawPhases{});
+            }
             DrawPipeline::FollowEpoch(job.epoch);
             GuestMemory::SetCurrentPacket(job.packetOpcode, job.submissionQueue);
             PerformanceTimer finishTiming("Driver.DrawFinish");
+            bool finished = false;
             try {
-                if (finishDraw(job, finishTiming) == DrawVerdict::Rejected) throw std::runtime_error(job.ownRejected);
+                const auto verdict = finishDraw(job, finishTiming);
+                if (verdict == DrawVerdict::Rejected) throw std::runtime_error(job.ownRejected);
+                finished = verdict == DrawVerdict::Drawn;
             } catch (const DrawCompilePending&) {
                 CaptureTrace::Log("draw-pending submission=%llu offset=%zu finisher=1", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset);
             } catch (const RefusedDraw& refused) {
@@ -792,9 +807,22 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 CaptureTrace::Log("draw-error submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset, error.what());
                 throw std::runtime_error("draw at submission " + std::to_string(job.submissionSerial) + " offset " + std::to_string(job.packetOffset) + " (finished on the draw finisher): " + error.what());
             }
+            if (!job.profile) return;
+            const auto now = std::chrono::steady_clock::now();
+            const auto& pending = pendingDrawPhases();
+            const bool phases = finished && pending.phases;
+            std::array<double, DrawDriverPhaseCount> ms{};
+            if (phases) {
+                ms = pending.ms;
+                ms[DrawRowEpilogue] = std::chrono::duration<double, std::milli>(now - pending.tailAt).count();
+            } else {
+                ms[DrawRowSkipped] = std::chrono::duration<double, std::milli>(now - pickedAt).count();
+            }
+            addFinisherDrawPhases(ms, phases, job.captures, std::chrono::duration<double, std::milli>(pickedAt - job.handedAt).count());
+            pendingDrawPhases() = outer;
         }, std::move(held));
         timing.Mark("draw_handed_off");
-        return drawn();
+        return handedVerdict;
     }
     noteFinisherHandOff(false);
     if (DrawFinisher::Busy()) {
@@ -825,7 +853,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     const bool pipelined = tail.pipelined;
     static const bool pipelinedIndirect = std::getenv("APS5_NO_PIPELINED_INDIRECT") == nullptr;
     const auto drainBeforeInline = [&] {
-        if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+        if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect, 0x100, "inline");
     };
     auto& traceIndirect = tail.traceIndirect;
     const auto dumpTarget = tail.dumpTarget;
@@ -1068,7 +1096,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         for (const auto& read : reads) memory.push_back({read.address, read.Bytes()});
     }
 
-    if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
+    if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels, 0x100, "draw_capture");
     if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(*tail.queue, packet, submission, packetOffset, rejected);
 
     bool rectListBuilt = false;
@@ -1211,6 +1239,53 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::size_t lastDrawable = records.size();
         for (std::size_t record = 0; record < records.size(); ++record) {
             if (drawable(records[record])) lastDrawable = record;
+        }
+        static const bool uniformRecords = std::getenv("APS5_UNIFORM_INDIRECT_RECORDS") != nullptr;
+        const auto plainStages = [&] {
+            return std::ranges::all_of(stages, [](const Graphics::CompiledShader& shader) {
+                return shader.program != nullptr && (shader.stage == Stage::Vertex || shader.stage == Stage::Fragment) && shader.program->stencilReferences.empty() && !shader.program->functionLdsBuffer;
+            }) && !Graphics::ShadersWriteMemory(stages);
+        };
+        if (uniformRecords && *indirectCpu == Graphics::IndirectDrawPath::NotFolded && !indirect.drawIndexEnabled &&
+            !graphics.rectList && !graphics.quadList && !graphics.primitiveRestart && !graphics.stages.mesh && !graphics.stages.tessellation &&
+            graphics.stages.path == Graphics::ShaderPath::Vertex && !graphics.depthBiasPerFace &&
+            !Graphics::SplitsAlternateAlpha(graphics) && plainStages()) {
+            const auto live = std::count_if(records.begin(), records.end(), drawable);
+            const auto equalWords = [&](const auto& slots, std::uint32_t value) {
+                return std::all_of(slots.begin(), slots.end(), [&](const auto& slot) { return programs[slot.first].userData.at(slot.second) == value; });
+            };
+            const auto unchanged = [&](const Pm4::DrawArguments& args) {
+                return args.count == 0 || args.instances == 0 || (equalWords(baseVertexWords, indirect.recordBytes == 20 ? args.vertexOffset : args.firstVertexOrIndex) && equalWords(startInstanceWords, args.firstInstance));
+            };
+            if (live > 1 && std::all_of(records.begin(), records.end(), unchanged)) {
+                auto grouped = drawParameters;
+                auto& args = *grouped.indirect;
+                args.baseVertexSgpr = -1;
+                args.startInstanceSgpr = -1;
+                args.countIndirect = false;
+                args.count = static_cast<std::uint32_t>(records.size());
+                if (!ClassifyIndirectDraw(*programResults[0], graphics, programs.front(), localDevice, grouped, false) && !localDevice->KnownDrawRejection(graphics, stages)) {
+                    drainBeforeInline();
+                    lockForDraw();
+                    runCaptureCheckHook();
+                    if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
+                        gpuLock.unlock();
+                        const RecaptureScope recapture;
+                        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    }
+                    auto captured = std::make_shared<std::vector<Pm4::DrawArguments>>(std::move(records));
+                    args.capturedRecords = captured;
+                    noteDrawWriters(stages, submission.queue);
+                    phaseTiming.Phase(DrawRowVectors);
+                    if (localDevice->Draw(graphics, grouped, stages, snapshots, nullptr, tracePtr) == Graphics::DrawResult::Handled) {
+                        if (traceIndirect) std::fprintf(stderr, "[uniform-indirect] grouped %zu drawable records\n", static_cast<std::size_t>(live));
+                        phaseTiming.Phase(DrawRowGraphics);
+                        timing.Mark("draw_and_resource_release");
+                        return drawn();
+                    }
+                    records = std::move(*captured);
+                }
+            }
         }
         const bool pushWord = drawCachePushWord();
         const bool verifyPushWord = pushWord && verifyDrawPushWord();

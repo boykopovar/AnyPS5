@@ -233,6 +233,10 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     alignas(256) static constexpr std::array<std::uint32_t, 6> rawStore{0x34020082u, 0x7e0402ffu, Value, 0xe0701000u, 0x80000201u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 7> formattedLoad{0x34020082u, 0xe0002000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 4> atomicAdd{0x34020082u, 0xe0c81000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 9> rawStoreX2{0x34020083u, 0x7e0402ffu, Value, 0x7e060302u, 0x7e080302u, 0x7e0a0302u, 0xe0741000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 9> rawStoreX4{0x34020084u, 0x7e0402ffu, Value, 0x7e060302u, 0x7e080302u, 0x7e0a0302u, 0xe0781000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 9> formattedStoreXyzw{0x34020084u, 0x7e0402ffu, Value, 0x7e060302u, 0x7e080302u, 0x7e0a0302u, 0xe01c1000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 9> formattedStoreD16Xyzw{0x34020083u, 0x7e0402ffu, Value, 0x7e060302u, 0x7e080302u, 0x7e0a0302u, 0xe21c1000u, 0x80000201u, 0xbf810000u};
     std::array<std::uint32_t, 8> userData{};
     auto request = Request(userData, device.ComputeTarget(Lanes), {});
     request.useCache = false;
@@ -273,11 +277,22 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     Require(all(0u), "raw load through a TYPE 0 FORMAT 0 V# did not return 0");
     dispatch(formattedLoad, strided(Input.data(), 0x31000facu));
     Require(all(0u), "formatted load through a TYPE 0 FORMAT 0 V# did not return 0");
-    for (const auto word3 : {0x31000facu, 0x91000facu, 0x91016facu, 0x91b00facu, 0xd1000facu, 0xd1016facu}) {
+    dispatch(rawStoreX2, raw(Output.data(), sizeof(Output), 0x31016facu));
+    Require(all(Value), "two-dword store through a TYPE 0 32_FLOAT V# did not write every word");
+    dispatch(rawStoreX4, raw(Output.data(), sizeof(Output), 0x31016facu));
+    Require(all(Value), "four-dword store through a TYPE 0 32_FLOAT V# did not write every word");
+    dispatch(formattedStoreXyzw, raw(Output.data(), sizeof(Output), 0x3104dfacu));
+    Require(all(Value), "formatted xyzw store through a TYPE 0 32_32_32_32_FLOAT V# did not write every word");
+    for (const auto word3 : {0x31000facu, 0x91000facu, 0x91016facu, 0x91b00facu, 0xd1000facu, 0xd1016facu, 0x9104dfacu, 0xd104dfacu}) {
         dispatch(rawStore, raw(Output.data(), sizeof(Output), word3));
         Require(all(Fill), "raw store through V# word 3 " + Hex(word3) + " wrote memory");
         dispatch(formattedStore, strided(Output.data(), word3));
         Require(all(Fill), "formatted store through V# word 3 " + Hex(word3) + " wrote memory");
+        for (const auto& [code, access] : {std::pair{std::span<const std::uint32_t>(rawStoreX2), "two-dword store"}, std::pair{std::span<const std::uint32_t>(rawStoreX4), "four-dword store"},
+                 std::pair{std::span<const std::uint32_t>(formattedStoreXyzw), "formatted xyzw store"}, std::pair{std::span<const std::uint32_t>(formattedStoreD16Xyzw), "formatted d16 xyzw store"}}) {
+            dispatch(code, raw(Output.data(), sizeof(Output), word3));
+            Require(all(Fill), std::string(access) + " through V# word 3 " + Hex(word3) + " wrote memory");
+        }
     }
     dispatch(formattedStore, {0x02100b00u, 0xc3c00000u, 0x010dc1dfu, 0x91b00facu});
     Require(all(Fill), "store through an image T# read as a V# wrote memory");
