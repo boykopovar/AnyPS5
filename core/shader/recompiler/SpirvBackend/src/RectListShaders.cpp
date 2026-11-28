@@ -1,5 +1,6 @@
 #include "Recompiler.hpp"
 #include "BdaAbi.hpp"
+#include "PipelineSpecialization.hpp"
 #include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvClipDistances.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
@@ -79,6 +80,18 @@ public:
         defineEntry(spv::ExecutionModelTessellationControl);
         const auto floatOne = constant(floatType, std::bit_cast<std::uint32_t>(1.0f));
 
+        std::array<std::uint32_t, 3> positions {};
+        const auto boolVector = type(spv::OpTypeVector, boolType, 4u);
+        std::array<std::uint32_t, 3> hasNan {};
+        for (std::uint32_t i = 0; i < positions.size(); i++) {
+            positions[i] = load(vec4FloatType, access(ptrInputVec4Float, glIn, intConstant(i), intConstant(0)));
+            hasNan[i] = result(spv::OpAny, boolType, result(spv::OpIsNan, boolVector, positions[i]));
+        }
+
+        const auto hasNanPosition = result(spv::OpLogicalOr, boolType, hasNan[0], result(spv::OpLogicalOr, boolType, hasNan[1], hasNan[2]));
+        const auto cullNan = builder.SpecializationConstant(uintType, PipelineSpecialization::RectListCullNan, 1u);
+        const auto culled = result(spv::OpLogicalAnd, boolType, hasNanPosition, result(spv::OpINotEqual, boolType, cullNan, constant(uintType, 0u)));
+        const auto level = result(spv::OpSelect, floatType, culled, constant(floatType, 0), floatOne);
         const auto invocation = load(intType, invocationId);
         const auto first = result(spv::OpIEqual, boolType, invocation, intConstant(0));
         const auto writeLevels = builder.AllocateId();
@@ -86,15 +99,18 @@ public:
         emit(spv::OpSelectionMerge, afterLevels, spv::SelectionControlMaskNone);
         emit(spv::OpBranchConditional, first, writeLevels, afterLevels);
         emit(spv::OpLabel, writeLevels);
-        for (std::uint32_t i = 0; i < 4; i++) store(access(ptrOutputFloat, tessOuter, intConstant(i)), floatOne);
-        for (std::uint32_t i = 0; i < 2; i++) store(access(ptrOutputFloat, tessInner, intConstant(i)), floatOne);
+        for (std::uint32_t i = 0; i < 4; i++) store(access(ptrOutputFloat, tessOuter, intConstant(i)), level);
+        for (std::uint32_t i = 0; i < 2; i++) store(access(ptrOutputFloat, tessInner, intConstant(i)), level);
         emit(spv::OpBranch, afterLevels);
         emit(spv::OpLabel, afterLevels);
 
-        std::array<std::uint32_t, 3> positions {};
-        for (std::uint32_t i = 0; i < positions.size(); i++) {
-            positions[i] = load(vec4FloatType, access(ptrInputVec4Float, glIn, intConstant(i), intConstant(0)));
-        }
+        const auto discardPatch = builder.AllocateId();
+        const auto assemblePatch = builder.AllocateId();
+        emit(spv::OpSelectionMerge, assemblePatch, spv::SelectionControlMaskNone);
+        emit(spv::OpBranchConditional, culled, discardPatch, assemblePatch);
+        emit(spv::OpLabel, discardPatch);
+        emit(spv::OpReturn);
+        emit(spv::OpLabel, assemblePatch);
 
         std::array<std::uint32_t, 3> coordinateEqual {};
         for (std::uint32_t i = 0; i < coordinateEqual.size(); i++) {
@@ -524,6 +540,7 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     RectListEmitter evaluation(parameters, emulation, spv::ExecutionModelTessellationEvaluation, target.spirvVersion, faultBinding, clipDistances);
     RectListShaders shaders;
     shaders.control.spirv = control.EmitControl(0u);
+    shaders.control.specialization.push_back({PipelineSpecialization::RectListCullNan, 1u});
     shaders.control.bindings.push_back({DescriptorKind::StorageBuffer, DescriptorRole::FaultBuffer, 0, faultBinding, 1, {}});
     shaders.control.bdaAbiVersion = BdaAbi::Version;
     shaders.evaluation.spirv = evaluation.EmitEvaluation();

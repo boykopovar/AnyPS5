@@ -178,6 +178,7 @@ struct DrawTail {
     std::size_t packetOffset = 0;
     std::uint32_t packetOpcode = 0;
     std::uint32_t reg207 = 0;
+    bool cullRectListNan = true;
     std::uint64_t epoch = 0;
     QueueState* queue = nullptr;
     std::span<const std::uint32_t> packet;
@@ -766,6 +767,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.submissionQueue = submission.queue;
     tail.packetOpcode = (packet[0] >> 8u) & 0xffu;
     tail.reg207 = readRegister(queue.context, 0x207);
+    if (graphics.rectList) {
+        const auto nanInfControl = queue.context.find(0x208);
+        constexpr std::uint32_t vteNanControls = 0xf8u;
+        constexpr std::uint32_t vsNanToInf = (1u << 8u) | (1u << 10u) | (1u << 12u);
+        tail.cullRectListNan = nanInfControl == queue.context.end() || (nanInfControl->second & (vteNanControls | vsNanToInf)) == 0u;
+    }
     tail.dumpTarget = dumpTarget;
     tail.dumpSlot1 = dumpSlot1;
     tail.packetOffset = packetOffset;
@@ -1108,6 +1115,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             require(programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr, "rect-list requires vertex and fragment programs");
             auto rectangle = DrawRectangle(*programs[0].snapshot, programs[1].snapshot, programResults[0]->variantId, programResults[1]->variantId, localDevice->Target());
             auto& control = graphics.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? rectangle.lastVertexControl : rectangle.control;
+            if (!tail.cullRectListNan) {
+                const auto cullNan = std::ranges::find(control.specialization, ShaderRecompiler::PipelineSpecialization::RectListCullNan, &ShaderRecompiler::PipelineSpecializationConstant::id);
+                require(cullNan != control.specialization.end(), "rect-list control shader is missing its NaN culling mode");
+                cullNan->value = 0u;
+            }
             if (rectListBuilt) {
                 results[rectIndex] = std::move(control);
                 results[rectIndex + 1] = std::move(rectangle.evaluation);
