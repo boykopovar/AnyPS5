@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -106,6 +107,16 @@ void Factory() {
     Require(factory->release(&factory) == 0 && !factory, "factory release fails");
     RequireInvalidArgument([] { PKCreateFactory_nid_postfix(nullptr, 0); }, "null factory pointer is accepted");
     RequireInvalidArgument([] { PKCreateFactory_CreateStream_nid_postfix(nullptr); }, "null stream pointer is accepted");
+    const int blocks = liveBlocks;
+    errno = 71;
+    RequireInvalidArgument([] { PKCreateFactory_nid_postfix(reinterpret_cast<void**>(std::uintptr_t{0x10}), 0); },
+                           "unwritable factory pointer is accepted");
+    RequireInvalidArgument([] { PKCreateFactory_CreateStream_nid_postfix(reinterpret_cast<void**>(std::uintptr_t{0x10})); },
+                           "unwritable stream pointer is accepted");
+    RequireInvalidArgument([] { PKFree_nid_postfix(reinterpret_cast<void**>(std::uintptr_t{0x10})); },
+                           "unreadable free pointer is accepted");
+    Require(errno == 71, "factory pointer checks changed errno");
+    Require(liveBlocks == blocks, "rejected factory outputs leaked allocations");
 
     failAllocation = true;
     raw = reinterpret_cast<void*>(1);
@@ -143,6 +154,14 @@ void Codecs() {
     Require(value->decoder == nullptr, "converter decoder is set");
     Require(PKFree_nid_postfix(&converter) == 0 && !converter, "converter release fails");
     RequireInvalidArgument([&] { factory->createFormatConverter(nullptr); }, "null converter pointer is accepted");
+    const int blocks = liveBlocks;
+    errno = 73;
+    RequireInvalidArgument([] { PKCreateCodecFactory_nid_postfix(reinterpret_cast<void**>(std::uintptr_t{0x10}), 0); },
+                           "unwritable codec factory pointer is accepted");
+    RequireInvalidArgument([] { PKCodecFactory_CreateFormatConverter_nid_postfix(reinterpret_cast<void**>(std::uintptr_t{0x10})); },
+                           "unwritable converter pointer is accepted");
+    Require(errno == 73, "codec factory pointer checks changed errno");
+    Require(liveBlocks == blocks, "rejected codec outputs leaked allocations");
 
     failAllocation = true;
     converter = reinterpret_cast<void*>(1);

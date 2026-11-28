@@ -462,6 +462,14 @@ void Allocation() {
     Require(slotPtr[0] == allocBuf, "read-only slot still contains original pointer");
     Require(sceKernelMprotect(slotMap, slotSize, 3) == 0, "restore slot writability");
     Require(WMPFree_nid_postfix(slotPtr) == 0 && slotPtr[0] == nullptr, "free succeeds after restoring writability");
+    Require(WMPAlloc_nid_postfix(&allocBuf, 32) == 0 && allocBuf != nullptr, "allocate buffer for PKFree slot test");
+    slotPtr[0] = allocBuf;
+    Require(sceKernelMprotect(slotMap, slotSize, 1) == 0, "protect PKFree slot read-only");
+    errno = 71;
+    RequireInvalidArgument([slotPtr] { PKFree_nid_postfix(slotPtr); }, "PKFree accepted a read-only slot");
+    Require(errno == 71 && slotPtr[0] == allocBuf, "PKFree changed errno or a read-only slot");
+    Require(sceKernelMprotect(slotMap, slotSize, 3) == 0, "restore PKFree slot writability");
+    Require(PKFree_nid_postfix(slotPtr) == 0 && slotPtr[0] == nullptr, "PKFree succeeds after restoring writability");
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(slotMap), slotSize) == 0, "unmap direct memory for slot");
     Require(sceKernelReleaseDirectMemory(slotPhys, slotSize) == 0, "release direct memory for slot");
 }
@@ -485,6 +493,11 @@ void MemoryCreate() {
         CloseMemory(stream);
     }
     RequireInvalidArgument([&] { CreateWS_Memory_nid_postfix(nullptr, bytes.data(), bytes.size()); }, "memory stream creation accepted a null stream pointer");
+    errno = 71;
+    RequireInvalidArgument([&] {
+        CreateWS_Memory_nid_postfix(reinterpret_cast<Jxr::Stream**>(std::uintptr_t{0x10}), bytes.data(), bytes.size());
+    }, "memory stream creation accepted an unwritable stream pointer");
+    Require(errno == 71, "memory stream output check changed errno");
 }
 
 void MemoryRead() {
