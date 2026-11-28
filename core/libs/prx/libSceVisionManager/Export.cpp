@@ -65,7 +65,8 @@ int APS5_VABI sceVisionManagerGenerateRegisterUserDataFinalize() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGenerateRegisterUserDataInitialize() {
+int APS5_VABI sceVisionManagerGenerateRegisterUserDataInitialize(void* buffer, std::uint32_t size) {
+    if (buffer == nullptr || size < 0x100000u) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -103,9 +104,13 @@ int APS5_VABI sceVisionManagerGetNumOfRegisterUserDataSlot(std::uint64_t version
     return CopyOut(count, &value, sizeof(value)) ? 0 : ErrorInvalidArgument;
 }
 
-int APS5_VABI sceVisionManagerGetRegisterUserDataSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVisionManagerGetRegisterUserDataSize(std::uint64_t version, std::uint64_t* size) {
+    std::uint64_t value = 0;
+    if (version == RegisterUserDataVersion) value = 0x2200;
+    else if (version == LibraryVersion) value = 0x79e0;
+    else return ErrorInvalidArgument;
+    if (size == nullptr) return ErrorInvalidArgument;
+    return CopyOut(size, &value, sizeof(value)) ? 0 : ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVisionManagerGetRegisterUserDataVersion(void* argument1, void* argument2, void* argument3) {
