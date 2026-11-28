@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    foreach(agcDstSelFirst 3 6 9)
+        math(EXPR agcDstSelLast "${agcDstSelFirst} + 2")
+        set(agcDstSelName agc_driver_image_store_dst_sel_formats_${agcDstSelFirst}_${agcDstSelLast})
+        add_test(NAME ${agcDstSelName} COMMAND agc_driver_image_store_dst_sel_tests --formats ${agcDstSelFirst} 3)
+        set_tests_properties(${agcDstSelName} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(${agcDstSelName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()

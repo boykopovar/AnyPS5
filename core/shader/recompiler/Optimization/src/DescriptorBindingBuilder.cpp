@@ -21,7 +21,8 @@ namespace ShaderRecompiler {
 
 static_assert(PipelineSpecialization::ImageBase + ShaderInfo::MaxImages * PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase);
 static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
-static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::DescriptorIndexBase);
+static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::StoreChannelsBase);
+static_assert(PipelineSpecialization::StoreChannelsBase + ShaderInfo::MaxImages <= PipelineSpecialization::DescriptorIndexBase);
 static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * PipelineSpecialization::CompareWords <= PipelineSpecialization::FoldOffsetBase);
 static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
 static_assert(PipelineSpecialization::UnnormalizedBaseLevelBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MirrorUnnormalizedBase);
@@ -558,8 +559,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             plan.specialization.push_back({PipelineSpecialization::MinLodBase + index, std::bit_cast<std::uint32_t>(static_cast<float>(clamp) / 256.0f)});
         }
         const auto& image = info.images[index];
-        if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;
+        if (image.resourceClass != ImageResourceClass::Storage || !image.written) continue;
         const auto code = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
+        plan.specialization.push_back({PipelineSpecialization::StoreChannelsBase + index, StoreChannelClass(code)});
+        if (image.atomic) continue;
         const auto values = StoreQuantizeValues(code);
         const auto quantize = PipelineSpecialization::StoreQuantizeBase + index * PipelineSpecialization::StoreQuantizeWords;
         for (std::uint32_t word = 0; word < values.size(); ++word) plan.specialization.push_back({quantize + word, values[word]});
