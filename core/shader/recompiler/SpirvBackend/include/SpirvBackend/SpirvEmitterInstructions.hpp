@@ -78,6 +78,7 @@ void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshRestartStart(SpirvValueEmitContext& ctx, const IrValue& inst);
+std::uint32_t EmitMeshGroupWord(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshCapturedWord(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitGetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitSetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);
