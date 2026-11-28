@@ -72,6 +72,13 @@ struct DecoderMemoryInfo {
 
 namespace SceVideodec2 {
 
+struct DirectMemoryInfo {
+    std::uint64_t thisSize;
+    std::uint64_t memorySize;
+    void* memoryAddr;
+    std::uint64_t reserved;
+};
+
 struct InputData {
     std::uint64_t thisSize;
     const std::uint8_t* auData;
@@ -298,7 +305,7 @@ int APS5_VABI sceVideodec2TermLibrary();
 int APS5_VABI sceVideodec2QueryLibraryInfo();
 int APS5_VABI sceVideodec2QueryDecoderInfo();
 int APS5_VABI sceVideodec2MapMemory();
-int APS5_VABI sceVideodec2MapDirectMemory(void*, const void*);
+int APS5_VABI sceVideodec2MapDirectMemory(void* decoder, const SceVideodec2::DirectMemoryInfo* memory);
 int APS5_VABI sceVideodec2PresetDecoderConfigInfo();
 int APS5_VABI sceVideodec2PresetDecoderConfigInfoAvc();
 int APS5_VABI sceVideodec2PresetDecoderConfigInfoHevc();
