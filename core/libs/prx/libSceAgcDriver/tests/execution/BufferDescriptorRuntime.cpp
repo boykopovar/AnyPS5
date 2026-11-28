@@ -179,8 +179,8 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         ShaderRecompiler::DescriptorValue descriptor{};
         std::copy(input.begin(), input.end(), descriptor.dwords.begin());
         descriptor.dwordCount = 4u;
-        const auto expectedTail = test.records == 0u ? 0u : (test.stride == 0u ? test.records : test.stride * test.records) & 3u;
-        Require(ShaderRecompiler::BufferSpecializationFields(descriptor, {}, 0u).tail == expectedTail, "scalar buffer size tail differs for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
+        const auto expectedTail = ((test.stride == 0u ? test.records : test.stride * test.records) & 3u) != 0u ? 1u : 0u;
+        Require(ShaderRecompiler::BufferSpecializationFields(descriptor).tail == expectedTail, "scalar buffer size tail differs for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
         device.Dispatch(result, 1, 1, 1);
         device.WaitIdle();
         const auto value = test.inBounds ? expected : 0u;

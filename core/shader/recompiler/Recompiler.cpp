@@ -558,7 +558,6 @@ bool diskPlans() {
 }
 
 bool sameLayout(const BindingLayout& left, const BindingLayout& right);
-void attachSubstitutes(CompiledVariant& variant);
 
 struct ResourcePlanState {
     std::atomic<std::uint64_t> heldBytes{0};
@@ -1157,7 +1156,7 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
         }
         cursor += count;
     }
-    materialized = std::move(compact);
+    materialized = NormalizeSpirvConstants(compact);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     materialized = ValidateAndOptimizeSpirv(materialized, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false);
 #endif
@@ -1366,12 +1365,7 @@ SpecializedSpirv registrationModule(std::uint64_t variantId, std::span<const std
     return {entry->module, std::move(built)};
 }
 
-bool bufferSubstitutesEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_BUFFER_SUBSTITUTES") == nullptr;
-    return enabled;
-}
-
-std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) {
+std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet, bool shaderImageMinLod) {
     struct BindingPlanKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
     key.clear();
@@ -1379,10 +1373,10 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     for (std::size_t index = 0; index < variant.info.info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
         key.push_back(descriptor.dwordCount);
-        const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
+        const auto fields = BufferSpecializationFields(descriptor);
         key.push_back(fields.word1);
         key.push_back(fields.word3);
-        key.push_back(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
+        key.push_back(fields.present ? 4u | fields.misalignment | fields.tail << 3u : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1412,20 +1406,74 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     }
     runOnce(*plan, [&] {
         try {
-            plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, substitutes, shaderImageMinLod);
+            plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, shaderImageMinLod);
         } catch (...) {
             plan->failure = std::current_exception();
         }
     });
     if (plan->failure) std::rethrow_exception(plan->failure);
-    for (std::size_t index = 0; index < substitutes.size(); ++index) {
-        const auto& descriptor = snapshot.buffers.at(index);
-        if (!substitutes[index].known && BufferDescriptorPresent(descriptor)) variant.substitutes->Learn(index, BufferSpecializationFields(descriptor, {}, index));
-    }
     return plan;
 }
 
+std::string specializationName(std::uint32_t id) {
+    using namespace PipelineSpecialization;
+    struct Range {
+        std::uint32_t first;
+        const char* name;
+        bool single;
+    };
+    static constexpr Range ranges[] = {
+        {BufferBase, "buffer", false}, {ImageBase, "image", false}, {VertexBase, "vertex", false}, {PushDataOffset, "push-data-offset", true}, {ExportBase, "export", false},
+        {ExportPackingBase, "export-packing", false}, {DualSourceBlend, "dual-source-blend", true}, {PipelineSpecialization::RasterPrimitive, "raster-primitive", true}, {LayerExported, "layer-exported", true},
+        {StencilReferenceOffset, "stencil-reference-offset", true}, {ReversedBlend, "reversed-blend", true}, {MeshLayerBase, "mesh-layer-base", true}, {MeshLayerCount, "mesh-layer-count", true},
+        {DepthRemapBase, "depth-remap", false}, {WorkgroupOffsetBase, "workgroup-offset", false}, {AtomicLockTableBase, "atomic-lock-table", false}, {HeapCountBase, "heap-count", false},
+        {MipCountBase, "mip-count", false}, {StoreQuantizeBase, "store-quantize", false}, {DescriptorIndexBase, "descriptor-index", false}, {CompareBase, "compare", false},
+        {FoldOffsetBase, "fold-offset", false}, {UnnormalizedBaseLevelBase, "unnormalized-base-level", false}, {MirrorUnnormalizedBase, "mirror-unnormalized", false}, {MinLodBase, "min-lod", false},
+        {SamplerLodBiasBase, "sampler-lod-bias", false}, {GatherLodBase, "gather-lod", false}, {GatherLodBiasBase, "gather-lod-bias", false}, {GatherImageMinLodBase, "gather-image-min-lod", false},
+        {FmaskFormatBase, "fmask-format", false}, {VolumeGatherBase, "volume-gather", false}, {GatherImageShapeBase, "gather-image-shape", false}, {ImageComponentBase, "image-component", false},
+        {NormalizedImageBase, "normalized-image", false}};
+    static constexpr const char* bufferWords[] = {"word1", "word3", "tail", "misalignment"};
+    static constexpr const char* imageWords[] = {"mode", "x", "y", "z", "w"};
+    auto range = std::ranges::begin(ranges);
+    for (auto next = range; next != std::ranges::end(ranges) && next->first <= id; ++next) range = next;
+    const auto offset = id - range->first;
+    if (range->first == BufferBase) return std::string(range->name) + "[" + std::to_string(offset / BufferWords) + "]." + bufferWords[offset % BufferWords];
+    if (range->first == ImageBase) return std::string(range->name) + "[" + std::to_string(offset / ImageWords) + "]." + imageWords[offset % ImageWords];
+    if (range->single && offset == 0u) return range->name;
+    return std::string(range->name) + "[" + std::to_string(offset) + "]";
+}
+
+std::map<std::uint32_t, std::pair<std::optional<std::uint32_t>, std::optional<std::uint32_t>>> specializationValues(std::span<const std::uint64_t> key, std::span<const std::uint64_t> neighbourKey) {
+    std::map<std::uint32_t, std::pair<std::optional<std::uint32_t>, std::optional<std::uint32_t>>> values;
+    for (const auto word : neighbourKey.subspan(1)) values[static_cast<std::uint32_t>(word >> 32u)].first = static_cast<std::uint32_t>(word);
+    for (const auto word : key.subspan(1)) values[static_cast<std::uint32_t>(word >> 32u)].second = static_cast<std::uint32_t>(word);
+    return values;
+}
+
+std::size_t specializationDifferences(std::span<const std::uint64_t> key, std::span<const std::uint64_t> neighbourKey) {
+    return static_cast<std::size_t>(std::ranges::count_if(specializationValues(key, neighbourKey), [](const auto& value) { return value.second.first != value.second.second; }));
+}
+
+void traceSpecializationVariant(std::span<const std::uint64_t> key, std::span<const std::uint64_t> neighbourKey, const SpecializedModule* module, const SpecializedModule* neighbour) {
+    const auto values = specializationValues(key, neighbourKey);
+    std::string changes;
+    std::size_t count = 0;
+    const auto text = [](const std::optional<std::uint32_t>& value) {
+        char hex[16];
+        std::snprintf(hex, sizeof(hex), "%#x", value.value_or(0u));
+        return value ? std::string(hex) : std::string("absent");
+    };
+    for (const auto& [id, pair] : values) {
+        if (pair.first == pair.second) continue;
+        if (++count <= 48u) changes += " " + specializationName(id) + " " + text(pair.first) + "->" + text(pair.second);
+    }
+    if (count > 48u) changes += " ...";
+    const auto sameSpirv = module == nullptr || neighbour == nullptr ? "unknown" : module->hash == neighbour->hash ? "same" : "different";
+    std::fprintf(stderr, "[specialization-variant] variant %016llx: a new module (%s SPIR-V as its nearest variant) differs in %zu of %zu values:%s\n", static_cast<unsigned long long>(key[0]), sameSpirv, count, values.size(), changes.c_str());
+}
+
 SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    static const bool trace = std::getenv("APS5_TRACE_SPECIALIZATION_VARIANTS") != nullptr;
     struct ModuleKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, ModuleKeyStorage>();
     key.clear();
@@ -1434,14 +1482,28 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
     static PrimedSharedMutex mutex;
     static std::map<std::vector<std::uint64_t>, std::shared_ptr<SpecializedModuleEntry>> modules;
     std::shared_ptr<SpecializedModuleEntry> entry;
+    std::vector<std::uint64_t> neighbourKey;
+    std::shared_ptr<SpecializedModuleEntry> neighbour;
     {
         std::shared_lock lock(mutex);
         if (const auto found = modules.find(key); found != modules.end()) entry = found->second;
     }
     if (entry == nullptr) {
+        auto fresh = std::make_shared<SpecializedModuleEntry>();
         std::unique_lock lock(mutex);
-        const auto found = modules.find(key);
-        entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<SpecializedModuleEntry>()).first->second;
+        const auto [found, created] = modules.try_emplace(key, std::move(fresh));
+        if (created && trace) {
+            auto fewest = std::numeric_limits<std::size_t>::max();
+            for (auto other = modules.lower_bound(std::vector<std::uint64_t>{key.front()}); other != modules.end() && other->first.front() == key.front(); ++other) {
+                if (other == found) continue;
+                if (const auto differences = specializationDifferences(key, other->first); differences < fewest) {
+                    fewest = differences;
+                    neighbourKey = other->first;
+                    neighbour = other->second;
+                }
+            }
+        }
+        entry = found->second;
     }
     SharedSpirv built;
     runOnce(*entry, [&] {
@@ -1453,6 +1515,7 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
             entry->failure = std::current_exception();
         }
     });
+    if (neighbour != nullptr) traceSpecializationVariant(key, neighbourKey, entry->module.get(), neighbour->done.load(std::memory_order_acquire) ? neighbour->module.get() : nullptr);
     if (entry->failure) std::rethrow_exception(entry->failure);
     if (built.empty()) built = specializedWords(*entry->module, artifact, classes, constants, target);
     return {entry->module, std::move(built)};
@@ -1528,9 +1591,7 @@ bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
     return false;
 }
 
-RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr, const std::vector<BufferSubstitute>* substituteSnapshot = nullptr) {
-    const auto localSubstitutes = substituteSnapshot == nullptr && bufferSubstitutesEnabled() && variant.substitutes != nullptr ? variant.substitutes->Slots() : std::vector<BufferSubstitute>{};
-    const auto substitutes = substituteSnapshot != nullptr ? std::span<const BufferSubstitute>(*substituteSnapshot) : std::span<const BufferSubstitute>(localSubstitutes);
+RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr) {
     ResourceSnapshot merged;
     const auto& snapshot = mergeTargetImage(variant, request, captured, registrationDefaults, merged);
     RecompileResult result;
@@ -1575,7 +1636,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         const auto index = reg - request.context.userDataBaseRegister;
         result.userDataRegisterReads |= reg >= request.context.userDataBaseRegister && index < 64u ? std::uint64_t{1} << index : ~std::uint64_t{0};
     }
-    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules, substitutes, request.target.shaderImageMinLod);
+    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules, request.target.shaderImageMinLod);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
     std::shared_ptr<PreparedModuleEntry> entry;
     struct LocalModuleKeyStorage {};
@@ -1763,18 +1824,6 @@ bool sameLayout(const BindingLayout& left, const BindingLayout& right) {
     return left.descriptorSet == right.descriptorSet && left.firstBinding == right.firstBinding && left.pushConstantOffsetBytes == right.pushConstantOffsetBytes && left.pushConstantSizeBytes == right.pushConstantSizeBytes;
 }
 
-void attachSubstitutes(CompiledVariant& variant) {
-    const auto slots = variant.info.info.buffers.size();
-    if (slots == 0u || variant.artifact.spirv.empty()) return;
-    const auto hash = variant.artifact.spirv.ContentHash();
-    static std::mutex mutex;
-    static std::map<std::tuple<std::uint64_t, std::uint64_t, std::size_t>, std::shared_ptr<BufferSubstituteTable>> tables;
-    std::lock_guard lock(mutex);
-    auto& table = tables[{hash.low, hash.high, slots}];
-    if (table == nullptr) table = std::make_shared<BufferSubstituteTable>(std::vector<BufferSubstitute>(slots));
-    variant.substitutes = table;
-}
-
 }
 
 SharedSpirv InternSpirv(std::vector<std::uint32_t> words) {
@@ -1903,7 +1952,6 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         if (ShaderDiskCache::Load(diskKey, loaded)) {
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
-            attachSubstitutes(loaded);
             ShaderDiskCache::ReleaseMapped(loaded.artifact.spirv);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
             NoteShader(2);
@@ -1923,7 +1971,6 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
                 source.program.reset();
                 return CountedCompile([&] { return compileVariant(request, std::move(program), &emissionFailure); });
             }();
-            attachSubstitutes(compiled);
             variant = std::make_shared<const CompiledVariant>(std::move(compiled));
         } catch (...) {
             if (emissionFailure != nullptr && FailureMemo()) source.emissionFailures.push_back({request.shader.codeAddress, request.layout, emissionFailure});
@@ -2220,7 +2267,7 @@ void reportResultMemo() {
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked, std::span<const BufferSubstitute> substitutes = {}) {
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -2244,20 +2291,14 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             const auto& value = snapshot.buffers[index];
             mix(value.dwordCount);
             mix(value.availableDwordMask);
-            const auto fields = BufferSpecializationFields(value, substitutes, index);
-            mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
+            const auto fields = BufferSpecializationFields(value);
+            mix(fields.present ? 4u | fields.misalignment | fields.tail << 3u : 0u);
             mix(fields.word1);
             if (value.dwordCount > 3u) mix(fields.word3);
             for (std::uint32_t i = 4; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
         }
     } else {
         mixDescriptors(snapshot.buffers);
-        for (std::size_t index = 0; index < substitutes.size() && index < snapshot.buffers.size(); ++index) {
-            const auto fields = BufferSpecializationFields(snapshot.buffers[index], substitutes, index);
-            mix(fields.word1);
-            mix(fields.word3);
-            mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
-        }
     }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
@@ -2367,8 +2408,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
 std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit, bool memoOnly = false, bool* contended = nullptr) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
-    const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    const auto hash = snapshotHash(request, snapshot, false, substitutes);
+    const auto hash = snapshotHash(request, snapshot, false);
     const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
     auto& counters = resultMemoCounters();
     const auto acquire = [&](std::unique_lock<std::mutex>& lock) {
@@ -2396,7 +2436,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         }
     }
     const bool masking = MaskedResultMemo();
-    const auto maskedHash = masking ? snapshotHash(request, snapshot, true, substitutes) : 0u;
+    const auto maskedHash = masking ? snapshotHash(request, snapshot, true) : 0u;
     const auto maskedIndex = (variantId * 0x9e3779b97f4a7c15ull) ^ maskedHash;
     std::shared_ptr<const RecompileResult> donor;
     std::shared_ptr<const MemoPatch> donorPatch;
@@ -2421,12 +2461,12 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     if (donor != nullptr) {
         result = std::make_shared<RecompileResult>(*donor);
         applyMemoPatch(*result, *donorPatch, snapshot);
-        if (VerifyMaskedResultMemo()) verifyPatchedResult(*result, materializeResult(*variant, request, snapshot, false, nullptr, &substitutes), variantId);
+        if (VerifyMaskedResultMemo()) verifyPatchedResult(*result, materializeResult(*variant, request, snapshot, false, nullptr), variantId);
         if (profile) counters.patchNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         counters.patched.fetch_add(1, std::memory_order_relaxed);
     } else {
         if (masking) patch = std::make_shared<MemoPatch>();
-        result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get(), &substitutes));
+        result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get()));
         if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         counters.misses.fetch_add(1, std::memory_order_relaxed);
     }
@@ -2742,8 +2782,7 @@ PreparedShaderInvocation PreparedShaderInvocation::Rebound(const RecompileReques
 
 std::uint64_t PreparedShaderInvocation::SnapshotKey(const ResourceCapture& capture) const {
     if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
-    const auto substitutes = bufferSubstitutesEnabled() && handle->artifact->substitutes != nullptr ? handle->artifact->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    std::uint64_t key = snapshotHash(request, capture.snapshot, false, substitutes);
+    std::uint64_t key = snapshotHash(request, capture.snapshot, false);
     for (const std::uint64_t value : {static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(handle.get())), static_cast<std::uint64_t>(handle->artifact->artifact.variantId), static_cast<std::uint64_t>(request.layout.descriptorSet), static_cast<std::uint64_t>(request.layout.pushConstantSizeBytes)}) {
         key ^= value;
         key *= 0x100000001b3ull;

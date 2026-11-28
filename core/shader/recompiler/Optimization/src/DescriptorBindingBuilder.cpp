@@ -436,15 +436,14 @@ bool BufferDescriptorPresent(const DescriptorValue& descriptor) {
     return descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
 }
 
-BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index) {
-    const bool present = BufferDescriptorPresent(descriptor);
-    if (!present && !substitutes.empty()) return index < substitutes.size() && substitutes[index].known ? substitutes[index] : BufferSubstitute{};
+BufferFields BufferSpecializationFields(const DescriptorValue& descriptor) {
+    if (!BufferDescriptorPresent(descriptor)) return {};
     const auto stride = (descriptor.dwords[1] >> 16u) & 0x3fffu;
     const auto tail = (stride == 0u ? descriptor.dwords[2] : stride * descriptor.dwords[2]) & 3u;
-    return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present ? tail : 0u, present};
+    return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], descriptor.dwords[0] & 3u, tail != 0u ? 1u : 0u, true};
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) const {
+DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, bool shaderImageMinLod) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity (" + std::to_string(info.images.size()) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
     DescriptorBindingPlan plan;
@@ -515,7 +514,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& descriptor = snapshot.buffers.at(index);
         if (descriptor.dwordCount != 4u) fail("buffer specialization requires four descriptor words");
         const auto& buffer = info.buffers[index];
-        const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
+        const auto fields = BufferSpecializationFields(descriptor);
         const auto format = (fields.word3 >> 12u) & 0x7fu;
         if (buffer.descriptorFormatted && format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) fail("buffer specialization has an unsupported format");
         const auto misalignment = fields.misalignment;
