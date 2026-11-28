@@ -219,14 +219,14 @@ int GuessAppended(GuestMemoryRec* memory, const std::string& base, const char* s
                   const char* function) {
     const std::size_t suffixLength = std::strlen(suffix) + 1;
     if (base.size() > static_cast<std::size_t>(IntMax) || suffixLength > static_cast<std::size_t>(IntMax) - base.size()) return ArrayTooLarge;
-    int error = 0;
     const std::size_t total = base.size() + suffixLength;
-    auto* name = static_cast<char*>(OtMemAlloc(memory, static_cast<std::int64_t>(total), &error));
-    if (error || !name) return error ? error : OutOfMemory;
     std::string built;
     built.reserve(total - 1);
     built.append(base);
     built.append(suffix);
+    int error = 0;
+    auto* name = static_cast<char*>(OtMemAlloc(memory, static_cast<std::int64_t>(total), &error));
+    if (error || !name) return error ? error : OutOfMemory;
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(name, built.c_str(), total);
     errno = savedErrno;
