@@ -308,6 +308,7 @@ def _comparison_checks(report):
         report["issues"].append("observed host/GPU/driver context differs between trials")
     if work and any(counts != work[0] for counts in work[1:]):
         report["issues"].append("reported frame/submission/thread/reference counts differ between trials")
+    report["issues"] = list(dict.fromkeys(report["issues"]))
 
 
 def _capture_metadata(capture, report):
