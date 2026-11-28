@@ -43,7 +43,6 @@ constexpr Export kExports[] = {
     &_ZN7WebCore11MediaPlayerdlEPv,
     &_ZN7WebCore11MediaPlayernaEm,
     &_ZN7WebCore11MediaPlayernwEm,
-    &_ZN7WebCore12ISOWebVTTCueD1Ev,
     &_ZN7WebCore13MIMETypeCacheD1Ev,
     &_ZN7WebCore13MIMETypeCachedaEPv,
     &_ZN7WebCore13MIMETypeCachedlEPv,

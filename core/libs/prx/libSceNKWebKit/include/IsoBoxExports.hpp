@@ -8,6 +8,22 @@
 
 extern "C" {
 
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueC1ERKS0_(NKWebKit::IsoAbi::WebVTTCue* self, const NKWebKit::IsoAbi::WebVTTCue* source);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueC2ERKS0_(NKWebKit::IsoAbi::WebVTTCue* self, const NKWebKit::IsoAbi::WebVTTCue* source);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueC1ERKN3WTF9MediaTimeES4_(NKWebKit::IsoAbi::WebVTTCue* self, const NKWebKit::MediaAbi::MediaTime* presentationTime, const NKWebKit::MediaAbi::MediaTime* duration);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueC2ERKN3WTF9MediaTimeES4_(NKWebKit::IsoAbi::WebVTTCue* self, const NKWebKit::MediaAbi::MediaTime* presentationTime, const NKWebKit::MediaAbi::MediaTime* duration);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueC1EON3WTF9MediaTimeES3_ONS1_6StringES5_S5_S5_S5_(NKWebKit::IsoAbi::WebVTTCue* self,
+    NKWebKit::MediaAbi::MediaTime* presentationTime, NKWebKit::MediaAbi::MediaTime* duration,
+    NKWebKit::WtfAbi::String* sourceID, NKWebKit::WtfAbi::String* identifier,
+    NKWebKit::WtfAbi::String* originalStartTime, NKWebKit::WtfAbi::String* settings, NKWebKit::WtfAbi::String* cueText);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueC2EON3WTF9MediaTimeES3_ONS1_6StringES5_S5_S5_S5_(NKWebKit::IsoAbi::WebVTTCue* self,
+    NKWebKit::MediaAbi::MediaTime* presentationTime, NKWebKit::MediaAbi::MediaTime* duration,
+    NKWebKit::WtfAbi::String* sourceID, NKWebKit::WtfAbi::String* identifier,
+    NKWebKit::WtfAbi::String* originalStartTime, NKWebKit::WtfAbi::String* settings, NKWebKit::WtfAbi::String* cueText);
+NKWebKit::IsoAbi::WebVTTCue* APS5_VABI _ZN7WebCore12ISOWebVTTCueaSERKS0_(NKWebKit::IsoAbi::WebVTTCue* self, const NKWebKit::IsoAbi::WebVTTCue* source);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueD1Ev(NKWebKit::IsoAbi::WebVTTCue* self);
+void APS5_VABI _ZN7WebCore12ISOWebVTTCueD2Ev(NKWebKit::IsoAbi::WebVTTCue* self);
+
 std::uint64_t APS5_VABI _ZNK7WebCore6ISOBox4sizeEv(const NKWebKit::IsoAbi::Box* self);
 const std::uint32_t* APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const NKWebKit::IsoAbi::Box* self);
 const NKWebKit::IsoAbi::ByteVector& APS5_VABI _ZNK7WebCore6ISOBox12extendedTypeEv(const NKWebKit::IsoAbi::Box* self);

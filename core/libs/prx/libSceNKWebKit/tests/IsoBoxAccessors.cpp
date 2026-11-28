@@ -73,6 +73,56 @@ static void BoxAndFullBox() {
     Require(ThrowsInvalidArgument([] { _ZNK7WebCore10ISOFullBox5flagsEv(nullptr); }));
 }
 
+static bool SameLatin1(const String& string, const char* text) {
+    const auto view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    return view.is8Bit && view.length == std::strlen(text)
+        && (!view.length || std::memcmp(view.data, text, view.length) == 0);
+}
+
+static void WebVTTCueLifecycle() {
+    using NKWebKit::MediaAbi::MediaTime;
+    using Destroy = void (APS5_VABI *)(WebVTTCue*);
+
+    MediaTime start(1500, 1000, MediaTime::Valid);
+    MediaTime duration(250, 1000, MediaTime::Valid);
+    String sourceID = Latin1("source");
+    String identifier = Latin1("cue");
+    String originalStartTime = Latin1("start");
+    String settings = Latin1("settings");
+    String cueText = Latin1("text");
+    auto* cue = static_cast<WebVTTCue*>(_ZN7WebCore6ISOBoxnwEm(sizeof(WebVTTCue)));
+    Require(ThrowsInvalidArgument([&] {
+        _ZN7WebCore12ISOWebVTTCueC1EON3WTF9MediaTimeES3_ONS1_6StringES5_S5_S5_S5_(
+            cue, &start, &duration, &sourceID, &identifier, &originalStartTime, &settings, nullptr);
+    }));
+    Require(SameLatin1(sourceID, "source") && SameLatin1(settings, "settings"));
+    _ZN7WebCore12ISOWebVTTCueC1EON3WTF9MediaTimeES3_ONS1_6StringES5_S5_S5_S5_(
+        cue, &start, &duration, &sourceID, &identifier, &originalStartTime, &settings, &cueText);
+    Require(!sourceID.impl && !identifier.impl && !originalStartTime.impl && !settings.impl && !cueText.impl);
+    Require(SameLatin1(cue->sourceID, "source") && SameLatin1(cue->identifier, "cue") && SameLatin1(cue->originalStartTime, "start"));
+    Require(SameLatin1(cue->settings, "settings") && SameLatin1(cue->cueText, "text"));
+    Require(cue->presentationTime.m_timeValue == 1500 && cue->duration.m_timeValue == 250);
+    Require(cue->box.vtable && !cue->box.size && !cue->box.boxType && !cue->box.extendedType.buffer);
+    cue->box.extendedType = Bytes("type");
+
+    alignas(WebVTTCue) std::byte copyStorage[sizeof(WebVTTCue)];
+    alignas(WebVTTCue) std::byte assignedStorage[sizeof(WebVTTCue)];
+    auto* copy = reinterpret_cast<WebVTTCue*>(copyStorage);
+    auto* assigned = reinterpret_cast<WebVTTCue*>(assignedStorage);
+    _ZN7WebCore12ISOWebVTTCueC1ERKS0_(copy, cue);
+    _ZN7WebCore12ISOWebVTTCueC1ERKN3WTF9MediaTimeES4_(assigned, &duration, &start);
+    Require(assigned->presentationTime.m_timeValue == 250 && !assigned->cueText.impl);
+    Require(copy->box.vtable == cue->box.vtable && copy->box.extendedType.buffer != cue->box.extendedType.buffer);
+    Require(_ZN7WebCore12ISOWebVTTCueaSERKS0_(assigned, copy) == assigned);
+    Require(_ZN7WebCore12ISOWebVTTCueaSERKS0_(copy, copy) == copy);
+
+    reinterpret_cast<Destroy>(cue->box.vtable[1])(cue);
+    reinterpret_cast<Destroy>(copy->box.vtable[0])(copy);
+    Require(SameLatin1(assigned->cueText, "text") && Same(assigned->box.extendedType, "type"));
+    Require(assigned->duration.m_timeValue == 250);
+    _ZN7WebCore12ISOWebVTTCueD2Ev(assigned);
+}
+
 static void TrackEncryptionBoxFields() {
     TrackEncryptionBox box{};
     box.defaultCryptByteBlock = {-3, true};
@@ -175,6 +225,7 @@ static void WebVTTCueJSON() {
 }
 
 int main() {
+    WebVTTCueLifecycle();
     BoxAndFullBox();
     TrackEncryptionBoxFields();
     ProtectionSystemSpecificHeaderFields();

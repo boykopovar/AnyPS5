@@ -39,7 +39,6 @@ __asm__(APS5_ASM_FUNCTION("_ZN7WebCore11MediaPlayerdaEPv") "jmp " APS5_ASM_SYMBO
 __asm__(APS5_ASM_FUNCTION("_ZN7WebCore11MediaPlayerdlEPv") "jmp " APS5_ASM_SYMBOL("_ZN3WTF8fastFreeEPv") "\n");
 __asm__(APS5_ASM_FUNCTION("_ZN7WebCore11MediaPlayernaEm") "jmp " APS5_ASM_SYMBOL("_ZN3WTF10fastMallocEm") "\n");
 __asm__(APS5_ASM_FUNCTION("_ZN7WebCore11MediaPlayernwEm") "jmp " APS5_ASM_SYMBOL("_ZN3WTF10fastMallocEm") "\n");
-__asm__(APS5_ASM_FUNCTION("_ZN7WebCore12ISOWebVTTCueD1Ev") "jmp " APS5_ASM_SYMBOL("_ZN7WebCore12ISOWebVTTCueD2Ev") "\n");
 __asm__(APS5_ASM_FUNCTION("_ZN7WebCore13MIMETypeCacheD1Ev") "jmp " APS5_ASM_SYMBOL("_ZN7WebCore13MIMETypeCacheD2Ev") "\n");
 __asm__(APS5_ASM_FUNCTION("_ZN7WebCore13MIMETypeCachedaEPv") "jmp " APS5_ASM_SYMBOL("_ZN3WTF8fastFreeEPv") "\n");
 __asm__(APS5_ASM_FUNCTION("_ZN7WebCore13MIMETypeCachedlEPv") "jmp " APS5_ASM_SYMBOL("_ZN3WTF8fastFreeEPv") "\n");
