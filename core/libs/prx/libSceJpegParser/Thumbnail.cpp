@@ -3,6 +3,7 @@
 #include "Decoder/Jpeg.hpp"
 #include "MetadataState.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -175,7 +176,8 @@ int Extract(const char* path, JpegParserThumbnail* output) {
     value.format = 0x20001;
     value.width = info->width;
     value.height = info->height;
-    if (!GuestWritable_nid_no_patch(output, sizeof(*output)))
+    const GuestArena::HostWrite outputWrite(output, sizeof(*output));
+    if (!outputWrite.Open() || !GuestWritable_nid_no_patch(output, sizeof(*output)))
         throw std::invalid_argument("JPEG thumbnail: unwritable output");
     if (sceKernelMapNamedFlexibleMemory(&value.data, value.mappingSize, 3, 0, "SceMdrwFMem") != 0)
         throw std::runtime_error("JPEG thumbnail: flexible memory mapping failed");
@@ -205,7 +207,8 @@ int WithPath(const void* pathObject, TOperation operation) {
     std::unique_ptr<void, Free> buffer(state.config.allocate(path.size + 1), state.config.release);
     if (!buffer) throw std::bad_alloc();
     char* text = static_cast<char*>(buffer.get());
-    if (!GuestWritable_nid_no_patch(text, path.size + 1))
+    const GuestArena::HostWrite textWrite(text, path.size + 1);
+    if (!textWrite.Open() || !GuestWritable_nid_no_patch(text, path.size + 1))
         throw std::invalid_argument("JPEG thumbnail: allocator returned unwritable storage");
     CopyIn(text, path.capacity < 16 ? path.bytes : path.pointer, path.size);
     text[path.size] = '\0';
