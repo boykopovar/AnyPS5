@@ -19,7 +19,6 @@ std::uint32_t APS5_VABI sceAgcDcbDrawIndirectGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier) {
-    Agc::Command::Require((countIndirect & 1u) == 0 || countIndirect == 1, __func__, "an odd count selector above 1 is not measured");
     const auto address = reinterpret_cast<std::uintptr_t>(countAddress);
     if (countIndirect == 1) Agc::Command::CheckAddress(address, 4, __func__);
     const auto offsets = Agc::Command::DrawPatchOffsets(modifier);
