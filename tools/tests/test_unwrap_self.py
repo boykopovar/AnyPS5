@@ -957,6 +957,20 @@ class UnwrapTest(unittest.TestCase):
                 for header in headers:
                     self.assertLessEqual(header[2] + header[5], len(data))
 
+    def test_truncated_trailing_segment_is_refused(self):
+        for kind in (PT_DYNAMIC, PT_INTERP, SCE_COMMENT, 0x60000042):
+            for stored in (0, 8):
+                with self.subTest(kind=kind, stored=stored):
+                    segments = default_segments() + [(SCE_COMMENT, 4, 0x15A0, 0, 0x20, 0x10),
+                                                     (kind, 4, 0x15C0, 0, 0x10, 1)]
+                    records = default_records() + [(0x302804, 0xAA0, 0x20)]
+                    payloads = dict(default_payloads())
+                    payloads[0xAA0] = pattern(11, 0x20) + pattern(13, stored)
+                    result, output = self.convert(build_container(segments, records, payloads))
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("segment 4 does not fit the file", result.stderr)
+                    self.assertFalse(output.exists())
+
     def test_segments_copied_outside_the_load_segments_keep_their_alignment(self):
         loads = [(PT_LOAD, 1, 0x1234, 0x0, 0x100, PAGE), (PT_LOAD, 4, 0x1500, 0x1000, 0x88, PAGE)]
         records = [(0x2804, 0x800, 0x100), (0x102804, 0xA00, 0x88)]

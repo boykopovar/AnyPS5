@@ -86,6 +86,7 @@ PHDR_NAMES = {
 }
 
 PT_TLS = 7
+PT_SCE_VERSION = 0x6FFFFF01
 
 
 class Refused(Exception):
@@ -228,6 +229,8 @@ def place_segments(data, headers, records):
             header["source"] = cursor
             cursor += header["size"]
             if cursor > len(data):
+                if header["type"] != PT_SCE_VERSION:
+                    raise Refused("segment %d does not fit the file" % header["index"])
                 header["source"] = 0
                 header["size"] = 0
     for header in loads:
