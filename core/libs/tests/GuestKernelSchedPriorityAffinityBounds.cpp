@@ -289,6 +289,10 @@ void TestPthreadAttrSchedulingBounds() {
     KernelSchedParam readBack{};
     Require(scePthreadAttrGetschedparam(&attr, &readBack) == 0);
     Require(readBack.sched_priority == 620);
+    readBack = {};
+    Require(pthread_attr_getschedparam_nid_postfix(&attr, &readBack) == 0);
+    Require(readBack.sched_priority == 620);
+    Require(pthread_attr_getschedparam_nid_postfix(&attr, reinterpret_cast<KernelSchedParam*>(0x10)) == PosixEfault);
 
     Require(scePthreadAttrDestroy(&attr) == 0);
 }
