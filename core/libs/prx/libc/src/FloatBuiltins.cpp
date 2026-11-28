@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <type_traits>
+#include <utility>
 
 #include "prx/libc/include/General.hpp"
 
@@ -699,6 +700,167 @@ __complex__ double APS5_VABI ctanh_nid_postfix(__complex__ double z) {
 
 __complex__ double APS5_VABI cpow_nid_postfix(__complex__ double x, __complex__ double y) {
     const auto result = std::pow(std::complex<double>(__real__ x, __imag__ x), std::complex<double>(__real__ y, __imag__ y));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI cacosf_nid_postfix(__complex__ float z) {
+    const auto result = std::acos(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI cacoshf_nid_postfix(__complex__ float z) {
+    const auto result = std::acosh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI casinf_nid_postfix(__complex__ float z) {
+    const auto result = std::asin(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI casinhf_nid_postfix(__complex__ float z) {
+    const auto result = std::asinh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI catanf_nid_postfix(__complex__ float z) {
+    const auto rotated = catanhf_nid_postfix(MakeComplex(__imag__ z, __real__ z));
+    return MakeComplex(__imag__ rotated, __real__ rotated);
+}
+
+__complex__ float APS5_VABI catanhf_nid_postfix(__complex__ float z) {
+    const float real = __real__ z;
+    const float imaginary = __imag__ z;
+    if (std::isinf(real) || std::isinf(imaginary)) {
+        const float angle = std::isnan(imaginary) ? imaginary : static_cast<float>(atan2_nid_postfix(std::copysign(1.0, imaginary), 0.0));
+        return MakeComplex(std::copysign(0.0f, real), angle);
+    }
+    if (std::isnan(real) || std::isnan(imaginary)) {
+        const float nan = real + imaginary;
+        return MakeComplex(real == 0.0f ? real : nan, nan);
+    }
+    const double x = std::abs(static_cast<double>(real));
+    const double y = imaginary;
+    if (x == 1.0 && imaginary == 0.0f) return MakeComplex(real / std::abs(imaginary), imaginary);
+    const double delta = 1.0 - x;
+    const double magnitude = 0.25 * log1p_nid_postfix(4.0 * x / (delta * delta + y * y));
+    const double angle = 0.5 * atan2_nid_postfix(2.0 * y, delta * (1.0 + x) - y * y);
+    return MakeComplex(static_cast<float>(std::copysign(magnitude, real)), static_cast<float>(angle));
+}
+
+__complex__ float APS5_VABI ccosf_nid_postfix(__complex__ float z) {
+    const auto result = std::cos(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI ccoshf_nid_postfix(__complex__ float z) {
+    const auto result = std::cosh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI cexpf_nid_postfix(__complex__ float z) {
+    const auto result = std::exp(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI clogf_nid_postfix(__complex__ float z) {
+    const double x = __real__ z;
+    const double y = __imag__ z;
+    double larger = std::abs(x);
+    double smaller = std::abs(y);
+    if (larger < smaller) std::swap(larger, smaller);
+    double logMagnitude;
+    if (larger >= 0.5 && larger <= 1.5) {
+        const double radiusSquaredMinusOne = (larger - 1.0) * (larger + 1.0) + smaller * smaller;
+        if (std::abs(radiusSquaredMinusOne) < 0x1p-25) {
+            logMagnitude = radiusSquaredMinusOne == 0.0 ? 0.0
+                : 0.5 * radiusSquaredMinusOne - 0.25 * radiusSquaredMinusOne * radiusSquaredMinusOne;
+        } else {
+            logMagnitude = 0.5 * std::log1p(radiusSquaredMinusOne);
+        }
+    } else {
+        logMagnitude = std::log(std::hypot(x, y));
+    }
+    return MakeComplex(static_cast<float>(logMagnitude), static_cast<float>(std::atan2(y, x)));
+}
+
+__complex__ float APS5_VABI csinf_nid_postfix(__complex__ float z) {
+    const auto result = std::sin(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI csinhf_nid_postfix(__complex__ float z) {
+    const auto result = std::sinh(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI csqrtf_nid_postfix(__complex__ float z) {
+    const double real = __real__ z;
+    const double imaginary = __imag__ z;
+    if (std::isfinite(real) && std::isfinite(imaginary)) {
+        if (real == 0.0 && imaginary == 0.0) return MakeComplex(0.0f, __imag__ z);
+        const double larger = std::sqrt((std::hypot(real, imaginary) + std::abs(real)) * 0.5);
+        if (real < 0.0) {
+            return MakeComplex(static_cast<float>(std::abs(imaginary) / (2.0 * larger)),
+                               static_cast<float>(std::copysign(larger, imaginary)));
+        }
+        return MakeComplex(static_cast<float>(larger), static_cast<float>(imaginary / (2.0 * larger)));
+    }
+    const auto result = std::sqrt(std::complex<float>(__real__ z, __imag__ z));
+    return MakeComplex(result.real(), result.imag());
+}
+
+__complex__ float APS5_VABI ctanf_nid_postfix(__complex__ float z) {
+    const auto rotated = ctanhf_nid_postfix(MakeComplex(__imag__ z, __real__ z));
+    return MakeComplex(__imag__ rotated, __real__ rotated);
+}
+
+static std::pair<double, double> ComplexTangentSinCos(float value) {
+    double angle = value;
+    int quadrant = 0;
+    if (std::abs(angle) > 0x1.921fb54442d18p-1 && std::abs(angle) < 0x1p21) {
+        constexpr double invHalfPi = 0x1.45f306dc9c883p-1;
+        constexpr double halfPiHigh = 0x1.921fb54442d18p+0;
+        constexpr double halfPiLow = 0x1.1a62633145c07p-54;
+        const double turns = std::round(angle * invHalfPi);
+        angle = std::fma(-turns, halfPiHigh, angle);
+        angle = std::fma(-turns, halfPiLow, angle);
+        quadrant = static_cast<int>(turns) & 3;
+    }
+    double sine, cosine;
+    sincos_nid_postfix(angle, &sine, &cosine);
+    switch (quadrant) {
+        case 1: return {cosine, -sine};
+        case 2: return {-sine, -cosine};
+        case 3: return {-cosine, sine};
+        default: return {sine, cosine};
+    }
+}
+
+__complex__ float APS5_VABI ctanhf_nid_postfix(__complex__ float z) {
+    const float real = __real__ z;
+    const float imaginary = __imag__ z;
+    if (imaginary == 0.0f) return MakeComplex(static_cast<float>(tanh_nid_postfix(real)), imaginary);
+    if (!std::isfinite(imaginary) || std::isnan(real)) {
+        if (std::isinf(real)) return MakeComplex(std::copysign(1.0f, real), 0.0f);
+        const float nan = real + (imaginary - imaginary);
+        return MakeComplex(real == 0.0f ? real : nan, nan);
+    }
+    const auto [sine, cosine] = ComplexTangentSinCos(imaginary);
+    if (real == 0.0f) return MakeComplex(real, static_cast<float>(sine / cosine));
+    const double sinCos = sine * cosine;
+    if (std::isinf(real)) return MakeComplex(std::copysign(1.0f, real), static_cast<float>(std::copysign(0.0, sinCos)));
+    const double exponent = -2.0 * std::abs(static_cast<double>(real));
+    const double decay = exp_nid_postfix(exponent);
+    const double gap = exponent > -1.0 ? -expm1_nid_postfix(exponent) : 1.0 - decay;
+    const double denominator = gap * gap + 4.0 * decay * cosine * cosine;
+    const double magnitude = gap * (1.0 + decay) / denominator;
+    const double phase = 4.0 * decay * sinCos / denominator;
+    return MakeComplex(static_cast<float>(std::copysign(magnitude, real)), static_cast<float>(phase));
+}
+
+__complex__ float APS5_VABI cpowf_nid_postfix(__complex__ float x, __complex__ float y) {
+    const auto result = std::pow(std::complex<float>(__real__ x, __imag__ x), std::complex<float>(__real__ y, __imag__ y));
     return MakeComplex(result.real(), result.imag());
 }
 
