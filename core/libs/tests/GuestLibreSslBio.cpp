@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -1368,7 +1369,7 @@ void TestCertificateFileLoadPaths() {
 int main(int argc, char** argv) {
 #ifdef ANYPS5_BIO_DYNAMIC
     Require(argc == 2, "patched BIO test needs the libraries directory");
-    InitializePatched(std::filesystem::absolute(argv[1]));
+    InitializePatched(std::filesystem::absolute(ArgumentPath(argv, 1)));
 #else
     static_cast<void>(argc);
     static_cast<void>(argv);
