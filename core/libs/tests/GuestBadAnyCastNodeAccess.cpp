@@ -1,8 +1,13 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
+#include <stdexcept>
 #include <string>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
@@ -27,6 +32,7 @@ static unsigned failures = 0;
 static std::string inspected;
 static char source[32];
 static bool overwriteSource = false;
+static unsigned newHandlerCalls = 0;
 
 extern "C" void APS5_VABI SceV2Inspect(void* object) {
     const auto* exception = static_cast<const LibcException::ExceptionObject*>(object);
@@ -43,7 +49,7 @@ static TypeRecord Named(const char* name) {
     return {_ZTISt9exception_nid_postfix.vtable, name, nullptr};
 }
 
-struct Case { const char* label; Thrower thrower; const char* message; const void* catchType; const void* otherType; int selector; const char* expected; };
+struct Case { const char* label; Thrower thrower; const void* message; const void* catchType; const void* otherType; int selector; const char* expected; };
 
 static void Run(const Case& test) {
     SceV2CatchType = test.catchType;
@@ -54,6 +60,41 @@ static void Run(const Case& test) {
     if (SceV2Selector == test.selector && inspected == test.expected) return;
     std::fprintf(stderr, "FAIL: %s: selector %d, got '%s', want '%s'\n", test.label, SceV2Selector, inspected.c_str(), test.expected);
     ++failures;
+}
+
+static void APS5_VABI ThrowingNewHandler() {
+    ++newHandlerCalls;
+    throw std::runtime_error("new_handler failed");
+}
+
+static void CheckNothrow(bool condition, const char* label) {
+    if (condition) return;
+    std::fprintf(stderr, "FAIL: %s\n", label);
+    ++failures;
+}
+
+static void TestNothrowNewCatchAll() {
+    const std::array<void*, 10> none{};
+    ApplicationHeapRegister_nid_no_patch(none.data());
+    newHandlerCalls = 0;
+    constexpr std::size_t huge = std::numeric_limits<std::size_t>::max();
+    const GuestNewHandler previousHandler = _ZSt15set_new_handlerPFvvE_nid_postfix(&ThrowingNewHandler);
+    CheckNothrow(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr && newHandlerCalls == 1,
+        "nothrow new catches non-bad_alloc from new_handler");
+    CheckNothrow(_ZnamRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr && newHandlerCalls == 2,
+        "nothrow array new catches non-bad_alloc from new_handler");
+    CheckNothrow(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr && newHandlerCalls == 3,
+        "nothrow aligned new catches non-bad_alloc from new_handler");
+    CheckNothrow(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr && newHandlerCalls == 4,
+        "nothrow aligned array new catches non-bad_alloc from new_handler");
+    const GuestNewHandler restoredFrom = _ZSt15set_new_handlerPFvvE_nid_postfix(previousHandler);
+    CheckNothrow(restoredFrom == &ThrowingNewHandler, "set_new_handler returns previous throwing handler on restore");
+    CheckNothrow(_ZSt15get_new_handlerv_nid_postfix() == previousHandler, "get_new_handler reflects restored handler");
+    CheckNothrow(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr && newHandlerCalls == 4,
+        "nothrow new returns nullptr without calling restored handler");
+    void* small = _ZnwmRKSt9nothrow_t_nid_postfix(16, nullptr);
+    CheckNothrow(small != nullptr, "nothrow new allocates small valid block");
+    _ZdlPvRKSt9nothrow_t_nid_postfix(small, nullptr);
 }
 
 int main() {
@@ -85,5 +126,6 @@ int main() {
     std::strcpy(source, "copied message");
     Run({"bad_any_cast keeps its own copy", badAnyCast, source, &_ZTISt8bad_cast_nid_postfix, &_ZTISt11logic_error_nid_postfix, 2,
         "St12bad_any_cast|St8bad_cast|copied message"});
+    TestNothrowNewCatchAll();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

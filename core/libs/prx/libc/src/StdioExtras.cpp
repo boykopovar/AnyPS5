@@ -124,7 +124,7 @@ void* APS5_VABI _ZnwmSt11align_val_t_nid_postfix(std::size_t size, std::size_t a
 void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
     try {
         return Allocate(size);
-    } catch (const std::bad_alloc&) {
+    } catch (...) {
         return nullptr;
     }
 }
@@ -132,7 +132,7 @@ void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) n
 void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
     try {
         return Allocate(size);
-    } catch (const std::bad_alloc&) {
+    } catch (...) {
         return nullptr;
     }
 }
@@ -171,7 +171,7 @@ void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, st
 void* APS5_VABI _ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void*) noexcept {
     try {
         return _ZnwmSt11align_val_t_nid_postfix(size, alignment);
-    } catch (const std::bad_alloc&) {
+    } catch (...) {
         return nullptr;
     }
 }
@@ -183,7 +183,7 @@ void* APS5_VABI _ZnamSt11align_val_t_nid_postfix(std::size_t size, std::size_t a
 void* AlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void*) noexcept {
     try {
         return _ZnamSt11align_val_t_nid_postfix(size, alignment);
-    } catch (const std::bad_alloc&) {
+    } catch (...) {
         return nullptr;
     }
 }
