@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -90,11 +91,28 @@ void RequireMfsr(bool condition, const char* function, const char* what) {
  if (!condition) throw std::runtime_error(std::string(function) + ": " + what);
 }
 
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+ errno = savedErrno;
+ return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+ const int savedErrno = errno;
+ const GuestArena::HostWrite guard(destination, bytes);
+ const bool copied = guard.Open() && GuestWritable_nid_no_patch(destination, bytes) && GuestCopyOut_nid_no_patch(destination, source, bytes);
+ errno = savedErrno;
+ return copied;
+}
+
 void RequireBlocks(const MfsrBlock* blocks, std::uint64_t blockCount, std::uint64_t requiredCount, const char* function) {
  RequireMfsr(blockCount >= requiredCount, function, "fewer memory blocks than the requirement");
  RequireMfsr(blocks != nullptr, function, "null memory block list");
  for (std::uint64_t i = 0; i < requiredCount; ++i) {
-  RequireMfsr(blocks[i].bytes >= MfsrBlockBytes && blocks[i].address % MfsrBlockBytes == 0, function, "memory block smaller or less aligned than the requirement");
+  MfsrBlock block{};
+  RequireMfsr(CopyInPreservingErrno(&block, blocks + i, sizeof(block)), function, "unreadable memory block");
+  RequireMfsr(block.bytes >= MfsrBlockBytes && block.address % MfsrBlockBytes == 0, function, "memory block smaller or less aligned than the requirement");
  }
 }
 
@@ -117,39 +135,6 @@ bool FindMfsrObject(void* handle, MfsrObject* out) {
  return true;
 }
 
-std::pair<std::uint32_t, std::uint32_t> MfsrInputDimensions(const MfsrContextParam* param) {
- if (param->inputWidth != 0) return {param->inputWidth, param->inputHeight};
- if (param->descriptor0 == nullptr) return {0, 0};
- std::uint16_t width = 0, height = 0;
- std::memcpy(&width, static_cast<const std::uint8_t*>(param->descriptor0) + 0x20, sizeof(width));
- std::memcpy(&height, static_cast<const std::uint8_t*>(param->descriptor0) + 0x22, sizeof(height));
- return {width, height};
-}
-
-std::int32_t ContextBufferRequirement(MfsrRequirement* requirement, const void* param, const char* function) {
- if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
- RequireMfsr(requirement != nullptr && param != nullptr, function, "null requirement or parameter");
- *requirement = {MfsrBlockBytes, MfsrBlockBytes, MfsrBlockCount};
- return 0;
-}
-
-std::int32_t CreateContextFromParam(void** context, const MfsrContextParam* param, bool useSharedResources, const char* function) {
- if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
- RequireMfsr(context != nullptr && param != nullptr, function, "null handle or parameter");
- RequireBlocks(param->blocks, param->blockCount, MfsrBlockCount, function);
- RequireMfsr(!useSharedResources || param->sharedResources != nullptr, function, "null shared resources handle");
- const auto [inputWidth, inputHeight] = MfsrInputDimensions(param);
- *context = CreateMfsrContext(useSharedResources ? param->sharedResources : nullptr, function, inputWidth, inputHeight);
- return 0;
-}
-
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
- const int savedErrno = errno;
- const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
- errno = savedErrno;
- return copied;
-}
-
 void ReleaseMfsrObject(void* handle, MfsrObjectKind kind, const char* function) {
  std::lock_guard lock(g_mfsrMutex);
  const auto found = g_mfsrObjects.find(handle);
@@ -161,6 +146,56 @@ void ReleaseMfsrObject(void* handle, MfsrObjectKind kind, const char* function) 
  }
  delete found->second;
  g_mfsrObjects.erase(found);
+}
+
+class PendingMfsrObject {
+public:
+ explicit PendingMfsrObject(void* handle) : handle(handle) {}
+ ~PendingMfsrObject() {
+  if (handle == nullptr) return;
+  std::lock_guard lock(g_mfsrMutex);
+  const auto found = g_mfsrObjects.find(handle);
+  if (found == g_mfsrObjects.end()) return;
+  delete found->second;
+  g_mfsrObjects.erase(found);
+ }
+ PendingMfsrObject(const PendingMfsrObject&) = delete;
+ PendingMfsrObject& operator=(const PendingMfsrObject&) = delete;
+ void Keep() { handle = nullptr; }
+
+private:
+ void* handle;
+};
+
+std::pair<std::uint32_t, std::uint32_t> MfsrInputDimensions(const MfsrContextParam& param, const char* function) {
+ if (param.inputWidth != 0) return {param.inputWidth, param.inputHeight};
+ if (param.descriptor0 == nullptr) return {0, 0};
+ std::uint16_t dimensions[2]{};
+ RequireMfsr(CopyInPreservingErrno(dimensions, static_cast<const std::uint8_t*>(param.descriptor0) + 0x20, sizeof(dimensions)), function, "unreadable descriptor0");
+ return {dimensions[0], dimensions[1]};
+}
+
+std::int32_t ContextBufferRequirement(MfsrRequirement* requirement, const void* param, const char* function) {
+ if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
+ RequireMfsr(requirement != nullptr && param != nullptr, function, "null requirement or parameter");
+ const MfsrRequirement result{MfsrBlockBytes, MfsrBlockBytes, MfsrBlockCount};
+ RequireMfsr(CopyOutPreservingErrno(requirement, &result, sizeof(result)), function, "unwritable requirement");
+ return 0;
+}
+
+std::int32_t CreateContextFromParam(void** context, const MfsrContextParam* param, bool useSharedResources, const char* function) {
+ if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
+ RequireMfsr(context != nullptr && param != nullptr, function, "null handle or parameter");
+ MfsrContextParam guestParam{};
+ RequireMfsr(CopyInPreservingErrno(&guestParam, param, sizeof(guestParam)), function, "unreadable parameter");
+ RequireBlocks(guestParam.blocks, guestParam.blockCount, MfsrBlockCount, function);
+ RequireMfsr(!useSharedResources || guestParam.sharedResources != nullptr, function, "null shared resources handle");
+ const auto [inputWidth, inputHeight] = MfsrInputDimensions(guestParam, function);
+ void* created = CreateMfsrContext(useSharedResources ? guestParam.sharedResources : nullptr, function, inputWidth, inputHeight);
+ PendingMfsrObject pending(created);
+ RequireMfsr(CopyOutPreservingErrno(context, &created, sizeof(created)), function, "unwritable context handle");
+ pending.Keep();
+ return 0;
 }
 
 }
@@ -198,27 +233,38 @@ std::int32_t APS5_VABI scePsmlMfsrInit() {
 std::int32_t APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement(MfsrRequirement* requirement, const MfsrSharedResourcesParam* param) {
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(requirement != nullptr && param != nullptr, __func__, "null requirement or parameter");
- if (param->type != 0) {
-  const bool gated = (param->type == 1 && (g_mfsrFeatureFlags.load() & 1u) != 0) || (param->type == 2 && (g_mfsrFeatureFlags.load() & 2u) != 0);
+ MfsrSharedResourcesParam guestParam{};
+ RequireMfsr(CopyInPreservingErrno(&guestParam, param, sizeof(guestParam)), __func__, "unreadable parameter");
+ if (guestParam.type != 0) {
+  const bool gated = (guestParam.type == 1 && (g_mfsrFeatureFlags.load() & 1u) != 0) || (guestParam.type == 2 && (g_mfsrFeatureFlags.load() & 2u) != 0);
   if (!gated) return SCE_PSML_ERROR_UNSUPPORTED_TYPE;
   NotImplemented_nid_no_patch(__func__);
  }
- *requirement = {MfsrBlockBytes, MfsrBlockBytes, MfsrSharedBlockCount};
+ const MfsrRequirement result{MfsrBlockBytes, MfsrBlockBytes, MfsrSharedBlockCount};
+ RequireMfsr(CopyOutPreservingErrno(requirement, &result, sizeof(result)), __func__, "unwritable requirement");
  return 0;
 }
 
 std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void** sharedResources, const MfsrSharedResourcesParam* param) {
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
- std::lock_guard lock(g_mfsrMutex);
- for (const auto& [handle, object] : g_mfsrObjects) {
-  if (object->kind == MfsrObjectKind::SharedResources) return SCE_PSML_ERROR_SHARED_RESOURCES_BUSY;
- }
  RequireMfsr(sharedResources != nullptr && param != nullptr, __func__, "null handle or parameter");
- if (param->type != 0) return SCE_PSML_ERROR_UNSUPPORTED_TYPE;
- RequireBlocks(param->blocks, param->blockCount, MfsrSharedBlockCount, __func__);
- auto* object = new MfsrObject{MfsrObjectKind::SharedResources, nullptr, 0, 0};
- g_mfsrObjects.emplace(object, object);
- *sharedResources = object;
+ MfsrSharedResourcesParam guestParam{};
+ RequireMfsr(CopyInPreservingErrno(&guestParam, param, sizeof(guestParam)), __func__, "unreadable parameter");
+ if (guestParam.type != 0) return SCE_PSML_ERROR_UNSUPPORTED_TYPE;
+ RequireBlocks(guestParam.blocks, guestParam.blockCount, MfsrSharedBlockCount, __func__);
+ void* handle = nullptr;
+ {
+  std::lock_guard lock(g_mfsrMutex);
+  for (const auto& [existingHandle, object] : g_mfsrObjects) {
+   if (object->kind == MfsrObjectKind::SharedResources) return SCE_PSML_ERROR_SHARED_RESOURCES_BUSY;
+  }
+  auto* object = new MfsrObject{MfsrObjectKind::SharedResources, nullptr, 0, 0};
+  g_mfsrObjects.emplace(object, object);
+  handle = object;
+ }
+ PendingMfsrObject pending(handle);
+ RequireMfsr(CopyOutPreservingErrno(sharedResources, &handle, sizeof(handle)), __func__, "unwritable shared resources handle");
+ pending.Keep();
  return 0;
 }
 
@@ -255,10 +301,15 @@ std::int32_t APS5_VABI scePsmlMfsrCreateContextFrom2023July(void** context, cons
 std::int32_t APS5_VABI scePsmlMfsrCreateContext(void** context, const MfsrMemoryParam* param) {
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(context != nullptr && param != nullptr, __func__, "null handle or parameter");
- RequireBlocks(param->blocks, param->blockCount, MfsrBlockCount, __func__);
- RequireMfsr(param->type <= 2, __func__, "unknown context type");
- if (param->type != 0) NotImplemented_nid_no_patch(__func__);
- *context = CreateMfsrContext(nullptr, __func__, Mfsr4KDimensions.first, Mfsr4KDimensions.second);
+ MfsrMemoryParam guestParam{};
+ RequireMfsr(CopyInPreservingErrno(&guestParam, param, sizeof(guestParam)), __func__, "unreadable parameter");
+ RequireBlocks(guestParam.blocks, guestParam.blockCount, MfsrBlockCount, __func__);
+ RequireMfsr(guestParam.type <= 2, __func__, "unknown context type");
+ if (guestParam.type != 0) NotImplemented_nid_no_patch(__func__);
+ void* created = CreateMfsrContext(nullptr, __func__, Mfsr4KDimensions.first, Mfsr4KDimensions.second);
+ PendingMfsrObject pending(created);
+ RequireMfsr(CopyOutPreservingErrno(context, &created, sizeof(created)), __func__, "unwritable context handle");
+ pending.Keep();
  return 0;
 }
 
@@ -296,7 +347,8 @@ std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(void* contex
  MfsrObject object;
  if (!FindMfsrObject(context, &object)) return SCE_PSML_ERROR_INVALID_ARGUMENT;
  if (packetSizeInDwords == nullptr) return SCE_PSML_ERROR_NULL_OUTPUT;
- *packetSizeInDwords = MfsrDispatchPacketDwords;
+ const std::uint32_t dwords = MfsrDispatchPacketDwords;
+ if (!CopyOutPreservingErrno(packetSizeInDwords, &dwords, sizeof(dwords))) return SCE_PSML_ERROR_INVALID_ARGUMENT;
  return 0;
 }
 
@@ -313,7 +365,8 @@ std::int32_t APS5_VABI scePsmlMfsrGetMipmapBias(void* context, float* bias, std:
  if (!FindMfsrObject(context, &object) || object.kind != MfsrObjectKind::Context) return SCE_PSML_ERROR_INVALID_ARGUMENT;
  if (bias == nullptr) return SCE_PSML_ERROR_NULL_OUTPUT;
  if (object.inputWidth == 0) return SCE_PSML_ERROR_INVALID_ARGUMENT;
- *bias = std::log2f(static_cast<float>(dimension) / static_cast<float>(object.inputWidth)) - 1.0f;
+ const float value = std::log2f(static_cast<float>(dimension) / static_cast<float>(object.inputWidth)) - 1.0f;
+ if (!CopyOutPreservingErrno(bias, &value, sizeof(value))) return SCE_PSML_ERROR_INVALID_ARGUMENT;
  return 0;
 }
 
