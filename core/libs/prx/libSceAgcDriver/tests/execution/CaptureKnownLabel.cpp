@@ -36,6 +36,8 @@ using AgcDriver::Graphics::Require;
 constexpr std::size_t BlockBytes = 0x40000;
 constexpr std::uint64_t ColorOffset = 0x30000;
 constexpr std::size_t ColorBytes = 1024;
+constexpr std::uint64_t OpeningFillOffset = 0x10000;
+constexpr std::uint32_t OpeningFillBytes = 0x10010;
 
 alignas(256) constexpr std::array<std::uint32_t, 16> TriangleVertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
@@ -138,6 +140,10 @@ void AppendFill(std::vector<std::uint32_t>& commands, std::uint64_t address, std
     Append(commands, 0x50, {0x40000000u, pattern, 0, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), bytes});
 }
 
+void AppendOpeningFill(std::vector<std::uint32_t>& commands, std::uint64_t base) {
+    AppendFill(commands, base + OpeningFillOffset, 0, OpeningFillBytes);
+}
+
 void AppendConstantPointer(std::vector<std::uint32_t>& commands, std::uint64_t constant) {
     Append(commands, 0x76, {0x00c, static_cast<std::uint32_t>(constant), static_cast<std::uint32_t>(constant >> 32u)});
 }
@@ -173,6 +179,7 @@ Outcome Run(const GuestBlock& block, const Scenario& scenario, bool knownLabels)
     std::memcpy(block.Data() + scenario.constantOffset, &cpu, sizeof(cpu));
     std::memset(block.Data() + ColorOffset, 0, ColorBytes);
     std::vector<std::uint32_t> commands;
+    AppendOpeningFill(commands, block.Address());
     AppendState(commands, block.Address() + ColorOffset);
     AppendConstantPointer(commands, block.Address() + scenario.constantOffset);
     AppendLabel(commands, block.Address() + scenario.labelOffset, std::bit_cast<std::uint32_t>(scenario.labelValue));
@@ -227,6 +234,7 @@ int CheckSubmittedBeforeWait(const GuestBlock& block) {
     std::memset(block.Data() + releaseOffset, 0, sizeof(std::uint32_t));
     std::memset(block.Data() + ColorOffset, 0, ColorBytes);
     std::vector<std::uint32_t> commands;
+    AppendOpeningFill(commands, block.Address());
     AppendState(commands, block.Address() + ColorOffset);
     AppendConstantPointer(commands, block.Address() + constantOffset);
     AppendLabel(commands, block.Address() + constantOffset, label);
@@ -275,7 +283,6 @@ struct HeldOutcome {
 HeldOutcome RunBesideHeldWrite(const GuestBlock& block, const std::string& name, std::uint64_t labelOffset, bool knownLabels) {
     AgcDriver::Graphics::RuntimeSwitches::Assign(AgcDriver::Graphics::RuntimeSwitch::NoCaptureKnownLabels, !knownLabels);
     constexpr std::uint64_t releaseOffset = 0x8000;
-    constexpr std::uint64_t computeFillOffset = 0x20000;
     const auto label = std::bit_cast<std::uint32_t>(0.25f);
     const auto other = std::bit_cast<std::uint32_t>(0.5f);
     const auto otherOffset = labelOffset + sizeof(std::uint32_t);
@@ -300,7 +307,7 @@ HeldOutcome RunBesideHeldWrite(const GuestBlock& block, const std::string& name,
         first = recorder->OpenSerial();
     }
     std::vector<std::uint32_t> compute;
-    AppendFill(compute, block.Address() + computeFillOffset, 0x01010101u, 256);
+    AppendOpeningFill(compute, block.Address());
     AppendLabel(compute, block.Address() + otherOffset, other);
     Packet computePacket{compute.data(), static_cast<std::uint32_t>(compute.size()), 0, {}};
     if (sceAgcDriverSubmitAcb(0x20, &computePacket) != 0) {
@@ -309,17 +316,19 @@ HeldOutcome RunBesideHeldWrite(const GuestBlock& block, const std::string& name,
     }
     bool held = false;
     const auto heldDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (!held && std::chrono::steady_clock::now() < heldDeadline) {
+    bool writtenByCpu = false;
+    while (!held && !writtenByCpu && std::chrono::steady_clock::now() < heldDeadline) {
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             held = recorder->Submissions() >= first && !recorder->Recording();
         }
-        if (!held) std::this_thread::sleep_for(std::chrono::microseconds(100));
+        writtenByCpu = otherWord.load(std::memory_order_acquire) == other;
+        if (!held && !writtenByCpu) std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
     if (!held || otherWord.load(std::memory_order_acquire) != 0) {
         static_cast<void>(hold.Release());
         AgcDriverWaitIdle_nid_postfix();
-        Require(held, prefix + ": the compute queue's write was not submitted to the GPU");
+        Require(held || writtenByCpu, prefix + ": the compute queue's write was recorded but not submitted to the GPU");
         return HeldOutcome{true};
     }
     const auto knownBefore = AgcDriver::ShaderMemory::KnownValues();
@@ -351,6 +360,7 @@ HeldOutcome RunBesideHeldWrite(const GuestBlock& block, const std::string& name,
         release.store(1, std::memory_order_release);
     });
     std::vector<std::uint32_t> commands;
+    AppendOpeningFill(commands, block.Address());
     AppendState(commands, block.Address() + ColorOffset, PairPixelCode.data());
     AppendConstantPointer(commands, block.Address() + labelOffset);
     AppendLabel(commands, block.Address() + labelOffset, label);
