@@ -652,7 +652,21 @@ void converterSha256() {
     require(message.Body[message.ReturnBranchOffset - 1] == 0x90 && message.Body[message.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     auto beforeReturn = file;
     beforeReturn[0x210] = 0xC3;
-    requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short SHA-256 instruction followed by a return was relocated");
+    const auto returned = converter->Convert(beforeReturn, {segmentHeader(text.size())});
+    require(returned.Trampolines.size() == 2 && returned.Trampolines[1].Offset == 0x20C && returned.Trampolines[1].Length == 5, "Short SHA-256 instruction followed by a return did not take the return");
+    require(returned.Trampolines[1].Body[returned.Trampolines[1].ReturnBranchOffset - 1] == 0xC3, "Short SHA-256 instruction followed by a return did not end its stub with the return");
+    Bytes entered(0x300, 0xCC);
+    const Bytes loop = {
+        0xC5, 0xF9, 0xFE, 0xC7,
+        0x0F, 0x38, 0xCD, 0xC6,
+        0xC4, 0xC1, 0x79, 0x7F, 0x01,
+        0xC3,
+        0xEB, 0xF8};
+    std::copy(loop.begin(), loop.end(), entered.begin() + 0x200);
+    const auto window = converter->Convert(entered, {segmentHeader(loop.size())});
+    require(window.Trampolines.size() == 1 && window.Reports.size() == 1 && window.Reports[0].InstructionName == "SHA256MSG2", "SHA256MSG2 before a branch target was not lowered through a stub");
+    const auto& moved = window.Trampolines[0];
+    require(moved.Offset == 0x200 && moved.Length == 8 && Bytes(moved.Body.begin(), moved.Body.begin() + 4) == Bytes(loop.begin(), loop.begin() + 4), "SHA256MSG2 before a branch target did not take room from the instruction before it");
     auto memoryForm = file;
     memoryForm[0x20F] = 0x28;
     const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
@@ -690,7 +704,21 @@ void converterSha1() {
     require(message.Body[message.ReturnBranchOffset - 1] == 0x90 && message.Body[message.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     auto beforeReturn = file;
     beforeReturn[0x215] = 0xC3;
-    requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short SHA-1 instruction followed by a return was relocated");
+    const auto returned = converter->Convert(beforeReturn, {segmentHeader(text.size())});
+    require(returned.Trampolines.size() == 3 && returned.Trampolines[2].Offset == 0x211 && returned.Trampolines[2].Length == 5, "Short SHA-1 instruction followed by a return did not take the return");
+    require(returned.Trampolines[2].Body[returned.Trampolines[2].ReturnBranchOffset - 1] == 0xC3, "Short SHA-1 instruction followed by a return did not end its stub with the return");
+    Bytes entered(0x300, 0xCC);
+    const Bytes loop = {
+        0xC5, 0xF9, 0xFE, 0xC7,
+        0x0F, 0x38, 0xCA, 0xC6,
+        0xC4, 0xC1, 0x79, 0x7F, 0x01,
+        0xC3,
+        0xEB, 0xF8};
+    std::copy(loop.begin(), loop.end(), entered.begin() + 0x200);
+    const auto window = converter->Convert(entered, {segmentHeader(loop.size())});
+    require(window.Trampolines.size() == 1 && window.Reports.size() == 1 && window.Reports[0].InstructionName == "SHA1MSG2", "SHA1MSG2 before a branch target was not lowered through a stub");
+    const auto& moved = window.Trampolines[0];
+    require(moved.Offset == 0x200 && moved.Length == 8 && Bytes(moved.Body.begin(), moved.Body.begin() + 4) == Bytes(loop.begin(), loop.begin() + 4), "SHA1MSG2 before a branch target did not take room from the instruction before it");
     auto memoryForm = file;
     memoryForm[0x214] = 0x28;
     const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
@@ -763,7 +791,34 @@ void converterClzero() {
     require(pair.Offset == 0x207 && pair.Length == 6 && result.Reports[1].InstructionName == "CLZERO", "Consecutive CLZERO sites were not lowered into one stub");
     auto beforeReturn = file;
     beforeReturn[0x203] = 0xC3;
-    requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short CLZERO followed by a return was relocated");
+    requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short CLZERO followed by a return was relocated into a site shorter than a jump");
+    Bytes entered(0x300, 0xCC);
+    const Bytes loop = {
+        0x48, 0x83, 0xC0, 0x40,
+        0x0F, 0x01, 0xFC,
+        0x48, 0x39, 0xD0,
+        0xC3,
+        0xEB, 0xFA};
+    std::copy(loop.begin(), loop.end(), entered.begin() + 0x200);
+    const auto window = converter->Convert(entered, {segmentHeader(loop.size())});
+    require(window.Trampolines.size() == 1 && window.Reports.size() == 1 && window.Reports[0].InstructionName == "CLZERO", "CLZERO before a branch target was not lowered through a stub");
+    const auto& moved = window.Trampolines[0];
+    require(moved.Offset == 0x200 && moved.Length == 7 && Bytes(moved.Body.begin(), moved.Body.begin() + 4) == add, "CLZERO before a branch target did not take room from the instruction before it");
+    Bytes padded(0x300, 0xCC);
+    const Bytes nops = {0x0F, 0x01, 0xFC, 0x90, 0x90, 0xC3};
+    std::copy(nops.begin(), nops.end(), padded.begin() + 0x200);
+    const auto extended = converter->Convert(padded, {segmentHeader(nops.size())});
+    require(extended.Trampolines.size() == 1 && extended.Trampolines[0].Offset == 0x200 && extended.Trampolines[0].Length == 5, "CLZERO followed by one-byte instructions did not take enough of them for a jump");
+    Bytes pushed(0x300, 0xCC);
+    const Bytes before = {
+        0x50, 0x51,
+        0x0F, 0x01, 0xFC,
+        0x48, 0x39, 0xD0,
+        0xC3,
+        0xEB, 0xFA};
+    std::copy(before.begin(), before.end(), pushed.begin() + 0x200);
+    const auto backward = converter->Convert(pushed, {segmentHeader(before.size())});
+    require(backward.Trampolines.size() == 1 && backward.Trampolines[0].Offset == 0x200 && backward.Trampolines[0].Length == 5 && Bytes(backward.Trampolines[0].Body.begin(), backward.Trampolines[0].Body.begin() + 2) == Bytes{0x50, 0x51}, "CLZERO before a branch target did not take enough one-byte instructions before it for a jump");
     auto segmentRelative = file;
     const Bytes fsClzero = {0x64, 0x0F, 0x01, 0xFC};
     std::copy(fsClzero.begin(), fsClzero.end(), segmentRelative.begin() + 0x20A);
