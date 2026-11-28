@@ -2,11 +2,25 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <new>
 #include <source_location>
 #include <string>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -56,6 +70,61 @@ void InitializeHeap() {
         reinterpret_cast<void*>(&PosixAlign),
     };
     ApplicationHeapRegister_nid_no_patch(api);
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = VirtualAlloc(nullptr, 2 * size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(base != nullptr);
+        DWORD previous{};
+        Require(VirtualProtect(static_cast<char*>(base) + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        base = mmap(nullptr, 2 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(base != MAP_FAILED);
+        Require(mprotect(static_cast<char*>(base) + size, size, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, 2 * size);
+#endif
+    }
+
+    void* Get() const { return base; }
+
+    void MakeReadOnly() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* base = nullptr;
+    std::size_t size = 0;
+};
+
+template<class TAction>
+bool Throws(TAction action) {
+    try {
+        action();
+    } catch (const std::bad_alloc&) {
+        return false;
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
 }
 
 Bignum* FromHex(const char* hex) {
@@ -185,6 +254,59 @@ int main() {
         Require(Hex(&fixed) == "10CE387");
         Require(BN_div_nid_postfix(&fixed, nullptr, numerator, divisor, context) == 0 && fixed.d == words);
         Require(ERR_get_error_nid_postfix() == ExpandOnStaticData && ERR_get_error_nid_postfix() == 0);
+        for (auto* value : {numerator, divisor, quotient, remainder}) BN_free_nid_postfix(value);
+    }
+    {
+        Bignum* numerator = FromHex("123456789ABCDEF0123456789ABCDEF0123456789");
+        Bignum* divisor = FromHex("FEDCBA987");
+        Bignum* quotient = BN_new_nid_postfix();
+        Bignum* remainder = BN_new_nid_postfix();
+        auto* unmapped = reinterpret_cast<Bignum*>(std::uintptr_t{0x10});
+        Require(BN_div_nid_postfix(quotient, remainder, numerator, divisor, context) == 1);
+        const int blocks = liveBlocks;
+        errno = 71;
+        Require(Throws([&] { BN_div_nid_postfix(quotient, remainder, unmapped, divisor, context); }));
+        Require(Throws([&] { BN_div_nid_postfix(quotient, remainder, numerator, unmapped, context); }));
+        Require(Throws([&] { BN_div_nid_postfix(unmapped, remainder, numerator, divisor, context); }));
+        Require(Throws([&] { BN_div_nid_postfix(quotient, unmapped, numerator, divisor, context); }));
+        Bignum unmappedWords{reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10}), 1, 1, 0, 0x02};
+        Require(Throws([&] { BN_div_nid_postfix(quotient, remainder, &unmappedWords, divisor, context); }));
+        Require(Throws([&] { BN_div_nid_postfix(quotient, remainder, numerator, &unmappedWords, context); }));
+        Require(errno == 71 && liveBlocks == blocks);
+
+        GuardedPage oversizedPage;
+        std::memset(oversizedPage.Get(), 0xff, sizeof(std::uint64_t));
+        Bignum oversized{static_cast<std::uint64_t*>(oversizedPage.Get()), INT_MAX, INT_MAX, 0, 0x02};
+        Require(Throws([&] { BN_div_nid_postfix(quotient, remainder, &oversized, divisor, context); }));
+        Require(Throws([&] { BN_div_nid_postfix(quotient, remainder, numerator, &oversized, context); }));
+        Require(errno == 71 && liveBlocks == blocks);
+
+        GuardedPage readOnlyPage;
+        std::uint64_t storage[8] {};
+        const Bignum fixed{storage, 0, 8, 0, 0x02};
+        std::memcpy(readOnlyPage.Get(), &fixed, sizeof(fixed));
+        readOnlyPage.MakeReadOnly();
+        auto* readOnly = static_cast<Bignum*>(readOnlyPage.Get());
+        Require(Throws([&] { BN_div_nid_postfix(readOnly, nullptr, numerator, divisor, context); }));
+        Require(Throws([&] { BN_div_nid_postfix(nullptr, readOnly, numerator, divisor, context); }));
+        Require(std::memcmp(readOnly, &fixed, sizeof(fixed)) == 0);
+        Require(std::all_of(std::begin(storage), std::end(storage), [](std::uint64_t word) { return word == 0; }));
+        Require(errno == 71 && liveBlocks == blocks);
+
+        GuardedPage readOnlyWords;
+        readOnlyWords.MakeReadOnly();
+        Bignum target{static_cast<std::uint64_t*>(readOnlyWords.Get()), 0, 8, 0, 0x02};
+        const Bignum before = target;
+        Require(Throws([&] { BN_div_nid_postfix(&target, nullptr, numerator, divisor, context); }));
+        Require(std::memcmp(&target, &before, sizeof(target)) == 0);
+        Bignum unreadableStorage{reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10}), 0, 1, 0, 0};
+        const Bignum unreadableBefore = unreadableStorage;
+        Require(Throws([&] { BN_div_nid_postfix(&unreadableStorage, nullptr, numerator, divisor, context); }));
+        Require(std::memcmp(&unreadableStorage, &unreadableBefore, sizeof(unreadableStorage)) == 0);
+        Require(errno == 71 && liveBlocks == blocks);
+        Require(BN_div_nid_postfix(quotient, remainder, numerator, divisor, context) == 1);
+        Require(Hex(quotient) == "124924924998D0E9A1F8700B8417F46E" && Hex(remainder) == "10CE387");
+        Require(errno == 71 && ERR_get_error_nid_postfix() == 0);
         for (auto* value : {numerator, divisor, quotient, remainder}) BN_free_nid_postfix(value);
     }
     BN_CTX_free_nid_postfix(context);

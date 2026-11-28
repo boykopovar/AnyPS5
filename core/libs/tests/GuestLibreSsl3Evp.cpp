@@ -3,12 +3,22 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using LibreSsl3::DigestContext;
 using LibreSsl3::DigestMethod;
@@ -26,6 +36,7 @@ template<typename TAction> static void Throws(TAction action) {
 }
 
 static bool failAllocation;
+static unsigned callocCount;
 static std::array<std::pair<void*, std::size_t>, 2> expectedCleared{};
 static unsigned clearedCount;
 static unsigned initCount;
@@ -59,7 +70,10 @@ static void APS5_VABI Free(void* memory) {
     }
     std::free(memory);
 }
-static void* APS5_VABI Calloc(std::size_t count, std::size_t size) { return failAllocation ? nullptr : std::calloc(count, size); }
+static void* APS5_VABI Calloc(std::size_t count, std::size_t size) {
+    ++callocCount;
+    return failAllocation ? nullptr : std::calloc(count, size);
+}
 static void* APS5_VABI Reallocate(void* memory, std::size_t size) { return std::realloc(memory, size); }
 static void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
 static void* APS5_VABI Realign(void* memory, std::size_t size, std::size_t) { return std::realloc(memory, size); }
@@ -230,6 +244,81 @@ static void CustomMethods() {
     clearKeyContext = false;
 }
 
+class ReadOnlyContext {
+public:
+    explicit ReadOnlyContext(const DigestContext& value) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        page = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(page != nullptr);
+        std::memcpy(page, &value, sizeof(value));
+        DWORD previous{};
+        Require(VirtualProtect(page, size, PAGE_READONLY, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+        std::memcpy(page, &value, sizeof(value));
+        Require(mprotect(page, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyContext() {
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, size);
+#endif
+    }
+
+    DigestContext* Get() const { return static_cast<DigestContext*>(page); }
+
+private:
+    void* page = nullptr;
+    std::size_t size = 0;
+};
+
+static void GuestPointers() {
+    auto* unmappedContext = reinterpret_cast<DigestContext*>(std::uintptr_t{0x10});
+    auto* unmappedMethod = reinterpret_cast<const DigestMethod*>(std::uintptr_t{0x10});
+    const DigestContext zero{};
+    errno = 71;
+    const unsigned callsBefore = callocCount;
+    Throws([&] { EVP_DigestInit_nid_postfix(unmappedContext, EVP_sha1_nid_postfix()); });
+    Throws([&] { EVP_MD_CTX_free_nid_postfix(unmappedContext); });
+    DigestContext stack{};
+    Throws([&] { EVP_DigestInit_nid_postfix(&stack, unmappedMethod); });
+    Require(std::memcmp(&stack, &zero, sizeof(stack)) == 0);
+
+    ReadOnlyContext empty(zero);
+    Throws([&] { EVP_DigestInit_nid_postfix(empty.Get(), EVP_sha1_nid_postfix()); });
+    Require(callocCount == callsBefore && std::memcmp(empty.Get(), &zero, sizeof(zero)) == 0);
+    Require(errno == 71);
+
+    auto* context = EVP_MD_CTX_new_nid_postfix();
+    Require(context != nullptr);
+    Require(EVP_DigestInit_nid_postfix(context, EVP_sha1_nid_postfix()) == 1);
+    std::array<unsigned char, 104> state;
+    std::memcpy(state.data(), context->data, state.size());
+    const DigestContext initialized = *context;
+    ReadOnlyContext readOnly(initialized);
+    Throws([&] { EVP_MD_CTX_free_nid_postfix(readOnly.Get()); });
+    Require(std::memcmp(readOnly.Get(), &initialized, sizeof(initialized)) == 0);
+    Require(std::memcmp(context->data, state.data(), state.size()) == 0);
+    Require(errno == 71);
+    EVP_MD_CTX_free_nid_postfix(context);
+
+    context = EVP_MD_CTX_new_nid_postfix();
+    Require(context != nullptr);
+    context->keyContext = unmappedContext;
+    Throws([&] { EVP_MD_CTX_free_nid_postfix(context); });
+    Require(errno == 71);
+    context->keyContext = nullptr;
+    EVP_MD_CTX_free_nid_postfix(context);
+}
+
 int main() {
     void* api[10]{reinterpret_cast<void*>(&Allocate), reinterpret_cast<void*>(&Free), reinterpret_cast<void*>(&Calloc),
         reinterpret_cast<void*>(&Reallocate), reinterpret_cast<void*>(&Align), reinterpret_cast<void*>(&Realign), reinterpret_cast<void*>(&PosixAlign)};
@@ -238,5 +327,6 @@ int main() {
     Ownership();
     AllocationAndClearing();
     CustomMethods();
+    GuestPointers();
     std::puts("LibreSSL3 EVP tests passed");
 }
