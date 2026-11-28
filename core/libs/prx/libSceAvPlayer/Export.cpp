@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include "SceTypes.hpp"
@@ -21,7 +22,8 @@ using namespace AvPlayer;
 
 namespace {
 
-void* LogCallback = nullptr;
+std::mutex LogCallbackMutex;
+SceAvPlayerLogCallback LogCallback = nullptr;
 void* LogUserData = nullptr;
 
 Player* ToPlayer(AvPlayerInternal* h) {
@@ -69,13 +71,21 @@ bool CopyLanguage(const char*& language, Language& local) {
 extern "C" {
 
 void SceAvPlayerSetLogCallbackState(void* callback, void* user_data) {
-    LogCallback = callback;
+    std::lock_guard lock(LogCallbackMutex);
+    LogCallback = reinterpret_cast<SceAvPlayerLogCallback>(callback);
     LogUserData = user_data;
 }
 
 int SceAvPlayerWriteLog(const char* format, VaList* arguments) {
-    if (LogCallback) {
-        return reinterpret_cast<SceAvPlayerLogCallback>(LogCallback)(LogUserData, format, arguments);
+    SceAvPlayerLogCallback callback = nullptr;
+    void* user_data = nullptr;
+    {
+        std::lock_guard lock(LogCallbackMutex);
+        callback = LogCallback;
+        user_data = LogUserData;
+    }
+    if (callback) {
+        return callback(user_data, format, arguments);
     }
 #ifdef _WIN32
     return LibcDetail::PrintWindows(format, arguments);

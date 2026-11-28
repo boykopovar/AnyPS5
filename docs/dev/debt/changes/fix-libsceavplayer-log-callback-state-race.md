@@ -1,0 +1,5 @@
+# libSceAvPlayer
+
+## change [libSceAvPlayer](../../../core/libs/prx/libSceAvPlayer/Export.cpp)
+
+- [libSceAvPlayer](../../../core/libs/prx/libSceAvPlayer/Export.cpp): The console's callback-thread and unregister/quiescence semantics are unmeasured; an in-flight log call may finish with its snapshot after replacement. The host stores and snapshots callback plus user data under a mutex, then releases it before guest invocation so callbacks can replace themselves or re-enter logging; ThreadSanitizer reproduced both pre-fix races and is clean after the fix. `sceAvPlayerSetLogCallback` feeds `sceAvPlayerPrintf`/`sceAvPlayerVprintf` through `SceAvPlayerWriteLog`; whether the console player emits logs this way is unverified. `sceAvPlayerSetAvailableBandwidth` remains ineffective because HLS is unsupported; after source addition it returns `OPERATION_FAILED`, per [prosper's reading](https://github.com/mattias800/prosper/blob/8dcb5dfdb9997ede7c76783995010d6abd1222f8/prosper/src/hle/video/avplayer.cpp#L960-L972).
