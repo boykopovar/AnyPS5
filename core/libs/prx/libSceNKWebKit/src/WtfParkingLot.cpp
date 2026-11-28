@@ -232,6 +232,7 @@
  *
  */
 
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfParkingLotExports.hpp"
@@ -289,8 +290,11 @@ struct ThreadData : std::enable_shared_from_this<ThreadData> {
     std::intptr_t token{0};
 };
 
+struct ThreadDataStorage {};
+
 ThreadData& MyThreadData() {
-    thread_local const std::shared_ptr<ThreadData> data = std::make_shared<ThreadData>();
+    auto& data = HostThreadLocal<std::shared_ptr<ThreadData>, ThreadDataStorage>();
+    if (!data) data = std::make_shared<ThreadData>();
     return *data;
 }
 
@@ -651,8 +655,11 @@ struct WordLockThreadData : std::enable_shared_from_this<WordLockThreadData> {
     WordLockThreadData* queueTail{nullptr};
 };
 
+struct WordLockThreadDataStorage {};
+
 WordLockThreadData& MyWordLockThreadData() {
-    thread_local const std::shared_ptr<WordLockThreadData> data = std::make_shared<WordLockThreadData>();
+    auto& data = HostThreadLocal<std::shared_ptr<WordLockThreadData>, WordLockThreadDataStorage>();
+    if (!data) data = std::make_shared<WordLockThreadData>();
     return *data;
 }
 
