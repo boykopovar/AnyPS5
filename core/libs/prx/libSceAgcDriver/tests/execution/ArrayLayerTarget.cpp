@@ -322,6 +322,24 @@ void SampleSliceZero(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std:
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
 
+void SampleArrayBaseSlice(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    constexpr std::uint32_t slice = 1;
+    const auto surface = AddressOf(texels);
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / sizeof(std::uint32_t), Initial);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    DrawSlice(device, surface, slice, TileR64KBX, false);
+    Require(StorageTexture::FindPending(surface, SurfaceBytes) != nullptr, "the draw left no pending array image");
+    auto texture = SurfaceDescriptor(surface, TileR64KBX, Type2DArray, Layers - 1u);
+    texture[4] |= slice << 16u;
+    Load(device, Sample2DCode, texture);
+    RequireOutput(std::bit_cast<std::uint32_t>(Drawn), Initial, "2D sample from the array's drawn base slice");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+}
+
 void OverlappingArrayLastSlice(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode) {
     const auto neighbourAddress = AddressOf(texels);
     const auto surface = neighbourAddress + LayerBytes;
@@ -471,6 +489,7 @@ int main() {
         RetiredArrayLayer(*device);
         UncommittedUnusedLayers(*device, 0u);
         UncommittedUnusedLayers(*device, Layers - 1u);
+        SampleArrayBaseSlice(*device, block.Data());
         std::puts("array layer target tests passed");
         return 0;
     } catch (const std::exception& error) {
