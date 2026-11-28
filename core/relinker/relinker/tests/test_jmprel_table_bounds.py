@@ -166,6 +166,15 @@ def main():
         for target in (0xFFFFFFFFFFFFFFF8, 0xFFFFFFFFFFFFFFFC, 0xFFFFFFFFFFFFFFFF):
             run(relinker, work, f"target-wrap-{target:x}", fixture(target=target),
                 "Relocation target range exceeds the address space")
+        for output_target in ("linux", "fixed", "lazy", "windows", "macos"):
+            prefix = f"{output_target}-relative-addend"
+            for addend in (0, 0x200, 0x1000):
+                run(relinker, work, f"{prefix}-{addend:x}",
+                    fixture(linux=True, data_relocations=True, relocation_type=8, addend=addend), target=output_target)
+            for addend in (0x1008, 0x5000, -8):
+                run(relinker, work, f"{prefix}-outside-{addend & 0xFFFFFFFFFFFFFFFF:x}",
+                    fixture(linux=True, data_relocations=True, relocation_type=8, addend=addend),
+                    "Relative relocation addend is outside the ELF image", target=output_target)
         for output_target in ("linux", "windows"):
             for data in (False, True):
                 options = {"linux": output_target == "linux", "data_relocations": data}
