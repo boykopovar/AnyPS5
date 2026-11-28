@@ -348,6 +348,12 @@ class ConflictTests(unittest.TestCase):
         self.assertIn("`shared.cpp`", report)
         self.assertTrue(report.startswith(pr_overlap.MARKER))
 
+    def test_uncompared_row_names_the_shared_functions(self):
+        rows = {3: {"added": set(), "uncompared": {"shared.cpp"},
+                    "uncompared_functions": {"shared_value"}}}
+        report = pr_overlap.report(rows, "https://example.invalid/blob/base")
+        self.assertIn("| [PR 3](https://example.invalid/pull/3) | `shared.cpp` | `shared_value` |", report)
+
     def test_report_links_pull_requests_without_cross_references(self):
         rows = {2: {"added": set(), "conflicts": {"other.cpp": [(1, 1)]}},
                 3: {"added": set(), "uncompared": {"shared.cpp"}}}
@@ -355,6 +361,48 @@ class ConflictTests(unittest.TestCase):
         self.assertIsNone(re.search(r"#\d|https://github\.com/owner/project/(pull|issues)/", report))
         self.assertIn("[PR 2](https://www.github.com/owner/project/pull/2)", report)
         self.assertIn("[PR 3](https://www.github.com/owner/project/pull/3)", report)
+
+
+    def test_uncomparable_pull_request_reports_the_function_it_shares(self):
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chdir(root)
+            try:
+                def git(*args):
+                    return subprocess.run(
+                        ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com", *args],
+                        capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
+
+                source = root / "core/libs/prx/libExample/Impl.cpp"
+                source.parent.mkdir(parents=True)
+                source.write_text("int shared_value(int value) {\n    return value;\n}\n", encoding="utf-8")
+                git("init", "-q")
+                git("add", ".")
+                git("commit", "-qm", "test: base")
+                base = git("rev-parse", "HEAD")
+
+                def edit(name, parent, text):
+                    git("checkout", "-qb", name, parent)
+                    source.write_text(text, encoding="utf-8")
+                    git("add", ".")
+                    git("commit", "-qm", f"test: {name}")
+                    return git("rev-parse", "HEAD")
+
+                older = edit("older", base, "int shared_value(int value) {\n    return value + 1;\n}\n")
+                main = edit("updated", base, "int shared_value(int value) {\n    return value + 2;\n}\n")
+                branch = edit("branch", main, "int shared_value(int value) {\n    return value + 3;\n}\n")
+                git("update-ref", "refs/pr/base", main)
+                prs = {1: {"ref": older, "author": "older-author", "depends": set()},
+                       0: {"ref": branch, "author": None, "depends": set()}}
+                for pr in prs.values():
+                    pr_overlap.scan(pr)
+                found = pr_overlap.overlaps(prs, 0, 1)
+                self.assertIsNone(prs[1]["tree"])
+                self.assertEqual(found["uncompared"], {"core/libs/prx/libExample/Impl.cpp"})
+                self.assertEqual(found["uncompared_functions"], {"shared_value"})
+            finally:
+                os.chdir(previous)
 
 
 class UnicodePathTests(unittest.TestCase):
@@ -560,11 +608,11 @@ class ReportSizeCapTests(unittest.TestCase):
             "| [PR 2](https://example.invalid/pull/2) | `other.cpp` [L1](https://example.invalid/blob/base/other.cpp#L1) |  |  |\n"
             "\n"
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
-            "Review these shared files manually before concluding that there is no overlap.\n"
+            "Review these shared files and the functions each diff names before concluding that there is no overlap.\n"
             "\n"
-            "| Pull request | Shared files not compared |\n"
-            "|---|---|\n"
-            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+            "| Pull request | Shared files not compared | Same functions (from the diff) |\n"
+            "|---|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |  |\n"
         ))
         self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
 
@@ -579,11 +627,11 @@ class ReportSizeCapTests(unittest.TestCase):
             "- `sceFoo` (same library/NID already present: core/libs/prx/libSceX (AAAAAAAAAAA))\n"
             "\n"
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
-            "Review these shared files manually before concluding that there is no overlap.\n"
+            "Review these shared files and the functions each diff names before concluding that there is no overlap.\n"
             "\n"
-            "| Pull request | Shared files not compared |\n"
-            "|---|---|\n"
-            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+            "| Pull request | Shared files not compared | Same functions (from the diff) |\n"
+            "|---|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |  |\n"
         ))
 
     def test_pathological_report_with_many_overlaps_and_paths_is_capped(self):
@@ -691,6 +739,27 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.canonical("sceFoo_nid_postfix"), "sceFoo")
         self.assertEqual(pr_overlap.canonical("sceFoo_nid_disambig2_nid_postfix"), "sceFoo")
         self.assertEqual(pr_overlap.canonical("sceFoo"), "sceFoo")
+
+    def test_diff_functions_reads_the_enclosing_function_from_each_hunk(self):
+        diff = ("@@ -2 +2 @@ int shared_value(int value) {\n"
+                "-    return value + 1;\n"
+                "+    return value + 2;\n"
+                "@@ -40 +40 @@ void other() {\n"
+                "-    value = 1;\n"
+                "+    value = 2;\n")
+        self.assertEqual(pr_overlap.diff_functions(diff), {"shared_value", "other"})
+
+    def test_diff_functions_ignores_keywords_and_parameter_types(self):
+        diff = ("@@ -563 +563 @@ bool GuestAllocationsForRegistered_nid_postfix(void*, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t)>& visit) {\n"
+                "@@ -228 +228 @@ void GuestAllocationsSetGpuMapObserver_nid_postfix(void (*callback)(const Mapped& ranges, std::uint64_t generation)) {\n")
+        found = pr_overlap.diff_functions(diff)
+        self.assertEqual(found, {"GuestAllocationsForRegistered_nid_postfix", "GuestAllocationsSetGpuMapObserver_nid_postfix"})
+        self.assertNotIn("void", found)
+
+    def test_diff_functions_names_nothing_for_a_static_assert_hunk(self):
+        diff = ("@@ -5 +5 @@ static_assert(sizeof(KernelTimespec) == 16);\n"
+                "@@ -7 +7 @@ static_assert(sizeof(SceRtcTick) == 8);\n")
+        self.assertEqual(pr_overlap.diff_functions(diff), set())
 
     def test_depends_on_reads_plain_and_linked_pull_request_numbers(self):
         self.assertEqual(pr_overlap.depends_on("- [ ] Depends on: #12, #34"), {12, 34})
