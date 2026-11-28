@@ -4,7 +4,9 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -55,6 +57,38 @@ std::int32_t IntegerSqrt(std::uint64_t value) {
         }
     }
     return static_cast<std::int32_t>(low);
+}
+
+template <typename T>
+void ReadGuestValue(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    if (!ok) APS5_INVALID_ARG_EX;
+}
+
+std::string ReadGuestCString(const char* source) {
+    if (!source) APS5_INVALID_ARG_EX;
+    std::string result;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    std::size_t offset = 0;
+    for (;;) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) APS5_INVALID_ARG_EX;
+        const auto current = base + offset;
+        const std::size_t toPageEnd = 4096u - (current % 4096u);
+        const std::size_t chunk = toPageEnd < 256u ? toPageEnd : 256u;
+        char buffer[256];
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk);
+        errno = savedErrno;
+        if (!ok) APS5_INVALID_ARG_EX;
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
+            result.append(buffer, static_cast<std::size_t>(end - buffer));
+            return result;
+        }
+        result.append(buffer, chunk);
+        offset += chunk;
+    }
 }
 
 }
@@ -382,14 +416,22 @@ void APS5_VABI ft_synthesize_vertical_metrics_nid_postfix(FreeType::GuestGlyphMe
 }
 
 void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descriptors, const char* service_id) {
-    if (descriptors && service_id) {
-        for (; descriptors->serv_id; ++descriptors) {
-            if (std::strcmp(descriptors->serv_id, service_id) == 0) {
-                return descriptors->serv_data;
-            }
+    if (!descriptors || !service_id) {
+        return nullptr;
+    }
+    const std::string targetId = ReadGuestCString(service_id);
+    const auto base = reinterpret_cast<std::uintptr_t>(descriptors);
+    for (std::size_t index = 0;; ++index) {
+        if (index > (std::numeric_limits<std::uintptr_t>::max() - base) / sizeof(GuestServiceDesc)) APS5_INVALID_ARG_EX;
+        GuestServiceDesc entry{};
+        ReadGuestValue(entry, reinterpret_cast<const GuestServiceDesc*>(base + index * sizeof(GuestServiceDesc)));
+        if (!entry.serv_id) {
+            return nullptr;
+        }
+        if (ReadGuestCString(entry.serv_id) == targetId) {
+            return entry.serv_data;
         }
     }
-    return nullptr;
 }
 
 void APS5_VABI ft_validator_init_nid_postfix(void* validator, const std::uint8_t* base,
