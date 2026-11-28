@@ -534,6 +534,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         if (path) InitializeLinuxGuestModule(module->native);
 #endif
 #ifdef __APPLE__
+        if (path && noDelete) static_cast<void>(::dlopen(resolved.c_str(), RTLD_NOLOAD | RTLD_NOW | RTLD_GLOBAL));
         FindImage(*module, path == nullptr);
 #endif
 #endif
