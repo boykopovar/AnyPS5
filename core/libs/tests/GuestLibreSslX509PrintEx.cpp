@@ -172,9 +172,12 @@ int failOnlyCall = -1;
 int shortWriteOnCall = -1;
 int writeCallIndex = 0;
 bool shortWriteTriggered = false;
+bool recordWriteSizes = false;
+std::vector<int> recordedWriteSizes;
 
 int APS5_VABI CaptureWrite(LibreSsl::Bio*, const char* data, int size) {
     const int currentCall = writeCallIndex++;
+    if (recordWriteSizes) recordedWriteSizes.push_back(size);
     if (writesBeforeFailure == 0 || currentCall == failOnlyCall) return -1;
     if (writesBeforeFailure > 0) --writesBeforeFailure;
     int accepted = size;
@@ -608,7 +611,7 @@ void CheckFlagsAndNameFormats() {
         X509FlagNoIssuer | X509FlagNoValidity | X509FlagNoSubject | X509FlagNoPubkey |
         X509FlagNoExtensions | X509FlagNoSigDump | X509FlagNoAux;
     printed.clear();
-    Require(X509_print_ex_nid_postfix(nullptr, &fixture.cert, X509FlagCompat, allOff) == 1);
+    Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, allOff) == 1);
     Require(printed.empty());
 
     const std::uint64_t issuerSubjectOnly = allOff & ~(X509FlagNoIssuer | X509FlagNoSubject);
@@ -699,8 +702,15 @@ void CheckErrorsAndGuardPages() {
     CertificateFixture fixture;
     CaptureBio bio;
 
+    const std::uint64_t allSectionsOff =
+        X509FlagNoHeader | X509FlagNoVersion | X509FlagNoSerial | X509FlagNoSigName |
+        X509FlagNoIssuer | X509FlagNoValidity | X509FlagNoSubject | X509FlagNoPubkey |
+        X509FlagNoExtensions | X509FlagNoSigDump | X509FlagNoAux;
+
     printed.clear();
     Require(X509_print_ex_nid_postfix(nullptr, &fixture.cert, X509FlagCompat, X509FlagCompat) == 0);
+    Require(X509_print_ex_nid_postfix(nullptr, &fixture.cert, X509FlagCompat, allSectionsOff) == 0);
+    Require(X509_print_ex_nid_postfix(nullptr, nullptr, X509FlagCompat, X509FlagCompat) == 0);
     Require(printed.empty());
 
     writesBeforeFailure = 0;
@@ -722,44 +732,50 @@ void CheckErrorsAndGuardPages() {
     shortWriteOnCall = -1;
     shortWriteTriggered = false;
 
-    const std::uint64_t allSectionsOff =
-        X509FlagNoHeader | X509FlagNoVersion | X509FlagNoSerial | X509FlagNoSigName |
-        X509FlagNoIssuer | X509FlagNoValidity | X509FlagNoSubject | X509FlagNoPubkey |
-        X509FlagNoExtensions | X509FlagNoSigDump | X509FlagNoAux;
-    const auto checkEveryWriteFailure = [&](std::uint64_t mask, int minShortWrites) {
-        for (int call = 0; call < 64; ++call) {
+    const auto checkEveryWriteFailure = [&](std::uint64_t mask) {
+        printed.clear();
+        writeCallIndex = 0;
+        recordedWriteSizes.clear();
+        recordWriteSizes = true;
+        Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, mask) == 1);
+        recordWriteSizes = false;
+        const std::vector<int> sizes = recordedWriteSizes;
+        Require(!sizes.empty());
+
+        for (std::size_t idx = 0; idx < sizes.size(); ++idx) {
             printed.clear();
             writeCallIndex = 0;
-            failOnlyCall = call;
+            failOnlyCall = static_cast<int>(idx);
             const int res = X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, mask);
             failOnlyCall = -1;
-            if (call >= writeCallIndex) break;
+            Require(writeCallIndex == static_cast<int>(idx) + 1);
             Require(res == 0);
             Require(printed.find("....") == std::string::npos);
         }
-        int shortWritesSeen = 0;
-        for (int call = 0; call < 64; ++call) {
+
+        int shortWritesTested = 0;
+        for (std::size_t idx = 0; idx < sizes.size(); ++idx) {
+            if (sizes[idx] <= 1) continue;
             printed.clear();
             writeCallIndex = 0;
-            shortWriteOnCall = call;
+            shortWriteOnCall = static_cast<int>(idx);
             shortWriteTriggered = false;
             const int res = X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, mask);
             shortWriteOnCall = -1;
             const bool triggered = shortWriteTriggered;
             shortWriteTriggered = false;
-            if (triggered) {
-                ++shortWritesSeen;
-                Require(res == 0);
-            }
-            if (call >= writeCallIndex) break;
+            Require(triggered);
+            Require(writeCallIndex == static_cast<int>(idx) + 1);
+            Require(res == 0);
+            ++shortWritesTested;
         }
-        Require(shortWritesSeen >= minShortWrites);
+        Require(shortWritesTested > 0);
     };
 
-    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoSigName, 2);
-    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoValidity, 5);
-    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoPubkey, 4);
-    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoExtensions, 5);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoSigName);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoValidity);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoPubkey);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoExtensions);
 
     {
         CertificateFixture bad;
@@ -774,7 +790,7 @@ void CheckErrorsAndGuardPages() {
         RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "null OID data");
     }
 
-    RequireThrows([] { X509_print_ex_nid_postfix(nullptr, nullptr, X509FlagCompat, X509FlagCompat); }, "null cert");
+    RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, nullptr, X509FlagCompat, X509FlagCompat); }, "null cert");
 
     {
         CertificateFixture bad;
@@ -813,6 +829,15 @@ void CheckErrorsAndGuardPages() {
     Require(guardPage != MAP_FAILED);
     const auto freeGuard = [guardPage, pageSize] { munmap(guardPage, static_cast<std::size_t>(pageSize)); };
 #endif
+
+    errno = 33;
+    Require(X509_print_ex_nid_postfix(nullptr, static_cast<const LibreSslX509*>(guardPage), X509FlagCompat, X509FlagCompat) == 0);
+    Require(errno == 33, "errno preserved on null BIO with unmapped cert");
+    {
+        CertificateFixture badSerial;
+        badSerial.info.serialNumber = guardPage;
+        Require(X509_print_ex_nid_postfix(nullptr, &badSerial.cert, X509FlagCompat, X509FlagNoHeader | X509FlagNoVersion) == 0);
+    }
 
     errno = 42;
     RequireThrows([&] {

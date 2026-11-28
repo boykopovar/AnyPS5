@@ -794,6 +794,7 @@ extern "C" {
 
 int APS5_VABI X509_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX509* certificate,
     std::uint64_t nameFlags, std::uint64_t certFlags) {
+    if (!bio) return 0;
     if (!certificate) throw std::invalid_argument("X509_print_ex: null certificate");
     const LibreSslX509 cert = CopyIn(certificate, __func__);
     if (!cert.certificateInfo) throw std::invalid_argument("X509_print_ex: null certificate info");
