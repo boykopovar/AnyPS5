@@ -153,3 +153,4 @@
 #include "prx/libSceNKWebKit/include/SQLiteExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteFileSystemDatabaseExports.hpp"
 #include "prx/libSceNKWebKit/include/DisplayListDrawGlyphsExports.hpp"
+#include "prx/libSceNKWebKit/include/NativeImageExports.hpp"
