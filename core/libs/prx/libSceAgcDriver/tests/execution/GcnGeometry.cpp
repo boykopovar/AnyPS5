@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -230,15 +231,24 @@ void RequireQuads(AgcDriver::VulkanDevice& device) {
     state.scissor = {{0, 0}, {Width, Height}};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    state.blend.blendEnable = VK_TRUE;
+    state.blend.srcColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_COLOR;
+    state.blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.blend.colorBlendOp = VK_BLEND_OP_ADD;
+    state.blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    state.blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.blend.alphaBlendOp = VK_BLEND_OP_ADD;
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
-    state.blendConstants = {};
+    state.blendConstants = {0.25f, 0.25f, 0.25f, 0.25f};
     device.Draw(state, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true, 0, 0}, shaders);
     device.WaitIdle();
-    const auto first = PixelAt(-0.5f, 0.0f);
-    Require(first == std::array<std::uint8_t, 4>{255u, 0u, 0u, 255u}, "the first point's quad is " + PixelText(first) + ", expected (255, 0, 0, 255)");
-    const auto second = PixelAt(0.5f, 0.0f);
-    Require(second[0] >= 127u && second[0] <= 128u && second[1] == 0u && second[2] == 0u && second[3] == 255u, "the second point's quad is " + PixelText(second) + ", expected half red");
+    for (const auto [centre, red, name] : {std::tuple{-0.5f, 80u, "first"}, std::tuple{0.5f, 48u, "second"}}) {
+        for (const auto [dx, dy] : {std::pair{0.0f, 0.0f}, std::pair{-0.15f, 0.0f}, std::pair{0.15f, 0.0f}, std::pair{0.0f, -0.15f}, std::pair{0.0f, 0.15f}}) {
+            const auto pixel = PixelAt(centre + dx, dy);
+            Require(pixel[0] + 1u >= red && pixel[0] <= red + 1u && pixel[1] == Background[1] && pixel[2] == Background[2] && pixel[3] == 255u, std::string("the ") + name + " point's quad at (" + std::to_string(centre + dx) + ", " + std::to_string(dy) + ") is " + PixelText(pixel) + ", expected red " + std::to_string(red) + " from one quarter-weight quad over the clear colour: a missing or duplicated primitive, or a strip in the wrong vertex order");
+        }
+    }
     for (const auto [x, y] : {std::pair{0.0f, 0.0f}, std::pair{-0.5f, 0.4f}, std::pair{0.5f, -0.4f}, std::pair{-0.9f, 0.0f}}) {
         const auto outside = PixelAt(x, y);
         Require(outside == Background, "a pixel outside both quads at (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(outside));
