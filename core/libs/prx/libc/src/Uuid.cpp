@@ -56,6 +56,7 @@
 /* Adapted from FreeBSD release/11.4.0 lib/libc/uuid: https://github.com/freebsd/freebsd-src/tree/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/uuid */
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -75,8 +76,24 @@ void SetStatus(std::uint32_t* status, std::uint32_t value) {
 
 bool UuidIsNil(const GuestUuid* uuid) {
     if (uuid == nullptr) return true;
-    const auto* words = reinterpret_cast<const std::uint32_t*>(uuid);
-    return words[0] == 0 && words[1] == 0 && words[2] == 0 && words[3] == 0;
+    if (uuid->time_low != 0 || uuid->time_mid != 0 || uuid->time_hi_and_version != 0) return false;
+    if (uuid->clock_seq_hi_and_reserved != 0 || uuid->clock_seq_low != 0) return false;
+    for (const std::uint8_t byte : uuid->node) {
+        if (byte != 0) return false;
+    }
+    return true;
+}
+
+bool IsUuidText(const char* text) {
+    for (std::size_t index = 0; index < 36; ++index) {
+        const bool hyphen = index == 8 || index == 13 || index == 18 || index == 23;
+        if (hyphen) {
+            if (text[index] != '-') return false;
+        } else if (std::isxdigit(static_cast<unsigned char>(text[index])) == 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }
@@ -122,7 +139,7 @@ extern "C" void APS5_VABI uuid_from_string_nid_postfix(const char* text, GuestUu
     }
     SetStatus(status, UuidStatusInvalidString);
     if (std::strlen(text) != 36) return;
-    if (text[8] != '-') return;
+    if (!IsUuidText(text)) return;
     GuestUuid parsed{};
     const int converted = std::sscanf(text, "%8x-%4hx-%4hx-%2hhx%2hhx-%2hhx%2hhx%2hhx%2hhx%2hhx%2hhx",
         &parsed.time_low, &parsed.time_mid, &parsed.time_hi_and_version,
@@ -167,7 +184,9 @@ extern "C" void APS5_VABI uuid_to_string_nid_postfix(const GuestUuid* uuid, char
     if (buffer == nullptr) SetStatus(status, UuidStatusNoMemory);
 }
 
-extern "C" void APS5_VABI uuid_enc_le_nid_postfix(void* buffer, const GuestUuid* uuid) {
+extern "C" void APS5_VABI uuid_enc_le_nid_postfix(void* buffer, const GuestUuid* source) {
+    const GuestUuid copy = *source;
+    const GuestUuid* uuid = &copy;
     auto* bytes = static_cast<std::uint8_t*>(buffer);
     for (int i = 0; i < 4; ++i) bytes[i] = static_cast<std::uint8_t>(uuid->time_low >> (8 * i));
     for (int i = 0; i < 2; ++i) bytes[4 + i] = static_cast<std::uint8_t>(uuid->time_mid >> (8 * i));
@@ -188,7 +207,9 @@ extern "C" void APS5_VABI uuid_dec_le_nid_postfix(const void* buffer, GuestUuid*
     for (std::size_t i = 0; i < sizeof(uuid->node); ++i) uuid->node[i] = bytes[10 + i];
 }
 
-extern "C" void APS5_VABI uuid_enc_be_nid_postfix(void* buffer, const GuestUuid* uuid) {
+extern "C" void APS5_VABI uuid_enc_be_nid_postfix(void* buffer, const GuestUuid* source) {
+    const GuestUuid copy = *source;
+    const GuestUuid* uuid = &copy;
     auto* bytes = static_cast<std::uint8_t*>(buffer);
     for (int i = 0; i < 4; ++i) bytes[i] = static_cast<std::uint8_t>(uuid->time_low >> (24 - 8 * i));
     for (int i = 0; i < 2; ++i) bytes[4 + i] = static_cast<std::uint8_t>(uuid->time_mid >> (8 - 8 * i));

@@ -37,7 +37,8 @@ int main() {
     Require(std::strcmp(text, Sample) == 0);
     free_nid_postfix(text);
 
-    GuestUuid nil{};
+    GuestUuid nil = sample;
+    status = 0xffffffffu;
     uuid_create_nil_nid_postfix(&nil, &status);
     Require(status == 0 && uuid_is_nil_nid_postfix(&nil, nullptr) == 1);
     Require(uuid_is_nil_nid_postfix(nullptr, nullptr) == 1);
@@ -62,8 +63,9 @@ int main() {
     const std::uint8_t le[16] = {0x67, 0x45, 0x23, 0x01, 0xab, 0x89, 0xef, 0xcd, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
     uuid_enc_le_nid_postfix(encoded, &sample);
     Require(std::memcmp(encoded, le, sizeof(le)) == 0);
-    uuid_dec_le_nid_postfix(encoded, &decoded);
-    Require(uuid_equal_nid_postfix(&decoded, &sample, nullptr) == 1);
+    GuestUuid decodedLe{};
+    uuid_dec_le_nid_postfix(encoded, &decodedLe);
+    Require(uuid_equal_nid_postfix(&decodedLe, &sample, nullptr) == 1);
 
     const GuestUuid variantBad = Parse("01234567-89ab-cdef-f123-456789abcdef", 1);
     Require(variantBad.clock_seq_hi_and_reserved == 0xf1);
