@@ -43,23 +43,31 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
 namespace {
 
-const WebRtcSocketAddress& Checked(const WebRtcSocketAddress* address, const char* function) {
-    if (!address)
+WebRtcSocketAddress Read(const WebRtcSocketAddress* address, const char* function) {
+    WebRtcSocketAddress host{};
+    if (!GuestPtr<WebRtcSocketAddress>(address).CopyIn(host))
         throw std::invalid_argument(function);
-    return *address;
+    return host;
 }
 
-WebRtcSocketAddress& Writable(WebRtcSocketAddress* address, const char* function) {
-    if (!address)
+WebRtcSocketAddress ReadWritable(WebRtcSocketAddress* address, const char* function) {
+    if (!address || !GuestWritable_nid_no_patch(address, sizeof(*address)))
         throw std::invalid_argument(function);
-    return *address;
+    return Read(address, function);
+}
+
+void Write(WebRtcSocketAddress* address, const WebRtcSocketAddress& host, const char* function) {
+    if (!GuestPtr<WebRtcSocketAddress>(address).CopyOut(host))
+        throw std::invalid_argument(function);
 }
 
 void InitHostname(WebRtcGuestString& hostname) {
@@ -84,41 +92,48 @@ bool IsAny(const WebRtcIpAddress& ip) {
 extern "C" {
 
 std::uint16_t APS5_VABI _ZNK3rtc13SocketAddress4portEv_nid_postfix(const WebRtcSocketAddress* address) {
-    return Checked(address, "SocketAddress::port requires an address").port;
+    return Read(address, "SocketAddress::port requires an address").port;
 }
 
 const WebRtcIpAddress* APS5_VABI _ZNK3rtc13SocketAddress6ipaddrEv_nid_postfix(const WebRtcSocketAddress* address) {
-    return &Checked(address, "SocketAddress::ipaddr requires an address").ip;
+    if (!address)
+        throw std::invalid_argument("SocketAddress::ipaddr requires an address");
+    return reinterpret_cast<const WebRtcIpAddress*>(reinterpret_cast<std::uintptr_t>(address) + offsetof(WebRtcSocketAddress, ip));
 }
 
 bool APS5_VABI _ZNK3rtc13SocketAddress7IsAnyIPEv_nid_postfix(const WebRtcSocketAddress* address) {
-    return IsAny(Checked(address, "SocketAddress::IsAnyIP requires an address").ip);
+    return IsAny(Read(address, "SocketAddress::IsAnyIP requires an address").ip);
 }
 
 bool APS5_VABI _ZNK3rtc13SocketAddress10IsCompleteEv_nid_postfix(const WebRtcSocketAddress* address) {
-    const WebRtcSocketAddress& checked = Checked(address, "SocketAddress::IsComplete requires an address");
+    const WebRtcSocketAddress checked = Read(address, "SocketAddress::IsComplete requires an address");
     return !IsAny(checked.ip) && checked.port != 0;
 }
 
 bool APS5_VABI _ZNK3rtc13SocketAddress5IsNilEv_nid_postfix(const WebRtcSocketAddress* address) {
-    const WebRtcSocketAddress& checked = Checked(address, "SocketAddress::IsNil requires an address");
+    const WebRtcSocketAddress checked = Read(address, "SocketAddress::IsNil requires an address");
     return checked.hostname.size == 0 && checked.ip.family == WebRtcAfUnspec && checked.port == 0;
 }
 
 void APS5_VABI _ZN3rtc13SocketAddressC1Ev_nid_postfix(WebRtcSocketAddress* address) {
-    WebRtcSocketAddress& target = Writable(address, "SocketAddress::SocketAddress requires an address");
+    constexpr const char* function = "SocketAddress::SocketAddress requires an address";
+    WebRtcSocketAddress target = ReadWritable(address, function);
     InitHostname(target.hostname);
     target.ip = WebRtcIpAddress{};
     target.port = 0;
     target.scopeId = 0;
     target.literal = false;
+    Write(address, target, function);
 }
 
 void APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(WebRtcSocketAddress* address, const WebRtcIpAddress* ip, std::int32_t port) {
-    WebRtcSocketAddress& target = Writable(address, "SocketAddress::SocketAddress requires an address");
-    if (!ip)
+    constexpr const char* function = "SocketAddress::SocketAddress requires an address";
+    if (!address)
+        throw std::invalid_argument(function);
+    WebRtcIpAddress source{};
+    if (!GuestPtr<WebRtcIpAddress>(ip).CopyIn(source))
         throw std::invalid_argument("SocketAddress::SocketAddress requires an IP address");
-    const WebRtcIpAddress source = *ip;
+    WebRtcSocketAddress target = ReadWritable(address, function);
     InitHostname(target.hostname);
     target.ip = WebRtcIpAddress{};
     target.ip.family = source.family;
@@ -126,6 +141,7 @@ void APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(WebRtcSock
     target.port = static_cast<std::uint16_t>(port);
     target.scopeId = 0;
     target.literal = false;
+    Write(address, target, function);
 }
 
 }

@@ -8,6 +8,13 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <vector>
 
 namespace {
@@ -18,6 +25,55 @@ bool failAllocation = false;
 void Require(bool condition) {
     if (!condition) throw std::runtime_error("Remb assertion failed");
 }
+
+enum class Access { ReadWrite, ReadOnly, None };
+
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    std::size_t size = 0;
+    unsigned char* base = nullptr;
+
+    explicit GuardedPages(std::size_t bytes = 1) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        size = (bytes + pageSize - 1) / pageSize * pageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        size = (bytes + pageSize - 1) / pageSize * pageSize;
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base = mapped == MAP_FAILED ? nullptr : static_cast<unsigned char*>(mapped);
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    template<typename T> T* As(std::size_t offset = 0) const { return reinterpret_cast<T*>(base + offset); }
+
+    void Protect(Access access, std::size_t offset = 0) const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        const DWORD mode = access == Access::ReadWrite ? PAGE_READWRITE : access == Access::ReadOnly ? PAGE_READONLY : PAGE_NOACCESS;
+        Require(VirtualProtect(base + offset, size - offset, mode, &previous) != 0);
+#else
+        const int mode = access == Access::ReadWrite ? PROT_READ | PROT_WRITE : access == Access::ReadOnly ? PROT_READ : PROT_NONE;
+        Require(mprotect(base + offset, size - offset, mode) == 0);
+#endif
+    }
+};
+
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     if (failAllocation) throw std::bad_alloc();
     ++allocations;
@@ -262,6 +318,42 @@ void TestReleaseAndNulls() {
     invalid(&remb, &header);
 }
 
+void TestInaccessibleGuestPointersThrow() {
+    GuardedPages hidden;
+    hidden.Protect(Access::None);
+    auto parse = [](WebRtcRtcpRemb* remb, const WebRtcRtcpCommonHeader* header) { return _ZN6webrtc4rtcp4Remb5ParseERKNS0_12CommonHeaderE_nid_postfix(remb, header); };
+    WebRtcRtcpRemb remb {};
+    Require(ThrowsInvalidArgument([&] { parse(&remb, hidden.As<WebRtcRtcpCommonHeader>()); }));
+    const auto bytes = Packet(2);
+    WebRtcRtcpCommonHeader header {};
+    Require(_ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(&header, bytes.data(), bytes.size()));
+    WebRtcRtcpCommonHeader moved = header;
+    moved.payload = hidden.As<std::uint8_t>();
+    Require(ThrowsInvalidArgument([&] { parse(&remb, &moved); }));
+    GuardedPages tail(2 * hidden.pageSize);
+    std::memcpy(tail.As<std::uint8_t>(tail.pageSize - 16), header.payload, 16);
+    tail.Protect(Access::None, tail.pageSize);
+    moved.payload = tail.As<std::uint8_t>(tail.pageSize - 16);
+    Require(ThrowsInvalidArgument([&] { parse(&remb, &moved); }));
+    Require(remb.senderSsrc == 0 && remb.bitrateBps == 0 && remb.ssrcBegin == nullptr);
+
+    GuardedPages readOnly;
+    *readOnly.As<WebRtcRtcpRemb>() = WebRtcRtcpRemb {};
+    readOnly.Protect(Access::ReadOnly);
+    Require(ThrowsInvalidArgument([&] { parse(readOnly.As<WebRtcRtcpRemb>(), &header); }));
+
+    GuardedPages storage;
+    storage.As<std::uint32_t>()[0] = 7;
+    storage.As<std::uint32_t>()[1] = 8;
+    storage.Protect(Access::ReadOnly);
+    remb.ssrcBegin = storage.As<std::uint32_t>();
+    remb.ssrcEnd = remb.ssrcBegin + 2;
+    remb.ssrcCapacityEnd = remb.ssrcBegin + 2;
+    const WebRtcRtcpRemb before = remb;
+    Require(ThrowsInvalidArgument([&] { parse(&remb, &header); }));
+    Require(std::memcmp(&remb, &before, sizeof(remb)) == 0 && storage.As<std::uint32_t>()[1] == 8);
+}
+
 }
 
 int main() {
@@ -280,6 +372,7 @@ int main() {
         TestCreateBitrates();
         TestCreateFullBuffer();
         TestDestructors();
+        TestInaccessibleGuestPointersThrow();
         Require(allocations == frees);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
