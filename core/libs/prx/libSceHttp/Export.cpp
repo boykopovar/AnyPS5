@@ -2,6 +2,8 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -12,6 +14,8 @@
 #include "prx/libSceHttp/src/GuestAccess.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -498,9 +502,40 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
     if (!header) return invalidResponse;
     if (!fieldStr || !fieldValue || !valueLen) return invalidValue;
 
+    const auto headerAddress = reinterpret_cast<std::uintptr_t>(header);
+    if (headerLen > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) ||
+        headerLen > std::numeric_limits<std::uintptr_t>::max() - headerAddress) return invalidResponse;
+
+    std::array<char, 0xfff> field{};
+    const auto fieldAddress = reinterpret_cast<std::uintptr_t>(fieldStr);
     std::size_t fieldLen = 0;
-    while (fieldLen < 0xfff && fieldStr[fieldLen] != '\0') ++fieldLen;
-    const std::string_view input(header, headerLen);
+    while (fieldLen < field.size()) {
+        if (fieldLen > std::numeric_limits<std::uintptr_t>::max() - fieldAddress ||
+            !GuestCopyIn_nid_no_patch(&field[fieldLen], reinterpret_cast<const void*>(fieldAddress + fieldLen), 1)) return invalidValue;
+        if (field[fieldLen] == '\0') break;
+        ++fieldLen;
+    }
+    if (headerLen == 0) return notFound;
+    std::unique_ptr<char, decltype(&std::free)> storage(nullptr, std::free);
+    std::size_t capacity = 0;
+    std::array<char, 4096> chunk;
+    for (std::size_t offset = 0; offset < headerLen;) {
+        const auto address = headerAddress + offset;
+        const std::size_t count = std::min(headerLen - offset, chunk.size());
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address), count)) return invalidResponse;
+        if (offset + count > capacity) {
+            capacity = std::max(offset + count, capacity + std::min(capacity, headerLen - capacity));
+            char* const previous = storage.release();
+            const int savedErrno = errno;
+            auto* const replacement = static_cast<char*>(std::realloc(previous, capacity));
+            errno = savedErrno;
+            storage.reset(replacement ? replacement : previous);
+            if (!replacement) return invalidResponse;
+        }
+        std::memcpy(storage.get() + offset, chunk.data(), count);
+        offset += count;
+    }
+    const std::string_view input(storage.get(), headerLen);
     const auto isSpace = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
     const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; };
     std::size_t start = 0;
@@ -508,7 +543,7 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
     while (start < headerLen) {
         if (!isSpace(input[start]) && fieldLen < headerLen - start && input[start + fieldLen] == ':') {
             std::size_t i = 0;
-            while (i < fieldLen && lower(input[start + i]) == lower(fieldStr[i])) ++i;
+            while (i < fieldLen && lower(input[start + i]) == lower(field[i])) ++i;
             if (i == fieldLen) {
                 start += fieldLen + 1;
                 found = true;
@@ -523,9 +558,7 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
 
     const auto continues = [&input, headerLen](std::size_t next) { return next < headerLen && (input[next] == ' ' || input[next] == '\t'); };
     const auto empty = [fieldValue, valueLen] {
-        *fieldValue = nullptr;
-        *valueLen = 0;
-        return 0;
+        return HttpGuest::Store(fieldValue, static_cast<const char*>(nullptr)) && HttpGuest::Store(valueLen, std::size_t{0}) ? 0 : invalidValue;
     };
     while (start < headerLen) {
         const std::size_t lineFeed = input[start] == '\r' && start + 1 < headerLen && input[start + 1] == '\n' ? start + 1 : start;
@@ -551,12 +584,10 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
         end = newline > start && input[newline - 1] == '\r' ? newline - 1 : newline;
         break;
     }
-    if (end > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw std::out_of_range("sceHttpParseResponseHeader: value end exceeds int");
-    }
-    *fieldValue = header + start;
-    *valueLen = end - start;
-    return static_cast<int>(end);
+    if (end > static_cast<std::size_t>(std::numeric_limits<int>::max())) return invalidResponse;
+    const auto* const value = reinterpret_cast<const char*>(headerAddress + start);
+    const std::size_t length = end - start;
+    return HttpGuest::Store(fieldValue, value) && HttpGuest::Store(valueLen, length) ? static_cast<int>(end) : invalidValue;
 }
 
 int APS5_VABI sceHttpCreateRequest2(int conn_id, const char* method, const char* path, uint64_t content_length) {
