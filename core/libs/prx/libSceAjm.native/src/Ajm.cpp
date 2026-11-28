@@ -1483,7 +1483,7 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
             result |= AJM_RESULT_INVALID_DATA;
             break;
         }
-        if ((job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
+        if ((job.console || Resampling(instance)) && (job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
     if (consumed == input.size() && frames == 0 && pcmOutputs.produced == 0 && result == 0) result |= AJM_RESULT_PARTIAL_INPUT;
 
