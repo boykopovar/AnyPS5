@@ -182,7 +182,9 @@ HW_ORACLE_RUNTIME=vulkan HW_ORACLE_VULKAN_RUNNER="$RUNNER" \
 python3 tools/hw-oracle/compare_results.py hardware.json recompiler.json
 ```
 
-The report's `runtime` field says which side produced it.
+The report's `runtime` field says which side produced it. Pass `--max-differences N` to print at most N differing words,
+or zero for counts only. The comparison still checks every word. Exit status 1 means a difference was found,
+and 2 means the reports were invalid or incompatible.
 
 - Compute only.
 - Whole waves: Python pads the rows with zeros to the wave size, so cross-lane instructions see the padded lanes.
