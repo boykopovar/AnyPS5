@@ -166,6 +166,8 @@ void APS5_VABI WKBundlePageSetBottomOverhangImage(const void* pageRef, const voi
 void APS5_VABI WKBundlePageSetTopOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold(const void* pageRef, std::uint64_t threshold);
 bool APS5_VABI WKBundlePageHasLocalDataForURL(const void* pageRef, const void* urlRef);
+void APS5_VABI WKBundlePagePostMessage(const void* bundlePageRef, const void* messageNameRef, const void* messageBodyRef);
+void APS5_VABI WKBundlePostMessage(const void* bundleRef, const void* messageNameRef, const void* messageBodyRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
@@ -503,6 +505,9 @@ bool APS5_VABI WKPageGetAllowsRemoteInspection(const void* pageRef);
 void APS5_VABI WKPageSetAllowsRemoteInspection(const void* pageRef, bool allowsRemoteInspection);
 const void* APS5_VABI WKPageCopyPendingAPIRequestURL(const void* pageRef);
 const void* APS5_VABI WKPageCopyPageConfiguration(const void* pageRef);
+void APS5_VABI WKPagePostMessageToInjectedBundle(const void* pageRef, const void* messageNameRef, const void* messageBodyRef);
+void APS5_VABI WKPageRunJavaScriptInMainFrame(const void* pageRef, const void* scriptRef, void* context, WKResultErrorFunction callback);
+bool APS5_VABI WKPageTryClose(const void* pageRef);
 const void* APS5_VABI WKPointCreate(NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKPointGetTypeID();
 NKWebKit::PointValue APS5_VABI WKPointGetValue(const void* pointRef);

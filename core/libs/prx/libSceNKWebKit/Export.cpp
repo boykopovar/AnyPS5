@@ -8315,10 +8315,6 @@ int APS5_VABI WKBundlePagePostMessageIgnoringFullySynchronousMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePagePostMessage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePagePostSynchronousMessageForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8448,10 +8444,6 @@ int APS5_VABI WKBundlePageUninstallPageOverlay() {
 }
 
 int APS5_VABI WKBundlePageUninstallPageOverlayWithAnimation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePostMessage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8858,10 +8850,6 @@ int APS5_VABI WKPageLookUpFrameFromHandle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPagePostMessageToInjectedBundle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageReloadExpiredOnly() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8899,10 +8887,6 @@ int APS5_VABI WKPageRunJavaScriptAlertResultListenerCall() {
 }
 
 int APS5_VABI WKPageRunJavaScriptConfirmResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRunJavaScriptInMainFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8998,9 +8982,6 @@ int APS5_VABI WKPageSupportsTextEncoding() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageTryClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageTryRestoreScrollPosition() {
     NotImplemented_nid_no_patch(__func__);

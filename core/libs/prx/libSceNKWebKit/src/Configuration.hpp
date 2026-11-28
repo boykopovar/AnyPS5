@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
@@ -100,6 +101,16 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    Retained<Object> lastInjectedBundleMessageName;
+    Retained<Object> lastInjectedBundleMessageBody;
+    bool tryCloseCalled = false;
+    OpaqueJSContext* mainFrameContext = nullptr;
+    ~Page() {
+        if (mainFrameContext) {
+            JSGlobalContextRelease(mainFrameContext);
+            mainFrameContext = nullptr;
+        }
+    }
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:

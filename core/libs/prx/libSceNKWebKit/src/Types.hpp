@@ -90,6 +90,14 @@ public:
 class CertificateInfo final : public ObjectOf<ObjectType::CertificateInfo> {
 };
 
+class Error final : public ObjectOf<ObjectType::Error> {
+public:
+    Error() = default;
+    explicit Error(Retained<String> description) : description(std::move(description)) {}
+
+    Retained<String> description;
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -193,7 +201,6 @@ public:
     bool historyClearedForTesting = false;
     bool resourceLoadStatisticsCleared = false;
     std::uint32_t resourceLoadStatisticsNotifyCount = 0;
-
     struct OriginAccessEntry {
         std::string sourceOrigin;
         std::string destinationProtocol;
@@ -204,6 +211,8 @@ public:
     };
 
     std::vector<OriginAccessEntry> originAccessAllowList;
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
@@ -311,6 +320,8 @@ public:
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
     bool hasLocalDataForURL = false;
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
