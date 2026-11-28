@@ -392,6 +392,7 @@ public:
         ReleasePushbackBuffer(nullptr);
 #endif
         _guest = {};
+        ClearPushback();
         guestError = false;
         randomDevice = false;
         lowSurrogate = 0;
