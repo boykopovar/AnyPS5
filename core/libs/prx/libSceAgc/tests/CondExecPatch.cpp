@@ -5,10 +5,24 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -45,6 +59,62 @@ struct Storage {
     }
 };
 
+struct PageMapping {
+    std::uint8_t* base = nullptr;
+    std::size_t size = 0;
+    std::size_t pageSize = 0;
+
+    explicit PageMapping(std::size_t pageCount) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        size = pageSize * pageCount;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        check(base != nullptr, "VirtualAlloc failed");
+#else
+        const long rawSize = sysconf(_SC_PAGESIZE);
+        check(rawSize > 0, "sysconf(_SC_PAGESIZE) failed");
+        pageSize = static_cast<std::size_t>(rawSize);
+        size = pageSize * pageCount;
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        check(mapped != MAP_FAILED, "mmap failed");
+        base = static_cast<std::uint8_t*>(mapped);
+#endif
+    }
+
+    ~PageMapping() {
+        if (base == nullptr) {
+            return;
+        }
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    void protectReadOnly(std::size_t pageIndex) {
+        std::uint8_t* page = base + pageIndex * pageSize;
+#ifdef _WIN32
+        DWORD previous = 0;
+        check(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0, "VirtualProtect PAGE_READONLY failed");
+#else
+        check(mprotect(page, pageSize, PROT_READ) == 0, "mprotect PROT_READ failed");
+#endif
+    }
+
+    void protectNoAccess(std::size_t pageIndex) {
+        std::uint8_t* page = base + pageIndex * pageSize;
+#ifdef _WIN32
+        DWORD previous = 0;
+        check(VirtualProtect(page, pageSize, PAGE_NOACCESS, &previous) != 0, "VirtualProtect PAGE_NOACCESS failed");
+#else
+        check(mprotect(page, pageSize, PROT_NONE) == 0, "mprotect PROT_NONE failed");
+#endif
+    }
+};
+
 std::uintptr_t endAfter(const std::uint32_t* packet, std::uintptr_t numDwords) {
     return reinterpret_cast<std::uintptr_t>(packet + 5) + numDwords * sizeof(std::uint32_t);
 }
@@ -53,7 +123,9 @@ template <typename TAction>
 void expectInvalidPacket(const Variant& variant, TAction action) {
     Storage storage(variant.write);
     const auto before = storage.words;
+    errno = 71;
     const int status = action(storage.packet);
+    check(errno == 71, "invalid packet patch modified errno");
     check(status == InvalidPacket, "expected invalid packet error code");
     check(storage.words == before, "invalid packet patch modified storage");
 }
@@ -64,7 +136,9 @@ void testSetEnd(const Variant& variant) {
         Storage storage(variant.write);
         storage.packet[4] |= 0xabcd0000u;
         const auto before = storage.words;
+        errno = 71;
         check(setEnd(storage.packet, at(endAfter(storage.packet, numDwords))) == 0, "SetEnd failed");
+        check(errno == 71, "SetEnd modified errno");
         check(storage.packet[4] == (0xabcd0000u | static_cast<std::uint32_t>(numDwords)), "SetEnd wrote the wrong dword count");
         check(std::equal(before.begin(), before.begin() + 4, storage.words.begin()), "SetEnd modified other packet words");
         check(std::equal(before.begin() + 5, before.end(), storage.words.begin() + 5), "SetEnd modified following words");
@@ -95,7 +169,9 @@ void testSetEnd(const Variant& variant) {
         Storage storage(variant.write);
         storage.packet[0] = (storage.packet[0] & ~0xff00u) | 0x2100u;
         const auto before = storage.words;
+        errno = 71;
         check(setEnd(storage.packet, at(endAfter(storage.packet, 2))) == InvalidPacket, "SetEnd accepted wrong opcode");
+        check(errno == 71, "SetEnd wrong opcode modified errno");
         check(storage.words == before, "SetEnd modified wrong-opcode packet");
     }
 }
@@ -106,7 +182,9 @@ void testSetCommandAddress(const Variant& variant) {
         Storage storage(variant.write);
         storage.packet[1] |= 3u;
         const auto before = storage.words;
+        errno = 71;
         check(setCommandAddress(storage.packet, at(address)) == 0, "SetCommandAddress failed");
+        check(errno == 71, "SetCommandAddress modified errno");
         check(storage.packet[1] == (static_cast<std::uint32_t>(address) | 3u) && storage.packet[2] == static_cast<std::uint32_t>(address >> 32u), "SetCommandAddress wrote the wrong address");
         check(storage.packet[0] == before[0] && storage.packet[3] == before[3] && storage.packet[4] == before[4], "SetCommandAddress modified other packet words");
         check(std::equal(before.begin() + 5, before.end(), storage.words.begin() + 5), "SetCommandAddress modified following words");
@@ -132,8 +210,90 @@ void testSetCommandAddress(const Variant& variant) {
         Storage storage(variant.write);
         storage.packet[0] = (storage.packet[0] & ~0xff00u) | 0x2100u;
         const auto before = storage.words;
+        errno = 71;
         check(setCommandAddress(storage.packet, at(0x1000u)) == InvalidPacket, "SetCommandAddress accepted wrong opcode");
+        check(errno == 71, "SetCommandAddress wrong opcode modified errno");
         check(storage.words == before, "SetCommandAddress modified wrong-opcode packet");
+    }
+}
+
+void testInvalidGuestPointers(const Variant& variant) {
+    auto* const unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    errno = 71;
+    check(variant.setEnd(unmapped, at(0x1000u)) == InvalidPacket, "SetEnd accepted unmapped cmd pointer");
+    check(errno == 71, "SetEnd unmapped cmd modified errno");
+    errno = 71;
+    check(variant.setCommandAddress(unmapped, at(0x1000u)) == InvalidPacket, "SetCommandAddress accepted unmapped cmd pointer");
+    check(errno == 71, "SetCommandAddress unmapped cmd modified errno");
+
+    for (const std::uintptr_t offset : {std::uintptr_t{1u}, std::uintptr_t{2u}}) {
+        expectInvalidPacket(variant, [=](std::uint32_t* packet) {
+            auto* const misaligned = reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(packet) + offset);
+            return variant.setEnd(misaligned, at(endAfter(packet, 2)));
+        });
+        expectInvalidPacket(variant, [=](std::uint32_t* packet) {
+            auto* const misaligned = reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(packet) + offset);
+            return variant.setCommandAddress(misaligned, at(0x1000u));
+        });
+    }
+
+    Storage templateStorage(variant.write);
+    std::array<std::uint32_t, 5> packetBytes{};
+    std::memcpy(packetBytes.data(), templateStorage.packet, sizeof(packetBytes));
+
+    {
+        PageMapping readOnlyMapping(1);
+        std::memcpy(readOnlyMapping.base, packetBytes.data(), sizeof(packetBytes));
+        readOnlyMapping.protectReadOnly(0);
+        auto* const roCmd = reinterpret_cast<std::uint32_t*>(readOnlyMapping.base);
+
+        errno = 71;
+        check(variant.setEnd(roCmd, at(endAfter(roCmd, 2))) == InvalidPacket, "SetEnd wrote into read-only cmd page");
+        check(errno == 71, "SetEnd read-only cmd modified errno");
+        check(std::memcmp(readOnlyMapping.base, packetBytes.data(), sizeof(packetBytes)) == 0, "SetEnd mutated read-only cmd page");
+
+        errno = 71;
+        check(variant.setCommandAddress(roCmd, at(0x1000u)) == InvalidPacket, "SetCommandAddress wrote into read-only cmd page");
+        check(errno == 71, "SetCommandAddress read-only cmd modified errno");
+        check(std::memcmp(readOnlyMapping.base, packetBytes.data(), sizeof(packetBytes)) == 0, "SetCommandAddress mutated read-only cmd page");
+    }
+
+    {
+        PageMapping guardedMapping(2);
+        std::uint8_t* const end = guardedMapping.base + guardedMapping.pageSize;
+        std::uint8_t* const straddlingBytes = end - 16;
+        std::memcpy(straddlingBytes, packetBytes.data(), 16);
+        guardedMapping.protectNoAccess(1);
+        auto* const straddlingCmd = reinterpret_cast<std::uint32_t*>(straddlingBytes);
+
+        errno = 71;
+        check(variant.setEnd(straddlingCmd, at(endAfter(straddlingCmd, 2))) == InvalidPacket, "SetEnd accepted guard-straddling cmd pointer");
+        check(errno == 71, "SetEnd guard-straddling cmd modified errno");
+        check(std::memcmp(straddlingBytes, packetBytes.data(), 16) == 0, "SetEnd mutated guard-straddling mapped bytes");
+
+        errno = 71;
+        check(variant.setCommandAddress(straddlingCmd, at(0x1000u)) == InvalidPacket, "SetCommandAddress accepted guard-straddling cmd pointer");
+        check(errno == 71, "SetCommandAddress guard-straddling cmd modified errno");
+        check(std::memcmp(straddlingBytes, packetBytes.data(), 16) == 0, "SetCommandAddress mutated guard-straddling mapped bytes");
+    }
+
+    for (const std::size_t tailOffset : {std::size_t{16u}, std::size_t{8u}}) {
+        PageMapping straddlingRoMapping(2);
+        std::uint8_t* const end = straddlingRoMapping.base + straddlingRoMapping.pageSize;
+        std::uint8_t* const straddlingBytes = end - tailOffset;
+        std::memcpy(straddlingBytes, packetBytes.data(), sizeof(packetBytes));
+        straddlingRoMapping.protectReadOnly(1);
+        auto* const straddlingCmd = reinterpret_cast<std::uint32_t*>(straddlingBytes);
+
+        errno = 71;
+        check(variant.setEnd(straddlingCmd, at(endAfter(straddlingCmd, 2))) == InvalidPacket, "SetEnd accepted RW-to-RO straddling cmd pointer");
+        check(errno == 71, "SetEnd RW-to-RO straddling cmd modified errno");
+        check(std::memcmp(straddlingBytes, packetBytes.data(), sizeof(packetBytes)) == 0, "SetEnd mutated RW-to-RO straddling bytes");
+
+        errno = 71;
+        check(variant.setCommandAddress(straddlingCmd, at(0x123456789abcu)) == InvalidPacket, "SetCommandAddress accepted RW-to-RO straddling cmd pointer");
+        check(errno == 71, "SetCommandAddress RW-to-RO straddling cmd modified errno");
+        check(std::memcmp(straddlingBytes, packetBytes.data(), sizeof(packetBytes)) == 0, "SetCommandAddress mutated RW-to-RO straddling bytes");
     }
 }
 
@@ -145,6 +305,7 @@ int main() {
                                        Variant{sceAgcAcbCondExec, sceAgcAsyncCondExecPatchSetEnd, sceAgcAsyncCondExecPatchSetCommandAddress}}) {
             testSetEnd(variant);
             testSetCommandAddress(variant);
+            testInvalidGuestPointers(variant);
         }
         std::puts("AGC COND_EXEC patch tests passed");
         return 0;
