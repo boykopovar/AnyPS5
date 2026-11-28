@@ -1,10 +1,61 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libScePlayReady4/include/InventoryExports.hpp"
 #include "prx/libScePlayReady4/include/Api.hpp"
+#include <array>
+#include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
+#include <mutex>
+#include <stdexcept>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+constexpr std::size_t ProfileEntryBytes = 24;
+constexpr std::size_t ProfileMaxDepth = 64;
+constexpr std::size_t ProfileStackSize = 64;
+
+struct ProfileState {
+    std::mutex mutex;
+    void* buffer = nullptr;
+    std::uint64_t capacity = 0;
+    std::uint64_t used = 0;
+    bool paused = false;
+    std::uint64_t depth = 0;
+    std::array<std::uint64_t, ProfileStackSize> stack {};
+};
+
+ProfileState& Profile() {
+    static ProfileState state;
+    return state;
+}
+
+std::uint64_t NowMicroseconds() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void WriteProfileBytes(void* destination, const void* source, const std::size_t bytes, const char* error) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(error);
+}
+
+void ReadProfileBytes(void* destination, const void* source, const std::size_t bytes, const char* error) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(error);
+}
+
+std::byte* ProfileEntry(void* buffer, const std::uint64_t index) {
+    return static_cast<std::byte*>(buffer) + index * ProfileEntryBytes;
+}
+
+} // namespace
 
 extern "C" {
 
@@ -148,39 +199,76 @@ int APS5_VABI scePlayReadyLicenseCount() {
     return 0;
 }
 
-int APS5_VABI scePlayReadyProfileClear() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfileClear() {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    if (profile.buffer == nullptr) return;
+    const std::size_t bytes = static_cast<std::size_t>(profile.used * ProfileEntryBytes);
+    const std::vector<std::byte> zeros(bytes);
+    if (bytes != 0) WriteProfileBytes(profile.buffer, zeros.data(), bytes, "scePlayReadyProfileClear: unwritable profile buffer");
+    profile.used = 0;
 }
 
-int APS5_VABI scePlayReadyProfileEnter() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfileEnter(int first, int second, int third) {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    if (profile.paused || profile.buffer == nullptr || profile.used >= profile.capacity) return;
+    if (profile.depth > ProfileMaxDepth - 1) {
+        ++profile.depth;
+        return;
+    }
+    auto* entry = ProfileEntry(profile.buffer, profile.used);
+    const std::array<std::byte, 4> header {static_cast<std::byte>(profile.depth + 1), static_cast<std::byte>(first), static_cast<std::byte>(second), static_cast<std::byte>(third)};
+    WriteProfileBytes(entry, header.data(), header.size(), "scePlayReadyProfileEnter: unwritable entry header");
+    const std::uint64_t timestamp = NowMicroseconds();
+    WriteProfileBytes(entry + 8, &timestamp, sizeof(timestamp), "scePlayReadyProfileEnter: unwritable entry timestamp");
+    profile.stack[profile.depth] = profile.used;
+    ++profile.used;
+    ++profile.depth;
 }
 
-int APS5_VABI scePlayReadyProfileLeave() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfileLeave() {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    if (profile.paused || profile.buffer == nullptr || profile.depth == 0) return;
+    const std::uint64_t previousDepth = profile.depth;
+    --profile.depth;
+    if (previousDepth > ProfileMaxDepth) return;
+    auto* entry = ProfileEntry(profile.buffer, profile.stack[profile.depth]);
+    std::uint64_t timestamp = 0;
+    ReadProfileBytes(&timestamp, entry + 8, sizeof(timestamp), "scePlayReadyProfileLeave: unreadable entry timestamp");
+    const std::uint64_t duration = NowMicroseconds() - timestamp;
+    WriteProfileBytes(entry + 16, &duration, sizeof(duration), "scePlayReadyProfileLeave: unwritable entry duration");
 }
 
-int APS5_VABI scePlayReadyProfilePause() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfilePause() {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    profile.paused = true;
 }
 
-int APS5_VABI scePlayReadyProfileResume() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfileResume() {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    profile.paused = false;
 }
 
-int APS5_VABI scePlayReadyProfileStart() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfileStart(void* buffer, std::uint64_t entries) {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    if (buffer == nullptr) return;
+    profile.buffer = buffer;
+    profile.capacity = entries;
+    profile.used = 0;
+    profile.paused = false;
 }
 
-int APS5_VABI scePlayReadyProfileStop() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePlayReadyProfileStop() {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.mutex);
+    profile.buffer = nullptr;
+    profile.capacity = 0;
+    profile.paused = true;
 }
 
 
