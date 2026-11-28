@@ -4,6 +4,7 @@
 #include "HostImportFailure.hpp"
 #include <fstream>
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GpuIndex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
@@ -31,7 +32,7 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 
-std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperties> devices, std::string_view request) {
+std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperties> devices, std::string_view request, std::optional<std::size_t> requestedIndex = std::nullopt) {
     const auto rankDeviceType = [](VkPhysicalDeviceType type) {
         switch (type) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
@@ -45,11 +46,12 @@ std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperti
     for (std::size_t index = 0; index < devices.size(); ++index) {
         const auto& candidate = devices[index];
         if (candidate.apiVersion < VK_API_VERSION_1_1) continue;
+        if (requestedIndex.has_value() && index != *requestedIndex) continue;
         const std::string_view name(candidate.deviceName);
         if (!request.empty() && std::search(name.begin(), name.end(), request.begin(), request.end(), [](char left, char right) {
             return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
         }) == name.end()) continue;
-        const int rank = request.empty() ? rankDeviceType(candidate.deviceType) : 4;
+        const int rank = request.empty() && !requestedIndex.has_value() ? rankDeviceType(candidate.deviceType) : 4;
         if (rank <= selectedRank) continue;
         selected = index;
         selectedRank = rank;
@@ -57,8 +59,8 @@ std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperti
     return selected;
 }
 
-bool canSkipVulkanFailure(const char* requestedName, const char* requireVulkan) {
-    return (requestedName == nullptr || *requestedName == '\0') && requireVulkan == nullptr;
+bool canSkipVulkanFailure(const char* requestedName, const char* requireVulkan, const char* requestedIndex = nullptr) {
+    return (requestedName == nullptr || *requestedName == '\0') && (requestedIndex == nullptr || *requestedIndex == '\0') && requireVulkan == nullptr;
 }
 
 void deviceSelectionTests() {
@@ -74,6 +76,10 @@ void deviceSelectionTests() {
         properties("NVIDIA GeForce RTX 5080", VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU),
     };
     Require(!selectDevice({}, {}).has_value(), "an empty Vulkan device list selected a device");
+    Require(selectDevice(devices, {}, 0u) == 0u, "ANYPS5_GPU_INDEX=0 did not select the first device over the discrete GPU");
+    Require(selectDevice(devices, "rtx 5080", 1u) == 1u, "ANYPS5_GPU_INDEX with a matching name did not select the device");
+    Require(!selectDevice(devices, "rtx 5080", 0u).has_value(), "ANYPS5_GPU_INDEX selected a device whose name does not match ANYPS5_GPU");
+    Require(!selectDevice(devices, {}, devices.size()).has_value(), "an out-of-range ANYPS5_GPU_INDEX selected a device");
     Require(selectDevice(devices, {}) == 1u, "default selection did not prefer the discrete GPU");
     Require(selectDevice(devices, "AMD") == 0u, "an AMD request lost to an unrelated discrete GPU");
     Require(selectDevice(devices, "aMd rAdEoN") == 0u, "GPU name matching was not case-insensitive");
@@ -83,6 +89,7 @@ void deviceSelectionTests() {
     Require(canSkipVulkanFailure("", nullptr), "an empty GPU request prevents an optional Vulkan skip");
     Require(!canSkipVulkanFailure("missing device", nullptr), "an unmatched GPU request can be reported as a skip");
     Require(!canSkipVulkanFailure(nullptr, "1"), "a required Vulkan test can be reported as a skip");
+    Require(!canSkipVulkanFailure(nullptr, nullptr, "2"), "a GPU index request can be reported as a skip");
     devices[0].apiVersion = VK_API_VERSION_1_0;
     Require(!selectDevice(devices, "AMD").has_value(), "a GPU without Vulkan 1.1 matched the request");
     std::cout << "BDA device selection CPU tests passed\n";
@@ -127,8 +134,17 @@ public:
             }
             const char* requestedName = std::getenv("ANYPS5_GPU");
             const std::string_view request = requestedName != nullptr ? requestedName : "";
-            const auto selected = selectDevice(deviceProperties, request);
+            const auto requestedIndex = AgcDriver::RequestedGpuIndex();
+            const auto selected = selectDevice(deviceProperties, request, requestedIndex);
             if (!selected.has_value()) {
+                if (requestedIndex.has_value()) {
+                    std::string candidateNames;
+                    for (const auto& candidate : deviceProperties) {
+                        if (!candidateNames.empty()) candidateNames += ", ";
+                        candidateNames += candidate.deviceName;
+                    }
+                    throw std::runtime_error("no Vulkan 1.1 device at ANYPS5_GPU_INDEX=" + std::to_string(*requestedIndex) + (request.empty() ? std::string() : " whose name contains ANYPS5_GPU=\"" + std::string(request) + "\"") + "; devices: " + candidateNames);
+                }
                 if (!request.empty()) {
                     std::string candidateNames;
                     for (const auto& candidate : deviceProperties) {
@@ -244,7 +260,7 @@ int main(int argc, char** argv) {
         try {
             device = std::make_unique<Device>(importFailures);
         } catch (const std::exception& error) {
-            if (!canSkipVulkanFailure(std::getenv("ANYPS5_GPU"), std::getenv("ANYPS5_REQUIRE_VULKAN"))) throw;
+            if (!canSkipVulkanFailure(std::getenv("ANYPS5_GPU"), std::getenv("ANYPS5_REQUIRE_VULKAN"), std::getenv("ANYPS5_GPU_INDEX"))) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
             return 77;
         }
