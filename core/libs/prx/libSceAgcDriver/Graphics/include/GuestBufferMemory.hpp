@@ -194,6 +194,7 @@ struct RegisteredPiece {
 // Whether a readable registered allocation contains [address, address + bytes) right now (one
 // registry lease): a storage image whose memory was freed or re-registered has nothing to store to.
 bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes, std::vector<RegisteredPiece>* pieces = nullptr);
+bool RegisteredAroundUnreadable(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
 std::uint64_t RegisteredReadableEnd(std::uint64_t address);
 
 // A persistent device copy of one registered range of the main guest image (which cannot be host
