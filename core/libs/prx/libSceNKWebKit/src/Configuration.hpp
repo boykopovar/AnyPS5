@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -111,6 +112,15 @@ public:
     std::vector<std::string> thirdPartyCNAMEDomains;
     std::vector<std::string> sameSiteStrictCookiesHosts;
     bool firstPartyWebsiteDataRemovalMode = false;
+    bool clearInMemoryAndPersistentStoreCalled = false;
+    std::optional<unsigned> clearModifiedSinceHours;
+    bool clearThroughWebsiteDataRemovalCalled = false;
+    std::map<std::string, bool> deletedCookiesHosts;
+    std::unordered_set<std::string> isolatedSessionHosts;
+    std::unordered_set<std::string> localStorageHosts;
+    bool processStatisticsAndDataRecordsCalled = false;
+    bool resetToConsistentStateCalled = false;
+    bool updateCookieBlockingCalled = false;
 };
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 

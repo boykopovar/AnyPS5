@@ -9292,42 +9292,6 @@ int APS5_VABI WKWebsiteDataStoreSetStatisticsVeryPrevalentResource() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreStatisticsClearInMemoryAndPersistentStoreModifiedSinceHours() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsClearInMemoryAndPersistentStore() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsClearThroughWebsiteDataRemoval() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsDeleteCookiesForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsHasIsolatedSession() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsHasLocalStorage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsProcessStatisticsAndDataRecords() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsResetToConsistentState() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreStatisticsUpdateCookieBlocking() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcess() {
     NotImplemented_nid_no_patch(__func__);
 }
