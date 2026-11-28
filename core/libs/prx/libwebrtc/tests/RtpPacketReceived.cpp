@@ -1,4 +1,14 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
@@ -152,6 +162,109 @@ void TestCopy() {
     Require(threw);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 4096;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template <typename Function>
+bool ThrowsInvalidArgument(Function function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestGuardedPointers() {
+    GuardedPages pages;
+    auto* guardPacket = reinterpret_cast<WebRtcRtpPacketReceived*>(pages.Guard());
+    auto* readOnlyPacket = reinterpret_cast<WebRtcRtpPacketReceived*>(pages.ReadOnly());
+    auto* guardExtensions = reinterpret_cast<const WebRtcRtpHeaderExtensionMap*>(pages.Guard());
+
+    WebRtcRtpPacketReceived valid{};
+    _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(&valid, nullptr, 12);
+    WebRtcRtpPacketReceived dest{};
+
+    const std::size_t allocsBefore = allocations.size();
+    Require(ThrowsInvalidArgument([&] {
+        _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(guardPacket, nullptr, 0);
+    }));
+    Require(ThrowsInvalidArgument([&] {
+        _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(readOnlyPacket, nullptr, 0);
+    }));
+    Require(ThrowsInvalidArgument([&] {
+        _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(&dest, guardExtensions, 0);
+    }));
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(guardPacket, &valid); }));
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(readOnlyPacket, &valid); }));
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(&dest, guardPacket); }));
+
+    WebRtcRtpPacketReceived badEntries = valid;
+    badEntries.extensionEntriesBegin = reinterpret_cast<WebRtcRtpPacketExtensionInfo*>(pages.Guard());
+    badEntries.extensionEntriesEnd = badEntries.extensionEntriesBegin + 1;
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(&dest, &badEntries); }));
+
+    WebRtcRtpPacketReceived badAdditional = valid;
+    badAdditional.additionalData = pages.ReadOnly();
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(&dest, &badAdditional); }));
+
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(guardPacket); }));
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(readOnlyPacket); }));
+
+    const void* const badDtorVTable[] = {nullptr, pages.ReadOnly()};
+    RefCounted nonExecObj{badDtorVTable, 1};
+    valid.additionalData = &nonExecObj;
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&valid); }));
+    Require(valid.additionalData == &nonExecObj && nonExecObj.refCount == 1);
+    valid.additionalData = nullptr;
+
+    RefCounted sharedObj{badDtorVTable, 2};
+    WebRtcRtpPacketReceived badBufPacket = valid;
+    badBufPacket.buffer.buffer = reinterpret_cast<decltype(badBufPacket.buffer.buffer)>(pages.ReadOnly());
+    badBufPacket.additionalData = &sharedObj;
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&badBufPacket); }));
+    Require(badBufPacket.additionalData == &sharedObj && sharedObj.refCount == 2);
+
+    Require(allocations.size() == allocsBefore);
+
+    _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&valid);
+}
+
 }
 
 int main() {
@@ -160,6 +273,7 @@ int main() {
         reinterpret_cast<void*>(&Align_nid_no_patch), reinterpret_cast<void*>(&Realign_nid_no_patch), reinterpret_cast<void*>(&PosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api);
     try {
+        TestGuardedPointers();
         TestConstructor();
         TestInvalidExtensionsPointers();
         TestCopy();
