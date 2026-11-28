@@ -21,6 +21,7 @@ bool LibreSslAddedObjectsExist_nid_no_patch();
 const LibreSslAsn1Object* LibreSslAddedObjectByNid_nid_no_patch(int nid);
 const char* LibreSslAddedObjectName_nid_no_patch(int nid, bool longName);
 int LibreSslAddedObjectShortNameNid_nid_no_patch(const char* name);
+bool LibreSslHasAddedObjectName_nid_no_patch(const char* name, bool longName);
 
 }
 
