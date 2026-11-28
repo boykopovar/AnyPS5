@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -252,10 +253,100 @@ static void TestPlatformCompare() {
     Require(threw);
 }
 
+template <typename Function>
+static bool ThrowsNotImplemented(Function&& function, const char* symbol) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void TestGuestPointers() {
+    GuardedMapping mapping;
+    auto* guard = reinterpret_cast<AuthenticationChallenge*>(mapping.GuardPage());
+    auto* split = reinterpret_cast<AuthenticationChallenge*>(mapping.GuardPage() - 64);
+    auto* dangling = reinterpret_cast<AuthenticationChallenge*>(0x10);
+
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore27AuthenticationChallengeBase6isNullEv(dangling); },
+        "_ZNK7WebCore27AuthenticationChallengeBase6isNullEv"));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore27AuthenticationChallengeBase6isNullEv(guard); },
+        "_ZNK7WebCore27AuthenticationChallengeBase6isNullEv"));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore27AuthenticationChallengeBase6isNullEv(split); },
+        "_ZNK7WebCore27AuthenticationChallengeBase6isNullEv"));
+
+    {
+        unsigned char* splitBytes = mapping.GuardPage() - 64;
+        std::memset(splitBytes, 0x3C, 64);
+        errno = 0x55;
+        bool caught = false;
+        try {
+            _ZN7WebCore27AuthenticationChallengeBase7nullifyEv(split);
+        } catch (const std::invalid_argument&) {
+            caught = true;
+        }
+        Require(caught);
+        Require(errno == 0x55);
+        for (std::size_t i = 0; i < 64; ++i) Require(splitBytes[i] == 0x3C);
+    }
+
+    alignas(16) unsigned char validStorage[sizeof(AuthenticationChallenge)] = {};
+    auto* valid = reinterpret_cast<AuthenticationChallenge*>(validStorage);
+    valid->requestURL.impl = nullptr;
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(dangling, valid); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(valid, dangling); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(guard, guard); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(split, valid); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(valid, split); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+
+    alignas(16) unsigned char leftStorage[sizeof(AuthenticationChallenge)] = {};
+    alignas(16) unsigned char rightStorage[sizeof(AuthenticationChallenge)] = {};
+    auto* left = reinterpret_cast<AuthenticationChallenge*>(leftStorage);
+    auto* right = reinterpret_cast<AuthenticationChallenge*>(rightStorage);
+
+    left->requestURL.impl = reinterpret_cast<StringImpl*>(mapping.GuardPage());
+    right->requestURL.impl = nullptr;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(left, right); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(right, left); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(left, left); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+
+    auto* splitImpl = reinterpret_cast<StringImpl*>(mapping.GuardPage() - 8);
+    left->requestURL.impl = splitImpl;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(left, right); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+
+    StringImpl badData{2, 8, mapping.GuardPage() - 4, 4};
+    left->requestURL.impl = &badData;
+    right->requestURL.impl = &badData;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(left, right); },
+        "_ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_"));
+
+    StringImpl nullData{2, 4, nullptr, 4};
+    left->requestURL.impl = &nullData;
+    bool caughtNullData = false;
+    try {
+        _ZN7WebCore23AuthenticationChallenge15platformCompareERKS0_S2_(left, right);
+    } catch (const std::invalid_argument&) {
+        caughtNullData = true;
+    }
+    Require(caughtNullData);
+}
+
 int main() {
     TestIsNull();
     TestNullify();
     TestAuthenticationClient();
     TestPlatformCompare();
+    TestGuestPointers();
     return 0;
 }
