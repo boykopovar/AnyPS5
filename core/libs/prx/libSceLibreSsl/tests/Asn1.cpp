@@ -1,20 +1,30 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <limits>
 #include <span>
 #include <string>
 #include <utility>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -292,6 +302,124 @@ void Times() {
     RequireInvalidArgument([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "guarded page allocation");
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guarded page mapping");
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    template <typename T>
+    T* Tail(const void* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return reinterpret_cast<T*>(data + bytes - size);
+    }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "read-only page protection");
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0, "read-only page protection");
+#endif
+    }
+
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template<typename TAction>
+void Rejects(TAction action, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, message);
+}
+
+void GuestPointers() {
+    auto* badString = reinterpret_cast<Asn1String*>(0x10);
+    auto* badObject = reinterpret_cast<const LibreSslAsn1Object*>(0x10);
+    auto* badData = reinterpret_cast<unsigned char*>(0x10);
+    unsigned char* result = nullptr;
+    Rejects([&] { ASN1_TIME_print_nid_postfix(nullptr, badString); }, "unmapped time");
+    Rejects([&] { ASN1_INTEGER_get_nid_postfix(badString); }, "unmapped integer");
+    Rejects([&] { ASN1_STRING_data_nid_postfix(badString); }, "unmapped string data accessor");
+    Rejects([&] { ASN1_STRING_length_nid_postfix(badString); }, "unmapped string length accessor");
+    Rejects([&] { ASN1_STRING_type_nid_postfix(badString); }, "unmapped string type accessor");
+    Rejects([&] { ASN1_STRING_print_nid_postfix(nullptr, badString); }, "unmapped printed string");
+    Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, badString); }, "unmapped converted string");
+    Rejects([&] { i2a_ASN1_OBJECT_nid_postfix(nullptr, badObject); }, "unmapped object");
+    Asn1String time{13, 23, badData, 0};
+    Rejects([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "unmapped time data");
+    Asn1String integer{2, 2, badData, 0};
+    Rejects([&] { ASN1_INTEGER_get_nid_postfix(&integer); }, "unmapped integer data");
+    Asn1String printed{3, 4, badData, 0};
+    Rejects([&] { ASN1_STRING_print_nid_postfix(nullptr, &printed); }, "unmapped printed data");
+    Asn1String converted{3, 12, badData, 0};
+    Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &converted); }, "unmapped converted data");
+    converted.length = -1;
+    Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &converted); }, "unmapped terminated data");
+    Require(result == nullptr, "rejected conversions leave the output alone");
+
+    {
+        GuardedPage page;
+        unsigned char latin[] = {'A', 0xff};
+        Asn1String value{2, 20, page.Tail<unsigned char>(latin, sizeof(latin)), 0x55};
+        Asn1String* stored = page.Tail<Asn1String>(&value, sizeof(value));
+        Require(ASN1_STRING_length_nid_postfix(stored) == 2 && ASN1_STRING_type_nid_postfix(stored) == 20 &&
+            ASN1_STRING_data_nid_postfix(stored) == value.data, "accessors read a string ending at a page boundary");
+        Asn1String terminated{-1, 20, page.Tail<unsigned char>(latin, sizeof(latin)), 0};
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &terminated); }, "unterminated data running into an unmapped page");
+        Asn1String longer{3, 20, terminated.data, 0};
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &longer); }, "data length running into an unmapped page");
+        Rejects([&] { ASN1_STRING_print_nid_postfix(nullptr, &longer); }, "printed length running into an unmapped page");
+        const unsigned char ending[] = {'A', 0xff, 0};
+        terminated.data = page.Tail<unsigned char>(ending, sizeof(ending));
+        Require(ASN1_STRING_to_UTF8_nid_postfix(&result, &terminated) == 3 && result && std::memcmp(result, "A\xc3\xbf", 4) == 0,
+            "terminated data ending at a page boundary converts");
+        free_nid_postfix(result);
+        result = nullptr;
+    }
+
+    {
+        GuardedPage page;
+        unsigned char* untouched = nullptr;
+        unsigned char** slot = page.Tail<unsigned char*>(&untouched, sizeof(untouched));
+        page.ReadOnly();
+        unsigned char text[] = {'A'};
+        Asn1String value{1, 12, text, 0};
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(slot, &value); }, "read-only output");
+        Rejects([&] { ASN1_STRING_to_UTF8_nid_postfix(reinterpret_cast<unsigned char**>(0x10), &value); }, "unmapped output");
+        Require(*slot == nullptr, "rejected output stays untouched");
+    }
+}
+
 std::size_t lastAllocationSize = 0;
 int allocationCount = 0;
 bool failAllocation = false;
@@ -352,6 +480,105 @@ void Allocator() {
     failAllocation = false;
 }
 
+void FileAndSocketBio() {
+    const auto tempRoot = std::filesystem::temp_directory_path() /
+        ("anyps5-libressl-bio-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directories(tempRoot), "create temp directory for BIO tests");
+    AddPathAlias_nid_no_patch("/bio-test", tempRoot.string().c_str());
+
+    const char* borrowedPath = "/bio-test/borrowed.txt";
+    FileStream* borrowedStream = fopen_nid_postfix(borrowedPath, "w+");
+    Require(borrowedStream != nullptr, "open borrowed guest FileStream");
+    LibreSsl::Bio* borrowedBio = BIO_new_fp_nid_postfix(borrowedStream, 0x10);
+    Require(borrowedBio != nullptr && borrowedBio->shutdown == 0 && borrowedBio->initialized == 1 && borrowedBio->data == borrowedStream,
+        "BIO_new_fp with 0x10 masks BioClose to 0");
+    Require(BIO_ctrl_nid_postfix(borrowedBio, 8, 0, nullptr) == 0, "BIO_CTRL_GET_CLOSE returns 0 for 0x10");
+    Require(BIO_write_nid_postfix(borrowedBio, "hi", 2) == 2, "write through borrowed file BIO");
+    Require(BIO_free_nid_postfix(borrowedBio) == 1, "free borrowed file BIO");
+    Require(fwrite_nid_postfix("!", 1, 1, borrowedStream) == 1, "borrowed FileStream remains writable after BIO_free");
+    Require(fflush_nid_postfix(borrowedStream) == 0, "flush borrowed FileStream");
+    rewind_nid_postfix(borrowedStream);
+    char content[4]{};
+    Require(fread_nid_postfix(content, 1, 3, borrowedStream) == 3 && std::memcmp(content, "hi!", 3) == 0,
+        "borrowed FileStream remains readable after BIO_free");
+    Require(fclose_nid_postfix(borrowedStream) == 0, "close borrowed FileStream");
+
+    const char* ownedPath = "/bio-test/owned.txt";
+    FileStream* ownedStream = fopen_nid_postfix(ownedPath, "w+");
+    Require(ownedStream != nullptr, "open owned guest FileStream");
+    LibreSsl::Bio* ownedBio = BIO_new_fp_nid_postfix(ownedStream, 0x11);
+    Require(ownedBio != nullptr && ownedBio->shutdown == 1 && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1,
+        "BIO_new_fp with 0x11 masks BioClose to 1");
+    Require(BIO_write_nid_postfix(ownedBio, "ok", 2) == 2, "write through owned file BIO");
+    Require(BIO_free_nid_postfix(ownedBio) == 1, "free owned file BIO closes stream");
+    FileStream* verifyStream = fopen_nid_postfix(ownedPath, "r");
+    Require(verifyStream != nullptr, "reopen file closed by BIO_free");
+    char verified[4]{};
+    Require(fread_nid_postfix(verified, 1, 2, verifyStream) == 2 && std::memcmp(verified, "ok", 2) == 0,
+        "owned FileStream flushed and closed on BIO_free");
+    Require(fclose_nid_postfix(verifyStream) == 0, "close verification FileStream");
+
+    LibreSsl::Bio* fileBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(fileBio != nullptr && fileBio->initialized == 0, "BIO_new(BIO_s_file()) starts uninitialized");
+    char scratch[4]{};
+    Require(fileBio->method->read(fileBio, scratch, sizeof(scratch)) == 0, "FileRead on uninitialized BIO returns 0");
+    Require(fileBio->method->write(fileBio, "abc", 3) == 0, "FileWrite on uninitialized BIO returns 0");
+    Require(fileBio->method->read(fileBio, scratch, -1) == -1, "FileRead keeps negative size returning -1");
+    Require(fileBio->method->write(fileBio, "abc", -1) == -1, "FileWrite keeps negative size returning -1");
+    fileBio->initialized = 1;
+    Require(fileBio->method->read(fileBio, scratch, sizeof(scratch)) == 0, "FileRead with null FileStream returns 0");
+    Require(BIO_write_nid_postfix(fileBio, "abc", 3) == 0, "BIO_write with null FileStream returns 0");
+    fileBio->initialized = 0;
+    Require(BIO_ctrl_nid_postfix(fileBio, 9, 0x12345678, nullptr) == 1, "BIO_CTRL_SET_CLOSE stores int on file BIO");
+    Require(fileBio->shutdown == 0x12345678 && BIO_ctrl_nid_postfix(fileBio, 8, 0, nullptr) == 0x12345678,
+        "BIO_CTRL_GET_CLOSE round-trips positive int on file BIO");
+    Require(BIO_ctrl_nid_postfix(fileBio, 9, -5, nullptr) == 1 && fileBio->shutdown == -5 &&
+        BIO_ctrl_nid_postfix(fileBio, 8, 0, nullptr) == -5, "BIO_CTRL_GET_CLOSE round-trips negative int on file BIO");
+    Require(BIO_ctrl_nid_postfix(fileBio, 9, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(fileBio, 8, 0, nullptr) == 0,
+        "BIO_CTRL_SET_CLOSE resets file BIO shutdown to 0");
+    Require(BIO_free_nid_postfix(fileBio) == 1, "free file BIO");
+
+    LibreSsl::Bio* socketBio = BIO_new_socket_nid_postfix(17, 0x2a);
+    Require(socketBio != nullptr && socketBio->shutdown == 0x2a && BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0x2a,
+        "BIO_new_socket stores arbitrary int closeFlag");
+    Require(BIO_ctrl_nid_postfix(socketBio, 9, 0x1357, nullptr) == 1 && socketBio->shutdown == 0x1357 &&
+        BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0x1357, "BIO_ctrl round-trips positive int on socket BIO");
+    Require(BIO_ctrl_nid_postfix(socketBio, 9, -3, nullptr) == 1 && socketBio->shutdown == -3 &&
+        BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == -3, "BIO_ctrl round-trips negative int on socket BIO");
+    Require(BIO_ctrl_nid_postfix(socketBio, 9, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0,
+        "reset socket BIO close flag before free");
+    Require(BIO_free_nid_postfix(socketBio) == 1, "free socket BIO");
+
+    const char* writeOnlyPath = "/bio-test/writeonly.txt";
+    FileStream* writeOnlyStream = fopen_nid_postfix(writeOnlyPath, "w");
+    Require(writeOnlyStream != nullptr, "open write-only FileStream");
+    LibreSsl::Bio* writeOnlyBio = BIO_new_fp_nid_postfix(writeOnlyStream, 0x11);
+    Require(writeOnlyBio != nullptr, "wrap write-only FileStream in BIO");
+    Require(BIO_write_nid_postfix(writeOnlyBio, nullptr, 4) == 0, "BIO_write with null buffer returns 0");
+    Require(writeOnlyBio->method->read(writeOnlyBio, nullptr, 4) == 0, "FileRead with null buffer returns 0");
+    Require(writeOnlyBio->method->write(writeOnlyBio, nullptr, 4) == 0, "FileWrite with null buffer returns 0");
+    Require(writeOnlyBio->method->read(writeOnlyBio, scratch, -1) == -1, "initialized FileRead with negative size returns -1");
+    Require(writeOnlyBio->method->write(writeOnlyBio, "abc", -1) == -1, "initialized FileWrite with negative size returns -1");
+    ERR_clear_error_nid_postfix();
+    errno = 0;
+    char byte = 0;
+    Require(writeOnlyBio->method->read(writeOnlyBio, &byte, 1) == -1, "FileRead on write-only FileStream returns -1");
+    const int readErrno = errno;
+    Require(readErrno != 0, "FileRead sets non-zero errno on write-only FileStream");
+    const std::uint64_t sysError = ERR_get_error_nid_postfix();
+    const std::uint64_t bioError = ERR_get_error_nid_postfix();
+    Require(sysError == ((2ULL << 24) | (0xfffULL << 12) | (static_cast<std::uint64_t>(readErrno) & 0xfff)),
+        "FileRead queues SYS error with function code 0xfff");
+    Require(bioError == ((32ULL << 24) | (0xfffULL << 12) | 2),
+        "FileRead queues BIO error with function code 0xfff");
+    Require(ERR_get_error_nid_postfix() == 0, "FileRead queues only SYS and BIO errors");
+    Require(BIO_free_nid_postfix(writeOnlyBio) == 1, "free write-only BIO");
+
+    RemovePathAlias_nid_no_patch("/bio-test");
+    std::error_code ignored;
+    std::filesystem::remove_all(tempRoot, ignored);
+}
+
 } // namespace
 
 int main(int argc, char**) {
@@ -367,4 +594,6 @@ int main(int argc, char**) {
     Strings();
     MalformedStrings();
     Times();
+    GuestPointers();
+    FileAndSocketBio();
 }

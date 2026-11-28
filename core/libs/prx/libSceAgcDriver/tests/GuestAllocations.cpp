@@ -127,7 +127,7 @@ void leaseSnapshotTests() {
     Require(readable.use_count() == 3, "the kept snapshots do not hold a readable range once each");
     {
         GuestAllocations::Mutation mutation;
-        mutation.Protect(memory.data() + 64, 64, false, false, true, [] {});
+        mutation.Protect(memory.data() + 64, 64, false, false, false, [] {});
     }
     Require(readable.expired(), "a kept snapshot holds a range that a protection change replaced");
     {
@@ -135,7 +135,15 @@ void leaseSnapshotTests() {
         Require(std::none_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64; }), "a lease taken after a range turned unreadable returned the old snapshot");
         const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
         const auto found = std::find_if(all.begin(), all.end(), [&](const auto& range) { return range->address == address + 64; });
-        Require(found != all.end() && !(*found)->readable && !(*found)->writable, "a lease of all ranges taken after a range turned unreadable returned the old snapshot");
+        Require(found != all.end() && !(*found)->readable && !(*found)->writable && !(*found)->gpu, "a lease of all ranges taken after a range turned unreadable returned the old snapshot");
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(memory.data() + 64, 64, false, false, true, true, [] {});
+    }
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(std::any_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64 && !range->readable && !range->writable && range->gpu && range->gpuWritable; }), "a lease taken after a range turned gpu-only missed it");
     }
     {
         GuestAllocations::Mutation mutation;
@@ -314,6 +322,19 @@ void RunUnmappedGapTests() {
     Require(GuestMemory::CommittedRanges(base + page, 2 * page) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base + 2 * page, base + 3 * page}}, "the pages after a query that starts in a gap were not described");
     Require(!GuestMemory::Accessible(block, 3 * page) && GuestMemory::Accessible(block + 2 * page, page, true), "an unmapped gap in host memory is misreported");
     Require(!GuestMemory::Accessible(reinterpret_cast<const void*>(std::uintptr_t{0x18}), 4), "a near-null address counts as accessible");
+    std::vector<std::byte> expectedBytes(3 * page, std::byte{0x5a});
+    std::memset(block, 0x5a, page);
+    std::memset(block + 2 * page, 0x5a, page);
+    Require(GuestMemory::CompareMapped(base, std::span<const std::byte>(expectedBytes.data(), page)) == GuestMemory::Compare::Equal, "equal host bytes do not compare equal");
+    Require(GuestMemory::CompareMapped(base, std::span<const std::byte>(expectedBytes.data(), 3 * page)) == GuestMemory::Compare::Unmapped, "a comparison across an unmapped gap in host memory is not reported unmapped");
+    expectedBytes[page - 1] = std::byte{0};
+    Require(GuestMemory::CompareMapped(base + page - 8, std::span<const std::byte>(expectedBytes.data() + page - 8, 8)) == GuestMemory::Compare::Differs, "differing host bytes do not compare different");
+    Require(GuestMemory::CompareMapped(base, std::span<const std::byte>(expectedBytes.data(), 3 * page)) == GuestMemory::Compare::Differs, "a difference before an unmapped gap in host memory is not reported");
+    std::vector<std::byte> hostBytes(40000, std::byte{0x33});
+    std::vector<std::byte> hostCopy(hostBytes);
+    Require(GuestMemory::CompareMapped(reinterpret_cast<std::uint64_t>(hostBytes.data()), hostCopy) == GuestMemory::Compare::Equal, "equal host bytes longer than one piece do not compare equal");
+    hostCopy[30000] = std::byte{0x34};
+    Require(GuestMemory::CompareMapped(reinterpret_cast<std::uint64_t>(hostBytes.data()), hostCopy) == GuestMemory::Compare::Differs, "a difference in a later piece of host bytes is not reported");
     munmap(block, page);
     munmap(block + 2 * page, page);
     alignas(4096) static std::array<std::byte, 4096> imagePage{};

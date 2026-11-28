@@ -82,6 +82,28 @@ def main():
                 assert headers[0] == (GNU_STACK, 6, 0, 0, 0, 0, 0, 16), headers
             else:
                 assert headers == stack_headers(original), (flags, headers)
+        case = Path(directory) / 'ignored-stack-file-offset'
+        modules = case / 'sce_module'
+        modules.mkdir(parents=True)
+        original = fixture(6)
+        struct.pack_into('<Q', original, 176 + 8, 0xffffffffffffffff)
+        (modules / 'provider.prx').write_bytes(original)
+        source = case / 'input.elf'
+        source.write_bytes(main_fixture())
+        for mode in ([], ['--windows'], ['--macos']):
+            output = case / ('output' + ('-'.join(mode) if mode else '-linux') + '.elf')
+            result = subprocess.run([str(relinker), *mode, str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (mode, result.stdout, result.stderr)
+            converted = case / 'app0' / 'sce_module' / 'provider.prx.guest.prx'
+            assert converted.exists(), (mode, 'guest module not written')
+            if not mode:
+                assert stack_headers(converted.read_bytes()) == stack_headers(original)
+                if native:
+                    run = subprocess.run([sys.executable, __file__, '--load', str(converted)],
+                                         capture_output=True, text=True, timeout=30)
+                    assert run.returncode == 0, (mode, run.returncode, run.stdout, run.stderr)
+        assert (modules / 'provider.prx').read_bytes() == original
         case = Path(directory) / 'duplicate'
         modules = case / 'sce_module'
         modules.mkdir(parents=True)

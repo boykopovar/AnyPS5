@@ -122,7 +122,6 @@ std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame8sourceIDEv(const void* s
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallStack4sizeEv(const void* self);
 std::uint32_t APS5_VABI _ZNK9Inspector24RemoteControllableTarget16targetIdentifierEv(const void* self);
 std::uint64_t APS5_VABI _ZNK7WebCore10ScrollView12contentsSizeEv(const void* self);
-std::uint64_t APS5_VABI WKAuthenticationChallengeGetDecisionListener(const void* self);
 std::uint64_t APS5_VABI WKAXObjectFrame(const void* self);
 std::uint64_t APS5_VABI WKBundlePageGetMainFrame(const void* self);
 std::uint64_t APS5_VABI WKFrameGetCertificateInfo(const void* self);

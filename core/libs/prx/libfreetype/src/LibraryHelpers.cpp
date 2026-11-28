@@ -19,11 +19,12 @@ extern "C" {
 int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestVector* sub) {
     const FT_Library host = library ? library->host : nullptr;
     if (!host || !sub) return FT_Library_SetLcdGeometry(host, nullptr);
-    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(sub, sizeof(*sub) * 3);
+    std::array<FreeType::GuestVector, 3> guest{};
+    if (!GuestCopyIn_nid_no_patch(guest.data(), sub, sizeof(guest))) return FT_Library_SetLcdGeometry(host, nullptr);
     std::array<FT_Vector, 3> native{};
     for (std::size_t index = 0; index < native.size(); ++index) {
-        if (!std::in_range<FT_Pos>(sub[index].x) || !std::in_range<FT_Pos>(sub[index].y)) NotImplemented_nid_no_patch(__func__);
-        native[index] = {static_cast<FT_Pos>(sub[index].x), static_cast<FT_Pos>(sub[index].y)};
+        if (!std::in_range<FT_Pos>(guest[index].x) || !std::in_range<FT_Pos>(guest[index].y)) NotImplemented_nid_no_patch(__func__);
+        native[index] = {static_cast<FT_Pos>(guest[index].x), static_cast<FT_Pos>(guest[index].y)};
     }
     return FT_Library_SetLcdGeometry(host, native.data());
 }
@@ -39,9 +40,8 @@ int APS5_VABI libfreetypeGetVarAxisFlags_nid_no_patch(void* master, std::uint32_
     FT_UInt value = 0;
     const FT_Error error = FT_Get_Var_Axis_Flags(native, axisIndex, &value);
     if (error) return error;
-    GuestArena::HostWrite write(flags, sizeof(*flags));
-    if (!write.Open()) return FT_Err_Invalid_Argument;
-    *flags = value;
+    GuestArena::HostWrite write(flags, sizeof(value));
+    if (!write.Open() || !GuestWritable_nid_no_patch(flags, sizeof(value)) || !GuestCopyOut_nid_no_patch(flags, &value, sizeof(value))) return FT_Err_Invalid_Argument;
     return 0;
 }
 APS5_EXPORT("+sDVkl3aAR8", libfreetypeGetVarAxisFlags_nid_no_patch);

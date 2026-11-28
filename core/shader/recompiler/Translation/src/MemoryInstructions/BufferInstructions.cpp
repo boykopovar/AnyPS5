@@ -32,6 +32,25 @@ MemoryInfo bufferMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 
 }
 
+void TranslationContext::bufferLoadToLds(const RdnaInstruction& inst, const MemoryInfo& memory, IrOpcode opcode, IrValue* resource, const BufferAddress& address) {
+    if (bufferLdsBytes == 0u) throw std::runtime_error("MUBUF LDS load requires a workgroup LDS allocation");
+    RdnaOperand m0{};
+    m0.kind = RdnaOperandKind::M0;
+    IrValue& base = ir.BitwiseAnd(readU32(m0).Value(), ir.Constant(0xffffu));
+    IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+    IrValue& target = ir.IAdd(ir.IAdd(base, ir.ShiftLeftLogical(lane, ir.Constant(2u))), ir.Constant(inst.memoryOffset));
+    IrValue& active = ir.LogicalAnd(ir.GetExec(), ir.ULessThan(target, ir.Constant(bufferLdsBytes)));
+    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& dword = memory.dataBits == 32u ? loaded : widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value();
+    MemoryInfo shared;
+    shared.kind = ResourceKind::Lds;
+    shared.dataDwords = 1u;
+    shared.dataBits = 32u;
+    shared.componentCount = 1u;
+    IrValue& aligned = ir.BitwiseAnd(target, ir.Constant(~3u));
+    (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&aligned, &dword, &active}, addMemoryInfo(shared, inst.programCounter));
+}
+
 bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
     memory.coherent = inst.glc || inst.dlc;
@@ -67,6 +86,10 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
+    if (inst.lds) {
+        bufferLoadToLds(inst, memory, opcode, resource, address);
+        return true;
+    }
     IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
     if (memory.dataBits != 32u) {
         writeOperand(inst.destination, &widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());

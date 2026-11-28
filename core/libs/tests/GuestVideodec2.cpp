@@ -214,6 +214,25 @@ void testFailures() {
     checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
     input.auSize = 2;
     checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
+    errno = 71;
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, reinterpret_cast<const InputData*>(0x10), &frame, &output); });
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, reinterpret_cast<FrameBuffer*>(0x10), &output); });
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, reinterpret_cast<OutputInfo*>(0x10)); });
+    checkThrows([&] { sceVideodec2Flush_nid_postfix(handle, reinterpret_cast<FrameBuffer*>(0x10), &output); });
+    checkThrows([&] { sceVideodec2Flush_nid_postfix(handle, &frame, reinterpret_cast<OutputInfo*>(0x10)); });
+    const InputData unmappedAu{sizeof(InputData), reinterpret_cast<const std::uint8_t*>(0x10), 16, 0, 0, 0};
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &unmappedAu, &frame, &output); });
+    check(errno == 71, "decode and flush pointer checks preserve errno");
+    OutputInfo undersizedOutput{0x28};
+    undersizedOutput.isValid = true;
+    check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &undersizedOutput) == static_cast<int>(0x811D0101u) && undersizedOutput.isValid, "undersized OutputInfo in Decode must be refused");
+    check(sceVideodec2Flush_nid_postfix(handle, &frame, &undersizedOutput) == static_cast<int>(0x811D0101u) && undersizedOutput.isValid, "undersized OutputInfo in Flush must be refused");
+    OutputInfo shortOutput{0x30};
+    shortOutput.frameFormat = 0x5a5a5a5au;
+    shortOutput.framePitchInBytes = 0xa5a5a5a5u;
+    const InputData emptyInput{sizeof(InputData), malformed.data(), 0, 0, 0, 0};
+    check(sceVideodec2Decode_nid_postfix(handle, &emptyInput, &frame, &shortOutput) == static_cast<int>(0x811D010Du), "empty access unit with 0x30 OutputInfo");
+    check(shortOutput.frameFormat == 0x5a5a5a5au && shortOutput.framePitchInBytes == 0xa5a5a5a5u, "0x30 OutputInfo overwrote tail fields");
     check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
     AvcPictureInfo avc{0x38};
     check(sceVideodec2GetAvcPictureInfo_nid_postfix(nullptr, &avc, nullptr) == static_cast<int>(0x811D0102u), "null AVC output error");
@@ -312,6 +331,13 @@ void testVp9PictureMetadata() {
         struct Snapshot { Vp9PictureInfo info{}; std::uint64_t guard = 0xfedcba9876543210ull; } snapshot;
         Videodec2Vp9PictureInfo_nid_no_patch(handle, output.frameBuffer, &snapshot.info);
         check(snapshot.info.thisSize == sizeof(Vp9PictureInfo) && snapshot.guard == 0xfedcba9876543210ull, "internal VP9 snapshot size or boundary differs");
+        errno = 71;
+        checkThrows([&] { Videodec2Vp9PictureInfo_nid_no_patch(handle, output.frameBuffer, reinterpret_cast<Vp9PictureInfo*>(0x10)); });
+        check(errno == 71, "preserves errno");
+        SceVideodec2::Internal::PictureHeader header{};
+        Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, &header);
+        checkThrows([&] { Videodec2PictureHeader_nid_no_patch(handle, output.frameBuffer, reinterpret_cast<SceVideodec2::Internal::PictureHeader*>(0x10)); });
+        check(errno == 71, "preserves errno");
         const auto& same = snapshot.info;
         const auto& expected = guarded.info;
         check(same.isValid && same.ptsData == expected.ptsData && same.dtsData == expected.dtsData && same.attachedData == expected.attachedData && same.profile == expected.profile && same.level == expected.level &&
@@ -800,6 +826,31 @@ void testAvcPictureMetadata() {
         if (picture < 2) check(avcFields(queryAvc(output)) == avcFields(plain[picture]), "AVC picture " + std::to_string(picture) + " before a PPS moved to another SPS differs");
         else checkUnprojected(output, sizeof(AvcPictureInfo));
     }) == ippp.size(), "AVC pictures after a PPS moved to another SPS are missing");
+
+    auto newSequence = ippp;
+    auto wideSpsAndPps = secondSpsAndPps;
+    wideSpsAndPps[11] = 14;
+    auto& idr = newSequence.front();
+    check(idr[10] == 0x67 && idr[35] == 0x68 && idr[43] == 0x65, "the IPPP fixture's IDR does not follow its SPS and PPS");
+    idr.erase(idr.begin() + 6, idr.begin() + 40);
+    idr.insert(idr.begin() + 6, wideSpsAndPps.begin(), wideSpsAndPps.end());
+    auto sequenceSwitches = ippp;
+    sequenceSwitches.insert(sequenceSwitches.end(), newSequence.begin(), newSequence.end());
+    sequenceSwitches.insert(sequenceSwitches.end(), ippp.begin(), ippp.end());
+    check(decodeAll(66, sequenceSwitches, [&](const OutputInfo& output, std::size_t picture) {
+        const auto unit = picture % ippp.size();
+        auto expected = plain[unit];
+        expected.ptsData = 1000 + picture;
+        expected.dtsData = picture;
+        expected.attachedData = 0xa0 + picture;
+        if (picture / ippp.size() == 1) {
+            expected.aspectRatioIdc = 14;
+            expected.sarWidth = 4;
+            expected.sarHeight = 3;
+        }
+        check(hash(output) == hashes[unit], "decoded AVC pixels changed across a sequence switch");
+        check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " reports the wrong sequence metadata");
+    }) == sequenceSwitches.size(), "AVC pictures are missing across sequence switches");
 }
 
 void testEmptyAccessUnit() {

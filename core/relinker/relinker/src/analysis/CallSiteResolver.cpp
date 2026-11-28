@@ -90,6 +90,8 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector
             if (!operand || operand->DisplacementOffset + 4 > textSection.size()) return;
             std::int32_t disp = readDisp32(textSection, operand->DisplacementOffset);
             VirtualAddress instrEnd = textSectionVAddr + m.Offset + static_cast<VirtualAddress>(m.Length);
+            if (disp < 0 && instrEnd < static_cast<VirtualAddress>(-static_cast<std::int64_t>(disp))) return;
+            if (disp > 0 && static_cast<VirtualAddress>(disp) > std::numeric_limits<VirtualAddress>::max() - instrEnd) return;
             VirtualAddress target = instrEnd + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
             if (operand->AddressSize32) target = static_cast<std::uint32_t>(target);
             _cachedTargetToInstr.emplace_back(target, m.Offset);

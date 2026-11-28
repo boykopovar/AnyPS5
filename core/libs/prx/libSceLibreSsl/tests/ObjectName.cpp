@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -68,6 +69,14 @@ void CheckBuiltIn() {
         Require(OBJ_sn2nid_nid_postfix(OBJ_nid2sn_nid_postfix(nid)) == nid, "every assigned short name maps back to its NID");
     }
     RequireThrows([] { OBJ_sn2nid_nid_postfix(nullptr); }, "a null name");
+    errno = 71;
+    RequireThrows([] { OBJ_sn2nid_nid_postfix(reinterpret_cast<const char*>(0x10)); }, "an unreadable name");
+    Require(errno == 71, "an unreadable name keeps errno");
+    alignas(4096) static char pages[8192];
+    std::memcpy(pages + 4093, "SHA256", 7);
+    Require(OBJ_sn2nid_nid_postfix(pages + 4093) == 672, "a name that crosses a page boundary");
+    std::memset(pages, 'a', sizeof(pages) - 1);
+    Require(OBJ_sn2nid_nid_postfix(pages) == 0, "a name longer than a page");
 }
 
 void CheckAdded() {

@@ -95,6 +95,9 @@ void collectRelativeEntries(
         if (rAddend < 0)
             throw RelinkerException("Relative relocation target address is negative", rOffset);
 
+        if (rOffset > std::numeric_limits<VirtualAddress>::max() - 8)
+            throw RelinkerException("Relocation target address overflow", rOffset);
+
         auto [it, inserted] = out.emplace(static_cast<VirtualAddress>(rOffset), static_cast<VirtualAddress>(rAddend));
         if (!inserted && it->second != static_cast<VirtualAddress>(rAddend))
             throw RelinkerException("Conflicting relative relocation targets for slot", rOffset);
@@ -119,6 +122,10 @@ public:
         result.reserve(_targets.size());
         for (const auto& entry : _targets) result.push_back(entry.second);
         return result;
+    }
+
+    std::map<VirtualAddress, VirtualAddress> SlotTargets() const override {
+        return {_targets.begin(), _targets.end()};
     }
 
 private:

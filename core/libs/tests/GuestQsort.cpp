@@ -108,6 +108,42 @@ bool ExpectReverseOrderR() {
     return true;
 }
 
+int APS5_VABI CountThunkCalls(void* thunk, const void*, const void*) {
+    ++*static_cast<int*>(thunk);
+    return 1;
+}
+
+bool ExpectQsortRShortInputs() {
+    Element elements[7] = {{2, 0}, {1, 1}, {3, 2}, {0, 3}, {6, 4}, {5, 5}, {4, 6}};
+    int calls = 0;
+    qsort_r_nid_postfix(nullptr, 0, sizeof(Element), &calls, CountThunkCalls);
+    qsort_r_nid_postfix(nullptr, 1, sizeof(Element), &calls, nullptr);
+    qsort_r_nid_postfix(elements, 1, sizeof(Element), &calls, CountThunkCalls);
+    qsort_r_nid_postfix(elements, 0, 0, &calls, nullptr);
+    qsort_r_nid_postfix(nullptr, 1, 0, &calls, nullptr);
+    for (std::size_t count = 2; count < 7; ++count) {
+        qsort_r_nid_postfix(elements, count, 0, &calls, CountThunkCalls);
+        qsort_r_nid_postfix(nullptr, count, 0, &calls, nullptr);
+    }
+    bool correct = calls == 0;
+    for (int index = 0; index < 7; ++index) correct &= elements[index].tag == index;
+    if (!correct) {
+        std::fprintf(stderr, "qsort_r of fewer than two elements or zero-size elements below 7: %d comparisons\n", calls);
+        return false;
+    }
+    bool threw = false;
+    try {
+        qsort_r_nid_postfix(elements, 7, 0, &calls, CountThunkCalls);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw || calls != 0) {
+        std::fprintf(stderr, "qsort_r of 7 zero-size elements did not throw before comparing\n");
+        return false;
+    }
+    return true;
+}
+
 bool ExpectQsortRValidation() {
     Element pair[2] = {{2, 0}, {1, 1}};
     int direction = 1;
@@ -116,13 +152,6 @@ bool ExpectQsortRValidation() {
     bool threw = false;
     try {
         qsort_r_nid_postfix(pair, 2, sizeof(Element), &direction, nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    if (!threw) return false;
-    threw = false;
-    try {
-        qsort_r_nid_postfix(pair, 2, 0, &direction, CompareKeysWithThunk);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -708,6 +737,42 @@ bool CheckMergesortCleanup() {
     }
     return true;
 }
+
+bool CheckHeapsortCleanup() {
+    InitializeHeap();
+    std::array<Element, 17> original{};
+    for (std::size_t index = 0; index < original.size(); ++index) original[index] = {static_cast<int>((index * 7) % 5), static_cast<int>(index)};
+    auto elements = original;
+    mergeComparisons = 0;
+    mergeFailureAt = 0;
+    if (heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0) return false;
+    const auto total = mergeComparisons;
+    for (std::size_t failure = 1; failure <= total; ++failure) {
+        elements = original;
+        mergeComparisons = 0;
+        mergeFailureAt = failure;
+        const auto allocated = allocations;
+        const auto released = releases;
+        bool caught = false;
+        try {
+            heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare);
+        } catch (const ComparisonFailure&) {
+            caught = true;
+        }
+        if (!caught || mergeComparisons != failure || allocations != allocated + 1 || releases != released + 1) {
+            std::fprintf(stderr, "heapsort cleanup failed at comparison %zu: caught=%d allocations=%zu releases=%zu\n",
+                failure, caught, allocations - allocated, releases - released);
+            mergeFailureAt = 0;
+            return false;
+        }
+    }
+    mergeFailureAt = 0;
+    elements = original;
+    if (heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0 || allocations != releases) return false;
+    for (std::size_t index = 1; index < elements.size(); ++index)
+        if (elements[index - 1].key > elements[index].key) return false;
+    return true;
+}
 }
 
 int main() {
@@ -721,6 +786,7 @@ int main() {
     correct &= ExpectOrderR("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
     correct &= ExpectReverseOrderR();
     correct &= ExpectQsortRValidation();
+    correct &= ExpectQsortRShortInputs();
     correct &= ExpectQsortS();
     correct &= ExpectQsortSConstraints();
     std::vector<int> keys;
@@ -745,5 +811,6 @@ int main() {
     correct &= CheckMergesortCleanup();
     correct &= CheckHeapsort();
     correct &= CheckHeapsortComparisons();
+    correct &= CheckHeapsortCleanup();
     return correct ? 0 : 1;
 }

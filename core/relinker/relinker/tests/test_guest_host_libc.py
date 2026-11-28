@@ -55,6 +55,32 @@ def main():
         needed = convert(relinker, work / "without-internal", ("libkernel.prx", "libc.prx"), ["libc.prx"])
         assert needed == ["$ORIGIN/app0/sce_module/libc.prx.guest.prx", "libkernel.prx"], needed
 
+        case = work / "kernel-sys-provider"
+        (case / "libs").mkdir(parents=True)
+        (case / "libs" / "libkernel_sys.prx").write_bytes(b"provider")
+        needed = convert(relinker, case, ("libkernel.prx",), ["other.prx"])
+        assert needed == ["$ORIGIN/app0/sce_module/other.prx.guest.prx", "libkernel.prx", "libkernel_sys.prx"], needed
+
+        for label, first_exists, second_exists, provider_index, expected in (
+                ("existing-provider", True, True, 1, True),
+                ("missing-provider", False, True, 1, True),
+                ("provider-missing", True, False, 0, True),
+                ("missing-empty", False, True, None, False)):
+            case = work / f"runpath-{label}"
+            first, second = case / "first", case / "second"
+            if first_exists:
+                first.mkdir(parents=True)
+            if second_exists:
+                second.mkdir(parents=True)
+            if provider_index is not None:
+                provider_directory = (first, second)[provider_index]
+                provider_directory.mkdir(parents=True, exist_ok=True)
+                (provider_directory / "libkernel_sys.prx").write_bytes(b"provider")
+            run_path = "$ORIGIN/first:$ORIGIN/second"
+            needed = convert(relinker, case, ("libkernel.prx",), ["other.prx"],
+                             ["--rpath", run_path])
+            assert ("libkernel_sys.prx" in needed) == expected, (label, needed)
+
         needed = convert(relinker, work / "not-bundled", imports, ["other.prx"])
         assert needed == ["$ORIGIN/app0/sce_module/other.prx.guest.prx", *imports], needed
 

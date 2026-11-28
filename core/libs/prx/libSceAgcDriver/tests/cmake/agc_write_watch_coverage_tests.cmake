@@ -4,8 +4,9 @@ if(BUILD_TESTING)
     target_link_libraries(agc_write_watch_coverage_tests PRIVATE libc)
     configure_windows_unwind(agc_write_watch_coverage_tests)
     add_test(NAME agc_write_watch_coverage COMMAND agc_write_watch_coverage_tests)
+    add_test(NAME agc_write_watch_coverage_no_summary COMMAND agc_write_watch_coverage_tests --no-summary)
     if(WIN32)
-        set_tests_properties(agc_write_watch_coverage PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_write_watch_coverage agc_write_watch_coverage_no_summary PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

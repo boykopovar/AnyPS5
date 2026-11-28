@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Opaque black borders under a T# DST_SEL that moves alpha](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Sampler.cpp) (libSceAgcDriver) - RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) swizzles an opaque black border by the T# DST_SEL like a texel (8_8_8_8_UNORM/UINT with W,Z,Y,X: (1, 0, 0, 0)); other formats are unmeasured. Without `borderColorSwizzleFromImage` (NVIDIA) an S# takes one view's border component mapping, so a DST_SEL that moves the border keeps the host's border (logged once) when the S# also samples another swizzle or sRGB encoding, when a 5_6_5, 1_5_5_5 or 4_4_4_4 host channel order changes the result, or without VK_EXT_border_color_swizzle; an image-table texture that disagrees gets its S#'s border. There, DST_SELs that keep the border stay unswizzled; NVIDIA (RTX 5080, 610.74) returns them like RDNA2. With `borderColorSwizzleFromImage` those host channel orders swizzle the border too: a 1_5_5_5 texture with X,Y,Z,W returns (1, 0, 0, 0).

@@ -1,8 +1,10 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +12,15 @@
 #include <exception>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -217,6 +228,17 @@ void RequireCaretSteps(const std::vector<Recorded>& events, uint32_t direction, 
 void CheckValidation() {
     Buffers buffers;
     Require(sceImeOpen_nid_postfix(nullptr, nullptr) == InvalidAddress, "null param");
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(reinterpret_cast<const Param*>(0x10), nullptr) == InvalidAddress, "unmapped param");
+    Require(errno == 71, "preserve errno on unmapped param");
+    Param validParam = MakeParam(buffers, 16);
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(&validParam, reinterpret_cast<const ExtendedParam*>(0x10)) == InvalidAddress, "unmapped extended param");
+    Require(errno == 71, "preserve errno on unmapped extended param");
+    validParam.input_text_buffer = reinterpret_cast<char16_t*>(0x10);
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(&validParam, nullptr) == InvalidAddress, "unmapped input text buffer");
+    Require(errno == 71, "preserve errno on unmapped input text buffer");
     Require(sceImeUpdate(nullptr) == NotOpened, "null handler with nothing open");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
@@ -271,6 +293,78 @@ void CheckValidation() {
     Require(sceImeOpen_nid_postfix(&param, &extFilters) == 0, "open with an external keyboard filter");
     Require(ImeCapturesKeyboard_nid_postfix(), "external keyboard filter session not open");
     Require(sceImeClose_nid_postfix() == 0, "close the external keyboard filter session");
+}
+
+struct GuardedTextPages {
+    std::uint8_t* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedTextPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr, "guarded VirtualAlloc failed");
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guarded VirtualProtect failed");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "sysconf page size failed");
+        pageSize = static_cast<std::size_t>(page);
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "guarded mmap failed");
+        base = static_cast<std::uint8_t*>(mapping);
+        Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "guarded mprotect failed");
+#endif
+    }
+
+    ~GuardedTextPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 2);
+#endif
+    }
+
+    char16_t* AtEnd(std::size_t unitsBeforeBoundary) const {
+        return reinterpret_cast<char16_t*>(base + pageSize - unitsBeforeBoundary * sizeof(char16_t));
+    }
+};
+
+void CheckGuardedSetText(Buffers& buffers) {
+    errno = 71;
+    Require(sceImeSetText(reinterpret_cast<const char16_t*>(0x10), 1) == InvalidAddress, "unmapped set text");
+    Require(errno == 71, "preserve errno on unmapped set text");
+    Require(std::u16string(buffers.text) == u"hello", "unmapped set text left input buffer");
+    Require(std::u16string(reinterpret_cast<const char16_t*>(buffers.work)) == u"hello", "unmapped set text left work buffer");
+
+    GuardedTextPages guarded;
+    char16_t* exactEnd = guarded.AtEnd(3);
+    exactEnd[0] = u'a';
+    exactEnd[1] = u'b';
+    exactEnd[2] = u'c';
+    Require(sceImeSetText(exactEnd, 3) == 0, "exact-length set text at page end");
+    Require(std::u16string(buffers.text) == u"abc", "exact-length set text value");
+
+    char16_t* terminatedEnd = guarded.AtEnd(3);
+    terminatedEnd[0] = u'o';
+    terminatedEnd[1] = u'k';
+    terminatedEnd[2] = u'\0';
+    Require(sceImeSetText(terminatedEnd, 16) == 0, "nul-terminated set text at page end");
+    Require(std::u16string(buffers.text) == u"ok", "nul-terminated set text value");
+
+    char16_t* crossing = guarded.AtEnd(2);
+    crossing[0] = u'x';
+    crossing[1] = u'y';
+    errno = EDOM;
+    Require(sceImeSetText(crossing, 4) == InvalidAddress, "crossing set text");
+    Require(errno == EDOM, "preserve errno on crossing set text");
+    Require(std::u16string(buffers.text) == u"ok", "crossing set text left input buffer");
+    Require(std::u16string(reinterpret_cast<const char16_t*>(buffers.work)) == u"ok", "crossing set text left work buffer");
+
+    Require(sceImeSetText(u"hello", 5) == 0, "restore text after guarded set text checks");
 }
 
 void CheckEditing() {
@@ -347,9 +441,13 @@ void CheckEditing() {
     Require(sceImeSetText(u"hello", 5) == 0, "set text");
     Require(std::u16string(buffers.text) == u"hello", "set text buffer");
     Require(Drain().empty(), "set text queued an event");
+    CheckGuardedSetText(buffers);
     Caret caret{};
     caret.index = 6;
     Require(sceImeSetCaret(nullptr) == InvalidAddress, "null caret");
+    errno = 71;
+    Require(sceImeSetCaret(reinterpret_cast<const Caret*>(0x10)) == InvalidAddress, "unmapped caret");
+    Require(errno == 71, "preserve errno on unmapped caret");
     Require(sceImeSetCaret(&caret) == InvalidParam, "caret past the text");
     caret.index = 1;
     Require(sceImeSetCaret(&caret) == 0, "set caret");
@@ -373,6 +471,7 @@ void CheckEditing() {
     Publish(ImeHostInputKind::Text, "ignored");
     Require(std::u16string(buffers.text) == u"hXello", "input after close");
     Require(sceImeSetText(u"a", 1) == NotOpened, "set text after close");
+    Require(sceImeSetText(reinterpret_cast<const char16_t*>(0x10), 1) == NotOpened, "unmapped set text checks open panel first");
 }
 
 void CheckMultiline() {
@@ -591,6 +690,42 @@ void CheckHostEvents() {
     Require(sceImeClose_nid_postfix() == 0, "host events close");
 }
 
+void CheckMultilineHostNavigation() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 16);
+    param.option = 1;
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "host navigation open");
+    Drain();
+
+    ImeTextInput input;
+    SDL_Event key{};
+    key.type = SDL_KEYDOWN;
+    key.key.windowID = 7;
+    SDL_Event text{};
+    text.type = SDL_TEXTINPUT;
+    text.text.windowID = 7;
+    std::strcpy(text.text.text, "X");
+
+    const auto check = [&](SDL_Scancode scancode, uint16_t mods, const char16_t* expected, const char* message) {
+        Require(sceImeSetText(u"a\r\nbc\nd", 7) == 0, "host navigation set text");
+        Caret caret{};
+        caret.index = 4;
+        Require(sceImeSetCaret(&caret) == 0, "host navigation set caret");
+        key.key.keysym.scancode = scancode;
+        key.key.keysym.mod = mods;
+        input.HandleEvent(key, 7);
+        input.HandleEvent(text, 7);
+        Drain();
+        Require(std::u16string(buffers.text) == expected, message);
+    };
+
+    check(SDL_SCANCODE_HOME, KMOD_NONE, u"a\r\nXbc\nd", "Home moves to the start of the current line");
+    check(SDL_SCANCODE_END, KMOD_NONE, u"a\r\nbcX\nd", "End moves to the end of the current line");
+    check(SDL_SCANCODE_HOME, KMOD_LCTRL, u"Xa\r\nbc\nd", "Ctrl+Home moves to the start of the buffer");
+    check(SDL_SCANCODE_END, KMOD_RCTRL, u"a\r\nbc\ndX", "Ctrl+End moves to the end of the buffer");
+    Require(sceImeClose_nid_postfix() == 0, "host navigation close");
+}
+
 void CheckMalformedHostText() {
     Buffers buffers;
     Param param = MakeParam(buffers, 16);
@@ -620,6 +755,159 @@ void CheckMalformedHostText() {
     Require(sceImeClose_nid_postfix() == 0, "malformed text close");
 }
 
+constexpr std::uint32_t PadL2 = 0x0100;
+constexpr std::uint32_t PadR2 = 0x0200;
+constexpr std::uint32_t PadL1 = 0x0400;
+constexpr std::uint32_t PadR1 = 0x0800;
+constexpr std::uint32_t PadTriangle = 0x1000;
+constexpr std::uint32_t PadCircle = 0x2000;
+constexpr std::uint32_t PadCross = 0x4000;
+constexpr std::uint32_t PadSquare = 0x8000;
+
+int g_foreignPads = 0;
+
+void ForeignPad(const ImeHostPad&) {
+    ++g_foreignPads;
+}
+
+void Pad(std::uint32_t buttons) {
+    ImePublishPad_nid_postfix({buttons, 128, 128, 0});
+}
+
+void Press(std::uint32_t button) {
+    Pad(button);
+    Pad(0);
+}
+
+std::u16string SelectedLabel() {
+    ImeKeyboardView view;
+    Require(ImeReadKeyboardView_nid_postfix(view), "keyboard view");
+    for (const auto& key : view.keys) {
+        if (key.selected) return key.label;
+    }
+    Require(false, "no selected key");
+    return {};
+}
+
+void CheckPadKeyboard() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 8);
+    ImeKeyboardView view;
+    Require(!ImeCapturesPad_nid_postfix() && !ImeReadKeyboardView_nid_postfix(view), "panel before open");
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "pad open");
+    Require(ImeCapturesPad_nid_postfix(), "pad not captured");
+    Require(ImeReadKeyboardView_nid_postfix(view) && view.rows != 0 && view.columns != 0 && !view.keys.empty(), "panel layout");
+    Require(view.text.empty() && view.caret == 0, "panel text at open");
+    Drain();
+
+    Pad(0);
+    const std::u16string key = SelectedLabel();
+    Require(key.size() == 1, "selected key label");
+    g_events.clear();
+    Press(PadCross);
+    Require(g_events.empty(), "pad edit delivered outside update");
+    auto events = Drain();
+    Require(events.size() == 1, "pad key event");
+    RequireText(events[0], EventUpdateText, key, 1, 0, 1);
+    Require(std::u16string(buffers.text) == key, "pad key buffer");
+    Require(ImeReadKeyboardView_nid_postfix(view) && view.text == key && view.caret == 1, "panel text after a key");
+
+    Press(PadTriangle);
+    events = Drain();
+    Require(events.size() == 1, "pad space event");
+    RequireText(events[0], EventUpdateText, key + u" ", 2, 1, 1);
+
+    Press(PadL1);
+    RequireCaretSteps(Drain(), 1, 1);
+    Press(PadR1);
+    RequireCaretSteps(Drain(), 2, 1);
+
+    Press(PadSquare);
+    events = Drain();
+    Require(events.size() == 1, "pad backspace event");
+    RequireText(events[0], EventUpdateText, key, 1, 1, -1);
+
+    Press(PadL2);
+    const std::u16string upper = SelectedLabel();
+    Require(upper != key, "shift changes the selected key");
+    Press(PadCross);
+    events = Drain();
+    Require(events.size() == 1, "pad shifted key event");
+    RequireText(events[0], EventUpdateText, key + upper, 2, 1, 1);
+    Require(SelectedLabel() == key, "shift ends after one key");
+
+    Pad(PadL1);
+    Pad(PadL1 | PadSquare);
+    Pad(0);
+    events = Drain();
+    Require(events.size() == 2, "pad clear events");
+    Require(events[0].id == EventUpdateCaret && events[0].param.caret_move == 1, "pad clear caret step");
+    RequireText(events[1], EventUpdateText, u"", 0, 0, -2);
+    Require(buffers.text[0] == u'\0', "pad clear buffer");
+    Pad(PadL1);
+    Pad(PadL1 | PadSquare);
+    Pad(0);
+    Require(Drain().empty(), "clearing empty text");
+
+    Press(PadR2);
+    events = Drain();
+    Require(events.size() == 1, "pad done event");
+    RequireText(events[0], EventPressEnter, u"", 0, 0, 0);
+    Press(PadCircle);
+    events = Drain();
+    Require(events.size() == 1, "pad cancel event");
+    RequireText(events[0], EventPressClose, u"", 0, 0, 0);
+
+    Require(sceImeClose_nid_postfix() == 0, "pad close");
+    Require(!ImeCapturesPad_nid_postfix() && !ImeReadKeyboardView_nid_postfix(view), "panel after close");
+}
+
+void CheckPadKeyboardMultiline() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 8);
+    param.option = 1;
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "pad multiline open");
+    Drain();
+    Pad(0);
+    Press(PadR2);
+    const auto events = Drain();
+    Require(events.size() == 1, "pad multiline done event");
+    RequireText(events[0], EventPressEnter, u"", 0, 0, 0);
+    Require(buffers.text[0] == u'\0', "pad multiline done inserted text");
+    Require(sceImeClose_nid_postfix() == 0, "pad multiline close");
+}
+
+void CheckPadKeyboardDisabled() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 8);
+    ExtendedParam extended{};
+    extended.disable_device = 1;
+    ImeKeyboardView view;
+    Require(sceImeOpen_nid_postfix(&param, &extended) == 0, "disabled pad open");
+    Require(!ImeCapturesPad_nid_postfix() && !ImeReadKeyboardView_nid_postfix(view), "disabled pad shows a panel");
+    Drain();
+    Press(PadCross);
+    Require(Drain().empty(), "disabled pad typed");
+    Publish(ImeHostInputKind::Text, "a");
+    Require(Drain().size() == 1, "host typing with the pad disabled");
+    Require(sceImeClose_nid_postfix() == 0, "disabled pad close");
+}
+
+void CheckPadKeyboardForeignSink() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 8);
+    ImeKeyboardView view;
+    ImeSetHostPadSink_nid_no_patch(&ForeignPad);
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "foreign sink open");
+    Require(!ImeReadKeyboardView_nid_postfix(view), "panel shown over a foreign sink");
+    Drain();
+    Press(PadCross);
+    Require(g_foreignPads == 2 && Drain().empty(), "foreign sink lost the pad");
+    Require(sceImeClose_nid_postfix() == 0, "foreign sink close");
+    Require(ImeCapturesPad_nid_postfix(), "close removed a foreign sink");
+    ImeSetHostPadSink_nid_no_patch(nullptr);
+}
+
 }
 
 int main() {
@@ -629,5 +917,10 @@ int main() {
     CheckCaretSurrogateBoundary();
     CheckTextFilter();
     CheckHostEvents();
+    CheckMultilineHostNavigation();
     CheckMalformedHostText();
+    CheckPadKeyboard();
+    CheckPadKeyboardMultiline();
+    CheckPadKeyboardDisabled();
+    CheckPadKeyboardForeignSink();
 }

@@ -30,23 +30,11 @@ std::uint8_t APS5_VABI __std_min_1u_nid_postfix(const void* first, const void* l
     return ByteExtremum(first, last, true);
 }
 
-int APS5_VABI __truncdfhf2_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_atomic_wait_direct_8_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceLibcInternalPrimitiveMallocStats_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_atomic_wait_direct_16_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

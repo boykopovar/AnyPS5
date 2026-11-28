@@ -133,6 +133,30 @@ void APS5_VABI _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(void* ptr, std::ui
     NKWebKit::Deallocate(ptr);
 }
 
+void* APS5_VABI _ZN7bmalloc11IsoTLSEntrynwEm(std::size_t size) {
+    return _ZN7bmalloc3api15mallocOutOfLineEmNS_8HeapKindE(size, 0);
+}
+
+void APS5_VABI _ZN7bmalloc11IsoTLSEntrydlEPv(void* ptr) {
+    _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(ptr, 0);
+}
+
+void* APS5_VABI _ZN7bmalloc11IsoTLSEntrynaEm(std::size_t size) {
+    return _ZN7bmalloc3api15mallocOutOfLineEmNS_8HeapKindE(size, 0);
+}
+
+void* APS5_VABI _ZN7bmalloc15IsoHeapImplBasenwEm(std::size_t size) {
+    return _ZN7bmalloc3api15mallocOutOfLineEmNS_8HeapKindE(size, 0);
+}
+
+void APS5_VABI _ZN7bmalloc15IsoHeapImplBasedlEPv(void* ptr) {
+    _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(ptr, 0);
+}
+
+void* APS5_VABI _ZN7bmalloc15IsoHeapImplBasenaEm(std::size_t size) {
+    return _ZN7bmalloc3api15mallocOutOfLineEmNS_8HeapKindE(size, 0);
+}
+
 void* APS5_VABI _ZN7bmalloc3api29tryLargeZeroedMemalignVirtualEmmNS_8HeapKindE(std::size_t alignment, std::size_t size, std::uint32_t) {
     void* ptr = NKWebKit::TryAllocate(size, alignment);
     if (ptr) {

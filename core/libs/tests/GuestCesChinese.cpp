@@ -288,8 +288,8 @@ int main() {
     Require(sceCesEucCnToUcs2(euc, Bytes("\xD6\xD0"), 2, &consumed, &ucs2) == 0 && consumed == 2 && ucs2 == 0x4E2D);
     Require(sceCesEucCnToUcs2(euc, Bytes("A"), 1, &consumed, &ucs2) == 0 && consumed == 1 && ucs2 == 'A');
     Require(sceCesEucCnToUcs2(euc, Bytes("\xA1\xA4"), 2, &consumed, &ucs2) == 0 && ucs2 == 0x00B7);
-    Require(sceCesEucCnToUcs2(euc, Bytes("\x80"), 1, &consumed, &ucs2) == invalidEncode);
-    Require(sceCesEucCnToUcs2(euc, Bytes("\x81\x40"), 2, &consumed, &ucs2) == invalidEncode);
+    Require(sceCesEucCnToUcs2(euc, Bytes("\x80"), 1, &consumed, &ucs2) == 0 && consumed == 1 && ucs2 == 0x80);
+    Require(sceCesEucCnToUcs2(euc, Bytes("\x81\x40"), 2, &consumed, &ucs2) == 0 && consumed == 1 && ucs2 == 0x81);
     Require(sceCesEucCnToUcs2(euc, Bytes("\xD6\x40"), 2, &consumed, &ucs2) == invalidEncode);
     Require(sceCesEucCnToUcs2(euc, Bytes("\xD6\xD0"), 1, &consumed, &ucs2) == srcBufferEnd);
     Require(sceCesEucCnToUcs2(euc, Bytes("\xAA\xA1"), 2, &consumed, &ucs2) == unassignedCode);
@@ -381,7 +381,9 @@ int main() {
         }
         if (sceCesUcs2ToEucCn(static_cast<std::uint16_t>(code), euc, encoded, sizeof(encoded), &size) == 0) {
             Require(size == 1 || (encoded[0] >= 0xA1 && encoded[1] >= 0xA1));
-            Require(sceCesEucCnToUcs2(euc, encoded, size, &consumed, &back) == 0 && consumed == size && back == code);
+            const int decoded = sceCesEucCnToUcs2(euc, encoded, size, &consumed, &back);
+            const bool leftOut = decoded == unassignedCode && size == 2 && (encoded[0] == 0xA2 || encoded[0] == 0xA6 || encoded[0] == 0xA8);
+            Require((decoded == 0 && consumed == size && back == code) || leftOut);
             ++eucCount;
         }
     }
@@ -414,5 +416,18 @@ int main() {
     Require(sceCesUtf8ToGb(Bytes("\xD6\xD0"), 2, nullptr, gb2005, nullptr, 0, nullptr) == invalidDstBuffer);
     CheckGb18030(gb2000, false, 0xE61D3BD3, 0x83476043, 0x469CFCE5, 0, 0);
     CheckGb18030(gb2005, true, 0xE4CF78F0, 0x8D188DFC, 0xD675EFA1, 0, 0);
+
+    alignas(8) std::uint8_t gb2022Sheet[64] = {};
+    const void* gb2022 = sceCesUcsProfileInitGb18030_2022(gb2022Sheet);
+    Require(gb2022 == gb2022Sheet);
+    for (std::uint32_t cell = 0; cell < 126 * 190; ++cell) {
+        const std::uint32_t column = cell % 190;
+        const std::uint32_t bytes = (0x81 + cell / 190) << 8 | (column < 0x3F ? 0x40 + column : 0x41 + column);
+        const std::uint32_t code = Gb18030Decode(gb2022, bytes);
+        Require(code != 0 && Gb18030Encode(gb2022, code) == bytes);
+    }
+    Require(Gb18030Decode(gb2022, 0xA8BC) == 0x1E3F && Gb18030Encode(gb2022, 0x1E3F) == 0xA8BC);
+    Require(Gb18030Decode(gb2022, 0x8135F437) == 0xE7C7 && Gb18030Encode(gb2022, 0xE7C7) == 0x8135F437);
+    Require(Gb18030Decode(gb2022, 0xD6D0) == 0x4E2D && Gb18030Encode(gb2022, 0x4E2D) == 0xD6D0);
     return 0;
 }

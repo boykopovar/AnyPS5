@@ -51,6 +51,8 @@ void TestStat() {
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(root.c_str(), nullptr, &error) == TypeDirectory && error == 0, "directory");
     perms = 1234;
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("missing").c_str(), &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "missing path");
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("file").c_str(), reinterpret_cast<int*>(0x10), reinterpret_cast<int*>(0x10)) == TypeRegular, "regular file with unwritable outputs");
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("missing").c_str(), &perms, reinterpret_cast<int*>(0x10)) == TypeNotFound, "missing path with an unwritable error output");
 }
 
 void TestStatInvalidPath() {
@@ -111,6 +113,7 @@ void TestCurrent() {
     Require(_ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(current), "current directory");
     Require(std::strcmp(current, "/") == 0, "current directory is the sandbox root");
     Require(static_cast<unsigned char>(current[2]) == 0x5a, "current directory writes two bytes");
+    Require(!_ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(reinterpret_cast<char*>(std::uintptr_t{0x10})), "current directory reports an unwritable buffer");
 }
 
 }

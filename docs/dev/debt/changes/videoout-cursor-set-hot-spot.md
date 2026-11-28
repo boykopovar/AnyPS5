@@ -1,0 +1,5 @@
+# libSceVideoOut
+
+## change [sceVideoOutCursorEnable, sceVideoOutCursorDisable, sceVideoOutCursorSetImageAddress, sceVideoOutCursorSetPosition]
+
+- [sceVideoOutCursorEnable, sceVideoOutCursorDisable, sceVideoOutCursorSetImageAddress, sceVideoOutCursorSetPosition, sceVideoOutCursorSetHotSpot](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) - no cursor is shown: image format and size are unknown, so a non-null address and index other than 0 report not implemented. `CursorSetPosition` and `CursorSetHotSpot` return 0 for any coordinate but only (100, 100) was measured. In a payload process on a PS5 (firmware 12.70) with no buffer registered: `CursorEnable` and `CursorSetImageAddress` with (handle, 0, NULL) returned 0x80290002, `CursorSetPosition(handle, 0, 100, 100)` and `CursorDisable(handle, 0)` returned 0, and all returned 0x8029000b for handle -1. A closed handle is unmeasured and answered like -1. Parameters follow Prospero Win's [declarations](https://github.com/mpereiraesaa/prospero-win/blob/644e32e400c555e340d507383398c5d21b39b0b0/wine/ps5/pw_vulkan_radv.c#L65-L68).

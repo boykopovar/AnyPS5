@@ -174,13 +174,14 @@ std::vector<HostVolume> ScanDeviceVolumes() {
 #endif
 }
 
-std::optional<HostVolume> HostFolderVolume(std::string_view folder) {
-    if (folder.empty()) return std::nullopt;
-    const auto root = Utf8Path(folder);
+namespace {
+
+std::optional<HostVolume> MountFolder(const std::filesystem::path& root) {
     std::error_code error;
     if (!std::filesystem::is_directory(root, error) || error) return std::nullopt;
+    const auto name = root.u8string();
     HostVolume volume;
-    volume.key = "anyps5-folder:" + root.string();
+    volume.key = "anyps5-folder:" + std::string(name.begin(), name.end());
     volume.root = root;
     const auto space = std::filesystem::space(root, error);
     volume.volumeSize = error ? 0 : static_cast<std::uint64_t>(space.capacity);
@@ -190,10 +191,21 @@ std::optional<HostVolume> HostFolderVolume(std::string_view folder) {
     return volume;
 }
 
+}
+
+std::optional<HostVolume> HostFolderVolume(std::string_view folder) {
+    if (folder.empty()) return std::nullopt;
+    return MountFolder(Utf8Path(folder));
+}
+
 std::vector<HostVolume> HostFolderVolumes() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_STORAGE_FOLDER");
+#else
     const char* configured = std::getenv("ANYPS5_STORAGE_FOLDER");
-    if (configured == nullptr || configured[0] == '\0') return {};
-    auto volume = HostFolderVolume(configured);
+#endif
+    if (configured == nullptr || configured[0] == 0) return {};
+    auto volume = MountFolder(std::filesystem::path(configured));
     if (!volume) {
         std::fprintf(stderr, "[usb] ANYPS5_STORAGE_FOLDER is not a directory, nothing is mounted\n");
         return {};

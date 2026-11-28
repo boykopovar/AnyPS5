@@ -45,6 +45,7 @@ extern "C" {
 
 int APS5_VABI FT_Outline_Embolden_nid_postfix(GuestOutline* outline, std::int64_t strength) {
     if (!outline) return FT_Outline_Embolden(nullptr, 0);
+    if (strength / 2 == 0) return FT_Err_Ok;
     NativeOutline native(*outline, __func__);
     const FT_Error error = FT_Outline_Embolden(&native.outline, HostCoordinate(strength, __func__));
     native.Publish(*outline);
@@ -53,6 +54,7 @@ int APS5_VABI FT_Outline_Embolden_nid_postfix(GuestOutline* outline, std::int64_
 
 int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(GuestOutline* outline, std::int64_t xStrength, std::int64_t yStrength) {
     if (!outline) return FT_Outline_EmboldenXY(nullptr, 0, 0);
+    if (xStrength / 2 == 0 && yStrength / 2 == 0) return FT_Err_Ok;
     NativeOutline native(*outline, __func__);
     const FT_Error error = FT_Outline_EmboldenXY(&native.outline, HostCoordinate(xStrength, __func__), HostCoordinate(yStrength, __func__));
     native.Publish(*outline);

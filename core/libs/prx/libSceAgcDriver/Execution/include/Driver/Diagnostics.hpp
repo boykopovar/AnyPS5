@@ -2,8 +2,10 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DIAGNOSTICS_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -21,7 +23,30 @@ public:
     std::uint64_t address;
 };
 
+class DrawCompilePending final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 bool SkipRefusedDraws();
+bool AsyncDrawCompile();
+std::size_t AsyncComputePipelineWords();
+std::chrono::milliseconds AsyncDispatchWait();
+
+class BackgroundWaitScope {
+public:
+    BackgroundWaitScope();
+    ~BackgroundWaitScope();
+    BackgroundWaitScope(const BackgroundWaitScope&) = delete;
+    BackgroundWaitScope& operator=(const BackgroundWaitScope&) = delete;
+
+private:
+    bool previous;
+};
+
+bool AwaitBackgroundJob(std::mutex& mutex, const bool& finished, bool& waited);
+void NoteDispatchDropped(std::uint64_t address);
+void NoteDispatchRecorded(std::uint64_t address);
 
 void ReportRefusedDraw(const RefusedDraw& refused);
 std::optional<std::size_t> RefusedShaderCount();

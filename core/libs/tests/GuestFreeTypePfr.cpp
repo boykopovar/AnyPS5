@@ -1,4 +1,5 @@
 #include "FreeTypeFontFixture.hpp"
+#include "FreeTypeQueryOutputFixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include <nid/NidCompute.hpp>
 #include <ft2build.h>
@@ -218,6 +219,77 @@ static void KerningCases(Kerning call, GuestFaceRec* face, bool pfr) {
     }
 }
 
+static void MetricsProtection(Metrics call, GuestFaceRec* face, bool pfr) {
+    QueryOutputFixture::Pages pages;
+    const std::array<std::size_t, 4> widths{4, 4, 8, 8};
+    for (std::size_t selected = 0; selected < widths.size(); ++selected) {
+        pages.Reject(widths[selected], [&](void* pointer) {
+            std::uint32_t outline = 11, metrics = 22;
+            std::int64_t x = 33, y = 44;
+            const int error = call(face, selected == 0 ? static_cast<std::uint32_t*>(pointer) : &outline,
+                selected == 1 ? static_cast<std::uint32_t*>(pointer) : &metrics,
+                selected == 2 ? static_cast<std::int64_t*>(pointer) : &x,
+                selected == 3 ? static_cast<std::int64_t*>(pointer) : &y);
+            return error == (pfr ? FT_Err_Invalid_Argument : FT_Err_Unknown_File_Format) &&
+                outline == 11 && metrics == 22 && x == 33 && y == 44;
+        });
+        pages.Reject(widths[selected], [&](void* pointer) {
+            return call(nullptr, selected == 0 ? static_cast<std::uint32_t*>(pointer) : nullptr,
+                selected == 1 ? static_cast<std::uint32_t*>(pointer) : nullptr,
+                selected == 2 ? static_cast<std::int64_t*>(pointer) : nullptr,
+                selected == 3 ? static_cast<std::int64_t*>(pointer) : nullptr) == FT_Err_Invalid_Argument;
+        });
+        pages.Accept(widths[selected], [&](void* pointer) {
+            const int error = call(face, selected == 0 ? static_cast<std::uint32_t*>(pointer) : nullptr,
+                selected == 1 ? static_cast<std::uint32_t*>(pointer) : nullptr,
+                selected == 2 ? static_cast<std::int64_t*>(pointer) : nullptr,
+                selected == 3 ? static_cast<std::int64_t*>(pointer) : nullptr);
+            if (error != (pfr ? 0 : FT_Err_Unknown_File_Format)) return false;
+            if (selected < 2) return *static_cast<std::uint32_t*>(pointer) == (selected == 1 && pfr ? 2000u : 1000u);
+            const std::int64_t expected = pfr ? FT_DivFix((selected == 2 ? 20 : 30) * 64, 2000) :
+                selected == 2 ? face->size->metrics.x_scale : face->size->metrics.y_scale;
+            return *static_cast<std::int64_t*>(pointer) == expected;
+        });
+    }
+}
+
+static void AdvanceProtection(Advance call, GuestFaceRec* face, bool pfr) {
+    QueryOutputFixture::Pages pages;
+    pages.Reject(sizeof(std::int64_t), [&](void* pointer) {
+        return call(nullptr, 1, static_cast<std::int64_t*>(pointer)) == FT_Err_Invalid_Argument;
+    });
+    for (const std::uint32_t index : {0u, 1u, 2u}) {
+        pages.Reject(sizeof(std::int64_t), [&](void* pointer) {
+            return call(face, index, static_cast<std::int64_t*>(pointer)) == FT_Err_Invalid_Argument;
+        });
+        pages.Accept(sizeof(std::int64_t), [&](void* pointer) {
+            const int error = call(face, index, static_cast<std::int64_t*>(pointer));
+            if (error != (pfr && index != 0 ? 0 : FT_Err_Invalid_Argument)) return false;
+            if (pfr) return *static_cast<std::int64_t*>(pointer) == (index == 1 ? 600 : index == 2 ? -120 : 0);
+            const auto* bytes = static_cast<unsigned char*>(pointer);
+            for (std::size_t i = 0; i < sizeof(std::int64_t); ++i) if (bytes[i] != 0xA5) return false;
+            return true;
+        });
+    }
+}
+
+static void KerningProtection(Kerning call, GuestFaceRec* face, bool pfr) {
+    QueryOutputFixture::Pages pages;
+    pages.Reject(sizeof(GuestVector), [&](void* pointer) {
+        return call(nullptr, 1, 2, static_cast<GuestVector*>(pointer)) == FT_Err_Invalid_Argument;
+    });
+    for (const std::uint32_t left : {1u, 0xFFFFFFFFu}) {
+        pages.Reject(sizeof(GuestVector), [&](void* pointer) {
+            return call(face, left, 2, static_cast<GuestVector*>(pointer)) == FT_Err_Invalid_Argument;
+        });
+        pages.Accept(sizeof(GuestVector), [&](void* pointer) {
+            auto* output = static_cast<GuestVector*>(pointer);
+            const int error = call(face, left, 2, output);
+            return error == 0 && output->x == (pfr && left == 1 ? -80 : 0) && output->y == 0;
+        });
+    }
+}
+
 int main(int argc, char** argv) {
     const auto pfrFont = PfrFont();
     Reference(pfrFont);
@@ -250,9 +322,9 @@ int main(int argc, char** argv) {
         Require(resize(face, 20, 30) == 0);
         std::array<unsigned char, sizeof(GuestFaceRec)> snapshot;
         std::memcpy(snapshot.data(), face, snapshot.size());
-        if (metrics) MetricsCases(metrics, face, pfr);
-        if (advance) AdvanceCases(advance, face, pfr);
-        if (kerning) KerningCases(kerning, face, pfr);
+        if (metrics) { MetricsCases(metrics, face, pfr); MetricsProtection(metrics, face, pfr); }
+        if (advance) { AdvanceCases(advance, face, pfr); AdvanceProtection(advance, face, pfr); }
+        if (kerning) { KerningCases(kerning, face, pfr); KerningProtection(kerning, face, pfr); }
         Require(std::memcmp(snapshot.data(), face, snapshot.size()) == 0);
         Require(destroy(face) == 0);
     }

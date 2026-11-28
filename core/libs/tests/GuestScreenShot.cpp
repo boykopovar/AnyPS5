@@ -1,4 +1,5 @@
 #include "prx/libSceScreenShot/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -14,6 +15,10 @@
 #include <string>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int ErrorArgument = static_cast<int>(0x80BE0001);
 constexpr int ErrorOverlayFile = static_cast<int>(0x80BE0003);
@@ -67,9 +72,13 @@ void TestDisableState() {
     value = 7;
     Require(sceScreenShotIsDisabled(-1, &value) == ErrorArgument && value == 7, "id -1 is rejected");
     Require(sceScreenShotIsDisabled(0, nullptr) == ErrorArgument, "null result is rejected");
+    errno = 71;
     Require(sceScreenShotIsDisabled(0, reinterpret_cast<int*>(0x10)) == ErrorArgument, "invalid pointer is rejected");
+    Require(errno == 71, "invalid pointer preserves errno");
     Require(sceScreenShotDisableNotification() == 0 && sceScreenShotEnableNotification() == 0, "notification toggles");
+    errno = 71;
     Require(sceScreenShotIsDisabled(1, &value) == 0 && value == 0, "positive id 1 is accepted");
+    Require(errno == 71, "valid output preserves errno");
     Require(sceScreenShotIsDisabled(2, &value) == 0 && value == 0, "positive id 2 is accepted");
     Require(sceScreenShotIsDisabled(-2, &value) == 0 && value == 0, "negative id -2 is accepted");
 }
@@ -87,6 +96,9 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(image.c_str(), -1, 0) == ErrorArgument, "negative x");
     Require(sceScreenShotSetOverlayImage(image.c_str(), 0, -1) == ErrorArgument, "negative y");
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
+    errno = 71;
+    Require(sceScreenShotSetOverlayImage(reinterpret_cast<const char*>(0x10), 0, 0) == ErrorArgument, "unmapped path");
+    Require(errno == 71, "preserve errno on unmapped path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
     const std::string nearLimit(1023, 'a');
@@ -109,6 +121,9 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 10) == ErrorArgument, "origin 10");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 0) == ErrorArgument, "origin checked first");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 1) == ErrorArgument, "null path with valid origin");
+    errno = 71;
+    Require(sceScreenShotSetOverlayImageWithOrigin(reinterpret_cast<const char*>(0x10), 0, 0, 1) == ErrorArgument, "unmapped path with valid origin");
+    Require(errno == 71, "preserve errno on unmapped path with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), -1, 0, 1) == ErrorArgument, "negative x with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, -1, 1) == ErrorArgument, "negative y with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), maxX + 1, 0, 1) == ErrorArgument, "x past screen with valid origin");
@@ -131,11 +146,15 @@ void TestSetParamUnmapped() {
 }
 
 int main(int argc, char** argv) {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     const bool large = argc > 1 && std::strcmp(argv[1], "large") == 0;
     pathPrefix = std::string("anyps5-screenshot-") + (large ? "large-" : "small-") + std::to_string(std::random_device{}()) + "-";
     InstallProcessParameters(large ? 0x3500000u : 0x34fffffu);
     TestDisableState();
     TestOverlay(large);
     TestSetParamUnmapped();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

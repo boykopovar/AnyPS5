@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -131,6 +133,15 @@ static void TestThreadJoin() {
     Require(_Thrd_join_nid_postfix(Start(ReturnArgument, reinterpret_cast<void*>(std::intptr_t{0x100000003})), &code) == ThrdSuccess);
     Require(code == 3);
     Require(_Thrd_join_nid_postfix(Start(ReturnArgument, nullptr), nullptr) == ThrdSuccess);
+    auto* const unwritableCode = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    const auto pending = Start(ReturnArgument, reinterpret_cast<void*>(std::intptr_t{11}));
+    Require(_Thrd_join_nid_postfix(pending, unwritableCode) == ThrdError);
+    code = 0;
+    Require(_Thrd_join_nid_postfix(pending, &code) == ThrdSuccess && code == 11);
+    const auto pendingV2 = Start(ReturnArgument, reinterpret_cast<void*>(std::intptr_t{12}));
+    Require(_ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(pendingV2, unwritableCode) == ThrdError);
+    code = 0;
+    Require(_ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(pendingV2, &code) == ThrdSuccess && code == 12);
 
     static std::atomic<bool> release{false};
     const auto detached = Start(WaitForRelease, &release);
@@ -348,6 +359,15 @@ static void TestConditionSignal() {
     Require(_Cnd_init_with_name_nid_postfix(&unnamed, nullptr) == ThrdSuccess && unnamed != nullptr);
     Require(_Cnd_signal_nid_postfix(&unnamed) == ThrdSuccess);
     _Cnd_destroy_nid_postfix(&unnamed);
+    const std::string longestName(31, 'n');
+    const std::string tooLongName(32, 'n');
+    void* limited = nullptr;
+    Require(_Cnd_init_with_name_nid_postfix(&limited, longestName.c_str()) == ThrdSuccess && limited != nullptr);
+    _Cnd_destroy_nid_postfix(&limited);
+    errno = 0;
+    Require(_Cnd_init_with_name_nid_postfix(&limited, tooLongName.c_str()) == ThrdError && errno == 63 && limited == nullptr);
+    Require(_Cnd_init_with_name_nid_postfix(&limited, "") == ThrdSuccess && limited != nullptr);
+    _Cnd_destroy_nid_postfix(&limited);
 
     void* plain = nullptr;
     Require(_Cnd_init_nid_postfix(&plain) == ThrdSuccess);

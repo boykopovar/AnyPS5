@@ -2,14 +2,28 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 constexpr std::size_t ContextBytes = 168;
 constexpr std::size_t CipherOffset = 0;
@@ -100,8 +114,21 @@ static void SetFlags(unsigned char* context, std::uint64_t flags) {
     std::memcpy(context + FlagsOffset, &flags, sizeof(flags));
 }
 
+static bool failCalloc = false;
+static bool failAllocate = false;
+
+static void* APS5_VABI GuestHeapAllocate(std::size_t size) { return failAllocate ? nullptr : std::malloc(size); }
+static void APS5_VABI GuestHeapFree(void* pointer) { std::free(pointer); }
+static void* APS5_VABI GuestHeapCalloc(std::size_t count, std::size_t size) { return failCalloc ? nullptr : std::calloc(count, size); }
+static void* APS5_VABI GuestHeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+static void* APS5_VABI GuestHeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI GuestHeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
+static int APS5_VABI GuestHeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+
 static void InitializeHeap() {
-    void* const api[10] {};
+    void* const api[10] {reinterpret_cast<void*>(GuestHeapAllocate), reinterpret_cast<void*>(GuestHeapFree), reinterpret_cast<void*>(GuestHeapCalloc),
+        reinterpret_cast<void*>(GuestHeapReallocate), reinterpret_cast<void*>(GuestHeapAlign), reinterpret_cast<void*>(GuestHeapRealign),
+        reinterpret_cast<void*>(GuestHeapPosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
@@ -452,6 +479,115 @@ static void TestDecryptFinalErrors() {
             Require((error >> 12 & 0xfff) == (reason ? 0xfff : 0));
             Require((error & 0xfff) == static_cast<unsigned>(reason));
             Require(ERR_get_error_nid_postfix() == 0);
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
+    }
+}
+
+static void RequireErrors(std::initializer_list<int> reasons, std::source_location location = std::source_location::current()) {
+    for (const int reason : reasons) Require(ERR_get_error_nid_postfix() == (UINT64_C(0x06fff000) | static_cast<unsigned>(reason)), location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void TestCipherErrors() {
+    int value = 0;
+    {
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == 0);
+        RequireErrors({131});
+        Cipher cipher {};
+        Store(context, CipherOffset, &cipher);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == 0);
+        RequireErrors({132});
+        cipher.control = RecordControl;
+        for (int result : {-1, 0, -2, 1}) {
+            ResetCalls();
+            calls.controlResult = result;
+            Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == (result == -1 ? 0 : result));
+            if (result == -1) RequireErrors({133});
+            else RequireErrors({});
+        }
+    }
+    for (int result : {2, -1, 0}) {
+        auto cipher = XorBlockCipher();
+        cipher.flags = FlagCtrlInit;
+        cipher.control = result == 2 ? nullptr : RecordControl;
+        ResetCalls();
+        calls.controlResult = result;
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+        if (result == 2) RequireErrors({132, 134});
+        else if (result == -1) RequireErrors({133, 134});
+        else RequireErrors({134});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    for (int encrypt : {1, 0}) {
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_CipherInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr, encrypt) == 0);
+        RequireErrors({131});
+        Require((encrypt ? EVP_EncryptInit_ex_nid_postfix : EVP_DecryptInit_ex_nid_postfix)(Context(context), nullptr, nullptr, XorKey, nullptr) == 0);
+        RequireErrors({131});
+    }
+    {
+        auto cipher = XorBlockCipher();
+        ResetCalls();
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        failCalloc = true;
+        const int result = EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr);
+        failCalloc = false;
+        Require(result == 0 && calls.inits == 0);
+        RequireErrors({65});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        cipher.blockSize = 4;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+        RequireErrors({136});
+        cipher.blockSize = 16;
+        cipher.ivLength = 17;
+        for (std::uint64_t mode : {ModeCbc, ModeCfb, ModeOfb}) {
+            cipher.flags = mode;
+            Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+            RequireErrors({102});
+        }
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    const auto input = Pattern(32, 7);
+    for (const auto final : {EVP_EncryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
+        auto cipher = XorBlockCipher();
+        ResetCalls();
+        unsigned char context[ContextBytes] {};
+        unsigned char out[64] {};
+        int written = 123;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+        ERR_clear_error_nid_postfix();
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, input.data(), 5) == 1 && written == 0);
+        written = 123;
+        Require(final(Context(context), out, &written) == 0 && written == 123);
+        RequireErrors({138});
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr) == 1);
+        cipher.blockSize = 64;
+        Require(final(Context(context), out, &written) == 0 && written == 123);
+        RequireErrors({136});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    for (const auto update : {EVP_EncryptUpdate_nid_postfix, EVP_DecryptUpdate_nid_postfix, EVP_CipherUpdate_nid_postfix}) {
+        for (int encrypt : {1, 0}) {
+            if (update != EVP_CipherUpdate_nid_postfix && encrypt != (update == EVP_EncryptUpdate_nid_postfix)) continue;
+            auto cipher = XorBlockCipher();
+            ResetCalls();
+            unsigned char context[ContextBytes] {};
+            unsigned char out[64] {};
+            Require(EVP_CipherInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr, encrypt) == 1);
+            cipher.blockSize = 64;
+            ERR_clear_error_nid_postfix();
+            int written = 123;
+            Require(update(Context(context), out, &written, input.data(), 5) == 0);
+            Require(written == (encrypt ? 0 : 123) && calls.ciphers == 0);
+            RequireErrors({136});
             Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
         }
     }
@@ -1065,6 +1201,25 @@ static void TestAesGcmControl() {
     Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 12, nullptr) == 0);
     RequireThrows([&] { cipher->control(context, GcmSetIvLength, 12, nullptr); });
     RequireThrows([&] { cipher->doCipher(context, out, plain.data(), 16); });
+    {
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 60, nullptr) == 1);
+        failAllocate = true;
+        const int resized = EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 64, nullptr);
+        failAllocate = false;
+        Require(resized == 0);
+        const auto longPlain = Hex(longIv.plain);
+        Bytes retryOut(longPlain.size() + 16, 0);
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), Hex(longIv.iv).data()) == 1);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, aad.data(), static_cast<int>(aad.size())) == 1);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), retryOut.data(), &written, longPlain.data(), static_cast<int>(longPlain.size())) == 1);
+        Require(Bytes(retryOut.data(), retryOut.data() + written) == Hex(longIv.encrypted));
+        int finalWritten = 0;
+        Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), retryOut.data() + written, &finalWritten) == 1 && finalWritten == 0);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 16, tag) == 1);
+        Require(Bytes(tag, tag + 16) == Hex(longIv.tag));
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
 }
 
 static Bytes TlsAadFor(int sequence, int length) {
@@ -1228,6 +1383,164 @@ static void TestAesWrap256() {
         Hex("28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21"));
 }
 
+static int (APS5_VABI* delegateDoCipher)(unsigned char*, unsigned char*, const unsigned char*, std::size_t) = nullptr;
+static int cipherCallCount = 0;
+static int failCipherOnCall = 0;
+
+static int APS5_VABI CountingDoCipher(unsigned char* context, unsigned char* out, const unsigned char* in, std::size_t length) {
+    ++cipherCallCount;
+    if (failCipherOnCall != 0 && cipherCallCount == failCipherOnCall) return 0;
+    return delegateDoCipher(context, out, in, length);
+}
+
+static void TestInPlaceOverlapAndDecryptFailure() {
+    auto cipher = XorBlockCipher();
+    delegateDoCipher = cipher.doCipher;
+    cipher.doCipher = CountingDoCipher;
+
+    const auto plain = Pattern(40, 11);
+    unsigned char refContext[ContextBytes] {};
+    unsigned char refOut[64] {};
+    int part = 0;
+    int refLen = 0;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(refContext), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(refContext), refOut, &part, plain.data(), 5) == 1);
+    refLen += part;
+    Require(EVP_EncryptUpdate_nid_postfix(Context(refContext), refOut + refLen, &part, plain.data() + 5, 35) == 1);
+    refLen += part;
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(refContext), refOut + refLen, &part) == 1);
+    refLen += part;
+    Require(refLen == 48);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(refContext)) == 1);
+
+    unsigned char inPlaceCtx[ContextBytes] {};
+    unsigned char work[64] {};
+    int written = 0;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(inPlaceCtx), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+    std::memcpy(work, plain.data(), 5);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(inPlaceCtx), work, &written, work, 5) == 1 && written == 0);
+    std::memcpy(work, plain.data() + 5, 35);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(inPlaceCtx), work, &written, work, 35) == 1 && written == 32);
+    Bytes actualEncrypt(work, work + written);
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(inPlaceCtx), work, &written) == 1 && written == 16);
+    actualEncrypt.insert(actualEncrypt.end(), work, work + written);
+    Require(actualEncrypt == Bytes(refOut, refOut + refLen));
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(inPlaceCtx)) == 1);
+
+    unsigned char decCtx[ContextBytes] {};
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(decCtx), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+    std::memcpy(work, refOut, 16);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(decCtx), work, &written, work, 16) == 1 && written == 0);
+    std::memcpy(work, refOut + 16, 32);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(decCtx), work, &written, work, 32) == 1 && written == 32);
+    Bytes actualDecrypt(work, work + written);
+    Require(EVP_DecryptFinal_ex_nid_postfix(Context(decCtx), work, &written) == 1 && written == 8);
+    actualDecrypt.insert(actualDecrypt.end(), work, work + written);
+    Require(actualDecrypt == plain);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(decCtx)) == 1);
+
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(decCtx), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+    std::memcpy(work + 4, refOut, 48);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(decCtx), work, &written, work + 4, 48) == 1 && written == 32);
+    actualDecrypt.assign(work, work + written);
+    Require(EVP_DecryptFinal_ex_nid_postfix(Context(decCtx), work, &written) == 1 && written == 8);
+    actualDecrypt.insert(actualDecrypt.end(), work, work + written);
+    Require(actualDecrypt == plain);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(decCtx)) == 1);
+
+    cipherCallCount = 0;
+    failCipherOnCall = 2;
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(decCtx), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(decCtx), work, &written, refOut, 16) == 1 && written == 0);
+    std::memset(work, 0xaa, sizeof(work));
+    written = 77;
+    Require(EVP_DecryptUpdate_nid_postfix(Context(decCtx), work, &written, refOut + 16, 16) == 0);
+    for (unsigned char byte : work) Require(byte == 0xaa);
+    failCipherOnCall = 0;
+    Require(EVP_DecryptUpdate_nid_postfix(Context(decCtx), work, &written, refOut + 16, 32) == 1 && written == 32);
+    actualDecrypt.assign(work, work + written);
+    Require(EVP_DecryptFinal_ex_nid_postfix(Context(decCtx), work, &written) == 1 && written == 8);
+    actualDecrypt.insert(actualDecrypt.end(), work, work + written);
+    Require(actualDecrypt == plain);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(decCtx)) == 1);
+}
+
+template<typename TCall> static void RejectsPreservingErrno(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static void TestGuestPointers() {
+    const auto* cbc = EvpCipher(EVP_aes_128_cbc_nid_postfix());
+    const auto key = Hex(Sp80038aKey128);
+    const auto iv = Hex("000102030405060708090a0b0c0d0e0f");
+    auto* unmapped = reinterpret_cast<LibreSslEvpCipherCtx*>(std::uintptr_t{0x10});
+    const auto* unmappedCipher = reinterpret_cast<const LibreSslEvpCipher*>(std::uintptr_t{0x10});
+    const auto* unmappedIv = reinterpret_cast<const unsigned char*>(std::uintptr_t{0x10});
+    unsigned char out[32] {};
+    int outl = 0x1234;
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_init_nid_postfix(unmapped); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_set_padding_nid_postfix(unmapped, 0); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(unmapped); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_ctrl_nid_postfix(unmapped, 0, 0, nullptr); });
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(unmapped, cbc, nullptr, key.data(), iv.data(), 1); });
+    RejectsPreservingErrno([&] { EVP_CipherUpdate_nid_postfix(unmapped, out, &outl, key.data(), 16); });
+    RejectsPreservingErrno([&] { EVP_CipherFinal_ex_nid_postfix(unmapped, out, &outl); });
+    Require(outl == 0x1234);
+
+    unsigned char context[ContextBytes] {};
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(Context(context), unmappedCipher, nullptr, key.data(), iv.data(), 1); });
+    Require(Load<const void*>(context, CipherOffset) == nullptr && Load<int>(context, EncryptOffset) == 1);
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(Context(context), cbc, nullptr, key.data(), unmappedIv, 1); });
+    Require(Load<const void*>(context, CipherOffset) == cbc);
+    unsigned char zeroIv[16] {};
+    Require(std::memcmp(context + OivOffset, zeroIv, sizeof(zeroIv)) == 0 && std::memcmp(context + IvOffset, zeroIv, sizeof(zeroIv)) == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    auto* readOnly = static_cast<unsigned char*>(page);
+    Require(EVP_CipherInit_ex_nid_postfix(Context(readOnly), cbc, nullptr, key.data(), iv.data(), 1) == 1);
+    unsigned char snapshot[ContextBytes];
+    std::memcpy(snapshot, readOnly, sizeof(snapshot));
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_init_nid_postfix(Context(readOnly)); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_set_padding_nid_postfix(Context(readOnly), 0); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(Context(readOnly)); });
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(Context(readOnly), cbc, nullptr, key.data(), iv.data(), 0); });
+    Require(std::memcmp(snapshot, readOnly, sizeof(snapshot)) == 0);
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ | PROT_WRITE) == 0);
+#endif
+    const auto plain = Hex("6bc1bee22e409f96e93d7e117393172a");
+    Require(EVP_CipherUpdate_nid_postfix(Context(readOnly), out, &outl, plain.data(), static_cast<int>(plain.size())) == 1);
+    Require(outl == 16 && Bytes(out, out + outl) == Hex("7649abac8119b246cee98e9b12e9197d"));
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(readOnly)) == 1);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1239,6 +1552,7 @@ int main() {
     TestPadding();
     TestHeldBlock();
     TestDecryptFinalErrors();
+    TestCipherErrors();
     TestBadPadding();
     TestNoPadding();
     TestInitFields();
@@ -1255,5 +1569,7 @@ int main() {
     TestAesWrap192();
     TestAesWrap256();
     TestEvpCleanup();
+    TestInPlaceOverlapAndDecryptFailure();
+    TestGuestPointers();
     return 0;
 }

@@ -24,16 +24,12 @@ bool CompareExchange16(Uint128* target, Uint128& expected, Uint128 desired) {
     return exchanged;
 }
 
-Uint128 ReadHalves(const Uint128* target) {
-    const auto* halves = reinterpret_cast<const volatile std::uint64_t*>(target);
-    const std::uint64_t low = halves[0];
-    const std::uint64_t high = halves[1];
-    return (static_cast<Uint128>(high) << 64) | low;
-}
-
 template<typename TOperation>
 Uint128 FetchAndApply16(Uint128* target, TOperation operation) {
-    Uint128 expected = ReadHalves(target);
+    if (target == nullptr || (reinterpret_cast<std::uintptr_t>(target) & 15) != 0) {
+        throw std::invalid_argument("FetchAndApply16: target must be non-null and 16-byte aligned");
+    }
+    Uint128 expected = 0;
     while (!CompareExchange16(target, expected, operation(expected))) {
     }
     return expected;

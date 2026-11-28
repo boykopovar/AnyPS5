@@ -1,5 +1,11 @@
 # libSceSystemLogger2 technical debt
 
+### Functional
+
+- [validateEvent, validateEventEx and validateEventEx2](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - the five `sceSystemLogger2Set*EventAsync` entry points still read the `event` record, and the entry name/language pointers it embeds, with raw host dereferences (`memcmp`, `memcpy`, `strnlen`) instead of `GuestCopyIn_nid_no_patch`/`CopyGuestString_nid_no_patch`; an unmapped or partially-mapped `event` still crashes the host instead of returning `0x818C0002`. Fixing this needs the record and its embedded pointers copied in bounded pieces rather than read in place, which is a larger, separate change.
+
+- [sceSystemLogger2GetTimestamp, sceSystemLogger2GetEventStatus and sceSystemLogger2SetEventAsyncInternal](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - the console's answer for an unwritable `timestamp` or `status` output, or an unreadable event name, is not measured. As a host-safety fallback these calls return `INVALID_ARGUMENT` (`0x818C0002`) for such a pointer, keeping the caller's `errno` and writing nothing.
+
 ### Silent stubs
 
 - [sceSystemLogger2Terminate](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - returns 0 and leaves the initialized flag alone, because the fw 13.40 export is a bare `xor %eax,%eax; ret`. Only `sceSystemLogger2TerminateWithResourceRelease` stops the logger.
@@ -8,6 +14,7 @@
 
 - [libSceSystemLogger2 source](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - read from the fw 13.40 module (SHA-256 `934AE1CDDE8BC66200EF2891923C53684B70D5BEB600744774A73A190C347485`), not run against the console logger. The logger daemon and its monitor singleton are absent, so `sceSystemLogger2IsAvailableMonitor` returns `0x818C000E` after the native argument checks and `sceSystemLogger2GetEventStatus` returns the same code (an inference). `sceSystemLogger2Initialize` only sets the initialized flag: the native `0x818C0003` allocation failure and its subsystem probe are not reproduced. `sceSystemLogger2GetTimestamp` always reports `networkClock` with the wall clock in microseconds since 0001-01-01; the `secureClock` and `NONE` fallbacks are unreachable here.
 - [Event submission](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - the five `sceSystemLogger2Set*EventAsync` entry points validate the event record as 13.40 does and then return `0x818C000E`; nothing is delivered, queued or written to the console's IPMI client. The checks are the string at `+0x00` (and `+0xD0`, `+0x168` or `+0x4D0`) shorter than `0x81` bytes, the clock source at `+0x90` equal to `networkClock`, `secureClock` or `NONE`, the entry count at `+0xB8` at most 4, entry names at `+0xD0` with stride `0x28` at most `0x23` bytes, entry languages at `+0xD8` at most 2 bytes, the detail string at `+0xCC` at most `0x400` bytes, and the RNPS token at `+0x158` non-null. Rejected records return `0x818C0002`, calls before `Initialize` return `0x818C0004`; `SetEventAsyncInternal` zeroes its status word once the record is accepted. Whether a title needs delivery, and what the daemon returns when the console queue is full, remain unmeasured.
+- [Event record guest pointers](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - event validation now copies the clock source, record fields, inline names and RNPS token from guest memory rather than dereferencing them directly; `SetEventAsyncEx` also safely reads the embedded entry name and language pointers. An unreadable record, name or language returns `0x818C0002` without dereferencing inaccessible host memory, while preserving `errno` and leaving `SetEventAsyncInternal`'s output untouched. This is a host-safety fallback: firmware behavior for invalid or partially mapped guest pointers was not measured on a console.
 
 ### Unknown function info
 

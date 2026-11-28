@@ -87,6 +87,7 @@ public:
     KernelEqueue Handle() const { return m_handle; }
     const std::string& GetName() const { return m_name; }
     void SetName(std::string name) { m_name = std::move(name); }
+    std::uint64_t DroppedPendingEvents() const { return m_droppedPendingEvents; }
 
     int AddEvent(const KernelEqueueEvent& event);
     int TriggerEvent(uintptr_t ident, int16_t filter, void* triggerData);
@@ -116,6 +117,7 @@ private:
     int CollectTriggered(KernelEvent* ev, int num);
     int CollectOncePerWait(KernelEvent* ev, int num);
     bool PollEvents();
+    void NoteDroppedPendingEvents(std::size_t dropped, const KernelEqueueEvent& ev);
     void MeasureFiles(std::unique_lock<std::mutex>& lock);
     void WakePollers();
     void WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos);
@@ -134,6 +136,7 @@ private:
     bool m_reportOncePerWait;
     bool m_closed = false;
     std::uint64_t m_activations = 0;
+    std::uint64_t m_droppedPendingEvents = 0;
 };
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;

@@ -3,7 +3,7 @@ target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
 )
 
 if(BUILD_TESTING)
-    foreach(preparedMode IN ITEMS indirect uncached debug debug_failure deferred deferred_undecodable registered_workgroup registered_workgroup_sync dispatch_ahead_prewarm abi_deferred_compute abi_deferred_pixel abi_deferred_stages abi_deferred_rectangle abi_deferred_undecodable_state abi_deferred_registration_failure abi_deferred_vertex_inputs abi_deferred_rectangle_pairs lazy lazy_sync lazy_budget_zero)
+    foreach(preparedMode IN ITEMS indirect uncached debug debug_failure deferred deferred_undecodable registered_workgroup registered_workgroup_sync dispatch_ahead_prewarm abi_deferred_compute abi_deferred_pixel abi_deferred_stages abi_deferred_rectangle abi_deferred_undecodable_state abi_deferred_registration_failure abi_deferred_vertex_inputs abi_deferred_rectangle_pairs abi_deferred_background_draw abi_deferred_background_progress abi_deferred_background_close lazy lazy_sync lazy_budget_zero)
         set(preparedTest "agc_driver_prepared_shaders_${preparedMode}")
         if(preparedMode MATCHES "^abi_deferred_")
             string(REPLACE "_" "-" preparedArgument ${preparedMode})

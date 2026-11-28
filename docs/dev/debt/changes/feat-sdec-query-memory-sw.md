@@ -1,0 +1,8 @@
+# libSceVdecSavc
+
+## remove sceSdecCreateSw and sceSdecQueryMemorySw](
+
+## add Functional
+
+- [sceSdecQueryMemorySw](../../../core/libs/prx/libSceVdecSavc/Export.cpp) (libSceVdecSavc) follows [readings of firmware 13.42's libSceVdecSavc.sprx](https://github.com/boykopovar/AnyPS5/issues/21865#issuecomment-6953921684), run natively, not measured on a console: the DPB count, the level and size checks (3) and the three sizes are the module's closed forms. Host choices: an unreadable argument gives 3, where the console faults; no frame override with a zero width or height gives 3, where the console divides by zero; a refused query leaves the memory record unwritten, where the console writes leftovers. A negative width or height throws, since that path wasn't read. DPB products past 32 bits are computed in 64 bits.
+- [sceSdecCreateSw](../../../core/libs/prx/libSceVdecSavc/Export.cpp) (libSceVdecSavc) makes the checks of [the 13.42 reading](https://github.com/boykopovar/AnyPS5/issues/21865#issuecomment-6954148174), then throws, since decoding is unsupported. Null arguments, a non-zero first word, a missing or too small first block and an instance mode above 1 give 3; memory that doesn't match a query for the same configuration gives 4. From the block-size check on, a refusal clears the handle. Not modelled: the header the console writes into the first block before those checks, and the 2 for a decoder object in use, which the reading's runs never reached. A picture past the query's layout limits throws, since create's answer there wasn't read. An unreadable argument gives 3, a host-safety fallback.

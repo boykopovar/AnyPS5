@@ -172,10 +172,12 @@ bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t se
     std::unordered_map<std::uint32_t, std::uint32_t> sets;
     std::unordered_map<std::uint32_t, std::uint32_t> bindings;
     std::unordered_map<std::uint32_t, std::uint32_t> constants;
+    std::unordered_map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> selects;
     const bool readable = forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
         if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationDescriptorSet) sets[instruction[1]] = instruction[3];
         if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationBinding) bindings[instruction[1]] = instruction[3];
         if (opcode == spv::OpConstant && instruction.size() == 4) constants[instruction[2]] = instruction[3];
+        if (opcode == spv::OpSelect && instruction.size() == 6) selects[instruction[2]] = {instruction[4], instruction[5]};
     });
     if (!readable) return false;
     std::unordered_set<std::uint32_t> buffers;
@@ -183,8 +185,12 @@ bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t se
         if (const auto found = sets.find(id); number == binding && found != sets.end() && found->second == set) buffers.insert(id);
     }
     const auto constantBelow = [&](std::uint32_t id, std::uint32_t limit) {
-        const auto found = constants.find(id);
-        return found != constants.end() && found->second < limit;
+        const auto below = [&](std::uint32_t value) {
+            const auto found = constants.find(value);
+            return found != constants.end() && found->second < limit;
+        };
+        const auto selected = selects.find(id);
+        return below(id) || (selected != selects.end() && below(selected->second.first) && below(selected->second.second));
     };
     const auto chainsBuffer = [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
         return (opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && instruction.size() > 3 && buffers.contains(instruction[3]);
@@ -229,12 +235,13 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         if (tables != 0 && storesThroughAddressesCached(shader.program->spirv)) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
-        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || loopGuarded));
+        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || shader.program->splitStateLanes != 0 || loopGuarded));
     }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
         guestMemory.AcquireRegistered();
+        if (!bdaReadOnly) guestMemory.AllowAddressStores();
         const auto snapshotsStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         for (const auto& snapshot : snapshots) guestMemory.AddSnapshot(snapshot);
         if (profile) GuestBufferMemory::CountAddressBuild(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - snapshotsStart).count());

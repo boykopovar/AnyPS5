@@ -15,6 +15,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 namespace {
 
@@ -122,10 +123,7 @@ bool ps4Title() {
 bool rangeChecked() {
     static const bool ps4 = ps4Title();
     if (!ps4) return true;
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version >= RANGE_CHECKED_SDK_VERSION;
+    return ApplicationCompiledSdkVersion() >= RANGE_CHECKED_SDK_VERSION;
 }
 
 std::uint64_t currentTick(std::size_t clock = 0) {
@@ -159,11 +157,14 @@ int setCurrentTick(std::size_t clock, const RtcTick* tick) {
 }
 
 bool hostLocalTime(std::time_t seconds, std::tm& local) {
+    const int savedErrno = errno;
 #ifdef _WIN32
-    return localtime_s(&local, &seconds) == 0;
+    const bool converted = localtime_s(&local, &seconds) == 0;
 #else
-    return localtime_r(&seconds, &local) != nullptr;
+    const bool converted = localtime_r(&seconds, &local) != nullptr;
 #endif
+    errno = savedErrno;
+    return converted;
 }
 
 std::int64_t localOffsetSeconds(std::uint64_t utcTick) {
@@ -208,9 +209,15 @@ bool writeGuest(void* destination, const void* source, std::size_t bytes) {
 }
 
 int readGuestString(const char* source, std::string& destination) {
-    constexpr std::size_t MAX_DATE_TIME_LENGTH = 4096;
     const int savedErrno = errno;
-    const int result = CopyGuestString_nid_no_patch(source, MAX_DATE_TIME_LENGTH, destination);
+    const auto limit = destination.max_size();
+    std::size_t maximum = 64;
+    int result;
+    for (;;) {
+        result = CopyGuestString_nid_no_patch(source, maximum, destination);
+        if (result != 63 || maximum == limit) break;
+        maximum = maximum > limit / 2 ? limit : maximum * 2;
+    }
     errno = savedErrno;
     if (result == 0) return 0;
     return result == 14 ? SCE_RTC_ERROR_INVALID_POINTER : SCE_RTC_ERROR_BAD_PARSE;
@@ -831,9 +838,9 @@ int APS5_VABI sceRtcSetCurrentDebugNetworkTick(const RtcTick* tick) {
 int APS5_VABI sceRtcSetConf(int first, int second, int third, int fourth) {
     (void)first;
     (void)second;
-    (void)third;
-    (void)fourth;
-    NotImplemented_nid_no_patch(__func__);
+    if (fourth < -1) return static_cast<int>(0x80020016u);
+    SetGuestTimezone_nid_no_patch(third, fourth < 0 ? 0 : fourth);
+    return 0;
 }
 
 int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, int time_zone_minutes, int precision) {
@@ -844,10 +851,10 @@ int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, in
     const std::uint64_t shift = static_cast<std::uint64_t>(time_zone_minutes < 0 ? -time_zone_minutes : time_zone_minutes) * TICKS_PER_MINUTE;
     std::uint64_t localTick = 0;
     if (time_zone_minutes < 0) {
-        if (source.tick < shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (source.tick < shift && rangeChecked()) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = source.tick - shift;
     } else {
-        if (source.tick > std::numeric_limits<std::uint64_t>::max() - shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (source.tick > std::numeric_limits<std::uint64_t>::max() - shift && rangeChecked()) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = source.tick + shift;
     }
     const RtcDateTime time = fromTick(localTick);

@@ -135,6 +135,9 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
         throw RelinkerException("FileByteOffset out of bounds", header.ProgramHeaderOffset);
     }
+    if (header.ProgramHeaderCount == PN_XNUM) {
+        throw RelinkerException("Extended program header counts are not supported", 0x38);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
@@ -206,6 +209,17 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         });
         if (!covered)
             throw RelinkerException("PT_TLS initialization image is outside PT_LOAD memory", tls.Offset);
+        const bool matches = std::any_of(headers.begin(), headers.end(), [&](const ProgramHeader& load) {
+            if (load.Type != PT_LOAD || tls.MappedAddress < load.MappedAddress) return false;
+            const auto relative = tls.MappedAddress - load.MappedAddress;
+            if (relative > load.MemorySize || tls.FileSize > load.MemorySize - relative) return false;
+            const auto fileBytes = relative < load.FileSize ? std::min(tls.FileSize, load.FileSize - relative) : 0;
+            const auto tlsBegin = _fileBuffer.begin() + tls.Offset;
+            if (fileBytes != 0 && !std::equal(tlsBegin, tlsBegin + fileBytes, _fileBuffer.begin() + load.Offset + relative)) return false;
+            return std::all_of(tlsBegin + fileBytes, tlsBegin + tls.FileSize, [](std::uint8_t value) { return value == 0; });
+        });
+        if (!matches)
+            throw RelinkerException("PT_TLS initialization image differs from PT_LOAD memory", tls.Offset);
     }
 
     return headers;
@@ -253,6 +267,10 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
             throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
         }
 
+        if (sh.Type == SHT_DYNAMIC && sh.EntrySize != kDynEntrySize) {
+            throw RelinkerException("Invalid dynamic section entry size", offset + kShdrEntSizeOffset);
+        }
+
         if (sh.Type == SHT_RELA && sh.EntrySize != kRelaEntrySize) {
             throw RelinkerException("Invalid relocation entry size", offset + kShdrEntSizeOffset);
         }
@@ -267,13 +285,25 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
             }
         }
 
-        sh.Name = _resolveShdrName(nameOffset, header);
+        sh.Name = sh.Type == SHT_NULL ? "" : _resolveShdrName(nameOffset, header);
 
         headers.push_back(sh);
         offset += header.SectionHeaderEntrySize;
     }
 
     return headers;
+}
+
+std::uint64_t ElfReader::ReadDynamicSymbolCount(const FileByteOffset symbolOffset, const std::uint32_t minimum) const {
+    const auto sections = ReadSectionHeaders();
+    const auto symbols = std::find_if(sections.begin(), sections.end(), [&](const auto& section) {
+        return section.Type == SHT_DYNSYM && section.Offset == symbolOffset;
+    });
+    if (symbols == sections.end()) return minimum;
+    const auto size = symbols->SectionSize;
+    if (size % kSymEntrySize != 0 || size / kSymEntrySize < minimum)
+        throw RelinkerException("Invalid dynamic symbol count", symbolOffset);
+    return size / kSymEntrySize;
 }
 
 std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeader& header) const {

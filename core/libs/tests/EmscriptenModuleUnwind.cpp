@@ -23,6 +23,12 @@ extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* function,
     throw UnsupportedPath{function};
 }
 
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (destination == nullptr || reinterpret_cast<std::uintptr_t>(destination) < 0x1000) return false;
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
 int main() {
     for (const auto query : {&sceKernelGetModuleInfoForUnwind, &sceSysmoduleGetModuleInfoForUnwind}) {
         for (const auto address : {std::uint64_t{0}, std::uint64_t{0x10000}, std::numeric_limits<std::uint64_t>::max()}) {

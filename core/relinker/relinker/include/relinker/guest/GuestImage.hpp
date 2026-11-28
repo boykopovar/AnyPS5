@@ -64,6 +64,7 @@ struct GuestImage {
     bool UsePlatformTlsResolver = true;
     bool Symbolic = false;
     bool FunctionSymbolRoots = false;
+    std::uint64_t IgnoredGlobDatAddends = 0;
     std::vector<std::size_t> NamedImports;
 };
 
@@ -86,7 +87,13 @@ struct GuestModuleInput {
     std::vector<GamePatch::PatchedRange> PatchedRanges;
 };
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, bool functionSymbolRoots = false);
+struct BackupCopy {
+    std::filesystem::path Copy;
+    std::filesystem::path Kept;
+    std::string Match;
+};
+
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, bool functionSymbolRoots = false);
 
 class GuestModuleBuilder {
 public:

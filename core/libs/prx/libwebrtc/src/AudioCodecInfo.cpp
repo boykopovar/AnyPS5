@@ -41,20 +41,25 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <stdexcept>
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(WebRtcAudioCodecInfo* info, int sampleRateHz, std::uint64_t numChannels, int defaultBitrateBps, int minBitrateBps, int maxBitrateBps) {
-    if (!info) throw std::invalid_argument("AudioCodecInfo requires an object");
-    info->sampleRateHz = sampleRateHz;
-    info->numChannels = numChannels;
-    info->defaultBitrateBps = defaultBitrateBps;
-    info->minBitrateBps = minBitrateBps;
-    info->maxBitrateBps = maxBitrateBps;
-    info->allowComfortNoise = true;
-    info->supportsNetworkAdaption = false;
+    if (!info || !GuestWritable_nid_no_patch(info, sizeof(*info)))
+        throw std::invalid_argument("AudioCodecInfo requires an object");
+    WebRtcAudioCodecInfo host{};
+    host.sampleRateHz = sampleRateHz;
+    host.numChannels = numChannels;
+    host.defaultBitrateBps = defaultBitrateBps;
+    host.minBitrateBps = minBitrateBps;
+    host.maxBitrateBps = maxBitrateBps;
+    host.allowComfortNoise = true;
+    host.supportsNetworkAdaption = false;
+    if (!GuestPtr<WebRtcAudioCodecInfo>(info).CopyOut(host))
+        throw std::invalid_argument("AudioCodecInfo requires an object");
 }
 
 }

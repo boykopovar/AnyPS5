@@ -1,6 +1,7 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -53,6 +54,10 @@ int main() {
     Require(sceNpUniversalDataSystemIntGetMemoryStat(nullptr) == kNotInitialized, "memory stat before initialize");
     Require(sceNpUniversalDataSystemIntCreateRecordArray(nullptr) == kNotInitialized, "create array before initialize");
     Require(sceNpUniversalDataSystemIntInitialize(nullptr) == kInvalidArgument, "null initialize parameter");
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntInitialize(reinterpret_cast<const NpUniversalDataSystemIntInitParam*>(std::uintptr_t{0x10})) == kInvalidArgument,
+            "unreadable initialize parameter");
+    Require(errno == EBUSY, "unreadable initialize parameter did not keep errno");
     Require(sceNpUniversalDataSystemIntInitialize(&wrongSize) == kInvalidParamSize, "wrong parameter size");
     param.memory = nullptr;
     Require(sceNpUniversalDataSystemIntInitialize(&param) == kInvalidArgument, "null memory pool");
@@ -65,17 +70,29 @@ int main() {
     void* object = nullptr;
     void* data = nullptr;
     Require(sceNpUniversalDataSystemIntCreateRecordArray(nullptr) == kInvalidArgument, "null array output");
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntCreateRecordArray(reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument, "unwritable array output");
+    Require(errno == EBUSY, "unwritable array output did not keep errno");
     Require(sceNpUniversalDataSystemIntCreateRecordArray(&array) == 0 && array != nullptr, "create array");
     Require(sceNpUniversalDataSystemIntCreateRecordObject(nullptr) == kInvalidArgument, "null object output");
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntCreateRecordObject(reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument, "unwritable object output");
+    Require(errno == EBUSY, "unwritable object output did not keep errno");
     Require(sceNpUniversalDataSystemIntCreateRecordObject(&object) == 0 && object != nullptr, "create object");
     Require(sceNpUniversalDataSystemIntCreateRecordData(nullptr, &data) == kInvalidName, "null record type");
     Require(sceNpUniversalDataSystemIntCreateRecordData("", &data) == kInvalidName, "empty record type");
     Require(sceNpUniversalDataSystemIntCreateRecordData("type", nullptr) == kInvalidArgument, "null data output");
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntCreateRecordData("type", reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument, "unwritable data output");
+    Require(errno == EBUSY, "unwritable data output did not keep errno");
     Require(sceNpUniversalDataSystemIntCreateRecordData("type", &data) == 0 && data != nullptr, "create data");
 
     std::size_t size = 0;
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(nullptr, &size) == kNullRecord, "null estimate record");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, nullptr) == kInvalidArgument, "null estimate output");
+    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, &size) == 0 && size > 0, "estimate record data");
+    std::size_t emptyArraySize = 0;
+    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &emptyArraySize) == 0 && emptyArraySize > 0, "estimate empty array");
 
     Require(sceNpUniversalDataSystemIntRecordArraySetBool(array, true) == 0, "array bool");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(array, -1) == 0, "array int32");
@@ -93,6 +110,13 @@ int main() {
     void* child = nullptr;
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, nullptr, &child) == kNullValue, "null array object");
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, reinterpret_cast<void*>(1), &child) == kNullObject, "unknown array object");
+    const std::size_t sizeBeforeUnwritableArrayObject = static_cast<NpUniversalDataSystemEventPropertyArray*>(array)->values.size();
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, object, reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument,
+            "unwritable array object output");
+    Require(errno == EBUSY, "unwritable array object output did not keep errno");
+    Require(static_cast<NpUniversalDataSystemEventPropertyArray*>(array)->values.size() == sizeBeforeUnwritableArrayObject,
+            "a rejected array object copy was still added");
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, object, &child) == 0 && child != nullptr, "array object");
     const auto* storedArrayObject = static_cast<NpUniversalDataSystemEventPropertyArray*>(array);
     Require(storedArrayObject->values.size() >= 1, "array object stored");
@@ -104,6 +128,13 @@ int main() {
 
     void* arrayChild = nullptr;
     Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, nullptr, &arrayChild) == kNullValue, "null array array");
+    const std::size_t sizeBeforeUnwritableArrayArray = static_cast<NpUniversalDataSystemEventPropertyArray*>(array)->values.size();
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, array, reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument,
+            "unwritable array array output");
+    Require(errno == EBUSY, "unwritable array array output did not keep errno");
+    Require(static_cast<NpUniversalDataSystemEventPropertyArray*>(array)->values.size() == sizeBeforeUnwritableArrayArray,
+            "a rejected array array copy was still added");
     Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, array, &arrayChild) == 0 && arrayChild != nullptr, "array array");
     const auto* storedNestedArray = std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyArray>>(&storedArrayObject->values.back());
     Require(storedNestedArray != nullptr && storedNestedArray->get() == arrayChild, "array array child pointer");
@@ -111,6 +142,9 @@ int main() {
     Require((*storedNestedArray)->values.size() >= 1, "array child array mutation stored");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(nullptr, 0) == kNullArray, "null array target");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(reinterpret_cast<void*>(1), 0) == kNullArray, "unknown array target");
+    std::size_t fullArraySize = 0;
+    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &fullArraySize) == 0 && fullArraySize > emptyArraySize,
+            "estimate grows with array values");
 
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, nullptr, true) == kInvalidKey, "null object key");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, "", true) == kInvalidKey, "empty object key");
@@ -129,6 +163,13 @@ int main() {
     child = nullptr;
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", nullptr, &child) == kNullValue, "null object object");
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", reinterpret_cast<void*>(1), &child) == kNullObject, "unknown object object");
+    const std::size_t sizeBeforeUnwritableObjectObject = static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->properties.size();
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", object, reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument,
+            "unwritable object object output");
+    Require(errno == EBUSY, "unwritable object object output did not keep errno");
+    Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->properties.size() == sizeBeforeUnwritableObjectObject,
+            "a rejected object object copy was still added");
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", object, &child) == 0 && child != nullptr, "object object");
     const auto* storedChild = StoredObject(object, "object");
     Require(storedChild != nullptr && storedChild->get() == child, "object child pointer");
@@ -139,6 +180,13 @@ int main() {
     void* objectArrayChild = nullptr;
     Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", nullptr, &objectArrayChild) == kNullValue, "null object array");
     Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", reinterpret_cast<void*>(1), &objectArrayChild) == kNullArray, "unknown object array");
+    const std::size_t sizeBeforeUnwritableObjectArray = static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->properties.size();
+    errno = EBUSY;
+    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", array, reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument,
+            "unwritable object array output");
+    Require(errno == EBUSY, "unwritable object array output did not keep errno");
+    Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->properties.size() == sizeBeforeUnwritableObjectArray,
+            "a rejected object array copy was still added");
     Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", array, &objectArrayChild) == 0 && objectArrayChild != nullptr, "object array");
     const auto* storedChildArray = StoredArray(object, "array");
     Require(storedChildArray != nullptr && storedChildArray->get() == objectArrayChild, "object child array pointer");

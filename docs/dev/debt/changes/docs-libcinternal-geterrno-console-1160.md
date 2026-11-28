@@ -1,0 +1,5 @@
+# libSceLibcInternal
+
+## change [_Geterrno]
+
+- [_Geterrno](../../../core/libs/prx/libSceLibcInternal/Err.cpp) (libSceLibcInternal) was compared with the console's `libSceLibcInternal.sprx` only against the `__error` of `libkernel.sprx`, and no title was seen calling it. The `int*(void)` prototype is the one the Dinkumware `<errno.h>` declares behind its `errno` macro, taken from that header's public description and not from a linked copy. Here it returns the calling thread's errno slot of `libc.prx`, the pointer `__error` returns; a payload process on firmware 11.60 (a title process may differ) measured that the console's module keeps a slot of its own for each thread: its pointer differs from the `__error` of `libkernel.sprx`, a value stored through it is not seen there, a failing `open` and `close(-1)` set the `libkernel.sprx` slot and leave this one alone, and a helper thread gets another pointer. `libSceLibcInternal.sprx` exports no `__error`, and the slot was not compared with the `__error` of `libc.prx` in a title

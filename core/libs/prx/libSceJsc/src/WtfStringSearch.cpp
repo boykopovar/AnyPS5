@@ -101,6 +101,7 @@ Derived from Source/WTF/wtf/text/StringView.cpp@c55364d53f971f63a709976f168d932d
  */
 
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
+#include "prx/libSceIcu/Properties.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -357,6 +358,22 @@ bool APS5_VABI _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView string, const 
         if (!IsASCIIAlphaCaselessEqual(codeUnit, expected)) return false;
     }
     return false;
+}
+
+std::int32_t APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb(StringImpl* self, bool* hasStrongDirectionality) {
+    constexpr std::int32_t LeftToRight = 0;
+    constexpr std::int32_t RightToLeft = 1;
+    constexpr std::int32_t RightToLeftArabic = 13;
+    const Text text = Require(self, __func__);
+    for (unsigned index = 0; index < text.length; ++index) {
+        const std::int32_t direction = u_charDirection_nid_postfix(text[index]);
+        if (direction == LeftToRight || direction == RightToLeft || direction == RightToLeftArabic) {
+            if (hasStrongDirectionality) *hasStrongDirectionality = true;
+            return direction == LeftToRight ? LeftToRight : RightToLeft;
+        }
+    }
+    if (hasStrongDirectionality) *hasStrongDirectionality = false;
+    return LeftToRight;
 }
 
 }

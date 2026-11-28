@@ -1,0 +1,9 @@
+# libSceAudioIn
+
+## change [sceAudioInSetUserMute, sceAudioInSetDeviceMuteStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn)
+
+- [sceAudioInSetUserMute, sceAudioInSetDeviceMuteStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - SetUserMute is a literal alias of SetDeviceMuteStatus. The type argument must land in {1,2,3,4,6,7} (0x8026010f otherwise); measured on a PS5 Pro payload process (13.60): negative types are rejected by that check - -1 with device 8 and -2 answer 0x8026010f like 0, 5, 8, 32 and 33 do - so the raw-device-id selection attributed to negative types never answered for them, and 33 is rejected so no 31-bit masking happens either. Accepted types reached the service tail and returned 0 in this process without an audio service; the mute effect itself is unimplemented, so these exports still throw past the gate.
+
+## change [sceAudioInSetMicLevel, sceAudioInSetMicrophoneLevel](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn)
+
+- [sceAudioInSetMicLevel, sceAudioInSetMicrophoneLevel](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - SetMicrophoneLevel aliases SetMicLevel with a zero fifth argument. Level above 100 returns 0x80260106 before the type check; a type outside 1..4 returns 0x8026010f, measured on a PS5 Pro payload process (13.60) to include negative types: -1 answers 0x8026010f like 0 and 5 do, so the raw-device-id selection attributed to negative types never answered for them; an invalid level with an invalid type answers 0x80260106, confirming the order. Accepted types reached the service tail and returned 0 in this process without an audio service; the mbus conversion and service call are unimplemented, so these exports still throw past the gate. This implementation used to pass negative types through; it now rejects them like the console.

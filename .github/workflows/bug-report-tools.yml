@@ -1,0 +1,26 @@
+name: Bug report tools
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/bug-report-tools.yml
+      - tools/bug_report.py
+      - tools/tests/test_bug_report.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bug-report-tools-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bug-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test bug report bundle
+        run: python3 tools/tests/test_bug_report.py

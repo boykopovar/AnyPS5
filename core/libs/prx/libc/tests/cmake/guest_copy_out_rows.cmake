@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_copy_out_rows_tests ${LIBS_INCLUDE_DIR}/tests/GuestCopyOutRows.cpp)
+    target_include_directories(guest_copy_out_rows_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_copy_out_rows_tests PRIVATE libc)
+    configure_windows_unwind(guest_copy_out_rows_tests)
+    add_test(NAME guest_copy_out_rows COMMAND guest_copy_out_rows_tests)
+    set_tests_properties(guest_copy_out_rows PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_copy_out_rows PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

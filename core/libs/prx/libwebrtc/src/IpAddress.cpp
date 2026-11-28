@@ -41,18 +41,26 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
 namespace {
 
-const WebRtcIpAddress& Checked(const WebRtcIpAddress* address, const char* function) {
+WebRtcIpAddress Checked(const WebRtcIpAddress* address, const char* function) {
     if (!address)
         throw std::invalid_argument(function);
-    return *address;
+    WebRtcIpAddress copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, address, sizeof(copy));
+    errno = savedErrno;
+    if (!copied)
+        throw std::invalid_argument(function);
+    return copy;
 }
 
 std::uint32_t BigEndianWord(const std::uint8_t* bytes) {
@@ -63,6 +71,58 @@ std::uint32_t HostOrderIpv4(const WebRtcIpAddress& address) {
     std::uint8_t bytes[4];
     std::memcpy(bytes, &address.address.ip4, sizeof(bytes));
     return BigEndianWord(bytes);
+}
+
+void StoreBigEndianWord(std::uint8_t* bytes, std::uint32_t word) {
+    bytes[0] = static_cast<std::uint8_t>(word >> 24);
+    bytes[1] = static_cast<std::uint8_t>(word >> 16);
+    bytes[2] = static_cast<std::uint8_t>(word >> 8);
+    bytes[3] = static_cast<std::uint8_t>(word);
+}
+
+
+WebRtcIpAddress Truncated(const WebRtcIpAddress& source, std::int32_t length) {
+    WebRtcIpAddress truncated{};
+    if (length < 0)
+        return truncated;
+    if (source.family == WebRtcAfInet) {
+        if (length > 31) {
+            truncated.family = source.family;
+            truncated.address = source.address;
+            return truncated;
+        }
+        truncated.family = WebRtcAfInet;
+        if (length == 0)
+            return truncated;
+        const std::uint32_t mask = 0xFFFFFFFFu << (32 - length);
+        std::uint8_t bytes[4];
+        StoreBigEndianWord(bytes, HostOrderIpv4(source) & mask);
+        std::memcpy(&truncated.address.ip4, bytes, sizeof(bytes));
+        return truncated;
+    }
+    if (source.family == WebRtcAfInet6) {
+        if (length > 127) {
+            truncated.family = source.family;
+            truncated.address = source.address;
+            return truncated;
+        }
+        truncated.family = WebRtcAfInet6;
+        if (length == 0)
+            return truncated;
+        const std::int32_t position = length / 32;
+        const std::int32_t innerLength = 32 - (length - position * 32);
+        const std::uint32_t innerMask = innerLength == 32 ? 0u : 0xFFFFFFFFu << innerLength;
+        std::memcpy(truncated.address.ip6.bytes, source.address.ip6.bytes, sizeof(WebRtcIn6Addr));
+        for (std::int32_t word = 0; word < 4; ++word) {
+            std::uint8_t* bytes = truncated.address.ip6.bytes + 4 * word;
+            if (word == position)
+                StoreBigEndianWord(bytes, BigEndianWord(source.address.ip6.bytes + 4 * word) & innerMask);
+            else if (word > position)
+                StoreBigEndianWord(bytes, 0);
+        }
+        return truncated;
+    }
+    return truncated;
 }
 
 }
@@ -112,6 +172,18 @@ int APS5_VABI _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(const WebRtc
     if (word == 0)
         return bits;
     return bits + 32 - std::countr_zero(word);
+}
+
+WebRtcIpAddress* APS5_VABI _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(WebRtcIpAddress* result, const WebRtcIpAddress* ip, std::int32_t length) {
+    if (!result)
+        throw std::invalid_argument("TruncateIP requires a result");
+    const WebRtcIpAddress truncated = Truncated(Checked(ip, "TruncateIP requires an address"), length);
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(result, &truncated, sizeof(truncated));
+    errno = savedErrno;
+    if (!written)
+        throw std::invalid_argument("TruncateIP requires a writable result");
+    return result;
 }
 
 }

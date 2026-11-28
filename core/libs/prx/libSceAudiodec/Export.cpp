@@ -1,6 +1,7 @@
 #include "prx/libSceAudiodec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -201,6 +202,16 @@ void fillMp3Info(AudiodecMp3Info* info, const Audiodec::Mp3Header& header) {
     info->i_result = 0;
 }
 
+void fillM4aacInfo(AudiodecM4aacInfo* info, const Audiodec::DecodeResult& decoded) {
+    info->i_result = decoded.status == Audiodec::DecodeStatus::InvalidData ? M4AAC_RESULT_DECODE_ERROR
+        : decoded.status == Audiodec::DecodeStatus::PartialInput ? M4AAC_RESULT_INSUFFICIENT_DATA : 0;
+    if (decoded.channels != 0) {
+        info->ui_sampling_freq = decoded.sampleRate;
+        info->ui_number_of_channels = decoded.channels;
+        info->ui_heaac = decoded.highEfficiency;
+    }
+}
+
 std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info, Instance& instance) {
     std::uint32_t enableNondelayOutput = 0;
     std::uint32_t surroundChannelInterleaveOrder = 0;
@@ -316,37 +327,41 @@ int32_t APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl) {
     InfoBuffer info{};
     if (const std::int32_t result = loadDecodeInfo(localCtrl, instance->codecType, info); result != 0) return result;
 
-    std::vector<std::uint8_t> auData(auInfo.ui_au_size);
-    if (!copyIn(auData.data(), auInfo.p_au_addr, auData.size())) return ERROR_INVALID_AU_POINTER;
-    std::vector<std::uint8_t> pcmData(pcmItem.ui_pcm_size);
+    constexpr std::size_t MaxCopyStep = 64 * 1024;
+    const auto* au = static_cast<const std::uint8_t*>(auInfo.p_au_addr);
+    std::vector<std::uint8_t> auData;
+    for (std::size_t wanted; (wanted = instance->decoder->InputBytes(auData.data(), auData.size(), auInfo.ui_au_size)) > auData.size();) {
+        const std::size_t old = auData.size();
+        auData.resize(old + std::min(wanted - old, MaxCopyStep));
+        if (!copyIn(auData.data() + old, au + old, auData.size() - old)) return ERROR_INVALID_AU_POINTER;
+    }
+    std::vector<std::uint8_t> pcmData;
 
     const Audiodec::DecodeResult decoded = instance->decoder->Decode(auData.data(), static_cast<std::uint32_t>(auData.size()),
-                                                                     pcmData.data(), static_cast<std::uint32_t>(pcmData.size()));
-    if (instance->codecType == TYPE_M4AAC) {
-        if (instance->surroundChannelInterleaveOrder != 0 && decoded.channels > 2) throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(instance->surroundChannelInterleaveOrder) + " is not implemented for " + std::to_string(decoded.channels) + " decoded channels");
-        info.m4aac.i_result = decoded.status == Audiodec::DecodeStatus::InvalidData ? M4AAC_RESULT_DECODE_ERROR
-            : decoded.status == Audiodec::DecodeStatus::PartialInput ? M4AAC_RESULT_INSUFFICIENT_DATA : 0;
-        if (decoded.channels != 0) {
-            info.m4aac.ui_sampling_freq = decoded.sampleRate;
-            info.m4aac.ui_number_of_channels = decoded.channels;
-            info.m4aac.ui_heaac = decoded.highEfficiency;
-        }
-        if (!copyOut(localCtrl.pBsiInfo, &info.m4aac, sizeof(info.m4aac))) return ERROR_INVALID_BSI_INFO_POINTER;
-    }
+                                                                     pcmData, pcmItem.ui_pcm_size);
     if (decoded.status == Audiodec::DecodeStatus::NotEnoughRoom) return ERROR_INVALID_PCM_SIZE;
     if (decoded.status != Audiodec::DecodeStatus::Ok) {
+        if (instance->codecType == TYPE_M4AAC) {
+            fillM4aacInfo(&info.m4aac, decoded);
+            if (!copyOut(localCtrl.pBsiInfo, &info.m4aac, sizeof(info.m4aac))) return ERROR_INVALID_BSI_INFO_POINTER;
+        }
         auInfo.ui_au_size = 0;
         pcmItem.ui_pcm_size = 0;
         if (!copyOut(localCtrl.pAuInfo, &auInfo, sizeof(auInfo))) return ERROR_INVALID_AU_INFO_POINTER;
         if (!copyOut(localCtrl.pPcmItem, &pcmItem, sizeof(pcmItem))) return ERROR_INVALID_PCM_ITEM_POINTER;
         return ERROR_API_FAIL;
     }
+    if (instance->codecType == TYPE_M4AAC && instance->surroundChannelInterleaveOrder != 0 && decoded.channels > 2) {
+        throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(instance->surroundChannelInterleaveOrder) + " is not implemented for " + std::to_string(decoded.channels) + " decoded channels");
+    }
     if (decoded.produced > 0 && !copyOut(pcmItem.p_pcm_addr, pcmData.data(), decoded.produced)) return ERROR_INVALID_PCM_POINTER;
-    if (instance->codecType == TYPE_MP3) {
+    if (instance->codecType == TYPE_M4AAC) {
+        fillM4aacInfo(&info.m4aac, decoded);
+        if (!copyOut(localCtrl.pBsiInfo, &info.m4aac, sizeof(info.m4aac))) return ERROR_INVALID_BSI_INFO_POINTER;
+    } else if (instance->codecType == TYPE_MP3) {
         fillMp3Info(&info.mp3, decoded.mp3);
         if (!copyOut(localCtrl.pBsiInfo, &info.mp3, sizeof(info.mp3))) return ERROR_INVALID_BSI_INFO_POINTER;
-    }
-    if (instance->codecType == TYPE_AT9) {
+    } else if (instance->codecType == TYPE_AT9) {
         fillAt9Info(&info.at9, instance->at9);
         if (!copyOut(localCtrl.pBsiInfo, &info.at9, sizeof(info.at9))) return ERROR_INVALID_BSI_INFO_POINTER;
     }

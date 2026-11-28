@@ -1,0 +1,15 @@
+add_library(libSceDataTransfer SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDataTransfer PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDataTransfer)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_data_transfer_not_initialized_tests ${LIBS_INCLUDE_DIR}/tests/GuestDataTransferNotInitialized.cpp)
+    target_include_directories(guest_data_transfer_not_initialized_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_data_transfer_not_initialized_tests PRIVATE libSceDataTransfer libc)
+    configure_windows_unwind(guest_data_transfer_not_initialized_tests)
+    add_test(NAME guest_data_transfer_not_initialized COMMAND guest_data_transfer_not_initialized_tests)
+    if(WIN32)
+        set_tests_properties(guest_data_transfer_not_initialized PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDataTransfer>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

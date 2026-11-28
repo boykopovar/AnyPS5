@@ -182,12 +182,8 @@ def main():
             result, output = convert(case, windows)
             skipped = "Skipping backup copy: sce_module/libSceFace.prx.esbak (same SONAME as sce_module/libSceFace.prx)"
             assert result.stdout.count(skipped) == 1, result.stdout
-            if windows:
-                assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
-                assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"libSceFace.prx.guest.prx"}
-            else:
-                assert result.returncode == 2 and "Duplicate or empty export after stripping #: shared" in result.stderr, result.stderr
-                assert not output.exists() and not (case / "app0").exists(), output
+            assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
+            assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"libSceFace.prx.guest.prx"}
 
             case = work / f"{windows}-prefixed-libraries"
             (case / "sce_module").mkdir(parents=True)

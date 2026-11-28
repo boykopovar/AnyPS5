@@ -1,4 +1,5 @@
 #include "prx/libSceVcodec/libSceVcodec.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
 #include <cerrno>
@@ -10,6 +11,10 @@
 #include <string>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int ErrorPermission = static_cast<int>(0x80bf0000);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80bf0001);
@@ -23,6 +28,8 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     const auto original = std::filesystem::current_path();
     const auto directory = original / ("vcodec-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory), "create the test directory");
@@ -36,7 +43,9 @@ int main() {
     Require(sceVcodecSetHwBudgetType(1, 2, 3) == ErrorPermission, "SetHwBudgetType without /dev/uvd_bgt maps EBADF");
 
     std::uint64_t result = 0x5a5a5a5a5a5a5a5aull;
+    errno = 71;
     Require(libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(&result, nullptr) == ErrorInvalidArgument, "Ipf4PM5PIHE null config");
+    Require(errno == 71, "Ipf4PM5PIHE errno preserved on initial result clear");
     Require(result == 0, "Ipf4PM5PIHE clears its result before the config check");
     Require(libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(nullptr, nullptr) == ErrorInvalidArgument, "Ipf4PM5PIHE null result and config");
     const std::array<std::uint32_t, 5> config{1, 1920, 1080, 0, 200};
@@ -61,5 +70,7 @@ int main() {
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
     std::puts("Vcodec tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

@@ -249,17 +249,17 @@ private:
         emit(spv::OpLabel, failed);
         const auto scope = uintConstant(spv::ScopeDevice);
         const auto relaxed = uintConstant(spv::MemorySemanticsMaskNone);
-        const auto state = faultWord(0);
-        const auto previous = result(spv::OpAtomicCompareExchange, uintType, state, scope, relaxed, relaxed, uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), uintConstant(0));
-        const auto won = result(spv::OpIEqual, boolType, previous, uintConstant(0));
+        const auto claim = faultWord(static_cast<std::uint32_t>(offsetof(BdaAbi::Fault, claim) / sizeof(std::uint32_t)));
+        const auto previous = result(spv::OpAtomicOr, uintType, claim, scope, relaxed, uintConstant(BdaAbi::FaultClaimed | BdaAbi::FaultClaimOtherFaults));
+        const auto won = result(spv::OpIEqual, boolType, result(spv::OpBitwiseAnd, uintType, previous, uintConstant(BdaAbi::FaultClaimed)), uintConstant(0));
         const auto write = builder.AllocateId();
         const auto done = builder.AllocateId();
         emit(spv::OpSelectionMerge, done, spv::SelectionControlMaskNone);
         emit(spv::OpBranchConditional, won, write, done);
         emit(spv::OpLabel, write);
         store(faultWord(1), uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultReason::InvalidRectangle)));
-        for (std::uint32_t i = 2; i < 8; ++i) store(faultWord(i), uintConstant(0));
-        emit(spv::OpAtomicStore, state, scope, uintConstant(spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
+        for (std::uint32_t i = 2; i < 7; ++i) store(faultWord(i), uintConstant(0));
+        store(faultWord(0), uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
         emit(spv::OpBranch, done);
         emit(spv::OpLabel, done);
         emit(spv::OpReturn);
@@ -497,7 +497,6 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     std::set<std::uint32_t> locations;
     for (const auto& input : fragment.fragmentParameters) {
         require(input.location < 32 && input.sourceLocation < 32 && locations.insert(input.location).second, "invalid fragment parameter location");
-        require(!input.custom, "custom per-vertex interpolation is unsupported");
         const bool exported = std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), input.sourceLocation) != vertex.parameterExports.end();
         if (fragment.barycentricEmulation.active && input.perVertex) {
             require(exported, "an emulated per-vertex parameter is not exported by the vertex shader");

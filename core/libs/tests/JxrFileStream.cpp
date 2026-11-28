@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -71,6 +72,13 @@ int main() {
         std::size_t position = 99;
         Require(GetPosWS_File_nid_postfix(&stream, &position) == 0 && position == 0);
         Require(SetPosWS_File_nid_postfix(&stream, 9) == 0 && GetPosWS_File_nid_postfix(&stream, &position) == 0 && position == 9);
+        bool threw = false;
+        try {
+            GetPosWS_File_nid_postfix(&stream, reinterpret_cast<std::size_t*>(0x10));
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
         Close(stream);
     }
     {

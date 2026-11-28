@@ -468,6 +468,6 @@ void Font::CachedStyleSetScalar(CachedStyle& style, float value) {
 }
 
 void Font::ClearRenderOutputs(FontGlyphMetrics* metrics, FontRenderOutput* result) {
-    if (metrics) *metrics = {};
-    if (result) *result = {};
+    if (metrics) CopyOutGuest(metrics, FontGlyphMetrics{});
+    if (result) CopyOutGuest(result, FontRenderOutput{});
 }

@@ -21,6 +21,7 @@ inline std::atomic<LookupHook>& LookupHookSlot() {
 
 using ConnectHook = int (*)(int socket, const void* address, std::uint32_t size);
 using PollHook = int (*)(std::uintptr_t native, bool write, bool both);
+using CheckHook = void (*)(std::atomic<bool>& stopped, std::atomic<bool>& cancelled);
 using WriteHook = std::int64_t (*)(int socket, const void* data, std::size_t size, int flags);
 
 inline std::atomic<ConnectHook>& ConnectHookSlot() {
@@ -30,6 +31,11 @@ inline std::atomic<ConnectHook>& ConnectHookSlot() {
 
 inline std::atomic<PollHook>& PollHookSlot() {
     static std::atomic<PollHook> hook{nullptr};
+    return hook;
+}
+
+inline std::atomic<CheckHook>& CheckHookSlot() {
+    static std::atomic<CheckHook> hook{nullptr};
     return hook;
 }
 
@@ -47,7 +53,8 @@ struct Settings {
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
-    bool inflateGzip = false;
+    bool inflateGzip = true;
+    bool stripGzipHeaders = false;
     bool auth = true;
     int redirect = 1;
     std::uint32_t verifyFlags = 0x3d;
@@ -84,7 +91,7 @@ public:
     int Headers(char** header, std::size_t* size);
     int TrailingHeaders(char** header, std::size_t* size);
     void Cancel();
-    void Stop();
+    void Stop(bool terminated);
 private:
     struct State;
     std::unique_ptr<State> state;
@@ -100,4 +107,5 @@ extern "C" void Http2SetLookupHook_nid_no_patch(Http2::LookupHook hook);
 
 extern "C" void Http2SetConnectHook_nid_no_patch(Http2::ConnectHook hook);
 extern "C" void Http2SetPollHook_nid_no_patch(Http2::PollHook hook);
+extern "C" void Http2SetCheckHook_nid_no_patch(Http2::CheckHook hook);
 extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook);

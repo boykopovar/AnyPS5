@@ -76,7 +76,7 @@ test("translate returns German, falls back to English for unknown keys and unkno
   assert.equal(translate("de", "cancelButton"), messages.de.cancelButton);
   assert.notEqual(messages.de.cancelButton, messages.en.cancelButton);
   assert.equal(translate("de", "__does_not_exist__"), "__does_not_exist__");
-  assert.equal(translate("fr", "cancelButton"), messages.en.cancelButton);
+  assert.equal(translate("xx", "cancelButton"), messages.en.cancelButton);
 });
 
 test("translate substitutes placeholders", () => {
@@ -98,16 +98,38 @@ test("apply sets lang, dir, text content and attributes for a locale", t => {
   assert.equal(attrNode.attributes["aria-label"], messages.de.themeToggle);
 });
 
-test("apply sets dir=rtl for an rtl locale without shipping one", t => {
-  const fakeDocument = stubDocument([]);
+test("Arabic applies right-to-left direction and persists across reloads", t => {
+  const store = new Map();
+  const fakeDocument = stubDocument([new FakeElement({ i18n: "heroTitle" })]);
   stubGlobal("document", fakeDocument, t);
-  locales.push({ code: "test-rtl", name: "Test RTL", direction: "rtl" });
-  t.after(() => { locales.pop(); });
+  stubGlobal("localStorage", { getItem: key => store.get(key) ?? null, setItem: (key, value) => { store.set(key, value); } }, t);
 
-  apply("test-rtl");
-
-  assert.equal(fakeDocument.documentElement.lang, "test-rtl");
+  set("ar");
+  assert.equal(current(), "ar");
+  assert.equal(fakeDocument.documentElement.lang, "ar");
   assert.equal(fakeDocument.documentElement.dir, "rtl");
+  assert.equal(fakeDocument.querySelectorAll("[data-i18n]")[0].textContent, messages.ar.heroTitle);
+  assert.match(messages.ar.heroTitle, /\p{Script=Arabic}/u);
+  apply("en");
+  assert.equal(fakeDocument.documentElement.dir, "ltr");
+  apply(current());
+  assert.equal(fakeDocument.documentElement.dir, "rtl");
+});
+
+test("Brazilian Portuguese applies pt-BR left-to-right and persists across reloads", t => {
+  const store = new Map();
+  const fakeDocument = stubDocument([new FakeElement({ i18n: "heroTitle" })]);
+  stubGlobal("document", fakeDocument, t);
+  stubGlobal("localStorage", { getItem: key => store.get(key) ?? null, setItem: (key, value) => { store.set(key, value); } }, t);
+
+  set("pt-BR");
+  assert.equal(store.get("anyps5.converter.locale"), "pt-BR");
+  assert.equal(current(), "pt-BR");
+  assert.equal(fakeDocument.documentElement.lang, "pt-BR");
+  assert.equal(fakeDocument.documentElement.dir, "ltr");
+  assert.equal(fakeDocument.querySelectorAll("[data-i18n]")[0].textContent, messages["pt-BR"].heroTitle);
+  assert.notEqual(messages["pt-BR"].heroTitle, messages.en.heroTitle);
+  assert.equal(translate("pt-BR", "unsafeZipPath", { name: "evil.txt" }), "Caminho inseguro no ZIP: evil.txt");
 });
 
 test("a saved locale choice is applied at start", t => {

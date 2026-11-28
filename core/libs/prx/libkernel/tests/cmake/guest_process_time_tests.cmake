@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test(NAME guest_process_time_rdtsc_delayed COMMAND guest_process_time_tests rdtsc delayed)
+    add_test(NAME guest_process_time_rdtsc_scaled_delayed COMMAND guest_process_time_tests rdtsc delayed)
+    set_tests_properties(guest_process_time_rdtsc_delayed guest_process_time_rdtsc_scaled_delayed PROPERTIES TIMEOUT 10)
+    set_tests_properties(guest_process_time_rdtsc_scaled_delayed PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
+    if(WIN32)
+        set_tests_properties(guest_process_time_rdtsc_delayed guest_process_time_rdtsc_scaled_delayed PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

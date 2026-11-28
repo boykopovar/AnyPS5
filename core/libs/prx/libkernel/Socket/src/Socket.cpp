@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <stdexcept>
@@ -33,6 +34,7 @@ constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int SelectDescriptorLimit = 1024;
 constexpr int SelectPollSliceMilliseconds = 10;
+constexpr std::size_t SelectScanBytes = 4096;
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -53,6 +55,10 @@ bool DescriptorSet(const void* set, int descriptor) {
 
 void ClearDescriptor(void* set, int descriptor) {
     if (set != nullptr) static_cast<std::uint64_t*>(set)[descriptor / 64] &= ~(std::uint64_t{1} << (descriptor % 64));
+}
+
+bool SelectDescriptorOpen(int descriptor) {
+    return GuestSockets::IsOpen(descriptor) || IsKqueueDescriptor_nid_no_patch(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor);
 }
 
 void ClearDescriptorsFrom(int nfds, void* readfds, void* writefds, void* exceptfds) {
@@ -213,7 +219,7 @@ bool KernelFindSocketNative_nid_no_patch(int descriptor, std::shared_ptr<void>* 
 
 static int SelectDescriptors(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
     const auto* limit = static_cast<const GuestTimeval*>(timeout);
-    if (nfds < 0 || nfds > SelectDescriptorLimit || (limit != nullptr && (limit->seconds < 0 || limit->microseconds < 0 || limit->microseconds >= 1000000))) {
+    if (nfds < 0 || (limit != nullptr && (limit->seconds < 0 || limit->microseconds < 0 || limit->microseconds >= 1000000))) {
         *__error_nid_postfix() = GuestEinval;
         return -1;
     }
@@ -360,29 +366,59 @@ static int SelectDescriptors(int nfds, void* readfds, void* writefds, void* exce
     }
 }
 
-int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
-    GuestTimeval limit{};
-    if (timeout != nullptr && !GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
-        *__error_nid_postfix() = GuestEfault;
-        return -1;
+bool KernelSelectCheckSets_nid_no_patch(int nfds, const void* readfds, const void* writefds, const void* exceptfds, int* scanned, int* error) {
+    *scanned = std::min(nfds, SelectDescriptorLimit);
+    if (nfds <= SelectDescriptorLimit) return true;
+    const auto bytes = static_cast<std::size_t>(nfds / 8 + (nfds % 8 != 0));
+    std::array<std::uint8_t, SelectScanBytes> chunk{};
+    for (const void* set : {readfds, writefds, exceptfds}) {
+        if (set == nullptr) continue;
+        for (std::size_t offset = SelectDescriptorLimit / 8; offset < bytes; offset += SelectScanBytes) {
+            const auto count = std::min(SelectScanBytes, bytes - offset);
+            const auto* source = static_cast<const std::uint8_t*>(set) + offset;
+            const bool chunkRead = GuestCopyIn_nid_no_patch(chunk.data(), source, count);
+            for (std::size_t index = 0; index < count; ++index) {
+                if (!chunkRead && !GuestCopyIn_nid_no_patch(&chunk[index], source + index, 1)) {
+                    *error = GuestEfault;
+                    return false;
+                }
+                const auto firstDescriptor = static_cast<int>((offset + index) * 8);
+                unsigned bits = chunk[index];
+                if (nfds - firstDescriptor < 8) bits &= (1u << (nfds - firstDescriptor)) - 1;
+                for (; bits != 0; bits &= bits - 1) {
+                    const int descriptor = firstDescriptor + std::countr_zero(bits);
+                    if (!SelectDescriptorOpen(descriptor)) {
+                        *error = GuestEbadf;
+                        return false;
+                    }
+                    *scanned = std::max(*scanned, descriptor + 1);
+                }
+            }
+        }
     }
-    if (nfds < 0 || nfds > SelectDescriptorLimit) {
-        *__error_nid_postfix() = GuestEinval;
-        return -1;
-    }
-    const std::size_t bytes = static_cast<std::size_t>((nfds + 63) / 64) * sizeof(std::uint64_t);
-    std::array<std::uint64_t, SelectDescriptorLimit / 64> sets[3]{};
+    return true;
+}
+
+int KernelSelectCheckedSets_nid_no_patch(int scanned, void* readfds, void* writefds, void* exceptfds, const void* limit) {
+    const std::size_t bytes = KernelSocketPoll::SelectSetBytes(scanned);
+    std::array<std::uint64_t, SelectDescriptorLimit / 64> fixed[3]{};
+    std::vector<std::uint64_t> grown[3];
     void* guest[3] = {readfds, writefds, exceptfds};
     void* local[3] = {};
     for (int index = 0; index < 3; ++index) {
         if (guest[index] == nullptr) continue;
-        if (!GuestCopyIn_nid_no_patch(sets[index].data(), guest[index], bytes)) {
+        std::uint64_t* buffer = fixed[index].data();
+        if (bytes > sizeof(fixed[index])) {
+            grown[index].resize(bytes / sizeof(std::uint64_t));
+            buffer = grown[index].data();
+        }
+        if (!GuestCopyIn_nid_no_patch(buffer, guest[index], bytes)) {
             *__error_nid_postfix() = GuestEfault;
             return -1;
         }
-        local[index] = sets[index].data();
+        local[index] = buffer;
     }
-    const int result = SelectDescriptors(nfds, local[0], local[1], local[2], timeout != nullptr ? &limit : nullptr);
+    const int result = SelectDescriptors(scanned, local[0], local[1], local[2], limit);
     if (result < 0) return result;
     for (int index = 0; index < 3; ++index) {
         if (local[index] != nullptr && !GuestCopyOut_nid_no_patch(guest[index], local[index], bytes)) {
@@ -391,6 +427,25 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
         }
     }
     return result;
+}
+
+int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
+    GuestTimeval limit{};
+    if (timeout != nullptr && !GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    if (nfds < 0) {
+        *__error_nid_postfix() = GuestEinval;
+        return -1;
+    }
+    int scanned = 0;
+    int error = 0;
+    if (!KernelSelectCheckSets_nid_no_patch(nfds, readfds, writefds, exceptfds, &scanned, &error)) {
+        *__error_nid_postfix() = error;
+        return -1;
+    }
+    return KernelSelectCheckedSets_nid_no_patch(scanned, readfds, writefds, exceptfds, timeout != nullptr ? &limit : nullptr);
 }
 
 }

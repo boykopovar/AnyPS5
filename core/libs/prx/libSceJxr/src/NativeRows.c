@@ -96,3 +96,7 @@ const char* JxrResetCodingContext_nid_no_patch(void* value) {
     ResetCodingContext((CCodingContext*)value);
     return NULL;
 }
+
+int32_t JxrAllocateCodingContextDec_nid_no_patch(void* codec, int32_t count) {
+    return AllocateCodingContextDec((CWMImageStrCodec*)codec, count);
+}

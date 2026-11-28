@@ -29,6 +29,12 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_load_release_rejects_duplicate_metadata_fields(self):
+        for data, key in ((b'{"tag_name":"v1","tag_name":"v2"}', "tag_name"),
+                          (b'{"assets":[{"size":1,"size":2}]}', "size")):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, f"duplicate JSON field.*{key}"):
+                build_web.load_release(io.BytesIO(data))
+
     def test_browser_unsafe_paths_do_not_publish_library_archives(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
         for name in ("libs/NUL.prx", "libs/file:stream.prx", "libs/trailing./libc.prx",
@@ -71,6 +77,11 @@ class LibraryPublicationTests(unittest.TestCase):
             allocator_license = source / "3rdparty/mimalloc/LICENSE"
             allocator_license.parent.mkdir(parents=True)
             allocator_license.write_bytes(b"allocator license")
+            ffmpeg_notices = root / "prebuilt FFmpeg" / "share/ffmpeg"
+            ffmpeg_notices.mkdir(parents=True)
+            for name in ("copyright", "SOURCE.txt"):
+                (ffmpeg_notices / name).write_bytes(name.encode())
+            (build / "release-ffmpeg-notices.txt").write_text(ffmpeg_notices.as_posix() + "\n", encoding="utf-8")
             runtime = root / "compiler"
             runtime.mkdir()
             for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
@@ -103,6 +114,8 @@ class LibraryPublicationTests(unittest.TestCase):
                         )
                         self.assertEqual(packaged.read("libs/licenses/vgmstream.txt"), b"decoder license")
                         self.assertEqual(packaged.read("libs/licenses/mimalloc.txt"), b"allocator license")
+                        for name in ("copyright", "SOURCE.txt"):
+                            self.assertEqual(packaged.read("libs/licenses/ffmpeg/" + name), name.encode())
                         if platform == "windows":
                             self.assertEqual(packaged.read("libs/libstdc++-6.dll"), b"compiler runtime")
             self.publish(archives["windows"], archives["linux"])
@@ -181,7 +194,10 @@ class LibraryPublicationTests(unittest.TestCase):
         with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True):
             self.publish(payload, payload)
         report = json.loads(self.manifest.read_text(encoding="utf-8"))
-        self.assertTrue(all(asset["expandedBytes"] == 4096 for asset in report["platforms"].values()))
+        self.assertEqual(
+            {platform: asset["expandedBytes"] for platform, asset in report["platforms"].items()},
+            {"windows": 4096, "linux": 4096},
+        )
 
     def test_file_ancestors_are_rejected_before_publication(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
@@ -570,6 +586,29 @@ class LocalNativeArtifactTests(unittest.TestCase):
             self.assertTrue((build / "web/.nojekyll").exists())
 
 
+    def test_copy_sources_removes_stale_files_without_touching_native_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            source = root / "demo/web"
+            output = Path(directory) / "build/web"
+            native = output / "native"
+            source.mkdir(parents=True)
+            native.mkdir(parents=True)
+            (source / "keep.mjs").write_bytes(b"keep")
+            removed = source / "removed.mjs"
+            removed.write_bytes(b"removed")
+            wasm = native / "relinker_wasm.wasm"
+            wasm.write_bytes(b"native")
+            with patch.object(build_web, "ROOT", root):
+                build_web.copy_sources(output)
+                removed.unlink()
+                build_web.copy_sources(output)
+            self.assertEqual((output / "keep.mjs").read_bytes(), b"keep")
+            self.assertFalse((output / "removed.mjs").exists())
+            self.assertEqual(wasm.read_bytes(), b"native")
+            self.assertTrue((output / ".nojekyll").is_file())
+
+
 class WebReleaseValidationTests(unittest.TestCase):
     HISTORICAL_FILES = (
         "index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs",
@@ -752,6 +791,21 @@ class WebReleaseValidationTests(unittest.TestCase):
         with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 128, "", "fatal: bad object")):
             with self.assertRaisesRegex(ValueError, "Cannot resolve release revision: 0000000000000000000000000000000000000000"):
                 build_web.release_web_files("0" * 40)
+
+    def test_request_sends_github_token_only_to_the_github_api(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "secret"}), \
+                patch.object(build_web.urllib.request, "urlopen", return_value="response") as urlopen:
+            self.assertEqual(build_web.request("https://api.github.com/repos/x/releases"), "response")
+            api = urlopen.call_args[0][0]
+            self.assertEqual(api.get_header("Authorization"), "Bearer secret")
+            self.assertEqual(api.get_header("User-agent"), "AnyPS5-Pages")
+            self.assertEqual(urlopen.call_args[1], {"timeout": 60})
+            build_web.request("https://github.com/x/prx.zip")
+            self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
+        with patch.dict(os.environ, clear=True), \
+                patch.object(build_web.urllib.request, "urlopen", return_value="response") as urlopen:
+            build_web.request("https://api.github.com/repos/x/releases")
+            self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
 
 
 if __name__ == "__main__":

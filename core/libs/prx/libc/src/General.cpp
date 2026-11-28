@@ -29,12 +29,14 @@
 #endif
 #include <windows.h>
 #include <io.h>
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #else
 #include <ctime>
 #include <fcntl.h>
 #include <sys/stat.h>
 #ifdef __linux__
 #include <sys/uio.h>
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #elif defined(__APPLE__)
 #include <mach/mach.h>
@@ -63,6 +65,7 @@ struct PathAliases {
     std::vector<std::pair<std::string, std::string>> entries;
     std::vector<std::string> blocked;
     std::vector<std::pair<std::string, PathProvider>> providers;
+    std::atomic<std::uint64_t> generation{0};
 };
 
 PathAliases& Aliases() {
@@ -85,12 +88,22 @@ std::size_t HostPageSize() {
     return size;
 }
 
+struct RestoreErrno {
+    int value = errno;
+    ~RestoreErrno() { errno = value; }
+};
+
 bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
+    const RestoreErrno restore;
     if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
+    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(reinterpret_cast<std::uintptr_t>(source), destination, bytes)) return true;
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
 #elif defined(__linux__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
     const int saved = errno;
@@ -163,8 +176,11 @@ bool CaseInsensitiveDirectoryWindows(const std::filesystem::path& directory) {
     const std::unique_ptr<void, decltype(&CloseHandle)> owner(handle, &CloseHandle);
     struct { ULONG flags; } information{};
     constexpr auto caseSensitiveInfo = static_cast<FILE_INFO_BY_HANDLE_CLASS>(23);
-    return GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)) &&
-        (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    if (GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)))
+        return (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    const auto error = GetLastError();
+    return error == ERROR_CALL_NOT_IMPLEMENTED || error == ERROR_INVALID_PARAMETER || error == ERROR_NOT_SUPPORTED ||
+        error == ERROR_INVALID_FUNCTION;
 }
 
 std::error_code MatchNamesWindows(const std::filesystem::path& directory, std::span<NameMatch> names) {
@@ -357,14 +373,23 @@ std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::s
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
     const auto host = HostPath(state, names);
     std::error_code error;
+#ifdef _WIN32
+    const auto hostStatus = [](const std::filesystem::path& path, std::error_code& failure) {
+        std::error_code verbatimError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(path, verbatimError);
+        return std::filesystem::status(verbatimError ? path : verbatim, failure);
+    };
+    const auto status = hostStatus(host, error);
+#else
     const auto status = std::filesystem::status(host, error);
+#endif
     if (std::filesystem::is_directory(status)) return;
     if (!error) error = std::make_error_code(std::filesystem::exists(status) ? std::errc::not_a_directory : std::errc::no_such_file_or_directory);
 #ifdef _WIN32
     if (error == std::errc::no_such_file_or_directory) {
         for (auto prefix = host.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
             std::error_code prefixError;
-            const auto prefixStatus = std::filesystem::status(prefix, prefixError);
+            const auto prefixStatus = hostStatus(prefix, prefixError);
             if (!std::filesystem::exists(prefixStatus)) continue;
             if (!std::filesystem::is_directory(prefixStatus)) error = std::make_error_code(std::errc::not_a_directory);
             break;
@@ -517,13 +542,79 @@ int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::too_many_symbolic_link_levels) return 62;
     return 5;
 }
+bool IsDirectory(const std::filesystem::path& path, std::error_code& error) {
+#ifdef _WIN32
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    if (error) return false;
+    return std::filesystem::is_directory(verbatim, error);
+#else
+    return std::filesystem::is_directory(path, error);
+#endif
+}
+
+#ifdef _WIN32
+std::optional<std::filesystem::path> FinalDirectoryPath(const std::filesystem::path& path, bool& notDirectory) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    if (error) return std::nullopt;
+    const HANDLE handle = ::CreateFileW(verbatim.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return std::nullopt;
+    FILE_BASIC_INFO basic{};
+    std::wstring final(MAX_PATH, L'\0');
+    DWORD length = 0;
+    if (::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic))) {
+        notDirectory = (basic.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+        if (!notDirectory) {
+            length = ::GetFinalPathNameByHandleW(handle, final.data(), static_cast<DWORD>(final.size()), FILE_NAME_NORMALIZED);
+            if (length >= final.size()) {
+                final.resize(length);
+                length = ::GetFinalPathNameByHandleW(handle, final.data(), length, FILE_NAME_NORMALIZED);
+            }
+        }
+    }
+    ::CloseHandle(handle);
+    if (length == 0 || length >= final.size()) return std::nullopt;
+    final.resize(length);
+    if (final.starts_with(LR"(\\?\UNC\)")) final.replace(0, 8, LR"(\\)");
+    else if (final.starts_with(LR"(\\?\)")) final.erase(0, 4);
+    return std::filesystem::path(std::move(final));
+}
+
+int SetLongWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved, const std::error_code& failure) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(resolved, error);
+    if (error || !verbatim.native().starts_with(LR"(\\?\)")) return DirectoryFailure(failure);
+    bool notDirectory = false;
+    const auto target = FinalDirectoryPath(resolved, notDirectory);
+    if (notDirectory) return 20;
+    if (!target) return DirectoryFailure(failure);
+    const auto root = FinalDirectoryPath(state.root, notDirectory);
+    if (!root) return DirectoryFailure(failure);
+    const auto relative = target->lexically_relative(*root);
+    if (relative.empty() || *relative.begin() == "..") return 45;
+    state.current = relative == "." ? state.root : state.root / relative;
+    return 0;
+}
+#endif
+
 int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved) {
     std::error_code error;
     const auto canonical = std::filesystem::canonical(resolved, error);
+#ifdef _WIN32
+    if (error) return SetLongWorkingDirectory(state, resolved, error);
+#else
     if (error) return DirectoryFailure(error);
+#endif
     if (!std::filesystem::is_directory(canonical, error)) return error ? DirectoryFailure(error) : 20;
     auto relative = canonical.lexically_relative(state.root);
 #ifdef _WIN32
+    if (relative.empty() || *relative.begin() == "..") {
+        bool notDirectory = false;
+        const auto target = FinalDirectoryPath(canonical, notDirectory);
+        const auto root = FinalDirectoryPath(state.root, notDirectory);
+        if (target && root) relative = target->lexically_relative(*root);
+    }
     if (relative.empty() || *relative.begin() == "..") {
         auto ancestor = canonical;
         while (!std::filesystem::equivalent(ancestor, state.root, error)) {
@@ -710,6 +801,7 @@ extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* h
     }
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
+    aliases.generation.fetch_add(1, std::memory_order_release);
     const auto prefix = TrimSlashes(guestPrefix);
     std::erase_if(aliases.blocked, [&](const auto& entry) { return SameName(entry, prefix); });
     for (auto& entry : aliases.entries) {
@@ -729,6 +821,7 @@ extern "C" void AddPathProvider_nid_no_patch(const char* guestPath, PathProvider
     if (path.empty()) { APS5_INVALID_ARG_EX; }
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
+    aliases.generation.fetch_add(1, std::memory_order_release);
     for (auto& entry : aliases.providers) {
         if (SameName(entry.first, path)) {
             entry.second = provide;
@@ -744,8 +837,13 @@ extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix) {
     }
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
+    aliases.generation.fetch_add(1, std::memory_order_release);
     const auto prefix = TrimSlashes(guestPrefix);
     std::erase_if(aliases.entries, [&](const auto& entry) { return SameName(entry.first, prefix); });
+}
+
+extern "C" std::uint64_t PathAliasGeneration_nid_no_patch() {
+    return Aliases().generation.load(std::memory_order_acquire);
 }
 
 extern "C" void RecordWrittenPath_nid_no_patch(const std::filesystem::path& path) {
@@ -803,6 +901,7 @@ extern "C" void BlockPathAlias_nid_no_patch(const char* guestPrefix) {
     if (prefix.empty()) { APS5_INVALID_ARG_EX; }
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
+    aliases.generation.fetch_add(1, std::memory_order_release);
     std::erase_if(aliases.entries, [&](const auto& entry) { return SameName(entry.first, prefix); });
     std::erase_if(aliases.blocked, [&](const auto& entry) { return SameName(entry, prefix); });
     aliases.blocked.push_back(prefix);
@@ -824,11 +923,42 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
     return ResolveLocked(path, module, true);
 }
 
+extern "C" bool GuestReadable_nid_no_patch(const void* source, std::size_t bytes) {
+    const RestoreErrno restore;
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    for (auto address = start; address < start + bytes;) {
+#ifdef _WIN32
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
+            (memory.Protect & PAGE_GUARD) != 0 ||
+            (memory.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
+        address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+#elif defined(__linux__)
+        const auto mapping = HostMapping::Find(address, "GuestReadable");
+        if (!mapping || !mapping->readable) return false;
+        address = mapping->end;
+#elif defined(__APPLE__)
+        mach_vm_address_t region = address;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        const auto result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+            reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+        if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+        if (result != KERN_SUCCESS || region > address || (info.protection & VM_PROT_READ) == 0) return false;
+        address = region + size;
+#else
+        throw std::runtime_error("GuestReadable: no checked read is available on this host");
+#endif
+    }
+    return true;
+}
+
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const RestoreErrno restore;
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
@@ -865,9 +995,11 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    const RestoreErrno restore;
     const GuestArena::HostWrite guard(destination, bytes);
     if (!guard.Open()) return false;
 #ifdef _WIN32
+    if (GuestArena::GuestArenaStoreOwned_nid_no_patch(start, source, bytes)) return true;
     for (auto address = start; address < start + bytes;) {
         MEMORY_BASIC_INFORMATION memory{};
         if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
@@ -878,6 +1010,9 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     std::memcpy(destination, source, bytes);
     return true;
 #elif defined(__linux__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
     const int saved = errno;
@@ -895,6 +1030,73 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
         reinterpret_cast<vm_offset_t>(source), static_cast<mach_msg_type_number_t>(bytes)) == KERN_SUCCESS;
 #else
     throw std::runtime_error("GuestCopyOut: no checked write is available on this host");
+#endif
+}
+
+extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t destinationPitch, const void* source, std::size_t sourcePitch, std::size_t rowBytes, std::size_t rows) {
+    if (rows == 0 || rowBytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(destination);
+    if (start == 0 || rowBytes > UINTPTR_MAX - start || (rows > 1 && destinationPitch > (UINTPTR_MAX - start - rowBytes) / (rows - 1))) return false;
+    auto* target = static_cast<std::uint8_t*>(destination);
+    const auto* from = static_cast<const std::uint8_t*>(source);
+#if defined(_WIN32) || defined(__linux__)
+    const GuestArena::HostWrite guard(destination, (rows - 1) * destinationPitch + rowBytes);
+    if (!guard.Open()) return false;
+#endif
+#ifdef _WIN32
+    std::uintptr_t writableStart = 0;
+    std::uintptr_t writableEnd = 0;
+    for (std::size_t row = 0; row < rows; ++row) {
+        const auto rowStart = start + row * destinationPitch;
+        for (auto address = rowStart; address < rowStart + rowBytes;) {
+            if (address >= writableStart && address < writableEnd) {
+                address = writableEnd;
+                continue;
+            }
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
+                (memory.Protect & PAGE_GUARD) != 0 ||
+                (memory.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
+            writableStart = reinterpret_cast<std::uintptr_t>(memory.BaseAddress);
+            writableEnd = writableStart + memory.RegionSize;
+            address = writableEnd;
+        }
+    }
+    for (std::size_t row = 0; row < rows; ++row) std::memcpy(target + row * destinationPitch, from + row * sourcePitch, rowBytes);
+    return true;
+#elif defined(__linux__)
+    constexpr std::size_t Batch = 1024;
+    std::array<iovec, Batch> local{};
+    std::array<iovec, Batch> remote{};
+    const int saved = errno;
+    for (std::size_t first = 0; first < rows;) {
+        const std::size_t count = std::min(Batch, rows - first);
+        for (std::size_t index = 0; index < count; ++index) {
+            local[index] = {const_cast<std::uint8_t*>(from + (first + index) * sourcePitch), rowBytes};
+            remote[index] = {target + (first + index) * destinationPitch, rowBytes};
+        }
+        const ssize_t copied = ::process_vm_writev(::getpid(), local.data(), count, remote.data(), count, 0);
+        if (copied < 0) {
+            if (errno == EFAULT) {
+                errno = saved;
+                return false;
+            }
+            throw std::runtime_error("GuestCopyOutRows: process_vm_writev failed with errno " + std::to_string(errno));
+        }
+        if (static_cast<std::size_t>(copied) != count * rowBytes) return false;
+        first += count;
+    }
+    return true;
+#else
+    for (std::size_t row = 0; row < rows; ++row)
+        if (!GuestCopyOut_nid_no_patch(target + row * destinationPitch, from + row * sourcePitch, rowBytes)) return false;
+    return true;
+#endif
+}
+
+extern "C" void GuestFaultCopyReinstall_nid_no_patch() {
+#if defined(__linux__) && defined(__x86_64__)
+    GuestFaultCopy::Reinstall();
 #endif
 }
 
@@ -986,7 +1188,7 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
         std::error_code error;
-        if (!std::filesystem::is_directory(state.current, error)) {
+        if (!IsDirectory(state.current, error)) {
             errno = error ? DirectoryFailure(error) : 2; return nullptr;
         }
         const auto relative = state.current.lexically_relative(state.root);

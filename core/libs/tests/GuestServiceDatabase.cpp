@@ -46,6 +46,9 @@ int main() {
 
     errno = 0;
     Require(getservbyname_nid_postfix("no-such-service", nullptr) == nullptr && errno == 0);
+    Require(getservbyname_nid_postfix(reinterpret_cast<const char*>(0x10), nullptr) == nullptr && errno == 0);
+    Require(getservbyname_nid_postfix("http", reinterpret_cast<const char*>(0x10)) == nullptr && errno == 0);
+    Require(getservbyname_nid_postfix("submission-service-name-longer-than-any-entry-in-the-service-table", nullptr) == nullptr);
     Require(getservbyname_nid_postfix("domain", "sctp") == nullptr);
     Require(getservbyname_nid_postfix("ntp", "TCP") == nullptr);
     Require(getservbyname_nid_postfix("HTTP", "tcp") == nullptr);

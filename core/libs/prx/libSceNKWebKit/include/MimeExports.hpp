@@ -43,5 +43,15 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry30appendFileExte
 bool APS5_VABI _ZN7WebCore16MIMETypeRegistry32containsImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& mimeTypes, const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& extensions);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry33preferredImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& mimeTypes, const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& extensions);
 bool APS5_VABI _ZN7WebCore16MIMETypeRegistry34isSupportedImageVideoOrSVGMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry15mimeTypeForPathERKN3WTF6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry20isJavaAppletMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry20mimeTypeForExtensionERKN3WTF6StringE(const NKWebKit::WtfAbi::String& extension);
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore16MIMETypeRegistry25mediaMIMETypeForExtensionERKN3WTF6StringE(const NKWebKit::WtfAbi::String& extension);
+
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry15canShowMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType);
+NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZN7WebCore16MIMETypeRegistry21allowedFileExtensionsERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& mimeTypes, const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& extensions);
+NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZN7WebCore16MIMETypeRegistry21extensionsForMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& type);
+bool APS5_VABI _ZN7WebCore16MIMETypeRegistry24isSupportedMediaMIMETypeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& mimeType);
 
 }

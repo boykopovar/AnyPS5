@@ -14,7 +14,8 @@ int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(const char* 
 std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error) {
     FileStat status{};
     if (stat_nid_postfix(path, &status) != 0) {
-        if (error) *error = GuestFilesystem::GuestErrno();
+        const int failure = GuestFilesystem::GuestErrno();
+        if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
         return UINT64_MAX;
     }
     return static_cast<std::uint64_t>(status.st_size);
@@ -23,8 +24,10 @@ std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const ch
 int APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(const char* path, std::int64_t* seconds, std::int64_t* nanoseconds) {
     FileStat status{};
     if (stat_nid_postfix(path, &status) != 0) return GuestFilesystem::GuestErrno();
-    *seconds = status.st_mtim.tv_sec;
-    *nanoseconds = status.st_mtim.tv_nsec;
+    constexpr int badAddress = 14;
+    const std::int64_t second = status.st_mtim.tv_sec;
+    const std::int64_t nanosecond = status.st_mtim.tv_nsec;
+    if (!GuestCopyOut_nid_no_patch(seconds, &second, sizeof(second)) || !GuestCopyOut_nid_no_patch(nanoseconds, &nanosecond, sizeof(nanosecond))) return badAddress;
     return 0;
 }
 

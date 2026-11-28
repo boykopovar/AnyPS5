@@ -1,4 +1,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
@@ -114,6 +117,8 @@ std::array<Event, 16> events{};
 int eventCount = 0;
 int newItemResult = 1;
 int marker = 0;
+bool throwFromFree = false;
+struct LookupFreeFailure {};
 
 void Record(char kind, LibreSslX509Lookup* lookup) {
     Require(eventCount < static_cast<int>(events.size()), "too many callbacks");
@@ -128,6 +133,7 @@ int APS5_VABI NewItem(LibreSslX509Lookup* lookup) {
 
 void APS5_VABI FreeItem(LibreSslX509Lookup* lookup) {
     Record('f', lookup);
+    if (throwFromFree) throw LookupFreeFailure{};
 }
 
 int APS5_VABI Shutdown(LibreSslX509Lookup* lookup) {
@@ -198,6 +204,58 @@ void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { throw std::runtim
 void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
 
+void MalformedStackCleanup() {
+    LibreSslX509LookupMethod method{};
+    method.newItem = reinterpret_cast<void*>(NewItem);
+    method.free = reinterpret_cast<void*>(FreeItem);
+    method.shutdown = reinterpret_cast<void*>(Shutdown);
+    for (int malformed = 0; malformed < 2; ++malformed) {
+        auto* store = X509_STORE_new_nid_postfix();
+        Require(store != nullptr, "a store for a malformed lookup stack");
+        auto* stack = Lookups(store);
+        if (malformed == 0) stack->numAlloc = 0;
+        else stack->num = -1;
+        const Stack before = *stack;
+        ERR_clear_error_nid_postfix();
+        LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+        allocations = frees = eventCount = 0;
+        RequireInvalidArgument([&] { X509_STORE_add_lookup_nid_postfix(store, &method); }, "a malformed lookup stack still throws");
+        Require(allocations == 1 && frees == 1, "an unpublished lookup is freed when its stack insertion throws");
+        Require(eventCount == 2 && events[0].kind == 'n' && events[1].kind == 'f' && events[0].lookup == events[1].lookup,
+            "stack failure runs new_item and free once without shutdown");
+        Require(events[0].storeContext == nullptr && events[1].storeContext == store, "cleanup keeps the callback store-context ordering");
+        Require(stack->num == before.num && stack->numAlloc == before.numAlloc && stack->data == before.data &&
+            stack->sorted == before.sorted && stack->comp == before.comp, "a refused insertion leaves the stack unchanged");
+        Require(ERR_get_error_nid_postfix() == 0x08fff065 && ERR_get_error_nid_postfix() == 0, "cleanup preserves the seeded error queue");
+        stack->num = 0;
+        stack->numAlloc = 4;
+        X509_STORE_free_nid_postfix(store);
+        Require(eventCount == 2, "store cleanup never repeats the unpublished lookup callbacks");
+    }
+}
+
+void ThrowingFreeOnFailedPush() {
+    std::array<LibreSslX509LookupMethod, 3> methods{};
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(store != nullptr, "a store for a throwing free callback");
+    for (auto& method : methods) Require(X509_STORE_add_lookup_nid_postfix(store, &method) != nullptr, "fill the lookup stack before growth");
+    LibreSslX509LookupMethod method{};
+    method.free = reinterpret_cast<void*>(FreeItem);
+    allocations = frees = eventCount = 0;
+    failRealloc = throwFromFree = true;
+    bool caught = false;
+    try {
+        X509_STORE_add_lookup_nid_postfix(store, &method);
+    } catch (const LookupFreeFailure&) {
+        caught = true;
+    }
+    failRealloc = throwFromFree = false;
+    Require(caught && eventCount == 1 && events[0].kind == 'f', "an ordinary failed push preserves a free callback exception");
+    Require(allocations == 1 && frees == 0 && Lookups(store)->num == 3, "a throwing free leaves the original stack intact");
+    free_nid_postfix(events[0].lookup);
+    X509_STORE_free_nid_postfix(store);
+}
+
 void Allocator() {
     std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch), reinterpret_cast<void*>(Calloc_nid_no_patch),
@@ -259,6 +317,73 @@ void Allocator() {
         "a store without a method stack frees the new lookup");
     store->lookupMethods = lookupMethods;
     X509_STORE_free_nid_postfix(store);
+    MalformedStackCleanup();
+    ThrowingFreeOnFailedPush();
+}
+
+void AesWrapSemiblockBounds() {
+    std::array<unsigned char, 32> key{};
+    for (std::size_t index = 0; index < key.size(); ++index) key[index] = static_cast<unsigned char>(index);
+    const std::array<unsigned char, 16> plain{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+    const std::array<const LibreSslEvpCipher*, 3> ciphers{
+        EVP_aes_128_wrap_nid_postfix(), EVP_aes_192_wrap_nid_postfix(), EVP_aes_256_wrap_nid_postfix()};
+
+    for (const auto* cipher : ciphers) {
+        Require(cipher != nullptr, "wrap cipher descriptor");
+        LibreSslEvpCipherCtx* enc = EVP_CIPHER_CTX_new_nid_postfix();
+        Require(enc != nullptr, "allocate wrap encrypt ctx");
+        enc->flags |= CipherCtxFlagWrapAllow;
+        Require(EVP_EncryptInit_ex_nid_postfix(enc, cipher, nullptr, key.data(), nullptr) == 1, "init wrap encrypt");
+
+        int outLen = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, nullptr, &outLen, plain.data(), 8) == 1 && outLen == 16,
+            "wrap encrypt length query for 8 bytes");
+        outLen = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, nullptr, &outLen, plain.data(), 0x7ffffff8) == 0 && outLen == -1,
+            "wrap encrypt rejects 0x7ffffff8 length query");
+
+        std::array<unsigned char, 32> wrapped{};
+        wrapped.fill(0xa5);
+        outLen = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, wrapped.data(), &outLen, plain.data(), 8) == 0 && outLen == -1,
+            "wrap encrypt rejects 8-byte single semiblock");
+        for (const unsigned char byte : wrapped) Require(byte == 0xa5, "rejected wrap encrypt leaves out untouched");
+
+        wrapped.fill(0xa5);
+        outLen = 0;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, wrapped.data(), &outLen, plain.data(), 16) == 1 && outLen == 24,
+            "wrap encrypt 16 bytes");
+        for (std::size_t index = 24; index < wrapped.size(); ++index)
+            Require(wrapped[index] == 0xa5, "wrap encrypt preserves trailing guard bytes");
+
+        LibreSslEvpCipherCtx* dec = EVP_CIPHER_CTX_new_nid_postfix();
+        Require(dec != nullptr, "allocate wrap decrypt ctx");
+        dec->flags |= CipherCtxFlagWrapAllow;
+        Require(EVP_DecryptInit_ex_nid_postfix(dec, cipher, nullptr, key.data(), nullptr) == 1, "init wrap decrypt");
+
+        outLen = -1;
+        Require(EVP_DecryptUpdate_nid_postfix(dec, nullptr, &outLen, wrapped.data(), 16) == 1 && outLen == 8,
+            "wrap decrypt length query for 16 bytes");
+
+        std::array<unsigned char, 24> unwrapped{};
+        unwrapped.fill(0xa5);
+        outLen = -1;
+        Require(EVP_DecryptUpdate_nid_postfix(dec, unwrapped.data(), &outLen, wrapped.data(), 16) == 0 && outLen == 0,
+            "wrap decrypt rejects 16-byte input");
+        for (const unsigned char byte : unwrapped) Require(byte == 0xa5, "rejected wrap decrypt leaves out untouched");
+
+        unwrapped.fill(0xa5);
+        outLen = 0;
+        Require(EVP_DecryptUpdate_nid_postfix(dec, unwrapped.data(), &outLen, wrapped.data(), 24) == 1 && outLen == 16,
+            "wrap decrypt 24 bytes");
+        Require(std::memcmp(unwrapped.data(), plain.data(), plain.size()) == 0, "wrap decrypt round-trip matches plaintext");
+        for (std::size_t index = 16; index < unwrapped.size(); ++index)
+            Require(unwrapped[index] == 0xa5, "wrap decrypt preserves trailing guard bytes");
+
+        EVP_CIPHER_CTX_free_nid_postfix(enc);
+        EVP_CIPHER_CTX_free_nid_postfix(dec);
+    }
 }
 
 } // namespace
@@ -274,4 +399,5 @@ int main(int argc, char**) {
     AddLookup();
     Unsupported();
     Callbacks();
+    AesWrapSemiblockBounds();
 }
