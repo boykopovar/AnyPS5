@@ -214,6 +214,7 @@ struct Ngs2Voice {
     std::uint32_t samplerCachedFrames = 4;
     bool samplerStarved = false;
     bool samplerEnded = false;
+    bool pausedAfterDecode = false;
     std::uint32_t pcmRemaining = 0;
     std::vector<Ngs2QueuedCallback> pendingBlockCallbacks;
     std::vector<Ngs2QueuedCallback> dispatchBlockCallbacks;

@@ -1,0 +1,13 @@
+# libSceNgs2.native
+
+## change [NGS2 closed waveforms]
+
+- [NGS2 closed waveforms](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - a `RESET` add of one block to a closed, playing voice queues and plays the block here, where PS5 firmware 3.20 and 4.03 returned 0 without playing it (seen once: flags 4 ended the voice, flags 5 left it at state flags 0x23). A one-block add to a never-set-up voice throws in the PS5 build, also with `RESET` on a closed waveform, where PS5 returns 0 for flags 4 to 7 and 0xC. PS4 11.00 reports state flags 0x21 where PS5 reports 0x23 for any voice waiting on an open waveform, an ordinary `CONTINUE` starvation included; the PS4 library follows the PS4 value and the PS5 build the PS5 one. The PS4 library returns `0x804A0151` for a closed waveform, a full queue and a one-block add to a never-set-up voice, as PS4 11.00 does (PS4 SDK `ngs2_errors.h`). Run on the PS5 firmware 3.20 and 4.03 module and the PS4 11.00 module on a PC, not a console; no firmware in the repository
+
+## change [NGS2 PS4 buffered controls]
+
+- [NGS2 PS4 buffered controls](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2) - gaps: `ngs2_core_jobbuffer` runs only the port volume cases (`over`) against the PS4 library; the other cases assert PS5 behaviour that PS4 11.00 contradicts, so they are PS5-only: an add on a closed waveform returns 0x804A0151 on PS4 (here 0x804A8054), and the 8-lane gain ramp differs in the last digits (RESULTS20 items 3 and 6, PS4 11.00 libSceNgs2.sprx on a PC, ngs2-oracle-m20). `ngs2_core_voiceevents` checks the PS4 state flags: 0x5 while a paused sampler has finished decode-ahead and 0x21 while a sampler waits on an open waveform. No PS4 case covers buffered matrix levels, patches or events.
+
+## change [sceNgs2VoiceControl sampler filter, PS4 library]
+
+- [sceNgs2VoiceControl sampler filter, PS4 library](../../../core/libs/prx/libSceNgs2.native/src/Filter.cpp) (libSceNgs2) - gaps against the PS4 11.00 libSceNgs2.sprx run on a PC (ngs2-oracle-m20 RESULTS20 item 5, RESULTS21): the arithmetic is the PS5 one (fma, blocks of four) and PS4 agrees to 1e-5 relative in 105 to 120 of 120 rows per type, at most 1.3e-4 to 3.7e-4 (types 1 to 8), bit-identical in 10 to 25% of rows; the history survives PAUSE (after RESUME PS4 equals a fresh voice for types 1 to 5, 7 to 10), tails run longer, block voice flags drop a render later. Implemented as run: shadPS4 layout at size 0x30, the PS5 layout at 0x38 as PS5 titles send it (PPSA21444; how the PS5 `libSceNgs2.sprx` takes 0x30 is not measured), else 0x804A030A, index against maxFilters 0x804A0600, locations 0 to 17 (else 0x804A0602), types 1 to 10 filter, 11+ off, fc floor 0.001 x rate

@@ -518,9 +518,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
     voice.hasSamples = false;
     const bool pitchShiftActive = (Ngs2HasPitchShift(voice) || voice.IsSampler() || voice.IsMixer()) &&
         (voice.state == Ngs2PlayState::Paused || voice.outputTransition == Ngs2VoiceTransition::Stop || voice.outputTransition == Ngs2VoiceTransition::Kill);
-    const bool frozenSampler = voice.IsSampler() && voice.state == Ngs2PlayState::Paused &&
-        (voice.stateFlags & (SCE_NGS2_VOICE_STATE_FLAG_PAUSED | SCE_NGS2_VOICE_STATE_FLAG_PLAYING)) ==
-        (SCE_NGS2_VOICE_STATE_FLAG_PAUSED | SCE_NGS2_VOICE_STATE_FLAG_PLAYING);
+    const bool frozenSampler = voice.IsSampler() && voice.state == Ngs2PlayState::Paused && voice.pausedAfterDecode;
     if ((voice.state == Ngs2PlayState::Playing || pitchShiftActive) && voice.channels != 0) {
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_SAMPLER || voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
             if (frozenSampler) RunFiltersOverSilence(voice, grain);
@@ -788,8 +786,13 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
             if (voice->state == Ngs2PlayState::Stopped) voice->state = Ngs2PlayState::Empty;
             const bool wasPaused = (voice->stateFlags & SCE_NGS2_VOICE_STATE_FLAG_PAUSED) != 0;
             voice->stateFlags = static_cast<std::uint32_t>(voice->state);
-            if (wasPaused && voice->state == Ngs2PlayState::Paused && voice->IsSampler()) voice->stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_PLAYING;
-            if (voice->state == Ngs2PlayState::Playing && voice->IsSampler() && voice->samplerStarved && voice->acceptsBlocks) voice->stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_EMPTY;
+            voice->pausedAfterDecode = wasPaused && voice->state == Ngs2PlayState::Paused && voice->IsSampler();
+            if (voice->pausedAfterDecode && !PS4_LIBRARY) voice->stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_PLAYING;
+            if (voice->state == Ngs2PlayState::Playing && voice->IsSampler() && voice->samplerStarved && voice->acceptsBlocks) {
+                voice->stateFlags = PS4_LIBRARY
+                    ? static_cast<std::uint32_t>(SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_EMPTY)
+                    : static_cast<std::uint32_t>(voice->stateFlags | SCE_NGS2_VOICE_STATE_FLAG_EMPTY);
+            }
             Ngs2PublishSamplerState(*voice);
         }
         std::vector<std::pair<Ngs2Voice*, Ngs2QueuedCallback>> events;
