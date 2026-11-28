@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelMprotect protection bits]
+
+- [sceKernelMprotect protection bits](../../../core/libs/prx/libkernel/DirectMemory/Export.cpp) (libkernel) - bits outside `0x3F7` are dropped instead of refused, in the POSIX `mprotect` as well (FreeBSD 11.4 masks the argument, `sys/vm/vm_mmap.c:613`; the console was measured only through `sceKernelMprotect`), as a PS5 (firmware 13.60) drops them: Onimusha: Way of the Sword (PPSA27836 01.000.001) maps direct memory with `0xf2` and then protects it with `0xfffffff2`, which the console reports as `0xf3` and then `0x3f3`. In a payload process the console also drops the CPU execute bit (`0x4`) of flexible, direct and JIT memory, and POSIX `mprotect` with write and execute reports write only (`0x2`). A title process may keep execute, so it is kept here. The map calls and `sceKernelMtypeprotect` refuse undefined bits on the console with `EINVAL` (`0x80020016`); here the map calls, batched or not, do too before mapping, but `sceKernelMtypeprotect` and the batch protect operations throw
