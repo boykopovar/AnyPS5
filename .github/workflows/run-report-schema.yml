@@ -9,6 +9,8 @@ on:
       - tools/requirements-run-report.txt
       - tools/tests/test_run_report_schema.py
       - tools/tests/test_run_report_docs.py
+      - tools/tests/test_run_report_summary.py
+      - tools/run_report_summary.py
       - docs/user/USAGE.md
       - docs/user/run-report.md
 
@@ -35,3 +37,5 @@ jobs:
         run: '"$RUNNER_TEMP/venv/bin/python" tools/tests/test_run_report_schema.py'
       - name: Check the run report docs
         run: python3 tools/tests/test_run_report_docs.py
+      - name: Check the run report summary
+        run: PYTHONPATH=. python3 tools/tests/test_run_report_summary.py

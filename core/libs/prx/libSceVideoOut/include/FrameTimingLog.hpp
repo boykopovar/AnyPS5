@@ -7,6 +7,7 @@
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <ios>
 #include <locale>
 #include <mutex>
 #include <ostream>
@@ -14,6 +15,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "prx/libc/include/HostThread.hpp"
 
 class FrameTimingLog {
 public:
@@ -22,18 +24,22 @@ public:
     FrameTimingLog() {
         pending.reserve(maxReports);
         file.rdbuf()->pubsetbuf(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        file.exceptions(std::ios::badbit | std::ios::failbit);
         file.imbue(std::locale::classic());
         file.open("frame-timing.log", std::ios::out | std::ios::binary | std::ios::trunc);
-        worker = std::jthread([this](std::stop_token token) { run(token); });
+        if (!file) throw std::ios_base::failure("opening frame-timing.log failed");
+        worker = Libc::StartHostJThread([this](std::stop_token token) { run(token); });
     }
 
     ~FrameTimingLog() {
-        worker.request_stop();
+        {
+            std::lock_guard lock(mutex);
+            worker.request_stop();
+        }
         changed.notify_one();
     }
 
     void Enqueue(Report report) {
+        if (!report) throw std::invalid_argument("frame timing log report is empty");
         {
             std::lock_guard lock(mutex);
             if (failure != nullptr) std::rethrow_exception(failure);
@@ -45,13 +51,26 @@ public:
     }
 
     void Finish() {
-        worker.request_stop();
+        std::lock_guard finishLock(finishMutex);
+        {
+            std::lock_guard lock(mutex);
+            worker.request_stop();
+        }
         changed.notify_one();
         if (worker.joinable()) worker.join();
-        if (failure != nullptr) std::rethrow_exception(failure);
+        std::exception_ptr error;
+        {
+            std::lock_guard lock(mutex);
+            error = failure;
+        }
+        if (error != nullptr) std::rethrow_exception(error);
     }
 
 private:
+    void requireGood() const {
+        if (!file) throw std::ios_base::failure("writing frame-timing.log failed");
+    }
+
     void run(std::stop_token token) {
         try {
             std::vector<Report> reports;
@@ -67,17 +86,26 @@ private:
                 }
                 for (const auto& report : reports) report(file);
                 reports.clear();
+                requireGood();
                 if (stopping) break;
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= flushAt) {
                     file.flush();
+                    requireGood();
                     flushAt = now + std::chrono::seconds(1);
                 }
             }
             file.close();
+            requireGood();
         } catch (...) {
+            const auto current = std::current_exception();
+            try {
+                if (file.is_open()) file.close();
+            } catch (...) {
+            }
             std::lock_guard lock(mutex);
-            failure = std::current_exception();
+            pending.clear();
+            failure = current;
         }
     }
 
@@ -85,6 +113,7 @@ private:
     std::array<char, 65536> buffer{};
     std::ofstream file;
     std::mutex mutex;
+    std::mutex finishMutex;
     std::condition_variable changed;
     std::vector<Report> pending;
     std::exception_ptr failure;

@@ -44,7 +44,7 @@ int APS5_VABI sceNpWebApi2PushEventStartPushContextCallback(std::int32_t userCon
 int APS5_VABI sceNpWebApi2PushEventUnregisterCallback(std::int32_t userContextId, std::int32_t callbackId);
 int APS5_VABI sceNpWebApi2PushEventUnregisterPushContextCallback(std::int32_t userContextId, std::int32_t callbackId);
 int APS5_VABI sceNpWebApi2SetRequestTimeout(int64_t requestId, uint32_t timeout);
-int APS5_VABI sceNpWebApi2AddMultipartPart();
+int APS5_VABI sceNpWebApi2AddMultipartPart(int64_t requestId, const void* partParameter, int32_t* partIndex);
 int APS5_VABI sceNpWebApi2CreateMultipartRequest(int userCtxId, const char* apiGroup, const char* path, const char* method, int64_t* requestId);
 int APS5_VABI sceNpWebApi2InitializeForPresence(int libHttpCtxId, uint64_t poolSize);
 int APS5_VABI sceNpWebApi2IntCreateRequest();
@@ -53,6 +53,6 @@ int APS5_VABI sceNpWebApi2IntInitialize2(const NpWebApi2IntInitialize2Args* args
 int APS5_VABI sceNpWebApi2IntPushEventCreateCtxIndFilter();
 int APS5_VABI sceNpWebApi2IntPushEventCreateDestPs4CtxIndFilter();
 int APS5_VABI sceNpWebApi2SendMultipartRequest(int64_t requestId, int partIndex, void* data, uint64_t dataSize, void* respInfoOption);
-int APS5_VABI sceNpWebApi2SetMultipartContentType();
+int APS5_VABI sceNpWebApi2SetMultipartContentType(int64_t requestId, const char* typeName, const char* boundary);
 
 }

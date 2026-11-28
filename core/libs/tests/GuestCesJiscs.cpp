@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -140,6 +141,7 @@ int main() {
     RequireDecode(profiles[7], 0xA4A2, 0, 0x3042);
     RequireDecode(profiles[4], 0x8FA2AF, 0, 0x02D8);
     RequireDecode(profiles[7], 0x8FA2AF, 0, 0x02D8);
+    RequireDecode(profiles[7], 0x8F00, invalidEncode, 0);
     for (int i = 0; i < 8; ++i) RequireDecode(profiles[i], 0x8E21, invalidEncode, 0);
     RequireEncode(profiles[0], 0x3042, 0, 0x03010402);
     RequireEncode(profiles[0], 0x00A5, 0, 0x5C);
@@ -163,6 +165,12 @@ int main() {
     RequireEncode(nullptr, 0xFFFFFFFF, illegalCode, 0);
     Require(sceCesJiscsToUcs(profiles[0], 0x2422, nullptr) == invalidDstBuffer);
     Require(sceCesUcsToJiscs(0x3042, profiles[0], nullptr) == invalidDstBuffer);
+    errno = 71;
+    Require(sceCesJiscsToUcs(profiles[0], 0x2422, reinterpret_cast<uint32_t*>(0x10)) == invalidDstBuffer);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceCesUcsToJiscs(0x3042, profiles[0], reinterpret_cast<uint32_t*>(0x10)) == invalidDstBuffer);
+    Require(errno == 71);
     Require(sceCesJiscsToUcs(nullptr, 0x2422, nullptr) == invalidProfile);
     return 0;
 }

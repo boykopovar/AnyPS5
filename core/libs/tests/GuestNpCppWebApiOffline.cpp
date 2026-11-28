@@ -1,5 +1,7 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +10,7 @@
 
 using SelfCall = int (APS5_VABI*)(void*);
 using Size = std::size_t (APS5_VABI*)(const void*);
+using Empty = bool (APS5_VABI*)(const void*);
 using Element = void* (APS5_VABI*)(void*, std::uint64_t);
 
 static void Require(bool value, const char* what) {
@@ -71,6 +74,7 @@ static void TestParameterLifecycles() {
             const int result = present ? _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer10initializeEPNS1_6Common10LibContextE(parameter, context) : ParameterInvalidArgument;
             Require(_ZNK3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer13isInitializedEv(parameter) == (before || result == 0), "isInitialized disagrees with initialize");
             Require(_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer15setserviceLabelEi(parameter, 1) == 0, "setserviceLabel failed");
+            Require(_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer15setserviceLabelEj(parameter, 1u) == 0, "setserviceLabel(unsigned) failed");
             return result;
         });
     TestParameterLifecycle(
@@ -344,6 +348,11 @@ static const Size sizes[] = {
     _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE4sizeEv,
 };
 
+static const Empty empties[] = {
+    _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE5emptyEv,
+    _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEE5emptyEv,
+};
+
 static const Element elements[] = {
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEEixEm,
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V113PlayerSessionEEEEixEm,
@@ -363,26 +372,33 @@ static void TestVectorSizeAndElements() {
     std::uint64_t context = 1;
     IntrusivePtr vector{nullptr, nullptr, &context};
     for (const auto size : sizes) Require(size(&vector) == 0, "a vector without a body has elements");
+    for (const auto empty : empties) Require(empty(&vector) == true, "a vector without a body is not empty");
     for (const auto element : elements) Require(Throws([&] { element(&vector, 0); }), "indexing a vector without a body did not throw");
 
     alignas(8) std::int32_t first[4] = {1};
     alignas(8) std::int32_t second[4] = {1};
-    const IntrusivePtr pushed[] = {{first, nullptr, &context}, {second, nullptr, &context}};
+    alignas(8) std::int32_t third[4] = {1};
+    const IntrusivePtr pushed[] = {{first, nullptr, &context}, {second, nullptr, &context}, {third, nullptr, &context}};
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(&vector, &context);
+    for (const auto empty : empties) Require(empty(&vector) == true, "a newly initialized vector is not empty");
     for (const auto& element : pushed)
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(&vector, &element) == 0, "pushBack failed");
-    for (const auto size : sizes) Require(size(&vector) == 2, "a vector reported the wrong size");
+    for (const auto size : sizes) Require(size(&vector) == 3, "a vector reported the wrong size");
+    for (const auto empty : empties) Require(empty(&vector) == false, "a populated vector reported empty");
     for (const auto element : elements) {
         Require(static_cast<IntrusivePtr*>(element(&vector, 0))->object == first, "operator[] returned the wrong first element");
         Require(static_cast<IntrusivePtr*>(element(&vector, 1))->object == second, "operator[] returned the wrong second element");
+        Require(static_cast<IntrusivePtr*>(element(&vector, 2))->object == third, "operator[] returned the wrong third element");
         Require(static_cast<IntrusivePtr*>(element(&vector, 1)) == static_cast<IntrusivePtr*>(element(&vector, 0)) + 1, "operator[] elements are not contiguous");
+        Require(static_cast<IntrusivePtr*>(element(&vector, 2)) == static_cast<IntrusivePtr*>(element(&vector, 1)) + 1, "operator[] elements are not contiguous");
     }
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEED1Ev(&vector);
-    Require(first[0] == 1 && second[0] == 1, "destroying the vector did not release its references");
+    Require(first[0] == 1 && second[0] == 1 && third[0] == 1, "destroying the vector did not release its references");
 
     alignas(8) unsigned char foreignBody[0x50] = {};
     IntrusivePtr foreign{foreignBody, nullptr, &context};
     for (const auto size : sizes) Require(Throws([&] { size(&foreign); }), "sizing a foreign body did not throw");
+    for (const auto empty : empties) Require(Throws([&] { empty(&foreign); }), "emptying a foreign body did not throw");
     for (const auto element : elements) Require(Throws([&] { element(&foreign, 0); }), "indexing a foreign body did not throw");
 }
 
@@ -502,13 +518,61 @@ static void TestSessionManagerRemaining() {
     Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi41deletePlayerSessionJoinableSpecifiedUsersEiRKNS4_52ParameterToDeletePlayerSessionJoinableSpecifiedUsersERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(nullptr) == kNotSignedIn, "deletePlayerSessionJoinableSpecifiedUsers is not signed out");
     Require(_ZN3sce2Np9CppWebApi14SessionManager2V150PutPlayerSessionsSessionIdLeaderRequestBodyFactory6createEPNS1_6Common10LibContextERKmPKcPNS5_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE(nullptr) == kNotSignedIn, "the leader request factory is not signed out");
 
-    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(nullptr, nullptr);
-    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(nullptr, nullptr);
+    const bool disabled = true;
+    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(sessionPlayer, &disabled);
+    Require(sessionPlayer[0x38] == 1 && sessionPlayer[0x39] == 1, "the disabled property was not stored");
+    const int maxPlayers = 4;
+    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(sessionPlayer, &maxPlayers);
+    Require(sessionPlayer[0x10] == 4 && sessionPlayer[0x14] == 1, "the maxPlayers property was not stored");
+}
+
+static void TestSmallInstantiations() {
+    IntrusivePtr empty{};
+    IntrusivePtr copied{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEEC1ERKS5_(&copied, &empty);
+    Require(copied.object == nullptr, "the binary copy is not empty");
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEED1Ev(&copied);
+    Require(!_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEcvbEv(&empty), "an empty restriction handle is true");
+
+    alignas(8) unsigned char object[8]{};
+    IntrusivePtr vector{};
+    vector.object = object;
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEdeEv(&vector) == object, "the string vector operand is wrong");
+
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0, "the profanity transaction reports a response");
+    alignas(8) unsigned char transaction[0x10]{};
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1ERKSB_(transaction) == 0, "the profanity transaction copy failed");
+}
+
+static void TestInvalidSessionFieldArguments() {
+    const auto setMaximum = _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession16setMaxSpectatorsERKi;
+    std::array<unsigned char, 0x40> model{};
+    model.fill(0xa5);
+    const auto initial = model;
+    const int value = 4;
+    const auto reports = NotImplementedCalls_nid_no_patch();
+    auto check = [&](void* destination, const int* source, const char* detail) {
+        errno = EAGAIN;
+        try {
+            setMaximum(destination, source);
+        } catch (const std::invalid_argument& error) {
+            Require(std::strstr(error.what(), detail) != nullptr, "session setter reported the wrong argument");
+            Require(errno == EAGAIN, "session setter changed errno on an invalid argument");
+            Require(NotImplementedCalls_nid_no_patch() == reports, "session setter reported a missing export");
+            return;
+        }
+        Require(false, "session setter accepted an invalid argument");
+    };
+    check(model.data(), nullptr, "unreadable value");
+    check(nullptr, &value, "unwritable model");
+    Require(model == initial, "an invalid session setter changed the model");
 }
 
 int main() {
+    TestInvalidSessionFieldArguments();
     TestLeaderboardEntryAccessors();
     TestSessionManagerRemaining();
+    TestSmallInstantiations();
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
     TestLeaderboardsParameterLifecycles();

@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_kernel_spinlock_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSpinlockBounds.cpp)
+    target_include_directories(guest_kernel_spinlock_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_spinlock_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_spinlock_bounds_tests)
+    add_test(NAME guest_kernel_spinlock_bounds COMMAND guest_kernel_spinlock_bounds_tests)
+    set_tests_properties(guest_kernel_spinlock_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_spinlock_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -7,6 +8,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#include "tests/CommandLineArgument.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -33,8 +35,10 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -465,6 +469,7 @@ Report Scenario(const Layout& layout, std::vector<std::uint8_t>& first, std::arr
     for (auto& reg : context) reg.value = ~reg.value;
     primitive.front().value = ~primitive.front().value;
     Settle(resolved);
+    while (AgcDriver::DriverDetail::RegistrationPreparationsPending() != std::optional<std::size_t>{0}) std::this_thread::yield();
     for (std::uint32_t index = 0; index <= Replaced; ++index) record("resolved", index);
     report["libraries resolved"] = Text(driver.PrebuiltLibraries());
     RegisterHeader(programs[Replacement], programs[Replaced].code, programs[Replaced].header.shader.shader_size / sizeof(std::uint32_t));
@@ -609,8 +614,12 @@ int main(int argc, char** argv) {
 #endif
             SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "1");
             ClearEnvironment("APS5_LAZY_SHADER_PREPARE");
-            const std::string command = "\"" + std::string(argv[0]) + "\" --eager-reference";
-            Require(std::system(command.c_str()) == 0, "lazy resolved ABI: the eager reference process failed");
+#ifdef _WIN32
+            const int status = _wsystem((L"\"" + ArgumentPath(argv, 0).native() + L"\" --eager-reference").c_str());
+#else
+            const int status = std::system(("\"" + std::string(argv[0]) + "\" --eager-reference").c_str());
+#endif
+            Require(status == 0, "lazy resolved ABI: the eager reference process failed");
             cached = CacheFiles(cache);
             Require(!cached.empty(), "lazy resolved ABI: the eager reference process wrote no shader cache files");
             SetEnvironment("APS5_LAZY_SHADER_PREPARE", "1");

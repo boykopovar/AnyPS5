@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace AgcDriver {
 namespace {
@@ -18,6 +20,21 @@ std::uint32_t roundToExtent(double value) {
 }
 
 }
+
+PresentationAspect SelectPresentationAspect(const char* value) {
+    const std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
+    if (text.empty() || text == "keep") return PresentationAspect::Keep;
+    if (text == "stretch") return PresentationAspect::Stretch;
+    throw std::runtime_error("ANYPS5_ASPECT must be keep or stretch, not \"" + std::string(text) + "\"");
+}
+
+AspectFitRect ComputePresentationRect(PresentationAspect aspect, std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t destinationWidth, std::uint32_t destinationHeight) {
+    if (aspect == PresentationAspect::Keep) return ComputeContainRect_nid_postfix(sourceWidth, sourceHeight, destinationWidth, destinationHeight);
+    require(sourceWidth != 0 && sourceHeight != 0, "source extent must be non-zero");
+    require(destinationWidth != 0 && destinationHeight != 0, "bounds extent must be non-zero");
+    return AspectFitRect{0, 0, destinationWidth, destinationHeight};
+}
+
 extern "C" {
 
 double ComputeContainScale_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t boundsWidth, std::uint32_t boundsHeight, bool allowUpscale) {
@@ -47,6 +64,21 @@ std::uint32_t ComputeWidthForHeight_nid_postfix(std::uint32_t sourceWidth, std::
 std::uint32_t ComputeHeightForWidth_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t width) {
     require(sourceWidth != 0 && sourceHeight != 0, "source extent must be non-zero");
     return std::max<std::uint32_t>(1, roundToExtent(static_cast<double>(width) * sourceHeight / sourceWidth));
+}
+
+bool PresentationStretches_nid_postfix() {
+    static const bool stretches = SelectPresentationAspect(std::getenv("ANYPS5_ASPECT")) == PresentationAspect::Stretch;
+    return stretches;
+}
+
+AspectFitSize ComputePresentationSize_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t boundsWidth, std::uint32_t boundsHeight) {
+    if (!PresentationStretches_nid_postfix()) return ComputeContainSize_nid_postfix(sourceWidth, sourceHeight, boundsWidth, boundsHeight, true);
+    const auto rect = ComputePresentationRect(PresentationAspect::Stretch, sourceWidth, sourceHeight, boundsWidth, boundsHeight);
+    return AspectFitSize{rect.width, rect.height};
+}
+
+AspectFitRect ComputePresentationRect_nid_postfix(std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t destinationWidth, std::uint32_t destinationHeight) {
+    return ComputePresentationRect(PresentationStretches_nid_postfix() ? PresentationAspect::Stretch : PresentationAspect::Keep, sourceWidth, sourceHeight, destinationWidth, destinationHeight);
 }
 
 }

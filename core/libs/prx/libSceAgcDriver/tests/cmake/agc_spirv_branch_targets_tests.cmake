@@ -3,6 +3,10 @@ target_link_libraries(agc_spirv_branch_targets_tests PRIVATE shader_recompiler_a
 set_target_properties(agc_spirv_branch_targets_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_spirv_branch_targets_tests)
 
+if(ANYPS5_ENABLE_SPIRV_TOOLS)
+    target_link_libraries(agc_spirv_branch_targets_tests PRIVATE SPIRV-Tools-static)
+endif()
+
 if(BUILD_TESTING)
     set_target_properties(agc_spirv_branch_targets_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_spirv_branch_targets COMMAND agc_spirv_branch_targets_tests)

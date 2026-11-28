@@ -1,0 +1,15 @@
+add_library(libSceVideoNativeExtEssential SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoNativeExtEssential PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVideoNativeExtEssential)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_native_ext_essential_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoNativeExtEssential.cpp)
+    target_include_directories(guest_video_native_ext_essential_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_native_ext_essential_tests PRIVATE libSceVideoNativeExtEssential libc)
+    configure_windows_unwind(guest_video_native_ext_essential_tests)
+    add_test(NAME guest_video_native_ext_essential COMMAND guest_video_native_ext_essential_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_native_ext_essential PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoNativeExtEssential>")
+    endif()
+endif()

@@ -16,6 +16,10 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
     throw std::runtime_error(name);
 }
 
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
+    throw std::runtime_error(name);
+}
+
 namespace {
 
 void Require(bool condition, const char* message) {
@@ -151,6 +155,21 @@ void Errors() {
         threw = true;
     }
     Require(threw, "invalid descriptor was accepted");
+    errno = EDOM;
+    {
+        EdgeWatch::Watch invalid(-1);
+    }
+    Require(errno == EDOM, "invalid EdgeWatch::Watch destruction clobbered errno");
+    {
+        EdgeWatch::Watch invalid(-1);
+        bool takeThrew = false;
+        try {
+            (void)invalid.TakeEdge();
+        } catch (const std::runtime_error&) {
+            takeThrew = true;
+        }
+        Require(takeThrew, "TakeEdge on invalid descriptor did not throw");
+    }
 }
 
 }

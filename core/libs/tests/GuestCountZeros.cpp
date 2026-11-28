@@ -1,14 +1,49 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include <array>
+#include "prx/libc/GuestStringStorage.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <new>
 
 static void Require(bool condition) {
     if (condition) return;
     std::fprintf(stderr, "count zeros mismatch\n");
     std::abort();
+}
+
+static void CheckGuestStringStorage() {
+    std::array<void*, 10> heapApi{};
+    ApplicationHeapRegister_nid_no_patch(heapApi.data());
+    GuestStringStorage::Deallocate(nullptr, GuestStringStorage::LargeAllocation);
+    GuestStringStorage::Deallocate(nullptr, 0x2000);
+    GuestStringStorage::Deallocate(nullptr, 0);
+
+    void* large = GuestStringStorage::Allocate(GuestStringStorage::LargeAllocation);
+    Require(large != nullptr);
+    Require((reinterpret_cast<std::uintptr_t>(large) & (GuestStringStorage::AllocationAlignment - 1)) == 0);
+    std::memset(large, 0x5A, GuestStringStorage::LargeAllocation);
+    Require(static_cast<unsigned char*>(large)[0] == 0x5A);
+    Require(static_cast<unsigned char*>(large)[GuestStringStorage::LargeAllocation - 1] == 0x5A);
+    GuestStringStorage::Deallocate(large, GuestStringStorage::LargeAllocation);
+
+    void* small = GuestStringStorage::Allocate(64);
+    Require(small != nullptr);
+    std::memset(small, 0x3C, 64);
+    Require(static_cast<unsigned char*>(small)[63] == 0x3C);
+    GuestStringStorage::Deallocate(small, 64);
+
+    bool threwBadAlloc = false;
+    try {
+        (void)GuestStringStorage::Allocate(std::numeric_limits<std::size_t>::max());
+    } catch (const std::bad_alloc&) {
+        threwBadAlloc = true;
+    }
+    Require(threwBadAlloc);
 }
 
 template<typename TValue>
@@ -27,6 +62,10 @@ static void Check(TCounter count) {
     const auto maximum = std::numeric_limits<TValue>::max();
     Require(count(0) == width);
     Require(count(maximum) == 0);
+    const auto evenBits = static_cast<TValue>(0x5555555555555555ULL);
+    const auto oddBits = static_cast<TValue>(0xAAAAAAAAAAAAAAAAULL);
+    Require(count(evenBits) == width / 2);
+    Require(count(oddBits) == width / 2);
     if constexpr (width <= 16) {
         for (std::uint32_t value = 0; value <= maximum; ++value) {
             Require(count(static_cast<TValue>(value)) == Reference(static_cast<TValue>(value)));
@@ -67,4 +106,5 @@ int main(int argc, char** argv) {
     else Require(false);
     Require(*__error_nid_postfix() == 87);
     *__error_nid_postfix() = saved;
+    CheckGuestStringStorage();
 }

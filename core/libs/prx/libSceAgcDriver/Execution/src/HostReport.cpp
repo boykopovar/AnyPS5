@@ -5,13 +5,105 @@
 #include <exception>
 #include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace AgcDriver {
 
 namespace {
 
+#ifdef _WIN32
+
+constexpr UINT Latin1Codepage = 28591;
+
+struct Decoded {
+    std::wstring text;
+    UINT codepage;
+};
+
+std::wstring decodeWide(const std::string& text, const UINT codepage) {
+    if (text.empty()) return {};
+    const auto flags = codepage == CP_UTF8 ? MB_ERR_INVALID_CHARS : 0;
+    const auto count = ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (count <= 0) return {};
+    std::wstring out(static_cast<std::size_t>(count), L'\0');
+    ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), out.data(), count);
+    return out;
+}
+
+std::string encodeNarrow(const std::wstring& text, const UINT codepage) {
+    if (text.empty()) return {};
+    const int count = ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (count <= 0) return {};
+    std::string out(static_cast<std::size_t>(count), '\0');
+    ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), out.data(), count, nullptr, nullptr);
+    return out;
+}
+
+Decoded decodeText(const std::string& text) {
+    if (text.empty()) return {{}, CP_UTF8};
+    const UINT codepages[] = {CP_UTF8, CP_ACP};
+    for (const auto codepage : codepages) {
+        auto wide = decodeWide(text, codepage);
+        if (!wide.empty() && encodeNarrow(wide, codepage) == text) return {std::move(wide), codepage};
+    }
+    return {decodeWide(text, Latin1Codepage), Latin1Codepage};
+}
+
+bool nameCharacter(wchar_t value) {
+    if (value == L'_') return true;
+    if (value < 0x80) return std::isalnum(static_cast<unsigned char>(value)) != 0;
+    WORD type = 0;
+    if (!::GetStringTypeW(CT_CTYPE1, &value, 1, &type)) return false;
+    return (type & (C1_ALPHA | C1_DIGIT)) != 0;
+}
+
+std::size_t findWideName(const std::wstring& text, const std::wstring& name, std::size_t cursor) {
+    for (std::size_t at = cursor; at + name.size() <= text.size(); ++at)
+        if (::CompareStringOrdinal(text.c_str() + at, static_cast<int>(name.size()), name.c_str(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL) return at;
+    return std::wstring::npos;
+}
+
+std::wstring replaceNames(std::wstring text, const std::vector<std::string>& names, const UINT codepage) {
+    for (const auto& name : names) {
+        if (name.empty()) continue;
+        const auto decoded = decodeWide(name, codepage);
+        if (decoded.empty()) continue;
+        std::wstring result;
+        std::size_t cursor = 0;
+        for (;;) {
+            const auto found = findWideName(text, decoded, cursor);
+            if (found == std::wstring::npos) break;
+            const auto end = found + decoded.size();
+            const bool before = found == 0 || !nameCharacter(text[found - 1]);
+            const bool after = end == text.size() || !nameCharacter(text[end]);
+            result.append(text, cursor, found - cursor);
+            if (before && after) result += L"<redacted>";
+            else result.append(text, found, decoded.size());
+            cursor = end;
+        }
+        result.append(text, cursor, std::wstring::npos);
+        text = std::move(result);
+    }
+    return text;
+}
+
+std::string replaceNames(std::string text, const std::vector<std::string>& names) {
+    const auto decoded = decodeText(text);
+    const auto encoded = encodeNarrow(replaceNames(decoded.text, names, decoded.codepage), decoded.codepage);
+    if (encoded.empty() && !text.empty()) return text;
+    return encoded;
+}
+
+#else
+
 bool nameCharacter(unsigned char value) {
     return std::isalnum(value) != 0 || value == '_';
+}
+
+std::size_t findName(const std::string& text, const std::string& name, const std::size_t cursor) {
+    return text.find(name, cursor);
 }
 
 std::string replaceNames(std::string text, const std::vector<std::string>& names) {
@@ -20,7 +112,7 @@ std::string replaceNames(std::string text, const std::vector<std::string>& names
         std::string result;
         std::size_t cursor = 0;
         for (;;) {
-            const auto found = text.find(name, cursor);
+            const auto found = findName(text, name, cursor);
             if (found == std::string::npos) break;
             const auto end = found + name.size();
             const bool before = found == 0 || !nameCharacter(static_cast<unsigned char>(text[found - 1]));
@@ -35,6 +127,8 @@ std::string replaceNames(std::string text, const std::vector<std::string>& names
     }
     return text;
 }
+
+#endif
 
 bool hardwareAddress(const std::string& token) {
     if (token.size() != 17) return false;
@@ -111,6 +205,17 @@ std::string hex16(std::uint32_t value) {
 
 std::string vulkanVersion(std::uint32_t version) {
     return std::to_string((version >> 22) & 0x7Fu) + "." + std::to_string((version >> 12) & 0x3FFu) + "." + std::to_string(version & 0xFFFu);
+}
+
+std::string driverVersion(HostDriverVersionScheme scheme, std::uint32_t version) {
+    const auto field = [&](unsigned shift, std::uint32_t mask) { return std::to_string((version >> shift) & mask); };
+    switch (scheme) {
+        case HostDriverVersionScheme::Vulkan: return field(22, 0x3FFu) + "." + field(12, 0x3FFu) + "." + field(0, 0xFFFu);
+        case HostDriverVersionScheme::Nvidia: return field(22, 0x3FFu) + "." + field(14, 0xFFu) + "." + field(6, 0xFFu) + "." + field(0, 0x3Fu);
+        case HostDriverVersionScheme::IntelWindows: return field(14, 0x3FFFFu) + "." + field(0, 0x3FFFu);
+        case HostDriverVersionScheme::Unknown: break;
+    }
+    return "unknown";
 }
 
 std::string join(const std::vector<std::string>& values) {
@@ -299,6 +404,7 @@ std::string FormatHostReport(const HostFacts& original) {
         line(output, "vulkan_api", vulkanVersion(gpu.apiVersion));
         line(output, "driver", gpu.driverName.empty() ? "unknown" : gpu.driverName);
         line(output, "driver_info", gpu.driverInfo.empty() ? "unknown" : gpu.driverInfo);
+        line(output, "driver_version", driverVersion(gpu.driverVersionScheme, gpu.driverVersion));
         line(output, "driver_version_raw", hex(gpu.driverVersion));
         line(output, "subgroup_size", std::to_string(gpu.subgroupSize));
         line(output, "device_local_mib", std::to_string(gpu.deviceLocalMiB));

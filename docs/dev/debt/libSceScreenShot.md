@@ -2,8 +2,9 @@
 
 ### Silent stubs
 
+- [sceScreenShotSetParam and sceScreenShotSetDrcParam](../../../core/libs/prx/libSceScreenShot/Export.cpp) (libSceScreenShot) - validate and copy parameter structures and strings from guest memory; returning ErrorArgument for unmapped guest pointers is a host safety fallback
 - [sceScreenShotEnableNotification and sceScreenShotDisableNotification](../../../core/libs/prx/libSceScreenShot/Export.cpp) (libSceScreenShot) - return 0 without effect: on the console they ask the system software to show or hide the capture notification, which this project does not display
-- [sceScreenShotSetOverlayImage and sceScreenShotSetOverlayImageWithOrigin](../../../core/libs/prx/libSceScreenShot/Export.cpp) (libSceScreenShot) - check the arguments and the file as the PS5 module does, then return 0 without keeping the image, since this project takes no screenshots to overlay
+- [sceScreenShotSetOverlayImage and sceScreenShotSetOverlayImageWithOrigin](../../../core/libs/prx/libSceScreenShot/Export.cpp) (libSceScreenShot) - check the arguments, path bounds, and the file as the PS5 module does, then return 0 without keeping the image, since this project takes no screenshots to overlay; returning ErrorArgument for unmapped path pointers is a host safety fallback
 - [sceScreenShotIsDisabled](../../../core/libs/prx/libSceScreenShot/Export.cpp) (libSceScreenShot) - reports one process-wide flag set by sceScreenShotDisable and cleared by sceScreenShotEnable for any id other than -1; returning ErrorArgument for a non-null unmapped pointer is a host-safety fallback, and console system software behaviour is unmeasured
 
 ### Unknown function info

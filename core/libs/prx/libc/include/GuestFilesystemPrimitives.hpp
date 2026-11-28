@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
@@ -56,13 +57,15 @@ inline int StatType(const char* path, int* perms, int* error) {
     int type;
     if (stat_nid_postfix(path, &status) == 0) {
         GuestErrno() = 0;
-        if (perms) *perms = status.st_mode & PermissionBits;
+        const int permissions = status.st_mode & PermissionBits;
+        if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
         type = TypeOfMode(status.st_mode);
     } else {
         const int code = GuestErrno();
         type = code == NoSuchFile || code == NotDirectory || code == Invalid || code == NameTooLong ? TypeNotFound : TypeNone;
     }
-    if (error) *error = GuestErrno();
+    const int failure = GuestErrno();
+    if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
     return type;
 }
 

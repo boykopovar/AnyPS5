@@ -370,16 +370,23 @@ void Remap(AgcDriver::VulkanDevice& device) {
     Build(device, scene);
     Settle(device, scene, "remap");
     auto* block = reinterpret_cast<std::uint8_t*>(scene.Texels(Key));
+#ifndef __APPLE__
     void* fresh = mmap(nullptr, BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(fresh != MAP_FAILED, "remap: cannot map the replacement block");
     Fill(static_cast<float*>(fresh), 0.0f);
+#endif
     const auto forgetBefore = Bumps(GuestMemory::WriteBumpSource::Forget);
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(scene.textures.base);
     }
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+#ifdef __APPLE__
+    Require(mmap(block, BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == block, "remap: cannot map the replacement block over the texture");
+    Fill(reinterpret_cast<float*>(block), 0.0f);
+#else
     Require(mremap(fresh, BlockBytes, BlockBytes, MREMAP_MAYMOVE | MREMAP_FIXED, block) == block, "remap: cannot move the replacement block over the texture");
+#endif
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
     {
         GuestAllocations::Mutation mutation;
@@ -459,6 +466,37 @@ void Imported(AgcDriver::VulkanDevice& device) {
     Settle(device, scene, "import (after)");
 }
 
+void SetSnapshotLimit(const char* mib) {
+#ifdef _WIN32
+    _putenv_s("APS5_DRAW_SNAPSHOT_MAX_MIB", mib);
+#else
+    setenv("APS5_DRAW_SNAPSHOT_MAX_MIB", mib, 1);
+#endif
+}
+
+void ClearTarget() {
+    std::memset(Target->base, 0, TargetBytes);
+}
+
+void ReboundWithoutSnapshot(AgcDriver::VulkanDevice& device) {
+    SetSnapshotLimit("0");
+    auto& scene = NewScene();
+    Build(device, scene);
+    Settle(device, scene, "rebound without snapshot");
+    SetSnapshotLimit("64");
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        AgcDriver::Graphics::ClearCachedTextures(device.Device());
+    }
+    ClearTarget();
+    auto outcome = Draw(device, scene);
+    Require(outcome.rebound >= 1.0 && outcome.brightest == 255u, "rebound without snapshot: the draw after its textures left the cache did not re-bind them and sample the key texel (" + outcome.Describe() + ")");
+    ClearTarget();
+    outcome = Draw(device, scene);
+    Require(outcome.brightest == 255u, "rebound without snapshot: the draw after the re-bind lost the key texel (" + outcome.Describe() + ")");
+    Settle(device, scene, "rebound without snapshot (after)");
+}
+
 void ArraySlices(AgcDriver::VulkanDevice& device) {
     auto& scene = NewScene();
     Build(device, scene, true);
@@ -520,7 +558,7 @@ int main(int argc, char** argv) {
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
         Target = &target;
-        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 11> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
+        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 12> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"rebound", &ReboundWithoutSnapshot}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
             run(*device);

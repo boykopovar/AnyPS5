@@ -29,6 +29,37 @@ struct InvitationDialogResult {
     std::uint8_t reserved[32];
 };
 
+struct InvitationDialogParamA {
+    CommonDialogBaseParam baseParam;
+    std::uint32_t size;
+    std::int32_t mode;
+    std::int32_t userId;
+    std::uint32_t padding;
+    void* callbackArg;
+    const void* dataParam;
+    std::uint8_t reserved[64];
+};
+
+struct InvitationDialogUser {
+    NpOnlineId onlineId;
+    std::uint32_t padding;
+    std::uint64_t accountId;
+};
+
+struct InvitationDialogUserList {
+    std::uint32_t count;
+    std::uint32_t padding;
+    InvitationDialogUser users[16];
+};
+
+struct InvitationDialogResultA {
+    void* callbackArg;
+    std::int32_t errorCode;
+    std::int32_t result;
+    InvitationDialogUserList* sentUsers;
+    std::uint8_t reserved[32];
+};
+
 static_assert(sizeof(CommonDialogBaseParam) == 48);
 static_assert(offsetof(InvitationDialogParam, size) == 48);
 static_assert(offsetof(InvitationDialogParam, mode) == 52);
@@ -45,6 +76,23 @@ static_assert(offsetof(InvitationDialogResult, result) == 0x0C);
 static_assert(offsetof(InvitationDialogResult, recipients) == 0x10);
 static_assert(offsetof(InvitationDialogResult, reserved) == 0x18);
 static_assert(sizeof(InvitationDialogResult) == 0x38);
+static_assert(offsetof(InvitationDialogParamA, size) == 48);
+static_assert(offsetof(InvitationDialogParamA, mode) == 52);
+static_assert(offsetof(InvitationDialogParamA, userId) == 56);
+static_assert(offsetof(InvitationDialogParamA, callbackArg) == 64);
+static_assert(offsetof(InvitationDialogParamA, dataParam) == 72);
+static_assert(offsetof(InvitationDialogParamA, reserved) == 80);
+static_assert(sizeof(InvitationDialogParamA) == 144);
+static_assert(offsetof(InvitationDialogUser, accountId) == 24);
+static_assert(sizeof(InvitationDialogUser) == 32);
+static_assert(offsetof(InvitationDialogUserList, count) == 0);
+static_assert(offsetof(InvitationDialogUserList, users) == 8);
+static_assert(sizeof(InvitationDialogUserList) == 520);
+static_assert(offsetof(InvitationDialogResultA, errorCode) == 0x08);
+static_assert(offsetof(InvitationDialogResultA, result) == 0x0C);
+static_assert(offsetof(InvitationDialogResultA, sentUsers) == 0x10);
+static_assert(offsetof(InvitationDialogResultA, reserved) == 0x18);
+static_assert(sizeof(InvitationDialogResultA) == 0x38);
 
 extern "C" {
 
@@ -55,7 +103,7 @@ int APS5_VABI sceInvitationDialogTerminate(void);
 int APS5_VABI sceInvitationDialogUpdateStatus(void);
 int APS5_VABI sceInvitationDialogClose(void);
 int APS5_VABI sceInvitationDialogGetStatus_nid_postfix(void);
-int APS5_VABI sceInvitationDialogOpenA_nid_postfix(void);
-int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(void);
+int APS5_VABI sceInvitationDialogOpenA_nid_postfix(const InvitationDialogParamA* param);
+int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(InvitationDialogResultA* result);
 
 }

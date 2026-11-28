@@ -38,7 +38,11 @@ int CheckValidIcon(const char* root) {
     const auto icon = GetAppIconData_nid_postfix();
     Require(icon.bytes != nullptr);
     Require(icon.size == 16);
-    Require(icon.bytes[0] == 0x89 && icon.bytes[1] == 'P' && icon.bytes[2] == 'N' && icon.bytes[3] == 'G');
+    constexpr std::uint8_t expectedSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    Require(std::memcmp(icon.bytes, expectedSig, sizeof(expectedSig)) == 0);
+    const auto icon2 = GetAppIconData_nid_postfix();
+    Require(icon.bytes == icon2.bytes && icon.size == icon2.size);
+    Require(HasAppIcon_nid_postfix());
     return 0;
 }
 
@@ -114,12 +118,14 @@ int main(int argc, char** argv) {
 
     const std::string validPng("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00", 16);
     const std::string corruptPng("\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", 16);
+    const std::string shortPng("\x89PNG\r\n\x1a", 7);
     const std::string emptyPng("");
 
     RunCase(argv[0], "--no-icon", {});
     RunCase(argv[0], "--valid-icon", {{"icon0.png", validPng}});
     RunCase(argv[0], "--empty-icon", {{"icon0.png", emptyPng}});
     RunCase(argv[0], "--corrupt-png", {{"icon0.png", corruptPng}});
+    RunCase(argv[0], "--corrupt-png", {{"icon0.png", shortPng}});
     RunCase(argv[0], "--concurrent", {{"icon0.png", validPng}});
 
     return 0;

@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <new>
@@ -104,6 +105,36 @@ static void BroadcastDoesNotAllocate() {
     _Cnd_destroy_nid_postfix(&condition);
 }
 
+static void ThreadEndWithoutBroadcastLeavesFlag() {
+    constexpr int timedout = 2;
+    for (int mode = 1; mode <= 3; ++mode) {
+        void* condition = nullptr;
+        void* mutex = nullptr;
+        Require(_Cnd_init_nid_postfix(&condition) == success);
+        Require(_Mtx_init_nid_postfix(&mutex, plain) == success);
+        int flags[25] = {};
+        std::thread worker([&] {
+            if (mode == 3) {
+                for (int& flag : flags) _Cnd_register_at_thread_exit_nid_postfix(condition, mutex, &flag);
+            } else {
+                _Cnd_register_at_thread_exit_nid_postfix(condition, mutex, &flags[0]);
+                if (mode == 2) _Cnd_unregister_at_thread_exit_nid_postfix(mutex);
+            }
+        });
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        const auto nsec = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() + 200000000;
+        const Xtime until{nsec / 1000000000, nsec % 1000000000};
+        Require(_Mtx_lock_nid_postfix(&mutex) == success);
+        Require(_Cnd_timedwait_nid_postfix(&condition, &mutex, &until) == timedout);
+        Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+        worker.join();
+        for (const int flag : flags) Require(flag == 0);
+        _Cnd_unregister_at_thread_exit_nid_postfix(mutex);
+        _Mtx_destroy_nid_postfix(&mutex);
+        _Cnd_destroy_nid_postfix(&condition);
+    }
+}
+
 struct HostPadThread {
     std::thread worker;
     void* result = nullptr;
@@ -176,6 +207,7 @@ int main() {
     UnregisterSkipsBroadcast();
     BroadcastWakesWaitingThread();
     BroadcastDoesNotAllocate();
+    ThreadEndWithoutBroadcastLeavesFlag();
     PadLaunchBroadcastsAtThreadExit();
     return 0;
 }

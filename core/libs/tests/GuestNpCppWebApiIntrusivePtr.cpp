@@ -133,6 +133,23 @@ static void TestAssign(const AssignCase& testCase) {
     Require(ReadCount(first, offset) == 0);
     Require(deleterCalls == 1 && deletedObject == first);
     Require(OnlyCountChanged(first, offset) && OnlyCountChanged(second, offset));
+
+    const IntrusivePtr empty{nullptr, RecordDelete, &context};
+    testCase.assign(&pointer, &empty);
+    Require(pointer.object == nullptr);
+    Require(ReadCount(second, offset) == 1);
+    Require(deleterCalls == 1);
+
+    pointer = {second, RecordDelete, &context};
+    testCase.assign(&pointer, &empty);
+    Require(pointer.object == nullptr);
+    Require(ReadCount(second, offset) == 0);
+    Require(deleterCalls == 2 && deletedObject == second);
+
+    IntrusivePtr emptyTarget{};
+    testCase.assign(&emptyTarget, &empty);
+    Require(emptyTarget.object == nullptr);
+    Require(deleterCalls == 2);
 }
 
 static void TestDestroy(const DestroyCase& testCase) {

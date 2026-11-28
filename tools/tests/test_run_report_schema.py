@@ -1,10 +1,22 @@
 import copy
 import json
+import os
+import subprocess
+import sys
+import tempfile
 from importlib import metadata
 from pathlib import Path
 import unittest
 
-import jsonschema
+try:
+    import jsonschema
+except ModuleNotFoundError:
+    jsonschema = None
+
+
+def setUpModule():
+    if jsonschema is None:
+        raise unittest.SkipTest("jsonschema not installed (see tools/requirements-run-report.txt)")
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "docs/run-report.schema.json").read_text(encoding="utf-8"))
@@ -137,6 +149,22 @@ def schema_keywords(node, path="schema"):
                 yield from schema_keywords(value, f"{path}.{key}")
 
 
+class DumpValidatorTests(unittest.TestCase):
+    def test_cli_continues_after_unparseable_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "a-truncated.json").write_bytes(b'{"run":')
+            (folder / "b-invalid-encoding.json").write_bytes(b'{"title":"\xff"}')
+            (folder / "c-valid.json").write_bytes((ROOT / "docs/run-report-fixtures/stop-none.json").read_bytes())
+            command = [sys.executable, str(Path(__file__).with_name("validate_run_report_dump.py")), directory]
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("FAIL a-truncated.json\n  invalid JSON:", result.stdout)
+        self.assertIn("FAIL b-invalid-encoding.json\n  invalid JSON:", result.stdout)
+        self.assertIn("PASS c-valid.json\n1 valid, 2 invalid\n", result.stdout)
+
+
 class PinnedValidatorTests(unittest.TestCase):
     def test_validator_matches_the_pinned_requirement(self):
         pinned = {}
@@ -176,6 +204,8 @@ class FixtureTests(ReportTests):
         for file in FIXTURES:
             with self.subTest(fixture=file.name):
                 data = file.read_bytes()
+                if os.name == "nt":
+                    data = data.replace(b"\r\n", b"\n")
                 self.assertLess(len(data), MAX_BYTES)
                 self.assertEqual(self.errors(json.loads(data.decode("utf-8"))), [])
                 self.assertEqual(

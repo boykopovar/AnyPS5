@@ -4,10 +4,12 @@
 #include <filesystem>
 #include <fstream>
 #include <system_error>
-#ifndef _WIN32
-#include <cerrno>
 #include <random>
 #include <string_view>
+#ifdef _WIN32
+#include "WindowsFileOutput.hpp"
+#else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -72,11 +74,11 @@ bool replaceFile(std::filesystem::path target, const std::string& path, const ch
     std::filesystem::path temporary;
     const int descriptor = createTemporary(target, mode, temporary);
     if (descriptor < 0)
-        return false;
+        throw Domain::RelinkerException("Cannot open output file: " + path);
     if (regular && fchmod(descriptor, mode) != 0) {
         close(descriptor);
         std::filesystem::remove(temporary, error);
-        return false;
+        throw Domain::RelinkerException("Cannot open output file: " + path);
     }
     const bool written = writeAll(descriptor, data, size);
     if (close(descriptor) != 0 || !written) {
@@ -87,13 +89,16 @@ bool replaceFile(std::filesystem::path target, const std::string& path, const ch
     if (!error)
         return true;
     std::filesystem::remove(temporary, error);
-    return false;
+    throw Domain::RelinkerException("Cannot replace output file: " + path);
 }
 #endif
 
 void writeOutput(const std::string& path, const std::ios::openmode mode, const char* data, const std::size_t size) {
     const auto target = NativePath(path);
-#ifndef _WIN32
+#ifdef _WIN32
+    if (Detail::ReplaceWindowsFile(target, path, mode, data, size))
+        return;
+#else
     if (replaceFile(target, path, data, size))
         return;
 #endif

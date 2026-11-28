@@ -43,9 +43,36 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace {
+
+constexpr std::size_t OnReceivedUplinkBandwidthSlot = 21;
+
+std::int64_t DivideRoundToNearest(std::int64_t dividend, std::int64_t divisor) {
+    if (dividend < 0) {
+        std::int64_t quotient = dividend / divisor;
+        if (-(dividend % divisor) > divisor / 2)
+            --quotient;
+        return quotient;
+    }
+    std::int64_t quotient = dividend / divisor;
+    if (dividend % divisor > (divisor - 1) / 2)
+        ++quotient;
+    return quotient;
+}
+
+void CallUplinkBandwidth(WebRtcAudioEncoder* encoder, int targetAudioBitrateBps, WebRtcOptionalInt64 bwePeriodMs, const char* name) {
+    if (!encoder || !encoder->vtable)
+        throw std::invalid_argument(std::string("AudioEncoder::") + name + " requires an encoder with a vtable");
+    const void* const slot = static_cast<const void* const*>(encoder->vtable)[OnReceivedUplinkBandwidthSlot];
+    if (!slot)
+        throw std::invalid_argument(std::string("AudioEncoder::") + name + " requires an encoder with OnReceivedUplinkBandwidth");
+    using UplinkBandwidth = void(APS5_VABI*)(WebRtcAudioEncoder*, int, WebRtcOptionalInt64);
+    reinterpret_cast<UplinkBandwidth>(const_cast<void*>(slot))(encoder, targetAudioBitrateBps, bwePeriodMs);
+}
 
 void ClearOptional(WebRtcOptionalUint32& optional) {
     optional.storage.nullState = 0;
@@ -93,5 +120,13 @@ void APS5_VABI _ZN6webrtc12AudioEncoder13OnReceivedRttEi_nid_postfix(WebRtcAudio
 void APS5_VABI _ZN6webrtc12AudioEncoder18OnReceivedOverheadEm_nid_postfix(WebRtcAudioEncoder*, std::size_t) {}
 
 void APS5_VABI _ZN6webrtc12AudioEncoder27SetReceiverFrameLengthRangeEii_nid_postfix(WebRtcAudioEncoder*, int, int) {}
+
+void APS5_VABI _ZN6webrtc12AudioEncoder28OnReceivedTargetAudioBitrateEi_nid_postfix(WebRtcAudioEncoder* encoder, int targetAudioBitrateBps) {
+    CallUplinkBandwidth(encoder, targetAudioBitrateBps, WebRtcOptionalInt64{0, false}, "OnReceivedTargetAudioBitrate");
+}
+
+void APS5_VABI _ZN6webrtc12AudioEncoder26OnReceivedUplinkAllocationENS_23BitrateAllocationUpdateE_nid_postfix(WebRtcAudioEncoder* encoder, WebRtcBitrateAllocationUpdate update) {
+    CallUplinkBandwidth(encoder, static_cast<int>(update.targetBitrateBps), WebRtcOptionalInt64{DivideRoundToNearest(update.bwePeriodUs, 1000), true}, "OnReceivedUplinkAllocation");
+}
 
 }

@@ -10,4 +10,10 @@ if(BUILD_TESTING)
         set_tests_properties(agc_frame_capture PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_frame_capture_reuse COMMAND agc_frame_capture_tests reuse)
+    set_tests_properties(agc_frame_capture_reuse PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_frame_capture_reuse PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()

@@ -4,17 +4,20 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "BatchHold.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <mutex>
+#include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -96,10 +99,6 @@ void MatchTests() {
     Require(!MatchSgprPatternFill(packet, Code, data, noGroup), "a dispatch without the group id matched");
 }
 
-alignas(8) std::uint32_t Finished = 0;
-std::uint32_t Submitted = 0;
-constexpr std::uint32_t MaxResubmits = 512;
-
 void Submit(const std::vector<std::uint32_t>& data, std::uint32_t groups) {
     std::vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
@@ -116,16 +115,62 @@ void Submit(const std::vector<std::uint32_t>& data, std::uint32_t groups) {
     registers(0x213, resource);
     registers(0x240, data);
     words.insert(words.end(), {0xc0031500u, groups, 1, 1, 0x41u});
-    const auto finished = reinterpret_cast<std::uintptr_t>(&Finished);
-    words.insert(words.end(), {0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(finished), static_cast<std::uint32_t>(finished >> 32u), ++Submitted});
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
 }
 
+class FillHold {
+public:
+    FillHold() : hold(ActiveDevice()) {}
+    FillHold(const FillHold&) = delete;
+    FillHold& operator=(const FillHold&) = delete;
+
+    ~FillHold() {
+        watchdog = {};
+        static_cast<void>(hold.Release());
+        try {
+            AgcDriverWaitIdle_nid_postfix();
+        } catch (...) {
+        }
+    }
+
+    void Arm() {
+        watchdog = {};
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        Require(recorder != nullptr, "no active recorder holds the fill on the GPU");
+        Require(recorder->Device() == hold.Device(), "the recorder changed device between held fills");
+        hold.Arm(*recorder);
+        watchdog = std::jthread([this](std::stop_token stop) {
+            std::mutex mutex;
+            std::unique_lock lock(mutex);
+            std::condition_variable_any().wait_for(lock, stop, std::chrono::seconds(5), [] { return false; });
+            if (!stop.stop_requested()) expired = hold.Release() == VK_SUCCESS;
+        });
+    }
+
+    void Release() {
+        watchdog = {};
+        Require(!std::exchange(expired, false), "the held fill was waited for before its keys were read");
+        Require(hold.Release() == VK_SUCCESS, "cannot release the held fill");
+    }
+
+private:
+    static VkDevice ActiveDevice() {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        Require(recorder != nullptr, "no active recorder holds the fill on the GPU");
+        return recorder->Device();
+    }
+
+    BatchHold hold;
+    bool expired = false;
+    std::jthread watchdog;
+};
+
 struct KeyRead {
     DccKeys keys;
     bool waited;
-    std::uint32_t resubmits;
 };
 
 std::uint64_t lastNote = 0;
@@ -135,31 +180,42 @@ void Settle() {
     AgcDriver::GuestMemory::FlushGpuWrites(KeysAddress(), KeyBytes);
 }
 
-KeyRead SubmitAndRead(const std::vector<std::uint32_t>& data, std::uint32_t groups, std::uint64_t surfaceBytes = SurfaceBytes, bool retireFirst = false) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    Submit(data, groups);
-    if (retireFirst) Settle();
-    std::uint32_t resubmits = 0;
+KeyRead ReadHeld(FillHold& hold, std::uint64_t surfaceBytes, std::chrono::steady_clock::time_point deadline) {
     for (;;) {
-        bool retired = false;
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             auto* recorder = AgcDriver::Graphics::Recorder::Active();
             if (const auto noted = recorder != nullptr ? recorder->NewestWriteNote(KeysAddress(), KeyBytes) : 0; noted > lastNote) {
                 lastNote = noted;
+                hold.Release();
                 const auto keys = AgcDriver::Graphics::CurrentDccKeys(KeysAddress(), surfaceBytes);
-                return {keys, !recorder->PendingWriteOverlaps(KeysAddress(), KeyBytes), resubmits};
+                return {keys, !recorder->PendingWriteOverlaps(KeysAddress(), KeyBytes)};
             }
-            retired = std::atomic_ref<std::uint32_t>(Finished).load() == Submitted;
         }
-        if (retired) {
-            Require(resubmits < MaxResubmits, "the dispatch completed " + std::to_string(resubmits + 1) + " times without a pending write over the keys");
-            ++resubmits;
-            Submit(data, groups);
-        }
-        Require(std::chrono::steady_clock::now() < deadline, "the submitted dispatch never became a pending write over the keys");
+        Require(std::chrono::steady_clock::now() < deadline, "the held dispatch never became a pending write over the keys");
         std::this_thread::yield();
     }
+}
+
+void AwaitSubmitted(std::chrono::steady_clock::time_point deadline) {
+    for (;;) {
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+            if (recorder == nullptr || !recorder->OpenWriteOverlaps(KeysAddress(), KeyBytes)) return;
+        }
+        Require(std::chrono::steady_clock::now() < deadline, "the read dispatch was never submitted to the GPU");
+        std::this_thread::yield();
+    }
+}
+
+KeyRead SubmitAndRead(FillHold& hold, const std::vector<std::uint32_t>& data, std::uint32_t groups, std::uint64_t surfaceBytes = SurfaceBytes) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    hold.Arm();
+    Submit(data, groups);
+    const auto read = ReadHeld(hold, surfaceBytes, deadline);
+    AwaitSubmitted(deadline);
+    return read;
 }
 
 void RequireStored(std::uint32_t count, const Pattern& pattern, std::uint32_t before, const std::string& what) {
@@ -174,40 +230,44 @@ std::string Describe(const char* what, const KeyRead& read) {
 }
 
 void ExecuteTests() {
+    Submit(UserData(Dwords, Dwords, Uniform(0xff)), Dwords / 64);
+    Settle();
+    FillHold hold;
     const std::array<std::pair<std::uint8_t, DccKeys>, 6> codes{{{0x00, DccKeys::Clear0000}, {0x40, DccKeys::Clear0001}, {0x80, DccKeys::Clear1110}, {0xc0, DccKeys::Clear1111}, {0x20, DccKeys::ClearRegister}, {0xff, DccKeys::Uncompressed}}};
     for (const auto& [key, keys] : codes) {
         Settle();
-        const auto read = SubmitAndRead(UserData(Dwords, Dwords, Uniform(key)), Dwords / 64);
+        const auto read = SubmitAndRead(hold, UserData(Dwords, Dwords, Uniform(key)), Dwords / 64);
         Require(read.keys == keys && !read.waited, Describe("a pending key code fill by the kernel", read));
         RequireStored(Dwords, Uniform(key), 0, "the kernel's key code fill");
     }
 
     Settle();
-    const auto retired = SubmitAndRead(UserData(Dwords, Dwords, Uniform(0x40)), Dwords / 64, SurfaceBytes, true);
-    Require(retired.resubmits > 0, "a fill that retired before the read was not submitted again");
-    Require(retired.keys == DccKeys::Clear0001 && !retired.waited, Describe("a pending 0001 fill submitted again after it retired before the read", retired));
+    Submit(UserData(Dwords, Dwords, Uniform(0x40)), Dwords / 64);
+    Settle();
+    const auto again = SubmitAndRead(hold, UserData(Dwords, Dwords, Uniform(0x40)), Dwords / 64);
+    Require(again.keys == DccKeys::Clear0001 && !again.waited, Describe("a pending 0001 fill submitted again after the same fill retired", again));
     RequireStored(Dwords, Uniform(0x40), 0, "the 0001 fill submitted again");
 
-    const auto other = SubmitAndRead(UserData(Dwords, Dwords, Uniform(0x5a)), Dwords / 64);
+    const auto other = SubmitAndRead(hold, UserData(Dwords, Dwords, Uniform(0x5a)), Dwords / 64);
     Require(other.keys == DccKeys::Mixed && other.waited, Describe("a pending fill of a byte that is not a key code", other));
     RequireStored(Dwords, Uniform(0x5a), 0, "the kernel's fill of another byte");
 
     const Pattern several{0x40404040u, 0x40404040u, 0x40404040u, 0x80808080u};
-    const auto mixed = SubmitAndRead(UserData(Dwords, Dwords, several), Dwords / 64);
+    const auto mixed = SubmitAndRead(hold, UserData(Dwords, Dwords, several), Dwords / 64);
     Require(mixed.keys == DccKeys::Mixed && mixed.waited, Describe("a pending fill of several key codes", mixed));
     RequireStored(Dwords, several, 0, "the kernel's fill of several key codes");
 
-    const auto first = SubmitAndRead(UserData(Dwords, Dwords, Uniform(0x40)), Dwords / 64);
+    const auto first = SubmitAndRead(hold, UserData(Dwords, Dwords, Uniform(0x40)), Dwords / 64);
     Require(first.keys == DccKeys::Clear0001 && !first.waited, Describe("a pending 0001 fill by the kernel", first));
-    const auto later = SubmitAndRead(UserData(Dwords, Dwords / 2, Uniform(0x5a)), Dwords / 64);
+    const auto later = SubmitAndRead(hold, UserData(Dwords, Dwords / 2, Uniform(0x5a)), Dwords / 64);
     Require(later.keys == DccKeys::Mixed && later.waited, Describe("a later writer over half of a pending 0001 fill", later));
     Settle();
     for (std::uint32_t i = 0; i < Dwords; ++i) Require(Keys[i] == (i < Dwords / 2 ? 0x5a5a5a5au : 0x40404040u), "the later writer over the 0001 fill: dword " + std::to_string(i) + " holds " + std::to_string(Keys[i]));
 
-    const auto half = SubmitAndRead(UserData(Dwords, Dwords / 2, Uniform(0xc0)), Dwords / 64);
+    const auto half = SubmitAndRead(hold, UserData(Dwords, Dwords / 2, Uniform(0xc0)), Dwords / 64);
     Require(half.keys == DccKeys::Mixed, Describe("a pending 1111 fill of half the keys over 0001 keys", half));
     Settle();
-    const auto inside = SubmitAndRead(UserData(Dwords, Dwords / 2, Uniform(0xc0)), Dwords / 64, SurfaceBytes / 2);
+    const auto inside = SubmitAndRead(hold, UserData(Dwords, Dwords / 2, Uniform(0xc0)), Dwords / 64, SurfaceBytes / 2);
     Require(inside.keys == DccKeys::Clear1111, Describe("the half of the keys a pending 1111 fill covers", inside));
     Settle();
     for (std::uint32_t i = 0; i < Dwords; ++i) Require(Keys[i] == (i < Dwords / 2 ? 0xc0c0c0c0u : 0x40404040u), "the 1111 fill of half the keys: dword " + std::to_string(i) + " holds " + std::to_string(Keys[i]));

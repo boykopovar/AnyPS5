@@ -43,7 +43,7 @@ struct FtLibraryContext {
 };
 
 void* FtAlloc(FT_Memory memory, long size) {
-    if (!memory || size <= 0) return nullptr;
+    if (!memory || size <= 0 || !FontFt::FitsGuestSize(size)) return nullptr;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
     if (!ctx || !ctx->iface || !ctx->iface->alloc) return nullptr;
     return ctx->iface->alloc(ctx->allocCtx, static_cast<std::uint32_t>(size));
@@ -60,6 +60,7 @@ void* FtRealloc(FT_Memory memory, long currentSize, long newSize, void* block) {
     if (!memory) return nullptr;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
     if (!ctx || !ctx->iface) return nullptr;
+    if (newSize > 0 && !FontFt::FitsGuestSize(newSize)) return nullptr;
     if (ctx->iface->realloc_fn) return ctx->iface->realloc_fn(ctx->allocCtx, block, static_cast<std::uint32_t>(newSize));
     if (newSize <= 0) {
         FtFree(memory, block);

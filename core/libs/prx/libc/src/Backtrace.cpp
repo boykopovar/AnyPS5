@@ -17,16 +17,19 @@
 extern "C" {
 
 std::string BacktraceModulePath_nid_no_patch(HMODULE handle, std::size_t initialCapacity) {
-    std::string module;
+    std::wstring module;
     std::size_t capacity = initialCapacity == 0 ? 1 : initialCapacity;
     while (true) {
         module.resize(capacity);
         SetLastError(ERROR_SUCCESS);
-        const DWORD length = GetModuleFileNameA(handle, module.data(), static_cast<DWORD>(module.size()));
+        const DWORD length = GetModuleFileNameW(handle, module.data(), static_cast<DWORD>(module.size()));
         if (length == 0) return {};
         if (length < capacity && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-            module.resize(length);
-            return module;
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, module.data(), static_cast<int>(length), nullptr, 0, nullptr, nullptr);
+            if (bytes == 0) return {};
+            std::string utf8(bytes, '\0');
+            if (!WideCharToMultiByte(CP_UTF8, 0, module.data(), static_cast<int>(length), utf8.data(), bytes, nullptr, nullptr)) return {};
+            return utf8;
         }
         if (capacity >= 32768) return {};
         capacity *= 2;
@@ -114,40 +117,69 @@ std::size_t RecordSize(const Frame& frame) {
     return (NameOffset + frame.module.size() + 1 + 7) & ~std::size_t{7};
 }
 
+void WriteBacktraceOutput(void* destination, const void* source, std::size_t bytes, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(std::string(function) + ": unwritable output");
+}
+
+void WriteAtomicOutputs(
+    int* count,
+    int countValue,
+    void* secondDestination,
+    const void* secondSource,
+    std::size_t secondBytes,
+    const char* function
+) {
+    int originalCount = 0;
+    const bool hadCount = GuestCopyIn_nid_no_patch(&originalCount, count, sizeof(originalCount));
+    WriteBacktraceOutput(count, &countValue, sizeof(countValue), function);
+    if (secondBytes != 0 && !GuestCopyOut_nid_no_patch(secondDestination, secondSource, secondBytes)) {
+        if (hadCount) GuestCopyOut_nid_no_patch(count, &originalCount, sizeof(originalCount));
+        throw std::invalid_argument(std::string(function) + ": unwritable output");
+    }
+}
+
 }  // namespace
 
 extern "C" {
 
 int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int limit, int* count, std::size_t* size) {
-    if (count == nullptr || size == nullptr) throw std::invalid_argument("sceLibcBacktraceGetBufferSize: null output");
+    if (count == nullptr || size == nullptr) return 1;
     const auto frames = CaptureFrames(limit, __builtin_return_address(0));
     std::size_t total = 0;
     for (const auto& frame : frames) total += RecordSize(frame);
-    *count = static_cast<int>(frames.size());
-    *size = total;
+    const int frameCount = static_cast<int>(frames.size());
+    WriteAtomicOutputs(count, frameCount, size, &total, sizeof(total), __func__);
     return 0;
 }
 
 int APS5_VABI sceLibcBacktraceSelf_nid_postfix(int limit, void* buffer, std::size_t size, int* count) {
-    if (buffer == nullptr || count == nullptr) throw std::invalid_argument("sceLibcBacktraceSelf: null argument");
+    if (buffer == nullptr || count == nullptr) return 1;
     const auto frames = CaptureFrames(limit, __builtin_return_address(0));
-    auto* cursor = static_cast<std::byte*>(buffer);
-    FrameRecord* previous = nullptr;
+    const auto base = reinterpret_cast<std::uintptr_t>(buffer);
+    std::size_t used = 0;
+    bool hasPrevious = false;
+    std::size_t previousOffset = 0;
     int written = 0;
+    std::vector<unsigned char> staged;
     for (const auto& frame : frames) {
         const auto bytes = RecordSize(frame);
-        if (static_cast<std::size_t>(cursor - static_cast<std::byte*>(buffer)) + bytes > size) break;
-        auto* record = reinterpret_cast<FrameRecord*>(cursor);
-        record->next = nullptr;
-        record->offset = frame.offset;
-        record->reserved = 0;
-        std::memcpy(cursor + NameOffset, frame.module.c_str(), frame.module.size() + 1);
-        if (previous != nullptr) previous->next = record;
-        previous = record;
-        cursor += bytes;
+        if (bytes > size - used) break;
+        if (used > UINTPTR_MAX - base || bytes > UINTPTR_MAX - base - used)
+            throw std::invalid_argument("sceLibcBacktraceSelf: output range wraps");
+        auto* record = reinterpret_cast<FrameRecord*>(base + used);
+        const FrameRecord value{nullptr, frame.offset, 0};
+        staged.resize(used + bytes, 0);
+        std::memcpy(staged.data() + used, &value, sizeof(value));
+        if (!frame.module.empty())
+            std::memcpy(staged.data() + used + NameOffset, frame.module.data(), frame.module.size());
+        if (hasPrevious) std::memcpy(staged.data() + previousOffset, &record, sizeof(record));
+        hasPrevious = true;
+        previousOffset = used;
+        used += bytes;
         ++written;
     }
-    *count = written;
+    WriteAtomicOutputs(count, written, buffer, staged.data(), staged.size(), __func__);
     return 0;
 }
 

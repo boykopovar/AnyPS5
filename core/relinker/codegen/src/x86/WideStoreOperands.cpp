@@ -32,6 +32,15 @@ void _appendU32(std::vector<std::uint8_t>& bytes, const std::uint32_t value) {
         bytes.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
 }
 
+WideStoreMaterialized _materialized(const std::uint8_t* data, const std::size_t length, const std::size_t vex, const std::size_t modRmOffset, const std::uint8_t inverted) {
+    using namespace X64OpcodeConstants;
+    const auto extensions = static_cast<std::uint8_t>(~inverted);
+    WideStoreMaterialized materialized;
+    materialized.Source = static_cast<std::uint8_t>(((data[modRmOffset] >> ModRmRegShift) & ModRmRegMask) | ((extensions & 0x80) >> 4));
+    materialized.Memory = DecodeMemoryOperand(data, length, modRmOffset, static_cast<std::uint8_t>(((extensions & 0x20) >> 5) | ((extensions & 0x40) >> 5)), std::vector<std::uint8_t>(data, data + vex));
+    return materialized;
+}
+
 }
 
 std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, const std::size_t length) {
@@ -83,6 +92,8 @@ std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, co
     const std::size_t displacementSize = mod == ModRmModDisp8 ? Disp8Size : (mod == ModRmModDisp32 || ripRelative || absolute) ? Disp32Size : 0;
     if (cursor + displacementSize != length)
         return std::nullopt;
+    if (addressSize32 && !ripRelative && !absoluteNoIndex)
+        return WideStoreOperands{{}, {}, _materialized(data, length, vex, modRmOffset, inverted)};
     std::int64_t displacement = 0;
     if (displacementSize == Disp8Size) {
         displacement = static_cast<std::int8_t>(data[cursor]);

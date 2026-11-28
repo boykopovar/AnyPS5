@@ -43,6 +43,8 @@ void CheckConsoleKind(bool ps4) {
     Require(sceKernelIsTestKit() == 0, "the console must not be reported as a test kit");
     Require(sceKernelIsProspero() == 1, "the architecture must be reported as Prospero");
     Require(sceKernelIsKratos() == 0, "the architecture must not be reported as Kratos");
+    Require(sceKernelIsAuthenticTrinity() == 0, "the console must not be reported as Trinity hardware");
+    Require(sceKernelIsCloudkit() == 0, "the console must not be reported as a cloud kit");
     if (ps4) {
         Require(sceKernelIsPs4Process() == 1, "a CUSA title must be reported as a PS4 process");
     } else {
@@ -73,6 +75,16 @@ void CheckAuthInfo() {
         for (std::size_t i = 16; i < bytes.size(); ++i) Require(bytes[i] == 0, "the rest of the result must be cleared");
         Require(info.guard == 0x5a5a5a5a5a5a5a5a, "get_authinfo wrote past its 0x88-byte result");
     }
+    *__error_nid_postfix() = 0;
+    Require(get_self_auth_info_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GuestEperm, "a null result must fail with EPERM");
+    Require(get_self_auth_info_nid_postfix(reinterpret_cast<KernelAuthInfo*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault,
+            "an unwritable store must fail with EFAULT");
+    std::memset(&info, 0x5a, sizeof(info));
+    Require(get_self_auth_info_nid_postfix(&info.value) == 0, "the calling process auth info must be returned");
+    Require(info.value.programAuthorityId == 0 && info.value.capabilities[0] == 0x2000000000000000, "the self authority ID or first capability word is wrong");
+    const auto selfBytes = std::bit_cast<std::array<std::uint8_t, sizeof(KernelAuthInfo)>>(info.value);
+    for (std::size_t i = 16; i < selfBytes.size(); ++i) Require(selfBytes[i] == 0, "the rest of the self result must be cleared");
+    Require(info.guard == 0x5a5a5a5a5a5a5a5a, "get_self_auth_info wrote past its 0x88-byte result");
 }
 
 void CheckOpenPsId() {

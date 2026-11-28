@@ -42,16 +42,20 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
-#include <cstring>
+#include <array>
+#include <cstdint>
 #include <stdexcept>
 
 extern "C" {
 
 WebRtcAudioOptions* APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(WebRtcAudioOptions* result, const void*) {
-    if (!result)
+    if (!result || !GuestWritable_nid_no_patch(result, sizeof(*result)))
         throw std::invalid_argument("AudioSourceInterface::options requires a result");
-    std::memset(result, 0, sizeof(WebRtcAudioOptions));
+    const std::array<std::uint8_t, sizeof(WebRtcAudioOptions)> zero{};
+    if (!GuestBytes(result).CopyOut(zero.data(), zero.size()))
+        throw std::invalid_argument("AudioSourceInterface::options requires a result");
     return result;
 }
 

@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Functional
+
+- [WebCore::AdClickAttribution](../../../core/libs/prx/libSceNKWebKit/src/AdClickAttribution.cpp) (libSceNKWebKit) - not compared with a console module. Its eleven exports follow [AdClickAttribution.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/loader/AdClickAttribution.cpp) on its 64-byte object (campaign 0, source 8, destination 16, click time 24, `Optional<Conversion>` 32, `Optional<WallTime>` 48). They are in the 3.20 inventory only, next to `SRGBA<float>` exports, which dates that WebKit between 2020-06-13 and the 2020-11-12 rename; `parseConversionRequest` therefore returns the 24-byte `Expected<Conversion, String>` it has had since 2020-03-30. Debug mode is taken as off, the `RuntimeEnabledFeatures` singleton being a stub, so errors carry a null string. `urlForTesting` without a conversion throws where WebKit asserts. The URL members use this library's parser and 40-byte `URL`. Closes when: compared with a console module.

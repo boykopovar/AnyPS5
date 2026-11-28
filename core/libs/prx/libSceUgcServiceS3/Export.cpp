@@ -4,6 +4,16 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int ErrorNoClient = static_cast<int>(0x81b70002u);
+
+bool HasClient() {
+    return false;
+}
+
+} // namespace
+
 extern "C" {
 
 APS5_EXPORT("stkA1oba6eY", sceUgcServiceS3Unknown00);
@@ -14,74 +24,87 @@ int APS5_VABI sceUgcServiceS3Unknown00(void) {
 
 APS5_EXPORT("VlNz4Z+qWu8", sceUgcServiceS3Unknown01);
 int APS5_VABI sceUgcServiceS3Unknown01(void) {
+    if (!HasClient()) return 0;
     NotImplemented_nid_no_patch("VlNz4Z+qWu8");
     return 0;
 }
 
 int APS5_VABI sceUgcServiceS3CreateRequest(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 APS5_EXPORT("6MeapakWJb8", sceUgcServiceS3Unknown02);
 int APS5_VABI sceUgcServiceS3Unknown02(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("6MeapakWJb8");
     return 0;
 }
 
 int APS5_VABI sceUgcServiceS3CancelRequest(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 APS5_EXPORT("bxfGN4Ghqmg", sceUgcServiceS3Unknown03);
 int APS5_VABI sceUgcServiceS3Unknown03(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("bxfGN4Ghqmg");
     return 0;
 }
 
 APS5_EXPORT("40fNo08E7T4", sceUgcServiceS3Unknown04);
 int APS5_VABI sceUgcServiceS3Unknown04(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("40fNo08E7T4");
     return 0;
 }
 
 APS5_EXPORT("diqgMYgC9oE", sceUgcServiceS3Unknown05);
 int APS5_VABI sceUgcServiceS3Unknown05(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("diqgMYgC9oE");
     return 0;
 }
 
 APS5_EXPORT("9NCT1TQWTQE", sceUgcServiceS3Unknown06);
 int APS5_VABI sceUgcServiceS3Unknown06(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("9NCT1TQWTQE");
     return 0;
 }
 
 int APS5_VABI sceUgcServiceS3UploadFileWithGmsResponse(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 APS5_EXPORT("QOhoeuKdo7E", sceUgcServiceS3Unknown07);
 int APS5_VABI sceUgcServiceS3Unknown07(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("QOhoeuKdo7E");
     return 0;
 }
 
 APS5_EXPORT("9967FcQ+zos", sceUgcServiceS3Unknown08);
 int APS5_VABI sceUgcServiceS3Unknown08(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("9967FcQ+zos");
     return 0;
 }
 
 int APS5_VABI sceUgcServiceS3DownloadFileWithGmsResponse(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 APS5_EXPORT("0lMDwFrLjkM", sceUgcServiceS3Unknown09);
 int APS5_VABI sceUgcServiceS3Unknown09(void) {
+    if (!HasClient()) return ErrorNoClient;
     NotImplemented_nid_no_patch("0lMDwFrLjkM");
     return 0;
 }

@@ -1,0 +1,5 @@
+# libkernel
+
+## change a write through the MIB was not measured and throws
+
+- [kern.rng_pseudo](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - the console's generator is unknown, and neither a write nor a title process was measured. `sysctlbyname` and `sysctl` {1, 50}, which `sysctlnametomib` gives as on the console, draw 64 new bytes from the host's `std::random_device` per read with a buffer and length. They answer as a payload process on a PS5 (firmware 12.70) did by name, and by MIB in each case, with reads of 0, 1, 63, 64, 65 and 128 bytes: a size query reports 64; a buffer of 64 bytes or more gets 64 bytes and a length of 64 (up to 65536 by name); a smaller buffer gets as many bytes as its length, which is left as given, and a null length gets none, both with -1 and `ENOMEM`; a null buffer with a null length returns 0. `errno` is kept on success. A write returns -1 with `EPERM`. The only caller seen is `mbedtls_hardware_poll` in the catalog's ProsperoLight boilerplate, which asks for 64 bytes and fails on fewer

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -20,12 +21,14 @@
 #include <sys/mman.h>
 #endif
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -103,6 +106,19 @@ struct Block {
             data = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
 #else
+#ifdef __linux__
+        if (direct) {
+            Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, BlockBytes, 0, &physical) == 0, "cannot allocate the Linux color target's direct memory");
+            void* mapped = nullptr;
+            if (sceKernelMapDirectMemory(&mapped, bytes, 0x33, 0, physical, BlockBytes) != 0) {
+                sceKernelReleaseDirectMemory(physical, bytes);
+                physical = -1;
+                Require(false, "cannot map the Linux color target's direct memory");
+            }
+            data = static_cast<std::uint8_t*>(mapped);
+            return;
+        }
+#endif
         static_cast<void>(direct);
         static_cast<void>(granule);
         if (arena && at != 0) {
@@ -129,6 +145,13 @@ struct Block {
     }
     ~Block() {
         StorageTexture::FlushPending(Address(), bytes, nullptr, "test release");
+#ifdef __linux__
+        if (physical >= 0) {
+            sceKernelMunmap(Address(), bytes);
+            sceKernelReleaseDirectMemory(physical, bytes);
+            return;
+        }
+#endif
         {
             GuestAllocations::Mutation mutation;
             mutation.Remove(data);
@@ -160,6 +183,9 @@ struct Block {
     std::size_t bytes;
     bool arena;
     std::uint8_t* data = nullptr;
+#ifdef __linux__
+    std::int64_t physical = -1;
+#endif
 #ifdef _WIN32
     HANDLE section = nullptr;
 #endif
@@ -424,6 +450,152 @@ void Compared(AgcDriver::VulkanDevice& device) {
 
 }
 
+#ifdef __linux__
+namespace {
+
+PFN_vkGetDeviceProcAddr DmaBufOriginalDeviceProc = nullptr;
+std::atomic<std::uint32_t> DmaBufHostPointerQueries{0};
+
+PFN_vkVoidFunction ResolveDmaBufRefusal(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkGetMemoryHostPointerPropertiesEXT") == 0) DmaBufHostPointerQueries.fetch_add(1, std::memory_order_relaxed);
+    return DmaBufOriginalDeviceProc(device, name);
+}
+
+PFN_vkCreateBuffer SparseOriginalCreate = nullptr;
+std::atomic<std::uint32_t> SparseRefusals{0};
+
+VKAPI_ATTR VkResult VKAPI_CALL RefuseSparseBuffer(VkDevice device, const VkBufferCreateInfo* info, const VkAllocationCallbacks* allocator, VkBuffer* buffer) {
+    if ((info->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0) {
+        SparseRefusals.fetch_add(1, std::memory_order_relaxed);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return SparseOriginalCreate(device, info, allocator, buffer);
+}
+
+PFN_vkVoidFunction ResolveSparseRefusal(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCreateBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(RefuseSparseBuffer);
+    return ResolveDmaBufRefusal(device, name);
+}
+
+bool DmaBufSparseFailure(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!DmaBufImportSelected(context) || !context.sparseBinding) {
+        std::puts("skipped, the device does not select watched sparse dma-buf imports");
+        return false;
+    }
+    SetHostImportRangeWindow(0);
+    Block block(std::size_t{65} << 20u, 0, true);
+    Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "sparse failure: direct memory already has an import");
+    DmaBufOriginalDeviceProc = context.deviceProc;
+    SparseOriginalCreate = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer");
+    context.deviceProc = ResolveSparseRefusal;
+    GuestAllocations::Mapped mapped;
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    for (const auto& range : lease) if (range->address == block.Address()) mapped.emplace_back(range);
+    Require(mapped.size() == 1, "sparse failure: direct allocation not registered");
+    bool propagated = false;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        try {
+            ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+        } catch (const std::runtime_error& error) {
+            propagated = std::string(error.what()).find("sparse dma-buf import") != std::string::npos;
+        }
+    }
+    Require(SparseRefusals.load(std::memory_order_relaxed) == 1, "sparse failure: the injected sparse buffer refusal was not reached exactly once");
+    Require(propagated, "sparse failure: a selected dma-buf failure was swallowed by ImportMappedRanges");
+    Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "sparse failure: the failed import left an entry cached");
+    Require(block.Watched(), "sparse failure: the failed import dropped write tracking");
+    std::puts("selected sparse dma-buf import failure propagates through mapped-range import");
+    return true;
+}
+
+bool DmaBufWatchLoss(AgcDriver::VulkanDevice& device, int walk) {
+    using namespace AgcDriver::Graphics;
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!DmaBufImportSelected(context)) {
+        std::puts("skipped, the device does not select watched dma-buf imports");
+        return false;
+    }
+    SetHostImportRangeWindow(0);
+    constexpr std::array<float, 4> seed{1300.0f, 1400.0f, 1500.0f, 1600.0f};
+    Block block(ResidentBytes, 0, true);
+    Seed(block, seed);
+    Require(block.Watched(), "dma-buf watch loss: direct memory starts outside the write watch");
+    struct Reset {
+        ~Reset() { AgcDriver::GuestMemory::SetImportWalkFailureForTest(0); }
+    } reset;
+    AgcDriver::GuestMemory::SetImportWalkFailureForTest(walk, block.Address());
+    const HostImport* imported = nullptr;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        imported = HostImportFor(context, block.Address(), block.bytes, ImportRequester::ColorTarget);
+    }
+    AgcDriver::GuestMemory::SetImportWalkFailureForTest(0);
+    Require(!block.Watched(), "dma-buf watch loss: the injected page walk failure did not remove write tracking");
+    Require(imported == nullptr, "dma-buf watch loss: a color target accepted an import after losing write tracking");
+    Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "dma-buf watch loss: the rejected import was cached");
+    Draw(device, block);
+    device.WaitIdle();
+    Check(block, seed, "dma-buf watch loss, copied draw");
+    std::puts("color target falls back to a copied draw after import loses write tracking");
+    return true;
+}
+
+bool DmaBufColorTarget(AgcDriver::VulkanDevice& device, bool refused) {
+    using namespace AgcDriver::Graphics;
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!DmaBufImportSelected(context)) {
+        std::puts("skipped, the device does not select watched dma-buf imports");
+        return false;
+    }
+    if (refused) {
+        std::uint64_t limit = 0;
+        std::ifstream settings("/sys/module/udmabuf/parameters/size_limit_mb");
+        if (!(settings >> limit) || limit == 0 || limit > 128) {
+            std::puts("skipped, the udmabuf limit is unavailable or too large for the refusal fixture");
+            return false;
+        }
+        const auto bytes = static_cast<std::size_t>(std::max<std::uint64_t>(65, limit + 1) << 20u);
+        Block block(bytes, 0, true);
+        context.sparseBinding = false;
+        Require(block.Watched(), "refused dma-buf: direct memory is not watched before the import");
+        Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "refused dma-buf: direct memory already has an import");
+        DmaBufHostPointerQueries.store(0, std::memory_order_relaxed);
+        DmaBufOriginalDeviceProc = context.deviceProc;
+        context.deviceProc = ResolveDmaBufRefusal;
+        const auto* imported = HostImportFor(context, block.Address(), block.bytes, ImportRequester::ColorTarget);
+        Require(DmaBufHostPointerQueries.load(std::memory_order_relaxed) == 0, "refused dma-buf: a color target attempted an unwatched host-pointer import");
+        Require(imported == nullptr, "refused dma-buf: a color target fell back to an unwatched host-pointer import");
+        Require(block.Watched(), "refused dma-buf: the failed color target import dropped write tracking");
+        Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "refused dma-buf: the failed color target left an import cached");
+        std::puts("color target dma-buf refusal preserves write tracking");
+        return true;
+    }
+    constexpr std::array<float, 4> first{1300.0f, 1400.0f, 1500.0f, 1600.0f};
+    constexpr std::array<float, 4> second{1700.0f, 1800.0f, 1900.0f, 2000.0f};
+    Block block(ResidentBytes, 0, true);
+    Seed(block, first);
+    Require(ExistingHostImportFor(context, block.Address(), TargetBytes) == nullptr, "dma-buf color target already has an import before its first draw");
+    Draw(device, block);
+    ExpectRecorded(context, block, "dma-buf color target");
+    const auto* imported = ExistingHostImportFor(context, block.Address(), TargetBytes);
+    Require(imported != nullptr && imported->dmaBuf && !imported->unwatched, "the color target did not choose a watched dma-buf import");
+    device.WaitIdle();
+    Check(block, first, "dma-buf color target, first draw");
+    Seed(block, second);
+    Draw(device, block);
+    ExpectRecorded(context, block, "dma-buf color target after CPU writes");
+    device.WaitIdle();
+    Check(block, second, "dma-buf color target after CPU writes");
+    std::puts("dma-buf color target creation, GPU draws and later CPU writes verified");
+    return true;
+}
+
+}
+#endif
+
 int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
@@ -433,6 +605,11 @@ int main(int argc, char** argv) {
             return VulkanTestSkipped;
         }
         const std::string_view only = argc > 1 ? argv[1] : "";
+#ifdef __linux__
+        if (only == "--dma-buf-watch-loss-before" || only == "--dma-buf-watch-loss-after") return DmaBufWatchLoss(*device, only == "--dma-buf-watch-loss-before" ? 1 : 2) ? 0 : VulkanTestSkipped;
+        if (only == "--dma-buf-sparse-failure") return DmaBufSparseFailure(*device) ? 0 : VulkanTestSkipped;
+        if (only == "--dma-buf-created" || only == "--dma-buf-refused") return DmaBufColorTarget(*device, only == "--dma-buf-refused") ? 0 : VulkanTestSkipped;
+#endif
 #ifndef _WIN32
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         const auto decided = AgcDriver::Graphics::PrepareImportWatch(context);

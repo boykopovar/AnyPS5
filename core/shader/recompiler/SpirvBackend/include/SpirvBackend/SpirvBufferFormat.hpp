@@ -2,7 +2,9 @@
 #define CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVBUFFERFORMAT_HPP
 
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
+#include "PipelineSpecialization.hpp"
 #include "SpirvBackend/SpirvEmitterState.hpp"
+#include <array>
 #include <cstdint>
 
 namespace ShaderRecompiler {
@@ -21,6 +23,8 @@ struct SpirvFormattedSource {
 [[nodiscard]] IrBufferFormat DecodeTBufferFormat(std::uint32_t dataFormat, std::uint32_t numberFormat);
 [[nodiscard]] SpirvFormatComponentType GetFormatComponentType(IrBufferFormat format);
 [[nodiscard]] SpirvBufferFormatInfo GetFormatInfo(IrBufferFormat format);
+[[nodiscard]] SpirvBufferFormatInfo GetImageFormatInfo(IrBufferFormat format);
+[[nodiscard]] std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> StoreQuantizeValues(std::uint32_t code);
 [[nodiscard]] SpirvFormattedSource ResolveFormattedSource(const SpirvBufferFormatInfo& info, std::uint32_t selector);
 [[nodiscard]] std::uint32_t FormattedConstantBits(const SpirvBufferFormatInfo& info, SpirvFormattedSourceKind kind);
 [[nodiscard]] std::uint32_t GetFormatComponentByteOffset(const SpirvBufferFormatInfo& info, std::uint32_t component);

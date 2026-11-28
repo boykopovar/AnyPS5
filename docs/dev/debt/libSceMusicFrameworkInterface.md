@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [sceMusicFwGetCurrentTime, sceMusicFwGetLoop, sceMusicFwGetMuted, sceMusicFwGetNetworkState, sceMusicFwGetVolume, sceMusicFwIsEnded, sceMusicFwIsPlaying, sceMusicFwIsStopped, sceMusicFwRemoveSrc, sceMusicFwSendMessageAsynchronously, sceMusicFwSendMessageSynchronously, sceMusicFwSetCurrentTime, sceMusicFwSetLoop, sceMusicFwSetShuffle, sceMusicFwSetVolume, sceMusicFwSkipNext and sceMusicFwSkipPrevious](../../../core/libs/prx/libSceMusicFrameworkInterface/Export.cpp) (libSceMusicFrameworkInterface) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceMusicFrameworkInterface.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceMusicFwRemoveSrc, sceMusicFwSendMessageAsynchronously, sceMusicFwSendMessageSynchronously, sceMusicFwSetCurrentTime, sceMusicFwSetLoop, sceMusicFwSetShuffle, sceMusicFwSetVolume, sceMusicFwSkipNext and sceMusicFwSkipPrevious](../../../core/libs/prx/libSceMusicFrameworkInterface/Export.cpp) (libSceMusicFrameworkInterface) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceMusicFrameworkInterface.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
 
 ### Additional callable export inventory
 
@@ -38,3 +38,7 @@ Candidate names marked **aerolib** occur in the [repository-pinned table](https:
 | `sceMusicFwStop` | `5YQ-72Mdsuo` | aerolib | `0x1870` | 268 |
 | `sceMusicFwUnregisterNotifyMessage` | `uAMoi7RinCQ` | aerolib | `0x3ac0` | 17 |
 | `Unknown` | `X9GN6gWabWM` | unresolved | `0x2d50` | 321 |
+
+### Functional
+
+- [sceMusicFwGetCurrentTime, sceMusicFwGetLoop, sceMusicFwGetMuted, sceMusicFwGetNetworkState, sceMusicFwGetVolume, sceMusicFwIsEnded, sceMusicFwIsPlaying, sceMusicFwIsStopped, sceMusicFwGetCapability, sceMusicFwGetDuration, sceMusicFwGetShuffle, sceMusicFwIsPaused, sceMusicFwIsSeeking, X9GN6gWabWM, sceMusicFwGetVolume2 and sceMusicFwInitialize2](../../../core/libs/prx/libSceMusicFrameworkInterface/Export.cpp) (libSceMusicFrameworkInterface) - only the null-pointer answer is implemented: each returns `0x81797001` for a null 2nd argument (the only one for GetVolume2 and Initialize2), which firmware 13.42 checks before any call (read from disassembly, not measured on a console). Past it they throw: the module goes on to calls this implementation does not make (for the handle exports a mutex and a lookup of the 32-bit handle; GetVolume logs before it returns `0x81797003` for an unknown handle). The declarations carry only the arguments these checks read; the names are mine.

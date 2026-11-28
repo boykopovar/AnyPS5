@@ -2,11 +2,13 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -16,7 +18,7 @@ import build_web
 import package_release
 import test_web
 
-FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
+FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "i18n.mjs", "output-directory.mjs", "worker.mjs",
          "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 REVISION = "a" * 40
 LATEST = "https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"
@@ -206,6 +208,23 @@ class WebReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(PermissionError, "publication blocked"):
                 self.publish()
         self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_publication_retries_a_briefly_locked_rename(self):
+        self.seed_previous()
+        rename = Path.rename
+        blocked = []
+
+        def locked_once(path, destination):
+            if path.name == "site" and not blocked:
+                blocked.append(path)
+                raise PermissionError("site is briefly in use")
+            return rename(path, destination)
+
+        with patch.object(Path, "rename", locked_once):
+            self.publish()
+        self.assertEqual(len(blocked), 1)
+        self.assertTrue((self.output / "web-release.json").is_file())
         self.assertEqual(list(self.build.glob(".web-release-*")), [])
 
     def test_failed_first_publication_leaves_no_output(self):
@@ -550,6 +569,69 @@ class TestWebRunnerTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+    def test_main_runs_node_tests_downloads_zip_and_passes_fixture_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            url = "https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/index.min.js"
+            (build / "web/archive.mjs").write_text(f'import * as zip from "{url}";\n', encoding="utf-8")
+            calls = []
+            observed_files = {}
+            observed_fixture = None
+
+            def fake_run(command, **kwargs):
+                calls.append((command, kwargs))
+                if len(calls) == 5:
+                    nonlocal observed_fixture
+                    observed_fixture = Path(command[-1])
+                    observed_files["main.elf"] = (observed_fixture / "main.elf").read_bytes()
+                    observed_files["module.elf"] = (observed_fixture / "module.elf").read_bytes()
+                    observed_files["zip.mjs"] = (observed_fixture / "zip.mjs").read_bytes()
+
+            with patch("subprocess.run", side_effect=fake_run), patch("urllib.request.urlopen") as mock_url:
+                mock_url.return_value.__enter__.return_value.read.return_value = b"zip-module-bytes"
+                result = test_web.main(["--build", str(build)])
+            self.assertEqual(result, 0)
+            mock_url.assert_called_once_with(url, timeout=30)
+            self.assertEqual(len(calls), 5)
+            self.assertEqual(calls[0][0][:2], ["node", "--test"])
+            self.assertEqual([Path(arg).name for arg in calls[0][0][2:]], [
+                "worker-manifest.test.mjs", "app.test.mjs", "batch.test.mjs",
+                "failure-report.test.mjs", "i18n.test.mjs", "output-directory.test.mjs", "directory-writer.test.mjs",
+            ])
+            self.assertTrue(calls[0][1].get("check"))
+            expected_web = str(Path(os.path.realpath(build)) / "web")
+            self.assertEqual([Path(call[0][1]).name for call in calls[1:]], [
+                "archive-root.test.mjs", "archive-windows.test.mjs", "archive-reserved.test.mjs", "archive.test.mjs",
+            ])
+            for command, kwargs in calls[1:]:
+                self.assertEqual(command[0], "node")
+                self.assertEqual(command[2], expected_web)
+                self.assertTrue(kwargs.get("check"))
+                self.assertEqual(kwargs["env"]["ANYPS5_TEST_ZIP_URL"], url)
+                self.assertEqual(kwargs["env"]["ANYPS5_TEST_ZIP_PATH"], (observed_fixture / "zip.mjs").as_uri())
+            self.assertTrue(observed_files["main.elf"].startswith(b"\x7fELF"))
+            self.assertTrue(observed_files["module.elf"].startswith(b"\x7fELF"))
+            self.assertEqual(observed_files["zip.mjs"], b"zip-module-bytes")
+            self.assertFalse(observed_fixture.exists())
+
+    def test_main_reports_node_and_download_failures_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web/archive.mjs").write_text('from "https://cdn.jsdelivr.net/example/zip.mjs";\n', encoding="utf-8")
+            with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, ["node"])):
+                with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                    test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertNotIn("Traceback", err.getvalue())
+            with patch("subprocess.run"), patch("urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+                with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                    test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("offline", err.getvalue())
+            self.assertNotIn("Traceback", err.getvalue())
 
 
 if __name__ == "__main__":

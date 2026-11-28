@@ -348,6 +348,12 @@ static void RegisteredUnreadableAddressFailsWithEfault() {
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(&word);
+        mutation.Add(&word, sizeof(word), false, false, true, true);
+    }
+    Require(sceKernelSyncOnAddressWait32(&word, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EFAULT && timeout == SHORT_TIMEOUT);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(&word);
     }
 }
 

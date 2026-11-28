@@ -1,0 +1,15 @@
+add_library(libSceVdecShevc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVdecShevc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVdecShevc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_vdec_shevc_tests ${LIBS_INCLUDE_DIR}/tests/GuestVdecShevc.cpp)
+    target_include_directories(guest_vdec_shevc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vdec_shevc_tests PRIVATE libSceVdecShevc libc)
+    configure_windows_unwind(guest_vdec_shevc_tests)
+    add_test(NAME guest_vdec_shevc COMMAND guest_vdec_shevc_tests)
+    if(WIN32)
+        set_tests_properties(guest_vdec_shevc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecShevc>")
+    endif()
+endif()

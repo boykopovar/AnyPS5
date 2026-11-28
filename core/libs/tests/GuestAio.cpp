@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -94,7 +95,94 @@ static void CheckBadPositionedDescriptors() {
     Check(std::filesystem::remove(file));
 }
 #endif
+static std::array<KernelAioResult, 2> g_completionResults;
+static std::array<unsigned, 2> g_completionWrites;
+
+static void NoticeCompletionWrite(std::uintptr_t address, std::size_t bytes) {
+    for (std::size_t index = 0; index < g_completionResults.size(); ++index) {
+        if (address == reinterpret_cast<std::uintptr_t>(&g_completionResults[index]) && bytes == sizeof(KernelAioResult)) ++g_completionWrites[index];
+    }
+}
+
+static void CheckCompletionWrites() {
+    const auto file = std::filesystem::path("anyps5-aio-completion-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    { std::ofstream stream(file, std::ios::binary); stream << "abcd"; Check(static_cast<bool>(stream)); }
+    const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Check(fd >= 0);
+    for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+            sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+        std::array<char, 2> bytes{'a', 'b'};
+        KernelAioRwRequest requests[2]{{0, 1, &bytes[0], &g_completionResults[0], fd},
+            {1, 1, &bytes[1], &g_completionResults[1], fd}};
+        g_completionResults = {{{-7, 7}, {-7, 7}}};
+        g_completionWrites = {};
+        std::int32_t ids[2]{-7, -7};
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(NoticeCompletionWrite);
+        const int submitted = submit(requests, 2, 1, ids);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+        Check(submitted == 0);
+        for (std::size_t index = 0; index < 2; ++index) {
+            Check(g_completionResults[index].return_value == 1 && g_completionResults[index].state == 3);
+            Check(g_completionWrites[index] == 1);
+            if (ids[index] > 0) DeleteAio(ids[index]);
+        }
+        Check(bytes[0] == 'a' && bytes[1] == 'b');
+        for (auto& request : requests) request.fd = -1;
+        g_completionResults = {{{-7, 7}, {-7, 7}}};
+        g_completionWrites = {};
+        ids[0] = ids[1] = -7;
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(NoticeCompletionWrite);
+        const int failedTransfers = submit(requests, 2, 1, ids);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+        Check(failedTransfers == 0);
+        for (std::size_t index = 0; index < 2; ++index) {
+            Check(g_completionResults[index].return_value == SCE_KERNEL_ERROR_EBADF && g_completionResults[index].state == 3);
+            Check(g_completionWrites[index] == 1);
+            if (ids[index] > 0) DeleteAio(ids[index]);
+        }
+    }
+    void* readOnly = MapReadOnlyPage();
+    for (auto* bad : {static_cast<KernelAioResult*>(readOnly), reinterpret_cast<KernelAioResult*>(std::uintptr_t{1})}) {
+        for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+            for (int iteration = 0; iteration < 520; ++iteration) {
+                char byte = 'z';
+                KernelAioResult untouched{-7, 7};
+                KernelAioRwRequest requests[2]{{0, 1, &byte, bad, fd}, {1, 1, &byte, &untouched, fd}};
+                std::int32_t ids[2]{-7, -7};
+                Check(submit(requests, 2, 1, ids) == SCE_KERNEL_ERROR_EFAULT);
+                Check(ids[0] == -7 && ids[1] == -7 && byte == 'z');
+                Check(untouched.return_value == -7 && untouched.state == 7);
+            }
+        }
+    }
+    for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+            sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+        char first = 'a';
+        char second = 'z';
+        KernelAioResult completed{-7, 7};
+        KernelAioRwRequest requests[2]{{0, 1, &first, &completed, fd},
+            {1, 1, &second, static_cast<KernelAioResult*>(readOnly), fd}};
+        std::int32_t ids[2]{-7, -7};
+        Check(submit(requests, 2, 1, ids) == SCE_KERNEL_ERROR_EFAULT);
+        Check(completed.return_value == 1 && completed.state == 3 && second == 'z');
+        Check(ids[0] == -7 && ids[1] == -7);
+    }
+    UnmapReadOnlyPage(readOnly);
+    std::array<char, 4> contents{};
+    Check(sceKernelPread(fd, contents.data(), contents.size(), 0) == 4);
+    Check(std::memcmp(contents.data(), "abcd", 4) == 0);
+    KernelAioResult result{-7, 7};
+    KernelAioRwRequest request{0, 0, nullptr, &result, fd};
+    std::int32_t id = -7;
+    Check(sceKernelAioSubmitReadCommands(&request, 1, 1, &id) == 0 && id > 0);
+    DeleteAio(id);
+    Check(sceKernelClose(fd) == 0 && std::filesystem::remove(file));
+}
+
 int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "completion-writes") == 0) { CheckCompletionWrites(); return 0; }
 #ifdef _WIN32
     if (argc > 1 && std::strcmp(argv[1], "bad-descriptors") == 0) {
         CheckBadPositionedDescriptors();
@@ -108,6 +196,23 @@ int main(int argc, char** argv) {
     const std::string seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     { std::ofstream stream(file, std::ios::binary); stream << seed; }
     static_assert(sizeof(KernelAioSchedulingParam) == 20);
+    std::array<KernelAioSchedulingParam, 3> defaults{};
+    defaults.fill({7, 7, 7, 7, 7});
+    sceKernelAioInitializeParam(defaults.data());
+    Check(defaults[0].schedulingWindowSize == 32 && defaults[0].delayedCountLimit == 32 && defaults[0].enableSplit == 1);
+    Check(defaults[0].splitSize == 0x100000 && defaults[0].splitChunkSize == 0x100000);
+    Check(defaults[1].schedulingWindowSize == 32 && defaults[1].delayedCountLimit == 32 && defaults[1].enableSplit == 1);
+    Check(defaults[1].splitSize == 0x100000 && defaults[1].splitChunkSize == 0x100000);
+    Check(defaults[2].schedulingWindowSize == 32 && defaults[2].delayedCountLimit == 32 && defaults[2].enableSplit == 0);
+    Check(defaults[2].splitSize == 0 && defaults[2].splitChunkSize == 0);
+    Check(sceKernelAioInitializeImpl(defaults.data(), 0x3c) == 0);
+    KernelAioSchedulingParam consoleParam{7, 7, 7, 7, 7};
+    Check(sceKernelAioSetParam(&consoleParam, 1, 1, 0, 0, 0) == 0);
+    Check(consoleParam.schedulingWindowSize == 1 && consoleParam.delayedCountLimit == 1 && consoleParam.enableSplit == 0);
+    Check(consoleParam.splitSize == 0 && consoleParam.splitChunkSize == 0);
+    Check(sceKernelAioSetParam(&consoleParam, 4, 4, 1, 4096, 4096) == 0);
+    Check(consoleParam.schedulingWindowSize == 4 && consoleParam.delayedCountLimit == 4 && consoleParam.enableSplit == 1);
+    Check(consoleParam.splitSize == 4096 && consoleParam.splitChunkSize == 4096);
     std::array<KernelAioSchedulingParam, 3> schedulingParams{};
     schedulingParams.fill({7, 7, 7, 7, 7});
     Check(sceKernelAioSetParam(&schedulingParams[1], 64, 16, 1, 0x200000, 0x40000) == 0);
@@ -143,6 +248,12 @@ int main(int argc, char** argv) {
     bool nullThrew = false;
     try { sceKernelAioSetParam(nullptr, 32, 32, 1, 0x100000, 0x100000); } catch (const std::invalid_argument&) { nullThrew = true; }
     Check(nullThrew);
+    auto* const badParam = reinterpret_cast<KernelAioSchedulingParam*>(1);
+    Check(sceKernelAioSetParam(badParam, 32, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioSetParam(badParam, -1, 32, 1, 0x100000, 0x100000) == SCE_KERNEL_ERROR_EINVAL);
+    bool initializeThrew = false;
+    try { sceKernelAioInitializeParam(badParam); } catch (const std::invalid_argument&) { initializeThrew = true; }
+    Check(initializeThrew);
     Check(sceKernelAioInitializeImpl(schedulingParams.data(), static_cast<std::int32_t>(sizeof(schedulingParams))) == 0);
     std::array<KernelAioSchedulingParam, 4> initParam{};
     initParam.fill({7, 7, 7, 7, 7});
@@ -154,6 +265,13 @@ int main(int argc, char** argv) {
     Check(initParam[2].schedulingWindowSize == 32 && initParam[2].delayedCountLimit == 32 && initParam[2].enableSplit == 0 &&
         initParam[2].splitSize == 0 && initParam[2].splitChunkSize == 0);
     Check(initParam[3].schedulingWindowSize == 7 && initParam[3].splitChunkSize == 7);
+    for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                             sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+        auto* const unreadable = reinterpret_cast<KernelAioRwRequest*>(1);
+        std::int32_t untouchedId = -1;
+        Check(submit(unreadable, 0, 1, &untouchedId) == SCE_KERNEL_ERROR_EINVAL && untouchedId == -1);
+        Check(submit(unreadable, 1, 1, &untouchedId) == SCE_KERNEL_ERROR_EFAULT && untouchedId == -1);
+    }
     const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
     std::array<char, 16> first{};
@@ -438,8 +556,34 @@ int main(int argc, char** argv) {
     Check(sceKernelAioPollRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioCancelRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioDeleteRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioWaitRequests(unreadable, 2, kept, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(kept[0] == 7 && kept[1] == 7);
     void* readOnly = MapReadOnlyPage();
+    const int submitFd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Check(submitFd >= 0);
+    const auto fileContents = [&] {
+        std::ifstream stream(file, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    };
+    const std::string beforeSubmits = fileContents();
+    for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
+        for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands,
+                                 sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+            for (const std::int32_t size : {1, 2}) {
+                std::array<char, 4> marker = {'m', 'n', 'o', 'p'};
+                KernelAioResult markerResults[2] = {{-1, 0}, {-1, 0}};
+                KernelAioRwRequest markerRequests[2] = {
+                    {0, marker.size(), marker.data(), &markerResults[0], submitFd},
+                    {16, marker.size(), marker.data(), &markerResults[1], submitFd},
+                };
+                Check(submit(markerRequests, size, 1, static_cast<std::int32_t*>(bad)) == SCE_KERNEL_ERROR_EFAULT);
+                Check(std::string(marker.data(), marker.size()) == "mnop");
+                for (const auto& markerResult : markerResults) Check(markerResult.state == 0 && markerResult.return_value == -1);
+            }
+        }
+    }
+    Check(fileContents() == beforeSubmits);
+    Check(sceKernelClose(submitFd) == 0);
     for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
         auto* badState = static_cast<std::int32_t*>(bad);
         const std::int32_t pollId = finished();
@@ -452,6 +596,14 @@ int main(int argc, char** argv) {
         Check(sceKernelAioDeleteRequest(deleteId, badState) == SCE_KERNEL_ERROR_EFAULT);
         std::int32_t removed = 7;
         Check(sceKernelAioDeleteRequest(deleteId, &removed) == 0 && removed == SCE_KERNEL_ERROR_ESRCH);
+        const std::int32_t waitId = finished();
+        Check(sceKernelAioWaitRequest(waitId, badState, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequest(waitId, &polled) == 0 && polled == 0x10003);
+        std::int32_t waitIds[2] = {finished(), finished()};
+        std::int32_t waitStates[2] = {7, 7};
+        Check(sceKernelAioWaitRequests(waitIds, 2, badState, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequests(waitIds, 2, waitStates) == 0 && waitStates[0] == 0x10003 && waitStates[1] == 0x10003);
+        Check(sceKernelAioDeleteRequests(waitIds, 2, waitStates) == 0 && waitStates[0] == 0 && waitStates[1] == 0);
         std::int32_t batchIds[2] = {finished(), finished()};
         std::int32_t batchStates[2] = {7, 7};
         Check(sceKernelAioPollRequests(batchIds, 2, badState) == SCE_KERNEL_ERROR_EFAULT);
@@ -462,6 +614,7 @@ int main(int argc, char** argv) {
         Check(batchStates[0] == SCE_KERNEL_ERROR_ESRCH && batchStates[1] == SCE_KERNEL_ERROR_ESRCH);
         DeleteAio(pollId);
         DeleteAio(cancelId);
+        DeleteAio(waitId);
     }
     Check(*static_cast<std::int32_t*>(readOnly) == 0);
     UnmapReadOnlyPage(readOnly);

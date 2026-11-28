@@ -49,7 +49,41 @@ static void Check(TValue value, std::uint32_t radix, std::uint32_t flags, TForma
     }
 }
 
+static void CheckUnwritableOutputs() {
+    constexpr int InvalidArgument = static_cast<int>(0x80558009);
+    constexpr int BufferTooSmall = static_cast<int>(0x80558008);
+    auto* const unwritableText = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    auto* const unwritableLength = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+    std::size_t length = 999;
+    Require(sceNpUInt64ToStr(unwritableText, 8, 42, 10, 0, &length) == InvalidArgument && length == 999);
+    Require(sceNpUInt32ToStr(unwritableText, 8, 42, 10, 0, &length) == InvalidArgument && length == 999);
+    Require(sceNpInt32ToStr(unwritableText, 8, -42, 10, 0, &length) == InvalidArgument && length == 999);
+    Require(sceNpInt64ToStr(unwritableText, 8, -42, 10, 4, &length) == InvalidArgument && length == 999);
+    Require(sceNpUInt64ToStr(unwritableText, 2, 42, 10, 0, &length) == BufferTooSmall && length == 999);
+    Require(sceNpUInt64ToStr(nullptr, 0, 42, 10, 0, unwritableLength) == InvalidArgument);
+    std::array<char, 8> output{};
+    Require(sceNpUInt64ToStr(output.data(), output.size(), 42, 10, 0, unwritableLength) == InvalidArgument);
+    Require(std::string(output.data()) == "42");
+}
+
+static void CheckUtilSettingGetters() {
+    Require(sceNpUtilGetSandboxMode() == 0);
+    Require(sceNpGetSandboxMode() == 0);
+    Require(sceNpUtilGetDateSetAuto() == 0);
+    Require(sceNpUtilGetFakeDisplayNameMode() == 0);
+    Require(sceNpUtilGetFakeRateLimit() == 100);
+    Require(sceNpUtilGetIgnoreNpTitleId() == 0);
+    Require(sceNpUtilGetNpDebug() == 0);
+    Require(sceNpUtilGetNpTestPatch() == 0);
+    Require(sceNpUtilGetShareTitleCheck() == 0);
+    Require(sceNpUtilGetTrcNotify() == 0);
+    Require(sceNpUtilGetWebApi2FakeRateLimit() == 0);
+    Require(sceNpUtilGetWebTraceSetting() == 0);
+}
+
 int main() {
+    CheckUtilSettingGetters();
+    CheckUnwritableOutputs();
     for (std::uint32_t radix = 2; radix <= 36; ++radix) {
         for (std::uint32_t flags = 0; flags < 8; ++flags) {
             for (std::uint64_t value : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{35}, std::numeric_limits<std::uint64_t>::max()})

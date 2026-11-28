@@ -102,5 +102,65 @@ class MergeBaseTests(unittest.TestCase):
         self.assertEqual(files, {"shared.txt"})
 
 
+class PrerequisiteHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.old = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        os.chdir(self.tmp.name)
+        run("init", "-q")
+        run("config", "commit.gpgsign", "false")
+        write("config.txt", "fence=old\ninline=old\nend\n")
+        write("main.txt", "base\n")
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        self.root = run("rev-parse", "HEAD")
+        self.parent = commit(self.root, "shared prerequisite", {"config.txt": "fence=old\nescape=shared\ninline=new\nend\n"})
+        self.main = commit(self.root, "main advances independently", {"main.txt": "main\n"})
+        run("update-ref", "refs/pr/base", self.main)
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+    def pull_requests(self, conflict=False):
+        left = commit(self.parent, "left follow-up", {"config.txt": "fence=left\nfence=expanded\nescape=shared\ninline=new\nend\n"})
+        changes = {"config.txt": "fence=right\nescape=shared\ninline=new\nend\n"} if conflict else {"right.txt": "right\n"}
+        right = commit(self.parent, "right follow-up", changes)
+        prs = {1: {"ref": left, "author": "left", "depends": {3}},
+               2: {"ref": right, "author": "right", "depends": {3}},
+               3: {"ref": self.parent, "author": "parent", "depends": set()}}
+        for pr in prs.values():
+            pr_overlap.scan(pr)
+            self.assertIsNotNone(pr["tree"])
+        return prs
+
+    def test_compatible_followups_keep_the_shared_prerequisite(self):
+        prs = self.pull_requests()
+        raw = subprocess.run(["git", "merge-tree", "--write-tree", prs[1]["ref"], prs[2]["ref"]], capture_output=True)
+        self.assertEqual(raw.returncode, 0)
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 2))
+
+    def test_comparison_commits_keep_both_actual_common_bases(self):
+        prs = self.pull_requests()
+        bases = set(run("merge-base", "--all", prs[1]["tree"], prs[2]["tree"]).split())
+        self.assertEqual(bases, {self.main, self.parent})
+        for number in (1, 2):
+            ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", prs[number]["ref"], prs[number]["tree"]])
+            self.assertEqual(ancestry.returncode, 0)
+
+    def test_incompatible_followups_still_report_their_conflict(self):
+        prs = self.pull_requests(conflict=True)
+        found = pr_overlap.overlaps(prs, 1, 2)
+        self.assertIsNotNone(found)
+        self.assertIn("config.txt", found["conflicts"])
+
+    def test_scanning_the_base_itself_remains_empty(self):
+        pr = {"ref": "refs/pr/base"}
+        pr_overlap.scan(pr)
+        self.assertIsNotNone(pr["tree"])
+        self.assertEqual(pr["files"], set())
+        self.assertEqual(pr["added_exports"], {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,11 +1,20 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using PthreadSpinlock = PthreadSpinlockPrivate*;
 
 static constexpr int GUEST_EPERM = 1;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EBUSY = 16;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GuestPthread_Process_Private = 0;
@@ -14,17 +23,66 @@ static constexpr int Increments = 200000;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
 struct Shared {
     PthreadSpinlock lock = nullptr;
     long counter = 0;
     int trylock = -1;
     int unlock = -1;
+    int destroy = -1;
 };
 
 static void* APS5_VABI Contender(void* arg) {
     auto& shared = *static_cast<Shared*>(arg);
     shared.trylock = pthread_spin_trylock_nid_postfix(&shared.lock);
     shared.unlock = pthread_spin_unlock_nid_postfix(&shared.lock);
+    shared.destroy = pthread_spin_destroy_nid_postfix(&shared.lock);
     return nullptr;
 }
 
@@ -55,12 +113,69 @@ static void ArgumentErrors() {
     Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EINVAL);
 }
 
+static void FaultArguments() {
+    auto* badLock = reinterpret_cast<PthreadSpinlock*>(0x10);
+    errno = 71;
+    Require(pthread_spin_init_nid_postfix(badLock, GuestPthread_Process_Private) == GUEST_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(pthread_spin_destroy_nid_postfix(badLock) == GUEST_EFAULT);
+    Require(errno == 71);
+
+    ReadOnlyPage initPage;
+    auto* readOnlyInit = initPage.Set<PthreadSpinlock>(nullptr);
+    initPage.Protect();
+    errno = 71;
+    Require(pthread_spin_init_nid_postfix(readOnlyInit, GuestPthread_Process_Private) == GUEST_EFAULT);
+    Require(errno == 71 && *readOnlyInit == nullptr);
+
+    PthreadSpinlock live = nullptr;
+    Require(pthread_spin_init_nid_postfix(&live, GuestPthread_Process_Private) == 0);
+    ReadOnlyPage destroyPage;
+    auto* readOnlyDestroy = destroyPage.Set(live);
+    destroyPage.Protect();
+    errno = 71;
+    Require(pthread_spin_destroy_nid_postfix(readOnlyDestroy) == GUEST_EFAULT);
+    Require(errno == 71 && *readOnlyDestroy == live);
+    Require(pthread_spin_destroy_nid_postfix(&live) == 0);
+}
+
+static void FaultSlotPointers() {
+    PthreadSpinlock live = nullptr;
+    Require(pthread_spin_init_nid_postfix(&live, GuestPthread_Process_Private) == 0);
+    auto* badSlot = reinterpret_cast<PthreadSpinlock*>(0x1);
+    errno = 71;
+    Require(pthread_spin_lock_nid_postfix(badSlot) == GUEST_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(pthread_spin_trylock_nid_postfix(badSlot) == GUEST_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(pthread_spin_unlock_nid_postfix(badSlot) == GUEST_EFAULT);
+    Require(errno == 71);
+
+    ReadOnlyPage slotPage;
+    auto* readOnlySlot = slotPage.Set(live);
+    slotPage.Protect();
+    Require(pthread_spin_lock_nid_postfix(readOnlySlot) == 0);
+    Require(*readOnlySlot == live);
+    Require(pthread_spin_unlock_nid_postfix(readOnlySlot) == 0);
+
+    Require(pthread_spin_unlock_nid_postfix(&live) == GUEST_EPERM);
+    Require(pthread_spin_lock_nid_postfix(&live) == 0);
+    Require(pthread_spin_unlock_nid_postfix(&live) == 0);
+    Require(pthread_spin_destroy_nid_postfix(&live) == 0);
+}
+
 static void SingleThread(int pshared) {
     PthreadSpinlock lock = nullptr;
     Require(pthread_spin_init_nid_postfix(&lock, pshared) == 0);
     Require(lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&lock) == GUEST_EPERM);
     Require(pthread_spin_lock_nid_postfix(&lock) == 0);
+    errno = 71;
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(errno == 71 && lock != nullptr);
     Require(pthread_spin_trylock_nid_postfix(&lock) == GUEST_EBUSY);
     bool threw = false;
     try {
@@ -70,9 +185,13 @@ static void SingleThread(int pshared) {
         threw = true;
     }
     Require(threw);
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&lock) == 0);
     Require(pthread_spin_unlock_nid_postfix(&lock) == GUEST_EPERM);
     Require(pthread_spin_trylock_nid_postfix(&lock) == 0);
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&lock) == 0);
     Require(pthread_spin_destroy_nid_postfix(&lock) == 0);
     Require(lock == nullptr);
@@ -88,8 +207,11 @@ static void HeldByAnotherThread() {
     Require(scePthreadJoin(thread, nullptr) == 0);
     Require(shared.trylock == GUEST_EBUSY);
     Require(shared.unlock == GUEST_EPERM);
+    Require(shared.destroy == GUEST_EBUSY);
+    Require(shared.lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&shared.lock) == 0);
     Require(pthread_spin_destroy_nid_postfix(&shared.lock) == 0);
+    Require(shared.lock == nullptr);
 }
 
 static void MutualExclusion() {
@@ -107,6 +229,8 @@ static void MutualExclusion() {
 
 int main() {
     ArgumentErrors();
+    FaultArguments();
+    FaultSlotPointers();
     SingleThread(GuestPthread_Process_Private);
     HeldByAnotherThread();
     MutualExclusion();

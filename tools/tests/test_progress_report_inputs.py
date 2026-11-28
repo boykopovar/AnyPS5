@@ -21,7 +21,8 @@ def matches(path, filters):
 class ProgressReportInputTests(unittest.TestCase):
     def inputs(self):
         script = Path(progress.__file__).resolve()
-        for path in (script, progress.OPCODES, progress.ISA, script.with_name("nid_names.py")):
+        for path in (script, progress.OPCODES, progress.ISA, progress.ISA_FORMS, progress.ISA_GFX1013,
+                     script.with_name("nid_names.py"), Path(progress.shader_scan.__file__), Path(progress.isa_profiles.__file__)):
             yield path.resolve().relative_to(ROOT).as_posix()
 
     def test_every_file_the_report_reads_starts_it(self):

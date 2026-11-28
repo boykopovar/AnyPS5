@@ -12,6 +12,7 @@ permissions: {}
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
     env:
@@ -32,6 +33,7 @@ jobs:
           force_label perf          fef2c0 'Performance change'
           force_label 'perf numbers missing' e99695 'perf pull request without a before and after summary line'
           force_label 'review queue' 1d76db 'Next in the maintainer review queue: checks pass, no open change request, no conflict'
+          force_label 'already in main' c5def5 'Merging would not change main; never closed automatically'
 
           label relinker  5319e7 'core/relinker'
           label libc      fbca04 'libc'

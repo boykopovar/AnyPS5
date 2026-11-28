@@ -1,0 +1,15 @@
+add_library(libSceAvcap2mvr SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAvcap2mvr PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAvcap2mvr)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_avcap2mvr_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvcap2mvr.cpp)
+    target_include_directories(guest_avcap2mvr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_avcap2mvr_tests PRIVATE libSceAvcap2mvr libc)
+    configure_windows_unwind(guest_avcap2mvr_tests)
+    add_test(NAME guest_avcap2mvr COMMAND guest_avcap2mvr_tests)
+    if(WIN32)
+        set_tests_properties(guest_avcap2mvr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvcap2mvr>")
+    endif()
+endif()

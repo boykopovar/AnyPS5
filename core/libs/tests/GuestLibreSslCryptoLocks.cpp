@@ -1,8 +1,10 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -32,20 +34,30 @@ static void CheckThreadIdNumeric() {
     std::memset(&id, 0xaa, sizeof(id));
     CRYPTO_THREADID_set_numeric_nid_postfix(&id, 0x1234567890abcdefull);
     Require(id.ptr == nullptr && id.val == 0x1234567890abcdefull);
+    std::memset(&id, 0xaa, sizeof(id));
+    constexpr auto maxVal = std::numeric_limits<std::uint64_t>::max();
+    CRYPTO_THREADID_set_numeric_nid_postfix(&id, maxVal);
+    Require(id.ptr == nullptr && id.val == maxVal);
     std::memset(&id, 0x55, sizeof(id));
     CRYPTO_THREADID_set_numeric_nid_postfix(&id, 0);
     unsigned char zero[sizeof(id)]{};
     Require(std::memcmp(&id, zero, sizeof(id)) == 0);
     RequireThrows([] { CRYPTO_THREADID_set_numeric_nid_postfix(nullptr, 1); });
+    errno = 71;
+    CRYPTO_THREADID_set_numeric_nid_postfix(reinterpret_cast<CryptoThreadId*>(0x10), 0x1234567890abcdefull);
+    Require(errno == 71);
 }
 
 int main() {
     Require(CRYPTO_num_locks_nid_postfix() == 41);
     CRYPTO_set_locking_callback_nid_postfix(reinterpret_cast<void*>(&Locking));
+    CRYPTO_set_locking_callback_nid_postfix(reinterpret_cast<void*>(&Locking));
     CRYPTO_set_locking_callback_nid_postfix(nullptr);
+    CRYPTO_set_add_lock_callback_nid_postfix(reinterpret_cast<void*>(&AddLock));
     CRYPTO_set_add_lock_callback_nid_postfix(reinterpret_cast<void*>(&AddLock));
     CRYPTO_set_add_lock_callback_nid_postfix(nullptr);
     CheckThreadIdCallback();
     CheckThreadIdNumeric();
+    Require(CRYPTO_num_locks_nid_postfix() == 41);
     return 0;
 }

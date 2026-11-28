@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -29,6 +30,7 @@
 
 namespace {
 constexpr int kSaveDataNotInitialized = -2137063423;
+constexpr int kSaveDataParameter = -2137063424;
 }
 
 static void Check(bool value, int line) {
@@ -87,12 +89,36 @@ static int FailWrite(const std::filesystem::path& path, [[maybe_unused]] std::si
     return result;
 }
 
+static void CheckUnmappedGetMemoryArguments() {
+    SaveDataMemoryGet2 get{};
+    get.user_id = 7531;
+    get.slot_id = 0;
+    Require(sceSaveDataGetSaveDataMemory2(reinterpret_cast<SaveDataMemoryGet2*>(0x10)) == kSaveDataParameter);
+    get.data = reinterpret_cast<SaveDataMemoryData*>(0x10);
+    Require(sceSaveDataGetSaveDataMemory2(&get) == kSaveDataParameter);
+    get.data = nullptr;
+    get.param = reinterpret_cast<SaveDataParam*>(0x10);
+    Require(sceSaveDataGetSaveDataMemory2(&get) == kSaveDataParameter);
+    get.param = nullptr;
+    get.icon = reinterpret_cast<SaveDataIcon*>(0x10);
+    Require(sceSaveDataGetSaveDataMemory2(&get) == kSaveDataParameter);
+    get.icon = nullptr;
+    Require(sceSaveDataGetSaveDataMemory2(&get) == 0);
+}
+
 int main() {
     Require(sceSaveDataCreateTransactionResource(1024) == kSaveDataNotInitialized);
     Require(sceSaveDataDeleteTransactionResource(1) == kSaveDataNotInitialized);
     const std::uint32_t syncParamUninit[2] = {7531u, 0u};
     Require(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000u));
+    errno = 71;
+    Require(sceSaveDataSyncSaveDataMemory(reinterpret_cast<const void*>(0x10)) == static_cast<int>(0x809F0000u));
+    Require(errno == 71);
     Require(sceSaveDataSyncSaveDataMemory(syncParamUninit) == static_cast<int>(0x809F0001u));
+    Require(sceSaveDataSetSaveDataMemory2(nullptr) == static_cast<int>(0x809F0000u));
+    errno = 71;
+    Require(sceSaveDataSetSaveDataMemory2(reinterpret_cast<const SaveDataMemorySet2*>(0x10)) == static_cast<int>(0x809F0000u));
+    Require(errno == 71);
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() /
         ("anyps5-metadata-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -108,6 +134,7 @@ int main() {
         Require(static_cast<bool>(file));
     }
     Require(sceSaveDataInitialize3(nullptr) == 0);
+    CheckUnmappedGetMemoryArguments();
     const int tx0 = sceSaveDataCreateTransactionResource(0);
     Require(tx0 > 0);
     Require(sceSaveDataDeleteTransactionResource(tx0) == 0);
@@ -121,6 +148,76 @@ int main() {
     set.user_id = 7531;
     set.param = &param;
     Require(sceSaveDataSetSaveDataMemory2(&set) == 0);
+    SaveDataMemorySet2 badDataSet{};
+    badDataSet.user_id = 7531;
+    badDataSet.slot_id = 0;
+    badDataSet.data_num = 1;
+    badDataSet.data = reinterpret_cast<const SaveDataMemoryData*>(0x10);
+    errno = 72;
+    Require(sceSaveDataSetSaveDataMemory2(&badDataSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 72);
+    SaveDataMemorySet2 maxDataSet{};
+    maxDataSet.user_id = 7531;
+    maxDataSet.slot_id = 0;
+    maxDataSet.data_num = 0xFFFFFFFFu;
+    maxDataSet.data = reinterpret_cast<const SaveDataMemoryData*>(0x10);
+    errno = 73;
+    Require(sceSaveDataSetSaveDataMemory2(&maxDataSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 73);
+    SaveDataMemoryData validChunk[1]{};
+    maxDataSet.data = validChunk;
+    errno = 74;
+    Require(sceSaveDataSetSaveDataMemory2(&maxDataSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 74);
+    SaveDataMemorySet2 badParamSet{};
+    badParamSet.user_id = 7531;
+    badParamSet.slot_id = 0;
+    badParamSet.param = reinterpret_cast<const SaveDataParam*>(0x10);
+    errno = 73;
+    Require(sceSaveDataSetSaveDataMemory2(&badParamSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 73);
+    SaveDataMemoryData badBufData{};
+    badBufData.buf = reinterpret_cast<void*>(0x10);
+    badBufData.buf_size = 16;
+    badBufData.offset = 0;
+    SaveDataMemorySet2 badBufSet{};
+    badBufSet.user_id = 7531;
+    badBufSet.slot_id = 0;
+    badBufSet.data_num = 1;
+    badBufSet.data = &badBufData;
+    errno = 75;
+    Require(sceSaveDataSetSaveDataMemory2(&badBufSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 75);
+    Require(Read(memoryPath) == memoryOriginal);
+    std::array<char, 4> badParamDataBuf{'x', 'y', 'z', 'w'};
+    SaveDataMemoryData badParamWriteData{};
+    badParamWriteData.buf = badParamDataBuf.data();
+    badParamWriteData.buf_size = badParamDataBuf.size();
+    badParamWriteData.offset = 0;
+    SaveDataMemorySet2 badParamWithDataSet{};
+    badParamWithDataSet.user_id = 7531;
+    badParamWithDataSet.slot_id = 0;
+    badParamWithDataSet.data_num = 1;
+    badParamWithDataSet.data = &badParamWriteData;
+    badParamWithDataSet.param = reinterpret_cast<const SaveDataParam*>(0x10);
+    errno = 76;
+    Require(sceSaveDataSetSaveDataMemory2(&badParamWithDataSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 76);
+    Require(Read(memoryPath) == memoryOriginal);
+    std::array<char, 20> excessiveBuf{};
+    std::array<SaveDataMemoryData, 2> excessiveData{{
+        {excessiveBuf.data(), excessiveBuf.size(), 0},
+        {excessiveBuf.data(), excessiveBuf.size(), 0}
+    }};
+    SaveDataMemorySet2 excessiveSet{};
+    excessiveSet.user_id = 7531;
+    excessiveSet.slot_id = 0;
+    excessiveSet.data_num = 2;
+    excessiveSet.data = excessiveData.data();
+    errno = 77;
+    Require(sceSaveDataSetSaveDataMemory2(&excessiveSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 77);
+    Require(Read(memoryPath) == memoryOriginal);
     const auto original = Read(path);
     Require(original.size() == sizeof(param));
     param.user_param = 42;
@@ -341,6 +438,18 @@ int main() {
     Require(setupResult.existed_memory_size == GrownMemorySize);
     Require(Read(setupBinPath) == expectedFinalBlob);
     Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
+    errno = 71;
+    Require(sceSaveDataSetupSaveDataMemory2(reinterpret_cast<const SaveDataMemorySetup2*>(0x10), nullptr) == kSaveDataParameter);
+    Require(errno == 71);
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, reinterpret_cast<SaveDataMemorySetupResult*>(0x10)) == kSaveDataParameter);
+    Require(errno == 71);
+    SaveDataMemorySetup2 invalidParamSetup = setup2;
+    invalidParamSetup.option = 1;
+    invalidParamSetup.init_param = reinterpret_cast<const SaveDataParam*>(0x10);
+    Require(sceSaveDataSetupSaveDataMemory2(&invalidParamSetup, nullptr) == kSaveDataParameter);
+    Require(errno == 71);
+    Require(sceSaveDataSetupSaveDataMemory(invalidParamSetup.user_id, invalidParamSetup.memory_size, reinterpret_cast<const SaveDataParam*>(0x10)) == kSaveDataParameter);
+    Require(errno == 71);
     Require(sceSaveDataTerminate() == 0);
     Require(sceSaveDataCreateTransactionResource(1024) == kSaveDataNotInitialized);
     Require(sceSaveDataDeleteTransactionResource(tx) == kSaveDataNotInitialized);

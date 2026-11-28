@@ -1,2 +1,3 @@
 #pragma once
-#include "prx/libSceConnectAccountDialog/include/InventoryExports.hpp"
+
+#include "prx/libSceConnectAccountDialog/include/Api.hpp"

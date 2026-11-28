@@ -6,6 +6,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -23,6 +29,17 @@ void Require(bool condition, const char* what) {
 }
 
 bool Fails(long result, int error) { return result == -1 && *__error_nid_postfix() == error; }
+
+const void* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    if (page == nullptr) std::abort();
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) std::abort();
+#endif
+    return page;
+}
 
 std::array<std::uint8_t, 16> Loopback() {
     std::array<std::uint8_t, 16> address{16, 2};
@@ -58,6 +75,18 @@ void ArgumentsAreCheckedBeforeTheDescriptor() {
     Require(Fails(bind_nid_postfix(-1, address.data(), 256), ErrorNameTooLong), "bind(-1) with a 256-byte address must fail with ENAMETOOLONG (63)");
     Require(Fails(bind_nid_postfix(-1, nullptr, address.size()), ErrorFault), "bind(-1) with a null address must fail with EFAULT (14)");
     Require(Fails(connect_nid_postfix(-1, address.data(), 1), ErrorInvalid), "connect(-1) with a 1-byte address must fail with EINVAL (22)");
+    for (const void* unusable : {reinterpret_cast<const void*>(0x10), UnreadablePage()}) {
+        Require(Fails(bind_nid_postfix(-1, unusable, address.size()), ErrorFault), "bind(-1) with an unreadable address must fail with EFAULT (14)");
+        Require(Fails(connect_nid_postfix(-1, unusable, address.size()), ErrorFault), "connect(-1) with an unreadable address must fail with EFAULT (14)");
+        const int stream = socket_nid_postfix(2, Stream, 0);
+        const int datagram = socket_nid_postfix(2, Datagram, 0);
+        Require(stream >= 0 && datagram >= 0, "socket failed");
+        Require(Fails(bind_nid_postfix(stream, unusable, address.size()), ErrorFault), "bind with an unreadable address must fail with EFAULT (14)");
+        Require(Fails(connect_nid_postfix(stream, unusable, address.size()), ErrorFault), "connect with an unreadable address must fail with EFAULT (14)");
+        Require(Fails(bind_nid_postfix(datagram, unusable, address.size()), ErrorFault), "bind of a datagram socket with an unreadable address must fail with EFAULT (14)");
+        Require(Fails(connect_nid_postfix(datagram, unusable, address.size()), ErrorFault), "connect of a datagram socket with an unreadable address must fail with EFAULT (14)");
+        Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+    }
     Require(Fails(sendto_nid_postfix(-1, "x", 1, 0, address.data(), 1), ErrorInvalid), "sendto(-1) with a 1-byte address must fail with EINVAL (22)");
     Require(Fails(bind_nid_postfix(-1, address.data(), address.size()), ErrorBadDescriptor), "bind(-1) with a valid address must fail with EBADF (9)");
     Require(Fails(connect_nid_postfix(-1, address.data(), address.size()), ErrorBadDescriptor), "connect(-1) with a valid address must fail with EBADF (9)");

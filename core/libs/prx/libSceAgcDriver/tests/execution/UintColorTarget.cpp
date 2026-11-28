@@ -60,8 +60,14 @@ constexpr TargetFormat R32G32{"R32G32_UINT", 0x42cu, VK_FORMAT_R32G32_UINT, 2, 4
 constexpr TargetFormat R32G32B32A32{"R32G32B32A32_UINT", 0x438u, VK_FORMAT_R32G32B32A32_UINT, 4, 4};
 constexpr TargetFormat R8{"R8_UINT", 0x404u, VK_FORMAT_R8_UINT, 1, 1};
 constexpr TargetFormat R16{"R16_UINT", 0x408u, VK_FORMAT_R16_UINT, 1, 2};
+constexpr TargetFormat R8G8{"R8G8_UINT", 0x40cu, VK_FORMAT_R8G8_UINT, 2, 1};
 constexpr TargetFormat R8G8B8A8{"R8G8B8A8_UINT", 0x428u, VK_FORMAT_R8G8B8A8_UINT, 4, 1};
 constexpr TargetFormat R16G16B16A16{"R16G16B16A16_UINT", 0x430u, VK_FORMAT_R16G16B16A16_UINT, 4, 2};
+constexpr TargetFormat A2B10G10R10{"A2B10G10R10_UINT", 0x424u, VK_FORMAT_A2B10G10R10_UINT_PACK32, 4, 0};
+
+std::uint32_t ElementBytes(const TargetFormat& target) {
+    return target.channelBytes == 0 ? 4u : target.channels * target.channelBytes;
+}
 
 struct ExportCase {
     const char* name;
@@ -83,7 +89,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 128> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 512> Programs{};
 std::size_t programCount = 0;
 
 std::span<const std::uint32_t> Program(const std::array<std::uint32_t, 4>& vgprs, bool compressed) {
@@ -176,7 +182,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::size_t by
     cx[0x3b8] = attrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == target.format && color.elementBytes == target.channels * target.channelBytes && color.componentMapping == 0xe4u && color.packing == ShaderRecompiler::ColorExportPacking::Uint && color.bytes == bytes, std::string("the UINT target did not decode as an ") + target.name + " surface with the unsigned integer packing");
+    Require(color.format == target.format && color.elementBytes == ElementBytes(target) && color.componentMapping == 0xe4u && color.packing == ShaderRecompiler::ColorExportPacking::Uint && color.bytes == bytes, std::string("the UINT target did not decode as an ") + target.name + " surface with the unsigned integer packing");
     color.packing = packing;
     return color;
 }
@@ -272,15 +278,20 @@ std::uint32_t Channel(const std::vector<std::uint8_t>& bytes, std::size_t at, st
     return value;
 }
 
+std::uint32_t TargetChannel(const std::vector<std::uint8_t>& bytes, std::size_t texel, const TargetFormat& target, std::uint32_t channel) {
+    if (target.channelBytes != 0) return Channel(bytes, texel + channel * target.channelBytes, target.channelBytes);
+    return (Channel(bytes, texel, 4u) >> (10u * channel)) & (channel == 3u ? 0x3u : 0x3ffu);
+}
+
 void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const TargetFormat& target, const ColorTargetLayout& layout, const std::vector<std::uint8_t>& before, const ExportCase& exported, const std::array<std::uint32_t, 4>& expected, const std::string& what) {
     const auto stored = ReadBack(device, block);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             for (std::uint32_t channel = 0; channel < target.channels; ++channel) {
-                const auto at = layout.Offset(x, y) + channel * target.channelBytes;
+                const auto at = layout.Offset(x, y);
                 const bool written = x < ScissorWidth && (exported.writeMask & (1u << channel)) != 0;
-                const auto want = written ? expected[channel] : Channel(before, at, target.channelBytes);
-                const auto got = Channel(stored, at, target.channelBytes);
+                const auto want = written ? expected[channel] : TargetChannel(before, at, target, channel);
+                const auto got = TargetChannel(stored, at, target, channel);
                 if (got == want) continue;
                 char detail[192];
                 std::snprintf(detail, sizeof(detail), ": channel %u of pixel (%u, %u) %s holds 0x%08x, expected 0x%08x", channel, x, y, written ? "written" : "not written", got, want);
@@ -297,9 +308,20 @@ std::vector<std::uint8_t> Fill(Block& block) {
     return {block.data, block.data + block.bytes};
 }
 
-std::array<std::uint32_t, 4> Expected(const ExportCase& exported, const std::array<std::uint32_t, 4>& vgprs) {
-    if (exported.format == Export32AR.format) return {vgprs[0], 0u, 0u, vgprs[1]};
-    return vgprs;
+std::array<std::uint32_t, 4> Expected(const ExportCase& exported, const std::array<std::uint32_t, 4>& vgprs, ShaderRecompiler::ColorExportPacking packing) {
+    auto expected = exported.format == Export32AR.format ? std::array<std::uint32_t, 4>{vgprs[0], 0u, 0u, vgprs[1]} : vgprs;
+    using ShaderRecompiler::ColorExportPacking;
+    for (std::uint32_t channel = 0; channel < expected.size(); ++channel) {
+        auto& value = expected[channel];
+        const auto tenBits = channel == 3u ? 0x3u : 0x3ffu;
+        if (packing == ColorExportPacking::UintMask8) value &= 0xffu;
+        if (packing == ColorExportPacking::UintMask16) value &= 0xffffu;
+        if (packing == ColorExportPacking::UintMask10_10_10_2) value &= tenBits;
+        if (packing == ColorExportPacking::UintClamp8) value = std::min(value, 0xffu);
+        if (packing == ColorExportPacking::UintClamp16) value = std::min(value, 0xffffu);
+        if (packing == ColorExportPacking::UintClamp10_10_10_2) value = std::min(value, tenBits);
+    }
+    return expected;
 }
 
 std::uint32_t WidenedHalf(std::uint32_t half) {
@@ -318,15 +340,17 @@ std::uint32_t WidenedHalf(std::uint32_t half) {
 }
 
 std::array<std::uint32_t, 4> HalfExpected(ShaderRecompiler::ColorExportPacking packing, const std::array<std::uint32_t, 4>& vgprs) {
-    const auto limit = packing == ShaderRecompiler::ColorExportPacking::UintClamp8 ? 0xffu : packing == ShaderRecompiler::ColorExportPacking::UintClamp16 ? 0xffffu : 0xffffffffu;
+    const auto limit = [&](std::uint32_t channel) {
+        if (packing == ShaderRecompiler::ColorExportPacking::UintClamp10_10_10_2) return channel == 3u ? 0x3u : 0x3ffu;
+        return packing == ShaderRecompiler::ColorExportPacking::UintClamp8 ? 0xffu : packing == ShaderRecompiler::ColorExportPacking::UintClamp16 ? 0xffffu : 0xffffffffu;
+    };
     std::array<std::uint32_t, 4> expected{};
-    for (std::uint32_t channel = 0; channel < expected.size(); ++channel) expected[channel] = std::min(WidenedHalf((vgprs[channel / 2u] >> (16u * (channel % 2u))) & 0xffffu), limit);
+    for (std::uint32_t channel = 0; channel < expected.size(); ++channel) expected[channel] = std::min(WidenedHalf((vgprs[channel / 2u] >> (16u * (channel % 2u))) & 0xffffu), limit(channel));
     return expected;
 }
 
 void TargetTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, const ExportCase& exported, std::span<const std::array<std::uint32_t, 4>> values, ColorTileMode mode, const char* kind, ShaderRecompiler::ColorExportPacking packing) {
-    const auto elementBytes = target.channels * target.channelBytes;
-    const ColorTargetLayout layout(Width, Height, mode, elementBytes);
+    const ColorTargetLayout layout(Width, Height, mode, ElementBytes(target));
     Block block((layout.Bytes() + BlockBytes - 1) / BlockBytes * BlockBytes);
     const auto color = DecodeTarget(block, layout.Bytes(), target, mode == ColorTileMode::Linear ? LinearAttrib3 : TiledAttrib3, packing);
     const bool halves = exported.format == ExportFp16ABGR.format;
@@ -339,7 +363,7 @@ void TargetTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, co
         variant = drawn;
         char what[192];
         std::snprintf(what, sizeof(what), "a %s export of 0x%08x 0x%08x 0x%08x 0x%08x into a %s %s target with packing %u", exported.name, vgprs[0], vgprs[1], vgprs[2], vgprs[3], kind, target.name, static_cast<unsigned>(packing));
-        ExpectSurface(device, block, target, layout, before, exported, halves ? HalfExpected(packing, vgprs) : Expected(exported, vgprs), what);
+        ExpectSurface(device, block, target, layout, before, exported, halves ? HalfExpected(packing, vgprs) : Expected(exported, vgprs, packing), what);
         before = ReadBack(device, block);
     }
 }
@@ -355,7 +379,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        constexpr std::array<std::uint32_t, 8> words{{0u, 1u, 0x3f800000u, 0x7fc00000u, 0xff800000u, 0x80000000u, 0xdeadbeefu, 0xffffffffu}};
+        constexpr std::array<std::uint32_t, 10> words{{0u, 1u, 0x1ffu, 0x3f800000u, 0x7fc00000u, 0xff800000u, 0x80000000u, 0x12345678u, 0xdeadbeefu, 0xffffffffu}};
         std::vector<std::array<std::uint32_t, 4>> single;
         for (const auto word : words) single.push_back({word, 0x11111111u, 0x22222222u, 0x33333333u});
         FormatTests(*device, R32, Export32R, single);
@@ -366,13 +390,29 @@ int main() {
         FormatTests(*device, R32G32B32A32, Export32ABGR, wide);
         const std::vector<std::array<std::uint32_t, 4>> narrow{{0u, 0x11111111u, 0x22222222u, 0x33333333u}, {1u, 0u, 0u, 0u}, {0x7fu, 0u, 0u, 0u}, {0xa5u, 0u, 0u, 0u}, {0xffu, 0u, 0u, 0u}};
         FormatTests(*device, R8, Export32R, narrow);
+        using ShaderRecompiler::ColorExportPacking;
+        FormatTests(*device, R8, Export32R, single, ColorExportPacking::UintMask8);
+        FormatTests(*device, R16, Export32R, single, ColorExportPacking::UintMask16);
+        FormatTests(*device, R8G8, Export32GR, wide, ColorExportPacking::UintClamp8);
+        FormatTests(*device, R8G8B8A8, Export32ABGR, wide, ColorExportPacking::UintClamp8);
+        FormatTests(*device, R16G16B16A16, Export32ABGR, wide, ColorExportPacking::UintClamp16);
+        FormatTests(*device, R32, Export32R, single, ColorExportPacking::UintMask8);
+        FormatTests(*device, R32, Export32R, single, ColorExportPacking::UintMask16);
+        FormatTests(*device, R32G32B32A32, Export32ABGR, wide, ColorExportPacking::UintClamp8);
+        FormatTests(*device, R32G32B32A32, Export32ABGR, wide, ColorExportPacking::UintClamp16);
+        const std::vector<std::array<std::uint32_t, 4>> tenBit{{0u, 0u, 0u, 0u}, {1u, 2u, 3u, 1u}, {0x155u, 0x2aau, 0x3ffu, 2u}, {0x3ffu, 0x3ffu, 0x3ffu, 3u}, {0x200u, 0x1ffu, 0xffu, 0u}};
+        FormatTests(*device, A2B10G10R10, Export32ABGR, tenBit);
+        FormatTests(*device, A2B10G10R10, Export32ABGR, wide, ColorExportPacking::UintClamp10_10_10_2);
+        FormatTests(*device, A2B10G10R10, Export32GR, wide, ColorExportPacking::UintClamp10_10_10_2);
+        FormatTests(*device, A2B10G10R10, Export32R, single, ColorExportPacking::UintMask10_10_10_2);
+        FormatTests(*device, R32G32B32A32, Export32ABGR, wide, ColorExportPacking::UintClamp10_10_10_2);
+        FormatTests(*device, R32, Export32R, single, ColorExportPacking::UintMask10_10_10_2);
         constexpr std::array<std::uint32_t, 13> halves{{0x0000u, 0x8000u, 0x3c00u, 0xbc00u, 0x3800u, 0x0001u, 0x83ffu, 0x03ffu, 0x7bffu, 0x7c00u, 0xfc00u, 0x7c01u, 0xfe00u}};
         std::vector<std::array<std::uint32_t, 4>> packed;
         for (std::size_t index = 0; index < halves.size(); ++index) {
             const auto half = [&](std::size_t offset) { return halves[(index + offset) % halves.size()]; };
             packed.push_back({half(0) | (half(3) << 16u), half(5) | (half(7) << 16u), 0u, 0u});
         }
-        using ShaderRecompiler::ColorExportPacking;
         FormatTests(*device, R32, ExportFp16ABGR, packed);
         FormatTests(*device, R32, ExportFp16ABGR, packed, ColorExportPacking::UintClamp8);
         FormatTests(*device, R32, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
@@ -381,6 +421,8 @@ int main() {
         FormatTests(*device, R16G16B16A16, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
         FormatTests(*device, R8, ExportFp16ABGR, packed, ColorExportPacking::UintClamp8);
         FormatTests(*device, R8G8B8A8, ExportFp16ABGR, packed, ColorExportPacking::UintClamp8);
+        FormatTests(*device, A2B10G10R10, ExportFp16ABGR, packed, ColorExportPacking::UintClamp10_10_10_2);
+        FormatTests(*device, R32G32B32A32, ExportFp16ABGR, packed, ColorExportPacking::UintClamp10_10_10_2);
         std::puts("UINT color target tests passed");
         return 0;
     } catch (const std::exception& error) {

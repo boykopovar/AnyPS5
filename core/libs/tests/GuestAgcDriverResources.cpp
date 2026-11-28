@@ -53,11 +53,8 @@ int main() {
     Require(bulkMemory == originalBulkMemory);
     Require(sceAgcDriverGetDefaultOwner(&owner) == Unavailable && owner == 7u);
     std::uint32_t maxNameLength = 8u;
-    Require(sceAgcDriverGetResourceRegistrationMaxNameLength(&maxNameLength) == 0 && maxNameLength == 0xfcu);
-    bool nullLengthRejected = false;
-    try { sceAgcDriverGetResourceRegistrationMaxNameLength(nullptr); }
-    catch (const std::invalid_argument&) { nullLengthRejected = true; }
-    Require(nullLengthRejected);
+    Require(sceAgcDriverGetResourceRegistrationMaxNameLength(&maxNameLength) == Unavailable && maxNameLength == 8u);
+    Require(sceAgcDriverGetResourceRegistrationMaxNameLength(nullptr) == Unavailable);
     const char* name = "unchanged";
     Require(sceAgcDriverGetOwnerName(owner, &name) == Unavailable);
     Require(sceAgcDriverGetResourceName(resource, &name) == Unavailable);
@@ -132,4 +129,7 @@ int main() {
     std::uint64_t userMemSize = 0;
     Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&userMemSize) == 0 && userMemSize == 0x4000ull);
     Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr) == 0x80020065u);
+    errno = 71;
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(reinterpret_cast<uint64_t*>(0x10)) == 0x80020065u);
+    Require(errno == 71);
 }

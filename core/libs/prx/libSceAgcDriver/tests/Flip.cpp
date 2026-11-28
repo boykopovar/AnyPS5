@@ -125,6 +125,49 @@ public:
     }
 };
 
+struct FlipOrder {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool block = true;
+    bool entered = false;
+    std::vector<std::uint32_t> landed;
+};
+
+class OrderedRequest final : public AgcDriver::IFlipRequest {
+public:
+    OrderedRequest(std::shared_ptr<FlipOrder> value, std::uint32_t mark, bool held) : order(std::move(value)), mark(mark), held(held) {}
+    void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override {
+        std::unique_lock lock(order->mutex);
+        if (held) {
+            order->entered = true;
+            order->changed.notify_all();
+            if (!order->changed.wait_for(lock, std::chrono::seconds(10), [&] { return !order->block; })) throw std::runtime_error("the held flip was never released");
+        }
+        order->landed.push_back(mark);
+        order->changed.notify_all();
+    }
+    void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
+private:
+    std::shared_ptr<FlipOrder> order;
+    std::uint32_t mark;
+    bool held;
+};
+
+class OrderedOutput final : public AgcDriver::IVideoOutput {
+public:
+    OrderedOutput(std::shared_ptr<FlipOrder> value, std::uint32_t port, bool holdsFirst) : order(std::move(value)), port(port), holdsFirst(holdsFirst) {}
+    void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
+        const std::uint32_t serial = ++reserved;
+        return std::make_shared<OrderedRequest>(order, port * 10 + serial, holdsFirst && serial == 1);
+    }
+private:
+    std::shared_ptr<FlipOrder> order;
+    std::uint32_t port;
+    bool holdsFirst;
+    std::atomic<std::uint32_t> reserved = 0;
+};
+
 void submitFlip(std::uint32_t handle = 7) {
     std::array<std::uint32_t, 6> words{0xc004105c, handle, 0xfffffffeu, 1, 0x76543211u, 0xfedcba98u};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -329,6 +372,52 @@ void testFlipHoldCoversTrailingLabel() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+void testFlipHoldQueuesHeldSubmission() {
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    {
+        std::lock_guard lock(output->state->mutex);
+        output->state->gate = true;
+        output->state->waiting = false;
+    }
+    struct GateRelease {
+        std::shared_ptr<State> state;
+        ~GateRelease() {
+            {
+                std::lock_guard lock(state->mutex);
+                state->gate = false;
+            }
+            state->changed.notify_all();
+        }
+    } gateRelease{output->state};
+    std::array<std::uint32_t, 10> words{0xc004105c, 7, 0xfffffffeu, 1, 0, 0, 0xc0021018, 7, 0, 0};
+    Packet frame{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&frame) == 0, "flip submission with a trailing rendering wait failed");
+    {
+        std::unique_lock lock(output->state->mutex);
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "worker did not reach the rendering wait after the flip");
+    }
+    const int reserved = output->state->alive.load();
+    auto next = std::async(std::launch::async, [] { submitFlip(); });
+    const bool held = next.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
+    const bool queued = output->state->alive.load() == reserved + 1;
+    const bool ordered = output->state->ready == 1;
+    {
+        std::lock_guard lock(output->state->mutex);
+        output->state->gate = false;
+    }
+    output->state->changed.notify_all();
+    const bool released = next.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+    check(held, "a flip returned while the previous flip submission had not completed");
+    check(queued, "a held flip submission was not queued while the title waited for the previous flip submission");
+    check(ordered, "a queued flip ran ahead of the previous flip submission");
+    check(released, "a flip stayed held after the previous flip submission completed");
+    next.get();
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->state->ready == 2, "a queued held flip was lost");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+}
+
 void testComputeRenderingWait() {
     auto output = std::make_shared<Output>();
     AgcDriverRegisterVideoOutput_nid_postfix(7, output);
@@ -489,11 +578,55 @@ void testPresentMode() {
     check(!SelectPresentQueue(1, 1).has_value(), "a presentation queue was taken from a family with one queue");
 }
 
+void testCpuFlipBehindReadyingFlip() {
+    auto order = std::make_shared<FlipOrder>();
+    auto held = std::make_shared<OrderedOutput>(order, 7, true);
+    auto other = std::make_shared<OrderedOutput>(order, 8, false);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, held);
+    AgcDriverRegisterVideoOutput_nid_postfix(8, other);
+    const auto landedWithin = [&](std::size_t count, std::chrono::seconds limit) {
+        std::unique_lock lock(order->mutex);
+        return order->changed.wait_for(lock, limit, [&] { return order->landed.size() >= count; });
+    };
+    const auto cpuFlip = [](std::uint32_t handle) {
+        std::thread thread([handle] { AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{handle, 0, 1, 0}); });
+        thread.join();
+    };
+    submitFlip(7);
+    {
+        std::unique_lock lock(order->mutex);
+        check(order->changed.wait_for(lock, std::chrono::seconds(5), [&] { return order->entered; }), "the GPU flip did not reach its output");
+    }
+    cpuFlip(8);
+    check(landedWithin(1, std::chrono::seconds(5)), "a CPU flip waited for another port's flip that was still being readied");
+    cpuFlip(7);
+    {
+        std::lock_guard lock(order->mutex);
+        check(order->landed == std::vector<std::uint32_t>({81}), "a CPU flip reached its output before the earlier GPU flip of the same port");
+        order->block = false;
+    }
+    order->changed.notify_all();
+    check(landedWithin(3, std::chrono::seconds(5)), "the flips did not all reach their outputs");
+    {
+        std::lock_guard lock(order->mutex);
+        check(order->landed == std::vector<std::uint32_t>({81, 71, 72}), "the flips of one port reached their output out of order");
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, held);
+    AgcDriverUnregisterVideoOutput_nid_postfix(8, other);
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "present-mode") {
             testPresentMode();
             std::puts("present mode selection tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "cpu-flip-ready-order") {
+            testCpuFlipBehindReadyingFlip();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC CPU flip ready order test passed");
             return 0;
         }
         if (argc == 2 && std::string(argv[1]) == "failure-log") {
@@ -504,7 +637,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2) testReset(std::string(argv[1]) == "compute");
-        else { testFlipAndBoundary(); testFlipHold(); testFlipHoldCoversTrailingLabel(); testComputeRenderingWait(); testComputeFlip(); testFailure(); }
+        else { testFlipAndBoundary(); testFlipHold(); testFlipHoldCoversTrailingLabel(); testFlipHoldQueuesHeldSubmission(); testComputeRenderingWait(); testComputeFlip(); testFailure(); }
         const auto shutdown = expectFailure([] { LibcRunShutdown_nid_postfix(); });
         check(shutdown.find(argc == 2 ? (std::string(argv[1]) == "compute" ? "not readable" : "required shader register") : "intentional flip failure") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC flip and suspend tests passed");

@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -142,13 +143,26 @@ AgcDriver::Graphics::ColorTarget DecodeColor(std::uint64_t address, std::uint32_
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color) {
+struct PreparedDraw {
+    ShaderRecompiler::RecompileResult vertex;
+    ShaderRecompiler::RecompileResult pixel;
+    std::uint32_t pixelPushOffset = 0;
+    AgcDriver::Graphics::State state{};
+    AgcDriver::Pm4::DrawParameters draw{};
+
+    std::array<AgcDriver::Graphics::CompiledShader, 2> Shaders() const {
+        return {{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Fragment, &pixel, pixelPushOffset}}};
+    }
+};
+
+std::unique_ptr<PreparedDraw> Prepare(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, VkRect2D scissor, std::uint8_t* vertices = nullptr) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     const auto vertexCount = 6u * color.layers;
     BuildQuads(color.layers);
+    if (vertices != nullptr) std::memcpy(vertices, Vertices.data(), sizeof(Vertices));
     std::vector<std::uint32_t> vertexUserData(4, 0u);
-    const auto address = AddressOf(Vertices.data());
+    const auto address = vertices != nullptr ? AddressOf(vertices) : AddressOf(Vertices.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (static_cast<std::uint32_t>(sizeof(Vertex)) << 16u), vertexCount, 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     ShaderRecompiler::ShaderVertexStageInfo vertexInfo{};
@@ -161,12 +175,13 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
         {0, 0, 0, 64}
     };
     vertex.useCache = false;
-    const auto vertexResult = ShaderRecompiler::Recompile(vertex);
-    const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
+    auto prepared = std::make_unique<PreparedDraw>();
+    prepared->vertex = ShaderRecompiler::Recompile(vertex);
+    const auto vertexPush = static_cast<std::uint32_t>(prepared->vertex.pushConstants.size());
 
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
-    AgcDriver::Graphics::State state{};
+    auto& state = prepared->state;
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
     state.colors = {color};
     state.color = color;
@@ -177,7 +192,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(Side), static_cast<float>(Side), -static_cast<float>(Side), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Side, Side}};
+    state.scissor = scissor;
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blends = {blend};
@@ -200,13 +215,15 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
         PixelPushLayout(vertexPush, target)
     };
     fragment.useCache = false;
-    const auto pixelResult = ShaderRecompiler::Recompile(fragment);
-    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
-        {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
-    }};
-    const AgcDriver::Pm4::DrawParameters draw{0, vertexCount, 0, 1, 0, false};
-    device.Draw(state, draw, shaders);
+    prepared->pixel = ShaderRecompiler::Recompile(fragment);
+    prepared->pixelPushOffset = PixelPushOffset(vertexPush, target);
+    prepared->draw = {0, vertexCount, 0, 1, 0, false};
+    return prepared;
+}
+
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color) {
+    const auto prepared = Prepare(device, color, {{0, 0}, {Side, Side}});
+    device.Draw(prepared->state, prepared->draw, prepared->Shaders());
     device.WaitIdle();
 }
 
@@ -232,12 +249,42 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t la
     }
 }
 
+void RecipeRun(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint8_t* vertices) {
+    constexpr std::uint32_t Written = 0x3c3c3c3cu;
+    constexpr std::uint32_t CpuSlice = 2;
+    const std::string what = "a layered draw over the left half of slices 1 to 3 of a four-slice 2D array, replayed from its recipe after the CPU rewrote slice 2";
+    const auto surface = AddressOf(texels);
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, Kept);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto prepared = Prepare(device, DecodeColor(surface, Slices - 1u, 1, 3), {{0, 0}, {Side / 2u, Side}}, vertices);
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+    device.Draw(prepared->state, prepared->draw, prepared->Shaders(), {}, &recipe);
+    device.WaitIdle();
+    Require(recipe != nullptr, what + ": the first draw built no recipe");
+    AgcDriver::Graphics::StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "layered array color draw recipe test");
+    device.WaitIdle();
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels + CpuSlice * SliceBytes), SliceBytes / 4u, Written);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(device.DrawFromRecipe(prepared->state, prepared->draw, prepared->Shaders(), {}, recipe) == AgcDriver::RecipeOutcome::Recorded, what + ": the second draw was not recorded from the recipe");
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "layered array color draw recipe test");
+    device.WaitIdle();
+    const auto* words = reinterpret_cast<const std::uint32_t*>(texels + CpuSlice * SliceBytes);
+    const auto drawnValue = std::bit_cast<std::uint32_t>(LayerValue(CpuSlice - 1u));
+    const auto written = static_cast<std::size_t>(std::count(words, words + SliceBytes / 4u, Written));
+    const auto drawn = static_cast<std::size_t>(std::count(words, words + SliceBytes / 4u, drawnValue));
+    constexpr std::size_t Half = SliceBytes / 8u;
+    Require(written == Half && drawn == Half, what + ": slice 2 holds " + std::to_string(drawn) + " drawn words and " + std::to_string(written) + " words of the CPU write, expected " + std::to_string(Half) + " of each");
+}
+
 }
 
 int main() {
     try {
         GuestBlock array;
         GuestBlock single;
+        GuestBlock vertices;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto target = device->Target();
@@ -247,6 +294,7 @@ int main() {
         }
         Run(*device, array.Data(), Slices - 1u, 1, 3, "a layered draw into slices 1 to 3 of a four-slice 2D array");
         Run(*device, single.Data(), 0, 0, 3, "a layered draw into slices 0 to 2 of a surface of one slice");
+        RecipeRun(*device, array.Data(), vertices.Data());
         std::puts("layered array color draw tests passed");
         return 0;
     } catch (const std::exception& error) {

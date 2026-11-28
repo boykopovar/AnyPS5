@@ -1,0 +1,26 @@
+add_library(libSceVdecSavc2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVdecSavc2 PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVdecSavc2 PRIVATE libkernel_sys)
+configure_windows_unwind(libSceVdecSavc2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sdec_destroy_tests ${LIBS_INCLUDE_DIR}/tests/GuestSdecDestroy.cpp)
+    target_include_directories(guest_sdec_destroy_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sdec_destroy_tests PRIVATE libSceVdecSavc libSceVdecSavc2 libc)
+    configure_windows_unwind(guest_sdec_destroy_tests)
+    add_test(NAME guest_sdec_destroy COMMAND guest_sdec_destroy_tests)
+    if(WIN32)
+        set_tests_properties(guest_sdec_destroy PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(guest_sdec_query_memory2_tests ${LIBS_INCLUDE_DIR}/tests/GuestSdecQueryMemory2.cpp)
+    target_include_directories(guest_sdec_query_memory2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sdec_query_memory2_tests PRIVATE libSceVdecSavc2 libkernel_sys libc)
+    configure_windows_unwind(guest_sdec_query_memory2_tests)
+    add_test(NAME guest_sdec_query_memory2 COMMAND guest_sdec_query_memory2_tests)
+    if(WIN32)
+        set_tests_properties(guest_sdec_query_memory2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

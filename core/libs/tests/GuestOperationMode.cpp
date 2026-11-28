@@ -17,6 +17,9 @@ int main() {
     int value = -1;
     Require(Throws(nullptr, &value) && Throws(&value, nullptr) && Throws(nullptr, nullptr));
     Require(value == -1);
+    auto* const inaccessible = reinterpret_cast<int*>(1);
+    Require(Throws(inaccessible, &value) && value == -1);
+    Require(Throws(&value, inaccessible));
     Require(sceKernelIsTrinityMode() == 0);
     Require(sceKernelHasTrinityMode() == 0);
 }

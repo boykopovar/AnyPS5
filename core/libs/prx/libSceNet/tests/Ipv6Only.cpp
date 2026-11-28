@@ -157,28 +157,18 @@ static void ExerciseGuestOutputs() {
         }
         reset(0);
         Require(get(data + page, length) == 0 && *length == 0 && data[page] == 0xa5);
-#ifdef _WIN32
         const int failure = net ? static_cast<int>(0x8041010eu) : -1;
         reset(4);
         Require(sceKernelMprotect(data, page, 1) == 0);
-        {
-            const GuestArena::HostWrite denied(output, sizeof(int));
-            Require(!denied.Open());
-        }
         Require(get(output, length) == failure && *error == 14);
         Require(*length == 4 && std::all_of(output, output + sizeof(int), [](unsigned char value) { return value == 0xa5; }));
         Require(sceKernelMprotect(data, page, 3) == 0);
         reset(8);
         Require(sceKernelMprotect(data + page * 2, page, 1) == 0);
-        {
-            const GuestArena::HostWrite denied(length, sizeof(*length));
-            Require(!denied.Open());
-        }
         Require(get(output, length) == failure && *error == 14);
         Require(*length == 8 && std::all_of(output, output + sizeof(int), [](unsigned char value) { return value == 0xa5; }));
         if (!net) Require(get(nullptr, length) == -1 && *error == 14 && *length == 8);
         Require(sceKernelMprotect(data + page * 2, page, 3) == 0);
-#endif
         Require((net ? sceNetSocketClose(descriptor) : close_nid_postfix(descriptor)) == 0);
     }
     Require(sceKernelMprotect(view, bytes, 3) == 0);

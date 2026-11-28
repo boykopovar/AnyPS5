@@ -1,4 +1,3 @@
-#include "Translation/ScalarInstructions.hpp"
 #include "Translation/RoundingMode.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
@@ -6,15 +5,11 @@
 
 namespace ShaderRecompiler {
 
-void TranslateScalarInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateScalarInstruction not implemented");
-}
-
 template <typename TWord>
 bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, bool binary, bool negateRhs, bool negateResult, TWord&& word) {
     const auto& destination = inst.destination;
     const auto execOrVcc = [](const RdnaOperand& operand) { return operand.kind == RdnaOperandKind::ExecLo || operand.kind == RdnaOperandKind::VccLo; };
-    const bool involved = execOrVcc(destination) || execOrVcc(sourceAt(inst, 0u)) || (binary && execOrVcc(sourceAt(inst, 1u)));
+    const bool involved = program.Resources().stage == IrShaderStage::Pixel || execOrVcc(destination) || execOrVcc(sourceAt(inst, 0u)) || (binary && execOrVcc(sourceAt(inst, 1u)));
     const bool exact = maskLanesExact(sourceAt(inst, 0u)) && (!binary || maskLanesExact(sourceAt(inst, 1u)));
     if (program.WaveSize() != 32u || !involved || !exact || (destination.kind != RdnaOperandKind::ScalarRegister && !execOrVcc(destination))) return word();
     IrU1 lane = binary ? u64MaskBinary(inst, logicalOpcode, negateRhs, negateResult) : readMask(sourceAt(inst, 0u));
@@ -104,14 +99,24 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         const std::uint32_t field = inst.source0.value;
         const std::uint32_t offset = (field >> 6u) & 0x1fu;
         const std::uint32_t size = ((field >> 11u) & 0x1fu) + 1u;
-        if ((field & 0x3fu) != 1u || offset + size > 8u) {
-            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round and denormal fields are modeled");
+        if ((field & 0x3fu) != 1u || (offset + size > 10u && (offset != 23u || size != 1u))) {
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round, denormal and status fields are modeled");
         }
         const std::uint32_t mask = ((1u << size) - 1u) << offset;
         if ((rounding.unknown & mask) != 0u) {
             throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE bits that differ between the paths reaching it or were written from an SGPR: not implemented");
         }
-        writeRawU32(inst.destination, IrU32(ir.Constant((rounding.value >> offset) & (mask >> offset))));
+        std::uint32_t mode = rounding.value;
+        if (dx10Clamp()) {
+            mode |= 1u << 8u;
+        }
+        if (ieeeMode) {
+            mode |= 1u << 9u;
+        }
+        if (fp16Overflow()) {
+            mode |= 1u << 23u;
+        }
+        writeRawU32(inst.destination, IrU32(ir.Constant((mode >> offset) & (mask >> offset))));
         return true;
     }
     case RdnaOpcode::SCmovkI32: {
@@ -497,10 +502,6 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateScalarInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateScalarInstruction not implemented");
 }
 
 }

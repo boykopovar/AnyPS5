@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -64,6 +65,12 @@ int main() {
     std::memset(record, 0xA5, sizeof(record));
     Require(sceFontOutlineVertexesInterfaceInit(nullptr, record, record, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
     int p1 = 0, p2 = 0;
+    errno = 71;
+    Require(sceFontOutlineVertexesInterfaceInit(reinterpret_cast<void*>(0x10), &p1, &p2, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontOutlineVertexesInterfaceInit(reinterpret_cast<void*>(0x10), nullptr, &p2, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontOutlineVertexesInterfaceInit(record, nullptr, &p2, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
     for (int i = 0; i < 0x30; ++i) Require(record[i] == 0);
     std::memset(record, 0xA5, sizeof(record));
@@ -90,8 +97,15 @@ int main() {
     Require(sceFontSupportGlyphs(reinterpret_cast<const FontGlyphSupport*>(thirdTable)) == SCE_FONT_OK);
     Require(sceFontSupportGlyphs(reinterpret_cast<const FontGlyphSupport*>(selection)) == SCE_FONT_OK);
 
-    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
+    errno = 71;
+    Require(sceFontDestroyLibrary(reinterpret_cast<FontLibrary*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontDestroyRenderer(reinterpret_cast<FontRenderer*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontMemoryInit(reinterpret_cast<FontMemory*>(0x10), nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontMemoryInit(reinterpret_cast<FontMemory*>(0x10), nullptr, 0, nullptr, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontMemoryTerm(reinterpret_cast<FontMemory*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK && library == nullptr);
     Require(allocations == 0);
-    Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
+    Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK && memory.mem_kind == 0);
     std::puts("Font support registration tests passed");
 }

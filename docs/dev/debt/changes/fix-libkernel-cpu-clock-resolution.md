@@ -1,0 +1,5 @@
+# libkernel
+
+## change [clock_getres](../../../core/libs/prx/libkernel/Time/Time.cpp)
+
+- [clock_getres](../../../core/libs/prx/libkernel/Time/Time.cpp) (libkernel) answers as libc's `clock_getres` did on a PS5 (firmware 11.60, a payload process, [#17958](https://github.com/boykopovar/AnyPS5/pull/17958)) and the raw system call on firmware 12.00 ([#15725](https://github.com/boykopovar/AnyPS5/issues/15725#issuecomment-6690824148)); the libkernel export itself, a title process and other firmware are unmeasured. Ids 3, 6, 15 to 20 and 22 to 31 fail with `EINVAL`, the result untouched; id 15 fails though its `clock_gettime` succeeds. Ids 32 and above fail with `EINVAL` too, as [#14557](https://github.com/boykopovar/AnyPS5/pull/14557) added and the console did for 1000 and `INT_MAX`. Values keep the host's granularity, not the reported resolution; on Windows ids 1, 2 and 21 step per scheduler tick. Encoded CPU clocks (bit 31) answer as id 14 and a null result returns 0 before the id is checked, as FreeBSD 11.4 does; the console agrees for -1 and a null result.

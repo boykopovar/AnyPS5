@@ -9,7 +9,6 @@
 namespace {
 
 constexpr std::size_t ObjectSize = 0x180;
-constexpr unsigned char Fill = 0x5a;
 
 struct Store {
     std::size_t offset;
@@ -24,11 +23,11 @@ void Require(bool condition, const char* message) {
 }
 
 template <typename Construct>
-void Expect(Construct construct, std::initializer_list<Store> stores, const char* name) {
+void ExpectWithFill(Construct construct, std::initializer_list<Store> stores, unsigned char fill, const char* name) {
     alignas(8) unsigned char object[ObjectSize];
     alignas(8) unsigned char expected[ObjectSize];
-    std::memset(object, Fill, sizeof(object));
-    std::memset(expected, Fill, sizeof(expected));
+    std::memset(object, fill, sizeof(object));
+    std::memset(expected, fill, sizeof(expected));
     for (const Store& store : stores) {
         for (std::size_t index = 0; index < store.size; ++index) {
             expected[store.offset + index] = static_cast<unsigned char>(store.value >> (8 * (index % 8)));
@@ -40,6 +39,13 @@ void Expect(Construct construct, std::initializer_list<Store> stores, const char
             std::fprintf(stderr, "%s: byte 0x%zx is 0x%02x, expected 0x%02x\n", name, index, object[index], expected[index]);
             std::abort();
         }
+    }
+}
+
+template <typename Construct>
+void Expect(Construct construct, std::initializer_list<Store> stores, const char* name) {
+    for (const unsigned char fill : {static_cast<unsigned char>(0x00), static_cast<unsigned char>(0x5a), static_cast<unsigned char>(0xff)}) {
+        ExpectWithFill(construct, stores, fill, name);
     }
 }
 
@@ -64,6 +70,7 @@ int main() {
     }
 
     Require(_ZN4IPMI6Client6Config14MsgQueueConfig20estimateMsgQueueSizeEmj(0, 0) == 0, "no messages need no queue");
+    Require(_ZN4IPMI6Client6Config14MsgQueueConfig20estimateMsgQueueSizeEmj(0xf00, 0) == 0, "zero messages ignore message size");
     Require(_ZN4IPMI6Client6Config14MsgQueueConfig20estimateMsgQueueSizeEmj(0, 1) == 0x10, "a message carries a 0x10-byte header");
     Require(_ZN4IPMI6Client6Config14MsgQueueConfig20estimateMsgQueueSizeEmj(0xf00, 4) == 0x3c40, "four 0xf00-byte messages");
     Require(_ZN4IPMI6Client6Config14MsgQueueConfig20estimateMsgQueueSizeEmj(0x100000000, 2) == 0x200000020, "the size is not truncated to 32 bits");

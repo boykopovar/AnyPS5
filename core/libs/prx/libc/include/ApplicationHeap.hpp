@@ -1,6 +1,8 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_APPLICATIONHEAP_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_APPLICATIONHEAP_HPP
 
+#include <cstdint>
+#include <cstring>
 #include <cstddef>
 
 extern "C" {
@@ -20,9 +22,17 @@ void* ApplicationHeapAlign_nid_no_patch(std::size_t alignment, std::size_t bytes
 void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std::size_t alignment);
 void* ApplicationHeapCalloc_nid_no_patch(std::size_t count, std::size_t bytes);
 int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment, std::size_t bytes);
+int ApplicationHeapStats_nid_no_patch(void* stats);
 int ApplicationHeapStatsFast_nid_no_patch(void* stats);
 std::size_t ApplicationHeapUsableSize_nid_no_patch(void* pointer);
 
+}
+
+inline std::uint32_t ApplicationCompiledSdkVersion() {
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, parameters + 0x10, sizeof(version));
+    return version;
 }
 
 #endif

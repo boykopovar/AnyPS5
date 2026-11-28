@@ -31,6 +31,19 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 
+    add_test_executable(guest_savedata_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataSize.cpp)
+    target_include_directories(guest_savedata_size_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_size_tests PRIVATE libSceSaveData.native libc)
+    configure_windows_unwind(guest_savedata_size_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_savedata_size_run)
+    add_test(NAME guest_savedata_size COMMAND guest_savedata_size_tests
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_savedata_size_run)
+    set_tests_properties(guest_savedata_size PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_savedata_size PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
     add_test_executable(guest_savedata_delete_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataDelete.cpp)
     target_include_directories(guest_savedata_delete_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_savedata_delete_tests PRIVATE libSceSaveData.native libc)
@@ -68,6 +81,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_savedata_mount_status COMMAND guest_savedata_mount_status_tests)
     if(WIN32)
         set_tests_properties(guest_savedata_mount_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
+    add_test_executable(guest_savedata_is_mounted_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataIsMounted.cpp)
+    target_include_directories(guest_savedata_is_mounted_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_is_mounted_tests PRIVATE libSceSaveData.native libc)
+    configure_windows_unwind(guest_savedata_is_mounted_tests)
+    add_test(NAME guest_savedata_is_mounted COMMAND guest_savedata_is_mounted_tests)
+    if(WIN32)
+        set_tests_properties(guest_savedata_is_mounted PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 

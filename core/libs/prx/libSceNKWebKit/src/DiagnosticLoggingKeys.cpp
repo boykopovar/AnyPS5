@@ -304,6 +304,10 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys33memoryUsa
     return MakeKey("over32768");
 }
 
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys34resourceLoadStatisticsTelemetryKeyEv() {
+    return MakeKey("resourceLoadStatisticsTelemetry");
+}
+
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys40backgroundCPUUsageToDiagnosticLoggingKeyEd(double cpuUsage) {
     if (cpuUsage < 1.0) return MakeKey("below1");
     if (cpuUsage < 5.0) return MakeKey("1to5");

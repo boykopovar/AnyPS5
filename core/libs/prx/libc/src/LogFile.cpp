@@ -1,5 +1,6 @@
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -163,6 +164,12 @@ void Tee::Note(const char* text, std::size_t length) {
     if (locked) unlock();
 }
 
+void Tee::SignalWrite(int standard, const char* text, std::size_t length) {
+    const auto terminal = streamOf(standard).terminal;
+    if (terminal != NoHandle) WriteAll(terminal, text, length);
+    if (_file != NoHandle) WriteAll(_file, text, length);
+}
+
 bool Tee::FileFailed() const {
     return _fileFailed.load(std::memory_order_relaxed);
 }
@@ -274,6 +281,14 @@ void CrashWrite(int standard, const char* text, std::size_t length) {
     WriteStandardDirect(standard, text, length);
 }
 
+void SignalWrite_nid_no_patch(int standard, const char* text, std::size_t length) {
+    if (auto* const session = g_session.load(std::memory_order_acquire)) {
+        session->Output().SignalWrite(standard, text, length);
+        return;
+    }
+    WriteStandardDirect(standard, text, length);
+}
+
 namespace {
 
 [[maybe_unused]] const bool g_started = [] {
@@ -301,4 +316,22 @@ extern "C" void LogFileFlush_nid_no_patch() {
 
 extern "C" void LogFileRelease_nid_no_patch() {
     log_file::Release();
+}
+
+namespace {
+
+std::atomic<LogSinkFn> g_logSink{nullptr};
+
+}
+
+extern "C" void* LibcLogSinkAddress_nid_no_patch() {
+    return &g_logSink;
+}
+
+extern "C" long long LibcLogTimestampMicros_nid_no_patch() {
+    static const bool timestamps = std::getenv("APS5_LOG_TIMESTAMPS") != nullptr;
+    if (!timestamps) return -1;
+    using Clock = std::chrono::steady_clock;
+    static const auto started = Clock::now();
+    return static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count());
 }

@@ -37,6 +37,13 @@ template <typename TFunction> bool foldU32(IrBuilder& builder, IrValue& inst, TF
     return true;
 }
 
+template <typename TFunction> bool foldU16x2(IrBuilder& builder, IrValue& inst, TFunction function) {
+    return foldU32(builder, inst, [&](std::uint32_t a, std::uint32_t b) {
+        const auto lane = [&](std::uint32_t shift) { return static_cast<std::uint32_t>(static_cast<std::uint16_t>(function(static_cast<std::uint16_t>(a >> shift), static_cast<std::uint16_t>(b >> shift)))); };
+        return lane(0u) | (lane(16u) << 16u);
+    });
+}
+
 template <typename TFunction> bool foldU64(IrBuilder& builder, IrValue& inst, TFunction function) {
     auto& lhs = resolveArg(inst, 0);
     auto& rhs = resolveArg(inst, 1);
@@ -815,9 +822,9 @@ IrValue& sampleNumber(IrProgram& program, IrBuilder& builder, IrValue& next) {
     return program.Metadata().pixelIteratesSamples ? insertBuiltin(program, builder, next, StageInputKind::SampleId) : builder.Constant(0u);
 }
 
-void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancillary) {
+bool lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancillary) {
     if (!isPackedAncillary(ancillary)) {
-        return;
+        return false;
     }
     const IrUseList uses = ancillary.OperandUses();
     std::vector<IrUse> direct;
@@ -886,6 +893,7 @@ void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancil
         user.ReplaceArgument(0, &field(index));
         user.ReplaceArgument(1, &builder.Constant(offset.ImmediateU32() - packedFields[index].first));
     }
+    return !forwarded.empty() || !direct.empty();
 }
 
 bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
@@ -1014,6 +1022,23 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
             }
             return replaceBinaryIdentity(value, IrType::U32, 0u);
         }
+        case IrOpcode::SplatLowU16x2: {
+            auto& source = resolveArg(value, 0);
+            if (!isImmediate(source, IrType::U32)) return false;
+            const auto low = source.ImmediateU32() & 0xffffu;
+            replaceWith(value, builder.Constant(low | (low << 16u)));
+            return true;
+        }
+        case IrOpcode::IAdd16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return a + b; });
+        case IrOpcode::ISub16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return a - b; });
+        case IrOpcode::IMul16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) * b; });
+        case IrOpcode::ShiftLeftLogical16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) << (b & 15u); });
+        case IrOpcode::ShiftRightLogical16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::uint32_t>(a) >> (b & 15u); });
+        case IrOpcode::ShiftRightArithmetic16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return static_cast<std::int32_t>(static_cast<std::int16_t>(a)) >> (b & 15u); });
+        case IrOpcode::SMin16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::min(static_cast<std::int16_t>(a), static_cast<std::int16_t>(b)); });
+        case IrOpcode::SMax16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::max(static_cast<std::int16_t>(a), static_cast<std::int16_t>(b)); });
+        case IrOpcode::UMin16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::min(a, b); });
+        case IrOpcode::UMax16x2: return foldU16x2(builder, value, [](std::uint16_t a, std::uint16_t b) { return std::max(a, b); });
         case IrOpcode::IAdd64: {
             if (foldU64(builder, value, [](std::uint64_t a, std::uint64_t b) { return a + b; })) {
                 return true;
@@ -1345,29 +1370,32 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
 } // namespace
 
 void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) const {
-    OperandFacts facts;
-    for (IrBlock* block : blocks) {
-        for (IrValue* inst : block->Instructions()) {
-            const auto success = tryFoldValue(program, *inst, facts);
-        }
-    }
-    std::vector<IrValue*> phis;
-    for (IrBlock* block : blocks) {
-        for (IrValue* inst : block->Instructions()) {
-            if (inst->Opcode() == IrOpcode::Phi) {
-                phis.push_back(inst);
+    const auto foldValues = [&] {
+        OperandFacts facts;
+        for (IrBlock* block : blocks) {
+            for (IrValue* inst : block->Instructions()) {
+                const auto success = tryFoldValue(program, *inst, facts);
             }
         }
-    }
-    bool folded = true;
-    while (folded) {
-        folded = false;
-        for (IrValue* phi : phis) {
-            if (phi->Opcode() == IrOpcode::Phi && foldPhi(*phi)) {
-                folded = true;
+        std::vector<IrValue*> phis;
+        for (IrBlock* block : blocks) {
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::Phi) {
+                    phis.push_back(inst);
+                }
             }
         }
-    }
+        bool folded = true;
+        while (folded) {
+            folded = false;
+            for (IrValue* phi : phis) {
+                if (phi->Opcode() == IrOpcode::Phi && foldPhi(*phi)) {
+                    folded = true;
+                }
+            }
+        }
+    };
+    foldValues();
     std::vector<IrValue*> words;
     for (IrBlock* block : blocks) {
         for (IrValue* inst : block->Instructions()) {
@@ -1377,13 +1405,16 @@ void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) 
         }
     }
     IrBuilder builder(program);
+    bool lowered = false;
     for (IrValue* word : words) {
-        lowerPackedAncillary(program, builder, *word);
+        lowered = lowerPackedAncillary(program, builder, *word) || lowered;
     }
+    if (lowered) foldValues();
 }
 
 void ConstantFolder::Fold(IrProgram& program) const {
     Fold(program, program.BlockOrder());
+    ResolveControlFlowIdentities(program);
 }
 
 bool ConstantFolder::FoldVertexLaneBounds(IrProgram& program, std::uint32_t hostSubgroupSize, std::uint32_t spirvVersion) const {

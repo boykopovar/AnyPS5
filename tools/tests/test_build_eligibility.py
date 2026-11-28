@@ -115,6 +115,8 @@ class RelinkerEligibilityTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 cls.process.kill()
                 cls.process.wait()
+        for stream in (cls.process.stdin, cls.process.stdout, cls.process.stderr):
+            stream.close()
         cls.temp.cleanup()
 
     def run_gate(self, commits, search, files=("core/relinker/main.cpp",), manual=False, workflow=None):
@@ -226,6 +228,25 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(self.run_gate([], None, files=("README.md",), manual=True)["outputs"]["relinker"], False)
 
 
+class EligibilityJobConditionTests(unittest.TestCase):
+    def eligibility_runs(self, event_name, ref):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        job = lines.index("  eligibility:")
+        condition = next(line.split("if:", 1)[1].strip() for line in lines[job + 1:] if line.strip().startswith("if:"))
+        expression = condition.replace("github.event_name", repr(event_name)).replace("github.ref", repr(ref))
+        return eval(expression.replace("||", " or ").replace("&&", " and "), {})
+
+    def test_manual_run_from_a_branch_runs_eligibility(self):
+        self.assertTrue(self.eligibility_runs("workflow_dispatch", "refs/heads/fix/some-branch"))
+
+    def test_pull_request_and_main_push_still_run_eligibility(self):
+        self.assertTrue(self.eligibility_runs("pull_request", "refs/pull/7/merge"))
+        self.assertTrue(self.eligibility_runs("push", "refs/heads/main"))
+
+    def test_push_from_a_branch_skips_eligibility(self):
+        self.assertFalse(self.eligibility_runs("push", "refs/heads/fix/some-branch"))
+
+
 class ConcurrencyGroupTests(unittest.TestCase):
     def workflow_line(self, prefix):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
@@ -237,6 +258,19 @@ class ConcurrencyGroupTests(unittest.TestCase):
 
     def test_pushes_are_never_cancelled_by_a_later_push(self):
         self.assertEqual(self.workflow_line("cancel-in-progress:"), "cancel-in-progress: ${{ github.event_name != 'push' }}")
+
+
+class TestGraphCacheTests(unittest.TestCase):
+    def test_both_selectors_diff_from_the_matched_cache_key(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        sections = workflow.split("      - name: Select the tests the change reaches\n")
+        self.assertEqual(len(sections), 3)
+        for preceding, following in zip(sections, sections[1:]):
+            restore = preceding.rsplit("      - if: ${{ inputs.select }}\n", 1)[1]
+            select = following.split("\n      - ", 1)[0]
+            self.assertIn("id: test-graph-cache", restore)
+            self.assertIn("GRAPH_KEY: ${{ steps.test-graph-cache.outputs.cache-matched-key }}", select)
+            self.assertIn('git diff --name-only -z "$graph_base" HEAD', select)
 
 
 if __name__ == "__main__":

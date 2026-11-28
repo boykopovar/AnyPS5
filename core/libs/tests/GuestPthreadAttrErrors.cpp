@@ -63,8 +63,10 @@ static void CheckBadPointers() {
         auto* ints = static_cast<int*>(pointer);
         auto* sizes = static_cast<std::size_t*>(pointer);
         auto* params = static_cast<KernelSchedParam*>(pointer);
+        auto* masks = static_cast<KernelCpumask*>(pointer);
         Require(scePthreadAttrInit(attrs) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrDestroy(attrs) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadAttrSetaffinity(attrs, 1) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrSetdetachstate(attrs, 0) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrSetguardsize(attrs, 0) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrSetinheritsched(attrs, 0) == SCE_KERNEL_ERROR_EFAULT);
@@ -75,23 +77,28 @@ static void CheckBadPointers() {
         int value = -1;
         std::size_t size = 1;
         KernelSchedParam param{};
+        KernelCpumask mask = 1;
         void* address = nullptr;
+        Require(scePthreadAttrGetaffinity(attrs, &mask) == SCE_KERNEL_ERROR_EFAULT && mask == 1);
         Require(scePthreadAttrGetdetachstate(attrs, &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
         Require(scePthreadAttrGetguardsize(attrs, &size) == SCE_KERNEL_ERROR_EFAULT && size == 1);
         Require(scePthreadAttrGetinheritsched(attrs, &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
         Require(scePthreadAttrGetschedparam(attrs, &param) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetschedpolicy(attrs, &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
+        Require(scePthreadAttrGetsolosched(attrs, &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
         Require(scePthreadAttrGetstackaddr(attrs, &address) == SCE_KERNEL_ERROR_EFAULT && address == nullptr);
         Require(scePthreadAttrGetstacksize(attrs, &size) == SCE_KERNEL_ERROR_EFAULT && size == 1);
 
         PthreadAttr attr = nullptr;
         Require(scePthreadAttrInit(&attr) == SCE_OK);
         Require(scePthreadAttrSetschedparam(&attr, params) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadAttrGetaffinity(&attr, masks) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetdetachstate(&attr, ints) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetguardsize(&attr, sizes) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetinheritsched(&attr, ints) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetschedparam(&attr, params) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetschedpolicy(&attr, ints) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadAttrGetsolosched(&attr, ints) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetstackaddr(&attr, static_cast<void**>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrGetstacksize(&attr, sizes) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadAttrDestroy(&attr) == SCE_OK);
@@ -149,6 +156,8 @@ int main() {
     std::size_t size = 0;
     int state = 0;
     KernelCpumask mask = 0;
+    Require(scePthreadAttrGetaffinity(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetsolosched(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGetstacksize(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGetdetachstate(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGetschedparam(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
@@ -167,12 +176,14 @@ int main() {
         param.sched_priority = 700;
         Require(scePthreadAttrSetschedparam(target, &param) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrSetaffinity(target, 1) == SCE_KERNEL_ERROR_EINVAL);
+        Require(scePthreadAttrSetsolosched(target, 0) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrGetstacksize(target, &size) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrGetdetachstate(target, &state) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrGetschedparam(target, &param) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrGetschedpolicy(target, &state) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrGetinheritsched(target, &state) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrGetaffinity(target, &mask) == SCE_KERNEL_ERROR_EINVAL);
+        Require(scePthreadAttrGetsolosched(target, &state) == SCE_KERNEL_ERROR_EINVAL);
         Require(scePthreadAttrDestroy(target) == SCE_KERNEL_ERROR_EINVAL);
     }
 

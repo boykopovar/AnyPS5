@@ -144,6 +144,10 @@ void Dump(std::vector<std::uint32_t>& commands, const void* destination) {
     Append(commands, 0x46, {0x139u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)});
 }
 
+void Control(std::vector<std::uint32_t>& commands, std::uint32_t blocks) {
+    Append(commands, 0x46, {0x138u, (blocks << 11u) | (2u << 9u), 0u});
+}
+
 void Submit(std::vector<std::uint32_t>& commands) {
     const auto done = reinterpret_cast<std::uintptr_t>(&Done);
     Done = 0;
@@ -190,6 +194,34 @@ void DumpsCountTheDrawsBeforeThem(const GuestBlock& guest) {
     Require(dumps == (queued ? 4u : 0u), std::to_string(dumps) + " of 4 dumps were queued behind the draws");
 }
 
+void ControlledDumpsWriteOnlyTheirBlocks(const GuestBlock& guest) {
+    constexpr std::uint64_t untouched = (static_cast<std::uint64_t>(FirstFill) << 32u) | FirstFill;
+    auto* slots = guest.Slots();
+    std::vector<std::uint32_t> commands;
+    Fill(commands, FirstFill, slots, SlotCount * sizeof(std::uint64_t));
+    Control(commands, 0xffu);
+    Dump(commands, &slots[0]);
+    Draw(commands, guest.Target());
+    Dump(commands, reinterpret_cast<const std::byte*>(slots) + 8);
+    Control(commands, 0xf0u);
+    Dump(commands, &slots[32]);
+    Control(commands, 0u);
+    Dump(commands, reinterpret_cast<const std::byte*>(&slots[32]) + 8);
+    Control(commands, 0xffffu);
+    Submit(commands);
+    const auto begin = Count(slots, 0);
+    const auto end = Count(slots, 1);
+    Require(end > begin, "the end dump under eight enabled blocks counted " + std::to_string(end - begin) + " samples for the draw before it");
+    for (std::size_t slot = 2; slot < 16; ++slot) Require(slots[slot] == SampleReady, "slot " + std::to_string(slot) + " of an enabled block is not an empty ready block");
+    for (std::size_t slot = 16; slot < 32; ++slot) Require(slots[slot] == untouched, "slot " + std::to_string(slot) + " belongs to a block PIXEL_PIPE_STAT_CONTROL disabled, but a dump wrote it");
+    Require(Count(slots, 40) == end, "the dump whose first enabled block is block 4 counted " + std::to_string(Count(slots, 40)) + " samples there, expected " + std::to_string(end));
+    for (std::size_t slot = 32; slot < SlotCount; ++slot) {
+        if (slot == 40) continue;
+        const bool written = slot % 2 == 0 && slot >= 42 && slot <= 46;
+        Require(slots[slot] == (written ? SampleReady : untouched), "slot " + std::to_string(slot) + (written ? " of an enabled block is not an empty ready block" : " belongs to a disabled block, but a dump wrote it"));
+    }
+}
+
 }
 
 int main() {
@@ -208,6 +240,7 @@ int main() {
         {
             const GuestBlock guest;
             DumpsCountTheDrawsBeforeThem(guest);
+            ControlledDumpsWriteOnlyTheirBlocks(guest);
         }
         AgcDriverShutdown_nid_postfix();
         std::puts("pipelined sample dump tests passed");

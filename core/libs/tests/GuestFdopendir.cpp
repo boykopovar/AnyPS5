@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <string>
 
@@ -37,9 +38,12 @@ int main() {
     Require(!DescriptorIsOpen_nid_no_patch(fd));
     Require(fdopendir_nid_postfix(fd) == nullptr && *__error_nid_postfix() == 9);
     Require(fdopendir_nid_postfix(-1) == nullptr && *__error_nid_postfix() == 9);
+    Require(fdopendir_nid_postfix(std::numeric_limits<int>::min()) == nullptr && *__error_nid_postfix() == 9);
     const int file = open_nid_postfix((root / "sample.txt").string().c_str(), 0, 0);
     Require(file >= 0);
+    Require(lseek_nid_postfix(file, 2, 0) == 2);
     Require(fdopendir_nid_postfix(file) == nullptr && *__error_nid_postfix() == 20);
+    Require(lseek_nid_postfix(file, 0, 1) == 2);
     Require(fcntl_nid_postfix(file, 1) == 1);
     Require(DescriptorIsOpen_nid_no_patch(file));
     Require(close_nid_postfix(file) == 0);

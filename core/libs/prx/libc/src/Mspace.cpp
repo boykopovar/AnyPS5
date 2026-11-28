@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -44,10 +45,10 @@ std::uintptr_t AlignUp(std::uintptr_t value, std::uintptr_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
-Arena* Find(void* handle) {
+Arena* Find(void* handle, bool setErrno = true) {
     const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
     if (found != arenas.end()) return found->second.get();
-    Error(22);
+    if (setErrno) Error(22);
     return nullptr;
 }
 
@@ -60,12 +61,12 @@ void RemoveFree(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
     arena.free.erase({chunk->second.end - chunk->first, chunk->first});
 }
 
-void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
+void* Allocate(Arena* arena, std::size_t size, std::size_t alignment, bool setErrno = true) {
     if (!arena) return nullptr;
     alignment = std::max<std::size_t>(alignment, MinimumAlignment);
     const auto needed = AlignUp(std::max<std::size_t>(size, 1), MinimumAlignment);
     if (needed < size || needed > std::numeric_limits<std::uintptr_t>::max() - alignment) {
-        Error(12);
+        if (setErrno) Error(12);
         return nullptr;
     }
     for (auto candidate = arena->free.lower_bound({needed, 0}); candidate != arena->free.end(); ++candidate) {
@@ -84,7 +85,7 @@ void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
         arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
         return reinterpret_cast<void*>(aligned);
     }
-    Error(12);
+    if (setErrno) Error(12);
     return nullptr;
 }
 
@@ -95,6 +96,25 @@ bool FindUsed(Arena* arena, const void* pointer, std::map<std::uintptr_t, Chunk>
     }
     Error(22);
     return false;
+}
+
+bool ExpandInPlace(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk, std::size_t needed) {
+    const auto start = chunk->first;
+    const auto capacity = chunk->second.end - start;
+    const auto next = std::next(chunk);
+    if (next == arena.chunks.end() || next->second.used || next->first != chunk->second.end ||
+        next->second.end - start < needed) {
+        return false;
+    }
+    const auto nextEnd = next->second.end;
+    RemoveFree(arena, next);
+    arena.chunks.erase(next);
+    const auto finish = start + needed;
+    if (finish < nextEnd) AddFree(arena, finish, nextEnd);
+    arena.inUse += needed - capacity;
+    arena.peakInUse = std::max(arena.peakInUse, arena.inUse);
+    arena.chunks[start] = {finish, true};
+    return true;
 }
 
 void Release(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
@@ -129,7 +149,7 @@ bool InsideAllocation(const Arena& arena, std::uintptr_t start, std::size_t size
 int FillStats(void* handle, MallocManagedSize* stats) {
     if (!stats || stats->size < sizeof(MallocManagedSize)) return 22;
     std::lock_guard lock(arenaMutex);
-    auto* arena = Find(handle);
+    auto* arena = Find(handle, false);
     if (!arena) return 22;
     const auto system = arena->end - arena->base;
     stats->maxSystemSize = system;
@@ -211,18 +231,7 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
     if (needed <= capacity) return pointer;
-    const auto next = std::next(chunk);
-    if (next != arena->chunks.end() && !next->second.used && next->first == chunk->second.end && next->second.end - start >= needed) {
-        const auto nextEnd = next->second.end;
-        RemoveFree(*arena, next);
-        arena->chunks.erase(next);
-        const auto finish = start + needed;
-        if (finish < nextEnd) AddFree(*arena, finish, nextEnd);
-        arena->inUse += needed - capacity;
-        arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
-        arena->chunks[start] = {finish, true};
-        return pointer;
-    }
+    if (ExpandInPlace(*arena, chunk, needed)) return pointer;
     void* result = Allocate(arena, size, Granule);
     if (result) {
         std::memcpy(result, pointer, std::min<std::size_t>(capacity, size));
@@ -235,11 +244,17 @@ int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void* handle, void** result
                                                    std::size_t alignment, std::size_t size) {
     if (!result || alignment < sizeof(void*) || (alignment & (alignment - 1))) return 22;
     std::lock_guard lock(arenaMutex);
-    auto* arena = Find(handle);
+    auto* arena = Find(handle, false);
     if (!arena) return 22;
-    void* pointer = Allocate(arena, size, alignment);
+    void* pointer = Allocate(arena, size, alignment, false);
     if (!pointer) return 12;
-    *result = pointer;
+    const int savedErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(result, &pointer, sizeof(pointer));
+    errno = savedErrno;
+    if (!writable) {
+        Release(*arena, arena->chunks.find(reinterpret_cast<std::uintptr_t>(pointer)));
+        throw std::invalid_argument("sceLibcMspacePosixMemalign: unwritable result");
+    }
     return 0;
 }
 
@@ -268,7 +283,9 @@ void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointe
     if (needed < size) { Error(12); return nullptr; }
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
-    if (needed <= capacity && (start & (effective - 1)) == 0) return pointer;
+    if ((start & (effective - 1)) == 0 && (needed <= capacity || ExpandInPlace(*arena, chunk, needed))) {
+        return pointer;
+    }
     void* result = Allocate(arena, size, effective);
     if (result) {
         std::memcpy(result, pointer, std::min<std::size_t>(capacity, size));
@@ -283,6 +300,12 @@ int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSi
 
 int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return FillStats(handle, stats);
+}
+
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    std::lock_guard lock(arenaMutex);
+    const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
+    return found != arenas.end() && found->second->inUse == 0 ? 1 : 0;
 }
 
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
@@ -350,5 +373,9 @@ int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManage
 
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return sceLibcMspaceMallocStatsFast_nid_postfix(handle, stats);
+}
+
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    return sceLibcMspaceIsHeapEmpty_nid_postfix(handle);
 }
 }

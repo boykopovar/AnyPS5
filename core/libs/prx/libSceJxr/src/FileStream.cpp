@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -40,8 +41,8 @@ std::int64_t APS5_VABI SetPosWS_File_nid_postfix(Jxr::Stream* stream, std::size_
 std::int64_t APS5_VABI GetPosWS_File_nid_postfix(Jxr::Stream* stream, std::size_t* position) {
     const std::int64_t offset = ftell_nid_postfix(File(stream, __func__));
     if (offset == -1) return FileError;
-    if (!position) throw std::invalid_argument("GetPosWS_File requires an output");
-    *position = static_cast<std::size_t>(offset);
+    const auto value = static_cast<std::size_t>(offset);
+    if (!position || !GuestCopyOut_nid_no_patch(position, &value, sizeof(value))) throw std::invalid_argument("GetPosWS_File requires an output");
     return Success;
 }
 

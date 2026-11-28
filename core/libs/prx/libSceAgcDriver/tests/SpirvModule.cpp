@@ -170,6 +170,66 @@ void testIdsStayUniqueBeyondCacheCapacity() {
     check(first > typeU32, "a constant was numbered before the type it uses");
 }
 
+void testSelectTreeOverSpecializedFormatFolds() {
+    constexpr std::uint32_t Entries = 78u;
+    const auto entry = [](std::uint32_t index) { return index < Entries ? 0x100u + (index / 2u) * 7u : 0u; };
+    for (std::uint32_t format = 0; format < 128u; ++format) {
+        SpirvModule module;
+        module.EmitCapability(spv::CapabilityShader);
+        const auto typeVoid = module.Type(spv::OpTypeVoid);
+        const auto typeBool = module.Type(spv::OpTypeBool);
+        const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
+        const auto zero = module.Constant(spv::OpConstant, typeU32, 0u);
+        const auto word3 = module.Constant(spv::OpConstant, typeU32, (format << 12u) | 0xfacu);
+        const auto typePrivatePtr = module.Type(spv::OpTypePointer, spv::StorageClassPrivate, typeU32);
+        const auto typeFunction = module.Type(spv::OpTypeFunction, typeVoid);
+        const auto output = module.DefineGlobalVariable(typePrivatePtr, spv::StorageClassPrivate);
+        const auto mainId = module.AllocateId();
+        module.AddFunction(spv::OpFunction, typeVoid, mainId, spv::FunctionControlMaskNone, typeFunction);
+        module.AddFunction(spv::OpLabel, module.AllocateId());
+        const auto field = module.AllocateId();
+        module.AddFunction(spv::OpBitFieldUExtract, typeU32, field, word3, module.Constant(spv::OpConstant, typeU32, 12u), module.Constant(spv::OpConstant, typeU32, 7u));
+        std::vector<std::uint32_t> odd;
+        for (std::uint32_t span = 1u; span < Entries; span <<= 1u) {
+            const auto masked = module.AllocateId();
+            module.AddFunction(spv::OpBitwiseAnd, typeU32, masked, field, module.Constant(spv::OpConstant, typeU32, span));
+            const auto set = module.AllocateId();
+            module.AddFunction(spv::OpINotEqual, typeBool, set, masked, zero);
+            odd.push_back(set);
+        }
+        std::vector<std::uint32_t> values;
+        for (std::uint32_t index = 0; index < (1u << odd.size()); ++index) values.push_back(module.Constant(spv::OpConstant, typeU32, entry(index)));
+        for (const auto condition : odd) {
+            std::vector<std::uint32_t> halves;
+            for (std::size_t pair = 0; pair < values.size(); pair += 2u) {
+                if (values[pair] == values[pair + 1u]) {
+                    halves.push_back(values[pair]);
+                    continue;
+                }
+                const auto chosen = module.AllocateId();
+                module.AddFunction(spv::OpSelect, typeU32, chosen, condition, values[pair + 1u], values[pair]);
+                halves.push_back(chosen);
+            }
+            values = std::move(halves);
+        }
+        module.AddFunction(spv::OpStore, output, values.front());
+        module.AddFunction(spv::OpReturn);
+        module.AddFunction(spv::OpFunctionEnd);
+        const auto folded = ShaderRecompiler::SpecializeSpirv(module.Finalize());
+        const auto counts = opcodeCounts(folded);
+        check(!counts.contains(spv::OpSelect), "a select tree over a specialized buffer format kept an OpSelect");
+        check(!counts.contains(spv::OpBitFieldUExtract), "a specialized buffer format field was not folded");
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::uint32_t stored = 0;
+        for (std::size_t cursor = 5; cursor < folded.size(); cursor += folded[cursor] >> 16u) {
+            if ((folded[cursor] >> 16u) == 0u) break;
+            if ((folded[cursor] & 0xffffu) == spv::OpConstant && (folded[cursor] >> 16u) == 4u) constants[folded[cursor + 2u]] = folded[cursor + 3u];
+            if ((folded[cursor] & 0xffffu) == spv::OpStore && folded[cursor + 1u] == output) stored = folded[cursor + 2u];
+        }
+        check(constants.contains(stored) && constants.at(stored) == entry(format), "a select tree over a specialized buffer format folded to the wrong entry");
+    }
+}
+
 void testEmittedWordsAreStable() {
     SpirvModule module;
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
@@ -632,6 +692,7 @@ int main() {
     testIdsBeyondTheBoundAreRejected();
     testStructExtractsAreNotShuffled();
     testPrivateCompositeTableLoadFolding();
+    testSelectTreeOverSpecializedFormatFolds();
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();
     testOperandKindsAgree();

@@ -33,16 +33,29 @@ std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     _appendBytes(s, kStubOpPushZero, sizeof(kStubOpPushZero));
     _appendBytes(s, kStubOpPushZero, sizeof(kStubOpPushZero));
     _appendBytes(s, kStubOpMovRbpRsp, sizeof(kStubOpMovRbpRsp));
+    constexpr std::uint8_t saveMxcsr[] = {
+        0x48, 0x83, 0xec, 0x10,
+        0x0f, 0xae, 0x1c, 0x24,
+        0xc7, 0x44, 0x24, 0x04, 0xc0, 0x9f, 0x00, 0x00,
+        0x0f, 0xae, 0x54, 0x24, 0x04
+    };
     if (mainStackEntrySlotVaddr) {
         _appendBytes(s, kStubOpLeaRsiRip, sizeof(kStubOpLeaRsiRip));
         appendRel32(realEntryVaddr);
+        _appendBytes(s, saveMxcsr, sizeof(saveMxcsr));
         _appendBytes(s, kStubOpCallRipIndirect, sizeof(kStubOpCallRipIndirect));
         appendRel32(*mainStackEntrySlotVaddr);
     } else {
         _appendBytes(s, kStubOpXorRsiRsi, sizeof(kStubOpXorRsiRsi));
+        _appendBytes(s, saveMxcsr, sizeof(saveMxcsr));
         s.push_back(kStubOpCallRel32);
         appendRel32(realEntryVaddr);
     }
+    constexpr std::uint8_t restoreMxcsr[] = {
+        0x0f, 0xae, 0x14, 0x24,
+        0x48, 0x83, 0xc4, 0x10
+    };
+    _appendBytes(s, restoreMxcsr, sizeof(restoreMxcsr));
     _appendBytes(s, kStubOpUd2, sizeof(kStubOpUd2));
     return s;
 }

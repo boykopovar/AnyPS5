@@ -84,6 +84,17 @@ void TestValidation() {
     Require(Create(param) == OutputTooSmall, "an output below 10 bytes is refused");
     param = Valid(output.data(), 56 + Setup.size() - 1);
     Require(Create(param) == OutputTooSmall, "an output that cannot hold the setup packet is refused");
+    param = Valid(output.data(), 0);
+    Require(Create(param) == OutputTooSmall, "zero capacity output is refused");
+    param = Valid(output.data(), 55);
+    Require(Create(param) == OutputTooSmall, "output below header size is refused");
+}
+
+void TestInstanceCodecType() {
+    Require(sceAjmInstanceCodecType(0) == 0, "codec type of instance 0 is 0");
+    Require(sceAjmInstanceCodecType(1 << 14) == 1, "codec type of instance (1 << 14) is 1");
+    Require(sceAjmInstanceCodecType((2 << 14) | 0x3FFF) == 2, "codec type preserves upper 18 bits");
+    Require(sceAjmInstanceCodecType(0xFFFFFFFF) == (0xFFFFFFFFu >> 14), "codec type shifts by 14 bits");
 }
 
 void TestPacket() {
@@ -119,9 +130,34 @@ void TestLargePacket() {
 
 }
 
+void TestSetupPacketValidation() {
+    constexpr int InvalidParameter = static_cast<int>(0x8A6E0001u);
+    constexpr int InvalidSize = static_cast<int>(0x8A6E0002u);
+    std::uint8_t input[4]{};
+    std::uint8_t output[64]{};
+    const WVorbisSetupPacketParameter valid{sizeof(WVorbisSetupPacketParameter), 2, 0, input, sizeof(input), output, sizeof(output), 0x5A5A};
+    Require(sceAjmDecWVorbisCreateSetupPacket(nullptr) == InvalidParameter, "a null setup packet parameter is refused");
+    auto param = valid;
+    param.size = 0x30;
+    param.channels = -1;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidSize, "the size is checked before the other fields");
+    param = valid;
+    param.channels = -1;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidParameter, "negative channels are refused");
+    param = valid;
+    param.input = nullptr;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidParameter, "a null input is refused");
+    param = valid;
+    param.output = nullptr;
+    Require(sceAjmDecWVorbisCreateSetupPacket(&param) == InvalidParameter, "a null output is refused");
+    Require(param.outputSize == 0x5A5A && output[0] == 0, "a refused call writes nothing");
+}
+
 int main() {
     TestValidation();
+    TestSetupPacketValidation();
     TestPacket();
     TestLargePacket();
+    TestInstanceCodecType();
     std::puts("guest ajm wvorbis header packet: PASS");
 }

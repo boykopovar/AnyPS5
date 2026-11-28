@@ -1,0 +1,5 @@
+# libSceMove
+
+## change [sceMoveOpen and sceMoveClose]
+
+- [sceMoveOpen and sceMoveClose](../../../core/libs/prx/libSceMove/Export.cpp): connected Move-device and non-initial-user Mbus resolution are unimplemented; the host treats non-initial users as unresolved and returns 0x80EE0006. It synthesizes increasing handles from 0x30B0100, requires type 0 above SDK 0x03ffffff (0x80EE0006), and checks duplicate (type,index) before the eight-slot limit (0x80EE0005). Firmware 13.42 disassembly ([reading](https://github.com/boykopovar/AnyPS5/issues/21752#issuecomment-6932806153)) orders the SDK/type gate, Mbus resolution, duplicate bus-handle check, device ioctl, MbusAddHandle, then capacity; disassembly only, not a console run. Firmware 10.71 PS4 ([measurements](https://github.com/boykopovar/AnyPS5/discussions/7941#discussioncomment-19045601)) returned handles 0x03140800/0x03150801 for indexes 0/1; their encoding and the conditions for type 1 remain unknown. User -1 returns 0x80EE0006 after init; closing an unknown handle returns 0x80EE0004.

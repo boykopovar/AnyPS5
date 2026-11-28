@@ -67,15 +67,16 @@ int main() {
     Require(plain != nullptr);
     const auto expected = Entries(plain);
     Require(expected.at("sample.txt") == 8 && expected.at("subdirectory") == 4);
-    for (const int flags : {0x7, 0x6, 0x0, 0x1, 0x20, 0x27, 0x100, 0x40000000, static_cast<int>(0xffffffe7u)}) {
+    for (const int flags : {0x7, 0x6, 0x0, 0x1, 0x10, 0x20, 0x27, 0x100, 0x40000000, static_cast<int>(0xffffffe7u)}) {
         void* directory = __opendir2_nid_postfix(path.c_str(), flags);
         Require(directory != nullptr);
         Require(Entries(directory) == expected);
     }
-    for (const int flags : {0x8, 0x10, 0x18, 0xf, 0x1f, 0x7fffffff, -1}) {
-        *__error_nid_postfix() = 1234;
-        Require(__opendir2_nid_postfix(path.c_str(), flags) == nullptr && *__error_nid_postfix() == 1234);
-        Require(__opendir2_nid_postfix(nullptr, flags) == nullptr && *__error_nid_postfix() == 1234);
+    for (const int flags : {0x8, 0xffff, -1}) {
+        void* directory = __opendir2_nid_postfix(path.c_str(), flags);
+        Require(directory != nullptr);
+        Require(readdir_nid_postfix(directory) == nullptr);
+        Require(closedir_nid_postfix(directory) == 0);
     }
     const auto missing = (root / "missing").string();
     Require(opendir_nid_postfix(missing.c_str()) == nullptr);
@@ -110,7 +111,16 @@ int main() {
     _seekdir_nid_postfix(unlockedDir, bookmark);
     auto* entryAfterSeek = _readdir_unlocked_nid_postfix(unlockedDir, 1);
     Require(entryAfterSeek != nullptr && bookmarkedName == entryAfterSeek->name);
+    *__error_nid_postfix() = 0;
+    _reclaim_telldir_nid_postfix(unlockedDir);
+    Require(*__error_nid_postfix() == 0);
+    _seekdir_nid_postfix(unlockedDir, bookmark);
+    auto* entryAfterReclaim = _readdir_unlocked_nid_postfix(unlockedDir, 1);
+    Require(entryAfterReclaim != nullptr && bookmarkedName == entryAfterReclaim->name);
     Require(closedir_nid_postfix(unlockedDir) == 0);
+    *__error_nid_postfix() = 0;
+    _reclaim_telldir_nid_postfix(nullptr);
+    Require(*__error_nid_postfix() == 9);
 
     s_fakeOffset = 0;
     void* fakeDir = OpenDescriptorDirectory_nid_no_patch("/virtual", 100, FakeClose, 0, FakeRead, FakeSeek);

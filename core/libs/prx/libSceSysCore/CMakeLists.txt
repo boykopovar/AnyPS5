@@ -1,0 +1,15 @@
+add_library(libSceSysCore SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSysCore PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSysCore)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sys_core_tests ${LIBS_INCLUDE_DIR}/tests/GuestSysCore.cpp)
+    target_include_directories(guest_sys_core_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sys_core_tests PRIVATE libSceSysCore libc)
+    configure_windows_unwind(guest_sys_core_tests)
+    add_test(NAME guest_sys_core COMMAND guest_sys_core_tests)
+    if(WIN32)
+        set_tests_properties(guest_sys_core PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysCore>")
+    endif()
+endif()

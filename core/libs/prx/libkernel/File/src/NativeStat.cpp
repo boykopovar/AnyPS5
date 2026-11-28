@@ -13,6 +13,7 @@
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <io.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -43,12 +44,11 @@ static bool NativeStatPath(const std::filesystem::path& path, std::filesystem::p
         return true;
     }
     std::error_code error;
-    prepared = std::filesystem::absolute(path, error);
+    prepared = WindowsAbsolutePath_nid_no_patch(path, error);
     if (error) {
         errno = FilesystemError(error);
         return false;
     }
-    prepared = prepared.lexically_normal().make_preferred();
     const auto& native = prepared.native();
     if (native.size() < MAX_PATH || native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return true;
     prepared = native.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))
@@ -62,6 +62,11 @@ static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     st->hasTimes = true;
     st->hasIdentity = GetFileInformationByHandle(handle, &st->identity) != 0;
     return 0;
+}
+static void ApplyWindowsModeAttributes(NativeStat* st, DWORD attributes) {
+    st->st_mode = static_cast<decltype(st->st_mode)>(
+        ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? (_S_IFDIR | 0111) : _S_IFREG) |
+        ((attributes & FILE_ATTRIBUTE_READONLY) != 0 ? 0444 : 0666));
 }
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     std::filesystem::path prepared;
@@ -83,7 +88,9 @@ static int DoFstat(int fd, NativeStat* st) {
         return -1;
     }
     if (_fstat64(fd, st) != 0) return -1;
-    return ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
+    if (ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st) != 0) return -1;
+    if (st->hasTimes) ApplyWindowsModeAttributes(st, st->times.FileAttributes);
+    return 0;
 }
 static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     std::filesystem::path prepared;
@@ -100,8 +107,7 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     CloseHandle(handle);
     if (result != 0) return result;
     if (!link) {
-        st->st_mode = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? (_S_IFDIR | 0111) : _S_IFREG;
-        st->st_mode |= (attributes & FILE_ATTRIBUTE_READONLY) != 0 ? 0444 : 0666;
+        ApplyWindowsModeAttributes(st, attributes);
         return 0;
     }
     st->st_mode = SymbolicLinkMode;
@@ -175,8 +181,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);
     sb->st_nlink = static_cast<std::uint16_t>(st.st_nlink);
-    sb->st_uid = 0;
-    sb->st_gid = 0;
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = 512;
     sb->st_blocks = (sb->st_size + 511LL) / 512LL;
@@ -203,8 +207,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);
     sb->st_nlink = static_cast<std::uint16_t>(st.st_nlink);
-    sb->st_uid = st.st_uid;
-    sb->st_gid = st.st_gid;
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = static_cast<std::uint32_t>(st.st_blksize);
     sb->st_blocks = static_cast<std::int64_t>(st.st_blocks);

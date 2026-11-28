@@ -4,15 +4,30 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <string>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <aclapi.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static const char* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<const char*>(page);
+}
 
 int main() {
     const auto name = "anyps5-access-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -32,6 +47,21 @@ int main() {
     Require(access_nid_postfix("missing", 0) == -1 && *__error_nid_postfix() == 2);
     Require(access_nid_postfix("", 0) == -1 && *__error_nid_postfix() == 2);
     Require(access_nid_postfix(nullptr, 0) == -1 && *__error_nid_postfix() == 14);
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        *__error_nid_postfix() = 0;
+        Require(access_nid_postfix(unusable, 0) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(access_nid_postfix(unusable, 8) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(remove_nid_postfix(unusable) == -1 && *__error_nid_postfix() == 14);
+    }
+    *__error_nid_postfix() = 0;
+    Require(remove_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    const std::string tooLong(1024, 'a');
+    *__error_nid_postfix() = 0;
+    Require(access_nid_postfix(tooLong.c_str(), 0) == -1 && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(remove_nid_postfix(tooLong.c_str()) == -1 && *__error_nid_postfix() == 63);
     Require(access_nid_postfix("sample.txt", 8) == -1 && *__error_nid_postfix() == 22);
     Require(access_nid_postfix("sample.txt", -1) == -1 && *__error_nid_postfix() == 22);
     Require(access_nid_postfix(nullptr, 8) == -1 && *__error_nid_postfix() == 22);

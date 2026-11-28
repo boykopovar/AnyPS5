@@ -176,7 +176,7 @@ int main() {
             else if (test.function == 2) result = std::bit_cast<std::uint64_t>(_Recip_nid_postfix(std::bit_cast<double>(test.first)));
             else result = std::bit_cast<std::uint32_t>(_FRecip_nid_postfix(std::bit_cast<float>(static_cast<std::uint32_t>(test.first))));
             const unsigned csr = _mm_getcsr();
-            const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+            const int flags = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
             const int error = *__error_nid_postfix();
             if (result != test.result || csr != (control | test.flags | sticky) || flags != StandardFlags(test.flags | sticky) || error != 97) {
                 std::fprintf(stderr, "Dinkumware division case %u sticky %u: bits %016llx/%016llx csr %x/%x flags %x/%x errno %d\n", index, sticky,

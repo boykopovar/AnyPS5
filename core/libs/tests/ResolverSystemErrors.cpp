@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <netdb.h>
 #include <sys/socket.h>
 
@@ -34,6 +35,16 @@ extern "C" int __wrap_getnameinfo(const sockaddr*, socklen_t, char*, socklen_t, 
     return Fail();
 }
 
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
 int main() {
     struct Scenario {
         int hostResult;
@@ -54,6 +65,8 @@ int main() {
         {EAI_AGAIN, 0, 2, 77},
         {EAI_FAIL, 0, 4, 77},
         {EAI_NONAME, 0, 8, 77},
+        {EAI_ADDRFAMILY, 0, 8, 77},
+        {EAI_NODATA, 0, 8, 77},
     };
     const std::array<unsigned char, 16> address{16, 2, 0, 80, 127, 0, 0, 1};
     for (const auto& scenario : scenarios) {

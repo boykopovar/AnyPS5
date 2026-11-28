@@ -18,7 +18,7 @@ int APS5_VABI sceSharePlayResumeScreenForCdlg(void);
 int APS5_VABI sceSharePlayServerLock(void);
 int APS5_VABI sceSharePlayServerUnLock(void);
 int APS5_VABI sceSharePlaySetMode(void);
-int APS5_VABI sceSharePlaySetProhibition(void);
+int APS5_VABI sceSharePlaySetProhibition(std::int32_t mode);
 int APS5_VABI sceSharePlaySetProhibitionModeWithAppId(void);
 int APS5_VABI sceSharePlayStartStandby(void);
 int APS5_VABI sceSharePlayStartStreaming(void);

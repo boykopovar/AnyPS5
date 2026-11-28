@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change [aio_read, aio_write, aio_fsync, aio_error, aio_return, aio_suspend, aio_waitcomplete, aio_cancel]
+
+- [aio_read, aio_write, aio_fsync, aio_error, aio_return, aio_suspend, aio_waitcomplete, aio_cancel](../../../core/libs/prx/libkernel_sys/Aio.cpp) (libkernel_sys) - a `SIGEV_SIGNAL` or `SIGEV_THREAD_ID` completion, or a socket write's `EPIPE` `SIGPIPE`, throws unless the target thread blocks it (the `SIGEV_THREAD_ID` thread, else the submitter); FreeBSD posts to the process. File requests run serially, cancellable until started. Sockets poll every 10 ms; a macOS or Windows host may send a whole write at once, even if cancelled or non-blocking. Requests keep the fd number. Pipes get `EOPNOTSUPP` (`enable_unsafe` 0, unverified). Waits ignore signals; sub-1 ms timeouts round up. `aio_suspend` and `aio_waitcomplete` return `EFAULT` for a bad list, timeout or result pointer. Else FreeBSD 11.4 [`vfs_aio.c`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/vfs_aio.c) and [`sys_socket.c`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/sys_socket.c)

@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +9,18 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 constexpr std::size_t CtxSize = 120;
 constexpr std::size_t InternalSize = 464;
@@ -447,6 +460,123 @@ static void TestNullInternal() {
     f.SessionIdContext(abc, 3, 1);
 }
 
+static void TestAddClientCa() {
+    Fixture f;
+    LibreSslPutError_nid_no_patch(2, 1, 2);
+    Require(SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == 0x02001002);
+    f.Verify(0, std::source_location::current());
+    RequireThrows([] { SSL_CTX_add_client_CA_nid_postfix(nullptr, nullptr); });
+    Require(ERR_get_error_nid_postfix() == 0);
+    f.SetCtx<void*>(CtxInternal, nullptr);
+    f.Throws([&] { SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr); });
+}
+
+template<typename TCall> static void RejectsPreservingErrno(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static void TestGuestPointers() {
+    const unsigned char sidCtx[4] {1, 2, 3, 4};
+    unsigned char keys[48] {};
+    auto* unmappedContext = reinterpret_cast<LibreSslCtx*>(Pointer(0x10));
+    RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(unmappedContext, 40, 0, nullptr); });
+    RejectsPreservingErrno([&] { SSL_CTX_check_private_key_nid_postfix(unmappedContext); });
+    RejectsPreservingErrno([&] { SSL_CTX_set_verify_nid_postfix(unmappedContext, 1, nullptr); });
+    RejectsPreservingErrno([&] { SSL_CTX_set_session_id_context_nid_postfix(unmappedContext, sidCtx, sizeof sidCtx); });
+    RejectsPreservingErrno([&] { SSL_CTX_get_ex_data_nid_postfix(unmappedContext, 0); });
+
+    {
+        Fixture f;
+        f.SetCtx<void*>(CtxInternal, Pointer(0x10));
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(f.Context(), 40, 0, nullptr); });
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(f.Context(), 33, 1, nullptr); });
+        RejectsPreservingErrno([&] { SSL_CTX_check_private_key_nid_postfix(f.Context()); });
+        RejectsPreservingErrno([&] { SSL_CTX_set_verify_nid_postfix(f.Context(), 1, Pointer(0xbbbb)); });
+        RejectsPreservingErrno([&] { SSL_CTX_get_ex_data_nid_postfix(f.Context(), 0); });
+        f.VerifyBytes();
+    }
+
+    {
+        Fixture f;
+        f.SetCtx<void*>(CtxExtraCerts, Pointer(0x7777));
+        void* unmappedOutput = Pointer(0x10);
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(f.Context(), 82, 0, unmappedOutput); });
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(f.Context(), 58, 48, unmappedOutput); });
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(f.Context(), 59, 48, unmappedOutput); });
+        RejectsPreservingErrno([&] { SSL_CTX_set_session_id_context_nid_postfix(f.Context(), static_cast<const unsigned char*>(unmappedOutput), sizeof sidCtx); });
+        f.VerifyBytes();
+    }
+
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    Fixture f;
+    auto* readOnlyInternal = static_cast<unsigned char*>(page);
+    auto* readOnlyCtx = readOnlyInternal + 512;
+    Require(512 + CtxSize <= pageSize);
+    f.SetInternal<void*>(offsetof(LibreSslCtxInternal, exData), nullptr);
+    std::memcpy(readOnlyInternal, f.actual.internal, InternalSize);
+    f.SetCtx<void*>(CtxInternal, readOnlyInternal);
+    std::memcpy(readOnlyCtx, f.actual.ctx, CtxSize);
+    unsigned char snapshot[512 + CtxSize];
+    std::memcpy(snapshot, page, sizeof snapshot);
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* readOnlyContext = reinterpret_cast<LibreSslCtx*>(readOnlyCtx);
+    for (LibreSslCtx* context : {f.Context(), readOnlyContext}) {
+        Require(SSL_CTX_ctrl_nid_postfix(context, 43, 0, nullptr) == 20480);
+        Require(SSL_CTX_get_ex_data_nid_postfix(context, 0) == nullptr);
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(context, 41, 1, nullptr); });
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(context, 32, 1, nullptr); });
+        RejectsPreservingErrno([&] { SSL_CTX_ctrl_nid_postfix(context, 59, 48, keys); });
+        RejectsPreservingErrno([&] { SSL_CTX_set_verify_nid_postfix(context, 1, Pointer(0xbbbb)); });
+    }
+    RejectsPreservingErrno([&] { SSL_CTX_set_session_id_context_nid_postfix(readOnlyContext, sidCtx, sizeof sidCtx); });
+    Require(std::memcmp(snapshot, page, sizeof snapshot) == 0);
+    f.VerifyBytes();
+    Require(ERR_get_error_nid_postfix() == 0);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+    void* pages = VirtualAlloc(nullptr, 2 * pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(pages != nullptr);
+#else
+    munmap(page, pageSize);
+    void* pages = mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(pages != MAP_FAILED);
+#endif
+    auto* straddling = static_cast<unsigned char*>(pages) + pageSize - CtxSidCtx;
+    Fixture g;
+    std::memcpy(straddling, g.actual.ctx, CtxSize);
+#ifdef _WIN32
+    Require(VirtualProtect(static_cast<unsigned char*>(pages) + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(static_cast<unsigned char*>(pages) + pageSize, pageSize, PROT_READ) == 0);
+#endif
+    RejectsPreservingErrno([&] { SSL_CTX_set_session_id_context_nid_postfix(reinterpret_cast<LibreSslCtx*>(straddling), sidCtx, sizeof sidCtx); });
+    Require(std::memcmp(straddling, g.actual.ctx, CtxSize) == 0);
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, 2 * pageSize);
+#endif
+}
+
 int main() {
     ERR_clear_error_nid_postfix();
     TestOptionsAndMode();
@@ -467,5 +597,7 @@ int main() {
     TestNullContext();
     TestCheckPrivateKey();
     TestNullInternal();
+    TestAddClientCa();
+    TestGuestPointers();
     return 0;
 }

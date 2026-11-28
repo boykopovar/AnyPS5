@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
@@ -98,5 +99,8 @@ int main() {
         Require(sceSystemServiceParamGetInt(paramId, &value) == SYSTEM_SERVICE_OK);
         Require(value == expected);
         Require(sceSystemServiceParamGetInt(paramId, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+        errno = 71;
+        Require(sceSystemServiceParamGetInt(paramId, reinterpret_cast<int*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+        Require(errno == 71);
     }
 }

@@ -114,6 +114,12 @@ void TestRejectedFactoryArguments() {
     Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
     ReleaseRemovedPlayer(&output);
     Require(deletionCount == 1);
+    IntrusivePtr memberOutput{};
+    Require(CreateMember(nullptr, "member", &memberOutput) == static_cast<int>(0x80553503));
+    Require(CreateMember(&context, "member", nullptr) == static_cast<int>(0x80553503));
+    IntrusivePtr teamOutput{};
+    Require(CreateTeam(nullptr, "team", &teamOutput) == static_cast<int>(0x80553503));
+    Require(CreateTeam(&context, "team", nullptr) == static_cast<int>(0x80553503));
 }
 
 void TestFailedFactoryPayload() {
@@ -595,6 +601,19 @@ int main(int argc, char** argv) {
     Require(Read<std::int32_t>(rosterObject.data(), 0) == 2);
     created.deleter(created.object);
     Require(Read<std::int32_t>(rosterObject.data(), 0) == 1);
+    created = {};
+
+    alignas(8) std::array<std::uint8_t, 0x50> updateRosterObject{};
+    Write<std::int32_t>(updateRosterObject.data(), 0, 1);
+    IntrusivePtr updateRosterHandle{};
+    updateRosterHandle.object = updateRosterObject.data();
+    updateRosterHandle.libContext = &context;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchDetailRequestFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_24UpdateMatchDetailRequestEEE(&context, &created) == 0);
+    Require(Read<const void*>(static_cast<const std::uint8_t*>(created.object), 0x08) == &context);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE(created.object, &updateRosterHandle) == 0);
+    Require(Read<std::int32_t>(updateRosterObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(updateRosterObject.data(), 0) == 1);
     created = {};
 
     return 0;

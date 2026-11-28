@@ -4,6 +4,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEFONT_INCLUDE_FONTINTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCEFONT_INCLUDE_FONTINTERNAL_HPP
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,8 +17,32 @@
 #include FT_FREETYPE_H
 
 #include "prx/libSceFont/include/FontDriver.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace Font {
+
+template <typename T>
+bool CopyOutGuest(T* destination, const T& value) {
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+}
+
+template <typename T>
+bool OutputWritable(T* destination) {
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite guard(destination, sizeof(T));
+        writable = guard.Open() && GuestWritable_nid_no_patch(destination, sizeof(T));
+    }
+    errno = savedErrno;
+    return writable;
+}
+
+template <typename T>
+bool CopyInGuest(T& value, const T* source) {
+    return GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+}
 
 constexpr std::uint8_t STYLE_FRAME_FLAG_SCALE = 0x01;
 constexpr std::uint8_t STYLE_FRAME_FLAG_SLANT = 0x02;

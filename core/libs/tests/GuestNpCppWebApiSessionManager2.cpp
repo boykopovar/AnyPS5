@@ -20,6 +20,48 @@ constexpr auto PointerDestruct = _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_1
 constexpr auto VectorConstruct = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V123MemberWithMultiPlatformEEEEC1EPNS2_10LibContextE;
 constexpr auto VectorDestruct = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V123MemberWithMultiPlatformEEEED1Ev;
 
+constexpr auto InvitationVectorBegin = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEE5beginEv;
+constexpr auto InvitationVectorEnd = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEE3endEv;
+constexpr auto InvitationIteratorAdvance = _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEppEv;
+constexpr auto InvitationIteratorDereference = _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEdeEv;
+constexpr auto InvitationIteratorNotEqual = _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEneERKS9_;
+constexpr auto StringVectorReserve = _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi;
+constexpr auto StringVectorPushBack = _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_;
+
+void TestInvitationVectorIteration() {
+    IntrusivePtr empty{};
+    CommonIterator first{};
+    CommonIterator last{};
+    Require(InvitationVectorBegin(&first, &empty) == &first);
+    Require(InvitationVectorEnd(&last, &empty) == &last);
+    Require(first.element == nullptr);
+    Require(last.element == nullptr);
+    Require(!InvitationIteratorNotEqual(&first, &last));
+
+    alignas(8) std::array<std::uint8_t, 0x18> element{};
+    CommonIterator iterator{};
+    iterator.element = element.data();
+    Require(InvitationIteratorDereference(&iterator) == element.data());
+    Require(InvitationIteratorAdvance(&iterator) == &iterator);
+    Require(iterator.element == element.data() + sizeof(IntrusivePtr));
+    Require(InvitationIteratorNotEqual(&iterator, &first));
+    Require(!InvitationIteratorNotEqual(&iterator, &iterator));
+}
+
+void TestStringVectorReserve() {
+    IntrusivePtr vector{};
+    Require(StringVectorReserve(&vector, 8) == 0);
+    Require(StringVectorReserve(&vector, 2) == 0);
+    Require(StringVectorReserve(&vector, -1) == 0);
+    Require(vector.object != nullptr);
+
+    CommonString element{};
+    Require(StringVectorPushBack(&vector, &element) == 0);
+    Require(StringVectorPushBack(&vector, &element) == 0);
+    Require(StringVectorReserve(&vector, 1) == 0);
+    Require(StringVectorReserve(&vector, 4) == 0);
+}
+
 }
 
 int main() {
@@ -39,5 +81,8 @@ int main() {
     IntrusivePtr vector{};
     VectorConstruct(&vector, nullptr);
     VectorDestruct(&vector);
+
+    TestInvitationVectorIteration();
+    TestStringVectorReserve();
     return 0;
 }

@@ -29,6 +29,14 @@ struct PacketProfile {
     std::array<std::pair<std::uint64_t, double>, static_cast<std::size_t>(DispatchOutcome::Count)> dispatchOutcomes{};
 };
 
+struct DrainEpochs {
+    static constexpr std::size_t Flip = 256;
+    std::uint64_t interrupts = 0, queuedInterrupts = 0;
+    std::array<std::uint64_t, Flip + 1> packets{};
+};
+
+DrainEpochs& DrainEpochCounts();
+
 struct PacketTimer {
     bool enabled; std::uint32_t key; std::uint32_t queue; PacketProfile& profile; std::chrono::steady_clock::time_point start;
     ~PacketTimer();

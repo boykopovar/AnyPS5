@@ -31,6 +31,14 @@ void Expect(const char* name, const std::vector<std::uint8_t>& bytes, const std:
     ++failures;
 }
 
+void ExpectInstruction(const char* name, const std::vector<std::uint8_t>& bytes, const char* expected) {
+    const char* found = crash_text::AmdOnlyInstruction(bytes.data(), bytes.size());
+    const std::string actual = found != nullptr ? found : "<none>";
+    if (actual == (expected != nullptr ? expected : "<none>")) return;
+    std::fprintf(stderr, "%s: expected %s, got %s\n", name, expected != nullptr ? expected : "<none>", actual.c_str());
+    ++failures;
+}
+
 }
 
 int main() {
@@ -50,6 +58,29 @@ int main() {
     Expect("output capacity", Narrow(std::string(100, 'x')), "\"" + std::string(10, 'x') + "\"...", 16);
     Expect("escape at the output capacity", Narrow("abcdefghi\n" + std::string(20, 'z')), "\"abcdefghi\"...", 16);
     Expect("too small output", Narrow("long enough text"), "<none>", 7);
+    ExpectInstruction("MONITORX", {0x0f, 0x01, 0xfa}, "MONITORX");
+    ExpectInstruction("MWAITX", {0x0f, 0x01, 0xfb}, "MWAITX");
+    ExpectInstruction("CLZERO", {0x0f, 0x01, 0xfc}, "CLZERO");
+    ExpectInstruction("CLZERO with an address-size prefix", {0x67, 0x0f, 0x01, 0xfc}, "CLZERO");
+    ExpectInstruction("RDPRU", {0x0f, 0x01, 0xfd}, "RDPRU");
+    ExpectInstruction("MONITORX behind a lock prefix", {0xf0, 0x0f, 0x01, 0xfa}, "MONITORX");
+    ExpectInstruction("MCOMMIT", {0xf3, 0x0f, 0x01, 0xfa}, "MCOMMIT");
+    ExpectInstruction("EXTRQ with immediates", {0x66, 0x0f, 0x78, 0xc0, 0x08, 0x10}, "EXTRQ");
+    ExpectInstruction("EXTRQ register form with REX", {0x66, 0x41, 0x0f, 0x79, 0xc1}, "EXTRQ");
+    ExpectInstruction("INSERTQ with immediates", {0xf2, 0x0f, 0x78, 0xc1, 0x08, 0x10}, "INSERTQ");
+    ExpectInstruction("INSERTQ register form", {0xf2, 0x0f, 0x79, 0xc1}, "INSERTQ");
+    ExpectInstruction("MOVNTSS", {0xf3, 0x0f, 0x2b, 0x07}, "MOVNTSS");
+    ExpectInstruction("MOVNTSD with REX", {0xf2, 0x44, 0x0f, 0x2b, 0x07}, "MOVNTSD");
+    ExpectInstruction("MOVNTPS", {0x0f, 0x2b, 0x07}, nullptr);
+    ExpectInstruction("MOVNTPD", {0x66, 0x0f, 0x2b, 0x07}, nullptr);
+    ExpectInstruction("VMREAD", {0x0f, 0x78, 0xc1}, nullptr);
+    ExpectInstruction("RDTSCP", {0x0f, 0x01, 0xf9}, nullptr);
+    ExpectInstruction("MONITOR", {0x0f, 0x01, 0xc8}, nullptr);
+    ExpectInstruction("UD2", {0x0f, 0x0b}, nullptr);
+    ExpectInstruction("two mandatory prefixes", {0x66, 0xf3, 0x0f, 0x01, 0xfa}, nullptr);
+    ExpectInstruction("MONITORX cut after two bytes", {0x0f, 0x01}, nullptr);
+    ExpectInstruction("a prefix alone", {0xf3}, nullptr);
+    ExpectInstruction("no readable bytes", {}, nullptr);
     if (failures != 0) return 1;
     std::puts("crash text: all cases passed");
     return 0;

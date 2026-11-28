@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -18,10 +20,13 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cerrno>
+#include <condition_variable>
 #include <exception>
+#include <mutex>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -168,6 +173,62 @@ void Driver::Shutdown() {
     rethrowFailure();
 }
 
+#ifdef APS5_PROFILE_GENERATE
+extern "C" void __gcov_dump(void);
+extern "C" void __gcov_reset(void);
+
+namespace {
+
+struct ProfileDumps {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::thread thread;
+    bool stopping = false;
+};
+
+ProfileDumps& profileDumps() {
+    static auto* const dumps = new ProfileDumps();
+    return *dumps;
+}
+
+void dumpProfile() {
+    __gcov_dump();
+    __gcov_reset();
+}
+
+void startProfileDumps() {
+    auto& dumps = profileDumps();
+    std::lock_guard lock(dumps.mutex);
+    if (dumps.stopping || dumps.thread.joinable()) return;
+    dumps.thread = std::thread([&dumps] {
+        std::unique_lock wait(dumps.mutex);
+        while (!dumps.wake.wait_for(wait, std::chrono::seconds(20), [&] { return dumps.stopping; })) dumpProfile();
+    });
+}
+
+void stopProfileDumps() {
+    auto& dumps = profileDumps();
+    {
+        std::lock_guard lock(dumps.mutex);
+        if (dumps.stopping) return;
+        dumps.stopping = true;
+    }
+    dumps.wake.notify_one();
+    if (dumps.thread.joinable()) dumps.thread.join();
+    dumpProfile();
+}
+
+}
+#else
+namespace {
+
+void startProfileDumps() {}
+
+void stopProfileDumps() {}
+
+}
+#endif
+
 void Driver::stop() {
     require(!onWorkerThread(), "worker cannot stop itself");
     std::lock_guard shutdownLock(shutdownMutex);
@@ -210,10 +271,13 @@ void Driver::stop() {
     PerformanceTrace::StopOutput();
     FlushAsyncLogAtEnd_nid_no_patch();
     StopProfileOutput_nid_no_patch();
+    CaptureTrace::Stop();
+    stopProfileDumps();
     stopped = true;
 }
 
 Driver::Driver() {
+    startProfileDumps();
     InstallAsyncLog_nid_no_patch();
     static const bool driverMemory = (MapDriverMemory(), true);
     static_cast<void>(driverMemory);
@@ -248,7 +312,7 @@ Driver::Driver() {
         }
         std::thread host;
         try {
-            host = std::thread(import);
+            host = Libc::StartHostThread(import);
         } catch (const std::system_error& error) {
             std::fprintf(stderr, "[gpu] import of GPU memory at its mapping failed: no host thread to run it on: %s\n", error.what());
             return;
@@ -271,6 +335,10 @@ void Driver::WaitIdle() {
         checkStopping();
     }
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
+void Driver::WaitDeviceIdle() {
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
 }
 
@@ -327,6 +395,11 @@ bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     return done;
 }
 
+bool Driver::SettledHeld() {
+    std::lock_guard lock(mutex);
+    return captureHold.load(std::memory_order_relaxed);
+}
+
 bool Driver::Settled() {
     std::lock_guard lock(mutex);
     return failure != nullptr || stopping || completed >= accepted || parkedOnTitle();
@@ -344,16 +417,15 @@ void Driver::ReleaseSettled() {
 std::vector<AwaitedWait> Driver::AwaitedWaits() {
     std::vector<AwaitedWait> result;
     for (const auto& slot : awaitedSlots) {
-        const auto address = slot.address.load(std::memory_order_acquire);
-        if (address == 0) continue;
+        const auto fields = readAwaited(slot, 0);
+        if (!fields) continue;
         AwaitedWait wait;
-        wait.address = address;
-        wait.reference = slot.reference.load(std::memory_order_relaxed);
-        wait.mask = slot.mask.load(std::memory_order_relaxed);
-        const auto shape = slot.shape.load(std::memory_order_relaxed);
-        wait.function = static_cast<std::uint32_t>(shape);
-        wait.bytes = static_cast<std::uint32_t>(shape >> 32u);
-        if (slot.address.load(std::memory_order_acquire) == address) result.push_back(wait);
+        wait.address = fields->address;
+        wait.reference = fields->reference;
+        wait.mask = fields->mask;
+        wait.function = static_cast<std::uint32_t>(fields->shape);
+        wait.bytes = static_cast<std::uint32_t>(fields->shape >> 32u);
+        if (awaitedUnchanged(slot, *fields)) result.push_back(wait);
     }
     return result;
 }
@@ -389,6 +461,10 @@ void Driver::ReportFailure(std::exception_ptr error) {
         first = !failure;
         if (first) failure = error;
         failed.store(true, std::memory_order_release);
+        {
+            std::lock_guard tails(tailsMutex);
+            unreadTails.clear();
+        }
         for (const auto& [handle, output] : outputs) output->Fail(failure);
         for (auto& [queue, worker] : workers) {
             for (const auto& item : worker.pending) {

@@ -1,5 +1,6 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -8,6 +9,7 @@
 #endif
 #include <atomic>
 #include <csignal>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,14 +47,23 @@ static double APS5_VABI Mixed(int a, double b, const char* c, float d, std::uint
 }
 
 static double APS5_VABI Variadic(int count, ...) {
+#ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, count);
+#else
+    std::va_list arguments;
+    va_start(arguments, count);
+#endif
     double sum = 0;
     for (int index = 0; index < count; ++index) {
         sum += static_cast<double>(__builtin_va_arg(arguments, std::uint64_t)) * (index + 1);
         sum += __builtin_va_arg(arguments, double) * (index + 1);
     }
+#ifdef _WIN32
     __builtin_sysv_va_end(arguments);
+#else
+    va_end(arguments);
+#endif
     return sum;
 }
 
@@ -221,7 +232,7 @@ int main(int argc, char** argv) {
     std::filesystem::remove(path);
 
     Require(Traced(&Unlabeled, "Unlabeled", "") == &Unlabeled);
-    const auto executable = std::filesystem::path(argv[0]).filename().string();
+    const auto executable = ArgumentPath(argv, 0).filename().string();
 #ifdef _WIN32
     Require(_putenv_s("APS5_TRACE_CALLS", executable.c_str()) == 0);
 #else

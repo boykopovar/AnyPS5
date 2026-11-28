@@ -75,6 +75,21 @@ inline std::uint8_t Scratch(std::array<bool, 16>& used, const char* instruction)
     throw CodegenException(std::string(instruction) + " has no scratch register");
 }
 
+inline bool UnindexedStack(const MemoryOperand& memory) {
+    return memory.StackBase && (memory.Sib & 0x38) == 0x20 && (memory.RexIndexBase & 2) == 0;
+}
+
+inline std::int32_t SelectFrame(const std::optional<MemoryOperand>& memory, bool wide, std::int32_t defaultFrame, std::int32_t spillBytes) {
+    if (!memory || !UnindexedStack(*memory)) return defaultFrame;
+    const auto displacement = static_cast<std::int64_t>(memory->Displacement);
+    const std::int64_t size = wide ? 8 : 4;
+    if (displacement >= spillBytes - defaultFrame || displacement + size <= -defaultFrame) return defaultFrame;
+    const auto needed = (-displacement + spillBytes + 15) & ~std::int64_t{15};
+    if (needed > std::numeric_limits<std::int32_t>::max())
+        throw CodegenException("stack spill frame exceeds 32-bit displacement");
+    return static_cast<std::int32_t>(needed);
+}
+
 inline void Memory(StubBodyBuilder& body, std::uint8_t opcode, bool wide, const MemoryOperand& memory, std::uint8_t reg, const char* instruction, std::int32_t frame = FrameSize) {
     auto displacement = static_cast<std::int64_t>(memory.Displacement);
     if (memory.StackBase) displacement += frame;

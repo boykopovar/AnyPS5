@@ -32,6 +32,15 @@ void RequireRefused(int result) {
     RequireWords({});
 }
 
+bool WholePackets(const std::uint32_t* words, std::size_t count) {
+    std::size_t at = 0;
+    while (at < count) {
+        if ((words[at] >> 30) != 3) return false;
+        at += ((words[at] >> 16) & 0x3fffu) + 2;
+    }
+    return at == count;
+}
+
 void CheckVs() {
     Require(sceGnmUpdateVsShader(Fresh(), 0x1d, Regs, 0) == 0);
     RequireWords({0xc0027600u, 0x48, 0x1000, 0, 0xc0027600u, 0x4a, 0x2000, 0x3000, 0xc0011000u, 0xc01e0207u, 0x6000,
@@ -44,6 +53,7 @@ void CheckVs() {
     RequireRefused(sceGnmUpdateVsShader(Fresh(), 0x1c, Regs, 0));
     RequireRefused(sceGnmUpdateVsShader(Fresh(), 0x1d, BadRegs, 0));
     RequireRefused(sceGnmUpdateVsShader(Fresh(), 0x1d, nullptr, 0));
+    Require(sceGnmUpdateVsShader(nullptr, 0x1d, Regs, 0) == -1);
 }
 
 void CheckPs() {
@@ -55,6 +65,7 @@ void CheckPs() {
     RequireWords({0xc0027600u, 8, 0, 0, 0xc0011000u, 0xc01e0203u, 0, 0xc01f1000u, 0});
     RequireRefused(sceGnmUpdatePsShader(Fresh(), 0x27, Regs));
     RequireRefused(sceGnmUpdatePsShader(Fresh(), 0x28, BadRegs));
+    Require(sceGnmUpdatePsShader(nullptr, 0x28, Regs) == -1);
 
     Require(sceGnmUpdatePsShader350(Fresh(), 0x28, Regs) == 0);
     Require(g_words[26] == 0xc01e008fu && g_words[28] == 0xc00a1000u);
@@ -62,6 +73,7 @@ void CheckPs() {
     RequireWords({0xc0027600u, 8, 0, 0, 0xc0011000u, 0xc01e0203u, 0, 0xc0016900u, 0x8f, 0xf, 0xc01c1000u, 0});
     RequireRefused(sceGnmUpdatePsShader350(Fresh(), 0x27, nullptr));
     RequireRefused(sceGnmUpdatePsShader350(Fresh(), 0x28, BadRegs));
+    Require(sceGnmUpdatePsShader350(nullptr, 0x28, Regs) == -1);
 
     Require(sceGnmSetPsShader350(Fresh(), 0x28, Regs) == 0);
     RequireWords({0xc0027600u, 8, 0x1000, 0, 0xc0027600u, 10, 0x2000, 0x3000, 0xc0026900u, 0x1c4, 0x4000, 0x5000,
@@ -71,6 +83,7 @@ void CheckPs() {
     RequireWords({0xc0027600u, 8, 0, 0, 0xc0016900u, 0x203, 0, 0xc0016900u, 0x8f, 0xf, 0xc01c1000u, 0});
     RequireRefused(sceGnmSetPsShader350(Fresh(), 0x27, Regs));
     RequireRefused(sceGnmSetPsShader350(Fresh(), 0x28, BadRegs));
+    Require(sceGnmSetPsShader350(nullptr, 0x28, Regs) == -1);
 }
 
 void CheckGsHsCs() {
@@ -80,12 +93,14 @@ void CheckGsHsCs() {
     RequireRefused(sceGnmUpdateGsShader(Fresh(), 0x1c, Regs));
     RequireRefused(sceGnmUpdateGsShader(Fresh(), 0x1d, nullptr));
     RequireRefused(sceGnmUpdateGsShader(Fresh(), 0x1d, BadRegs));
+    Require(sceGnmUpdateGsShader(nullptr, 0x1d, Regs) == -1);
 
     Require(sceGnmUpdateHsShader(Fresh(), 0x1d, Regs, 0x77) == 0);
     RequireWords({0xc0027600u, 0x108, 0x1000, 0, 0xc0027600u, 0x10a, 0x2000, 0x3000, 0xc0021000u, 0xc01e0286u, 0x5000, 0x6000,
         0xc0011000u, 0xc01e02dbu, 0x4000, 0xc0011000u, 0xc01e02d6u, 0x77, 0xc00a1000u, 0});
     RequireRefused(sceGnmUpdateHsShader(Fresh(), 0x1c, Regs, 0));
     RequireRefused(sceGnmUpdateHsShader(Fresh(), 0x1d, BadRegs, 0));
+    Require(sceGnmUpdateHsShader(nullptr, 0x1d, Regs, 0) == -1);
 
     Require(sceGnmSetCsShaderWithModifier(Fresh(), 0x19, Regs, 0x3c0) == 0);
     RequireWords({0xc0027600u, 0x20c, 0x1000, 0, 0xc0027600u, 0x212, 0x23c0, 0x3000, 0xc0037600u, 0x207, 0x4000, 0x5000, 0x6000,
@@ -97,6 +112,46 @@ void CheckGsHsCs() {
     RequireRefused(sceGnmSetCsShaderWithModifier(Fresh(), 0x19, Regs, 0x400));
     RequireRefused(sceGnmSetCsShaderWithModifier(Fresh(), 0x18, Regs, 0));
     RequireRefused(sceGnmSetCsShaderWithModifier(Fresh(), 0x19, BadRegs, 0));
+    Require(sceGnmSetCsShaderWithModifier(nullptr, 0x19, Regs, 0) == -1);
+}
+
+void CheckMarkersAndVgt() {
+    Require(sceGnmInsertDingDongMarker(nullptr, 4) == -1);
+    RequireRefused(sceGnmInsertDingDongMarker(Fresh(), 3));
+    RequireRefused(sceGnmInsertDingDongMarker(Fresh(), 5));
+    Require(sceGnmInsertDingDongMarker(Fresh(), 4) == 0);
+    RequireWords({0xc0021000u, 0, 0, 0});
+
+    Require(sceGnmResetVgtControl(nullptr, 3) == -1);
+    RequireRefused(sceGnmResetVgtControl(Fresh(), 2));
+    RequireRefused(sceGnmResetVgtControl(Fresh(), 4));
+    Require(sceGnmResetVgtControl(Fresh(), 3) == 0);
+    RequireWords({0xc0017900u, 0x40000258u, 0x6d007fu});
+}
+
+void CheckEmbeddedShaders() {
+    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x30, 2, 0) == static_cast<int>(0x8EEE00FFu));
+    RequireWords({});
+    Require(sceGnmSetEmbeddedPsShader(nullptr, 0x30, 0, 0) == -1);
+
+    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x30, 0, 0) == 0);
+    Require(g_words[0] == 0xc0027600u && g_words[1] == 8);
+    Require(WholePackets(g_words, 28));
+    Require(g_words[28] == 0xc00a1000u && g_words[29] == 0);
+
+    Require(sceGnmSetEmbeddedPsShader(Fresh(), 0x30, 1, 0) == 0);
+    Require(g_words[0] == 0xc0027600u && g_words[1] == 8);
+    Require(WholePackets(g_words, 28));
+    Require(g_words[28] == 0xc00a1000u && g_words[29] == 0);
+
+    Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x30, 1, 0) == static_cast<int>(0x8EEE00FFu));
+    RequireWords({});
+    Require(sceGnmSetEmbeddedVsShader(nullptr, 0x30, 0, 0) == -1);
+
+    Require(sceGnmSetEmbeddedVsShader(Fresh(), 0x30, 0, 0) == 0);
+    Require(g_words[0] == 0xc0027600u && g_words[1] == 0x48);
+    Require(WholePackets(g_words, 17));
+    Require(g_words[17] == 0xc00a1000u && g_words[18] == 0);
 }
 
 void CheckWorkloads() {
@@ -122,6 +177,8 @@ int main() {
     CheckVs();
     CheckPs();
     CheckGsHsCs();
+    CheckMarkersAndVgt();
+    CheckEmbeddedShaders();
     CheckWorkloads();
     Require(sceGnmGetGpuCoreClockFrequency() == 911000000);
     Require(sceGnmGetOffChipTessellationBufferSize() == 0x800000);

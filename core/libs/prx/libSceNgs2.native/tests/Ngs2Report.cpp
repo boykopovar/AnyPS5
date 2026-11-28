@@ -1,5 +1,6 @@
 #include "Ngs2Test.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 
@@ -27,6 +28,8 @@ int main() {
     Require(Throws([&] { sceNgs2ReportRegisterHandler(5, nullptr, 0, &handle); }));
     Require(handle == 0x1234);
     Require(sceNgs2ReportRegisterHandler(5, Counted, 0, nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    errno = 71;
+    Require(sceNgs2ReportRegisterHandler(5, Counted, 0, reinterpret_cast<Ngs2Handle*>(0x10)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS && errno == 71);
 
     Require(sceNgs2ReportRegisterHandler(5, Counted, 42, &handle) == SCE_NGS2_OK);
     Require(handle != 0);

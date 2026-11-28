@@ -19,10 +19,17 @@ extern "C" {
 
 std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const DeviceServiceInitParam* param) {
     (void)mode;
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     if (param != nullptr) {
-        if (param->size != sizeof(DeviceServiceInitParam) || param->reserved != 0) return static_cast<std::int32_t>(0x809B0080u);
-        if (param->threadParam != nullptr) {
-            if (param->threadParam->reserved != 0) return static_cast<std::int32_t>(0x809B0080u);
+        DeviceServiceInitParam local{};
+        const bool copiedParam = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+        if (!copiedParam) return invalidArgument;
+        if (local.size != sizeof(DeviceServiceInitParam) || local.reserved != 0) return invalidArgument;
+        if (local.threadParam != nullptr) {
+            DeviceServiceThreadParam thread{};
+            const bool copiedThread = GuestCopyIn_nid_no_patch(&thread, local.threadParam, sizeof(thread));
+            if (!copiedThread) return invalidArgument;
+            if (thread.reserved != 0) return invalidArgument;
             throw std::runtime_error("sceDeviceServiceInitialize: custom worker scheduling is not implemented");
         }
     }
@@ -54,18 +61,21 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
     case 0x9001:
         if (filter != nullptr) return invalidArgument;
         break;
-    case 0x8001:
-        if (filter == nullptr || filter->minimumUsage > filter->maximumUsage) return invalidArgument;
+    case 0x8001: {
+        DeviceServiceUsageFilter usage{};
+        const int savedErrno = errno;
+        const bool readable = filter != nullptr && GuestCopyIn_nid_no_patch(&usage, filter, sizeof(usage));
+        errno = savedErrno;
+        if (!readable || usage.minimumUsage > usage.maximumUsage) return invalidArgument;
         break;
+    }
     default:
         return invalidArgument;
     }
     if (infoSize != 112 || maxInfos < 0 || (maxInfos != 0 && infos == nullptr)) return invalidArgument;
     if (count != nullptr) {
         const std::int32_t zero = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return 0;

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "ThreadOwned.hpp"
+#include "Optimization/SrtWalker.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -30,9 +31,19 @@ void Driver::appendEntryRegions(const DispatchVariant& variant, std::vector<Shad
     const auto& source = words != nullptr ? *words : variant.words;
     regions.reserve(regions.size() + variant.runs.size());
     std::size_t offset = 0;
+    std::size_t shared = 0;
     for (const auto& [begin, end] : variant.runs) {
         const auto count = static_cast<std::size_t>((end - begin) / sizeof(std::uint32_t));
-        regions.push_back({begin, std::as_bytes(std::span<const std::uint32_t>(source).subspan(offset, count))});
+        auto bytes = std::as_bytes(std::span<const std::uint32_t>(source).subspan(offset, count));
+        while (shared < variant.shared.size() && variant.shared[shared].first + variant.shared[shared].count <= offset) ++shared;
+        if (variant.linking != nullptr && shared < variant.shared.size()) {
+            const auto& entry = variant.shared[shared];
+            if (entry.first <= offset && offset + count <= entry.first + entry.count) {
+                const auto block = entry.block.lock();
+                if (block != nullptr && std::ranges::find(variant.linking->dependencies, block) != variant.linking->dependencies.end()) bytes = std::as_bytes(std::span(block->words).subspan(entry.offset + offset - entry.first, count));
+            }
+        }
+        regions.push_back({begin, bytes});
         offset += count;
     }
 }
@@ -46,7 +57,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::patchDataWords(
     return patched;
 }
 
-bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& synced, PendingView& pending, std::optional<SampledReadScope>& sampling, std::span<const VouchedRegions> skipped) {
+bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& synced, PendingView& pending, std::optional<SampledReadScope>& sampling, std::span<const VouchedRegions> skipped, const PreparedShaderState::UserDataLink* linking) {
     using Policy = ShaderMemory::PendingWrite;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     for (std::size_t index = 0, range = 0; index < regions.size(); ++index) {
@@ -58,7 +69,8 @@ bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const S
         if (!pending.Overlaps(region.guestAddress, region.bytes.size())) continue;
         if (!sampling) sampling.emplace(siteSampling() ? evidenceValidations : evidenceReads);
         std::uint64_t ValidateCounters::*reason = &ValidateCounters::syncedOff;
-        const auto policy = validateSkipEnabled() ? classifyPendingWrite(region.guestAddress, region.bytes.size(), reason, pending) : Policy::Sync;
+        const bool dependency = linking != nullptr && linking->Overlaps(region.guestAddress, region.bytes.size());
+        const auto policy = validateSkipEnabled() && !dependency ? classifyPendingWrite(region.guestAddress, region.bytes.size(), reason, pending) : Policy::Sync;
         if (policy != Policy::Sync) continue;
         if (validateSkipEnabled() && (validateLegacy() ? !GuestMemory::EqualsCommittedUnsynced(region.guestAddress, region.bytes) : GuestMemory::CompareMapped(region.guestAddress, region.bytes) != GuestMemory::Compare::Equal)) {
             if (profile) {
@@ -120,7 +132,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     thread_local std::vector<VouchedRegions>* vouchedSlot = nullptr;
     auto& vouched = ShaderRecompiler::ThreadOwned(vouchedSlot);
     vouched.clear();
-    if (!variant.shared.empty() && vouchedValidation() && !validateLegacy() && variant.runs.size() == regions.size()) VouchSharedRegions(variant.shared, regions.size(), &QueryPendingSpan, vouched);
+    if (!variant.shared.empty() && vouchedValidation() && !validateLegacy() && variant.runs.size() == regions.size()) VouchSharedRegions(variant.shared, regions.size(), &QueryPendingSpan, vouched, variant.linking != nullptr ? std::span(variant.linking->dependencies) : std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>{}, &PreparedShaderState::UserDataLink::Restamp);
     PendingView pending;
     pending.Load();
     std::erase_if(vouched, [&](const VouchedRegions& range) { return pending.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low)); });
@@ -138,7 +150,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         }
     }
     const std::span<const std::pair<std::uint64_t, std::uint64_t>> runs = vouched.empty() ? std::span<const std::pair<std::uint64_t, std::uint64_t>>(variant.runs) : std::span<const std::pair<std::uint64_t, std::uint64_t>>(checked);
-    if (!syncPendingRuns(program, queue, *variant.compiled, regions, runsSynced, pending, sampling, vouched)) return EntryOutcome::Differing;
+    if (!syncPendingRuns(program, queue, *variant.compiled, regions, runsSynced, pending, sampling, vouched, variant.linking.get())) return EntryOutcome::Differing;
     auto publish = Graphics::Recorder::PublishGeneration();
     auto pendingSerial = Graphics::StorageTexture::PendingSerial();
     auto forget = GuestMemory::ForgetSerial();
@@ -149,7 +161,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
             if (Graphics::StorageTexture::FlushPending(region.guestAddress, region.bytes.size(), nullptr, "dispatch-cache entry")) ++imagesFlushed;
         }
         pending.Load();
-        if (!syncPendingRuns(program, queue, *variant.compiled, regions, runsSynced, pending, sampling)) return EntryOutcome::Differing;
+        if (!syncPendingRuns(program, queue, *variant.compiled, regions, runsSynced, pending, sampling, {}, variant.linking.get())) return EntryOutcome::Differing;
         publish = Graphics::Recorder::PublishGeneration();
         pendingSerial = Graphics::StorageTexture::PendingSerial();
         forget = GuestMemory::ForgetSerial();

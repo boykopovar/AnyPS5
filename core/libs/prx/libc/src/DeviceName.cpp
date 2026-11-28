@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <climits>
@@ -16,8 +17,9 @@ constexpr std::size_t SpecialNameLength = 63;
 void CopyString(char* destination, std::size_t size, const char* text, std::size_t length) {
     if (size == 0) return;
     const std::size_t count = std::min(length, size - 1);
-    std::copy_n(text, count, destination);
-    destination[count] = '\0';
+    char copy[16] = {};
+    std::copy_n(text, count, copy);
+    GuestCopyOut_nid_no_patch(destination, copy, count + 1);
 }
 }
 
@@ -42,7 +44,7 @@ extern "C" char* APS5_VABI devname_r_nid_postfix(std::uint32_t device, std::uint
     for (int index = digits - 1; index >= 0; --index) *end++ = "0123456789abcdef"[(device >> (index * 4)) & 0xF];
     if (size > static_cast<std::size_t>(INT_MAX) + 1) {
         *__error_nid_postfix() = ErrorOverflow;
-        *buffer = '\0';
+        GuestCopyOut_nid_no_patch(buffer, "", 1);
         return buffer;
     }
     CopyString(buffer, size, text, static_cast<std::size_t>(end - text));

@@ -85,6 +85,17 @@ void TestTransforms() {
     y = 1;
     cairo_matrix_transform_point(&m, &x, &y);
     Require(Close(x, -1) && Close(y, 2));
+
+    cairo_matrix_init_translate(&m, 100, -50);
+    cairo_matrix_scale(&m, 2, 3);
+    x = 3;
+    y = -4;
+    cairo_matrix_transform_distance(&m, &x, &y);
+    Require(Close(x, 6) && Close(y, -12));
+    x = 3;
+    y = -4;
+    cairo_matrix_transform_point(&m, &x, &y);
+    Require(Close(x, 106) && Close(y, -62));
 }
 
 void TestInverse() {
@@ -108,7 +119,20 @@ void TestInverse() {
     Require(cairo_matrix_invert(&m) == 5);
     Matches(m, {0, 0, 0, 1, -3, -4});
     m = CairoMatrix{1, 1, 0, std::numeric_limits<double>::infinity(), 1, 1};
+    Require(cairo_matrix_invert(&m) == 0);
+    Require(std::isnan(m.xx) && m.yx == 0 && m.xy == 0 && m.yy == 0 && std::isnan(m.x0) && m.y0 == 0);
+
+    m = CairoMatrix{2, -0.0, -0.0, 4, 6, 8};
+    Require(cairo_matrix_invert(&m) == 0);
+    Matches(m, {0.5, 0, 0, 0.25, -3, -2});
+
+    m = CairoMatrix{1, 0, 0, 0, 5, 6};
     Require(cairo_matrix_invert(&m) == 5);
+    Matches(m, {1, 0, 0, 0, -5, -6});
+
+    m = CairoMatrix{1, 2, 3, std::numeric_limits<double>::quiet_NaN(), 5, 6};
+    Require(cairo_matrix_invert(&m) == 5);
+    Require(Close(m.xx, 1) && Close(m.yx, 2) && Close(m.xy, 3) && std::isnan(m.yy) && Close(m.x0, 5) && Close(m.y0, 6));
 }
 }
 

@@ -1,4 +1,4 @@
-#include "SpirvBackend/SpirvAluEmitter.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include <functional>
@@ -7,14 +7,6 @@
 #include <vector>
 
 namespace ShaderRecompiler {
-
-void EmitAluValue(SpirvModule& module, const IrValue& value, std::uint32_t resultId) {
-    throw std::runtime_error("EmitAluValue not implemented");
-}
-
-void EmitAluValue(SpirvValueEmitContext& context, const IrValue& value, std::uint32_t resultId) {
-    throw std::runtime_error("EmitAluValue not implemented");
-}
 
 void EmitGetThreadBitScalarRegister(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitUnreachable(ctx, inst);
@@ -119,6 +111,47 @@ std::uint32_t DirectWindowElement(SpirvValueEmitContext& ctx, const IrValue& ins
     return state.vectorWindowSlots.at(state.laneHalf).at(index->ImmediateU32() - state.vectorWindowIndexed);
 }
 
+}
+
+std::uint32_t SplitStateWord(SpirvEmitterState& state, std::uint32_t element) {
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.splitStateVariable, ConstantU32(state, 0u), element);
+    return pointer;
+}
+
+std::uint32_t LoadSplitStateWord(SpirvEmitterState& state, std::uint32_t element) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, SplitStateWord(state, element));
+    return value;
+}
+
+std::uint32_t SplitSliceGroup(SpirvEmitterState& state) {
+    const auto launched = EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u);
+    const auto listed = EmitINotEqual32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupListDword)), ConstantU32(state, 0u));
+    const auto entry = LoadSplitStateWord(state, EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupListOffsetDword)), launched));
+    return EmitSelectU32(state, listed, entry, launched);
+}
+
+std::uint32_t SplitStateElement(SpirvEmitterState& state, std::uint32_t slot) {
+    if (!state.splitState) throw std::runtime_error("split state is accessed in a program that has no split state buffer");
+    const auto capacity = LoadSplitStateWord(state, ConstantU32(state, SplitStateCapacityDword));
+    const auto group = SplitSliceGroup(state);
+    const auto index = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), index, InputVariableForKind(state, StageInputKind::LocalInvocationIndex));
+    const auto invocation = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, MeshWindowInvocations(state))), index);
+    const auto lane = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, invocation, ConstantU32(state, state.laneCount)), ConstantU32(state, state.laneHalf));
+    return EmitAddU32(state, EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, slot, capacity), lane), ConstantU32(state, SplitStateHeaderDwords));
+}
+
+void EmitLoadSplitState(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    ctx.Define(inst, LoadSplitStateWord(ctx.state, SplitStateElement(ctx.state, ctx.Arg(inst, 0u))));
+}
+
+void EmitStoreSplitState(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto slot = ctx.Arg(inst, 0u);
+    const auto value = ctx.Arg(inst, 1u);
+    EmitIfCondition(state, ctx.Arg(inst, 2u), [&] { state.module.AddFunction(spv::OpStore, SplitStateWord(state, SplitStateElement(state, slot)), value); });
 }
 
 void EmitLoadVectorWindow(SpirvValueEmitContext& ctx, const IrValue& inst) {

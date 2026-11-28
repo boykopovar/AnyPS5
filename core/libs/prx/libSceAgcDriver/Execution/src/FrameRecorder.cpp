@@ -277,7 +277,17 @@ void FrameRecorder::writeReferenceFrames() {
 }
 
 void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders, const std::function<void()>& accept) {
-    std::lock_guard lock(mutex);
+    std::unique_lock lock(mutex);
+    if (accept && !prologueCall && state != State::Recording) {
+        unrecordedAccepts.fetch_add(1, std::memory_order_relaxed);
+        lock.unlock();
+        struct Accepted {
+            std::atomic<std::uint64_t>& count;
+            ~Accepted() { count.fetch_sub(1, std::memory_order_release); }
+        } accepted{unrecordedAccepts};
+        accept();
+        return;
+    }
     recordLocked(std::move(call), prologueCall, shaders);
     if (accept) accept();
 }
@@ -440,7 +450,16 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     for (auto& span : spans) {
         span.since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
         blocks.insert(blocks.end(), written.begin(), written.end());
+        GuestMemory::ChangedComparedPages(span.address, static_cast<std::size_t>(span.bytes), written);
+        blocks.insert(blocks.end(), written.begin(), written.end());
     }
+    std::ranges::sort(blocks);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    for (const auto& [begin, end] : blocks) {
+        if (!merged.empty() && merged.back().second >= begin) merged.back().second = std::max(merged.back().second, end);
+        else merged.emplace_back(begin, end);
+    }
+    blocks = std::move(merged);
     auto& driver = DriverDetail::Driver::Get();
     const struct Hold {
         DriverDetail::Driver& driver;
@@ -473,6 +492,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         for (std::uint64_t at = 0; at < range.bytes;) {
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
             readGuest(range.address + at, bytes);
+            if (stored.kind == FrameRangeKind::Unwatched) GuestMemory::SeedComparedPages(range.address + at, bytes);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
             if (!zero || collected) {
                 writer->WriteDelta(group, completed, range.address + at, bytes);
@@ -497,6 +517,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
         readGuest(begin, bytes);
+        GuestMemory::UpdateComparedPages(begin, bytes);
         writer->WriteDelta(group, completed, begin, bytes);
         deltaBytes += bytes.size();
         any = true;
@@ -523,6 +544,7 @@ void FrameRecorder::snapshot(const Range& range) {
         if (abandonIfDiskLow()) return;
         bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(SnapshotPieceBytes, range.bytes - at)));
         readGuest(range.address + at, bytes);
+        if (range.kind == FrameRangeKind::Unwatched) GuestMemory::SeedComparedPages(range.address + at, bytes);
         snapshotBytes += writer->WriteSnapshot(range.address + at, bytes);
     }
 }
@@ -542,6 +564,7 @@ bool FrameRecorder::abandonIfDiskLow() {
 
 void FrameRecorder::stop(const char* reason) {
     GuestMemory::SetOwnStoreCompare(false);
+    GuestMemory::SetLeftWatchCompare(false);
     warnings.push_back(reason);
     std::fprintf(stderr, "[frame-capture] %s\n", reason);
     try {
@@ -553,19 +576,29 @@ void FrameRecorder::stop(const char* reason) {
     state = State::Done;
 }
 
+void FrameRecorder::SetStartIdleWaitForTest(std::function<bool()> wait) {
+    startIdleWaitForTest = std::move(wait);
+}
+
 void FrameRecorder::start() {
+    constexpr std::uint64_t MaxStartAttempts = 600;
+    constexpr std::uint64_t WaitingReportEvery = 50;
     ++startAttempts;
     auto& driver = DriverDetail::Driver::Get();
-    if (!driver.WaitIdleUnlessTitleWaitsFor(std::chrono::seconds(10))) {
-        if (startAttempts >= 600) {
-            std::fprintf(stderr, "[frame-capture] giving up: the driver was not idle at any of %llu frame boundaries\n", static_cast<unsigned long long>(startAttempts));
+    if (unrecordedAccepts.load(std::memory_order_acquire) != 0 || !(startIdleWaitForTest ? startIdleWaitForTest() : driver.WaitIdleUnlessTitleWaitsFor(std::chrono::seconds(10)))) {
+        if (startAttempts >= MaxStartAttempts) {
+            std::fprintf(stderr, "[frame-capture] giving up: the driver was not idle, or a guest call was still being accepted, at all of %llu frame boundaries\n", static_cast<unsigned long long>(startAttempts));
             state = State::Done;
+        } else if (startAttempts == 1 || startAttempts % WaitingReportEvery == 0) {
+            std::fprintf(stderr, "[frame-capture] waiting to start the capture: the driver was not idle, or a guest call was still being accepted, at %llu of up to %llu frame boundaries\n",
+                    static_cast<unsigned long long>(startAttempts), static_cast<unsigned long long>(MaxStartAttempts));
         }
         return;
     }
     rewindTailFlips = std::max(rewindTailFlips, driver.RewindTailFlips());
     if (!GuestMemory::WriteWatched()) throw std::runtime_error("frame capture: the guest write watch is unavailable, so CPU stores during the frames cannot be recorded");
     GuestMemory::SetOwnStoreCompare(true);
+    GuestMemory::SetLeftWatchCompare(true);
     startedAt = std::chrono::steady_clock::now();
     startBoundary = boundaries;
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
@@ -623,6 +656,7 @@ void FrameRecorder::start() {
 void FrameRecorder::finish() {
     emitDelta();
     GuestMemory::SetOwnStoreCompare(false);
+    GuestMemory::SetLeftWatchCompare(false);
     if (!writer) return;
     auto end = make(FrameCallKind::End);
     end.ordinal = ++ordinal;
@@ -674,11 +708,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
+        const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
-        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        const auto access = (allocation->readable ? FrameRangeAccess::Readable : 0u) | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         for (auto address = first; address < end;) {
             MEMORY_BASIC_INFORMATION info{};
             if (VirtualQuery(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), &info, sizeof(info)) == 0) throw std::runtime_error("frame capture: VirtualQuery failed inside the guest arena");
@@ -695,7 +730,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
                 else if (info.Type == MEM_PRIVATE) range.kind = GuestMemory::Watched(range.address, static_cast<std::size_t>(range.bytes)) ? FrameRangeKind::Watched : FrameRangeKind::Unwatched;
                 else range.kind = FrameRangeKind::Section;
                 auto& last = result.empty() ? range : result.back();
-                if (!result.empty() && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
+                if (result.size() > firstRange && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
                 else result.push_back(range);
             }
             address = regionEnd;
@@ -709,11 +744,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
+        const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
-        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        const auto access = (allocation->readable ? FrameRangeAccess::Readable : 0u) | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
             if (!mapping.readable && !mapping.writable && !mapping.executable) return;
             const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable) {
@@ -729,7 +765,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
                 else if (!mapping.shared && mapping.inode == 0) range.kind = FrameRangeKind::Unwatched;
                 else range.kind = FrameRangeKind::Section;
                 auto& last = result.empty() ? range : result.back();
-                if (!result.empty() && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
+                if (result.size() > firstRange && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
                 else result.push_back(range);
             };
             const auto address = std::max<std::uint64_t>(first, mapping.start);

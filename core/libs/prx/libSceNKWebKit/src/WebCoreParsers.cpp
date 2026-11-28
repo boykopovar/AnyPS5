@@ -86,19 +86,48 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * Copyright (C) 2018 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 // Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/html/parser/HTMLParserIdioms.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 // Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/platform/network/HTTPParsers.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 // Derived from neonmodder123/PS5-WebKit-11.x/Source/WTF/wtf/text/LineEnding.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from WebKit/WebKit/Source/WebCore/platform/network/HTTPParsers.cpp@ccda9bfb069d312ebdfbeb37a2151e0536968a1d
+// Derived from WebKit/WebKit/Source/WTF/wtf/text/StringToIntegerConversion.h@ccda9bfb069d312ebdfbeb37a2151e0536968a1d
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace NKWebKit::WtfAbi {
@@ -210,15 +239,199 @@ StringView Trim(StringView view) {
     return StringView{base + static_cast<std::size_t>(start) * (view.is8Bit ? 1 : 2), end - start, view.is8Bit};
 }
 
+using WebCore::XFrameOptionsDisposition;
+
+bool IsFrameOptionsWhitespace(char16_t character) {
+    return character == ' ' || (character >= '\t' && character <= '\r')
+        || character == 0x1680 || (character >= 0x2000 && character <= 0x200a)
+        || character == 0x2028 || character == 0x205f || character == 0x3000;
+}
+
+template<typename Char> bool MatchesFrameOption(std::basic_string_view<Char> value, std::string_view token) {
+    if (value.size() != token.size()) return false;
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const char16_t character = value[i];
+        const char16_t lower = character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character;
+        if (lower != static_cast<unsigned char>(token[i])) return false;
+    }
+    return true;
+}
+
+template<typename Char> XFrameOptionsDisposition ParseFrameOption(std::basic_string_view<Char> value) {
+    while (!value.empty() && IsFrameOptionsWhitespace(value.front())) value.remove_prefix(1);
+    while (!value.empty() && IsFrameOptionsWhitespace(value.back())) value.remove_suffix(1);
+    if (MatchesFrameOption(value, "deny")) return XFrameOptionsDisposition::Deny;
+    if (MatchesFrameOption(value, "sameorigin")) return XFrameOptionsDisposition::SameOrigin;
+    if (MatchesFrameOption(value, "allowall")) return XFrameOptionsDisposition::AllowAll;
+    return XFrameOptionsDisposition::Invalid;
+}
+
+template<typename Char> XFrameOptionsDisposition ParseFrameOptions(const void* data, unsigned length) {
+    std::basic_string_view<Char> remaining(static_cast<const Char*>(data), length);
+    auto result = XFrameOptionsDisposition::None;
+    while (!remaining.empty()) {
+        const auto separator = remaining.find(',');
+        const auto token = remaining.substr(0, separator);
+        if (!token.empty()) {
+            const auto parsed = ParseFrameOption(token);
+            if (result != XFrameOptionsDisposition::None && result != parsed) return XFrameOptionsDisposition::Conflict;
+            result = parsed;
+        }
+        if (separator == remaining.npos) break;
+        remaining.remove_prefix(separator + 1);
+    }
+    return result;
+}
+
 ByteVector& Checked(ByteVector* vector) {
     if (!vector) throw std::invalid_argument("null WTF::Vector");
     return *vector;
+}
+
+const NKWebKit::WtfAbi::String& Checked(const NKWebKit::WtfAbi::String* string) {
+    if (!string) throw std::invalid_argument("null WTF::String");
+    return *string;
+}
+
+long long& Checked(long long* value) {
+    if (!value) throw std::invalid_argument("null long long");
+    return *value;
+}
+
+constexpr std::size_t notFound = std::numeric_limits<std::size_t>::max();
+
+bool IsSpaceOrNewline(char16_t character) {
+    if (character <= 0xFF) return character == ' ' || (character >= 0x9 && character <= 0xD);
+    return character == 0x1680 || (character >= 0x2000 && character <= 0x200A) || character == 0x2028 || character == 0x205F || character == 0x3000;
+}
+
+class CodeUnits {
+public:
+    explicit CodeUnits(const NKWebKit::WtfAbi::String& string) {
+        const auto* impl = string.impl;
+        if (!impl) return;
+        m_length = impl->length;
+        m_is8Bit = impl->hashAndFlags & 4;
+        m_data = impl->data;
+        if (m_length && !m_data) throw std::invalid_argument("null WTF::StringImpl characters");
+    }
+
+    std::size_t size() const { return m_length; }
+
+    char16_t at(std::size_t index) const {
+        if (m_is8Bit) return static_cast<const unsigned char*>(m_data)[m_begin + index];
+        return static_cast<const char16_t*>(m_data)[m_begin + index];
+    }
+
+    std::size_t find(char16_t value) const {
+        for (std::size_t i = 0; i < m_length; ++i) {
+            if (at(i) == value) return i;
+        }
+        return notFound;
+    }
+
+    CodeUnits slice(std::size_t begin, std::size_t end) const {
+        CodeUnits result = *this;
+        result.m_begin = m_begin + begin;
+        result.m_length = end - begin;
+        return result;
+    }
+
+    CodeUnits stripped() const {
+        std::size_t begin = 0;
+        std::size_t end = m_length;
+        while (begin < end && IsSpaceOrNewline(at(begin))) ++begin;
+        while (end > begin && IsSpaceOrNewline(at(end - 1))) --end;
+        return slice(begin, end);
+    }
+
+private:
+    const void* m_data{nullptr};
+    std::size_t m_begin{0};
+    std::size_t m_length{0};
+    bool m_is8Bit{false};
+};
+
+bool ParseInt64Strict(const CodeUnits& text, long long& result) {
+    constexpr std::uint64_t base = 10;
+    constexpr std::uint64_t integralMax = static_cast<std::uint64_t>(std::numeric_limits<long long>::max());
+    constexpr std::uint64_t maxMultiplier = integralMax / base;
+
+    const std::size_t length = text.size();
+    std::size_t position = 0;
+    while (position < length && IsSpaceOrNewline(text.at(position))) ++position;
+
+    bool isNegative = false;
+    if (position < length && text.at(position) == '-') {
+        isNegative = true;
+        ++position;
+    } else if (position < length && text.at(position) == '+') {
+        ++position;
+    }
+
+    if (position == length || !IsASCIIDigit(text.at(position))) return false;
+
+    std::uint64_t value = 0;
+    while (position < length && IsASCIIDigit(text.at(position))) {
+        const std::uint64_t digit = static_cast<std::uint64_t>(text.at(position) - '0');
+        if (value > maxMultiplier || (value == maxMultiplier && digit > integralMax % base + static_cast<std::uint64_t>(isNegative))) return false;
+        value = base * value + digit;
+        ++position;
+    }
+
+    while (position < length && IsSpaceOrNewline(text.at(position))) ++position;
+    if (position != length) return false;
+
+    result = static_cast<long long>(isNegative ? 0 - value : value);
+    return true;
+}
+
+bool ParseRange(const CodeUnits& range, long long& rangeOffset, long long& rangeEnd, long long& rangeSuffixLength) {
+    rangeOffset = rangeEnd = rangeSuffixLength = -1;
+
+    static constexpr char prefix[] = "bytes=";
+    constexpr std::size_t prefixLength = sizeof(prefix) - 1;
+    if (range.size() < prefixLength) return false;
+    for (std::size_t i = 0; i < prefixLength; ++i) {
+        if ((range.at(i) | 0x20) != prefix[i]) return false;
+    }
+
+    const CodeUnits byteRange = range.slice(prefixLength, range.size());
+    const std::size_t index = byteRange.find('-');
+    if (index == notFound) return false;
+
+    if (!index) {
+        long long suffixLength;
+        if (ParseInt64Strict(byteRange.slice(1, byteRange.size()).stripped(), suffixLength)) rangeSuffixLength = suffixLength;
+        return true;
+    }
+
+    long long firstBytePos;
+    if (!ParseInt64Strict(byteRange.slice(0, index).stripped(), firstBytePos)) return false;
+
+    const CodeUnits lastBytePosText = byteRange.slice(index + 1, byteRange.size()).stripped();
+    long long lastBytePos = -1;
+    if (lastBytePosText.size() && !ParseInt64Strict(lastBytePosText, lastBytePos)) return false;
+
+    if (firstBytePos < 0 || !(lastBytePos == -1 || lastBytePos >= firstBytePos)) return false;
+
+    rangeOffset = firstBytePos;
+    rangeEnd = lastBytePos;
+    return true;
 }
 
 }  // namespace
 
 extern "C" {
 
+WebCore::XFrameOptionsDisposition APS5_VABI _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(const NKWebKit::WtfAbi::String& header) {
+    const auto* impl = header.impl;
+    if (!impl || !impl->length) return XFrameOptionsDisposition::None;
+    if (!impl->data) throw std::invalid_argument("null WTF::String data");
+    constexpr unsigned Is8Bit = 4;
+    if (impl->hashAndFlags & Is8Bit) return ParseFrameOptions<char>(impl->data, impl->length);
+    return ParseFrameOptions<char16_t>(impl->data, impl->length);
+}
 WebCore::ExpectedInt APS5_VABI _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView input) {
     auto result = Parse(input);
     WebCore::ExpectedInt expected{};
@@ -235,6 +448,11 @@ WebCore::CrossOriginResourcePolicy APS5_VABI _ZN7WebCore36parseCrossOriginResour
     if (Equals(trimmed, "same-site")) return WebCore::CrossOriginResourcePolicy::SameSite;
     if (Equals(trimmed, "cross-origin")) return WebCore::CrossOriginResourcePolicy::CrossOrigin;
     return WebCore::CrossOriginResourcePolicy::Invalid;
+}
+
+bool APS5_VABI _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(const NKWebKit::WtfAbi::String* range, long long* rangeOffset, long long* rangeEnd, long long* rangeSuffixLength) {
+    const CodeUnits text(Checked(range));
+    return ParseRange(text, Checked(rangeOffset), Checked(rangeEnd), Checked(rangeSuffixLength));
 }
 
 ByteVector APS5_VABI _ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(ByteVector&& vector) {

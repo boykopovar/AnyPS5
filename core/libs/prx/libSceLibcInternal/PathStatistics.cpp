@@ -1,8 +1,13 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/General.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
+#endif
 #include <cerrno>
 #include <cstdint>
 #include <fcntl.h>
+#include <string>
 #include <string_view>
 #include <system_error>
 #ifdef _WIN32
@@ -66,7 +71,7 @@ int PathVolume(const std::filesystem::path& path, bool directory, LibcStatvfs* o
     volume.f_ffree = static_cast<std::int64_t>(host.f_favail);
     volume.f_namemax = static_cast<std::uint32_t>(host.f_namemax);
     const LibcStatvfs result = StatvfsFromStatfs(volume);
-    std::memcpy(output, &result, sizeof(result));
+    if (!GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) return Fail(14);
     return 0;
 }
 #else
@@ -85,13 +90,20 @@ struct Descriptor {
 
 int OpenMetadata(const std::filesystem::path& path, bool directory) {
 #ifdef _WIN32
-    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    const auto verbatimPath = [](const std::filesystem::path& candidate) {
+        std::error_code verbatimError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(candidate, verbatimError);
+        return verbatimError ? candidate : verbatim;
+    };
+    const auto openPath = verbatimPath(path);
+    const HANDLE handle = CreateFileW(openPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
         if (error == ERROR_PATH_NOT_FOUND || error == ERROR_INVALID_NAME || error == ERROR_DIRECTORY) {
             for (auto prefix = path.parent_path(); !prefix.empty();) {
-                const DWORD attributes = GetFileAttributesW(prefix.c_str());
+                const auto attributePath = verbatimPath(prefix);
+                const DWORD attributes = GetFileAttributesW(attributePath.c_str());
                 if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return Fail(20);
                 const auto parent = prefix.parent_path();
                 if (parent == prefix) break;
@@ -141,12 +153,14 @@ int OpenMetadata(const std::filesystem::path& path, bool directory) {
 
 extern "C" int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output) {
     if (path == nullptr || output == nullptr) return Fail(14);
-    if (*path == '\0') return Fail(2);
+    std::string guestPath;
+    if (const int error = CopyGuestPath_nid_no_patch(path, guestPath)) return Fail(error);
+    if (guestPath.empty()) return Fail(2);
     const int saved = errno;
-    const auto last = std::string_view(path).back();
-    const bool directory = last == '/' || last == '\\' || FinalPathComponentIsDot_nid_no_patch(path);
+    const auto last = guestPath.back();
+    const bool directory = last == '/' || last == '\\' || FinalPathComponentIsDot_nid_no_patch(guestPath.c_str());
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return Fail(error);
+    if (const int error = ResolvePathError_nid_no_patch(guestPath.c_str(), native)) return Fail(error);
 #ifdef __APPLE__
     if (PathVolume(native, directory, output) != 0) return -1;
     errno = saved;

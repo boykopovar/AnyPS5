@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <ft2build.h>
@@ -12,10 +13,24 @@
 
 using namespace FreeType;
 
+namespace {
+
+void CheckOutlineArrays(const GuestOutline& outline, const char* function) {
+    if (!outline.points) NotImplemented_nid_no_patch(function);
+    if (outline.n_contours == 0) return;
+    if (!outline.contours) NotImplemented_nid_no_patch(function);
+    for (std::size_t contour = 0; contour < outline.n_contours; ++contour) {
+        if (outline.contours[contour] >= outline.n_points) NotImplemented_nid_no_patch(function);
+    }
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI FT_Outline_Get_Orientation_nid_postfix(GuestOutline* outline) {
     if (!outline || outline->n_points == 0) return FT_ORIENTATION_TRUETYPE;
+    CheckOutlineArrays(*outline, __func__);
     const auto initial = outline->points[0];
     GuestBBox bounds{initial.x, initial.y, initial.x, initial.y};
     for (unsigned index = 1; index < outline->n_points; ++index) {

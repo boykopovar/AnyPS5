@@ -9,19 +9,28 @@ def run(executable, enabled):
     environment.pop("APS5_TRACE_SYNC", None)
     if enabled:
         environment["APS5_TRACE_SYNC"] = "1"
-    return subprocess.run([executable], capture_output=True, check=False, env=environment, text=True, timeout=15)
+    try:
+        result = subprocess.run([executable], capture_output=True, check=False, env=environment, text=True, timeout=15)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"Cannot launch semaphore trace executable {executable!r}. "
+            "Build it with: cmake --build <build-dir> --target semaphore_trace_tests"
+        ) from None
+    if result.returncode != 0:
+        mode = "enabled" if enabled else "disabled"
+        output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+        message = f"Semaphore trace executable exited {result.returncode} with tracing {mode}."
+        raise SystemExit(f"{message}\n{output}" if output else message)
+    return result
 
 
 def main():
     executable = sys.argv[1]
     quiet = run(executable, False)
-    if quiet.returncode != 0 or "[sema]" in quiet.stderr:
-        raise SystemExit("semaphore test failed or traced without APS5_TRACE_SYNC")
+    if "[sema]" in quiet.stderr:
+        raise SystemExit("Semaphore trace emitted without APS5_TRACE_SYNC.")
 
     traced = run(executable, True)
-    if traced.returncode != 0:
-        raise SystemExit(traced.stderr or f"semaphore test exited {traced.returncode}")
-
     lines = traced.stderr.splitlines()
     create = next((line for line in lines if "[sema] create " in line and "'trace'" in line), None)
     if create is None:

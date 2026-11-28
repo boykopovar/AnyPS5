@@ -11,6 +11,7 @@
 #include FT_TYPE1_TABLES_H
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -125,6 +126,17 @@ private:
     void* mapping = nullptr;
 };
 
+static void CheckInit() {
+    Require(FT_Init_FreeType_nid_postfix(nullptr) == FT_Err_Invalid_Argument);
+    GuestOutput output;
+    auto* library = output.At<GuestLibrary*>(0);
+    output.Protect(0, 1);
+    output.Reject([&] { return FT_Init_FreeType_nid_postfix(library); });
+    output.Protect(0, 3);
+    Require(FT_Init_FreeType_nid_postfix(library) == 0 && *library != nullptr);
+    Require(FT_Done_FreeType_nid_postfix(*library) == 0);
+}
+
 static void CheckNames(GuestFaceRec* face) {
     GuestOutput output;
     auto* name = output.At<GuestSfntName>(0);
@@ -194,12 +206,20 @@ static void CheckPostScript(GuestFaceRec* face) {
     output.Reject([&] { return FT_Get_PS_Font_Info_nid_postfix(nullptr, info); }, FT_Get_PS_Font_Info(nullptr, &nativeInfo));
     output.Protect(0, 3);
 #endif
+    static const GuestPSFontInfo readOnlyInfo{nullptr, nullptr, nullptr, nullptr, nullptr, 123, 0, -10, 5};
+    errno = 71;
+    Require(FT_Get_PS_Font_Info_nid_postfix(face, const_cast<GuestPSFontInfo*>(&readOnlyInfo)) == FT_Err_Invalid_Argument);
+    Require(errno == 71 && readOnlyInfo.italicAngle == 123 && readOnlyInfo.underlinePosition == -10);
+    errno = 71;
+    Require(FT_Get_PS_Font_Info_nid_postfix(face, reinterpret_cast<GuestPSFontInfo*>(std::uintptr_t{0x10})) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
     Require(FT_Get_PS_Font_Info_nid_postfix(face, info) == 0);
     Require(info->fullName != nullptr && std::strcmp(info->fullName, "AnyPS5 Guard") == 0);
     Require(info->underlinePosition == -100 && info->underlineThickness == 50);
 }
 
 int main() {
+    CheckInit();
     GuestLibrary library{};
     Require(FT_Init_FreeType(&library.host) == 0);
     {

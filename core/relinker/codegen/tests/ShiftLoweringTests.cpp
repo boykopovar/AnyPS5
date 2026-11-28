@@ -1,6 +1,7 @@
 #include "LoweringExecution.hpp"
 #include <codegen/x86/ShiftLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <array>
 #include <cstring>
@@ -101,6 +102,16 @@ void decoding() {
     require(rejected, "An overflowing stack displacement was silently wrapped");
 }
 
+void flagLiveness() {
+    for (const Bytes code : {Bytes{0x09, 0xC8}, Bytes{0x48, 0x31, 0xC0}, Bytes{0x85, 0xC0}, Bytes{0x83, 0xE0, 0x0F}, Bytes{0xF7, 0xD8}, Bytes{0x66, 0x3D, 0x01, 0x00}, Bytes{0x8B, 0xC1, 0x01, 0xC8}, Bytes{0x0F, 0xB6, 0x02, 0x48, 0x83, 0xC2, 0x04}, Bytes{0x48, 0x8D, 0x04, 0x08, 0x50, 0x5A, 0x39, 0xD0}, Bytes{0x41, 0x0F, 0xB6, 0x48, 0x28, 0xC4, 0xE2, 0x71, 0xF7, 0xC0, 0x09, 0xC7}, Bytes{0xC4, 0xE3, 0xFB, 0xF0, 0xC0, 0x07, 0x85, 0xC0}})
+        require(Codegen::FlagsDeadAfter(code), "Flags overwritten before any read were reported live");
+    Bytes far;
+    for (int move = 0; move < 16; ++move) far.insert(far.end(), {0x89, 0xC8});
+    far.insert(far.end(), {0x09, 0xC8});
+    for (const Bytes code : {Bytes{}, Bytes{0x01}, Bytes{0x11, 0xC8}, Bytes{0x19, 0xC8}, Bytes{0x83, 0xD0, 0x01}, Bytes{0x0F, 0x44, 0xC1}, Bytes{0x74, 0x00, 0x09, 0xC8}, Bytes{0xC3}, Bytes{0x9C}, Bytes{0xF7, 0xD0, 0x09, 0xC8}, Bytes{0xC4, 0xE2, 0x70, 0xF2, 0xC0, 0x09, 0xC8}, Bytes{0xC5, 0xF9, 0x6F, 0xC1, 0x09, 0xC8}, Bytes{0x65, 0x01, 0xC8}, Bytes{0xF3, 0x01, 0xC8}, Bytes{0xD3, 0xE0}, Bytes{0x8B, 0xC1, 0x0F, 0x92, 0xC0, 0x09, 0xC8}, far})
+        require(!Codegen::FlagsDeadAfter(code), "Flags that may be read were reported dead");
+}
+
 void matching() {
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
@@ -112,6 +123,15 @@ void matching() {
         require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("Rosetta mode did not require a trampoline for ") + name);
         const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
         require(rosetta->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
+        const Bytes overwrite{0x09, 0xC8};
+        const Bytes read{0x0F, 0x44, 0xC1};
+        const Bytes trailing{0x90};
+        const auto dropped = rosetta->Match(bytes.data(), bytes.size(), {}, overwrite);
+        const auto kept = rosetta->Match(bytes.data(), bytes.size(), {}, read);
+        const auto moved = rosetta->Match(bytes.data(), bytes.size(), trailing, overwrite);
+        require(dropped && kept && match->StubBody == kept->StubBody, std::string("A flag read after ") + name + " changed its stub");
+        require(dropped->StubBody.size() + 2 == kept->StubBody.size(), std::string("The stub of ") + name + " still saved flags the next instruction overwrites");
+        require(moved && moved->StubBody.size() == kept->StubBody.size() + 1, std::string("The stub of ") + name + " dropped the flag save while moving trailing bytes");
     }
 }
 
@@ -120,11 +140,11 @@ void matching() {
 using LoweringExecution::Execution;
 using LoweringExecution::State;
 
-Execution executable(const Bytes& site, std::uint64_t memoryValue) {
+Execution executable(const Bytes& site, std::uint64_t memoryValue, bool preserveFlags) {
     const auto operands = Codegen::DecodeShift(site.data(), site.size());
     require(operands.has_value(), "Execution site was not a shift");
-    return Execution(site, memoryValue, operands->Memory && operands->Memory->RipRelative, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
-        Codegen::EmitShift(body, *Codegen::DecodeShift(relocated.data(), relocated.size()));
+    return Execution(site, memoryValue, operands->Memory && operands->Memory->RipRelative, [preserveFlags](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
+        Codegen::EmitShift(body, *Codegen::DecodeShift(relocated.data(), relocated.size()), preserveFlags);
     }, operands->Operation == ShiftOperation::RotateRight ? 1 : 0);
 }
 
@@ -146,7 +166,7 @@ std::uint64_t expected(const Codegen::ShiftOperands& operands, std::uint64_t sou
     return 0;
 }
 
-void check(const State& state, const Codegen::ShiftOperands& operands, std::uint64_t source, std::uint64_t count) {
+void check(const State& state, const Codegen::ShiftOperands& operands, std::uint64_t source, std::uint64_t count, bool preserveFlags) {
     const auto name = Codegen::ShiftName(operands.Operation);
     const auto result = expected(operands, source, count);
     for (std::size_t reg = 0; reg < 16; ++reg) {
@@ -154,22 +174,23 @@ void check(const State& state, const Codegen::ShiftOperands& operands, std::uint
         if (state.Output[reg] != wanted)
             throw std::runtime_error(std::string(name) + (operands.Wide ? " 64" : " 32") + " dst " + std::to_string(operands.Destination) + " src " + std::to_string(operands.Source) + " count " + std::to_string(operands.Count) + (operands.Memory ? " memory" : "") + ": register " + std::to_string(reg) + " is " + std::to_string(state.Output[reg]) + ", wanted " + std::to_string(wanted) + " (source " + std::to_string(source) + ", count value " + std::to_string(count) + ")");
     }
-    require((state.Flags & LoweringExecution::kFlagMask) == (state.InputFlags & LoweringExecution::kFlagMask), std::string(name) + " did not preserve the flags");
+    if (preserveFlags)
+        require((state.Flags & LoweringExecution::kFlagMask) == (state.InputFlags & LoweringExecution::kFlagMask), std::string(name) + " did not preserve the flags");
     for (const auto value : state.RedZone) require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
 }
 
-void run(const Execution& execution, const Codegen::ShiftOperands& operands, State state, std::uint64_t memoryValue) {
+void run(const Execution& execution, const Codegen::ShiftOperands& operands, State state, std::uint64_t memoryValue, bool preserveFlags) {
     for (const auto flags : {LoweringExecution::kBaseFlags | LoweringExecution::kFlagMask, LoweringExecution::kBaseFlags}) {
         state.InputFlags = flags;
         auto trial = state;
         execution.Run(trial);
         const auto source = operands.Memory ? memoryValue : trial.Input[operands.Source];
         const auto count = operands.Operation == ShiftOperation::RotateRight ? operands.Count : trial.Input[operands.Count];
-        check(trial, operands, source, count);
+        check(trial, operands, source, count, preserveFlags);
     }
 }
 
-void execution() {
+void execution(const bool preserveFlags) {
     constexpr std::array<std::uint64_t, 6> values{0, 1, 0x80000000ull, 0x8000000000000000ull, 0xFFFFFFFFFFFFFFFFull, 0xABCD123456789000ull};
     constexpr std::array<std::uint64_t, 7> counts{0, 1, 31, 32, 63, 64, 0xFF};
     for (const auto operation : kShifts) {
@@ -178,13 +199,13 @@ void execution() {
                 for (const auto pair : std::array<std::pair<std::uint8_t, std::uint8_t>, 9>{{{6, 2}, {dst, 10}, {11, dst}, {dst, dst}, {4, 9}, {9, 4}, {1, 6}, {6, 1}, {1, 1}}}) {
                     const auto site = shift(operation, wide, dst, pair.first, pair.second);
                     const auto operands = *Codegen::DecodeShift(site.data(), site.size());
-                    const auto execution = executable(site, 0);
+                    const auto execution = executable(site, 0, preserveFlags);
                     for (const auto value : values) {
                         for (const auto count : counts) {
                             auto state = LoweringExecution::InitialState();
                             state.Input[pair.first] = value;
                             state.Input[pair.second] = count;
-                            run(execution, operands, state, 0);
+                            run(execution, operands, state, 0, preserveFlags);
                         }
                     }
                 }
@@ -200,11 +221,11 @@ void execution() {
                     if (!every && immediate > 1 && immediate != 31 && immediate != 32 && immediate != 63 && immediate != 255) continue;
                     const auto site = rotate(wide, dst, src, immediate);
                     const auto operands = *Codegen::DecodeShift(site.data(), site.size());
-                    const auto execution = executable(site, 0);
+                    const auto execution = executable(site, 0, preserveFlags);
                     for (const auto value : values) {
                         auto state = LoweringExecution::InitialState();
                         state.Input[src] = value;
-                        run(execution, operands, state, 0);
+                        run(execution, operands, state, 0, preserveFlags);
                     }
                 }
             }
@@ -216,21 +237,68 @@ void execution() {
                 for (const auto value : std::array<std::uint64_t, 3>{0, 0xFEDCBA9876543210ull, 0xFFFFFFFF00000000ull}) {
                     const auto site = memorySite(operation, wide, tail, 13);
                     const auto operands = *Codegen::DecodeShift(site.data(), site.size());
-                    const auto execution = executable(site, value);
+                    const auto execution = executable(site, value, preserveFlags);
                     auto state = LoweringExecution::InitialState();
                     state.Input[6] = reinterpret_cast<std::uint64_t>(execution.Memory()) - (tail[0] == 0x46 ? 16 : 0);
                     state.Input[2] = reinterpret_cast<std::uint64_t>(execution.Memory()) - 3 * 8;
                     state.Input[1] = 3;
                     state.Input[5] = reinterpret_cast<std::uint64_t>(execution.Memory()) - 16;
                     state.Output[0] = value;
-                    run(execution, operands, state, value);
+                    run(execution, operands, state, value, preserveFlags);
                 }
+            }
+            for (const std::uint8_t dst : std::array<std::uint8_t, 2>{0, 4}) {
+                for (const std::int32_t displacement : {-176, -168, -167, -160, -152, -151, -144, -136}) {
+                    Bytes tail{static_cast<std::uint8_t>(0x84 | (dst << 3)), 0x24};
+                    for (unsigned s = 0; s < 32; s += 8)
+                        tail.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> s));
+                    constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                    const auto site = memorySite(operation, wide, tail, 13);
+                    const auto operands = *Codegen::DecodeShift(site.data(), site.size());
+                    const Execution execution(site, value, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                        for (int part = 0; part < 2; ++part) {
+                            Bytes store{0xC7, 0x84, 0x24};
+                            const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                            const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                            for (unsigned s = 0; s < 32; s += 8) store.push_back(static_cast<std::uint8_t>(slot >> s));
+                            for (unsigned s = 0; s < 32; s += 8) store.push_back(static_cast<std::uint8_t>(word >> s));
+                            body.Raw(store);
+                        }
+                        Codegen::EmitShift(body, operands, preserveFlags);
+                    }, operands.Operation == ShiftOperation::RotateRight ? 1 : 0);
+                    auto state = LoweringExecution::InitialState();
+                    state.Input[1] = 13;
+                    run(execution, operands, state, value, preserveFlags);
+                }
+            }
+            const auto stackSite = operation == ShiftOperation::RotateRight ? rotate(wide, 4, 6, 13) : shift(operation, wide, 4, 6, 2);
+            const auto stackOperands = *Codegen::DecodeShift(stackSite.data(), stackSite.size());
+            Codegen::StubBodyBuilder probe;
+            Codegen::EmitShift(probe, stackOperands, preserveFlags);
+            const auto built = probe.Finish();
+            const Bytes raw(built.Bytes.begin(), built.Bytes.begin() + static_cast<std::ptrdiff_t>(built.ReturnBranchOffset));
+            Codegen::X64InstructionDecoder decoder;
+            for (std::size_t cut = 0; cut < raw.size(); cut += decoder.Decode(raw.data() + cut, raw.size() - cut)) {
+                const Execution execution(stackSite, 0, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                    body.Raw(std::span<const std::uint8_t>(raw.data(), cut));
+                    for (std::int32_t disp = -256; disp < -128; disp += 4) {
+                        Bytes clobber{0xC7, 0x84, 0x24};
+                        for (unsigned s = 0; s < 32; s += 8)
+                            clobber.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(disp) >> s));
+                        clobber.insert(clobber.end(), {0xEF, 0xBE, 0xAD, 0xDE});
+                        body.Raw(clobber);
+                    }
+                    body.Raw(std::span<const std::uint8_t>(raw.data() + cut, raw.size() - cut));
+                });
+                auto state = LoweringExecution::InitialState();
+                state.Input[2] = 13;
+                run(execution, stackOperands, state, 0, preserveFlags);
             }
         }
     }
 }
 #else
-void execution() { std::cout << "shift execution checks require a Linux/macOS x86-64 build\n"; }
+void execution(bool) { std::cout << "shift execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 #endif
 
 }
@@ -238,8 +306,10 @@ void execution() { std::cout << "shift execution checks require a Linux/macOS x8
 int main() {
     try {
         decoding();
+        flagLiveness();
         matching();
-        execution();
+        execution(true);
+        execution(false);
         std::cout << "shift lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -1,43 +1,49 @@
 #include "prx/libSceDiscId/include/Api.hpp"
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <filesystem>
+#include <string>
 
 namespace {
 
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
+constexpr int ErrorInvalidArgument = static_cast<int>(0x81680016);
+constexpr int ErrorDeviceUnavailable = static_cast<int>(0x816800ff);
 
-template<typename TCall>
-bool Throws(TCall call) {
-    try {
-        static_cast<void>(call());
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
+void Require(bool condition, const char* message) {
+    if (condition) return;
+    std::fprintf(stderr, "DISC ID: %s\n", message);
+    std::abort();
 }
 
 }
 
 int main() {
-    Require(Throws([] { return sceDiscIdGet(nullptr); }));
-    Require(Throws([] { return sceDiscIdGet2(nullptr, 0); }));
-    Require(Throws([] { return sceDiscIdGet2(nullptr, 0xFFFFFFFFu); }));
+    const auto original = std::filesystem::current_path();
+    const auto directory = original / ("discid-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(directory), "create the test directory");
+    std::filesystem::current_path(directory);
+
+    Require(sceDiscIdGet(nullptr) == ErrorInvalidArgument, "Get null output");
+    Require(sceDiscIdGet2(nullptr, 0) == ErrorInvalidArgument, "Get2 null output");
+    Require(sceDiscIdGet2(nullptr, 1) == ErrorInvalidArgument, "Get2 null output and nonzero flags");
 
     std::uint8_t buffer[64];
     std::memset(buffer, 0xAB, sizeof(buffer));
     auto* id = reinterpret_cast<DiscId*>(buffer);
     auto* id2 = reinterpret_cast<DiscId2*>(buffer);
+    for (const std::uint32_t flags : {1u, 3u, 0x80000000u, 0xFFFFFFFFu}) {
+        Require(sceDiscIdGet2(id2, flags) == ErrorInvalidArgument, "Get2 nonzero flags");
+    }
+    Require(sceDiscIdGet(id) == ErrorDeviceUnavailable, "Get without /dev/duid");
+    Require(sceDiscIdGet2(id2, 0) == ErrorDeviceUnavailable, "Get2 without /dev/duid");
+    for (const std::uint8_t byte : buffer) Require(byte == 0xAB, "failed calls write nothing");
 
-    Require(Throws([id] { return sceDiscIdGet(id); }));
-    Require(Throws([id2] { return sceDiscIdGet2(id2, 0); }));
-    Require(Throws([id2] { return sceDiscIdGet2(id2, 1); }));
-    Require(Throws([id2] { return sceDiscIdGet2(id2, 3); }));
-    Require(Throws([id2] { return sceDiscIdGet2(id2, 0xFFFFFFFFu); }));
-    for (std::uint8_t byte : buffer) Require(byte == 0xAB);
-
+    std::filesystem::current_path(original);
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::puts("DiscId tests passed");
     return 0;
 }

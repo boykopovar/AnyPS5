@@ -150,6 +150,22 @@ static void CheckFailure(Converter convert, int hint = -1) {
     Require(errno == expectedError, "Failed conversion changed the underlying mktime error");
 }
 
+static void CheckUnmappedTime() {
+    constexpr std::array<Converter, 3> converters{libc_mktime_nid_postfix, mktime_nid_postfix, timelocal_nid_postfix};
+    auto* const unmapped = reinterpret_cast<GuestTm*>(std::uintptr_t{0x10});
+    for (const auto convert : converters) {
+        errno = 0;
+        Require(convert(unmapped) == -1 && errno == EFAULT, "a conversion of an unmapped struct tm did not fail with EFAULT");
+        errno = 0;
+        Require(convert(nullptr) == -1 && errno == EFAULT, "a conversion of a null struct tm did not fail with EFAULT");
+    }
+    GuestTm valid{};
+    valid.tm_year = 120;
+    valid.tm_mday = 1;
+    valid.tm_isdst = 0;
+    Require(libc_mktime_nid_postfix(&valid) != -1 && valid.tm_yday == 0, "mktime no longer converts a valid struct tm after the failures");
+}
+
 static void CheckEarlyYearNormalization(Converter convert) {
     const struct {
         int year;
@@ -243,6 +259,11 @@ static void CheckTimelocalDst() {
 #endif
     Require(forTimelocal.tm_isdst == 1, "timelocal normalized tm_isdst was not 1 in summer DST");
 
+    GuestTm universal{};
+    Require(gmtime_s_nid_postfix(&summerTimer, &universal) == &universal && universal.tm_isdst == -1, "gmtime_s set tm_isdst");
+    Require(mktime_nid_postfix(&universal) == summerTimer + 4 * 3600, "mktime of gmtime_s fields did not determine DST");
+    Require(gmtime_nid_postfix(&summerTimer)->tm_isdst == 0, "gmtime did not set tm_isdst to 0");
+
     GuestTm failure{};
     failure.tm_year = std::numeric_limits<int>::max();
     failure.tm_mon = std::numeric_limits<int>::max();
@@ -258,6 +279,39 @@ static void CheckTimelocalDst() {
 
     Require(timelocal_nid_postfix(&failure) == -1, "timelocal accepted unrepresentable date");
     Require(Equal(failure, expectedFailure), "timelocal failure modified fields other than tm_isdst");
+}
+
+static void CheckTimegm() {
+    constexpr std::array<std::int64_t, 6> timers{0, 1, 86400, 946684800, 1577836800, 2000000000};
+    for (const auto timer : timers) {
+        GuestTm expected{};
+        Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime conversion failed");
+        expected.tm_isdst = 0;
+        GuestTm input = expected;
+        input.tm_sec += 60;
+        --input.tm_min;
+        input.tm_wday = -1;
+        input.tm_yday = -1;
+        Require(timegm_nid_postfix(&input) == timer, "timegm returned wrong timestamp");
+        Require(Equal(input, expected), "timegm did not normalize UTC fields");
+    }
+
+    GuestTm leap2000{};
+    leap2000.tm_year = 100;
+    leap2000.tm_mon = 1;
+    leap2000.tm_mday = 29;
+    const std::int64_t leapTimer = timegm_nid_postfix(&leap2000);
+    Require(leapTimer != -1, "timegm rejected leap day in year 2000");
+    Require(leap2000.tm_year == 100 && leap2000.tm_mon == 1 && leap2000.tm_mday == 29, "timegm distorted leap day");
+
+    GuestTm monthOverflow{};
+    monthOverflow.tm_year = 121;
+    monthOverflow.tm_mon = 12;
+    monthOverflow.tm_mday = 5;
+    const std::int64_t normTimer = timegm_nid_postfix(&monthOverflow);
+    Require(normTimer != -1, "timegm rejected month overflow");
+    Require(monthOverflow.tm_year == 122 && monthOverflow.tm_mon == 0 && monthOverflow.tm_mday == 5,
+        "timegm failed to normalize month overflow");
 }
 
 int main() {
@@ -279,10 +333,12 @@ int main() {
     CheckZone("UTC0");
     CheckZone("UTC-2");
     CheckZone("UTC5");
+    CheckUnmappedTime();
     CheckEquivalentFutureCalendars("EST5EDT");
 #ifndef _WIN32
     CheckEquivalentFutureCalendars("America/New_York");
     CheckEquivalentFutureCalendars("Pacific/Kiritimati");
 #endif
     CheckTimelocalDst();
+    CheckTimegm();
 }

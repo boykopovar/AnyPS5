@@ -35,6 +35,10 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> png);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> png);
 
+std::vector<std::uint16_t> DecodeRgba16(std::span<const std::uint8_t> png);
+
+bool CheckChunkCrc(std::span<const std::uint8_t> typeAndData, std::uint32_t expected);
+
 inline constexpr std::uint8_t FILTER_NONE = 1 << 0;
 inline constexpr std::uint8_t FILTER_SUB = 1 << 1;
 inline constexpr std::uint8_t FILTER_UP = 1 << 2;
@@ -45,6 +49,8 @@ inline constexpr std::uint8_t FILTER_ALL = FILTER_NONE | FILTER_SUB | FILTER_UP 
 struct EncodeOptions {
     int compressionLevel = 8;
     std::uint8_t filters = FILTER_ALL;
+    std::uint8_t bitDepth = 8;
+    bool whiteBackground = false;
 };
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,

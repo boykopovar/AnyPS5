@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <locale>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -65,6 +66,7 @@ void writeRecord(const std::filesystem::path& directory, const std::filesystem::
     temporary += ".tmp";
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        file.imbue(std::locale::classic());
         for (const auto& [key, value] : values) file << key << ' ' << value << '\n';
         file.flush();
         if (!file) throw std::runtime_error("cannot write the " + what + " " + temporary.string());

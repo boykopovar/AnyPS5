@@ -31,10 +31,12 @@ alignas(256) constexpr std::array<std::uint32_t, 17> Code{
     0xbf810000u,
 };
 
-constexpr std::array<std::uint64_t, 18> Values{
+constexpr std::array<std::uint64_t, 30> Values{
     0x0000000000000000ull, 0x8000000000000000ull, 0x0000000000000001ull, 0x8000000000000001ull, 0x000fffffffffffffull, 0x800fffffffffffffull,
     0x0008000000000000ull, 0x8008000000000000ull, 0x0010000000000000ull, 0x8010000000000000ull, 0x3fe0000000000000ull, 0xbff8000000000000ull,
     0x4006000000000000ull, 0x3fefffffffffffffull, 0xbfefffffffffffffull, 0x7fefffffffffffffull, 0xffefffffffffffffull, 0x4330000000000001ull,
+    0x0000000080000000ull, 0x00000000ffffffffull, 0x0000000100000000ull, 0x0000000100000001ull, 0x8000000100000001ull, 0x0000123456789abcull,
+    0x800000007fffffffull, 0x0010000000000001ull, 0x3ff0000000000000ull, 0xc000000000000000ull, 0x0000000000000002ull, 0x8000000000000003ull,
 };
 
 struct Mode {
@@ -122,7 +124,7 @@ std::uint32_t Check(const Mode& mode, bool keepsDenormals) {
             if (actual == expected[index]) continue;
             const auto text = [index](std::uint64_t bits) { return index < 4u ? Hex(bits) : std::to_string(static_cast<std::int32_t>(bits)); };
             const std::string message = std::string(Names[index]) + " " + mode.name + " of " + Hex(source) + " is " + text(actual) + ", expected " + text(expected[index]);
-            const bool deviceDependent = std::any_of(deviceFlushes.begin(), deviceFlushes.end(), [&](std::uint32_t flushed) { return Expected(source, flushed)[index] != expected[index]; });
+            const bool deviceDependent = index < 3u && std::any_of(deviceFlushes.begin(), deviceFlushes.end(), [&](std::uint32_t flushed) { return Expected(source, flushed)[index] != expected[index]; });
             Require(deviceDependent && !keepsDenormals, message);
             std::printf("skipped %s, the device flushes f64 denormals without DenormPreserve support\n", message.c_str());
             ++skipped;

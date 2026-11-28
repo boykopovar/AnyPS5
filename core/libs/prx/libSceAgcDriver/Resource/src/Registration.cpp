@@ -7,7 +7,6 @@
 #include "prx/libc/include/General.hpp"
 
 static constexpr int SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE = static_cast<int>(0x8A6C9018);
-static constexpr uint32_t RESOURCE_REGISTRATION_MAX_NAME_LENGTH = 0xfc;
 static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_INVALID_ID = static_cast<int>(0x8A6C0033);
 static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_NULL = static_cast<int>(0x8A6C0035);
 static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_NOT_REGISTERED = static_cast<int>(0x8A6C003A);
@@ -99,9 +98,8 @@ int APS5_VABI sceAgcDriverGetDefaultOwner(uint32_t* owner_handle) {
 }
 
 int APS5_VABI sceAgcDriverGetResourceRegistrationMaxNameLength(uint32_t* max_length) {
-    if (max_length == nullptr) APS5_INVALID_ARG_EX;
-    *max_length = RESOURCE_REGISTRATION_MAX_NAME_LENGTH;
-    return 0;
+    (void)max_length;
+    return SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverGetOwnerName(uint32_t owner_handle, const char** name) {

@@ -80,8 +80,7 @@ int releaseThreadAtexitImage(const void* address, const char* caller) {
     {
         std::lock_guard lock(threadAtexitMutex);
         const auto found = threadAtexitReferences.find(image);
-        if (found == threadAtexitReferences.end())
-            throw std::runtime_error(std::string(caller) + ": image holds no thread atexit reference");
+        if (found == threadAtexitReferences.end()) return 0;
         handle = found->second;
         threadAtexitReferences.erase(found);
     }

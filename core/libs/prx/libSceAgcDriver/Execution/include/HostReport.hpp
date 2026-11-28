@@ -17,6 +17,13 @@ struct HostRequirement {
     bool present = false;
 };
 
+enum class HostDriverVersionScheme {
+    Unknown,
+    Vulkan,
+    Nvidia,
+    IntelWindows,
+};
+
 struct HostGpuFacts {
     std::string name;
     std::string type;
@@ -26,6 +33,7 @@ struct HostGpuFacts {
     std::uint32_t deviceId = 0;
     std::uint32_t apiVersion = 0;
     std::uint32_t driverVersion = 0;
+    HostDriverVersionScheme driverVersionScheme = HostDriverVersionScheme::Unknown;
     std::uint32_t subgroupSize = 0;
     std::uint64_t deviceLocalMiB = 0;
     std::vector<std::string> candidates;

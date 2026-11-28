@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::RTCStatsReport::begin, end and its ConstIterator operators and destructor](../../../core/libs/prx/libwebrtc/src/RtcStatsReport.cpp) (libwebrtc) - unchecked on the console. Adapted from [rtc_stats_report.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/stats/rtc_stats_report.cc), with its WebRTC notice and BSD licence at the top of the file. Assumed layouts: the report holds its reference count at 0 and the `std::map` at 16 (begin node, root, size); a node holds its links, the 40-byte guest string key at 32 and the `RTCStats` pointer at 72; an iterator is the report pointer then the node pointer, returned through the hidden pointer. The iterator that drops the last reference destroys the report, each `RTCStats` through the deleting destructor in vtable slot 1, in libc++'s `__tree::destroy` order. Advancing or dereferencing the end iterator, undefined upstream, throws, as does a malformed tree. Closes when: compared with the console.

@@ -48,9 +48,8 @@ const void* TypeInfoVptr(LibcException::TypeInfoVtable& vtable) {
 }
 
 const ClassTypeInfo MemoryResourceType {TypeInfoVptr(_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix), "NSt3pmr15memory_resourceE"};
-const SingleTypeInfo IdentityEqualResourceType {TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "NSt3pmr24_Identity_equal_resourceE", &MemoryResourceType};
-const SingleTypeInfo NewDeleteResourceType {TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "NSt3pmr33_Aligned_new_delete_resource_implE", &IdentityEqualResourceType};
-const SingleTypeInfo NullResourceType {TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "ZNSt3pmr20null_memory_resourceEvE14_Null_resource", &IdentityEqualResourceType};
+const SingleTypeInfo NewDeleteResourceType {TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "NSt3pmr17_New_del_resourceE", &MemoryResourceType};
+const SingleTypeInfo NullResourceType {TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "NSt3pmr18_Null_mem_resourceE", &MemoryResourceType};
 
 void APS5_VABI DestroyPmrResource_nid_no_patch(MemoryResource*) {}
 

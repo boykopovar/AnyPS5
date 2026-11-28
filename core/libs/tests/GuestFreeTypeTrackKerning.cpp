@@ -1,11 +1,13 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "FontFixture.hpp"
+#include "Type1Fixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -48,10 +50,40 @@ static void Compare(FacePair& face, std::int64_t pointSize, std::int32_t degree)
     else Require(actual == sentinel);
 }
 
+static void TestType1Tracks(GuestLibrary& library, FT_Library nativeLibrary) {
+    FacePair pair(library, nativeLibrary, Type1Fixture::Font());
+    std::string metrics = Type1Fixture::Afm();
+    metrics.insert(metrics.find("StartKernPairs"), "StartTrackKern 1\nTrackKern -1 8 -2 16 2\nEndTrackKern\n");
+    FT_Open_Args args{};
+    args.flags = FT_OPEN_MEMORY;
+    args.memory_base = reinterpret_cast<const FT_Byte*>(metrics.data());
+    args.memory_size = static_cast<FT_Long>(metrics.size());
+    Require(FT_Attach_Stream(pair.guest.host, &args) == 0);
+    Require(FT_Attach_Stream(pair.oracle, &args) == 0);
+
+    constexpr std::int64_t sentinel = 0x123456789ALL;
+    for (const int points : {6, 10, 12, 18}) {
+        const FT_Fixed size = points << 16;
+        for (const int degree : {-1, 1}) {
+            FT_Fixed native = 37;
+            std::int64_t guest = sentinel;
+            Require(FT_Get_Track_Kerning(pair.oracle, size, degree, &native) == 0);
+            Require(FT_Get_Track_Kerning_nid_postfix(&pair.guest.rec, size, degree, &guest) == 0);
+            if (degree == -1) {
+                Require(native != 37 && guest == native);
+                if (points == 12) Require(guest == 0);
+            } else {
+                Require(native == 37 && guest == sentinel);
+            }
+        }
+    }
+}
+
 int main() {
     GuestLibrary library{};
     FT_Library nativeLibrary = nullptr;
     Require(FT_Init_FreeType(&library.host) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+    TestType1Tracks(library, nativeLibrary);
     {
         FacePair truetype(library, nativeLibrary, FontFixture::BuildFont(3, {}));
         FacePair bitmap(library, nativeLibrary, FontFixture::BitmapFont());
@@ -61,6 +93,7 @@ int main() {
             }
             std::int64_t value = 0;
             Require(FT_Get_Track_Kerning_nid_postfix(&face->guest.rec, 12 << 16, 0, nullptr) == FT_Get_Track_Kerning(face->oracle, 12 << 16, 0, nullptr));
+            Require(FT_Get_Track_Kerning_nid_postfix(&face->guest.rec, 12 << 16, 0, reinterpret_cast<std::int64_t*>(std::uintptr_t{1})) == FT_Err_Invalid_Argument);
             Require(value == 0);
         }
         std::int64_t value = 0;

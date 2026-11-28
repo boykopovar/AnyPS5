@@ -16,12 +16,12 @@ TPOFF64 = 18
 TEMPLATE = 0x2780
 
 
-def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, section=0, symbol=3, tls_memory=16):
+def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, section=0, symbol=3, tls_memory=16, name=0):
     image = module([(TARGET, (symbol << 32) | kind, addend)], sce=sce)
     struct.pack_into("<I", image, 0x2244, 4)
     if sce:
         change_tag(image, 4, 4 * 24, 0x6100003f)
-    struct.pack_into("<IBBHQQ", image, 0x2280 + 3 * 24, 0, info, 0, section, value, 0)
+    struct.pack_into("<IBBHQQ", image, 0x2280 + 3 * 24, name, info, 0, section, value, 0)
     if tls:
         count, = struct.unpack_from("<H", image, 56)
         struct.pack_into("<H", image, 56, count + 1)
@@ -76,47 +76,60 @@ def main():
             return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
 
         for sce in (False, True):
-            for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4)):
-                image = fixture(sce, kind=kind, addend=addend)
-                for system in ("linux", "windows", "macos"):
-                    result, artifact, output = convert(f"{sce}-{kind}", system, image)
-                    assert result.returncode == 0, (sce, kind, system, result.stdout, result.stderr)
-                    if system == "linux":
-                        assert relocations(artifact.read_bytes()) == [(TARGET, kind, addend)], (sce, kind)
+            for info in (3, 6):
+                for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4)) + (((TPOFF64, 4),) if info == 6 else ()):
+                    image = fixture(sce, info=info, kind=kind, addend=addend)
+                    for system in ("linux", "windows", "macos"):
+                        result, artifact, output = convert(f"{sce}-{info}-{kind}", system, image)
+                        assert result.returncode == 0, (sce, info, kind, system, result.stdout, result.stderr)
+                        if system == "linux":
+                            assert relocations(artifact.read_bytes()) == [(TARGET, kind, addend)], (sce, info, kind)
             for name, image in (("no-tls", fixture(sce, tls=False)),
+                                ("local-tls-no-tls", fixture(sce, tls=False, info=6)),
                                 ("valued-section", fixture(sce, value=8)),
+                                ("valued-local-tls", fixture(sce, info=6, value=8)),
                                 ("notype", fixture(sce, info=0)),
                                 ("dtpmod-addend", fixture(sce, addend=4)),
+                                ("local-tls-dtpmod-addend", fixture(sce, info=6, addend=4)),
                                 ("tpoff", fixture(sce, kind=TPOFF64)),
-                                ("absolute-section", fixture(sce, section=0xfff1))):
+                                ("absolute-section", fixture(sce, section=0xfff1)),
+                                ("unnamed-global", fixture(sce, info=0x16)),
+                                ("unnamed-weak", fixture(sce, info=0x26)),
+                                ("unnamed-global-dtpoff", fixture(sce, info=0x16, kind=DTPOFF64, addend=4)),
+                                ("unnamed-weak-dtpoff", fixture(sce, info=0x26, kind=DTPOFF64, addend=4)),
+                                ("unnamed-global-tpoff", fixture(sce, info=0x16, kind=TPOFF64, addend=4)),
+                                ("unnamed-weak-tpoff", fixture(sce, info=0x26, kind=TPOFF64, addend=4)),
+                                ("suffix-only-global", fixture(sce, info=0x16, name=9)),
+                                ("suffix-only-weak-dtpoff", fixture(sce, info=0x26, kind=DTPOFF64, addend=4, name=9))):
                 result, artifact, output = convert(f"{sce}-{name}", "linux", image)
                 assert result.returncode == 2 and "Invalid guest TLS relocation" in result.stderr, (sce, name, result.stderr)
                 assert not artifact.exists() and not output.exists(), name
-            for symbol, info, section in ((3, 3, 0), (0, 3, 0), (3, 6, 1)):
+            for symbol, info, section in ((3, 3, 0), (0, 3, 0), (3, 6, 0), (3, 6, 1)):
                 for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4), (TPOFF64, 4)):
                     if info == 3 and symbol == 3 and kind == TPOFF64:
                         continue
-                    if info == 6:
+                    if info == 6 and section == 1:
                         image = fixture(sce, info=info, section=section, kind=kind, addend=addend)
                         for system in ("linux", "windows", "macos"):
                             result, artifact, output = convert(f"{sce}-defined-{kind}", system, image)
                             assert result.returncode == 0, (sce, kind, system, result.stdout, result.stderr)
                     image = fixture(sce, info=info, section=section, kind=kind, addend=addend, symbol=symbol, tls_memory=0)
                     for system in ("linux", "windows", "macos"):
-                        name = f"{sce}-{symbol}-{info}-{kind}-empty-tls"
+                        name = f"{sce}-{symbol}-{info}-{section}-{kind}-empty-tls"
                         result, artifact, output = convert(name, system, image)
                         assert result.returncode == 2 and "Invalid guest TLS relocation" in result.stderr, (name, system, result.stdout, result.stderr)
                         assert not artifact.exists() and not output.exists(), (name, system)
-            for flags in (0x10, 0x18):
-                image = with_flags(fixture(sce, info=6, section=1, kind=TPOFF64, addend=4), flags)
-                for system in ("linux", "windows", "macos"):
-                    result, artifact, output = convert(f"{sce}-static-tls-{flags}", system, image)
-                    assert result.returncode == 0, (sce, flags, system, result.stdout, result.stderr)
-                    if system == "linux":
-                        assert [info & 0xffffffff for _, info, _ in relocations(artifact.read_bytes())] == [TPOFF64], (sce, flags)
-                        if sys.platform == "linux" and os.uname().machine == "x86_64":
-                            loaded = subprocess.run([sys.executable, __file__, "--load", str(artifact)], capture_output=True, text=True, timeout=10)
-                            assert loaded.returncode == 0, (sce, flags, loaded.returncode, loaded.stderr)
+            for section in (0, 1):
+                for flags in (0x10, 0x18):
+                    image = with_flags(fixture(sce, info=6, section=section, kind=TPOFF64, addend=4), flags)
+                    for system in ("linux", "windows", "macos"):
+                        result, artifact, output = convert(f"{sce}-static-tls-{section}-{flags}", system, image)
+                        assert result.returncode == 0, (sce, section, flags, system, result.stdout, result.stderr)
+                        if system == "linux":
+                            assert [info & 0xffffffff for _, info, _ in relocations(artifact.read_bytes())] == [TPOFF64], (sce, section, flags)
+                            if sys.platform == "linux" and os.uname().machine == "x86_64":
+                                loaded = subprocess.run([sys.executable, __file__, "--load", str(artifact)], capture_output=True, text=True, timeout=10)
+                                assert loaded.returncode == 0, (sce, section, flags, loaded.returncode, loaded.stderr)
             for flags in (0x1, 0x4, 0x14):
                 image = with_flags(fixture(sce, info=6, section=1, kind=TPOFF64, addend=4), flags)
                 result, artifact, output = convert(f"{sce}-unsupported-flags-{flags}", "linux", image)

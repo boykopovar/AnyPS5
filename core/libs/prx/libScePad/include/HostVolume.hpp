@@ -13,6 +13,7 @@ public:
     int Volume() const { return volume; }
     bool Muted() const { return muted; }
     bool MuteOnFocusLoss() const { return muteOnFocusLoss; }
+    bool Focused() const { return focused; }
     bool FocusMuted() const { return muteOnFocusLoss && !focused; }
 
     bool Silent() const { return muted || FocusMuted(); }

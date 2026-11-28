@@ -40,6 +40,7 @@ static bool SeedIs(const std::uint16_t* seed, std::uint16_t low, std::uint16_t m
 }
 
 static void CheckRand48() {
+    Require(drand48_nid_postfix() == 0x2bbb62dcp-32 && lrand48_nid_postfix() == 0x5ffcc9c0 && mrand48_nid_postfix() == 0x18abd015, "unseeded rand48 starts from the seed of srand48(0)");
     std::uint16_t seed[3] = {0x330e, 0xabcd, 0x1234};
     Require(erand48_nid_postfix(seed) == 0x657eb725p-32 && SeedIs(seed, 0x5101, 0xb725, 0x657e), "erand48 first value");
     Require(nrand48_nid_postfix(seed) == 1804928587 && SeedIs(seed, 0x6378, 0x0c96, 0xd72a), "nrand48 second value");
@@ -70,8 +71,8 @@ static void CheckRand48() {
     std::uint16_t custom[3] = {2, 0, 0};
     Require(nrand48_nid_postfix(custom) == 0 && SeedIs(custom, 11, 0, 0), "lcong48 parameters apply to nrand48");
     const std::uint16_t newSeed[3] = {0x330e, 0xabcd, 0x1234};
-    std::uint16_t* const echoed = seed48_nid_postfix(newSeed);
-    Require(SeedIs(echoed, 0x330e, 0xabcd, 0x1234), "seed48 returns a copy of the new seed");
+    std::uint16_t* const installed = seed48_nid_postfix(newSeed);
+    Require(installed != newSeed && SeedIs(installed, 0x330e, 0xabcd, 0x1234), "seed48 returns a copy of the new seed");
     std::uint16_t again[3] = {0x330e, 0xabcd, 0x1234};
     Require(drand48_nid_postfix() == erand48_nid_postfix(again), "seed48 restores the default multiplier and addend");
     lcong48_nid_postfix(parameters);
@@ -224,6 +225,25 @@ int main() {
         threw = true;
     }
     Require(threw, "setstate with a null state must throw");
+    const std::uint16_t knownSeed[3] = {1, 2, 3};
+    std::uint16_t knownCopy[3] = {1, 2, 3};
+    const double knownNext = erand48_nid_postfix(knownCopy);
+    seed48_nid_postfix(knownSeed);
+    threw = false;
+    try {
+        seed48_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "seed48 with an unreadable seed must throw");
+    threw = false;
+    try {
+        lcong48_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "lcong48 with unreadable parameters must throw");
+    Require(drand48_nid_postfix() == knownNext, "unreadable seed48 and lcong48 input must keep the rand48 state");
 
     constexpr std::size_t threadCount = 4;
     constexpr std::size_t callsPerThread = 2000;

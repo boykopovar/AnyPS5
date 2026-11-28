@@ -1,7 +1,9 @@
+import argparse
 import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_compile
 
 TOOL = Path(__file__).resolve().parents[1] / "check_compile.py"
+
+
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def spawnable_python():
+    for program, options in ((sys.executable, ()), (shutil.which("py"), ("-3",))):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return [program, *options]
+    return None
 
 
 class CheckCompileFixture(unittest.TestCase):
@@ -72,6 +85,91 @@ class CheckCompileTests(CheckCompileFixture):
         result = self.tool("unit.cpp")
         self.assertEqual(result.returncode, 0)
         self.assertIn("1 translation units compile", result.stdout)
+
+
+class CheckCompileDatabaseNulTests(unittest.TestCase):
+    def test_rejects_embedded_nul_in_command_fields(self):
+        import check_compile
+        for record in ({"directory": "build", "file": "unit.c", "command": "cc\0 unit.c"},
+                       {"directory": "build", "file": "unit.c", "arguments": ["cc", "unit\0.c"]}):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(ValueError, "NUL"):
+                    check_compile.compilation_database(json.dumps([record]), "compile_commands.json")
+
+
+class CheckCompileHeaderTests(CheckCompileFixture):
+    def test_checks_only_configurations_that_include_the_header(self):
+        cmake = shutil.which("cmake")
+        ninja = shutil.which("ninja")
+        compiler = shutil.which("gcc") or shutil.which("clang")
+        if not all((cmake, ninja, compiler)):
+            self.skipTest("requires CMake, Ninja and GCC or Clang")
+        self.source(".gitignore", "build/\n")
+        self.source("CMakeLists.txt", """cmake_minimum_required(VERSION 3.15)
+project(HeaderSyntax C)
+add_library(with_header STATIC source.c)
+target_compile_definitions(with_header PRIVATE USE_SHARED)
+add_library(without_header STATIC source.c)
+add_library(unbuilt STATIC EXCLUDE_FROM_ALL source.c)
+""")
+        self.source("source.c", '#ifdef USE_SHARED\n#include "Shared Dir/shared header.h"\n#endif\nint x;\n')
+        header = "Shared Dir/shared header.h"
+        self.source(header, "#define SHARED 1\n")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], cwd=self.root, check=True)
+        subprocess.run([cmake, "-S", str(self.root), "-B", str(self.build), "-G", "Ninja",
+                        f"-DCMAKE_C_COMPILER={compiler}", f"-DCMAKE_MAKE_PROGRAM={ninja}",
+                        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], check=True, capture_output=True)
+        subprocess.run([cmake, "--build", str(self.build)], check=True, capture_output=True)
+
+        manifest = json.loads((self.build / "compile_commands.json").read_text(encoding="utf-8-sig"))
+        owner = next(entry for entry in manifest if "-DUSE_SHARED" in entry["command"])
+        output = self.build / check_compile.compilation_output(owner)
+
+        self.source(header, "#error header syntax fixture\n")
+        ordinary = self.tool("--base", "HEAD", "--dry-run")
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertEqual(json.loads(ordinary.stdout), {"translation_units": []})
+        for paths in ((header,), ("--base", "HEAD")):
+            with self.subTest(paths=paths):
+                planned = self.tool("--headers", "--dry-run", *paths)
+                self.assertEqual(planned.returncode, 0, planned.stderr)
+                units = json.loads(planned.stdout)["translation_units"]
+                self.assertEqual([Path(unit["source"]) for unit in units], [self.root / "source.c"])
+                self.assertEqual(len(units[0]["commands"]), 1)
+                self.assertIn("-DUSE_SHARED", units[0]["commands"][0]["arguments"])
+                self.assertIn("0 stale, 1 missing", planned.stderr)
+
+        owner.pop("output", None)
+        self.manifest(manifest)
+        explicit = self.tool("--headers", "--dry-run", "source.c", header)
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        units = json.loads(explicit.stdout)["translation_units"]
+        self.assertEqual(len(units), 1)
+        self.assertEqual(len(units[0]["commands"]), 3)
+
+        checked = self.tool("--headers", header)
+        self.assertEqual(checked.returncode, 1, checked.stderr)
+        self.assertIn("header syntax fixture", checked.stderr)
+        self.assertIn("1 of 1 translation units did not compile", checked.stderr)
+        self.source(header, "#define SHARED 1\n")
+        checked = self.tool("--headers", header)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertIn("1 translation units compile", checked.stdout)
+
+        output.unlink()
+        stale = self.tool("--headers", "--dry-run", header)
+        self.assertEqual(stale.returncode, 1, stale.stderr)
+        self.assertEqual(json.loads(stale.stdout), {"translation_units": []})
+        self.assertIn("1 stale, 1 missing", stale.stderr)
+        self.assertIn("has no compile configuration with a valid recorded Ninja dependency", stale.stderr)
+
+    def test_source_only_request_does_not_require_ninja(self):
+        self.source("source.c")
+        self.manifest([self.entry("source.c", "cc -c source.c")])
+        with patch.object(check_compile, "ninja_for_build", side_effect=AssertionError("unexpected Ninja lookup")):
+            tasks = check_compile.compile_tasks(self.root, self.build, [self.root / "source.c"], headers=True)
+        self.assertEqual(len(tasks[0][-1]), 1)
 
 
 class CheckCompileRecordedCommandTests(CheckCompileFixture):
@@ -317,6 +415,99 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertIn("flags.rsp", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_dry_run_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        source = self.source("unit.cpp")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\nsys.exit(1)\n")
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" -c -o unit.o "{source}"'),
+                       self.entry("other.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{other}"')])
+        control = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+        self.assertEqual(control.stderr, "")
+        self.assertEqual(json.loads(control.stdout), {
+            "translation_units": [{
+                "source": str(source),
+                "commands": [{
+                    "directory": str(self.build),
+                    "arguments": [sys.executable, str(script), str(invoked), "-fsyntax-only", str(source)],
+                }],
+            }],
+        })
+        self.assertFalse(invoked.exists())
+        for arguments in (("unit.cpp", "loop.cpp"), ("loop.cpp",)):
+            with self.subTest(arguments=arguments):
+                result = self.tool("--dry-run", *arguments)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("loop.cpp", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists())
+        subprocess.run(["git", "-C", str(self.root), "add", "unit.cpp"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "add"], check=True)
+        result = self.tool("--dry-run", "--base", "HEAD")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("loop.cpp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+        looping_build = self.root / "looping-build"
+        looping_build.symlink_to(looping_build)
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"'),
+                       {"directory": str(looping_build), "file": "other.cpp", "command": "cc other.cpp"},
+                       {"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), str(loop), str(source), "--", str(loop)]}])
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        plan = json.loads(result.stdout)
+        self.assertEqual(len(plan["translation_units"]), 1)
+        self.assertEqual(plan["translation_units"][0]["source"], str(source))
+        self.assertEqual(len(plan["translation_units"][0]["commands"]), 2)
+        self.assertFalse(invoked.exists())
+        response = self.build / "flags.rsp"
+        response.write_text('"-DREQUIRED=1" "-c" "-o" "unit.o"', encoding="utf-8")
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), "@flags.rsp", str(source)]}])
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(json.loads(result.stdout), {
+            "translation_units": [{
+                "source": str(source),
+                "commands": [{
+                    "directory": str(self.build),
+                    "arguments": [sys.executable, str(script), str(invoked), "-fsyntax-only", "-DREQUIRED=1", str(source)],
+                }],
+            }],
+        })
+        self.assertFalse(invoked.exists())
+        response.unlink()
+        response.symlink_to(response)
+        result = self.tool("--dry-run", "unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("flags.rsp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+        dangling = self.root / "dangling.cpp"
+        dangling.symlink_to(self.root / "missing.cpp")
+        for missing_arg, resolved in (("orphan.cpp", self.root / "orphan.cpp"),
+                                      ("dangling.cpp", self.root / "missing.cpp")):
+            with self.subTest(missing_arg=missing_arg):
+                result = self.tool("--dry-run", missing_arg)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(json.loads(result.stdout), {
+                    "translation_units": [{"source": str(resolved), "commands": []}],
+                })
+
     def test_syntax_arguments_does_not_call_path_resolve_on_the_source(self):
         loop = self.root / "loop.cpp"
         other = self.root / "other.cpp"
@@ -397,10 +588,32 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
             ninja = bin / "ninja"
             ninja.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stub}"\n', encoding="utf-8")
             ninja.chmod(0o755)
-        result = self.tool("unit.cpp", env={"PATH": f"{bin}{os.pathsep}{os.environ['PATH']}",
-                                            "NINJA_STUB_PYTHON": sys.executable})
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("1 translation units compile", result.stdout)
+        for program in (None, "CMAKE_MAKE_PROGRAM-NOTFOUND", self.root / "missing-ninja"):
+            with self.subTest(program=program):
+                if program is not None:
+                    (self.build / "CMakeCache.txt").write_text(
+                        f"CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_MAKE_PROGRAM:FILEPATH={program}\n", encoding="utf-8")
+                result = self.tool("unit.cpp", env={"PATH": f"{bin}{os.pathsep}{os.environ['PATH']}",
+                                                    "NINJA_STUB_PYTHON": sys.executable})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("1 translation units compile", result.stdout)
+
+    def test_configured_ninja_is_used_when_ninja_is_not_on_path(self):
+        ninja = shutil.which("ninja")
+        cmake = shutil.which("cmake")
+        compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+        if ninja is None or cmake is None or compiler is None:
+            self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
+        source = self.source("unit.cpp", "int main() { return 0; }\n")
+        self.source("CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\nproject(Unit CXX)\n"
+                    "add_executable(unit unit.cpp)\n")
+        subprocess.run([cmake, "-G", "Ninja", "-S", str(self.root), "-B", str(self.build),
+                        f"-DCMAKE_MAKE_PROGRAM={ninja}", f"-DCMAKE_CXX_COMPILER={compiler}",
+                        "-DCMAKE_EXPORT_COMPILE_COMMANDS=OFF"], check=True, capture_output=True)
+        path_lookup = shutil.which
+        with patch.object(check_compile.shutil, "which", side_effect=lambda name: None if name == "ninja" else path_lookup(name)):
+            self.assertEqual(check_compile.check(self.root, self.build, [source]), (1, 0))
 
     def test_argument_arrays_preserve_tokens_and_take_precedence_over_command(self):
         source = self.source("unit with spaces.cpp")
@@ -472,6 +685,16 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
                 result = self.tool("--jobs", jobs, "first.c")
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("positive integer", result.stderr)
+
+
+class CheckCompileDuplicateCompilationDatabaseKeysTests(unittest.TestCase):
+    def test_rejects_duplicate_keys_in_compilation_records(self):
+        import check_compile
+        for content in ('[{"directory":"a","directory":"b","file":"a.c","command":"cc a.c"}]',
+                        '[{"directory":"a","file":"a.c","command":"cc a.c","command":"cc b.c"}]'):
+            with self.subTest(content=content):
+                with self.assertRaisesRegex(ValueError, "duplicate"):
+                    check_compile.compilation_database(content, "compile_commands.json")
 
 
 class CheckCompileDatabaseTests(CheckCompileFixture):
@@ -575,6 +798,23 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                 with self.assertRaisesRegex(ValueError, "ninja -t compdb: " + message):
                     check_compile.check(self.root, self.build, [source])
                 compiler.assert_not_called()
+
+    def test_index_groups_entries_by_checkout_relative_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "checkout"
+            build = Path(directory) / "build"
+            (root / "src").mkdir(parents=True)
+            build.mkdir()
+            database = [
+                {"directory": str(root), "file": "src/a.cpp", "command": "cc -c src/a.cpp"},
+                {"directory": str(root / "src"), "file": "a.cpp", "command": "cc -DX -c a.cpp"},
+                {"directory": str(root), "file": "src/b.cpp", "command": "cc -c src/b.cpp"},
+            ]
+            (build / "compile_commands.json").write_text(json.dumps(database), encoding="utf-8")
+            commands = check_compile.index(build, root)
+            self.assertEqual(sorted(commands), ["src/a.cpp", "src/b.cpp"])
+            self.assertEqual(commands["src/a.cpp"], database[:2])
+            self.assertEqual(commands["src/b.cpp"], database[2:])
 
 
 class CheckCompileOutputTests(CheckCompileFixture):
@@ -715,21 +955,26 @@ class CheckCompileOutputTests(CheckCompileFixture):
                     self.assertEqual(path.read_bytes(), content, str(path))
                 self.assertEqual(set(self.build.iterdir()), set(preserved))
 
-    def test_unmodeled_saved_temporary_modes_are_rejected_before_the_compiler_runs(self):
+    def test_all_saved_temporary_modes_are_dropped_before_the_compiler_runs(self):
         source = self.source("unit.c")
         invoked = self.root / "invoked"
-        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        recorded = self.root / "recorded.json"
+        script = self.compiler("import json, sys\nfrom pathlib import Path\n"
+                               f"Path({str(invoked)!r}).touch()\n"
+                               f"Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n")
         for option in ("-save-temps=invalid", "-save-temps=diag", "--save-temps=diag",
                        "-save-temps=CWD", "-save-temps="):
             with self.subTest(option=option):
+                invoked.unlink(missing_ok=True)
+                recorded.unlink(missing_ok=True)
                 self.manifest([{"directory": str(self.build), "file": str(source),
-                                "arguments": [sys.executable, str(script), str(invoked), option,
+                                "arguments": [sys.executable, str(script), option,
                                               "-c", str(source), "-o", str(self.build / "unit.o")]}])
                 result = self.tool("unit.c")
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn(f"unsupported saved-temporary mode in {option}", result.stderr)
-                self.assertNotIn("Traceback", result.stderr)
-                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("1 translation units compile", result.stdout)
+                self.assertTrue(invoked.exists(), result.stdout + result.stderr)
+                self.assertNotIn(option, json.loads(recorded.read_text(encoding="utf-8")))
                 self.assertFalse((self.build / "unit.o").exists(), result.stdout + result.stderr)
 
 
@@ -770,8 +1015,10 @@ class CheckCompileResponseTests(CheckCompileFixture):
         source = self.source("unit.c")
         response = self.build / "flags.rsp"
         recorder = self.compiler("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
-        launcher = shutil.which("py")
-        wrapper = f"{launcher},-3,{recorder}" if launcher else f"{sys.executable},{recorder}"
+        interpreter = spawnable_python()
+        if interpreter is None:
+            self.skipTest("needs a Python interpreter that is not an App Execution Alias")
+        wrapper = ",".join([*interpreter, str(recorder)])
         arguments = [compiler, "-wrapper", wrapper,
                      "-c", str(source), "-o", str(self.build / "unit.o"), "@flags.rsp"]
         cases = (
@@ -882,19 +1129,148 @@ class CheckCompileResponseTests(CheckCompileFixture):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertFalse(invoked.exists())
 
-    def test_windows_response_grammars_are_rejected_before_execution(self):
+    def test_cl_mode_response_files_are_rejected_before_execution(self):
         source = self.source("unit.c")
         response = self.build / "flags.rsp"
         response.write_text("-DA=7", encoding="utf-8")
         for arguments in (["clang-cl", "@flags.rsp"], ["cl.exe", "@flags.rsp"],
                           ["clang", "--driver-mode=cl", "@flags.rsp"],
-                          ["clang", "--rsp-quoting=windows", "@flags.rsp"]):
+                          ["clang", "--driver-mode=cl", "--rsp-quoting=windows", "@flags.rsp"]):
             with self.subTest(arguments=arguments):
                 self.manifest([{"directory": str(self.build), "file": str(source), "arguments": arguments}])
                 result = self.tool("unit.c")
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn("Windows-style compiler response files are unsupported", result.stderr)
+                self.assertIn("cl-mode compiler response files are unsupported", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_windows_quoted_response_files_follow_the_clang_tokenizer(self):
+        response = self.build / "flags.rsp"
+        cases = (
+            (r'-DA=a\\"b c"', ["-DA=a\\b c"]),
+            (r'-DA=a\\\"b', ['-DA=a\\"b']),
+            (r"-DA=c:\dir\ -DB=x\\y", ["-DA=c:\\dir\\", "-DB=x\\\\y"]),
+            (r'"-DA=p""q"', ['-DA=p"q']),
+            (r'"-DA=p"""q"', ['-DA=p"q']),
+            (r'-DA=p""q', ["-DA=pq"]),
+            (r'-D "" -DB', ["-D", "", "-DB"]),
+            ('""', [""]),
+            ("-DA=x\vy -DB=x\fy", ["-DA=x\vy", "-DB=x\fy"]),
+            ('-DA "-DB=x y', ["-DA", "-DB=x y"]),
+            ("-DA\r\n-DB\t-DC\n", ["-DA", "-DB", "-DC"]),
+            ('"-DA=x\r\ny"', ["-DA=x\r\ny"]),
+            ("-DA='x y'", ["-DA='x", "y'"]),
+            ("\\", ["\\"]),
+            ('"\\"', ['"']),
+            ("", []),
+            (" \t\r\n", []),
+        )
+        for content, expected in cases:
+            with self.subTest(content=content):
+                response.write_bytes(content.encode("utf-8"))
+                self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True), expected)
+
+    def test_windows_quoted_response_files_decode_byte_order_marks(self):
+        response = self.build / "flags.rsp"
+        cases = (
+            (b"\xef\xbb\xbf-DA=c:\\dir", ["-DA=c:\\dir"]),
+            (b"\xff\xfe" + '-DA="x y" -DB=\u00e9'.encode("utf-16-le"), ["-DA=x y", "-DB=\u00e9"]),
+            (b"\xfe\xff" + '-DA="x y"'.encode("utf-16-be"), ["-DA=x y"]),
+        )
+        for content, expected in cases:
+            with self.subTest(content=content):
+                response.write_bytes(content)
+                self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True), expected)
+        for content in (b"-DA=\0", b"\xff\xfe-", b"-DA=\xff", "-DNOBOM".encode("utf-16-le")):
+            with self.subTest(content=content):
+                response.write_bytes(content)
+                with self.assertRaises(ValueError):
+                    check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True)
+
+    def test_windows_quoting_applies_to_nested_response_files_relative_to_the_build_directory(self):
+        (self.build / "sub").mkdir()
+        (self.build / "sub" / "outer.rsp").write_text("@inner.rsp -DA=c:\\outer", encoding="utf-8")
+        (self.build / "sub" / "inner.rsp").write_text("-DWRONG", encoding="utf-8")
+        (self.build / "inner.rsp").write_text('"-DB=x y" -DC=c:\\inner', encoding="utf-8")
+        self.assertEqual(check_compile.expand_response_files(["@sub/outer.rsp"], self.build, windows=True),
+                         ["-DB=x y", "-DC=c:\\inner", "-DA=c:\\outer"])
+
+    def test_the_last_top_level_rsp_quoting_option_selects_the_tokenizer(self):
+        source = self.source("unit.c")
+        response = self.build / "flags.rsp"
+        recorded = self.root / "recorded.json"
+        script = self.compiler("import json, sys\nfrom pathlib import Path\n"
+                               f"Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+        cases = (
+            ("-DA=c:\\dir", ["--rsp-quoting=windows"], "-DA=c:\\dir"),
+            ("-DA=c:\\dir", ["--rsp-quoting=windows", "--rsp-quoting=posix"], "-DA=c:dir"),
+            ("-DA=c:\\dir", ["--rsp-quoting=posix", "--rsp-quoting=windows"], "-DA=c:\\dir"),
+            ("-DA=c:\\dir", ["@flags.rsp", "--rsp-quoting=windows"], "-DA=c:\\dir"),
+            ("--rsp-quoting=windows -DA=c:\\dir", [], "-DA=c:dir"),
+        )
+        for content, options, expected in cases:
+            with self.subTest(content=content, options=options):
+                response.write_text(content, encoding="utf-8")
+                arguments = [sys.executable, str(script), *options]
+                if "@flags.rsp" not in options:
+                    arguments.append("@flags.rsp")
+                self.manifest([{"directory": str(self.build), "file": str(source), "arguments": arguments}])
+                result = self.tool("unit.c")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, json.loads(recorded.read_text(encoding="utf-8")))
+
+    def test_an_unknown_rsp_quoting_value_is_rejected_before_execution(self):
+        source = self.source("unit.c")
+        (self.build / "flags.rsp").write_text("-DA=7", encoding="utf-8")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(invoked), "--rsp-quoting=cl", "@flags.rsp"]}])
+        result = self.tool("unit.c")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("unsupported response-file quoting --rsp-quoting=cl", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(invoked.exists())
+
+    def test_windows_quoted_response_tokens_match_clang(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to compare Windows response-file quoting")
+        prefix = "error: no such file or directory: '"
+        empty_error = prefix + "'" in subprocess.run(
+            [compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", ""],
+            cwd=self.build, capture_output=True, text=True, encoding="utf-8").stderr
+        response = self.build / "flags.rsp"
+        for content in (r'a\\"b c"', 'a\\\\\\"b', "x\\ y", '"', '""', '"""', '""""', 'a""b', '"a""b"',
+                        'x"y z', 'q\\\\"', '"\\"', "'a b'", "a\tb\r\nc", "a\vb\fc", '"a\nb" c'):
+            with self.subTest(content=content):
+                if not empty_error and content in ('"', '""'):
+                    continue
+                response.write_bytes(("-- " + content).encode("utf-8"))
+                result = subprocess.run([compiler, "-###", "--rsp-quoting=windows", "-fsyntax-only", "-x", "c", "@flags.rsp"],
+                                        cwd=self.build, capture_output=True, text=True, encoding="utf-8")
+                tokens = [part[:part.rindex("'")] for part in result.stderr.split(prefix)[1:]]
+                self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build, windows=True)[1:], tokens)
+
+    def test_windows_quoted_response_files_compile_without_changing_build_outputs(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to compile Windows-quoted response files")
+        source = self.source("unit.c", "_Static_assert(VALUE == 'x', \"Windows quoting keeps single quotes\");\n"
+                                       "_Static_assert(sizeof(TEXT) == 4, \"Windows quoting keeps backslashes\");\n")
+        outputs = [self.build / name for name in ("unit.o", "unit dependency.d")]
+        response = self.build / "flags.rsp"
+        response.write_text(f"-DVALUE='x' -DTEXT=\\\"a\\\\b\\\" -c \"{source}\" -o \"{outputs[0]}\" -MD -MF \"{outputs[1]}\"",
+                            encoding="utf-8")
+        arguments = [compiler, "--rsp-quoting=windows", "@flags.rsp"]
+        original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True)
+        self.assertEqual(original.returncode, 0, original.stderr)
+        preserved = {path: path.read_bytes() for path in [source, response, *outputs]}
+        self.manifest([{"directory": str(self.build), "file": str(source), "arguments": arguments}])
+        result = self.tool("unit.c")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+        for path, content in preserved.items():
+            self.assertEqual(path.read_bytes(), content, path.name)
 
     def test_response_files_are_expanded_without_rewriting_build_outputs(self):
         compiler = shutil.which("clang")
@@ -1060,19 +1436,19 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 self.assertEqual(check_compile.syntax_arguments(
                     [*prefix, "ccache", "g++", "-DNAME=1", "-include", "pch.hxx", "-c", "-o", "unit.o", str(source)],
                     Path.cwd(), source),
-                    [*prefix, "ccache", "g++", "-fsyntax-only", "-DNAME=1", "-include", "pch.hxx", str(source)])
+                    [*prefix, "ccache", "g++", "-fsyntax-only", "-DNAME=1", "-include", "pch.hxx", str(check_compile.real(source))])
 
     def test_env_delimiter_preserves_a_command_path_containing_equals(self):
         source = Path.cwd() / "unit.cpp"
         prefix = ["cmake", "-E", "env", "--"]
         command = "compiler=tools/g++"
         self.assertEqual(check_compile.syntax_arguments([*prefix, command, "-c", str(source)], Path.cwd(), source),
-                         [*prefix, command, "-fsyntax-only", str(source)])
+                         [*prefix, command, "-fsyntax-only", str(check_compile.real(source))])
 
     def test_only_cmake_starts_an_env_prefix(self):
         source = Path.cwd() / "unit.cpp"
         self.assertEqual(check_compile.syntax_arguments(["g++", "-E", "env", "-c", str(source)], Path.cwd(), source),
-                         ["g++", "-fsyntax-only", "env", str(source)])
+                         ["g++", "-fsyntax-only", "env", str(check_compile.real(source))])
 
     def test_an_env_prefix_without_a_command_or_with_an_unmodeled_option_is_rejected(self):
         source = Path.cwd() / "unit.cpp"
@@ -1084,6 +1460,169 @@ class CheckCompileLauncherTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
+
+
+class CheckCompileValidateArgumentsTests(unittest.TestCase):
+    def test_accepts_nonempty_list_of_strings(self):
+        check_compile.validate_arguments(["cc", "-c", "a.c"])
+
+    def test_rejects_non_lists_empty_lists_and_empty_executable(self):
+        for arguments in ("cc -c", ("cc",), [], [""], None):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.validate_arguments(arguments)
+
+    def test_rejects_non_string_elements(self):
+        with self.assertRaises(ValueError):
+            check_compile.validate_arguments(["cc", 1])
+
+
+class CheckCompileWindowsResponseTextTests(unittest.TestCase):
+    def test_decodes_utf16_with_either_byte_order_mark(self):
+        self.assertEqual(check_compile.windows_response_text("-DA=é".encode("utf-16")), "-DA=é")
+        self.assertEqual(check_compile.windows_response_text(b"\xfe\xff" + "-DA=é".encode("utf-16-be")), "-DA=é")
+
+    def test_strips_utf8_byte_order_mark(self):
+        self.assertEqual(check_compile.windows_response_text(b"\xef\xbb\xbf-DA"), "-DA")
+
+    def test_plain_utf8_is_decoded_and_invalid_bytes_raise(self):
+        self.assertEqual(check_compile.windows_response_text("-DA=é".encode("utf-8")), "-DA=é")
+        with self.assertRaises(UnicodeDecodeError):
+            check_compile.windows_response_text(b"\xff\xff\xff")
+
+
+class CheckCompileResponseQuotingTests(unittest.TestCase):
+    def test_defaults_to_posix(self):
+        self.assertEqual(check_compile.response_quoting([]), "posix")
+        self.assertEqual(check_compile.response_quoting(["cc", "-c"]), "posix")
+
+    def test_last_option_wins(self):
+        arguments = ["cc", "--rsp-quoting=windows", "--rsp-quoting=posix"]
+        self.assertEqual(check_compile.response_quoting(arguments), "posix")
+        self.assertEqual(check_compile.response_quoting(["--rsp-quoting=windows"]), "windows")
+
+    def test_unknown_quoting_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "unsupported response-file quoting --rsp-quoting=shell"):
+            check_compile.response_quoting(["--rsp-quoting=shell"])
+
+
+class CheckCompilePositiveIntegerTests(unittest.TestCase):
+    def test_returns_positive_integers(self):
+        self.assertEqual(check_compile.positive_integer("3"), 3)
+        self.assertEqual(check_compile.positive_integer(" 12 "), 12)
+
+    def test_zero_and_negative_values_are_argument_errors(self):
+        for value in ("0", "-4"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    check_compile.positive_integer(value)
+
+    def test_non_numbers_raise_value_error(self):
+        with self.assertRaises(ValueError):
+            check_compile.positive_integer("many")
+
+
+class CheckCompileLauncherPrefixTests(unittest.TestCase):
+    def test_non_cmake_commands_have_no_prefix(self):
+        self.assertEqual(check_compile.launcher_prefix(["cc", "-c", "a.c"]), [])
+        self.assertEqual(check_compile.launcher_prefix(["cmake", "-E"]), [])
+        self.assertEqual(check_compile.launcher_prefix(["cmake", "-P", "env", "A=1", "cc"]), [])
+
+    def test_environment_assignments_end_at_the_first_other_word(self):
+        arguments = ["cmake", "-E", "env", "A=1", "B=2", "cc", "-c", "a=b.c"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:5])
+
+    def test_double_dash_ends_the_options(self):
+        arguments = ["cmake", "-E", "env", "A=1", "--", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:5])
+
+    def test_modify_and_unset_options_are_skipped(self):
+        arguments = ["cmake", "-E", "env", "--modify", "PATH=path_list_prepend:x", "--unset=A", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:6])
+
+    def test_executable_name_ignores_case_and_windows_directory(self):
+        arguments = ["C:\\Tools\\CMake.exe", "-E", "env", "A=1", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:4])
+
+    def test_malformed_launchers_are_refused(self):
+        for arguments in (["cmake", "-E", "env", "--bogus", "cc"], ["cmake", "-E", "env", "--modify"],
+                          ["cmake", "-E", "env", "A=1"], ["cmake", "-E", "env"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.launcher_prefix(arguments)
+
+    def test_compiler_wrapper_prefixes_are_bare(self):
+        self.assertEqual(check_compile.launcher_prefix(["ccache", "clang", "-c", "a.c"]), ["ccache"])
+        self.assertEqual(check_compile.launcher_prefix(["sccache", "clang"]), ["sccache"])
+        self.assertEqual(check_compile.launcher_prefix(["distcc", "clang"]), ["distcc"])
+
+    def test_compiler_wrapper_options_are_refused(self):
+        for arguments in (["ccache", "--unknown", "clang"], ["ccache", "--show-stats", "clang"],
+                          ["ccache", "--clear", "clang"], ["ccache", "-s"], ["ccache", "--", "clang"],
+                          ["sccache", "--show-stats"], ["sccache", "--start-server", "clang"], ["sccache"],
+                          ["distcc", "--show-hosts", "clang"], ["distcc", "-j", "8", "clang"],
+                          ["distcc", "-j"], ["ccache"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.launcher_prefix(arguments)
+
+
+class CheckCompileEntryKeyTests(unittest.TestCase):
+    def test_relative_file_is_resolved_against_the_entry_directory(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            entry = {"directory": str(root / "build"), "file": "../src/a.cpp"}
+            self.assertEqual(check_compile.entry_key(entry, root), "src/a.cpp")
+
+    def test_absolute_file_inside_root_is_root_relative(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            entry = {"directory": str(root), "file": str(root / "core" / "b.cpp")}
+            self.assertEqual(check_compile.entry_key(entry, root), "core/b.cpp")
+
+    def test_file_outside_root_keeps_its_absolute_path(self):
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as other:
+            outside = Path(other) / "c.cpp"
+            entry = {"directory": name, "file": str(outside)}
+            self.assertEqual(check_compile.entry_key(entry, Path(name)), check_compile.real(outside).as_posix())
+
+
+class CheckCompileResolveSourceTests(unittest.TestCase):
+    def test_existing_file_inside_root_gets_a_relative_name(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "core").mkdir()
+            file = root / "core" / "a.cpp"
+            file.write_text("")
+            source, key = check_compile.resolve_source(file, root)
+            self.assertEqual(source, check_compile.real(file))
+            self.assertEqual(key, "core/a.cpp")
+
+    def test_missing_file_is_still_resolved(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source, key = check_compile.resolve_source(root / "gone.cpp", root)
+            self.assertEqual(key, "gone.cpp")
+            self.assertEqual(source, check_compile.real(root / "gone.cpp"))
+
+    def test_file_outside_root_keeps_an_absolute_name(self):
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as other:
+            file = Path(other) / "x.cpp"
+            _, key = check_compile.resolve_source(file, Path(name))
+            self.assertEqual(key, check_compile.real(file).as_posix())
+
+
+class CheckCompileCommandArgumentsTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
+    def test_command_arguments_splits_quoted_words(self):
+        self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+
+
+class CheckCompileEntriesTests(unittest.TestCase):
+    def test_entries_rejects_a_build_that_is_not_a_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                check_compile.entries(Path(directory) / "missing-build")
 
 
 if __name__ == "__main__":

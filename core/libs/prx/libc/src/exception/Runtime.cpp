@@ -1,17 +1,52 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <stdexcept>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <cerrno>
 #include <unistd.h>
 #endif
+
+#ifdef __APPLE__
+namespace {
+
+[[maybe_unused]] const bool hostRefstringPrepared = [] {
+    const int saved = errno;
+    {
+        const std::runtime_error prepared("");
+    }
+    errno = saved;
+    return true;
+}();
+
+}
+#endif
+
+namespace __cxxabiv1 {
+struct __class_type_info::__upcast_result {
+    const void* dst_ptr;
+    __sub_kind part2dst;
+    int src_details;
+    const __class_type_info* base_type;
+};
+struct __class_type_info::__dyncast_result {
+    const void* dst_ptr;
+    __sub_kind whole2dst;
+    __sub_kind whole2src;
+    __sub_kind dst2src;
+    int whole_details;
+};
+}
 
 namespace LibcException {
 
@@ -51,24 +86,28 @@ static void RawLog(const char* format, ...) {
     RawWrite(buffer, static_cast<std::size_t>(length));
 }
 
+const char* CaughtWhat(const char** typeName) {
+    if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
+    Header* primary = Primary(globals.caught);
+    if (typeName != nullptr) *typeName = primary->type ? primary->type->name() : nullptr;
+    void* exception = primary->adjusted;
+    if (!exception || !primary->type || !Match(&typeid(std::exception), primary->type, exception)) return nullptr;
+    struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
+    const void* vtable = *static_cast<const void* const*>(exception);
+    auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
+#ifdef _WIN32
+    if (!primary->_pad) {
+        using GuestWhat = const char* (APS5_VABI *)(const void*);
+        return reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
+    }
+#endif
+    return layout->whatFn(exception);
+}
+
 [[noreturn]] static void DefaultTerminate() {
     if (globals.caught && Native(globals.caught->unwind.exception_class)) {
-        Header* primary = Primary(globals.caught);
-        const char* typeName = primary->type ? primary->type->name() : nullptr;
-        const char* what = nullptr;
-        void* exception = primary->adjusted;
-        if (exception && primary->type && Match(&typeid(std::exception), primary->type, exception)) {
-            struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
-            const void* vtable = *static_cast<const void* const*>(exception);
-            auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
-#ifdef _WIN32
-            if (!primary->_pad) {
-                using GuestWhat = const char* (__attribute__((sysv_abi)) *)(const void*);
-                what = reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
-            } else
-#endif
-            what = layout->whatFn(exception);
-        }
+        const char* typeName = nullptr;
+        const char* what = CaughtWhat(&typeName);
         int status = 0;
         char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
         const char* displayName = (status == 0 && demangled) ? demangled : typeName;
@@ -87,7 +126,10 @@ static void RawLog(const char* format, ...) {
 
 inline std::atomic<void(*)()> terminateHandler {DefaultTerminate};
 [[noreturn]] void InvokeTerminate(void (*handler)()) {
+    const bool runtimeHandler = handler == nullptr || handler == DefaultTerminate || handler == std::abort;
+    if (runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     try { if (handler) handler(); } catch (...) {}
+    if (!runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     std::abort();
 }
 [[noreturn]] void Terminate() { InvokeTerminate(terminateHandler.load(std::memory_order_acquire)); }
@@ -211,6 +253,190 @@ void Bases(const std::type_info* type, void* object, Search& search) {
     };
     VisitBases(type, {object, 0}, true, visitor);
     if (search.count == 1 && !reachedPublicly) search.count = 0;
+}
+
+bool APS5_VABI UpcastTypeInfo(const std::type_info* self, const __cxxabiv1::__class_type_info* destination,
+                              void** object) {
+    if (!self || !destination || !object) throw std::invalid_argument("invalid RTTI upcast arguments");
+    Search search {destination};
+    Bases(self, *object, search);
+    if (search.count != 1) return false;
+    *object = search.found;
+    return true;
+}
+
+struct CallbackLocation {
+    void* object;
+    std::uintptr_t identity;
+    __cxxabiv1::__class_type_info::__sub_kind path;
+    const std::type_info* virtualBase;
+};
+
+template<class Visitor>
+void VisitCallbackBases(const std::type_info* type, CallbackLocation location, Visitor& visitor, unsigned depth = 0) {
+    using ClassTypeInfo = __cxxabiv1::__class_type_info;
+    if (!type) return;
+    if (depth > 128) Terminate();
+    visitor(type, location);
+    const char* kind = Kind(type);
+    if (std::strcmp(kind, "N10__cxxabiv120__si_class_type_infoE") == 0) {
+        const auto* si = static_cast<const __cxxabiv1::__si_class_type_info*>(type);
+        VisitCallbackBases(si->__base_type, location, visitor, depth + 1);
+        return;
+    }
+    if (std::strcmp(kind, "N10__cxxabiv121__vmi_class_type_infoE") != 0) return;
+    const auto* vmi = static_cast<const __cxxabiv1::__vmi_class_type_info*>(type);
+    for (unsigned index = 0; index < vmi->__base_count; ++index) {
+        const auto& base = vmi->__base_info[index];
+        const bool isVirtual = (base.__offset_flags & 1) != 0;
+        const bool isPublic = (base.__offset_flags & 2) != 0;
+        auto offset = base.__offset_flags >> 8;
+        CallbackLocation next = location;
+        if (isVirtual) {
+            next.path = static_cast<ClassTypeInfo::__sub_kind>(next.path | ClassTypeInfo::__contained_virtual_mask);
+            next.virtualBase = base.__base_type;
+            if (location.object) {
+                const auto* addressPoint = *static_cast<const std::intptr_t* const*>(location.object);
+                std::memcpy(&offset, reinterpret_cast<const unsigned char*>(addressPoint) + offset, sizeof(offset));
+            } else {
+                next.identity = reinterpret_cast<std::uintptr_t>(base.__base_type);
+                offset = 0;
+            }
+        }
+        if (!isPublic)
+            next.path = static_cast<ClassTypeInfo::__sub_kind>(next.path & ~ClassTypeInfo::__contained_public_mask);
+        if (location.object) {
+            next.object = static_cast<unsigned char*>(location.object) + offset;
+            next.identity = reinterpret_cast<std::uintptr_t>(next.object);
+        } else next.identity += offset;
+        VisitCallbackBases(base.__base_type, next, visitor, depth + 1);
+    }
+}
+
+bool APS5_VABI UpcastTypeInfoResult(const __cxxabiv1::__class_type_info* self,
+                                   const __cxxabiv1::__class_type_info* destination, const void* object,
+                                   __cxxabiv1::__class_type_info::__upcast_result& result) {
+    using ClassTypeInfo = __cxxabiv1::__class_type_info;
+    if (!self || !destination) throw std::invalid_argument("invalid RTTI upcast result arguments");
+    const auto sentinel = reinterpret_cast<const ClassTypeInfo*>(std::uintptr_t{1});
+    bool found = false;
+    bool ambiguous = false;
+    std::uintptr_t identity = 0;
+    auto visitor = [&](const std::type_info* candidate, CallbackLocation location) {
+        if (ambiguous) return;
+        if (!Equal(candidate, destination)) return;
+        const auto* candidateBase = location.virtualBase
+                                        ? static_cast<const ClassTypeInfo*>(location.virtualBase)
+                                        : sentinel;
+        if (!found) {
+            found = true;
+            identity = location.identity;
+            result.dst_ptr = location.object;
+            result.part2dst = location.path;
+            result.base_type = candidateBase;
+            return;
+        }
+        if (identity != location.identity) {
+            result.dst_ptr = nullptr;
+            result.part2dst = ClassTypeInfo::__contained_ambig;
+            result.base_type = nullptr;
+            ambiguous = true;
+            return;
+        }
+        result.part2dst = static_cast<ClassTypeInfo::__sub_kind>(result.part2dst | location.path);
+        if (result.base_type != candidateBase) result.base_type = sentinel;
+    };
+    VisitCallbackBases(self, {const_cast<void*>(object), reinterpret_cast<std::uintptr_t>(object), ClassTypeInfo::__contained_public, nullptr}, visitor);
+    return found;
+}
+
+bool APS5_VABI DynamicCastTypeInfo(const __cxxabiv1::__class_type_info* self, std::ptrdiff_t sourceToDestination,
+                                   __cxxabiv1::__class_type_info::__sub_kind accessPath,
+                                   const __cxxabiv1::__class_type_info* destination, const void* object,
+                                   const __cxxabiv1::__class_type_info* source, const void* sourceObject,
+                                   __cxxabiv1::__class_type_info::__dyncast_result& result) {
+    using ClassTypeInfo = __cxxabiv1::__class_type_info;
+    if (!self || !destination || !source) throw std::invalid_argument("invalid RTTI dynamic cast arguments");
+    const auto rootPath = accessPath;
+    bool sourcePresent = false;
+    bool sourcePublic = false;
+    struct Candidate {
+        const void* object;
+        std::uintptr_t identity;
+        ClassTypeInfo::__sub_kind path;
+        ClassTypeInfo::__sub_kind toSource;
+        bool containsSource;
+    };
+    std::vector<Candidate> candidates;
+    auto visitor = [&](const std::type_info* candidate, CallbackLocation location) {
+        if (Equal(candidate, source) && location.object == sourceObject) {
+            sourcePresent = true;
+            if (location.path & ClassTypeInfo::__contained_public_mask) sourcePublic = true;
+            result.whole2src = static_cast<ClassTypeInfo::__sub_kind>(result.whole2src | location.path);
+        }
+        if (!Equal(candidate, destination)) return;
+        bool containsSource = false;
+        ClassTypeInfo::__sub_kind toSource = ClassTypeInfo::__not_contained;
+        auto sourceVisitor = [&](const std::type_info* base, CallbackLocation baseLocation) {
+            if (!Equal(base, source) || baseLocation.object != sourceObject) return;
+            toSource = containsSource ? static_cast<ClassTypeInfo::__sub_kind>(toSource | baseLocation.path) : baseLocation.path;
+            containsSource = true;
+        };
+        VisitCallbackBases(candidate, {location.object, location.identity, ClassTypeInfo::__contained_public, nullptr}, sourceVisitor);
+        auto found = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate& entry) {
+            return entry.identity == location.identity;
+        });
+        if (found == candidates.end())
+            candidates.push_back({location.object, location.identity, location.path, toSource, containsSource});
+        else {
+            found->path = static_cast<ClassTypeInfo::__sub_kind>(found->path | location.path);
+            found->toSource = static_cast<ClassTypeInfo::__sub_kind>(found->toSource | toSource);
+            found->containsSource = found->containsSource || containsSource;
+        }
+    };
+    result.whole2src = ClassTypeInfo::__unknown;
+    if (result.whole_details & 0x10) {
+        if (std::strcmp(Kind(self), "N10__cxxabiv121__vmi_class_type_infoE") == 0)
+            result.whole_details = static_cast<const __cxxabiv1::__vmi_class_type_info*>(self)->__flags;
+        else result.whole_details = 0;
+    }
+    VisitCallbackBases(self, {const_cast<void*>(object), reinterpret_cast<std::uintptr_t>(object), rootPath, nullptr}, visitor);
+    result.dst_ptr = nullptr;
+    result.whole2dst = ClassTypeInfo::__unknown;
+    result.dst2src = ClassTypeInfo::__unknown;
+    std::vector<Candidate*> downcasts;
+    std::vector<Candidate*> publicTargets;
+    for (auto& candidate : candidates) {
+        if (candidate.path & ClassTypeInfo::__contained_public_mask) publicTargets.push_back(&candidate);
+        if (candidate.containsSource && (candidate.toSource & ClassTypeInfo::__contained_public_mask))
+            downcasts.push_back(&candidate);
+    }
+    if (downcasts.size() == 1) {
+        result.dst_ptr = downcasts.front()->object;
+        result.whole2dst = downcasts.front()->path;
+        result.dst2src = downcasts.front()->toSource;
+        return false;
+    }
+    if (downcasts.size() > 1) {
+        result.dst2src = ClassTypeInfo::__contained_ambig;
+        return true;
+    }
+    if (candidates.size() > 1) {
+        result.whole2dst = ClassTypeInfo::__contained_ambig;
+        return true;
+    }
+    if (publicTargets.size() == 1 && sourcePresent && sourcePublic) {
+        result.dst_ptr = publicTargets.front()->object;
+        result.whole2dst = publicTargets.front()->path;
+        result.dst2src = ClassTypeInfo::__not_contained;
+        return false;
+    }
+    if (publicTargets.size() > 1) {
+        result.dst2src = ClassTypeInfo::__contained_ambig;
+        return true;
+    }
+    if (sourceToDestination == -2) result.dst2src = ClassTypeInfo::__not_contained;
+    return false;
 }
 
 bool PointerMatch(const __cxxabiv1::__pbase_type_info* caught, const __cxxabiv1::__pbase_type_info* thrown,
@@ -384,6 +610,9 @@ int APS5_VABI _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>
 [[noreturn]] void APS5_VABI _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
 
 LibcTerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
+#ifdef __APPLE__
+    std::set_terminate(handler ? handler : std::abort);
+#endif
     return LibcException::terminateHandler.exchange(handler ? handler : std::abort);
 }
 LibcTerminateHandler APS5_VABI _ZSt13get_terminatev_nid_postfix() { return LibcException::terminateHandler.load(); }

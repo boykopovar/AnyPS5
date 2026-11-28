@@ -6,4 +6,6 @@
 
 ### Functional
 
+- Invalid-output behavior for [PFR query exports](../../../core/libs/prx/libSceFreeTypeOptOl/Export.cpp), through their [shared adapters](../../../core/libs/prx/libSceFreeType/src/Pfr.cpp), is not measured on a console. Before each actual output write, the host-safety guard checks the complete range; metrics checks every present output before changing any. A refused range returns the native error if nonzero, otherwise Invalid_Argument. Writable outputs retain outline-before-metrics-before-x-before-y alias order, error-path values and the existing non-PFR advance no-write rule. The measured null-face error remains Invalid_Argument (6).
+
 - [PFR faces](../../../core/libs/prx/libSceFreeTypeOptOl/Export.cpp) share the existing libSceFreeType ownership and lifetime rules. The optional module forwards to native helpers in that library rather than constructing another FreeType runtime. Private face records, stale or arbitrary pointers, caller-replaced internal records and simultaneous operations on the same face are not made safe by these adapters; callers must obey FreeType's face lifetime and threading requirements. The synthetic PFR regression exercises metrics, signed advances, metric-space kerning and an empty outline; it does not test bitmap-only PFR faces or every format feature.

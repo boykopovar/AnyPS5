@@ -1,10 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -47,10 +49,30 @@ int main() {
     Require(Rejects("256.1.1.1") && Rejects("1.2.3.256") && Rejects("1.2.65536"), "part out of range");
     Require(Rejects("1.2.3.4.5") && Rejects("08") && Rejects("0x") && Rejects("1.2.3.4x"), "malformed");
     Require(Rejects("") && Rejects(".1") && Rejects("1..2") && Rejects("-1"), "missing digits");
+    Require(Parses("0x.1", Network(0, 0, 0, 1)) && Parses("0.0x1", Network(0, 0, 0, 1)), "bare 0x before a dot");
+    Require(Rejects("1.0x") && Rejects("0x.0x") && Rejects("0x0x1"), "bare 0x in the last part");
+    Require(Parses("0X1.0XA", Network(1, 0, 0, 10)) && Parses("0xAb.0xcD.0XeF.0x01", Network(0xab, 0xcd, 0xef, 1)), "upper-case hex");
+    Require(Parses("00", Network(0, 0, 0, 0)) && Parses("0377.1", Network(255, 0, 0, 1)) && Rejects("0400.1") && Rejects("1.08"), "octal parts");
+    Require(Parses("1.0xffffff", Network(1, 255, 255, 255)) && Parses("1.16777215", Network(1, 255, 255, 255)), "two-part maximum");
+    Require(Rejects("1.0x1000000") && Rejects("1.16777216"), "two-part overflow");
+    Require(Parses("1.2.0xffff", Network(1, 2, 255, 255)) && Rejects("1.2.0x10000"), "three-part limit");
+    Require(Parses("1.2.3.0xff", Network(1, 2, 3, 255)) && Rejects("1.2.3.0x100") && Rejects("1.2.3.4."), "four-part limit");
+    Require(Parses("4294967295", Network(255, 255, 255, 255)) && Parses("4294967296", Network(0, 0, 0, 0)), "single part above 32 bits");
+    Require(Parses("18446744073709551617", Network(0, 0, 0, 1)) && Parses("0x10000000000000001", Network(0, 0, 0, 1)) &&
+            Parses("0xfffffffffffffffff", Network(255, 255, 255, 255)), "single part wraps at 64 bits");
+    Require(Rejects("4294967296.1") && Rejects("0x100000001.1") && Rejects("1.4294967296") && Rejects("1.0x100000001") &&
+            Rejects("1.2.3.0x100000001"), "parts compared before truncation to 32 bits");
+    Require(Parses("1.2.3.4\t", Network(1, 2, 3, 4)) && Parses("1.2.3.4\n", Network(1, 2, 3, 4)) && Parses("1.2.3.4\v", Network(1, 2, 3, 4)) &&
+            Parses("1.2.3.4\f", Network(1, 2, 3, 4)) && Parses("1.2.3.4\r", Network(1, 2, 3, 4)), "trailing whitespace");
+    Require(Rejects("1.2.3.4\x01") && Rejects("1.2.3.4\x80") && Rejects("1.2.3.4\xa0"), "trailing control or non-ASCII byte");
     Require(inet_aton_nid_postfix("1.2.3.4", nullptr) == 1 && inet_aton_nid_postfix("x", nullptr) == 0, "null destination");
+    errno = 71;
+    Require(inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<std::uint32_t*>(0x10)) == 0 && errno == 71, "unwritable destination");
 
     Require(inet_addr_nid_postfix("127.0.0.1") == Network(127, 0, 0, 1), "inet_addr");
     Require(inet_addr_nid_postfix("bad") == 0xffffffffu && inet_addr_nid_postfix("255.255.255.255") == 0xffffffffu, "inet_addr none");
+    Require(inet_addr_nid_postfix("0x.1") == Network(0, 0, 0, 1) && inet_addr_nid_postfix("4294967296") == 0 && inet_addr_nid_postfix("1.0x") == 0xffffffffu &&
+            inet_addr_nid_postfix("1.2.3.0x100") == 0xffffffffu, "inet_addr follows inet_aton");
 
     char* const text = inet_ntoa_nid_postfix(Network(10, 20, 30, 40));
     Require(std::string(text) == "10.20.30.40", "inet_ntoa");
@@ -136,6 +158,24 @@ int main() {
     threw = false;
     try { __inet_network_nid_postfix(nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw, "__inet_network null throws");
+
+    auto rejectsRuntime = [](auto&& call, const char* what) {
+        errno = 71;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            Require(errno == 71, what);
+            return;
+        }
+        Require(false, what);
+    };
+    const auto* badText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    std::uint32_t out = 0x5a5a5a5a;
+    rejectsRuntime([&] { inet_aton_nid_postfix(badText, &out); }, "inet_aton unreadable text");
+    Require(out == 0x5a5a5a5a, "inet_aton unreadable text preserves out");
+    rejectsRuntime([&] { inet_addr_nid_postfix(badText); }, "inet_addr unreadable text");
+    rejectsRuntime([&] { inet_network_nid_postfix(badText); }, "inet_network unreadable text");
+    rejectsRuntime([&] { __inet_network_nid_postfix(badText); }, "__inet_network unreadable text");
 
     return 0;
 }

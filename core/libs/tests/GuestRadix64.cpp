@@ -3,12 +3,25 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <thread>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -27,6 +40,11 @@ static void CheckNullPointers() {
     Check(l64a_r_nid_postfix(1, nullptr, 10) == -1);
     Check(l64a_r_nid_postfix(3695, nullptr, 10) == -1);
     Check(l64a_r_nid_postfix(-1L, nullptr, 10) == -1);
+
+    errno = 71;
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0 && errno == 71);
+    Check(l64a_r_nid_postfix(3695, reinterpret_cast<char*>(0x10), 10) == -1 && errno == 71);
+    Check(l64a_r_nid_postfix(0, reinterpret_cast<char*>(0x10), 10) == -1 && errno == 71);
 }
 
 static void CheckEmptyStrings() {
@@ -98,6 +116,14 @@ static void CheckBoundaries() {
     Check(a64l_nid_postfix("zzzzz1") == INT64_C(-1));
     Check(a64l_nid_postfix(".....0") == INT64_C(-2147483648));
     Check(std::strcmp(l64a_nid_postfix(INT64_C(0x100000001)), "/") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(0x100000000)), "") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(0x7fffffff00000000)), "") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(-0x100000000)), "") == 0);
+    char highBuf[16]{};
+    Check(l64a_r_nid_postfix(INT64_C(0x100000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(0x100000001), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "/") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(0x7fffffff00000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(-0x100000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
     Check(a64l_nid_postfix("zz") == 4095);
     Check(std::strcmp(l64a_nid_postfix(4095), "zz") == 0);
 
@@ -290,6 +316,55 @@ static void CheckBufferCapacity() {
     Check(canaries[8] == '#');
 }
 
+static void CheckFaultAtomicityAndWraparound() {
+#ifdef _WIN32
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const std::size_t pageSize = si.dwPageSize;
+    Check(pageSize > 0);
+    void* region = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Check(region != nullptr);
+    char* pageEnd = static_cast<char*>(region) + pageSize;
+    DWORD oldProtect = 0;
+    Check(VirtualProtect(pageEnd, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    const long rawPageSize = sysconf(_SC_PAGESIZE);
+    Check(rawPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(rawPageSize);
+    void* region = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Check(region != MAP_FAILED);
+    char* pageEnd = static_cast<char*>(region) + pageSize;
+    Check(mprotect(pageEnd, pageSize, PROT_NONE) == 0);
+#endif
+
+    pageEnd[-1] = '~';
+    Check(l64a_r_nid_postfix(2001, pageEnd - 1, 3) == -1);
+    Check(pageEnd[-1] == '~');
+
+    pageEnd[-1] = '~';
+    Check(l64a_r_nid_postfix(2001, pageEnd - 1, 2) == -1);
+    Check(pageEnd[-1] == '~');
+
+    pageEnd[-3] = '~';
+    pageEnd[-2] = '~';
+    pageEnd[-1] = '~';
+    Check(l64a_r_nid_postfix(2001, pageEnd - 3, 3) == 0);
+    Check(pageEnd[-3] == 'F' && pageEnd[-2] == 'T' && pageEnd[-1] == '\0');
+
+#ifdef _WIN32
+    Check(VirtualFree(region, 0, MEM_RELEASE) != 0);
+#else
+    Check(munmap(region, pageSize * 2) == 0);
+#endif
+
+    errno = 73;
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(UINTPTR_MAX)) == 0 && errno == 73);
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(UINTPTR_MAX - 1)) == 0 && errno == 73);
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(UINTPTR_MAX - 4)) == 0 && errno == 73);
+    Check(l64a_r_nid_postfix(2001, reinterpret_cast<char*>(UINTPTR_MAX), 3) == -1 && errno == 73);
+    Check(l64a_r_nid_postfix(2001, reinterpret_cast<char*>(UINTPTR_MAX - 1), 3) == -1 && errno == 73);
+}
+
 static void CheckConcurrency() {
     constexpr std::array<long, 8> threadVals{1, 64, 2001, 3695, 4096, 262144, 2147483647, -1L};
     std::barrier start(static_cast<std::ptrdiff_t>(threadVals.size()));
@@ -324,6 +399,7 @@ int main() {
     CheckLengthCeiling();
     CheckRoundTrip();
     CheckBufferCapacity();
+    CheckFaultAtomicityAndWraparound();
     CheckConcurrency();
     return 0;
 }

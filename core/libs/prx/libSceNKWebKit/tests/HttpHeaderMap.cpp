@@ -85,6 +85,7 @@ using Get = String (APS5_VABI *)(const Map*, int);
 using ContainsEnum = bool (APS5_VABI *)(const Map*, int);
 using ContainsString = bool (APS5_VABI *)(const Map*, const String&);
 using NameString = Literal (APS5_VABI *)(int);
+using IsolatedCopy = Map (APS5_VABI *)(const Map*);
 
 const auto construct1 = std::bit_cast<Construct>(&_ZN7WebCore13HTTPHeaderMapC1Ev);
 const auto construct2 = std::bit_cast<Construct>(&_ZN7WebCore13HTTPHeaderMapC2Ev);
@@ -97,6 +98,7 @@ const auto get = std::bit_cast<Get>(&_ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHe
 const auto containsEnum = std::bit_cast<ContainsEnum>(&_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE);
 const auto containsString = std::bit_cast<ContainsString>(&_ZNK7WebCore13HTTPHeaderMap8containsERKN3WTF6StringE);
 const auto nameString = std::bit_cast<NameString>(&_ZN7WebCore20httpHeaderNameStringENS_14HTTPHeaderNameE);
+const auto isolatedCopy = std::bit_cast<IsolatedCopy>(&_ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv);
 
 constexpr std::array<const char*, 95> expectedNames {
     "Accept",
@@ -442,6 +444,31 @@ void TestUncommon() {
     Require(removeString(&map, empty), "remove empty name");
 }
 
+void TestStringLookup() {
+    using GetString = String (APS5_VABI *)(const Map*, const String&);
+    const auto lookup = std::bit_cast<GetString>(&_ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE);
+    const auto lookupUncommon = std::bit_cast<GetString>(&_ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE);
+    Guarded guarded;
+    auto& map = guarded.map;
+    auto first = Text("first");
+    auto second = Text("second");
+    auto accept = Text("Accept");
+    auto uncommon = Text("X-Test");
+    Require(!lookup(&map, accept).impl && !lookupUncommon(&map, uncommon).impl, "missing values are null");
+    set(&map, accept, first);
+    append(&map, accept, second);
+    set(&map, uncommon, second);
+    Expect(lookup(&map, Wide(u"aCcEpT")), u"first");
+    Require(!lookupUncommon(&map, accept).impl, "common lookup is excluded from uncommon table");
+    Expect(lookup(&map, Wide(u"x-tEsT")), u"second");
+    auto retained = lookupUncommon(&map, uncommon);
+    Require(removeString(&map, uncommon), "remove uncommon key after lookup");
+    Expect(retained, u"second");
+    set(&map, uncommon, Text(""));
+    Require(lookupUncommon(&map, uncommon).impl != nullptr, "empty value is present");
+    RequireThrows([&] { lookup(nullptr, accept); });
+}
+
 void TestGrowth() {
     Guarded guarded;
     auto& map = guarded.map;
@@ -496,6 +523,31 @@ void TestAliasing() {
     Require(map.common.size == 7, "common aliased append across growth");
     add(&map, known, map.common.buffer[0].value);
     Expect(get(&map, 0), u"a, a");
+}
+
+void TestIsolatedCopy() {
+    Map map {};
+    const auto empty = isolatedCopy(&map);
+    Require(!empty.common.buffer && !empty.uncommon.buffer, "empty copy allocates no vectors");
+    append(&map, Text("Accept"), Text("first"));
+    append(&map, Text("Accept"), Wide(u"\u03b2"));
+    append(&map, Text("X-Isolated"), String {});
+
+    auto copy = isolatedCopy(&map);
+    Require(copy.common.size == 2 && copy.uncommon.size == 1, "copy preserves both vectors and duplicates");
+    Require(copy.common.buffer != map.common.buffer && copy.uncommon.buffer != map.uncommon.buffer, "copy owns both vectors");
+    Require(copy.common.buffer[0].value.impl != map.common.buffer[0].value.impl, "copy owns narrow values");
+    Require(copy.common.buffer[1].value.impl != map.common.buffer[1].value.impl, "copy owns wide values");
+    Require(copy.uncommon.buffer[0].key.impl != map.uncommon.buffer[0].key.impl, "copy owns uncommon keys");
+    Destroy(map.common);
+    Destroy(map.uncommon);
+
+    Expect(get(&copy, 0), u"first");
+    Expect(copy.common.buffer[1].value, u"\u03b2");
+    Expect(copy.uncommon.buffer[0].key, u"X-Isolated");
+    Require(!copy.uncommon.buffer[0].value.impl, "copy preserves null values");
+    Destroy(copy.common);
+    Destroy(copy.uncommon);
 }
 
 void TestInvalidStorage() {
@@ -593,10 +645,12 @@ int main(int argc, char** argv) {
         TestValuesAndDuplicates();
         TestNullValues();
         TestUncommon();
+        TestStringLookup();
         TestGrowth();
         TestAliasing();
+        TestIsolatedCopy();
         TestInvalidStorage();
-        std::puts("HTTPHeaderMap: all 11 exports, 95 names, ABI, growth and lifetime checks passed");
+        std::puts("HTTPHeaderMap: lookup, mutation, 95 names, ABI, growth and lifetime checks passed");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "HTTPHeaderMap unexpected exception: %s\n", error.what());
         return 1;

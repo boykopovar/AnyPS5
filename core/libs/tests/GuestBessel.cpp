@@ -116,6 +116,304 @@ static void CheckFloatSecondKindZero() {
     std::feclearexcept(FE_ALL_EXCEPT);
 }
 
+static void CheckFloatSecondKind() {
+    struct FloatCase { std::uint32_t input; std::uint32_t output; };
+    const FloatCase cases[] = {
+        {0x3f800000u, 0x3db4c010u},
+        {0xbf800000u, 0x7fc00000u},
+        {0x00000000u, 0xff800000u},
+        {0x80000000u, 0xff800000u},
+        {0x00000001u, 0xc283a57cu},
+        {0x80000001u, 0x7fc00000u},
+        {0x007fffffu, 0xc25eb226u},
+        {0x807fffffu, 0x7fc00000u},
+        {0x00800000u, 0xc25eb226u},
+        {0x80800000u, 0x7fc00000u},
+        {0x3e000000u, 0xbfb1e10eu},
+        {0xbe000000u, 0x7fc00000u},
+        {0x3f000000u, 0xbee397f5u},
+        {0xbf000000u, 0x7fc00000u},
+        {0x3f400000u, 0xbe0c7705u},
+        {0xbf400000u, 0x7fc00000u},
+        {0x3fa00000u, 0x3e843500u},
+        {0xbfa00000u, 0x7fc00000u},
+        {0x3fc00000u, 0x3ec3d057u},
+        {0xbfc00000u, 0x7fc00000u},
+        {0x3fe00000u, 0x3eee550eu},
+        {0xbfe00000u, 0x7fc00000u},
+        {0x40800000u, 0xbc8ac74du},
+        {0xc0800000u, 0x7fc00000u},
+        {0x41200000u, 0x3d640774u},
+        {0xc1200000u, 0x7fc00000u},
+        {0x4e800000u, 0xb7cac9c3u},
+        {0xce800000u, 0x7fc00000u},
+        {0x7f7fffffu, 0x9f469478u},
+        {0xff7fffffu, 0x7fc00000u},
+        {0x7f800000u, 0x00000000u},
+        {0x7fc00123u, 0x7fc00123u},
+        {0xffc00123u, 0xffc00123u},
+        {0x7f800123u, 0x7fc00123u},
+        {0xff800123u, 0xffc00123u},
+        {0x31ffffffu, 0xc13fcf5du},
+        {0xb1ffffffu, 0x7fc00000u},
+        {0x32000000u, 0xc13fcf5du},
+        {0xb2000000u, 0x7fc00000u},
+        {0x32000001u, 0xc13fcf5du},
+        {0xb2000001u, 0x7fc00000u},
+        {0x38ffffffu, 0xc0b9ee39u},
+        {0xb8ffffffu, 0x7fc00000u},
+        {0x39000000u, 0xc0b9ee38u},
+        {0xb9000000u, 0x7fc00000u},
+        {0x39000001u, 0xc0b9ee38u},
+        {0xb9000001u, 0x7fc00000u},
+        {0x3f7fffffu, 0x3db4c00au},
+        {0xbf7fffffu, 0x7fc00000u},
+        {0x3f800001u, 0x3db4c01eu},
+        {0xbf800001u, 0x7fc00000u},
+        {0x3fffffffu, 0x3f02a7fau},
+        {0xbfffffffu, 0x7fc00000u},
+        {0x40000000u, 0x3f02a7fbu},
+        {0xc0000000u, 0x7fc00000u},
+        {0x40000001u, 0x3f02a7fdu},
+        {0xc0000001u, 0x7fc00000u},
+        {0x4036db67u, 0x3ed732d5u},
+        {0xc036db67u, 0x7fc00000u},
+        {0x4036db68u, 0x3ed732d3u},
+        {0xc036db68u, 0x7fc00000u},
+        {0x4036db69u, 0x3ed732d2u},
+        {0xc036db69u, 0x7fc00000u},
+        {0x40f71c57u, 0x3e2ed535u},
+        {0xc0f71c57u, 0x7fc00000u},
+        {0x40f71c58u, 0x3e2ed53bu},
+        {0xc0f71c58u, 0x7fc00000u},
+        {0x40f71c59u, 0x3e2ed544u},
+        {0xc0f71c59u, 0x7fc00000u},
+        {0x40ffffffu, 0x3e64e2cdu},
+        {0xc0ffffffu, 0x7fc00000u},
+        {0x41000000u, 0x3e64e2d2u},
+        {0xc1000000u, 0x7fc00000u},
+        {0x41000001u, 0x3e64e2dcu},
+        {0xc1000001u, 0x7fc00000u},
+        {0x7effffffu, 0x1f7bfb6du},
+        {0xfeffffffu, 0x7fc00000u},
+        {0x7f000000u, 0x9e018611u},
+        {0xff000000u, 0x7fc00000u},
+        {0x7f000001u, 0x1f8d328du},
+        {0xff000001u, 0x7fc00000u},
+        {0x4036d916u, 0x3ed73810u},
+        {0x4036d917u, 0x3ed73810u},
+        {0x4036d918u, 0x3ed7380eu},
+        {0x409173eau, 0xbe551769u},
+        {0x409173ebu, 0xbe551770u},
+        {0x409173ecu, 0xbe55177cu},
+        {0x57ffffffu, 0x33099cc2u},
+        {0x58000000u, 0xb290f3bcu},
+        {0x58000001u, 0x32eca10eu},
+        {0x3affffffu, 0xc081729cu},
+        {0x3b000000u, 0xc081729cu},
+        {0x3b000001u, 0xc081729cu},
+        {0x397fffffu, 0xc0abcf54u},
+        {0x39800000u, 0xc0abcf54u},
+        {0x39800001u, 0xc0abcf54u},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const float result = y0f_nid_postfix(std::bit_cast<float>(test.input));
+        if (std::bit_cast<std::uint32_t>(result) != test.output || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Guest y0f failed for %08x: %08x, expected %08x, errno %d\n", test.input,
+                         std::bit_cast<std::uint32_t>(result), test.output, *__error_nid_postfix());
+            std::abort();
+        }
+    }
+    for (const float input : {-1.0f, -std::numeric_limits<float>::denorm_min(), -std::numeric_limits<float>::max()}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(y0f_nid_postfix(input)) == 0x7fc00000u);
+        Require(std::fetestexcept(FE_DIVBYZERO | FE_INVALID) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 12345;
+    Require(std::isnan(y0f_nid_postfix(-std::numeric_limits<float>::infinity())));
+    Require(std::fetestexcept(FE_INVALID) != 0 && *__error_nid_postfix() == 12345);
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
+static void CheckFloatOne() {
+    struct FloatCase { std::uint32_t input; std::uint32_t first; std::uint32_t second; };
+    const FloatCase cases[] = {
+        {0x3fa00000u, 0x3f02b834u, 0xbf1598e2u},
+        {0x3fc00000u, 0x3f0ed4edu, 0xbed31a1fu},
+        {0x00000000u, 0x00000000u, 0xff800000u},
+        {0x00000001u, 0x00000000u, 0xff800000u},
+        {0x3f000000u, 0x3e781539u, 0xbfbc5935u},
+        {0x3f800000u, 0x3ee14e4fu, 0xbf47fd90u},
+        {0x7f7fffffu, 0x9f469478u, 0x9e3f4fecu},
+        {0x247fffffu, 0x23ffffffu, 0xda22f984u},
+        {0x24800000u, 0x24000000u, 0xda22f983u},
+        {0x24800001u, 0x24000001u, 0xda22f982u},
+        {0x31ffffffu, 0x317fffffu, 0xcca2f984u},
+        {0x32000000u, 0x31800000u, 0xcca2f983u},
+        {0x32000001u, 0x31800001u, 0xcca2f982u},
+        {0x3fffffffu, 0x3f13a43du, 0xbddb33dcu},
+        {0x40000000u, 0x3f13a43du, 0xbddb33d3u},
+        {0x40000001u, 0x3f13a43du, 0xbddb33beu},
+        {0x401fffffu, 0x3efe8321u, 0x3e156b8au},
+        {0x40200000u, 0x3efe8320u, 0x3e156b91u},
+        {0x40200001u, 0x3efe8320u, 0x3e156b98u},
+        {0x4036db67u, 0x3ec7e1b0u, 0x3e90a364u},
+        {0x4036db68u, 0x3ec7e1afu, 0x3e90a366u},
+        {0x4036db69u, 0x3ec7e1acu, 0x3e90a368u},
+        {0x40f71c57u, 0x3e3e6931u, 0xbe61384fu},
+        {0x40f71c58u, 0x3e3e6936u, 0xbe61384au},
+        {0x40f71c59u, 0x3e3e693eu, 0xbe613841u},
+        {0x40ffffffu, 0x3e70447fu, 0xbe21daa3u},
+        {0x41000000u, 0x3e704483u, 0xbe21da9cu},
+        {0x41000001u, 0x3e70448du, 0xbe21da8cu},
+        {0x47ffffffu, 0xbad3244au, 0x3ac5228cu},
+        {0x48000000u, 0xbad4ace7u, 0x3ac37abdu},
+        {0x48000001u, 0xbad7b424u, 0x3ac021f4u},
+        {0x7effffffu, 0x1f7bfb6du, 0x1f0d3ccfu},
+        {0x7f000000u, 0x9e018611u, 0x9f8f85b0u},
+        {0x7f000001u, 0x1f8d328du, 0x1e732ee7u},
+        {0x7f800000u, 0x00000000u, 0x00000000u},
+        {0x7fc00123u, 0x7fc00123u, 0x7fc00123u},
+        {0x4036d916u, 0x3ec7e814u, 0x3e909d6fu},
+        {0x4036d917u, 0x3ec7e811u, 0x3e909d71u},
+        {0x4036d918u, 0x3ec7e80fu, 0x3e909d74u},
+        {0x409173eau, 0xbe78d2a1u, 0x3e93e975u},
+        {0x409173ebu, 0xbe78d2a8u, 0x3e93e971u},
+        {0x409173ecu, 0xbe78d2b2u, 0x3e93e96eu},
+        {0x57ffffffu, 0x33099cc2u, 0xb22f6f80u},
+        {0x58000000u, 0xb290f3bcu, 0xb2f9dd24u},
+        {0x58000001u, 0x32eca10eu, 0x32a5adf1u},
+        {0x38ffffffu, 0x387fffffu, 0xc5a2f986u},
+        {0x39000000u, 0x38800000u, 0xc5a2f984u},
+        {0x39000001u, 0x38800001u, 0xc5a2f982u},
+        {0x32ffffffu, 0x327fffffu, 0xcba2f984u},
+        {0x33000000u, 0x32800000u, 0xcba2f983u},
+        {0x33000001u, 0x32800001u, 0xcba2f982u},
+    };
+    for (const auto& test : cases) {
+        for (const std::uint32_t sign : {0u, 0x80000000u}) {
+            const std::uint32_t input = test.input | sign;
+            const std::uint32_t first = test.first ^ sign;
+            const std::uint32_t second = test.input > 0x7f800000u ? test.second | sign : sign != 0 && test.input != 0 ? 0x7fc00000u : test.second;
+            for (const bool secondKind : {false, true}) {
+                if (secondKind && sign != 0 && test.input == 0x7f800000u) continue;
+                *__error_nid_postfix() = 12345;
+                const float x = std::bit_cast<float>(input);
+                const auto actual = std::bit_cast<std::uint32_t>(secondKind ? y1f_nid_postfix(x) : j1f_nid_postfix(x));
+                const auto expected = secondKind ? second : first;
+                if (actual != expected || *__error_nid_postfix() != 12345) {
+                    std::fprintf(stderr, "Guest %s failed for %08x: %08x, expected %08x, errno %d\n", secondKind ? "y1f" : "j1f", input,
+                                 actual, expected, *__error_nid_postfix());
+                    std::abort();
+                }
+            }
+        }
+    }
+    for (const float input : {-1.0f, -std::numeric_limits<float>::denorm_min()}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(y1f_nid_postfix(input)));
+        Require(std::fetestexcept(FE_DIVBYZERO | FE_INVALID) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 12345;
+    Require(std::isnan(y1f_nid_postfix(-std::numeric_limits<float>::infinity())));
+    Require(std::fetestexcept(FE_INVALID) != 0 && *__error_nid_postfix() == 12345);
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
+static void CheckFloatIntegerOrders() {
+    struct FloatOrderCase { int order; std::uint32_t input; std::uint32_t first; std::uint32_t second; };
+    const FloatOrderCase cases[] = {
+        {0, 0x3f000000u, 0x3f703f8fu, 0xbee397f5u},
+        {1, 0x3f000000u, 0x3e781539u, 0xbfbc5935u},
+        {2, 0x3f000000u, 0x3cfab54bu, 0xc0ae1fb6u},
+        {3, 0x3e000000u, 0x382a8005u, 0xc5234b29u},
+        {4, 0x3f800000u, 0x3b224f1cu, 0xc2051d1au},
+        {0, 0x00000001u, 0x3f800000u, 0xc283a57cu},
+        {1, 0x00000001u, 0x00000000u, 0xff800000u},
+        {2, 0x00000001u, 0x00000000u, 0xff800000u},
+        {3, 0x80000001u, 0x80000000u, 0x7fc00000u},
+        {2, 0x307fffffu, 0x1ffffffeu, 0xdda2f985u},
+        {2, 0x30800000u, 0x20000000u, 0xdda2f983u},
+        {2, 0x30800001u, 0x20000002u, 0xdda2f981u},
+        {3, 0x30800000u, 0x0faaaaabu, 0xeda2f983u},
+        {33, 0x30000000u, 0x00000000u, 0xff800000u},
+        {34, 0x30000000u, 0x00000000u, 0xff800000u},
+        {3, 0x403fffffu, 0x3e9e3d74u, 0xbf09dddfu},
+        {3, 0x40400000u, 0x3e9e3d78u, 0xbf09dddeu},
+        {3, 0x40400001u, 0x3e9e3d7au, 0xbf09ddddu},
+        {3, 0x3f800000u, 0x3ca04354u, 0xc0ba49dfu},
+        {40, 0x3fc00000u, 0x00000000u, 0xff800000u},
+        {300, 0x3f800000u, 0x00000000u, 0xff800000u},
+        {100, 0x42c7ffffu, 0x3dc55bccu, 0xbe2aed81u},
+        {100, 0x42c80000u, 0x3dc55becu, 0xbe2aed70u},
+        {100, 0x42c80001u, 0x3dc55bfau, 0xbe2aed5cu},
+        {6, 0x501502f9u, 0xb6120061u, 0x3700ca5bu},
+        {7, 0x71800000u, 0x2644a000u, 0xa55d4605u},
+        {8, 0x7f7fffffu, 0x1e3f4fecu, 0x9f469478u},
+        {-1, 0x3f000000u, 0xbe781539u, 0x3fbc5935u},
+        {-3, 0x3fa00000u, 0xbd170347u, 0x404ef7cau},
+        {-4, 0x3fa00000u, 0x3bc093cdu, 0xc1654535u},
+        {3, 0xbfa00000u, 0xbd170347u, 0x7fc00000u},
+        {4, 0xbfa00000u, 0x3bc093cdu, 0x7fc00000u},
+        {INT_MIN, 0x3f000000u, 0x3e781539u, 0xbfbc5935u},
+        {INT_MIN, 0xbf000000u, 0x3e781539u, 0x7fc00000u},
+        {INT_MAX, 0x30000000u, 0x00000000u, 0xff800000u},
+        {0, 0x00000000u, 0x3f800000u, 0xff800000u},
+        {1, 0x80000000u, 0x80000000u, 0xff800000u},
+        {2, 0x00000000u, 0x00000000u, 0xff800000u},
+        {3, 0x80000000u, 0x80000000u, 0xff800000u},
+        {-3, 0x00000000u, 0x80000000u, 0xff800000u},
+        {-4, 0x80000000u, 0x00000000u, 0xff800000u},
+        {0, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {1, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {2, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {-3, 0x7f800000u, 0x80000000u, 0x00000000u},
+        {INT_MIN, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {INT_MAX, 0x7f800000u, 0x00000000u, 0x00000000u},
+        {2, 0xff800000u, 0x00000000u, 0xffc00000u},
+        {3, 0xff800000u, 0x80000000u, 0xffc00000u},
+        {-3, 0xff800000u, 0x00000000u, 0xffc00000u},
+        {0, 0x7fc00123u, 0x7fc00123u, 0x7fc00123u},
+        {1, 0xffc00123u, 0xffc00123u, 0xffc00123u},
+        {3, 0x7fc00123u, 0x7fc00123u, 0x7fc00123u},
+        {INT_MIN, 0xffc00123u, 0xffc00123u, 0xffc00123u},
+    };
+    for (const auto& test : cases) {
+        for (int kind = 0; kind < 2; ++kind) {
+            *__error_nid_postfix() = 12345;
+            const float input = std::bit_cast<float>(test.input);
+            const float result = kind == 0 ? jnf_nid_postfix(test.order, input) : ynf_nid_postfix(test.order, input);
+            const std::uint32_t expected = kind == 0 ? test.first : test.second;
+            const bool invalidInfinity = kind == 1 && test.input == 0xff800000u;
+            if ((invalidInfinity ? !std::isnan(result) : std::bit_cast<std::uint32_t>(result) != expected) || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest %s(%d, %08x): result %08x, expected %08x, errno %d\n", kind == 0 ? "jnf" : "ynf", test.order,
+                             test.input, std::bit_cast<std::uint32_t>(result), expected, *__error_nid_postfix());
+                std::abort();
+            }
+        }
+    }
+    for (const int order : {INT_MIN, -3, -2, -1, 0, 1, 2, 3, INT_MAX}) {
+        for (const std::uint32_t bits : {0x80000001u, 0xbf800000u, 0xff7fffffu}) {
+            for (const int flags : {0, FE_INEXACT, FE_DIVBYZERO}) {
+                std::feclearexcept(FE_ALL_EXCEPT);
+                std::feraiseexcept(flags);
+                const int expectedFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                *__error_nid_postfix() = 12345;
+                const float result = ynf_nid_postfix(order, std::bit_cast<float>(bits));
+                Require(std::bit_cast<std::uint32_t>(result) == 0x7fc00000u);
+                Require(std::fetestexcept(FE_ALL_EXCEPT) == expectedFlags && *__error_nid_postfix() == 12345);
+            }
+        }
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(ynf_nid_postfix(order, -std::numeric_limits<float>::infinity())));
+        Require((std::fetestexcept(FE_INVALID) & FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
 static void CheckIntegerOrders() {
     const OrderCase first[] = {
         {2, 0x3ddb7cdfd9d7bdbbull, 0x3b979ca10c924224ull}, {5, 0xbddb7cdfd9d7bdbbull, 0xb4cfed4f3ec0c466ull}, {33, 0x3e00000000000000ull, 0x0000000000000000ull},
@@ -198,6 +496,9 @@ int main() {
     CheckFirstKind();
     CheckSecondKind();
     CheckFloatSecondKindZero();
+    CheckFloatSecondKind();
+    CheckFloatOne();
+    CheckFloatIntegerOrders();
     CheckIntegerOrders();
     CheckValues();
     return 0;

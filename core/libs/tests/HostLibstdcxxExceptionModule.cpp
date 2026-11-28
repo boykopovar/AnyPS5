@@ -53,10 +53,24 @@ static bool RethrowsStoredStreamFailure(const char* path) {
     return false;
 }
 
+static bool CatchesManyConversions() {
+    constexpr int Throws = 70000;
+    int caught = 0;
+    for (int i = 0; i < Throws; ++i) {
+        try {
+            (void)std::stoi("x");
+        } catch (const std::invalid_argument&) {
+            ++caught;
+        }
+    }
+    return caught == Throws;
+}
+
 extern "C" const char* HostLibstdcxxExceptionFailure(const char* path) {
     if (!CatchesConversion()) return "std::stoi failure was not caught as std::invalid_argument";
     if (!CatchesStreamFailure(path)) return "std::ofstream::open failure was not caught as std::ios_base::failure";
     if (!CatchesStreamFailureAsException(path)) return "std::ofstream::open failure was not caught as std::exception";
     if (!RethrowsStoredStreamFailure(path)) return "a stored std::ofstream::open failure was not rethrown";
+    if (!CatchesManyConversions()) return "a repeated std::stoi failure was not caught every time";
     return nullptr;
 }

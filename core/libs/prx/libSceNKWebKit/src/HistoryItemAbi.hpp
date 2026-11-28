@@ -14,6 +14,25 @@ struct HistoryItemVectorStorage {
     unsigned size;
 };
 
+struct CachedPage {
+    void* page;
+    double expirationTime;
+};
+
+struct BackForwardItemIdentifier {
+    std::uint64_t objectIdentifier{};
+    std::uint64_t processIdentifier{};
+};
+
+struct alignas(8) PolicyContainerStorage {
+    std::uint8_t storage[80];
+};
+
+struct OptionalPolicyContainer {
+    std::uint8_t engaged{};
+    PolicyContainerStorage value{};
+};
+
 struct HistoryItem {
     unsigned refCount{};
     WtfAbi::String urlString;
@@ -38,10 +57,21 @@ struct HistoryItem {
     void* formData{};
     WtfAbi::String formContentType;
     void* cachedPage{};
-    std::uint8_t pruningReason{};
+    std::uint32_t pruningReason{};
+    BackForwardItemIdentifier identifier{};
+    OptionalPolicyContainer policyContainer{};
 };
 
 static_assert(sizeof(HistoryItemVectorStorage) == 16);
+static_assert(sizeof(BackForwardItemIdentifier) == 16);
+static_assert(offsetof(BackForwardItemIdentifier, objectIdentifier) == 0);
+static_assert(offsetof(BackForwardItemIdentifier, processIdentifier) == 8);
+static_assert(sizeof(PolicyContainerStorage) == 80);
+static_assert(sizeof(OptionalPolicyContainer) == 88);
+static_assert(offsetof(OptionalPolicyContainer, value) == 8);
+static_assert(sizeof(HistoryItem) == 280);
+static_assert(offsetof(CachedPage, page) == 0);
+static_assert(offsetof(CachedPage, expirationTime) == 8);
 static_assert(offsetof(HistoryItem, refCount) == 0);
 static_assert(offsetof(HistoryItem, urlString) == 8);
 static_assert(offsetof(HistoryItem, originalURLString) == 16);
@@ -66,5 +96,10 @@ static_assert(offsetof(HistoryItem, formData) == 144);
 static_assert(offsetof(HistoryItem, formContentType) == 152);
 static_assert(offsetof(HistoryItem, cachedPage) == 160);
 static_assert(offsetof(HistoryItem, pruningReason) == 168);
+static_assert(offsetof(HistoryItem, identifier) == 176);
+static_assert(offsetof(HistoryItem, policyContainer) == 192);
+
+using HistoryItemChangedHook = void (*)(HistoryItem*);
+extern HistoryItemChangedHook historyItemChangedHook;
 
 }

@@ -1,0 +1,15 @@
+add_library(libScePfs SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePfs PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePfs)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_pfs_tests ${LIBS_INCLUDE_DIR}/tests/GuestPfs.cpp)
+    target_include_directories(guest_pfs_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pfs_tests PRIVATE libScePfs libc)
+    configure_windows_unwind(guest_pfs_tests)
+    add_test(NAME guest_pfs COMMAND guest_pfs_tests)
+    if(WIN32)
+        set_tests_properties(guest_pfs PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePfs>")
+    endif()
+endif()

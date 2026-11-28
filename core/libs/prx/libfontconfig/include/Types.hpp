@@ -34,6 +34,14 @@ enum FcType {
     FcTypeRange
 };
 
+enum FcMatchKind {
+    FcMatchPattern,
+    FcMatchFont,
+    FcMatchScan,
+    FcMatchKindEnd,
+    FcMatchKindBegin = FcMatchPattern
+};
+
 enum FcResult {
     FcResultMatch,
     FcResultNoMatch,

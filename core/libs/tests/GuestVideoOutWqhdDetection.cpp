@@ -45,6 +45,9 @@ int main() {
     VideoOutOutputStatus after{};
     Require(sceVideoOutGetOutputStatus(handle, &after) == 0);
     Require(SameStatus(before, after));
+    Require(before.refreshRate == 3 || before.refreshRate == 13);
+    Require(before.resolution == 1 || before.resolution == 2);
+    Require(before.flags == 0);
 
     Require(RejectsHandle(0));
     Require(RejectsHandle(-1));
