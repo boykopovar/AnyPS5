@@ -176,6 +176,49 @@ Outcome RepeatsAreElidedUntilTheRangeChanges(AgcDriver::VulkanDevice& device, co
     return Outcome::Passed;
 }
 
+void FillSpanningAdjacentAllocations(AgcDriver::VulkanDevice& device) {
+    WatchedBlock guest;
+    const std::size_t half = BlockBytes / 2;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(guest.Data());
+        mutation.Add(guest.Data(), half, true, true, true);
+    }
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        Require(device.FillBuffer(guest.Address(), FillOffset, Zero), "repeated fill elision: first half fill failed");
+        device.WaitIdle();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(guest.Data() + half, half, true, true, true);
+    }
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        Require(device.FillBuffer(guest.Address() + half, FillOffset, Zero), "repeated fill elision: second half fill failed");
+        device.WaitIdle();
+    }
+    const std::size_t offset = half - FillOffset;
+    const std::size_t bytes = 2 * FillOffset;
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        Require(device.FillBuffer(guest.Address() + offset, bytes, Pattern), "repeated fill elision: a fill spanning adjacent guest allocations fell back off the GPU");
+        device.WaitIdle();
+    }
+    RequireFilled(guest, offset, bytes, Pattern, "a fill spanning adjacent allocations");
+    Require(guest.Data()[offset - 1] == 0x37 && guest.Data()[offset + bytes] == 0x37, "repeated fill elision: a joined fill stored outside its range");
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        Graphics::ClearHostImports(device.Device());
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(guest.Data() + half);
+        mutation.Remove(guest.Data());
+        mutation.Add(guest.Data(), BlockBytes, true, true, true);
+    }
+}
+
 }
 
 int main() {
@@ -209,6 +252,7 @@ int main() {
             return VulkanTestSkipped;
         }
 #endif
+        FillSpanningAdjacentAllocations(*device);
         std::puts("repeated fill elision tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -18,6 +18,7 @@
 namespace {
 
 constexpr std::size_t Icu68ResourceBundleSize = 200;
+constexpr std::size_t Icu68ResourceDataEntryOffset = 8;
 constexpr std::size_t Icu68ResourceOffset = 172;
 constexpr std::uint32_t IntegerType = 7;
 constexpr std::uint32_t TypeShift = 28;
@@ -51,6 +52,32 @@ void APS5_VABI ures_close(UResourceBundle* resB) {
 
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB) {
     std::memset(resB, 0, Icu68ResourceBundleSize);
+}
+
+const char* APS5_VABI ures_getLocaleInternal_nid_postfix(const UResourceBundle* bundle, std::int32_t* status) {
+    if (!status) return nullptr;
+    const int savedErrno = errno;
+    std::int32_t currentStatus;
+    CopyIn(&currentStatus, status, sizeof(currentStatus), savedErrno, __func__);
+    if (currentStatus > 0) return nullptr;
+    if (!bundle) {
+        currentStatus = IllegalArgument;
+        CopyOut(status, &currentStatus, sizeof(currentStatus), savedErrno, __func__);
+        return nullptr;
+    }
+
+    const auto address = reinterpret_cast<std::uintptr_t>(bundle);
+    if (address > UINTPTR_MAX - Icu68ResourceDataEntryOffset) NotImplemented_nid_no_patch(__func__);
+    const void* entry;
+    CopyIn(&entry, reinterpret_cast<const void*>(address + Icu68ResourceDataEntryOffset), sizeof(entry), savedErrno,
+           __func__);
+    const char* name;
+    CopyIn(&name, entry, sizeof(name), savedErrno, __func__);
+    return name;
+}
+
+const char* APS5_VABI ures_getLocale_nid_postfix(const UResourceBundle* bundle, std::int32_t* status) {
+    return ures_getLocaleInternal_nid_postfix(bundle, status);
 }
 
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status) {

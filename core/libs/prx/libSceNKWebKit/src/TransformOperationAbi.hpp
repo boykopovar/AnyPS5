@@ -44,16 +44,16 @@ namespace NKWebKit::TransformAbi {
 class TransformOperationRef;
 
 struct TransformOperationVtable {
-    void (APS5_VABI* completeDestructor)(WebCore::TransformOperation*);
-    void (APS5_VABI* deletingDestructor)(WebCore::TransformOperation*);
-    TransformOperationRef (APS5_VABI* clone)(const WebCore::TransformOperation*);
-    bool (APS5_VABI* equals)(const WebCore::TransformOperation*, const WebCore::TransformOperation&);
-    bool (APS5_VABI* isIdentity)(const WebCore::TransformOperation*);
-    bool (APS5_VABI* apply)(const WebCore::TransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&);
-    TransformOperationRef (APS5_VABI* blend)(WebCore::TransformOperation*, const WebCore::TransformOperation*, double, bool);
-    bool (APS5_VABI* isAffectedByTransformOrigin)(const WebCore::TransformOperation*);
-    bool (APS5_VABI* isRepresentableIn2D)(const WebCore::TransformOperation*);
-    void (APS5_VABI* dump)(const WebCore::TransformOperation*, NKWebKit::WtfAbi::TextStream&);
+    void (APS5_VABI* completeDestructor)(WebCore::LegacyTransformOperation*);
+    void (APS5_VABI* deletingDestructor)(WebCore::LegacyTransformOperation*);
+    TransformOperationRef (APS5_VABI* clone)(const WebCore::LegacyTransformOperation*);
+    bool (APS5_VABI* equals)(const WebCore::LegacyTransformOperation*, const WebCore::LegacyTransformOperation&);
+    bool (APS5_VABI* isIdentity)(const WebCore::LegacyTransformOperation*);
+    bool (APS5_VABI* apply)(const WebCore::LegacyTransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&);
+    TransformOperationRef (APS5_VABI* blend)(WebCore::LegacyTransformOperation*, const WebCore::LegacyTransformOperation*, double, bool);
+    bool (APS5_VABI* isAffectedByTransformOrigin)(const WebCore::LegacyTransformOperation*);
+    bool (APS5_VABI* isRepresentableIn2D)(const WebCore::LegacyTransformOperation*);
+    void (APS5_VABI* dump)(const WebCore::LegacyTransformOperation*, NKWebKit::WtfAbi::TextStream&);
 };
 
 struct TransformOperationVtableStorage {
@@ -62,15 +62,15 @@ struct TransformOperationVtableStorage {
     TransformOperationVtable dispatch;
 };
 
-inline const TransformOperationVtable& Dispatch(const WebCore::TransformOperation& operation) {
+inline const TransformOperationVtable& Dispatch(const WebCore::LegacyTransformOperation& operation) {
     return *static_cast<const TransformOperationVtable*>(operation.m_vptr);
 }
 
-inline void RefOperation(WebCore::TransformOperation* operation) {
+inline void RefOperation(WebCore::LegacyTransformOperation* operation) {
     ++operation->m_refCount;
 }
 
-inline void DerefOperation(WebCore::TransformOperation* operation) {
+inline void DerefOperation(WebCore::LegacyTransformOperation* operation) {
     if (!operation) return;
     if (operation->m_refCount != 1) {
         --operation->m_refCount;
@@ -81,18 +81,18 @@ inline void DerefOperation(WebCore::TransformOperation* operation) {
 
 class TransformOperationRef {
 public:
-    explicit TransformOperationRef(WebCore::TransformOperation* operation) : m_operation(operation) {}
+    explicit TransformOperationRef(WebCore::LegacyTransformOperation* operation) : m_operation(operation) {}
     TransformOperationRef(TransformOperationRef&& other) noexcept : m_operation(std::exchange(other.m_operation, nullptr)) {}
     TransformOperationRef(const TransformOperationRef&) = delete;
     TransformOperationRef& operator=(const TransformOperationRef&) = delete;
     TransformOperationRef& operator=(TransformOperationRef&&) = delete;
     ~TransformOperationRef() { DerefOperation(m_operation); }
 
-    WebCore::TransformOperation* Get() const { return m_operation; }
-    WebCore::TransformOperation* Leak() { return std::exchange(m_operation, nullptr); }
+    WebCore::LegacyTransformOperation* Get() const { return m_operation; }
+    WebCore::LegacyTransformOperation* Leak() { return std::exchange(m_operation, nullptr); }
 
 private:
-    WebCore::TransformOperation* m_operation;
+    WebCore::LegacyTransformOperation* m_operation;
 };
 
 static_assert(sizeof(TransformOperationVtable) == 80);

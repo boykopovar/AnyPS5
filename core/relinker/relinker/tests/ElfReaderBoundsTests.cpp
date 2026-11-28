@@ -423,6 +423,20 @@ int main() {
             Write<std::uint64_t>(zeroHeadersOobOffset, 32, std::numeric_limits<std::uint64_t>::max());
             RejectProgramHeaders(std::move(zeroHeadersOobOffset), "FileByteOffset out of bounds", std::numeric_limits<std::uint64_t>::max());
         }},
+        {"extended program header count", [] {
+            auto largest = Fixture();
+            largest.resize(64 + std::size_t{0xfffe} * 56);
+            Write<std::uint16_t>(largest, 56, 0xfffe);
+            const auto headers = Relinker::ElfReader(std::move(largest)).ReadProgramHeaders();
+            Require(headers.size() == 0xfffe && headers[0].Type == 1 && headers.back().Type == 0);
+            auto extended = Fixture();
+            extended.resize(64 + std::size_t{0xffff} * 56);
+            Write<std::uint16_t>(extended, 56, 0xffff);
+            RejectProgramHeaders(std::move(extended), "Extended program header counts are not supported", 0x38);
+            auto truncated = Fixture();
+            Write<std::uint16_t>(truncated, 56, 0xffff);
+            RejectProgramHeaders(std::move(truncated), "FileByteOffset out of bounds", 0x40);
+        }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
             Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].Alignment == 8 && sections[1].EntrySize == 24);

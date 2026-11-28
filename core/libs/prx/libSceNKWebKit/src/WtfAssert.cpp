@@ -78,6 +78,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+#ifdef _WIN32
+namespace {
+
+void PrintWindowsToStandardError(const char* format, const void* args) {
+    std::string buffer;
+    const int size = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
+    if (size > 0) std::fwrite(buffer.data(), 1, static_cast<std::size_t>(size), stderr);
+}
+
+}
+#endif
+
 struct WTFLogChannel {
     std::uint8_t state;
     const char* name;
@@ -94,6 +106,16 @@ static_assert(offsetof(WTFLogChannel, subsystem) == 24);
 namespace {
 
 constexpr std::uint8_t LogChannelStateOn = 1;
+constexpr std::size_t ReportTextLimit = 65536;
+
+std::string GuestText(const char* text) {
+    std::string copied;
+    if (text == nullptr) return copied;
+    const int savedErrno = errno;
+    if (CopyGuestString_nid_no_patch(text, ReportTextLimit, copied) != 0) copied.clear();
+    errno = savedErrno;
+    return copied;
+}
 
 std::mutex& AccumulatorLock() {
     static auto* lock = new std::mutex;
@@ -170,7 +192,7 @@ extern "C" {
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -184,47 +206,47 @@ extern "C" {
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_im(int line, const char* file, const char* function, int counter, std::uint64_t reason) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason));
     std::abort();
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_imm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu misc1=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason), static_cast<unsigned long long>(misc1));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu misc1=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason), static_cast<unsigned long long>(misc1));
     std::abort();
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason));
     std::abort();
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason));
     std::abort();
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3, std::uint64_t misc4) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason));
     std::abort();
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmmmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3, std::uint64_t misc4, std::uint64_t misc5) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason));
     std::abort();
 }
 
 [[noreturn]] void APS5_VABI _Z20WTFCrashWithInfoImpliPKcS0_immmmmmm(int line, const char* file, const char* function, int counter, std::uint64_t reason, std::uint64_t misc1, std::uint64_t misc2, std::uint64_t misc3, std::uint64_t misc4, std::uint64_t misc5, std::uint64_t misc6) {
-    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", file ? file : "", line, function ? function : "", counter, static_cast<unsigned long long>(reason));
+    std::fprintf(stderr, "CRASH WITH INFO: %s:%d %s counter=%d reason=%llu\n", GuestText(file).c_str(), line, GuestText(function).c_str(), counter, static_cast<unsigned long long>(reason));
     std::abort();
 }
 
 void APS5_VABI WTFReportAssertionFailure(const char* file, int line, const char* function, const char* assertion) {
     if (assertion) {
-        std::fprintf(stderr, "ASSERTION FAILED: %s\n", assertion);
+        std::fprintf(stderr, "ASSERTION FAILED: %s\n", GuestText(assertion).c_str());
     } else {
         std::fprintf(stderr, "SHOULD NEVER BE REACHED\n");
     }
-    std::fprintf(stderr, "(%s:%d %s)\n", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "(%s:%d %s)\n", GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFReportAssertionFailureWithMessage(const char* file, int line, const char* function, const char* assertion, const char* format, ...) {
@@ -233,7 +255,7 @@ void APS5_VABI WTFReportAssertionFailureWithMessage(const char* file, int line, 
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -242,11 +264,11 @@ void APS5_VABI WTFReportAssertionFailureWithMessage(const char* file, int line, 
         va_end(args);
 #endif
     }
-    std::fprintf(stderr, "\n%s\n(%s:%d %s)\n", assertion ? assertion : "", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "\n%s\n(%s:%d %s)\n", GuestText(assertion).c_str(), GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFReportArgumentAssertionFailure(const char* file, int line, const char* function, const char* argName, const char* assertion) {
-    std::fprintf(stderr, "ARGUMENT BAD: %s, %s\n(%s:%d %s)\n", argName ? argName : "", assertion ? assertion : "", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "ARGUMENT BAD: %s, %s\n(%s:%d %s)\n", GuestText(argName).c_str(), GuestText(assertion).c_str(), GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFReportFatalError(const char* file, int line, const char* function, const char* format, ...) {
@@ -255,7 +277,7 @@ void APS5_VABI WTFReportFatalError(const char* file, int line, const char* funct
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -264,7 +286,7 @@ void APS5_VABI WTFReportFatalError(const char* file, int line, const char* funct
         va_end(args);
 #endif
     }
-    std::fprintf(stderr, "\n(%s:%d %s)\n", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "\n(%s:%d %s)\n", GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFReportError(const char* file, int line, const char* function, const char* format, ...) {
@@ -273,7 +295,7 @@ void APS5_VABI WTFReportError(const char* file, int line, const char* function, 
 #ifdef _WIN32
         __builtin_sysv_va_list args;
         __builtin_sysv_va_start(args, format);
-        LibcDetail::PrintWindows(format, args);
+        PrintWindowsToStandardError(format, args);
         __builtin_sysv_va_end(args);
 #else
         std::va_list args;
@@ -282,11 +304,11 @@ void APS5_VABI WTFReportError(const char* file, int line, const char* function, 
         va_end(args);
 #endif
     }
-    std::fprintf(stderr, "\n(%s:%d %s)\n", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "\n(%s:%d %s)\n", GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFReportNotImplementedYet(const char* file, int line, const char* function) {
-    std::fprintf(stderr, "NOT IMPLEMENTED YET\n(%s:%d %s)\n", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "NOT IMPLEMENTED YET\n(%s:%d %s)\n", GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFLogAlways(const char* format, ...) {
@@ -296,7 +318,7 @@ void APS5_VABI WTFLogAlways(const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -333,7 +355,7 @@ void APS5_VABI WTFLog(void* channel, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -355,7 +377,7 @@ void APS5_VABI WTFLogVerbose(const char* file, int line, const char* function, v
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -363,7 +385,7 @@ void APS5_VABI WTFLogVerbose(const char* file, int line, const char* function, v
     std::vfprintf(stderr, format, args);
     va_end(args);
 #endif
-    std::fprintf(stderr, "\n(%s:%d %s)\n", file ? file : "", line, function ? function : "");
+    std::fprintf(stderr, "\n(%s:%d %s)\n", GuestText(file).c_str(), line, GuestText(function).c_str());
 }
 
 void APS5_VABI WTFLogWithLevel(void* channel, std::uint32_t level, const char* format, ...) {
@@ -377,7 +399,7 @@ void APS5_VABI WTFLogWithLevel(void* channel, std::uint32_t level, const char* f
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -486,7 +508,7 @@ void APS5_VABI _ZN3WTF8dataLogFEPKcz(const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    LibcDetail::PrintWindows(format, args);
+    PrintWindowsToStandardError(format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
@@ -501,7 +523,7 @@ void APS5_VABI _ZN3WTF9dataLogFVEPKcP13__va_list_tag(const char* format, void* a
         return;
     }
 #ifdef _WIN32
-    LibcDetail::PrintWindows(format, argList);
+    PrintWindowsToStandardError(format, argList);
 #else
     std::vfprintf(stderr, format, *reinterpret_cast<std::va_list*>(argList));
 #endif

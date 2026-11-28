@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
@@ -170,7 +171,7 @@ struct OptionalTransformationMatrix {
     TransformationMatrix m_value;
 };
 
-struct TransformOperation {
+struct LegacyTransformOperation {
     enum class OperationType : std::uint32_t {
         ScaleX,
         ScaleY,
@@ -201,28 +202,28 @@ struct TransformOperation {
     OperationType m_type;
 };
 
-struct IdentityTransformOperation : TransformOperation {
+struct IdentityTransformOperation : LegacyTransformOperation {
 };
 
-struct RotateTransformOperation : TransformOperation {
+struct RotateTransformOperation : LegacyTransformOperation {
     double m_x;
     double m_y;
     double m_z;
     double m_angle;
 };
 
-struct ScaleTransformOperation : TransformOperation {
+struct ScaleTransformOperation : LegacyTransformOperation {
     double m_x;
     double m_y;
     double m_z;
 };
 
-struct SkewTransformOperation : TransformOperation {
+struct SkewTransformOperation : LegacyTransformOperation {
     double m_angleX;
     double m_angleY;
 };
 
-struct MatrixTransformOperation : TransformOperation {
+struct MatrixTransformOperation : LegacyTransformOperation {
     double m_a;
     double m_b;
     double m_c;
@@ -231,7 +232,7 @@ struct MatrixTransformOperation : TransformOperation {
     double m_f;
 };
 
-struct Matrix3DTransformOperation : TransformOperation {
+struct Matrix3DTransformOperation : LegacyTransformOperation {
     TransformationMatrix m_matrix;
 };
 
@@ -328,6 +329,29 @@ struct ViewportArguments {
     float shrinkToFit{ValueAuto};
     ViewportFit viewportFit{ViewportFit::Auto};
     bool widthWasExplicit{false};
+};
+
+enum ViewportErrorCode : int {
+    UnrecognizedViewportArgumentKeyError,
+    UnrecognizedViewportArgumentValueError,
+    TruncatedViewportArgumentValueError,
+    MaximumScaleTooLargeError
+};
+
+struct ViewportErrorCallableWrapper;
+
+struct ViewportErrorCallableWrapperVtable {
+    void (APS5_VABI* completeDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* deletingDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* call)(ViewportErrorCallableWrapper* self, ViewportErrorCode errorCode, const NKWebKit::WtfAbi::String& message);
+};
+
+struct ViewportErrorCallableWrapper {
+    const ViewportErrorCallableWrapperVtable* vtable;
+};
+
+struct ViewportErrorHandler {
+    ViewportErrorCallableWrapper* callableWrapper;
 };
 
 struct ProtectionSpaceBase {
@@ -448,14 +472,14 @@ static_assert(offsetof(OptionalAffineTransform, m_value) == 8);
 static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(OptionalTransformationMatrix) == 144);
 static_assert(offsetof(OptionalTransformationMatrix, m_value) == 16);
-static_assert(sizeof(TransformOperation) == 16);
-static_assert(offsetof(TransformOperation, m_refCount) == 8);
-static_assert(offsetof(TransformOperation, m_type) == 12);
-static_assert(sizeof(TransformOperation::OperationType) == 4);
-static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::Rotate) == 6);
-static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::Matrix) == 10);
-static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::Matrix3D) == 18);
-static_assert(static_cast<std::uint32_t>(TransformOperation::OperationType::NoOperation) == 21);
+static_assert(sizeof(LegacyTransformOperation) == 16);
+static_assert(offsetof(LegacyTransformOperation, m_refCount) == 8);
+static_assert(offsetof(LegacyTransformOperation, m_type) == 12);
+static_assert(sizeof(LegacyTransformOperation::OperationType) == 4);
+static_assert(static_cast<std::uint32_t>(LegacyTransformOperation::OperationType::Rotate) == 6);
+static_assert(static_cast<std::uint32_t>(LegacyTransformOperation::OperationType::Matrix) == 10);
+static_assert(static_cast<std::uint32_t>(LegacyTransformOperation::OperationType::Matrix3D) == 18);
+static_assert(static_cast<std::uint32_t>(LegacyTransformOperation::OperationType::NoOperation) == 21);
 static_assert(sizeof(IdentityTransformOperation) == 16);
 static_assert(sizeof(RotateTransformOperation) == 48);
 static_assert(sizeof(ScaleTransformOperation) == 40);
@@ -493,6 +517,9 @@ static_assert(sizeof(ViewportArguments) == 56);
 static_assert(offsetof(ViewportArguments, width) == 4);
 static_assert(offsetof(ViewportArguments, viewportFit) == 52);
 static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ViewportErrorCode) == 4);
+static_assert(offsetof(ViewportErrorCallableWrapperVtable, call) == 16);
+static_assert(sizeof(ViewportErrorHandler) == 8);
 static_assert(sizeof(ProtectionSpaceBase) == 24);
 static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
 static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);

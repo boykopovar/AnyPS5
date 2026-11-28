@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <cerrno>
@@ -303,7 +304,7 @@ int main(int argc, char** argv) {
     Require(wide || std::string(argv[3]) == "narrow", "width selection");
     const std::string name = wide ? "_WStopfx" : "_Stopfx";
     const std::string symbol = std::string(argv[2]) == "patched" ? Nid::ComputeNid(name, "") : name + "_nid_postfix";
-    const auto path = std::filesystem::absolute(argv[1]) / "libc.prx";
+    const auto path = std::filesystem::absolute(ArgumentPath(argv, 1)) / "libc.prx";
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const auto startup = GetModuleHandleW(L"libc.prx");

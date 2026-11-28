@@ -11,6 +11,7 @@
 
 #include "SceTypes.hpp"
 #include "prx//libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 
@@ -710,8 +711,49 @@ int APS5_VABI scePadDeviceOpen(std::uint64_t deviceId, std::int32_t type, std::i
 }
 
 int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(data, sizeof(*data))) {
+        errno = savedErrno;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno;
+    if (!Pad::IsInitialized()) {
+        PadData localData;
+        WriteDefaultData(&localData);
+        const int copyErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+            errno = copyErrno;
+            return PAD_ERROR_INVALID_ARG;
+        }
+        errno = copyErrno;
+        return PAD_ERROR_NOT_INITIALIZED;
+    }
+    if (port >= PAD_MAX_CONTROLLERS) return PAD_ERROR_INVALID_ARG;
+
+    PadData localData;
+    try {
+        localData = Pad::ReadState(port);
+    } catch (const std::invalid_argument&) {
+        const PadData empty{};
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty));
+        errno = copyErrno;
+        return PAD_ERROR_INVALID_ARG;
+    } catch (const std::exception&) {
+        const PadData empty{};
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty));
+        errno = copyErrno;
+        return PAD_ERROR_NOT_INITIALIZED;
+    }
+    const int savedErrno2 = errno;
+    if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+        errno = savedErrno2;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno2;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color) {
@@ -817,6 +859,7 @@ int APS5_VABI scePadShareOutputDataWithFunctionType(std::int32_t source, std::in
 int APS5_VABI scePadSetVibrationForce(std::int32_t handle, const PadVibrationParam* param) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (param == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     if (SpecialHandle(handle)) return PAD_OK;
     const int port = PortOf(handle);
     if (port < 0) NotImplemented_nid_no_patch("scePadSetVibrationForce: a handle with no pad port");
@@ -1225,14 +1268,18 @@ int APS5_VABI scePadSetVrTrackingMode(std::uint8_t mode) {
 
 int APS5_VABI scePadGetMotionSensorPosition(std::int32_t handle, PadMotionSensorPosition* position) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
-    if (position == nullptr || !GuestWritable_nid_no_patch(position, sizeof(*position))) return PAD_ERROR_INVALID_ARG;
+    if (position == nullptr) return PAD_ERROR_INVALID_ARG;
+    const GuestArena::HostWrite write(position, sizeof(*position));
+    if (!write.Open() || !GuestWritable_nid_no_patch(position, sizeof(*position))) return PAD_ERROR_INVALID_ARG;
     if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadGetSphereRadius(std::int32_t handle, float* radius) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
-    if (radius == nullptr || !GuestWritable_nid_no_patch(radius, sizeof(*radius))) return PAD_ERROR_INVALID_ARG;
+    if (radius == nullptr) return PAD_ERROR_INVALID_ARG;
+    const GuestArena::HostWrite write(radius, sizeof(*radius));
+    if (!write.Open() || !GuestWritable_nid_no_patch(radius, sizeof(*radius))) return PAD_ERROR_INVALID_ARG;
     if (OpenPortType(handle) != PAD_PORT_TYPE_SPECIAL) return PAD_ERROR_INVALID_HANDLE;
     return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
@@ -1259,7 +1306,9 @@ bool APS5_VABI scePadIsMoveConnected(std::int32_t handle) {
 
 int APS5_VABI scePadGetBluetoothAddress(std::int32_t handle, std::uint64_t* address) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
-    if (address == nullptr || !GuestWritable_nid_no_patch(address, sizeof(*address))) return PAD_ERROR_INVALID_ARG;
+    if (address == nullptr) return PAD_ERROR_INVALID_ARG;
+    const GuestArena::HostWrite write(address, sizeof(*address));
+    if (!write.Open() || !GuestWritable_nid_no_patch(address, sizeof(*address))) return PAD_ERROR_INVALID_ARG;
     if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }

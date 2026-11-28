@@ -1,0 +1,10 @@
+add_test_executable(guest_complex_trig_long_tests ${LIBS_INCLUDE_DIR}/tests/GuestComplexTrigLong.cpp)
+target_include_directories(guest_complex_trig_long_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_complex_trig_long_tests PRIVATE libc)
+configure_windows_unwind(guest_complex_trig_long_tests)
+add_test(NAME guest_complex_trig_long COMMAND guest_complex_trig_long_tests)
+set_tests_properties(guest_complex_trig_long PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_complex_trig_long PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

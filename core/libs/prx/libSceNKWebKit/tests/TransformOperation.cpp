@@ -17,7 +17,7 @@ using NKWebKit::TransformAbi::TransformOperationRef;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringBuilder;
 using NKWebKit::WtfAbi::TextStream;
-using OperationType = WebCore::TransformOperation::OperationType;
+using OperationType = WebCore::LegacyTransformOperation::OperationType;
 
 void Check(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -57,7 +57,7 @@ std::string Release(TextStream& stream) {
     return result;
 }
 
-std::string DumpThroughVtable(const WebCore::TransformOperation* operation, unsigned flags = 0) {
+std::string DumpThroughVtable(const WebCore::LegacyTransformOperation* operation, unsigned flags = 0) {
     TextStream stream = NewStream(flags);
     Dispatch(*operation).dump(operation, stream);
     Check(stream.formattingFlags == flags);
@@ -70,7 +70,7 @@ template<typename T> const T* As(const TransformOperationRef& ref) {
 
 void TestIdentity() {
     TransformOperationRef identity = _ZN7WebCore26IdentityTransformOperation6createEv();
-    WebCore::TransformOperation* operation = identity.Get();
+    WebCore::LegacyTransformOperation* operation = identity.Get();
     Check(operation->m_refCount == 1);
     Check(operation->m_type == OperationType::Identity);
     Check(static_cast<std::uint32_t>(operation->m_type) == 20);
@@ -166,7 +166,7 @@ void TestRotateBasics() {
 void TestRotateBlend() {
     TransformOperationRef from = _ZN7WebCore24RotateTransformOperation6createEdNS_18TransformOperation13OperationTypeE(10.0, OperationType::Rotate);
     TransformOperationRef to = _ZN7WebCore24RotateTransformOperation6createEdNS_18TransformOperation13OperationTypeE(50.0, OperationType::Rotate);
-    WebCore::TransformOperation* toOp = to.Get();
+    WebCore::LegacyTransformOperation* toOp = to.Get();
 
     TransformOperationRef quarter = Dispatch(*toOp).blend(toOp, from.Get(), 0.25, false);
     const auto* quarterOp = As<WebCore::RotateTransformOperation>(quarter);
@@ -415,7 +415,7 @@ void TestMatrix3D() {
 
 void TestRefCounting() {
     TransformOperationRef scale = _ZN7WebCore23ScaleTransformOperation6createEddNS_18TransformOperation13OperationTypeE(2.0, 2.0, OperationType::Scale);
-    WebCore::TransformOperation* operation = scale.Get();
+    WebCore::LegacyTransformOperation* operation = scale.Get();
     {
         TransformOperationRef self = Dispatch(*operation).blend(operation, operation, 0.5, false);
         Check(self.Get() != operation);

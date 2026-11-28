@@ -48,6 +48,12 @@ extern "C" {
 const NKWebKit::WtfAbi::DoubleToStringConverter* APS5_VABI
 _ZN3WTF17double_conversion23DoubleToStringConverter19EcmaScriptConverterEv();
 bool APS5_VABI
+_ZNK3WTF17double_conversion23DoubleToStringConverter7ToFixedEdiPNS0_13StringBuilderE(
+    const NKWebKit::WtfAbi::DoubleToStringConverter* self,
+    double value,
+    int requestedDigits,
+    NKWebKit::WtfAbi::DoubleConversionStringBuilder* resultBuilder);
+bool APS5_VABI
 _ZNK3WTF17double_conversion23DoubleToStringConverter13ToExponentialEdiPNS0_13StringBuilderE(
     const NKWebKit::WtfAbi::DoubleToStringConverter* self,
     double value,

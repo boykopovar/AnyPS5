@@ -94,6 +94,8 @@ def prepare(dump, source, log=print):
             continue
         modules = stage_modules(modules_of(directory), source / relative, log)
         if not modules:
+            if relative in STANDARD_DIRECTORIES:
+                (source / relative).mkdir(parents=True, exist_ok=True)
             continue
         count += len(modules)
         module_directories.append(source / relative)
@@ -148,10 +150,14 @@ def remaining(module_directories, extra, source):
     return kept, [relative for relative in extra if relative in names]
 
 
-def convert(relinker, source, output, extra, windows):
+RELINKER_FLAGS = ("--trap-sdk-syscall-stubs", "--function-symbol-roots")
+
+
+def convert(relinker, source, output, extra, windows, flags=()):
     command = [str(relinker), "--registry"]
     if windows:
         command.append("--windows")
+    command += [flag for flag in RELINKER_FLAGS if flag in flags]
     for relative in extra:
         command += ["--module-dir", relative]
     command += [str(source / "eboot.elf"), str(output)]
@@ -199,6 +205,8 @@ def main(argv=None):
     parser.add_argument("--libs", action="append", required=True, help="built .prx directory, as for import_audit.py (repeatable)")
     parser.add_argument("--work", help="directory for the unwrapped files and registries (default: a temporary one, removed afterwards)")
     parser.add_argument("--windows", action="store_true", help="convert for Windows, as the title would be run there")
+    parser.add_argument("--trap-sdk-syscall-stubs", action="store_true", help="pass relinker --trap-sdk-syscall-stubs, as a ps5-payload-dev SDK title is converted")
+    parser.add_argument("--function-symbol-roots", action="store_true", help="pass relinker --function-symbol-roots, for modules whose function symbol sizes overrun their code")
     parser.add_argument("--json", help="also write import_audit.py's JSON report to this file outside the input dump")
     args = parser.parse_args(argv)
     dump = Path(args.dump)
@@ -283,7 +291,8 @@ def main(argv=None):
             return 2
         while True:
             try:
-                result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+                flags = [flag for flag in RELINKER_FLAGS if getattr(args, flag[2:].replace("-", "_"))]
+                result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows, flags)
             except OSError as error:
                 print(f"FAIL: cannot run relinker {relinker}: {error}", file=sys.stderr)
                 return 2

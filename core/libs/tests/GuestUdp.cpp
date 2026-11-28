@@ -100,6 +100,53 @@ static void CheckAddressLengths(int family) {
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
 }
 
+static void CheckConnectedSendTo(int family) {
+    constexpr int AlreadyConnected = 56;
+    const std::uint32_t addressSize = family == 2 ? 16 : 28;
+    const int receiver = socket_nid_postfix(family, 2 | 0x20000000, 0);
+    if (receiver < 0 && family == 28 && *__error_nid_postfix() == 47) return;
+    const int other = socket_nid_postfix(family, 2 | 0x20000000, 0);
+    const int sender = socket_nid_postfix(family, 2, 0);
+    Require(receiver >= 0 && other >= 0 && sender >= 0);
+    std::array<unsigned char, 28> destination{};
+    destination[0] = static_cast<unsigned char>(addressSize);
+    destination[1] = static_cast<unsigned char>(family);
+    if (family == 2) { destination[4] = 127; destination[7] = 1; }
+    else destination[23] = 1;
+    std::array<unsigned char, 28> elsewhere = destination;
+    const int bound = bind_nid_postfix(receiver, destination.data(), addressSize);
+    if (bound < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(sender) == 0 && close_nid_postfix(other) == 0 && close_nid_postfix(receiver) == 0);
+        return;
+    }
+    Require(bound == 0 && bind_nid_postfix(other, elsewhere.data(), addressSize) == 0);
+    std::uint32_t size = destination.size();
+    Require(getsockname_nid_postfix(receiver, destination.data(), &size) == 0 && size == addressSize);
+    size = elsewhere.size();
+    Require(getsockname_nid_postfix(other, elsewhere.data(), &size) == 0 && size == addressSize);
+    Require(connect_nid_postfix(sender, destination.data(), addressSize) == 0);
+    const char payload[] = "connected";
+    char received[sizeof(payload)]{};
+    for (const auto* target : {&destination, &elsewhere}) {
+        Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, target->data(), addressSize) == -1 && *__error_nid_postfix() == AlreadyConnected);
+        KernelIovec vector{const_cast<char*>(payload), sizeof(payload)};
+        GuestMsghdr message{const_cast<unsigned char*>(target->data()), addressSize, &vector, 1, nullptr, 0, 0};
+        Require(sendmsg_nid_postfix(sender, &message, 0) == -1 && *__error_nid_postfix() == AlreadyConnected);
+    }
+    Require(sendto_nid_postfix(sender, reinterpret_cast<void*>(0x10), 1, 0, destination.data(), addressSize) == -1 && *__error_nid_postfix() == 14);
+    Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
+    std::int64_t got = -1;
+    for (int attempt = 0; attempt < 200 && got < 0; ++attempt) {
+        got = recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr);
+        if (got < 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Require(got == sizeof(payload) && std::memcmp(received, payload, sizeof(payload)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+    Require(recvfrom_nid_postfix(other, received, sizeof(received), 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(other) == 0 && close_nid_postfix(receiver) == 0);
+}
+
 static void CheckDissolvedName(int family, int binding) {
     const std::uint32_t addressSize = family == 2 ? 16 : 28;
     const int peer = socket_nid_postfix(family, 2, 0);
@@ -678,6 +725,8 @@ int main() {
     CheckSendReceiveFaults();
     CheckAddressLengths(2);
     CheckAddressLengths(28);
+    CheckConnectedSendTo(2);
+    CheckConnectedSendTo(28);
     for (const int family : {2, 28})
         for (int binding = 0; binding < 3; ++binding) CheckDissolvedName(family, binding);
     CheckArrivalTimestamps(2);
@@ -740,7 +789,7 @@ int main() {
     Require(fcntl_nid_postfix(receiver, 3) == 2);
     Require(fcntl_nid_postfix(receiver, 4, 6) == 0);
     Require(fcntl_nid_postfix(receiver, 3) == 6);
-    Require(fcntl_nid_postfix(receiver, 4, 0x8000) == -1);
+    Require(fcntl_nid_postfix(receiver, 4, 0x8000 | 6) == 0);
     Require(fcntl_nid_postfix(receiver, 3) == 6);
     char buffer[64]{};
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0, nullptr, nullptr) == -1);

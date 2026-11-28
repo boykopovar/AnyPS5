@@ -781,6 +781,7 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     instruction.family = RdnaInstructionFamily::SMEM;
     instruction.opcodeId = opcode;
     instruction.glc = ((word0 >> 16u) & 1u) != 0u;
+    instruction.dlc = ((word0 >> 14u) & 1u) != 0u;
     instruction.memoryOffset = signExtend(word1 & 0x1FFFFFu, 21u);
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);

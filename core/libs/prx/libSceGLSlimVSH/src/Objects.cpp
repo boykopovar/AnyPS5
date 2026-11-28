@@ -61,9 +61,7 @@ void CopyString(const std::string& source, GLsizei size, GLsizei* length, GLchar
         }
     }
     if (length) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(length, &count, sizeof(count));
-        errno = savedErrno;
         if (!copied) Error_nid_no_patch(0x0501);
     }
 }
@@ -125,9 +123,7 @@ void APS5_VABI glBufferData_nid_postfix(GLenum target, GLsizeiptr size, const vo
         if (static_cast<std::size_t>(size) > next.max_size()) { Error_nid_no_patch(0x0505); return; }
         next.resize(size);
         if (size && data) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyIn_nid_no_patch(next.data(), data, static_cast<std::size_t>(size));
-            errno = savedErrno;
             if (!copied) { Error_nid_no_patch(0x0501); return; }
         }
         buffer->data.swap(next);
@@ -141,9 +137,7 @@ void APS5_VABI glBufferSubData_nid_postfix(GLenum target, GLintptr offset, GLsiz
     if (!buffer) return;
     if (offset < 0 || size < 0 || static_cast<std::size_t>(offset) > buffer->data.size() || static_cast<std::size_t>(size) > buffer->data.size() - offset) { Error_nid_no_patch(0x0501); return; }
     if (size) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(buffer->data.data() + offset, data, static_cast<std::size_t>(size));
-        errno = savedErrno;
         if (!copied) { Error_nid_no_patch(0x0501); return; }
     }
 }
@@ -156,9 +150,7 @@ void APS5_VABI glGetBufferParameteriv_nid_postfix(GLenum target, GLenum name, GL
     if (name == 0x8764) result = static_cast<GLint>(std::min<std::size_t>(buffer->data.size(), std::numeric_limits<GLint>::max()));
     else if (name == 0x8765) result = buffer->usage;
     else { Error_nid_no_patch(0x0500); return; }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 
@@ -260,9 +252,7 @@ void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GL
                 const GLchar* from = localStrings[i];
                 while (remaining) {
                     const auto n = std::min(remaining, piece.size());
-                    const int savedErrno = errno;
                     const bool copied = GuestCopyIn_nid_no_patch(piece.data(), from, n);
-                    errno = savedErrno;
                     if (!copied) { Error_nid_no_patch(0x0501); return; }
                     source.append(piece.data(), n);
                     from += n;
@@ -292,9 +282,7 @@ void APS5_VABI glGetShaderiv_nid_postfix(GLuint shader, GLenum name, GLint* valu
     case 0x8b88: result = object->source.empty() ? 0 : static_cast<GLint>(std::min<std::size_t>(object->source.size() + 1, std::numeric_limits<GLint>::max())); break;
     default: Error_nid_no_patch(0x0500); return;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 
@@ -309,9 +297,7 @@ void APS5_VABI glGetProgramiv_nid_postfix(GLuint program, GLenum name, GLint* va
     case 0x8b82: case 0x8b83: case 0x8b84: case 0x8b86: case 0x8b87: case 0x8b89: case 0x8b8a: result = 0; break;
     default: Error_nid_no_patch(0x0500); return;
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) Error_nid_no_patch(0x0501);
 }
 
@@ -333,9 +319,7 @@ void APS5_VABI glGetAttachedShaders_nid_postfix(GLuint program, GLsizei size, GL
     }
     if (count) {
         const GLsizei written = static_cast<GLsizei>(local.size());
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(count, &written, sizeof(written));
-        errno = savedErrno;
         if (!copied) Error_nid_no_patch(0x0501);
     }
 }

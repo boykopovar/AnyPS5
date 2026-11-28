@@ -60,7 +60,7 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
 int GetIpLevelOption(SocketOptionState& state, bool ipv4, bool datagram, int option, void* value, std::uint32_t* length);
 int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length);
 int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length);
-int GetLocalLevelOption(const LocalCredentials* credentials, bool stream, int option, void* value, std::uint32_t* length);
+int GetLocalLevelOption(const LocalCredentials* credentials, bool stream, bool connectWait, int option, void* value, std::uint32_t* length);
 
 }
 

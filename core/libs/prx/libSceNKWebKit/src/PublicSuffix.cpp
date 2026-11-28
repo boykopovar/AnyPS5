@@ -46,7 +46,7 @@ using NKWebKit::WtfAbi::StringView;
 String LoadString(const String* string, const char* operation) {
     if (!string) throw std::invalid_argument(std::string(operation) + ": null string");
     StringImpl* impl = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&impl, &string->impl, sizeof(impl))) throw std::invalid_argument(std::string(operation) + ": unreadable string");
+    if (!GuestCopyIn_nid_no_patch(&impl, string, sizeof(impl))) throw std::invalid_argument(std::string(operation) + ": unreadable string");
     if (impl) impl->refCount += 2;
     return String(impl);
 }

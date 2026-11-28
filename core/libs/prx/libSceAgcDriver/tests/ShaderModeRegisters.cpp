@@ -370,6 +370,43 @@ void verifyRoundingInLoop() {
     expectRejected(carried, ShaderFloatMode{0xc0}, "reads MODE bits", 0);
 }
 
+void verifyOutputModifierRounding() {
+    struct Form {
+        std::uint32_t opcode;
+        RdnaOpcode op;
+        std::uint32_t sources;
+    };
+    constexpr std::uint32_t unary = 0x00000101;
+    constexpr std::uint32_t binary = 0x00020501;
+    constexpr std::uint32_t ternary = 0x040c0501;
+    constexpr std::array<Form, 9> tracked{{
+        {0x13a, RdnaOpcode::VMinF16, binary}, {0x139, RdnaOpcode::VMaxF16, binary}, {0x351, RdnaOpcode::VMin3F16, ternary},
+        {0x354, RdnaOpcode::VMax3F16, ternary}, {0x357, RdnaOpcode::VMed3F16, ternary}, {0x1db, RdnaOpcode::VFloorF16, unary},
+        {0x1dc, RdnaOpcode::VCeilF16, unary}, {0x1dd, RdnaOpcode::VTruncF16, unary}, {0x1de, RdnaOpcode::VRndneF16, unary},
+    }};
+    constexpr std::array<Form, 8> untracked{{
+        {0x1d4, RdnaOpcode::VRcpF16, unary}, {0x1d5, RdnaOpcode::VSqrtF16, unary}, {0x1d6, RdnaOpcode::VRsqF16, unary},
+        {0x1d7, RdnaOpcode::VLogF16, unary}, {0x1d8, RdnaOpcode::VExpF16, unary}, {0x1e0, RdnaOpcode::VSinF16, unary},
+        {0x1e1, RdnaOpcode::VCosF16, unary}, {0x1d9, RdnaOpcode::VFrexpMantF16, unary},
+    }};
+    const auto diamond = [](std::uint32_t first, std::uint32_t second, const Form& form, std::uint32_t omod) {
+        return std::array<std::uint32_t, 8>{0xbf840002, roundMode(first), 0xbf820001, roundMode(second), 0xd4000000u | (form.opcode << 16u), (omod << 27u) | form.sources, endProgram, endProgram};
+    };
+    const ShaderFloatMode flushed{0x40u, true, false, false};
+    for (const auto& form : tracked) {
+        requireOpcode(0xd4000000u | (form.opcode << 16u), form.op);
+        expectRejected(diamond(12, 0, form, 1), flushed, "reads MODE bits", 16);
+        static_cast<void>(translate(diamond(12, 12, form, 1), flushed));
+        static_cast<void>(translate(diamond(12, 0, form, 0), flushed));
+        static_cast<void>(translate(diamond(12, 0, form, 1), ShaderFloatMode{0x40u, true, true, false}));
+        static_cast<void>(translate(diamond(12, 0, form, 1), ShaderFloatMode{0xc0u, true, false, false}));
+    }
+    for (const auto& form : untracked) {
+        requireOpcode(0xd4000000u | (form.opcode << 16u), form.op);
+        static_cast<void>(translate(diamond(12, 0, form, 1), flushed));
+    }
+}
+
 void verifyRecompilePropagation() {
     constexpr std::array<std::uint32_t, 2> code{0xbfa40005, 0xbf810000};
     constexpr std::array<std::uint32_t, 2> capabilities{1, 61};
@@ -405,7 +442,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 21> checks{{
+    constexpr std::array<Check, 22> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
@@ -414,6 +451,7 @@ int main() {
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
+        {"outputModifierRounding", verifyOutputModifierRounding},
     }};
     int failures = 0;
     for (const auto& check : checks) {

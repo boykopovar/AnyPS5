@@ -55,7 +55,7 @@ int APS5_VABI sceDiscMapGetPackageSize(std::int64_t fflags, std::uint64_t* ret1,
 extern "C" {
 
 int APS5_VABI libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_DISC_MAP_ERROR_NO_BITMAP_INFO;
 }
 APS5_EXPORT("5+vOlukvkfg", libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch);
 

@@ -1,5 +1,4 @@
 #include "prx/libSceVideoArbitration/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -21,13 +20,6 @@ struct VideoArbitrationParam {
     std::uint64_t affinityMask;
 };
 static_assert(sizeof(VideoArbitrationParam) == VideoArbitrationParamSize);
-
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
 
 std::mutex g_mutex;
 bool g_initialized = false;
@@ -62,7 +54,7 @@ int APS5_VABI sceVideoArbitrationEnable(std::uint64_t reserved, void* callback) 
 int APS5_VABI sceVideoArbitrationInitialize(const void* param) {
     if (param == nullptr) return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
     VideoArbitrationParam localParam{};
-    if (!CopyInPreservingErrno(&localParam, param, sizeof(localParam))) {
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
         return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
     }
     if (localParam.size != VideoArbitrationParamSize) {
