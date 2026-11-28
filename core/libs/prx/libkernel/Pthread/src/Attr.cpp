@@ -244,8 +244,10 @@ int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size)
 }
 
 int APS5_VABI scePthreadAttrSetstackaddr(PthreadAttr* attr, void* addr) {
-    if (!attr || !*attr || !addr) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->stackAddress = addr;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    if (!addr) return SCE_KERNEL_ERROR_EINVAL;
+    handle->stackAddress = addr;
     return SCE_OK;
 }
 
