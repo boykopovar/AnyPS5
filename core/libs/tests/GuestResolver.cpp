@@ -48,14 +48,18 @@ int main() {
         {"2130706433", {127, 0, 0, 1}},
         {"127.1 trailing", {127, 0, 0, 1}},
         {"127.0.0.1\tignored", {127, 0, 0, 1}},
-        {"4294967297", {0, 0, 0, 1}},
-        {"18446744073709551617", {0, 0, 0, 1}},
+        {"4294967295", {255, 255, 255, 255}},
         {"0x.1", {0, 0, 0, 1}},
         {"255.255.255.255", {255, 255, 255, 255}},
         {"0", {0, 0, 0, 0}},
         {"1.16777215", {1, 255, 255, 255}},
         {"1.2.65535", {1, 2, 255, 255}}
     };
+    for (const char* rejected : {"4294967296", "4294967297", "18446744073709551616", "18446744073709551617", "0x100000000"}) {
+        *sceNetErrnoLoc() = 77;
+        Require(gethostbyname_nid_postfix(rejected) == nullptr);
+        Require(*sceNetErrnoLoc() != 0);
+    }
     for (const auto& test : numericCases) {
         *sceNetErrnoLoc() = 77;
         legacy = gethostbyname_nid_postfix(test.name);
