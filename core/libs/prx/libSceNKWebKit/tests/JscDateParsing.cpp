@@ -186,6 +186,11 @@ const Local kLocal[] = {
     {"Mar 26 2021 02:30", "2021, 2, 26, 2, 30"},
     {"Mar 28 2021 02:30", "2021, 2, 28, 2, 30"},
     {"Mar 14 2021 02:30", "2021, 2, 14, 2, 30"},
+    {"2021-03-14T02:30:00", "2021, 2, 14, 2, 30"},
+    {"2021-03-28T02:30:00", "2021, 2, 28, 2, 30"},
+    {"Mar 14 2021 03:30", "2021, 2, 14, 3, 30"},
+    {"Mar 28 2021 03:30", "2021, 2, 28, 3, 30"},
+    {"Nov 7 2021 01:30", "2021, 10, 7, 1, 30"},
     {"Jul 4 2021 02:30:15", "2021, 6, 4, 2, 30, 15"},
     {"Oct 31 2021 02:30", "2021, 9, 31, 2, 30"},
     {"2021-07-04T23:59:59.999", "2021, 6, 4, 23, 59, 59, 999"},
@@ -195,6 +200,22 @@ const Local kLocal[] = {
     {"2024-02-29T00:00:00", "2024, 1, 29"},
     {"2023-12-31T23:59:59", "2023, 11, 31, 23, 59, 59"},
     {"2021-01-01T00:00:00", "2021, 0, 1"},
+};
+
+struct EarlyLocal {
+    const char* text;
+    const char* day;
+    const char* clock;
+};
+
+const EarlyLocal kEarlyLocal[] = {
+    {"0000-02-29T00:00:00", "0, 1, 29", "0"},
+    {"0004-02-29T12:00:00", "4, 1, 29", "12"},
+    {"0016-04-30T23:30:00", "16, 3, 30", "23, 30"},
+    {"0018-03-31T02:30:00", "18, 2, 31", "2, 30"},
+    {"0099-03-14T02:30:00", "99, 2, 14", "2, 30"},
+    {"0099-03-28T02:30:00", "99, 2, 28", "2, 30"},
+    {"0099-04-04T02:30:00", "99, 3, 4", "2, 30"},
 };
 
 void TestStringsThatDoNotDependOnTheTimeZone(JSContextRef ctx) {
@@ -217,6 +238,11 @@ void TestStringsInLocalTime(JSContextRef ctx) {
     Require(EvalBool(ctx, "var first = new Date(2000, 0, 1); first.setFullYear(0); Date.parse('0000-01-01T00:00:00') === first.getTime()"));
     Require(EvalBool(ctx, "var last = new Date(2000, 11, 31, 23, 59, 59); last.setFullYear(99); Date.parse('0099-12-31T23:59:59') === last.getTime()"));
     Require(EvalBool(ctx, "Date.parse('0100-01-01T00:00:00') === new Date(100, 0, 1).getTime()"));
+    for (const EarlyLocal& entry : kEarlyLocal) {
+        const std::string expected = std::string("var wall = new Date(2000, 5, 15, ") + entry.clock + "); wall.setFullYear(" + entry.day + ")";
+        const double time = JSValueToNumber(ctx, Eval(ctx, expected.c_str()), nullptr);
+        RequireFor(!std::isnan(time) && ParsesTo(ctx, entry.text, time), entry.text);
+    }
     Require(EvalBool(ctx, "Date.parse('1969-12-31T23:59:59.9995') === Math.trunc(new Date(1970, 0, 1).getTime() - 0.5)"));
     Require(EvalBool(ctx, "Date.parse('1970-01-01T00:00:05.0005') === Math.trunc(new Date(1970, 0, 1, 0, 0, 5).getTime() + 0.5)"));
     Require(EvalBool(ctx, "var d = new Date('Jan 2 2021 10:07:09 PM'); d.getFullYear() === 2021 && d.getMonth() === 0 && d.getDate() === 2 && d.getHours() === 22 && d.getMinutes() === 7 && d.getSeconds() === 9"));
@@ -264,6 +290,10 @@ void TestTheConstructorObject(JSContextRef ctx) {
 
     Require(EvalBool(ctx, "var kept = Date.parse('1/1/0001'); var realSetFullYear = Date.prototype.setFullYear; Date.prototype.setFullYear = function () { throw new Error('replaced'); };"
                           "var same = Date.parse('1/1/0001') === kept && new Date('0050-06-15T12:00:00').getFullYear() === 50; Date.prototype.setFullYear = realSetFullYear; same"));
+    Require(EvalBool(ctx, "var keptEarly = Date.parse('0050-06-15T12:00:00'); var realSetHours = Date.prototype.setHours; var realGetTime = Date.prototype.getTime;"
+                          "Date.prototype.setHours = function () { throw new Error('replaced'); }; Date.prototype.getTime = function () { throw new Error('replaced'); };"
+                          "var unchanged = Date.parse('1/1/0001') === kept && Date.parse('0050-06-15T12:00:00') === keptEarly && Date.parse('Mar 14 2021 02:30') === realGetTime.call(new Date(2021, 2, 14, 2, 30));"
+                          "Date.prototype.setHours = realSetHours; Date.prototype.getTime = realGetTime; unchanged"));
     Require(EvalBool(ctx, "var RealDate = Date; Date = function () { throw new Error('replaced'); }; var still = RealDate.parse('1/1/0001') === kept; Date = RealDate; still && new Date('1/1/0001').getTime() === kept"));
 }
 

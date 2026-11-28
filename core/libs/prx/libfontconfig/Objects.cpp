@@ -1,6 +1,7 @@
 /*
- * Derived from src/fclang.c (Fontconfig 72b9a48f57de6204d99ce1c217b5609ee92ece9b)
+ * Derived from src/fclang.c, src/fcmatch.c and src/fcstr.c (Fontconfig 72b9a48f57de6204d99ce1c217b5609ee92ece9b)
  *
+ * Copyright © 2000 Keith Packard
  * Copyright © 2002 Keith Packard
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
@@ -22,6 +23,7 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "prx/libfontconfig/include/Config.hpp"
 #include "prx/libfontconfig/include/InventoryExports.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libc/include/General.hpp"
@@ -31,7 +33,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iterator>
+#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -54,11 +61,15 @@ unsigned char Lower(unsigned char value) {
 
 class CaseWalker {
 public:
-    explicit CaseWalker(std::string_view value) : source(value) {}
+    explicit CaseWalker(std::string_view value, std::string_view skip = {}) : source(value), skip(skip), size(value.size()) {}
 
     unsigned char Next() {
         if (read < end) return buffer[read++];
-        if (source.empty()) return 0;
+        while (!source.empty() && skip.find(source.front()) != std::string_view::npos) source.remove_prefix(1);
+        if (source.empty()) {
+            finished = true;
+            return 0;
+        }
         const auto first = static_cast<unsigned char>(source.front());
         source.remove_prefix(1);
         if (first < 0xc0) return Lower(first);
@@ -81,6 +92,8 @@ public:
         return buffer[read++];
     }
 
+    std::size_t Consumed() const { return size - source.size() + (finished ? 1 : 0); }
+
 private:
     void Encode(std::uint32_t value) {
         if (value >= 0x80000000u) return;
@@ -102,6 +115,9 @@ private:
     }
 
     std::string_view source;
+    std::string_view skip;
+    std::size_t size = 0;
+    bool finished = false;
     std::array<unsigned char, 12> buffer{};
     unsigned read = 0;
     unsigned end = 0;
@@ -114,6 +130,44 @@ int CompareIgnoringCase(std::string_view first, std::string_view second) {
         const auto b = right.Next();
         if (!a || a != b) return static_cast<int>(a) - b;
     }
+}
+
+int CompareIgnoringBlanks(std::string_view first, std::string_view second) {
+    CaseWalker left(first, " "), right(second, " ");
+    for (;;) {
+        const auto a = left.Next();
+        const auto b = right.Next();
+        if (!a || a != b) return static_cast<int>(a) - b;
+    }
+}
+
+std::size_t MatchedPrefix(std::string_view first, std::string_view second, std::string_view delimiters) {
+    CaseWalker left(first, delimiters), right(second, delimiters);
+    for (;;) {
+        const auto a = left.Next();
+        const auto b = right.Next();
+        if (!a || a != b) return left.Consumed() - 1;
+    }
+}
+
+bool GlobMatch(std::string_view glob, std::string_view text) {
+    while (!glob.empty()) {
+        const char c = glob.front();
+        glob.remove_prefix(1);
+        if (c == '*') {
+            if (glob.empty()) return true;
+            if (glob.find('*') == std::string_view::npos) {
+                if (text.size() < glob.size()) return false;
+                text.remove_prefix(text.size() - glob.size());
+            }
+            for (; !text.empty(); text.remove_prefix(1))
+                if (GlobMatch(glob, text)) return true;
+            return false;
+        }
+        if (text.empty() || (c != '?' && text.front() != c)) return false;
+        text.remove_prefix(1);
+    }
+    return text.empty();
 }
 
 FcLangResult CompareLanguages(std::string_view first, std::string_view second) {
@@ -165,6 +219,7 @@ struct PatternValue {
 
     PatternValue() = default;
     PatternValue(PatternValue&&) noexcept = default;
+    PatternValue& operator=(PatternValue&&) noexcept = default;
     PatternValue(const PatternValue& other)
         : type(other.type), integer(other.integer), real(other.real), text(other.text), matrix(other.matrix),
           charset(RetainCharSet(other.charset.get())),
@@ -257,18 +312,217 @@ struct FcPattern {
 
 namespace {
 
-FcBool AddValue(FcPattern* pattern, const char* object, PatternValue value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
-    if (!ValidType(object, value.type)) return 0;
-    const auto found = pattern->objects.find(object);
+FcBool AddValue(FcPattern* pattern, const char* object, PatternValue value, const char* caller) {
+    if (!pattern || !object) NotImplemented_nid_no_patch(caller);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, caller);
+    if (!ValidType(name, value.type)) return 0;
+    const auto found = pattern->objects.find(name);
     if (found != pattern->objects.end()) {
         found->second.push_back(std::move(value));
     } else {
         std::list<PatternValue> values;
         values.push_back(std::move(value));
-        pattern->objects.emplace(object, std::move(values));
+        pattern->objects.emplace(name, std::move(values));
     }
     return 1;
+}
+
+enum class Matcher { None, Family, String, Number, Bool, Filename, CharSet, Lang, PostScript, Range, Size };
+
+struct MatcherEntry {
+    std::string_view object;
+    Matcher matcher;
+};
+
+constexpr MatcherEntry Matchers[] = {
+    {"family", Matcher::Family}, {"style", Matcher::String}, {"slant", Matcher::Number}, {"weight", Matcher::Range},
+    {"width", Matcher::Range}, {"size", Matcher::Size}, {"pixelsize", Matcher::Number}, {"spacing", Matcher::Number},
+    {"foundry", Matcher::String}, {"antialias", Matcher::Bool}, {"file", Matcher::Filename},
+    {"rasterizer", Matcher::String}, {"outline", Matcher::Bool}, {"scalable", Matcher::Bool},
+    {"charset", Matcher::CharSet}, {"lang", Matcher::Lang}, {"fontversion", Matcher::Number},
+    {"fontformat", Matcher::String}, {"decorative", Matcher::Bool}, {"postscriptname", Matcher::PostScript},
+    {"color", Matcher::Bool}, {"symbol", Matcher::Bool}, {"variable", Matcher::Bool}, {"fonthashint", Matcher::Bool},
+    {"order", Matcher::Number}, {"namedinstance", Matcher::Bool}, {"fontwrapper", Matcher::String},
+};
+
+constexpr bool KnownObjects() {
+    for (const auto& entry : Matchers) {
+        bool found = false;
+        for (const auto& object : fontconfig_data::Objects) found = found || object.name == entry.object;
+        if (!found) return false;
+    }
+    return true;
+}
+
+static_assert(KnownObjects());
+
+Matcher MatcherFor(std::string_view object) {
+    for (const auto& entry : Matchers)
+        if (entry.object == object) return entry.matcher;
+    return Matcher::None;
+}
+
+bool Number(const PatternValue& value, double& number) {
+    if (value.type == FcTypeInteger) number = value.integer;
+    else if (value.type == FcTypeDouble) number = value.real;
+    else return false;
+    return true;
+}
+
+PatternValue Real(double number) {
+    PatternValue value;
+    value.type = FcTypeDouble;
+    value.real = number;
+    return value;
+}
+
+bool SameTerritoryFamily(std::string_view first, std::string_view second) {
+    const auto dash = first.find('-');
+    return dash != std::string_view::npos && second.find('-') == dash && first.substr(0, dash) == second.substr(0, dash);
+}
+
+FcLangResult CompareLanguageSet(const FcLangSet& set, const std::set<std::string>& languages) {
+    auto best = FcLangDifferentLang;
+    for (auto entry = languages.begin(); best > FcLangEqual && entry != languages.end(); ++entry)
+        best = std::min(best, FcLangSetHasLang(&set, reinterpret_cast<const FcChar8*>(entry->c_str())));
+    return best;
+}
+
+FcLangResult CompareLanguageSets(const FcLangSet& first, const FcLangSet& second) {
+    for (std::size_t i = 0; i < first.known.size(); ++i)
+        if (first.known[i] && second.known[i]) return FcLangEqual;
+    auto best = FcLangDifferentLang;
+    for (std::size_t i = 0; i < first.known.size() && best == FcLangDifferentLang; ++i) {
+        if (!first.known[i]) continue;
+        for (std::size_t j = 0; j < second.known.size(); ++j) {
+            if (second.known[j] && SameTerritoryFamily(fontconfig_data::Languages[i], fontconfig_data::Languages[j])) {
+                best = FcLangDifferentTerritory;
+                break;
+            }
+        }
+    }
+    if (!first.extra.empty()) best = std::min(best, CompareLanguageSet(second, first.extra));
+    if (best > FcLangEqual && !second.extra.empty()) best = std::min(best, CompareLanguageSet(first, second.extra));
+    return best;
+}
+
+double CompareLanguage(const PatternValue& first, const PatternValue& second) {
+    FcLangResult result;
+    const auto text = [](const PatternValue& value) { return reinterpret_cast<const FcChar8*>(value.text.c_str()); };
+    if (first.type == FcTypeLangSet && second.type == FcTypeLangSet) result = CompareLanguageSets(*first.langset, *second.langset);
+    else if (first.type == FcTypeLangSet && second.type == FcTypeString) result = FcLangSetHasLang(first.langset.get(), text(second));
+    else if (first.type == FcTypeString && second.type == FcTypeLangSet) result = FcLangSetHasLang(second.langset.get(), text(first));
+    else if (first.type == FcTypeString && second.type == FcTypeString) result = CompareLanguages(first.text, second.text);
+    else return -1;
+    return result == FcLangEqual ? 0 : result == FcLangDifferentTerritory ? 1 : 2;
+}
+
+bool DifferentInitials(std::string_view first, std::string_view second) {
+    const unsigned char a = first.empty() ? 0 : first.front();
+    const unsigned char b = second.empty() ? 0 : second.front();
+    return Lower(a) != Lower(b) && a != ' ' && b != ' ';
+}
+
+double CompareRange(const PatternValue& first, const PatternValue& second, PatternValue& best, bool size) {
+    double b1 = 0, b2 = 0;
+    if (!Number(first, b1) || !Number(second, b2)) return -1;
+    const double e1 = b1, e2 = b2;
+    if (size) best = Real((b1 + e1) * .5);
+    else best = Real(e1 < b2 ? b2 : e2 < b1 ? e2 : ((b1 > b2 ? b1 : b2) + (e1 < e2 ? e1 : e2)) * .5);
+    if (e1 < b2 || e2 < b1) {
+        const double low = std::fabs(b2 - e1), high = std::fabs(b1 - e2);
+        return low < high ? low : high;
+    }
+    return 0.0;
+}
+
+double Compare(Matcher matcher, const PatternValue& first, const PatternValue& second, PatternValue& best) {
+    switch (matcher) {
+    case Matcher::Number: {
+        double a = 0, b = 0;
+        if (!Number(first, a) || !Number(second, b)) return -1;
+        best = PatternValue(second);
+        const double distance = b - a;
+        return distance < 0 ? -distance : distance;
+    }
+    case Matcher::String:
+        best = PatternValue(second);
+        return CompareIgnoringCase(first.text, second.text) != 0;
+    case Matcher::Family:
+        best = PatternValue(second);
+        if (DifferentInitials(first.text, second.text)) return 1.0;
+        return CompareIgnoringBlanks(first.text, second.text) != 0;
+    case Matcher::PostScript: {
+        best = PatternValue(second);
+        if (DifferentInitials(first.text, second.text)) return 1.0;
+        const auto matched = MatchedPrefix(first.text, second.text, " -");
+        const auto longest = std::max(first.text.size(), second.text.size());
+        return static_cast<double>(longest - matched) / static_cast<double>(longest);
+    }
+    case Matcher::Lang:
+        best = PatternValue(second);
+        return CompareLanguage(first, second);
+    case Matcher::Bool:
+        if (first.type != FcTypeBool || second.type != FcTypeBool) return -1;
+        best = PatternValue{};
+        best.type = FcTypeBool;
+        best.integer = second.integer != 2 ? second.integer : first.integer;
+        return (second.integer ^ first.integer) == 1;
+    case Matcher::CharSet:
+        best = PatternValue(second);
+        return FcCharSetSubtractCount(first.charset.get(), second.charset.get());
+    case Matcher::Range: return CompareRange(first, second, best, false);
+    case Matcher::Size: return CompareRange(first, second, best, true);
+    case Matcher::Filename:
+        best = PatternValue(second);
+        if (first.text == second.text) return 0.0;
+        if (CompareIgnoringCase(first.text, second.text) == 0) return 1.0;
+        return GlobMatch(first.text, second.text) ? 2.0 : 3.0;
+    case Matcher::None: break;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
+bool CompareLists(Matcher matcher, const std::list<PatternValue>& pattern, const std::list<PatternValue>& font,
+    PatternValue* bestValue, std::size_t* position) {
+    if (matcher == Matcher::None) {
+        if (bestValue) *bestValue = PatternValue(font.front());
+        if (position) *position = 0;
+        return true;
+    }
+    const bool single = matcher != Matcher::Family && matcher != Matcher::PostScript;
+    double best = 1e99;
+    std::size_t found = 0;
+    bool scored = false;
+    std::size_t j = 0;
+    for (const auto& first : pattern) {
+        std::size_t k = 0;
+        for (const auto& second : font) {
+            PatternValue match;
+            double score = Compare(matcher, first, second, match);
+            if (score < 0) return false;
+            score = score * 1000 + j * 100 + (second.type == FcTypeString ? k : 0);
+            if (score < best) {
+                if (bestValue) *bestValue = std::move(match);
+                best = score;
+                found = k;
+                scored = true;
+            }
+            if (single && best < 1000) {
+                if (position) *position = found;
+                return true;
+            }
+            ++k;
+        }
+        ++j;
+    }
+    if (bestValue && !scored) *bestValue = PatternValue(font.front());
+    if (position) *position = found;
+    return true;
+}
+
+bool IsNameLanguage(std::string_view object) {
+    return object == "familylang" || object == "stylelang" || object == "fullnamelang";
 }
 
 }
@@ -285,20 +539,20 @@ void APS5_VABI FcLangSetDestroy(FcLangSet* set) {
 
 FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
     if (!set || !language) NotImplemented_nid_no_patch(__func__);
-    const std::string_view name(reinterpret_cast<const char*>(language));
-    const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), name,
-        [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
-    if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0) {
-        set->known[entry - std::begin(fontconfig_data::Languages)] = true;
-        return 1;
-    }
     try {
-        const auto [entry, inserted] = set->extra.emplace(name);
+        const std::string name = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(language), __func__);
+        const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), std::string_view(name),
+            [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
+        if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0) {
+            set->known[entry - std::begin(fontconfig_data::Languages)] = true;
+            return 1;
+        }
+        const auto [insertedEntry, inserted] = set->extra.emplace(name);
         if (inserted) {
             try {
                 set->extraOrder.emplace_back(name);
             } catch (...) {
-                set->extra.erase(entry);
+                set->extra.erase(insertedEntry);
                 throw;
             }
         }
@@ -310,8 +564,8 @@ FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
 
 FcLangResult APS5_VABI FcLangSetHasLang(const FcLangSet* set, const FcChar8* language) {
     if (!set || !language) NotImplemented_nid_no_patch(__func__);
-    const std::string_view name(reinterpret_cast<const char*>(language));
-    const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), name,
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(language), __func__);
+    const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), std::string_view(name),
         [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
     const auto index = static_cast<int>(entry - std::begin(fontconfig_data::Languages));
     if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0 && set->known[index])
@@ -356,10 +610,19 @@ FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* pattern) {
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects) {
     if (!objects) return FcPatternDuplicate_nid_postfix(pattern);
     if (!pattern) NotImplemented_nid_no_patch(__func__);
+    FcObjectSet objectSet{};
+    ReadGuestValue(objectSet, objects, __func__);
+    if (objectSet.nobject < 0 || (objectSet.nobject > 0 && !objectSet.objects)) NotImplemented_nid_no_patch(__func__);
     try {
         auto copy = std::make_unique<FcPattern>();
-        for (int i = 0; i < objects->nobject; ++i) {
-            const auto entry = pattern->objects.find(objects->objects[i]);
+        const auto arrayBase = reinterpret_cast<std::uintptr_t>(objectSet.objects);
+        for (int i = 0; i < objectSet.nobject; ++i) {
+            const auto offset = static_cast<std::size_t>(i);
+            if (offset > (std::numeric_limits<std::uintptr_t>::max() - arrayBase) / sizeof(const char*)) NotImplemented_nid_no_patch(__func__);
+            const char* namePointer = nullptr;
+            ReadGuestValue(namePointer, reinterpret_cast<const char* const*>(arrayBase + offset * sizeof(const char*)), __func__);
+            const std::string name = FontconfigReadGuestCString_nid_no_patch(namePointer, __func__);
+            const auto entry = pattern->objects.find(name);
             if (entry == pattern->objects.end()) continue;
             auto& values = copy->objects[entry->first];
             for (const auto& value : entry->second) values.push_back(value);
@@ -384,7 +647,8 @@ FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second)
 
 FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
-    const auto entry = pattern->objects.find(object);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
+    const auto entry = pattern->objects.find(name);
     if (entry == pattern->objects.end()) return 0;
     pattern->objects.erase(entry);
     return 1;
@@ -392,7 +656,8 @@ FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object
 
 FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
-    const auto entry = pattern->objects.find(object);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
+    const auto entry = pattern->objects.find(name);
     if (entry == pattern->objects.end() || id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return 0;
     entry->second.erase(std::next(entry->second.begin(), id));
     if (entry->second.empty()) pattern->objects.erase(entry);
@@ -401,8 +666,9 @@ FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id)
 
 FcResult APS5_VABI FcPatternGet_nid_postfix(const FcPattern* pattern, const char* object, int id, FcValue* value) {
     if (!object) NotImplemented_nid_no_patch(__func__);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
     if (!pattern) return FcResultNoMatch;
-    const auto entry = pattern->objects.find(object);
+    const auto entry = pattern->objects.find(name);
     if (entry == pattern->objects.end()) return FcResultNoMatch;
     if (id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return FcResultNoId;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -447,7 +713,7 @@ FcBool APS5_VABI FcPatternAddInteger_nid_postfix(FcPattern* pattern, const char*
         PatternValue entry;
         entry.type = FcTypeInteger;
         entry.integer = value;
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -456,7 +722,7 @@ FcBool APS5_VABI FcPatternAddBool_nid_postfix(FcPattern* pattern, const char* ob
         PatternValue entry;
         entry.type = FcTypeBool;
         entry.integer = value;
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -465,7 +731,7 @@ FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, doub
         PatternValue entry;
         entry.type = FcTypeDouble;
         entry.real = value;
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -475,8 +741,8 @@ FcBool APS5_VABI FcPatternAddString(FcPattern* pattern, const char* object, cons
     try {
         PatternValue entry;
         entry.type = FcTypeString;
-        entry.text = reinterpret_cast<const char*>(value);
-        return AddValue(pattern, object, std::move(entry));
+        entry.text = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(value), __func__);
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -487,7 +753,7 @@ FcBool APS5_VABI FcPatternAddCharSet(FcPattern* pattern, const char* object, con
         PatternValue entry;
         entry.type = FcTypeCharSet;
         entry.charset = RetainCharSet(value);
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -498,7 +764,7 @@ FcBool APS5_VABI FcPatternAddLangSet(FcPattern* pattern, const char* object, con
         PatternValue entry;
         entry.type = FcTypeLangSet;
         entry.langset = std::make_unique<FcLangSet>(*value);
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -509,10 +775,94 @@ FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, cons
         PatternValue entry;
         entry.type = FcTypeMatrix;
         ReadGuestValue(entry.matrix, value, __func__);
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
+
+FcPattern* APS5_VABI FcFontRenderPrepare(FcConfig* config, FcPattern* pattern, FcPattern* font) {
+    if (!pattern || !font) NotImplemented_nid_no_patch(__func__);
+    try {
+        auto prepared = std::make_unique<FcPattern>();
+        for (const auto& [object, values] : font->objects) {
+            if (IsNameLanguage(object)) continue;
+            if (object == "family" || object == "style" || object == "fullname") {
+                const auto language = object + "lang";
+                const auto fontLanguages = font->objects.find(language);
+                const auto patternLanguages = pattern->objects.find(language);
+                if (fontLanguages != font->objects.end() && patternLanguages != pattern->objects.end()) {
+                    std::size_t chosen = 1;
+                    if (!CompareLists(Matcher::Lang, patternLanguages->second, fontLanguages->second, nullptr, &chosen))
+                        return nullptr;
+                    std::list<PatternValue> names, languages;
+                    auto name = values.begin();
+                    auto tag = fontLanguages->second.begin();
+                    for (std::size_t j = 0; name != values.end() || tag != fontLanguages->second.end(); ++j) {
+                        if (name != values.end()) {
+                            if (j == chosen) names.push_front(*name);
+                            else names.push_back(*name);
+                            ++name;
+                        }
+                        if (tag != fontLanguages->second.end()) {
+                            if (j == chosen) languages.push_front(*tag);
+                            else languages.push_back(*tag);
+                            ++tag;
+                        }
+                    }
+                    prepared->objects.emplace(object, std::move(names));
+                    prepared->objects.emplace(language, std::move(languages));
+                    continue;
+                }
+                if (fontLanguages != font->objects.end()) {
+                    prepared->objects.emplace(object, values);
+                    prepared->objects.emplace(language, fontLanguages->second);
+                    continue;
+                }
+            }
+            const auto requested = pattern->objects.find(object);
+            if (requested == pattern->objects.end()) {
+                prepared->objects.emplace(object, values);
+                continue;
+            }
+            PatternValue best;
+            if (!CompareLists(MatcherFor(object), requested->second, values, &best, nullptr)) return nullptr;
+            std::list<PatternValue> chosen;
+            chosen.push_back(std::move(best));
+            prepared->objects.emplace(object, std::move(chosen));
+        }
+        for (const auto& [object, values] : pattern->objects)
+            if (!font->objects.contains(object) && !IsNameLanguage(object)) prepared->objects.emplace(object, values);
+        if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+        return prepared.release();
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+}
+
+std::string FontconfigReadGuestCString_nid_no_patch(const char* source, const char* caller) {
+    if (!source) NotImplemented_nid_no_patch(caller);
+    std::string result;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    std::size_t offset = 0;
+    for (;;) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) NotImplemented_nid_no_patch(caller);
+        const auto current = base + offset;
+        const std::size_t toPageEnd = 4096u - (current % 4096u);
+        const std::size_t chunk = toPageEnd < 256u ? toPageEnd : 256u;
+        char buffer[256];
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk);
+        errno = savedErrno;
+        if (!ok) NotImplemented_nid_no_patch(caller);
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
+            result.append(buffer, static_cast<std::size_t>(end - buffer));
+            return result;
+        }
+        result.append(buffer, chunk);
+        offset += chunk;
+    }
 }
 
 std::vector<std::string> FontconfigLanguages_nid_no_patch(const FcLangSet* set, bool enumerate) {

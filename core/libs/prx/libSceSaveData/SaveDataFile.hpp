@@ -24,6 +24,13 @@ template <typename ReplaceOperation>
 inline bool replace_file_with(const std::filesystem::path& path, const void* data, std::size_t size,
                               ReplaceOperation&& replace_operation) {
     if (size != 0 && data == nullptr) return false;
+    if (path.empty()) return false;
+    const auto filename = path.filename();
+    if (filename.empty() || filename == "." || filename == "..") return false;
+    std::error_code status_error;
+    const auto status = std::filesystem::symlink_status(path, status_error);
+    if (!status_error && std::filesystem::is_directory(status)) return false;
+
     const auto parent = path.parent_path();
     std::error_code error;
     if (!parent.empty()) {
@@ -70,6 +77,7 @@ inline bool replace_file_with(const std::filesystem::path& path, const void* dat
 }
 
 inline bool move_replacing(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    if (source.empty() || destination.empty()) return false;
 #ifdef _WIN32
     return ::MoveFileExW(source.c_str(), destination.c_str(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;

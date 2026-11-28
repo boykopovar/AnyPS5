@@ -5,6 +5,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -76,7 +77,7 @@ static constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
 static constexpr std::uint64_t CloseOnExecRequest = 0x20006601;
 static constexpr std::uint64_t KeepOnExecRequest = 0x20006602;
 static constexpr std::uint64_t MalformedRequests[] = {0, 123, 0x5401, 0x5413, 0x40007468, 0x20087468, 0x00087468};
-static constexpr std::uint64_t IntegerArgumentRequest = 0x20046601;
+static constexpr std::uint64_t IntegerArgumentRequest = 0x20047801;
 static constexpr std::uint64_t EmptyInputRequest = 0x8000667f;
 static constexpr int SceEbadf = static_cast<int>(0x80020009u);
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
@@ -202,7 +203,11 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, DuplicateCommand, -1) == SceEinval);
     Require(sceKernelFcntl(socket, DuplicateCloseOnExec, -1) == SceEnotsup);
     Require(sceKernelFcntl(socket, Duplicate2Command, -1) == SceEbadf);
-    Require(sceKernelFcntl(socket, SetFlags, 0x8000) == SceEnotsup);
+    Require(sceKernelFcntl(socket, SetFlags, 0x8000 | AsyncFlag) == 0);
+    Require(sceKernelFcntl(socket, GetFlags) == (ReadWrite | AsyncFlag));
+    Require(sceKernelFcntl(socket, SetFlags, 0) == 0);
+    Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
+    Require(sceKernelFcntl(socket, SetFlags, 0x100 | AsyncFlag) == SceEnotsup);
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     Require(sceKernelFcntl(socket, 5) == SceEinval);
     Require(sceKernelFcntl(socket + 4096, GetFlags) == SceEbadf);
@@ -224,7 +229,7 @@ static void SocketsKeepTheirPath() {
     Require(ioctl_nid_postfix(socket, KeepOnExecRequest, nullptr) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     Require(ioctl_nid_postfix(socket, KeepOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     RequireMalformedRequestsFail(socket);
-    RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEaddrnotavail);
     RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEnotty);
     char windowSize[8] = {};
     RequireFailure(ioctl_nid_postfix(socket, WindowSizeRequest, windowSize), GuestEaddrnotavail);
@@ -644,6 +649,40 @@ static void StandardInputFlags() {
     Require(fcntl_nid_postfix(0, GetDescriptorFlags) == 0);
 }
 
+static void PipeOwnerRoundTrips() {
+    constexpr int GetOwnerCommand = 5;
+    constexpr int SetOwnerCommand = 6;
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 0);
+    Require(fcntl_nid_postfix(pipe[0], SetOwnerCommand, 4242) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(pipe[0], SetOwnerCommand, 0) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void PipeOwnerIsSharedByDuplicatesMadeBeforeTheFirstCall() {
+    constexpr int GetOwnerCommand = 5;
+    constexpr int SetOwnerCommand = 6;
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    const int copy = dup_nid_postfix(pipe[0]);
+    const int fromCommand = fcntl_nid_postfix(pipe[0], DuplicateCommand, 0);
+    Require(copy >= 0 && fromCommand >= 0);
+    const int second = std::max({pipe[1], copy, fromCommand}) + 1;
+    const int moved = dup2_nid_postfix(pipe[0], second);
+    Require(moved == second);
+    Require(fcntl_nid_postfix(copy, SetOwnerCommand, 4242) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(moved, GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(fromCommand, GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(moved, SetOwnerCommand, 77) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 77 && fcntl_nid_postfix(copy, GetOwnerCommand) == 77);
+    Require(close_nid_postfix(copy) == 0 && close_nid_postfix(moved) == 0 && close_nid_postfix(fromCommand) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
 static void RequireNoDeviceType(int device) {
     for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
         int type = 0x5a5a5a5a;
@@ -675,6 +714,8 @@ int main() {
     FileFlagsRoundTrip();
     RecordLocksBelongToTheProcess();
     PipeFlagsRoundTrip();
+    PipeOwnerRoundTrips();
+    PipeOwnerIsSharedByDuplicatesMadeBeforeTheFirstCall();
     AsyncRequestSetsTheStatusFlag();
 #ifndef _WIN32
     HostSocketFlags();

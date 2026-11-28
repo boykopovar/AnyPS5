@@ -88,6 +88,26 @@ def main():
         convert("empty", empty, "Unterminated dynamic segment")
 
         strict_modes = (["unused-filter=2"], ["--windows", "unused-filter=2"], ["--macos", "unused-filter=2"])
+        for name, offset, file_size, address, memory_size in (
+            ("zero", 0, 0, 0, 0),
+            ("past-eof", 0x100000, 0x4000, 0, 0x4000),
+            ("all-max", 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff),
+            ("memory-overflow", 0, 0, 0xffffffffffffffff, 1),
+        ):
+            ignored_null = strict_fixture()
+            struct.pack_into("<H", ignored_null, 56, 3)
+            struct.pack_into("<IIQQQQQQ", ignored_null, 64 + 2 * 56,
+                             0, 0xffffffff, offset, address,
+                             0xffffffffffffffff, file_size, memory_size, 0xffffffffffffffff)
+            convert("strict-null-" + name, ignored_null, modes=strict_modes)
+
+        invalid_load = strict_fixture()
+        struct.pack_into("<H", invalid_load, 56, 3)
+        struct.pack_into("<IIQQQQQQ", invalid_load, 64 + 2 * 56,
+                         1, 4, 0x100000, 0x8000,
+                         0x8000, 0x4000, 0x4000, 1)
+        convert("strict-load-past-eof", invalid_load, "Segment offset out of bounds", strict_modes)
+
         for name, offset, address, size in (("file-offset", 0xffffffffffffffff, 0, 0),
                                            ("address-overflow", 0, 0xffffffffffffffff, 1)):
             ignored_stack = strict_fixture()
@@ -95,6 +115,12 @@ def main():
             struct.pack_into("<IIQQQQQQ", ignored_stack, 64 + 2 * 56,
                              0x6474e551, 6, offset, address, 0, 0, size, 16)
             convert("strict-gnu-stack-" + name, ignored_stack,
+                    modes=([], ["--windows"], ["--macos"], *strict_modes))
+            ignored_null = strict_fixture()
+            struct.pack_into("<H", ignored_null, 56, 3)
+            struct.pack_into("<IIQQQQQQ", ignored_null, 64 + 2 * 56,
+                             0, 6, offset, address, 0, 0, size, 16)
+            convert("strict-null-header-" + name, ignored_null,
                     modes=([], ["--windows"], ["--macos"], *strict_modes))
         strict_size = struct.unpack_from("<Q", strict_fixture(), 120 + 32)[0]
         strict = strict_fixture()

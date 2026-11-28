@@ -33,6 +33,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
@@ -96,6 +97,7 @@ const TrackPrivateBaseVtableStorage TrackPrivateBaseVtableInstance = {
 extern "C" {
 
 void APS5_VABI _ZN7WebCore16TrackPrivateBaseC2Ev(void* self) {
+    if (self == nullptr) throw std::invalid_argument("WebCore::TrackPrivateBase::TrackPrivateBase: null object");
     auto& base = *static_cast<TrackPrivateBase*>(self);
     base.vptr = &TrackPrivateBaseVtableInstance.dispatch;
     base.refCount = 1;

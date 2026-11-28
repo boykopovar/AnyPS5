@@ -1,0 +1,5 @@
+# libSceNet
+
+## add Unknown function info
+
+- [sceNetConfigDownInterface and sceNetConfigUpInterface](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - non-loopback interfaces throw `NotImplemented_nid_no_patch` because non-loopback config requires host network sync and remains unmeasured on PS5 hardware. For `NET_IF_LO0` (0), toggling `IFF_UP` (leaving `IFF_LOOPBACK | IFF_RUNNING | IFF_MULTICAST` set, transitioning between 0x8049 and 0x8048) follows FreeBSD 11.4 `sys/net/if.c` (`SIOCSIFFLAGS` lines 2622-2651, `if_down` line 2345, `if_up` line 2357) where `IFF_UP` is toggled while `lo0` driver running state (`if_drv_flags` / `IFF_DRV_RUNNING`, mapped to `NET_IFF_RUNNING` 0x40) remains set (`sys/net/if_loop.c` lines 375, 400-402); modeled from FreeBSD and unmeasured on hardware. Down state is reflected only in `sceNetConfigGetIfFlags` and does not gate loopback traffic. Shared flags use `std::atomic<std::uint32_t>`. Closes when: state transitions, traffic gating, and non-loopback config are measured on a PS5.

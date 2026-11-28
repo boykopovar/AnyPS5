@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libcxx_string_find_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxStringFind.cpp)
+    target_include_directories(guest_libcxx_string_find_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_string_find_tests PRIVATE libc)
+    configure_windows_unwind(guest_libcxx_string_find_tests)
+    add_test(NAME guest_libcxx_string_find COMMAND guest_libcxx_string_find_tests)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_string_find PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

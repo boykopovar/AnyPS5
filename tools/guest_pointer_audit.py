@@ -1,8 +1,10 @@
 import argparse
+import errno
 import functools
 import json
 import os
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -14,8 +16,10 @@ SAFE = {"GuestCopyIn_nid_no_patch": (0, 1), "GuestCopyOut_nid_no_patch": (0, 1),
         "CopyGuestPath_nid_no_patch": (0,), "CopyGuestEnvironment_nid_no_patch": (0,)}
 UNEVALUATED = ("sizeof", "alignof", "decltype", "noexcept")
 RAW_CALLS = {
-    "memcpy": (0, 1), "memmove": (0, 1), "memset": (0,), "memcmp": (0, 1),
+    "memcpy": (0, 1), "memmove": (0, 1), "memset": (0,), "memcmp": (0, 1), "memchr": (0,),
     "strcpy": (0, 1), "strncpy": (0, 1), "strlen": (0,), "strnlen": (0,), "strcmp": (0, 1), "strncmp": (0, 1),
+    "strcat": (0, 1), "strncat": (0, 1), "strchr": (0,), "strrchr": (0,), "strstr": (0, 1), "strpbrk": (0, 1),
+    "strspn": (0, 1), "strcspn": (0, 1), "strtoll": (0, 1),
     "snprintf": (0, 2), "sprintf": (0, 1), "copy": (0, 1, 2), "copy_n": (0, 2), "fill": (0, 1), "fill_n": (0,),
 }
 PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(\w+)\s*$")
@@ -38,12 +42,12 @@ _OPERAND = rf"(?<![.>:])(?:\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\
 _ACCESS_PATTERNS = (
     ("member", re.compile(rf"{_OPERAND}\s*->")),
     ("index", re.compile(rf"{_OPERAND}\s*\[")),
-    ("dereference", re.compile(rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{_OPERAND}")),
+    ("dereference", re.compile(rf"(?:^|[=(),;{{}}!&|?:+\-]|\breturn)\s*\*\s*{_OPERAND}(?!\s*(?:->|\[))")),
 )
 _SIMPLE_ACCESS_PATTERNS = (
     ("member", "->", re.compile(r"(?<![.>:])\b(?P<direct>\w+)\b\s*->")),
     ("index", "[", re.compile(r"(?<![.>:])\b(?P<direct>\w+)\b\s*\[")),
-    ("dereference", "*", re.compile(r"(?:^|[=(,;{}!&|?:+\-]|\breturn)\s*\*\s*(?<![.>:])\b(?P<direct>\w+)\b")),
+    ("dereference", "*", re.compile(r"(?:^|[=(),;{}!&|?:+\-]|\breturn)\s*\*\s*(?<![.>:])\b(?P<direct>\w+)\b(?!\s*(?:->|\[))")),
 )
 _DEREF_PATTERN = _ACCESS_PATTERNS[2][1]
 _SIMPLE_DEREF_PATTERN = _SIMPLE_ACCESS_PATTERNS[2][2]
@@ -254,7 +258,7 @@ def parameter_patterns(name):
     operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = tuple((kind, re.compile(pattern)) for kind, pattern in (
         ("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
-        ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")))
+        ("dereference", rf"(?:^|[=(),;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}(?!\s*(?:->|\[))")))
     return re.compile(rf"\(?\s*{word}\b"), found
 
 
@@ -545,15 +549,29 @@ def main(argv=None):
     if missing:
         parser.error(f"not a library under core/libs/prx: {', '.join(missing)}")
     report = audit([PRX / name for name in names])
-    if args.json:
-        print(json.dumps(report, indent=2))
+    try:
+        if args.json:
+            print(json.dumps(report, indent=2))
+            sys.stdout.flush()
+            return 0
+        for entry in report:
+            print(f"{entry['file']}:{entry['line']}: {entry['function']}: parameter {entry['parameter']} ({', '.join(entry['kinds'])})")
+        counts = Counter(entry["library"] for entry in report)
+        print(f"{len(report)} direct guest pointer accesses in {len({(e['file'], e['function']) for e in report})} exported functions")
+        for library, count in counts.most_common():
+            print(f"  {count:5} {library}")
+        sys.stdout.flush()
+    except OSError as exc:
+        if not (isinstance(exc, BrokenPipeError) or (sys.platform == "win32" and exc.errno == errno.EINVAL)):
+            raise
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+        finally:
+            os.close(devnull)
         return 0
-    for entry in report:
-        print(f"{entry['file']}:{entry['line']}: {entry['function']}: parameter {entry['parameter']} ({', '.join(entry['kinds'])})")
-    counts = Counter(entry["library"] for entry in report)
-    print(f"{len(report)} direct guest pointer accesses in {len({(e['file'], e['function']) for e in report})} exported functions")
-    for library, count in counts.most_common():
-        print(f"  {count:5} {library}")
     return 0
 
 

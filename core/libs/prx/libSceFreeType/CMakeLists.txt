@@ -10,6 +10,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/SfntTable.cpp
         src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/Variations.cpp
         src/GuestObjects.cpp
+        src/CacheManager.cpp
         src/Names.cpp
         src/Trigonometry.cpp
         src/OutlineDecompose.cpp

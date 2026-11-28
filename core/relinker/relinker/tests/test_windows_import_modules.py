@@ -806,6 +806,8 @@ def check_ps4_import_modules(work, relinker):
 
 
 def main():
+    if os.name == 'nt':
+        ctypes.windll.kernel32.SetErrorMode(0x8003)
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-import-modules-') as directory:
         work = Path(directory)
@@ -871,18 +873,19 @@ def main():
             assert run.returncode != 0 and 'Failed to load module:' in run.stderr and 'unused.prx' in run.stderr and 'GetLastError: 126' in run.stderr, (run.returncode, run.stdout, run.stderr)
             assert 'nothing is imported from it' not in run.stderr, run.stderr
 
-        for needed in ('libSceGnmDriver_padebug.prx', 'libSceGnmDriver_padebug.sprx'):
-            case = work / ('padebug-' + needed)
+        for needed, host_library in (('libSceGnmDriver_padebug.prx', 'libSceGnmDriver'), ('libSceGnmDriver_padebug.sprx', 'libSceGnmDriver'),
+                                     ('libSceSsl2.prx', 'libSceSsl'), ('libSceSsl2.sprx', 'libSceSsl')):
+            case = work / ('alias-' + needed)
             (case / 'libs').mkdir(parents=True)
-            (case / 'libs' / 'libSceGnmDriver.prx').write_bytes(native_provider.read_bytes())
+            (case / 'libs' / (host_library + '.prx')).write_bytes(native_provider.read_bytes())
             source = case / 'input.elf'
-            source.write_bytes(executable(needed, 'shared#A#B', module_name='libSceGnmDriver'))
+            source.write_bytes(executable(needed, 'shared#A#B', module_name=host_library))
             output = case / 'output.exe'
             result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', str(source), str(output)], capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, result.stderr
             image = output.read_bytes()
-            assert 'libs\\libSceGnmDriver.prx\0'.encode('utf-16le') in image, needed
-            assert 'libSceGnmDriver_padebug'.encode('utf-16le') not in image, needed
+            assert ('libs\\' + host_library + '.prx\0').encode('utf-16le') in image, needed
+            assert needed.rsplit('.', 1)[0].encode('utf-16le') not in image, needed
             if os.name == 'nt':
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                 assert run.returncode == 22, (needed, run.returncode, run.stdout, run.stderr)

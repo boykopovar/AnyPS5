@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import io
 import json
@@ -76,6 +77,26 @@ class ReportTests(unittest.TestCase):
             path = Path(directory) / "junit.xml"
             path.write_text(text, encoding="utf-8")
             return gate.parse_report(path, {"probe"})
+
+    def test_ctest_failure_status_cannot_pass_without_a_failure_element(self):
+        for status in ("fail", "notrun", "disabled", "None"):
+            with self.subTest(status=status):
+                tests, problems = self.report(
+                    f'<testsuite><testcase name="probe" status="{status}"><system-out>{gate.INSERTED_LAYER}'
+                    '</system-out></testcase></testsuite>')
+                self.assertTrue(tests["probe"]["failed_or_skipped"])
+                self.assertEqual(problems, ["probe"])
+
+    def test_validation_identifier_counts_exclude_prose_and_spec_links(self):
+        tests, problems = self.report(
+            '<testsuite><testcase name="probe"><system-out>' + gate.INSERTED_LAYER + '\n'
+            'Validation Error: [ VUID-Actual-1 ] see VUID-Other-2 and https://example.test/#VUID-Actual-1\n'
+            'VUID-Legacy-3 (ERROR / SPEC): refers to VUID-Other-2\n'
+            'Validation Error: [ SYNC-HAZARD-WRITE_AFTER_WRITE ] related [ UNASSIGNED-Other ]\n'
+            '</system-out></testcase></testsuite>')
+        self.assertEqual(problems, [])
+        self.assertEqual(tests["probe"]["diagnostics"], {
+            "VUID-Actual-1": 1, "VUID-Legacy-3": 1, "SYNC-HAZARD-WRITE_AFTER_WRITE": 1})
 
     def test_test_body_messages_are_distinct_from_configuration_echoes(self):
         text = '<testsuite><testcase name="probe"><system-out>'
@@ -172,6 +193,29 @@ class ReportTests(unittest.TestCase):
                                iteration("candidate", "probe", {"VUID-A-1": 1})])
         self.assertEqual(report["new_diagnostics"], {"probe": ["VUID-A-1"]})
         self.assertEqual(report["exit_code"], 1)
+
+    def test_nested_runtime_link_cannot_add_an_artifact_outside_the_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            build = root / "build"
+            runtime = build / "runtime" / "nested"
+            runtime.mkdir(parents=True)
+            external = root / "external"
+            external.mkdir()
+            (external / "runtime.dll").write_bytes(b"external runtime")
+            internal = runtime / "internal.dll"
+            internal.write_bytes(b"internal runtime")
+            self.assertEqual(set(gate.artifact_hashes(build, [], ["runtime"])), {str(internal)})
+            link = runtime / "linked"
+            if os.name == "nt":
+                junction = subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(external)],
+                                          capture_output=True, timeout=10)
+                if junction.returncode:
+                    self.skipTest(f"junctions unavailable: {junction.stderr!r}")
+            else:
+                link.symlink_to(external, target_is_directory=True)
+            with self.assertRaisesRegex(gate.GateError, "linked"):
+                gate.artifact_hashes(build, [], ["runtime"])
 
     def test_relative_executable_follows_the_test_working_directory(self):
         for mode in ("default", "absolute", "relative"):
@@ -910,6 +954,114 @@ class NestedContainmentTests(FixtureTests):
         self.assertTrue(ready.exists())
         self.unlink_once_released(ctest_marker)
         self.assertFalse(ctest_marker.exists())
+
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_positive_accepts_finite_positive_numbers(self):
+        self.assertEqual(gate.positive("2.5"), 2.5)
+
+    def test_positive_refuses_zero_negative_and_non_finite_values(self):
+        for value in ("0", "-1", "nan", "inf"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                gate.positive(value)
+
+
+
+class IdentityTests(unittest.TestCase):
+    def make_repo(self, directory):
+        root = Path(directory).resolve()
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        return root, head
+
+    def test_identity_refuses_an_abbreviated_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_repo(directory)
+            with self.assertRaisesRegex(gate.GateError, "full lowercase"):
+                gate.identity(root, "abc123")
+
+    def test_identity_refuses_a_head_that_differs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_repo(directory)
+            with self.assertRaisesRegex(gate.GateError, "HEAD differs"):
+                gate.identity(root, "0" * 40)
+
+    def test_identity_accepts_the_expected_clean_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, head = self.make_repo(directory)
+            self.assertEqual(gate.identity(root, head), {"source": str(root), "commit": head})
+
+
+
+class CacheTests(unittest.TestCase):
+    def test_cache_values_reads_typed_entries_and_skips_comments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CMakeCache.txt").write_text(
+                "\ufeff# comment: ignored\n"
+                "CMAKE_BUILD_TYPE:STRING=Release\n"
+                "ANYPS5_GPU:BOOL=ON\n"
+                "//doc:STRING=skipped\n", encoding="utf-8")
+            self.assertEqual(gate.cache_values(build),
+                             {"CMAKE_BUILD_TYPE": "Release", "ANYPS5_GPU": "ON"})
+
+
+
+class SaveTests(unittest.TestCase):
+    def test_save_writes_a_newline_terminated_json_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gate.save(Path(directory), {"exit_code": 0})
+            text = (Path(directory) / "report.json").read_text(encoding="utf-8")
+            self.assertTrue(text.endswith("\n"))
+            self.assertEqual(json.loads(text), {"exit_code": 0})
+class WaitTests(unittest.TestCase):
+    class FinishingProcess:
+        def __init__(self):
+            self.calls = 0
+            self.args = ["cmd"]
+
+        def wait(self, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return 3
+
+    class StuckProcess(FinishingProcess):
+        def wait(self, timeout):
+            raise subprocess.TimeoutExpired(self.args, timeout)
+
+    def test_wait_in_slices_returns_the_exit_code_after_a_slice_times_out(self):
+        process = self.FinishingProcess()
+        self.assertEqual(gate.wait_in_slices(process, 5), 3)
+        self.assertEqual(process.calls, 2)
+
+    def test_wait_in_slices_raises_once_the_deadline_passes(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            gate.wait_in_slices(self.StuckProcess(), 0.05)
+
+class ParseReportTests(unittest.TestCase):
+    def report(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "report.xml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_parse_report_flags_expected_tests_that_did_not_run(self):
+        path = self.report('<testsuite><testcase name="a"><system-out>'
+                           'Insert instance layer "VK_LAYER_KHRONOS_validation"</system-out></testcase></testsuite>')
+        results, problems = gate.parse_report(path, ["a", "b"])
+        self.assertEqual(sorted(results), ["a"])
+        self.assertTrue(any("missing=['b']" in problem for problem in problems))
+
+    def test_parse_report_refuses_a_duplicate_test_name(self):
+        path = self.report('<testsuite><testcase name="a"/><testcase name="a"/></testsuite>')
+        with self.assertRaisesRegex(gate.GateError, "duplicate testcase name"):
+            gate.parse_report(path, ["a"])
 
 
 if __name__ == "__main__":
