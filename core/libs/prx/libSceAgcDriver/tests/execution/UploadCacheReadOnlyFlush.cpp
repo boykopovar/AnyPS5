@@ -323,6 +323,7 @@ void SparsePendingWrite(AgcDriver::VulkanDevice& device, const AgcDriver::Graphi
     const auto withWrite = upload(untracked);
     Require(withWrite[5 * page / 4] == First && ReadUploaded(context, after, block.Address(), BlockBytes) == current, "an unwatched write changed a live predecessor or missed the next upload");
     const auto index = 2 * page / sizeof(std::uint32_t);
+    if (!AgcDriver::GuestMemory::Watched(block.Address(), ImageBytes)) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block.Data(), ImageBytes);
     AgcDriver::GuestMemory::Unwatch(block.Address() + 2 * page, page);
     Require(AgcDriver::GuestMemory::Watched(block.Address(), page) && !AgcDriver::GuestMemory::Watched(block.Address() + 2 * page, page) && AgcDriver::GuestMemory::Watched(block.Address() + 3 * page, page), "sparse fixture requires an unwatched page inside a backed piece");
     auto* words = reinterpret_cast<std::uint32_t*>(block.Data());
