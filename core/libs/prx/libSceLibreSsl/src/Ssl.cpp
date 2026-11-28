@@ -17,6 +17,7 @@ static_assert(offsetof(LibreSslSslInternal, shutdown) == 168);
 static_assert(sizeof(LibreSslSsl) == 232);
 static_assert(offsetof(LibreSslSsl, rbio) == 16);
 static_assert(offsetof(LibreSslSsl, wbio) == 24);
+static_assert(offsetof(LibreSslSsl, param) == 64);
 static_assert(offsetof(LibreSslSsl, session) == 128);
 static_assert(offsetof(LibreSslSsl, ctx) == 152);
 static_assert(offsetof(LibreSslSsl, verifyResult) == 160);
@@ -335,6 +336,10 @@ void* APS5_VABI SSL_get_ex_data_nid_postfix(const LibreSslSsl* ssl, int index) {
     const auto* const stack = static_cast<const LibreSslStack*>(Internal(ssl, __func__).exData.stack);
     if (!stack || index >= sk_num_nid_postfix(stack)) return nullptr;
     return sk_value_nid_postfix(stack, index);
+}
+
+void* APS5_VABI SSL_get0_param_nid_postfix(const LibreSslSsl* ssl) {
+    return Connection(ssl, __func__).param;
 }
 
 }
