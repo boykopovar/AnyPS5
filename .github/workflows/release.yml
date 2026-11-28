@@ -112,6 +112,9 @@ jobs:
           path: dist/*
           if-no-files-found: error
           compression-level: 0
+      - name: Check Linux release ABI
+        if: matrix.platform == 'linux'
+        run: python3 tools/check_linux_release_abi.py "dist/prx-linux-$RELEASE_TAG.tar.gz" "dist/prx-linux-unpatched-$RELEASE_TAG.tar.gz"
 
   web:
     name: Build and test web converter
