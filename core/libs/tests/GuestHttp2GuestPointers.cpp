@@ -61,6 +61,7 @@ int main() {
 #else
     setenv("APS5_NET_DISCONNECTED", "1", 1);
 #endif
+    RequireErrno(sceHttp2SendRequestAsync(request, nullptr, 0, static_cast<Http2AsyncOption*>(unmapped), nullptr), nullPointer);
     Require(sceHttp2SendRequestAsync(request, nullptr, 0, nullptr, nullptr) == 0);
     RequireErrno(sceHttp2GetStatusCode(request, static_cast<int*>(unmapped)), nullPointer);
     RequireErrno(sceHttp2WaitAsync(request, static_cast<Http2AsyncResult*>(unmapped), nullptr, nullptr), nullPointer);
@@ -75,6 +76,8 @@ int main() {
 #else
     unsetenv("APS5_NET_DISCONNECTED");
 #endif
+    RequireErrno(sceHttp2ReadDataAsync(request, nullptr, 0, unmapped, nullptr), nullPointer);
+    RequireErrno(sceHttp2SendRequestAsync(request, unmapped, 16, nullptr, nullptr), nullPointer);
     Require(sceHttp2DeleteRequest(request) == 0);
 
     std::puts("guest_http2_guest_pointers ok");
