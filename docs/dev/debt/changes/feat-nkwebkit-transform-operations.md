@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [WebCore transform operations](../../../core/libs/prx/libSceNKWebKit/src/WebCoreTransform.cpp) (libSceNKWebKit) - Translate and Perspective exports throw: pinned [Length.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WebCore/platform/Length.h#L133-L135) puts `m_hasQuirk` before `m_type` and has no `Content` type, unlike this library's `Length`, and calculated lengths need `CalculationValueMap`. Identity, Rotate, Scale, Skew, Matrix and Matrix3D use host vtables in pinned [TransformOperation.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WebCore/platform/graphics/transforms/TransformOperation.h#L37-L117) declaration order (Itanium, no RTTI) and that revision's layout (4-byte `OperationType` at offset 12); neither is console-measured.
+- [WebCore transform operations](../../../core/libs/prx/libSceNKWebKit/src/WebCoreTransform.cpp) (libSceNKWebKit) - Identity, Rotate, Scale, Skew, Matrix and Matrix3D use host vtables in pinned [TransformOperation.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WebCore/platform/graphics/transforms/TransformOperation.h#L37-L117) declaration order (Itanium, no RTTI) and that revision's layout (4-byte `OperationType` at offset 12), the base Perspective shares as `LegacyTransformOperation`; Translate uses the 11.x one-byte `Type` base instead. Neither layout is console-measured.
 
 ## change The 108 remaining
 
