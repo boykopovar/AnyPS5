@@ -3,6 +3,7 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -128,6 +129,13 @@ void CheckExceptionPointerType() {
     __cxa_free_exception_nid_postfix(object);
 }
 
+void CheckExceptionPointerNullSelf() {
+    const int savedErrno = errno;
+    _ZNSt15__exception_ptr13exception_ptr9_M_addrefEv_nid_postfix(nullptr);
+    _ZNSt15__exception_ptr13exception_ptr10_M_releaseEv_nid_postfix(nullptr);
+    Check(errno == savedErrno);
+}
+
 void CheckArrayNullDealloc() {
     for (bool sized : {false, true}) {
         ResetVecState();
@@ -236,6 +244,7 @@ int main() {
         for (int index = 0; index < RegisterCount; ++index) Check(_Unwind_GetGR_nid_postfix(&context, index) == 0);
     }
     CheckExceptionPointerType();
+    CheckExceptionPointerNullSelf();
     CheckArrayNullDealloc();
     return 0;
 }
