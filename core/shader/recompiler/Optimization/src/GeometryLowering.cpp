@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <optional>
 #include <span>
@@ -136,7 +137,7 @@ ExportTargetKind CopyTargetKind(std::uint32_t target, std::uint32_t& index) {
 
 class Lowering {
 public:
-    Lowering(IrProgram& program, const ShaderGeometryInputInfo& geometry) : program(program), geometry(geometry), stage(program.Resources().stage) {}
+    Lowering(IrProgram& program, const ShaderGeometryInputInfo& geometry) : program(program), geometry(geometry), stage(program.Resources().stage), ringDwords(GeometryRingDwords(geometry.maxVertices, geometry.vertexDwords)) {}
 
     void Run() {
         if (stage != IrShaderStage::Vertex && stage != IrShaderStage::Geometry) Fail("a geometry configuration reached a stage other than the export or geometry program", 0u);
@@ -225,7 +226,7 @@ private:
                 if (offset) {
                     const auto value = offset->constant + bytes;
                     if (value < 0 || (value & 3) != 0) Fail("an unaligned GSVS ring store", flags.pc);
-                    if (value / 4 >= static_cast<std::int64_t>(geometry.vertexDwords) * geometry.maxVertices) Fail("a GSVS ring store outside VGT_GS_VERT_ITEMSIZE times VGT_GS_MAX_VERT_OUT dwords", flags.pc);
+                    if (value / 4 >= ringDwords) Fail("a GSVS ring store outside VGT_GS_VERT_ITEMSIZE times VGT_GS_MAX_VERT_OUT dwords", flags.pc);
                     address = &constant(static_cast<std::uint32_t>(value));
                 } else {
                     address = bytes == 0u ? inst.Argument(2) : &insert(block, inst, IrOpcode::IAdd32, IrType::U32, {inst.Argument(2), &constant(bytes)});
@@ -286,6 +287,7 @@ private:
     IrProgram& program;
     const ShaderGeometryInputInfo& geometry;
     IrShaderStage stage;
+    std::uint32_t ringDwords;
 };
 
 struct CopySource {
@@ -367,12 +369,19 @@ void Forget(std::map<std::uint32_t, CopySource>& vectors, std::map<std::uint32_t
 
 }
 
+std::uint32_t GeometryRingDwords(std::uint32_t maxVertices, std::uint32_t vertexDwords) {
+    if (maxVertices == 0u || vertexDwords == 0u) throw std::runtime_error("geometry ring: VGT_GS_MAX_VERT_OUT and VGT_GS_VERT_ITEMSIZE must be nonzero");
+    const auto slotBytes = static_cast<std::uint64_t>(maxVertices) * GsVsVertexBytes;
+    if (slotBytes > std::numeric_limits<std::uint32_t>::max() / vertexDwords) throw std::runtime_error("geometry ring: " + std::to_string(vertexDwords) + " vertex dwords of " + std::to_string(maxVertices) + " vertices at " + std::to_string(GsVsVertexBytes) + " bytes each do not fit in 32-bit ring addresses");
+    return maxVertices * vertexDwords;
+}
+
 void GeometryLowering::Lower(IrProgram& program, const ShaderGeometryInputInfo& geometry) const {
     Lowering(program, geometry).Run();
 }
 
 std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::uint32_t> code, std::uint32_t maxVertices, std::uint32_t vertexDwords, std::optional<std::uint32_t> streamConfigSgpr) {
-    if (maxVertices == 0u || vertexDwords == 0u) throw std::runtime_error("geometry copy program: VGT_GS_MAX_VERT_OUT and VGT_GS_VERT_ITEMSIZE must be nonzero");
+    static_cast<void>(GeometryRingDwords(maxVertices, vertexDwords));
     const auto program = RdnaInstructionDecoder{}.Decode(code);
     std::map<std::uint32_t, CopySource> vectors;
     std::map<std::uint32_t, std::uint32_t> scalars;
