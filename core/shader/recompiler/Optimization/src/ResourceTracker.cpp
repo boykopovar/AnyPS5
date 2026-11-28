@@ -842,7 +842,7 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
-    bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
+    bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false, bool sampleAdjust = false) {
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
         if (handle.Opcode() != expected || handle.ArgumentCount() != width) {
@@ -870,7 +870,9 @@ private:
         FirstLaneOffset baseLane;
         bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
-            IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
+            // An _a sample ORs its adjust values into the reserved bits of S# dword 3; the record
+            // is the read under that OR, as for a sampler that is not in a table (MakeSource).
+            IrValue* read = ResolveInvariantPhi(m_program.Resources(), sampler && sampleAdjust && dword == 3u ? canonicalizeSampleAdjustDword3(handle.Argument(dword)) : handle.Argument(dword));
             if (read == nullptr) return false;
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
@@ -1528,12 +1530,12 @@ private:
         return found == m_tableColumns.end() ? nullptr : &*found;
     }
 
-    bool PlanTableColumn(IrValue& handle, bool sampler, bool r128) {
+    bool PlanTableColumn(IrValue& handle, bool sampler, bool r128, bool sampleAdjust = false) {
         if (FindTableColumn(handle) != nullptr) {
             return true;
         }
         TableColumnPlan plan;
-        if (!TryMakeTableColumn(handle, sampler, r128, plan)) {
+        if (!TryMakeTableColumn(handle, sampler, r128, plan, false, sampleAdjust)) {
             return false;
         }
         m_tableColumns.push_back(std::move(plan));
@@ -2403,7 +2405,7 @@ private:
                     static_cast<void>(PlanTableColumn(image, false, memory.imageR128));
                 }
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
-                    static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
+                    static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false, (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u));
                 }
             }
         }
