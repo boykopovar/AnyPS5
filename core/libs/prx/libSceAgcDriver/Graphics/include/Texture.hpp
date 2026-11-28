@@ -366,6 +366,7 @@ public:
     static void SetFlushSelectedHookForTest(void (*hook)());
     static void SetFlushingHookForTest(void (*hook)());
     static void SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
+    static void SetFlushingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
     static constexpr std::uint64_t OccasionalWriteFlips = 8;

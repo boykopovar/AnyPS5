@@ -269,38 +269,38 @@ void CheckConcurrentFlushWait(GuestSurface& surface) {
         try { AgcDriver::Graphics::StorageTexture::FlushPending(address, SurfaceBytes, nullptr, "concurrent flush test"); }
         catch (...) { flushFailure = std::current_exception(); }
     });
+    auto& gpu = AgcDriver::GuestMemory::GpuMutex();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) != nullptr && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
-    const bool taken = AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) == nullptr;
+    while (gpu.Waiters() == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    const bool blocked = gpu.Waiters() != 0;
+    const bool keptPending = AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) != nullptr;
     std::vector<std::byte> seen(SurfaceBytes);
     std::atomic<bool> readDone = false;
     std::exception_ptr readFailure;
-    std::thread reader;
-    if (taken) {
-        reader = std::thread([&] {
-            try {
-                AgcDriver::Graphics::StorageTexture::FlushPending(address, SurfaceBytes, nullptr, "concurrent read test");
-                AgcDriver::GuestMemory::Read(address, seen);
-            } catch (...) {
-                readFailure = std::current_exception();
-            }
-            readDone.store(true, std::memory_order_release);
-            changed.notify_all();
-        });
+    std::thread reader([&] {
+        try {
+            AgcDriver::Graphics::StorageTexture::FlushPending(address, SurfaceBytes, nullptr, "concurrent read test");
+            AgcDriver::GuestMemory::Read(address, seen);
+        } catch (...) {
+            readFailure = std::current_exception();
+        }
+        readDone.store(true, std::memory_order_release);
+        changed.notify_all();
+    });
+    {
         std::unique_lock lock(mutex);
         changed.wait_for(lock, std::chrono::milliseconds(50), [&] { return readDone.load(std::memory_order_acquire); });
-        releaseGpu = true;
-    } else {
-        std::lock_guard lock(mutex);
         releaseGpu = true;
     }
     changed.notify_all();
     holder.join();
     flusher.join();
-    if (reader.joinable()) reader.join();
-    Require(taken, "file write: concurrent flush did not take the pending image");
+    reader.join();
+    Require(blocked, "file write: the concurrent flush never waited for the GPU mutex");
+    Require(keptPending, "file write: a flush waiting for the GPU mutex took the image out of the pending registry");
     if (flushFailure != nullptr) std::rethrow_exception(flushFailure);
     if (readFailure != nullptr) std::rethrow_exception(readFailure);
+    Require(AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) == nullptr, "file write: the image is still pending after both flushes");
     Require(std::any_of(seen.begin(), seen.end(), [](std::byte value) { return value != std::byte{}; }), "file write: concurrent guest read returned before an overlapping image was stored");
 }
 
