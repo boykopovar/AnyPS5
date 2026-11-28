@@ -16,6 +16,7 @@ using ConverterToUCallback = void (APS5_VABI*)(const void* context, ConverterToU
 }
 
 extern "C" {
+void APS5_VABI ucnv_cbFromUWriteBytes(Icu::ConverterFromUnicodeArgs* arguments, const char* source, std::int32_t length, std::int32_t offsetIndex, std::int32_t* error);
 void APS5_VABI ucnv_setFromUCallBack(UConverter* converter, Icu::ConverterFromUCallback newAction, const void* newContext,
                                      Icu::ConverterFromUCallback* oldAction, const void** oldContext,
                                      std::int32_t* error);

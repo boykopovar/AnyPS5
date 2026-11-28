@@ -13,6 +13,7 @@
 
 #undef ucnv_setFromUCallBack
 #undef ucnv_setToUCallBack
+#undef ucnv_cbFromUWriteBytes
 
 namespace {
 
@@ -216,6 +217,12 @@ GuestToU TranslateToU(UConverterToUCallback action, const void* context) {
 }
 
 extern "C" {
+
+void APS5_VABI ucnv_cbFromUWriteBytes(Icu::ConverterFromUnicodeArgs* arguments, const char* source,
+                                     std::int32_t length, std::int32_t offsetIndex, std::int32_t* error) {
+    U_ICU_ENTRY_POINT_RENAME(ucnv_cbFromUWriteBytes)(reinterpret_cast<UConverterFromUnicodeArgs*>(arguments),
+                                                   source, length, offsetIndex, reinterpret_cast<UErrorCode*>(error));
+}
 
 void APS5_VABI UCNV_FROM_U_CALLBACK_STOP_nid_postfix(const void*, Icu::ConverterFromUnicodeArgs*, const char16_t*, std::int32_t, std::int32_t codePoint, std::int32_t reason, std::int32_t* error) {
     ValidateReason(reason);
