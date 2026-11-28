@@ -1,5 +1,7 @@
 import argparse
+import errno
 import json
+import os
 import sys
 from pathlib import Path
 import struct
@@ -20,8 +22,20 @@ def main(argv=None):
                  for address, name in zip(addresses, names)]} for start, end, addresses, names in module.code]
     except (OSError, ValueError, struct.error) as error:
         parser.error(str(error))
-    print(json.dumps({"image_base": module.image_base, "size": module.size, "timestamp": module.timestamp,
-                      "symbol_source": "exports" if module.exported else "coff", "code": code}, ensure_ascii=False, indent=2))
+    try:
+        print(json.dumps({"image_base": module.image_base, "size": module.size, "timestamp": module.timestamp,
+                          "symbol_source": "exports" if module.exported else "coff", "code": code}, ensure_ascii=False, indent=2))
+        sys.stdout.flush()
+    except OSError as exc:
+        if not (isinstance(exc, BrokenPipeError) or (sys.platform == "win32" and exc.errno == errno.EINVAL)):
+            raise
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+        finally:
+            os.close(devnull)
     return 0
 
 

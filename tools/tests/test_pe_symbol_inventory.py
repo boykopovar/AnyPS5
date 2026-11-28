@@ -71,5 +71,26 @@ class Tests(unittest.TestCase):
         self.assertTrue(all(x["symbols"]==[] for x in data["code"]))
 
 
+    def test_output_into_a_closed_pipe_exits_cleanly_without_traceback(self):
+        sys.path.insert(0,str(Path(__file__).parent))
+        from test_symbolize_samples import build_pe
+        path=self.root/"piped.prx"
+        build_pe(path)
+        read_fd,write_fd=os.pipe()
+        os.close(read_fd)
+        try:
+            process=subprocess.Popen([sys.executable,str(TOOLS/SCRIPT),str(path)],stdout=write_fd,stderr=subprocess.PIPE)
+        finally:
+            os.close(write_fd)
+        try:
+            _,stderr=process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise
+        self.assertEqual(process.returncode,0)
+        self.assertEqual(stderr.decode("utf-8",errors="replace"),"")
+
+
 if __name__ == "__main__":
     unittest.main()
