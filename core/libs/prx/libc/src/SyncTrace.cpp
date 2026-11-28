@@ -134,9 +134,9 @@ bool PassesFilter(unsigned operation, const char* name) {
     return name != nullptr && std::strcmp(name, FilterName()) == 0;
 }
 
-void WriteLine(const char* text, std::size_t length) {
-    log_file::CrashWrite(log_file::StandardError, text, length);
-    log_file::CrashWrite(log_file::StandardError, "\n", 1);
+void WriteLine(char* text, std::size_t length) {
+    text[length] = '\n';
+    log_file::CrashWrite(log_file::StandardError, text, length + 1);
 }
 
 }
@@ -192,7 +192,7 @@ void SyncTraceReportRing_nid_no_patch() noexcept {
     if (length > 0) WriteLine(line, static_cast<std::size_t>(length) < sizeof(line) ? static_cast<std::size_t>(length) : sizeof(line) - 1);
     for (std::size_t index = 0; index < count; ++index) {
         const Valid& record = g_valids[index];
-        const unsigned long long micros = static_cast<unsigned long long>(record.micros - base);
+        const unsigned long long micros = static_cast<unsigned long long>(record.micros > base ? record.micros - base : 0);
         const unsigned long long thread = static_cast<unsigned long long>(record.thread);
         const unsigned long long sequence = static_cast<unsigned long long>(record.sequence);
         const char* name = NameOf(record.object);
