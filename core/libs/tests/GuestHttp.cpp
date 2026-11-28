@@ -251,8 +251,9 @@ static void CheckUriEscapeBytes() {
         std::size_t required = 0;
         Require(sceHttpUriEscape(nullptr, &required, 0, input) == 0 && required == size);
         char output[5] = {'Z', 'Z', 'Z', 'Z', 'Z'};
-        Require(sceHttpUriEscape(output, &required, size - 1, input) == static_cast<int>(0x80431022));
-        for (char byte : output) Require(byte == 'Z');
+        required = 77;
+        Require(sceHttpUriEscape(output, &required, size - 1, input) == static_cast<int>(0x80431022) && required == 77);
+        Require(output[size - 1] == 'Z' && output[4] == 'Z' && (size != 2 || output[0] == input[0]));
         Require(sceHttpUriEscape(output, &required, size, input) == 0 && required == size);
         Require(Equal(output, expected) && output[size] == 'Z');
     }
@@ -525,6 +526,11 @@ int main(int argc, char** argv) {
     for (char c : built) Require(c == 'Z');
     Require(sceHttpUriBuild(built, nullptr, required, &element, 0x01) == 0);
     Require(Equal(built, "https://") && built[required] == 'Z');
+    errno = 71;
+    Require(sceHttpUriBuild(reinterpret_cast<char*>(0x10), &required, sizeof(built), &element, buildAll) == invalidValue);
+    Require(sceHttpUriBuild(built, reinterpret_cast<std::size_t*>(0x10), sizeof(built), &element, buildAll) == invalidValue);
+    Require(errno == 71);
+    Require(sceHttpUriBuild(built, &required, sizeof(built), &element, buildAll) == 0);
     Require(sceHttpUriBuild(built, nullptr, sizeof(built), &element, 0) == 0);
     Require(Equal(built, "//"));
     Require(sceHttpUriBuild(built, nullptr, sizeof(built), &element, 0x02) == 0);
@@ -596,6 +602,17 @@ int main(int argc, char** argv) {
     Require(sceHttpUriEscape(escaped, nullptr, sizeof(escaped), "a b/~\xC3\xA9") == 0);
     Require(Equal(escaped, "a%20b%2F~%C3%A9"));
     Require(sceHttpUriEscape(escaped, nullptr, sizeof(escaped), nullptr) == invalidValue);
+    std::memset(escaped, 'Z', sizeof(escaped));
+    required = 123;
+    Require(sceHttpUriEscape(escaped, &required, 4, "hello world") == outOfMemory && required == 123);
+    Require(std::memcmp(escaped, "hellZ", 5) == 0);
+
+    Require(sceHttpUriEscape(reinterpret_cast<char*>(0x10), &required, 4, "hello world") == invalidValue);
+    errno = 71;
+    Require(sceHttpUriEscape(reinterpret_cast<char*>(0x10), &required, sizeof(escaped), "a b") == invalidValue);
+    Require(sceHttpUriEscape(escaped, reinterpret_cast<std::size_t*>(0x10), sizeof(escaped), "a b") == invalidValue);
+    Require(errno == 71);
+    Require(sceHttpUriEscape(escaped, &required, sizeof(escaped), "a b") == 0 && Equal(escaped, "a%20b") && required == 6);
     const std::string previousCtype = std::setlocale(LC_CTYPE, nullptr);
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     CheckUriEscapeBytes();
@@ -1103,4 +1120,11 @@ int main(int argc, char** argv) {
         Require(sceHttpUriCopy(&copy, &pooled, hostPool, sizeof(hostPool), &needed) == 0 && needed == 18 && copy.hostname == hostPool + 4 && copy.hostname[0] == 0);
         Require(Equal(copy.path, "/p/q") && copy.path == hostPool + 5 && copy.port == 1234);
     }
+    errno = 71;
+    Require(sceHttpUriMerge(reinterpret_cast<char*>(0x10), base, "./default.html", &required, sizeof(merged), 0) == invalidValue);
+    Require(sceHttpUriMerge(merged, base, "./default.html", reinterpret_cast<std::size_t*>(0x10), sizeof(merged), 0) == invalidValue);
+    Require(sceHttpUriMerge(reinterpret_cast<char*>(0x10), base, "http://bar.com/other", &required, sizeof(merged), 0) == invalidValue);
+    Require(sceHttpUriMerge(merged, base, "http://bar.com/other", reinterpret_cast<std::size_t*>(0x10), sizeof(merged), 0) == invalidValue);
+    Require(errno == 71);
+    Require(sceHttpUriMerge(merged, base, "./default.html", &required, sizeof(merged), 0) == 0 && Equal(merged, "http://foo.com/foo/./default.html"));
 }
