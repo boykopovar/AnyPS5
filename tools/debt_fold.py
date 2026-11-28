@@ -1,5 +1,6 @@
 import argparse
 import bisect
+import errno
 import os
 import re
 import sys
@@ -301,7 +302,20 @@ def main(argv=None):
         if not path.is_file():
             print(f"no debt file for {args.show}", file=sys.stderr)
             return 1
-        sys.stdout.write(texts.get(args.show, path.read_text(encoding="utf-8")))
+        text = texts.get(args.show, path.read_text(encoding="utf-8"))
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except OSError as exc:
+            if not (isinstance(exc, BrokenPipeError) or (sys.platform == "win32" and exc.errno == errno.EINVAL)):
+                raise
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, sys.stdout.fileno())
+            except (AttributeError, OSError, ValueError):
+                pass
+            finally:
+                os.close(devnull)
     elif not args.check:
         print(f"applied {len(fragments)} fragments to {len(texts)} debt files")
     return 0

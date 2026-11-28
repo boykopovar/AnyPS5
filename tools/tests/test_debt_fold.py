@@ -372,6 +372,30 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
 
 
+class OutputTests(unittest.TestCase):
+    def test_show_into_a_closed_pipe_exits_cleanly_without_traceback(self):
+        import os
+        import subprocess
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(Path(debt_fold.__file__).resolve()), "--show", "libc"],
+                stdout=write_fd,
+                stderr=subprocess.PIPE,
+            )
+        finally:
+            os.close(write_fd)
+        try:
+            _, stderr_bytes = process.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr_bytes = process.communicate()
+            raise
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(stderr_bytes.decode("utf-8", errors="replace"), "")
+
+
 class SpaceTests(unittest.TestCase):
     def test_space_adds_blank_before_entries_after_text(self):
         import debt_fold
