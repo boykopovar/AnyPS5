@@ -133,6 +133,9 @@ struct ImageTableColumnSnapshot {
     bool outside = false;
     bool nested = false;
     bool pointerKeyed = false;
+    std::uint64_t recordStart = 0;
+    std::uint32_t recordStride = 0;
+    std::uint32_t recordBytes = 0;
     SharedValues<std::uint64_t> pointers;
     SharedValues<std::uint32_t> codes;
     SharedValues<DescriptorValue> words;
