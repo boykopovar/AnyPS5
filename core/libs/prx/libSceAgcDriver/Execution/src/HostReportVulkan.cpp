@@ -28,7 +28,7 @@ HostDriverVersionScheme driverVersionScheme(VkDriverId driver) {
     switch (driver) {
         case VK_DRIVER_ID_NVIDIA_PROPRIETARY: return HostDriverVersionScheme::Nvidia;
         case VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS: return HostDriverVersionScheme::IntelWindows;
-        case VK_DRIVER_ID_MOLTENVK: return HostDriverVersionScheme::Unknown;
+        case VK_DRIVER_ID_MOLTENVK: return HostDriverVersionScheme::MoltenVk;
         default: return HostDriverVersionScheme::Vulkan;
     }
 }
