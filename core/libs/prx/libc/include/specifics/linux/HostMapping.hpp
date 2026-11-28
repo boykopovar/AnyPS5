@@ -1,18 +1,21 @@
 #ifndef PRX_LIBC_INCLUDE_SPECIFICS_LINUX_HOSTMAPPING_HPP
 #define PRX_LIBC_INCLUDE_SPECIFICS_LINUX_HOSTMAPPING_HPP
 
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <fstream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 #if __has_include(<linux/fs.h>)
 #include <linux/fs.h>
 #endif
@@ -58,19 +61,58 @@ struct Mapping {
     std::uint64_t inode = 0;
 };
 
+inline int MapsFd() {
+    static std::atomic<int> cached{-1};
+    int fd = cached.load(std::memory_order_acquire);
+    if (fd >= 0) return fd;
+    const int opened = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (opened < 0) return -1;
+    if (cached.compare_exchange_strong(fd, opened, std::memory_order_acq_rel, std::memory_order_acquire)) return opened;
+    close(opened);
+    return fd;
+}
+
 inline int QueryFd() {
     static const int fd = [] {
         if (std::getenv("APS5_NO_PROCMAP_QUERY") != nullptr) return -1;
-        const int opened = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+        const int opened = MapsFd();
         if (opened < 0) return -1;
         procmap_query probe{};
         probe.size = sizeof(probe);
         probe.query_flags = PROCMAP_QUERY_COVERING_OR_NEXT_VMA;
         if (ioctl(opened, PROCMAP_QUERY, &probe) == 0 || errno == ENOENT) return opened;
-        close(opened);
         return -1;
     }();
     return fd;
+}
+
+inline std::mutex& ScanLock() {
+    static std::mutex lock;
+    return lock;
+}
+
+template <typename Line>
+void ScanLines(const char* caller, Line&& line) {
+    const std::lock_guard guard(ScanLock());
+    const int fd = MapsFd();
+    if (fd < 0) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
+    std::string pending;
+    char chunk[4096];
+    for (off_t offset = 0;;) {
+        const ssize_t got = pread(fd, chunk, sizeof(chunk), offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) throw std::runtime_error(std::string(caller) + ": failed to read /proc/self/maps");
+        if (got == 0) break;
+        offset += got;
+        pending.append(chunk, static_cast<std::size_t>(got));
+        std::size_t begin = 0;
+        for (auto newline = pending.find('\n'); newline != std::string::npos; newline = pending.find('\n', begin)) {
+            if (!line(pending.substr(begin, newline - begin))) return;
+            begin = newline + 1;
+        }
+        pending.erase(0, begin);
+    }
+    if (!pending.empty()) line(pending);
 }
 
 inline std::optional<Mapping> ParseMapsLine(const std::string& line) {
@@ -95,15 +137,14 @@ inline std::optional<Mapping> ParseMapsLine(const std::string& line) {
 }
 
 inline std::optional<Mapping> ScanMaps(std::uint64_t address, const char* caller) {
-    std::ifstream maps("/proc/self/maps");
-    if (!maps) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
-    std::string line;
-    while (std::getline(maps, line)) {
+    std::optional<Mapping> found;
+    ScanLines(caller, [&](const std::string& line) {
         auto mapping = ParseMapsLine(line);
-        if (!mapping || address < mapping->start || address >= mapping->end) continue;
-        return mapping;
-    }
-    return std::nullopt;
+        if (!mapping || address < mapping->start || address >= mapping->end) return true;
+        found = std::move(mapping);
+        return false;
+    });
+    return found;
 }
 
 inline Mapping FromQuery(const procmap_query& query, const char* name) {
@@ -148,16 +189,16 @@ void Walk(std::uint64_t begin, std::uint64_t end, const char* caller, Visit&& vi
         }
         return;
     }
-    std::ifstream maps("/proc/self/maps");
-    if (!maps) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
-    std::string line;
-    while (std::getline(maps, line)) {
-        const auto mapping = ParseMapsLine(line);
+    std::vector<Mapping> mappings;
+    ScanLines(caller, [&](const std::string& line) {
+        auto mapping = ParseMapsLine(line);
         if (!mapping) throw std::runtime_error(std::string(caller) + ": unexpected /proc/self/maps line: " + line);
-        if (mapping->end <= begin) continue;
-        if (mapping->start >= end) return;
-        visit(*mapping);
-    }
+        if (mapping->end <= begin) return true;
+        if (mapping->start >= end) return false;
+        mappings.push_back(std::move(*mapping));
+        return true;
+    });
+    for (const auto& mapping : mappings) visit(mapping);
 }
 
 }
