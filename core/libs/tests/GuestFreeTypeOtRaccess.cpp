@@ -1,12 +1,17 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <new>
+#include <string_view>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -378,9 +383,103 @@ void GuestPointers() {
     UnmapPages(pages, 3 * pageSize);
 }
 
+int CheckWatched() {
+    using namespace GuestArena;
+    constexpr std::size_t bytes = 65536;
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+#ifdef __APPLE__
+        std::abort();
+#else
+        std::puts("Page write watch is unavailable");
+        return 77;
+#endif
+    }
+#else
+    Require(GuestArenaWriteWatched_nid_postfix(), "guest arena supports write watch");
+#endif
+    auto* pages = static_cast<std::byte*>(GuestArenaAllocate_nid_postfix(bytes, bytes));
+    Require(pages != nullptr, "watched guest arena pages are allocated");
+#ifdef _WIN32
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr, "section for watched pages is created");
+    GuestArenaMap_nid_postfix(pages, bytes, section, 0, PAGE_READWRITE);
+    CloseHandle(section);
+#else
+    GuestArenaCommit_nid_postfix(pages, bytes, 0x04, bytes);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pages, bytes);
+#endif
+    const auto arm = [&] {
+#ifdef _WIN32
+        std::array<void*, 32> written{};
+        auto count = written.size();
+        Require(GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), bytes, written.data(), &count, true),
+                "watched writes are collected");
+        for (const std::size_t offset : {0u, 16384u, 32768u, 49152u}) {
+            MEMORY_BASIC_INFORMATION info{};
+            Require(VirtualQuery(pages + offset, &info, sizeof(info)) == sizeof(info) && info.Protect == PAGE_READONLY,
+                    "armed watched page has PAGE_READONLY protection");
+        }
+#else
+        bool written = false;
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), bytes,
+                    [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &written),
+                "watched writes are collected");
+#endif
+    };
+    auto* const newNames = new (pages) char*[9]();
+    auto* const offsets = new (pages + 16384) std::int64_t[9]();
+    auto* const errors = new (pages + 32768) std::int32_t[9]();
+    auto* const mapOffset = new (pages + 49152) std::int64_t(-1);
+    auto* const rdataPos = new (pages + 49152 + sizeof(std::int64_t)) std::int64_t(-1);
+
+    const Fork fork = MakeFork(0, false);
+    Session session(fork.bytes);
+    arm();
+    Require(FT_Raccess_Get_HeaderInfo_nid_postfix(&session.library, &session.stream, 0, mapOffset, rdataPos) == 0,
+            "header info writes outputs on watched guest pages");
+    Require(*rdataPos == 0x100 && *mapOffset == 0x140 + 28, "header info writes expected values on watched guest pages");
+
+    for (int i = 0; i < 9; ++i) {
+        newNames[i] = nullptr;
+        offsets[i] = -1;
+        errors[i] = -1;
+    }
+    char baseMutable[] = "dir/font";
+    arm();
+    FT_Raccess_Guess_nid_postfix(&session.library, nullptr, baseMutable, newNames, offsets, errors);
+    Require(errors[0] == 0x51 && !newNames[0] && offsets[0] == -1, "watched rule 0 preserves offset on error");
+    Require(errors[1] == 0x51 && !newNames[1] && offsets[1] == -1, "watched rule 1 preserves offset on error");
+    Require(errors[2] != 0 && !newNames[2] && offsets[2] == -1, "watched rule 2 preserves offset on error");
+    Require(errors[3] == 0 && newNames[3] && std::strcmp(newNames[3], "dir/font/..namedfork/rsrc") == 0 && offsets[3] == 0,
+            "watched rule 3 succeeds");
+    Require(errors[4] == 0 && newNames[4] && std::strcmp(newNames[4], "dir/font/rsrc") == 0 && offsets[4] == 0,
+            "watched rule 4 succeeds");
+    Require(errors[5] == 0 && newNames[5] && std::strcmp(newNames[5], "dir/resource.frk/font") == 0 && offsets[5] == 0,
+            "watched rule 5 succeeds");
+    Require(errors[6] == 0 && newNames[6] && std::strcmp(newNames[6], "dir/.resource/font") == 0 && offsets[6] == 0,
+            "watched rule 6 succeeds");
+    Require(errors[7] != 0 && !newNames[7] && offsets[7] == -1, "watched rule 7 preserves offset on error");
+    Require(errors[8] != 0 && !newNames[8] && offsets[8] == -1, "watched rule 8 preserves offset on error");
+
+    for (int i = 0; i < 9; ++i) {
+        if (newNames[i]) ft_mem_free_nid_postfix(&session.recorder.memory, newNames[i]);
+    }
+    Require(session.recorder.allocs == session.recorder.frees, "all allocated names on watched pages are freed");
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pages, bytes);
+#endif
+    GuestArenaReset_nid_postfix(pages, bytes);
+    GuestArenaRelease_nid_postfix(pages, bytes);
+    std::puts("Guest FreeType Ot raccess watched tests passed");
+    return 0;
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--watched") return CheckWatched();
+    if (argc != 1) return 1;
     HeaderAndOffsets(0, false);
     HeaderAndOffsets(0x80, true);
     RejectedHeaders();

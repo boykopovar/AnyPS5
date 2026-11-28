@@ -8,6 +8,7 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/System.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
 #include <array>
@@ -52,7 +53,11 @@ void CopyOut(void* destination, const void* source, std::size_t bytes, const cha
 
 void RequireWritable(void* destination, std::size_t bytes, const char* function) {
     const int savedErrno = errno;
-    const bool writable = destination && GuestWritable_nid_no_patch(destination, bytes);
+    bool writable = false;
+    if (destination) {
+        const GuestArena::HostWrite guard(destination, bytes);
+        writable = guard.Open() && GuestWritable_nid_no_patch(destination, bytes);
+    }
     errno = savedErrno;
     if (!writable) NotImplemented_nid_no_patch(function);
 }
