@@ -4,8 +4,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
-#include "prx/libc/include/GuestArena.hpp"
-#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -95,9 +93,7 @@ void Store(const std::uint32_t* texels, std::span<const std::uint32_t> code) {
 
 std::uint32_t* MapSurface() {
 #ifdef _WIN32
-    auto* texels = static_cast<std::uint32_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, Block));
-    if (texels != nullptr) GuestArena::GuestArenaCommit_nid_postfix(texels, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
-    return texels;
+    return static_cast<std::uint32_t*>(VirtualAlloc(nullptr, SurfaceBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
     void* mapped = mmap(nullptr, SurfaceBytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (mapped == MAP_FAILED) return nullptr;
@@ -105,19 +101,15 @@ std::uint32_t* MapSurface() {
     const auto aligned = (begin + Block - 1) & ~std::uintptr_t{Block - 1};
     if (aligned != begin) munmap(mapped, aligned - begin);
     if (aligned != begin + Block) munmap(reinterpret_cast<void*>(aligned + SurfaceBytes), begin + Block - aligned);
-    auto* texels = reinterpret_cast<std::uint32_t*>(aligned);
-    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(texels, SurfaceBytes);
-    return texels;
+    return reinterpret_cast<std::uint32_t*>(aligned);
 #endif
 }
 
 void ReleaseSurface(std::uint32_t* texels) {
 #ifdef _WIN32
-    GuestArena::GuestArenaReset_nid_postfix(texels, SurfaceBytes);
-    GuestArena::GuestArenaRelease_nid_postfix(texels, SurfaceBytes);
+    VirtualFree(texels, 0, MEM_RELEASE);
 #else
     munmap(texels, SurfaceBytes);
-    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(texels, SurfaceBytes);
 #endif
 }
 
@@ -163,12 +155,7 @@ Outcome Run() {
     } unmapped{texels, mapped};
     Require(AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels))).guestBytes == SurfaceBytes, "idle store over unmap: unexpected surface size");
     const auto address = AddressOf(texels);
-    if (!AgcDriver::GuestMemory::Watched(address, SurfaceBytes)) {
-        std::printf("skipped, the surface is not write-watched\n");
-        return Outcome::NotRun;
-    }
-    AgcDriver::GuestMemory::Unwatch(address, SurfaceBytes);
-    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "idle store over unmap: the surface is still write-watched");
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "idle store over unmap: the surface is write-watched");
     std::unique_lock hold(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
     Store(texels, StoreCode);
     if (!HoldLive(hold, texels, Stored)) return Outcome::Missed;
@@ -180,6 +167,7 @@ Outcome Run() {
     }
     Require(static_cast<const volatile std::uint32_t*>(texels)[0] == Stored, "idle store over unmap: the first result was not stored");
     hold.lock();
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "idle store over unmap: the surface regained the write watch after its first store");
     const auto image = StorageTexture::FindLive(address, SurfaceBytes);
     const bool saved = image != nullptr && image->GuestSnapshotValid();
     hold.unlock();
