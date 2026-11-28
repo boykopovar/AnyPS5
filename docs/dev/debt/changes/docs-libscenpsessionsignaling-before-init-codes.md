@@ -1,0 +1,5 @@
+# libSceNpSessionSignaling
+
+## change [sceNpSessionSignalingInitialize, sceNpSessionSignalingInitializeWithPort, sceNpSessionSignalingCreateContext, sceNpSessionSignalingCreateContext2, sceNpSessionSignalingActivateSession]
+
+- [sceNpSessionSignalingInitialize, sceNpSessionSignalingInitializeWithPort, sceNpSessionSignalingCreateContext, sceNpSessionSignalingCreateContext2, sceNpSessionSignalingActivateSession](../../../core/libs/prx/libSceNpSessionSignaling/Export.cpp) - safely copying guest memory and returning `0x80553303` (`InvalidArgument`) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured. Measured on a console in a payload process on firmware 11.60 (two runs; a title process may differ): before any initialization CreateContext and ActivateSession, each called with non-null output pointers and made-up ids (argument layouts assumed), return `0x80553301` and write no output, and Initialize with a null parameter returns `0x80553303`; unmapped pointers were not tried.
