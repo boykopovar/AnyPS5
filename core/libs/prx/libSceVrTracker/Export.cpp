@@ -104,12 +104,16 @@ int APS5_VABI sceVrTrackerGetTime(std::uint64_t* time) {
     return CopyOutGuest(time, now) ? 0 : ArgumentInvalid;
 }
 int APS5_VABI sceVrTrackerGpuSubmit(const VrTrackerGpuSubmitParam* param) {
+    if (!g_initialized.load()) return NotInit;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceVrTrackerGpuWait(const VrTrackerGpuWaitParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_initialized.load()) return NotInit;
+    if (!param) return ArgumentInvalid;
+    std::uint32_t size = 0;
+    if (!CopyInGuest(size, &param->size) || size != sizeof(VrTrackerGpuWaitParam)) return ArgumentInvalid;
+    return NotExecuteGpuSubmit;
 }
 int APS5_VABI sceVrTrackerInit(const VrTrackerInitParam* param) {
     if (g_initialized.load()) return AlreadyInitialized;
