@@ -239,13 +239,7 @@ void Deallocate(void* ptr);
 
 namespace NKWebKit::WtfAbi {
 
-void Release(StringImpl* impl) {
-    if (!impl) return;
-    if (impl->refCount != 2) {
-        impl->refCount -= 2;
-        return;
-    }
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+void FreeStringImpl(StringImpl* impl) {
     switch (impl->hashAndFlags & 3) {
     case 1:
         Deallocate(const_cast<void*>(impl->data));
@@ -255,6 +249,16 @@ void Release(StringImpl* impl) {
         break;
     }
     Deallocate(impl);
+}
+
+void Release(StringImpl* impl) {
+    if (!impl) return;
+    if (impl->refCount != 2) {
+        impl->refCount -= 2;
+        return;
+    }
+    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    FreeStringImpl(impl);
 }
 
 void Release(CStringBuffer* buffer) {
@@ -675,6 +679,13 @@ String SubstringSharingImpl(const String& string, unsigned start, unsigned lengt
 }  // namespace NKWebKit::WtfAbi
 
 extern "C" {
+void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
+    if (!impl) throw std::invalid_argument("WTF::StringImpl::destroy: null string");
+    if (impl->hashAndFlags & 48) throw std::logic_error("WTF::StringImpl::destroy: atom and symbol strings are not modeled");
+    if ((impl->hashAndFlags & 3) == 3) throw std::logic_error("WTF::StringImpl::destroy: external buffers are not modeled");
+    NKWebKit::WtfAbi::FreeStringImpl(impl);
+}
+
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {
     return String(CopyImpl({data, length, false}));
 }
