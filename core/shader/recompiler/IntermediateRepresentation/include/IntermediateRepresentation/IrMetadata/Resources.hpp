@@ -121,6 +121,7 @@ struct ImageResource {
     bool volumeGather = false;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
+    std::uint32_t byTexelBytes = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     std::uint32_t emulatedCompare = 0;
     std::uint32_t table = NoTable;

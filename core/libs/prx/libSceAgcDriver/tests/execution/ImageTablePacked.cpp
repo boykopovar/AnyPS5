@@ -694,17 +694,12 @@ void UnsupportedStores(AgcDriver::VulkanDevice& device) {
     FillInput(false);
     const auto initial = Texels;
     for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) {
-        for (const auto table : {false, true}) {
-            const auto code = Code(opcode, (opcode & 1u) != 0u ? 15u : 3u, table);
-            std::string refusal;
-            try {
-                Run(device, code, 0u, 1u, false);
-            } catch (const std::exception& error) {
-                refusal = error.what();
-            }
-            Require(refusal.find("stores are not implemented") != std::string::npos, "unsupported BY store opcode " + std::to_string(opcode) + " was not rejected before GPU submission: " + refusal);
-            Require(Texels == initial, "unsupported BY store compilation modified an image");
-        }
+        const auto dmask = (opcode & 1u) != 0u ? 15u : 3u;
+        const auto direct = Run(device, Code(opcode, dmask, false), 0u, 1u, false);
+        Require(direct.faults == 0u && direct.tables == 0u, "BY2/BY4 store opcode " + std::to_string(opcode) + " rejected a direct identity-swizzled 2D image");
+        const auto table = Run(device, Code(opcode, dmask, true), 0u);
+        Require(table.log.find("image table:") != std::string::npos, "BY2/BY4 store opcode " + std::to_string(opcode) + " through an image table was not poisoned:\n" + table.log);
+        Require(Texels == initial, "BY2/BY4 store through an image table modified an image");
     }
     SetEntry(0u, Descriptor(0u, Format{5u, 1u, 1u}));
     for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) {
@@ -712,7 +707,7 @@ void UnsupportedStores(AgcDriver::VulkanDevice& device) {
         Require(poisoned.faults != 0u && poisoned.log.find("image table:") != std::string::npos, "PCK store opcode " + std::to_string(opcode) + " through an image table was not poisoned");
         Require(Texels == initial, "PCK store opcode " + std::to_string(opcode) + " through an image table modified an image");
     }
-    std::cout << "BY stores rejected without GPU submission and PCK stores through image tables poisoned\n";
+    std::cout << "BY stores accepted directly and poisoned through image tables; PCK stores poisoned through image tables\n";
 }
 
 struct Rejection {
