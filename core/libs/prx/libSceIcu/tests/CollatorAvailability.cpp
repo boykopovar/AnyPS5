@@ -81,11 +81,38 @@ std::vector<std::uint8_t> CollationIndex(const std::vector<std::string_view>& lo
     return bytes;
 }
 
-void CheckWithoutData() {
-    Require(ucol_countAvailable_nid_postfix() == 0, "ucol_countAvailable counted locales without collation data");
-    for (const auto index : {std::numeric_limits<std::int32_t>::min(), -1, 0, 1, std::numeric_limits<std::int32_t>::max()})
-        Require(ucol_getAvailable_nid_postfix(index) == nullptr, "ucol_getAvailable returned a locale without collation data");
-    Require(ucol_countAvailable_nid_postfix() == 0, "ucol_countAvailable changed between calls");
+void CheckBundled() {
+    const auto count = ucol_countAvailable_nid_postfix();
+    Require(count == 145, "ucol_countAvailable returned " + std::to_string(count) + ", expected the 145 locales of the bundled collation data");
+    std::string_view first;
+    std::string_view previous;
+    bool german = false;
+    bool swedish = false;
+    for (std::int32_t index = 0; index != count; ++index) {
+        const char* locale = ucol_getAvailable_nid_postfix(index);
+        Require(locale != nullptr, "ucol_getAvailable returned null for index " + std::to_string(index));
+        Require(ucol_getAvailable_nid_postfix(index) == locale, "ucol_getAvailable returned another pointer for the same index");
+        const std::string_view name(locale);
+        Require(index == 0 || previous < name, "ucol_getAvailable returned " + std::string(name) + " out of order");
+        if (index == 0) first = name;
+        german = german || name == "de";
+        swedish = swedish || name == "sv";
+        previous = name;
+    }
+    Require(first == "af" && previous == "zu", "the bundled collation locales do not run from af to zu");
+    Require(german && swedish, "the bundled collation locales lack de or sv");
+    Require(ucol_getAvailable_nid_postfix(count) == nullptr, "ucol_getAvailable returned a locale at the count");
+    Require(ucol_getAvailable_nid_postfix(std::numeric_limits<std::int32_t>::max()) == nullptr, "ucol_getAvailable returned a locale past the count");
+    for (const auto index : {std::numeric_limits<std::int32_t>::min(), -1}) {
+        bool thrown = false;
+        try {
+            ucol_getAvailable_nid_postfix(index);
+        } catch (const std::exception&) {
+            thrown = true;
+        }
+        Require(thrown, "ucol_getAvailable accepted the negative index " + std::to_string(index));
+    }
+    Require(ucol_countAvailable_nid_postfix() == count, "ucol_countAvailable changed between calls");
 }
 
 void CheckWithData() {
@@ -117,9 +144,9 @@ void CheckWithData() {
 }
 
 int main(int argumentCount, char** arguments) {
-    Require(argumentCount == 2, "expected one argument: empty or data");
+    Require(argumentCount == 2, "expected one argument: bundled or data");
     const std::string_view mode = arguments[1];
-    if (mode == "empty") CheckWithoutData();
+    if (mode == "bundled") CheckBundled();
     else if (mode == "data") CheckWithData();
     else Require(false, "unknown mode " + std::string(mode));
     return 0;
