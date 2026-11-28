@@ -128,6 +128,7 @@ class TimelinePreviewTests(unittest.TestCase):
                                         capture_output=True, timeout=5)
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, b"")
+                self.assertIn(str(timeline).encode("utf-8"), result.stderr)
                 self.assertNotIn(b"Traceback", result.stderr)
 
     def test_duplicate_json_fields_are_not_previewed(self):

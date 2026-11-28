@@ -33,8 +33,10 @@ def main(argv=None):
     try:
         document = load_timeline(args.timeline)
         result = preview(document, args.repeat, args.gap_ms)
-    except (OSError, ValueError, RecursionError) as error:
+    except OSError as error:
         parser.exit(2, f"{parser.prog}: {error}\n")
+    except (ValueError, RecursionError) as error:
+        parser.exit(2, f"{parser.prog}: {args.timeline}: {error}\n")
     if args.json:
         print(json.dumps(result, indent=2))
     else:
