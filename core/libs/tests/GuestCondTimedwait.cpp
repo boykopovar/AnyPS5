@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <thread>
 
 static int cleanupAt = -1;
 static void APS5_VABI Cleanup(void*) { cleanupAt = 0; }
@@ -208,6 +210,172 @@ static void SignalTo() {
     Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
 }
 
+
+struct TargetedWait {
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    std::atomic<int> ready{0};
+    std::atomic<int> targetResult{-1};
+    std::atomic<int> otherResult{-1};
+};
+
+struct TargetedWaitArgument {
+    TargetedWait* state;
+    bool target;
+};
+
+static void* APS5_VABI TargetedWaiter(void* arg) {
+    const auto argument = *static_cast<TargetedWaitArgument*>(arg);
+    auto& state = *argument.state;
+    Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    state.ready.fetch_add(1);
+    const int result = pthread_cond_reltimedwait_np_nid_postfix(&state.cond, &state.mutex, 100000);
+    (argument.target ? state.targetResult : state.otherResult).store(result);
+    Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+    return nullptr;
+}
+
+static void SignalToTargetOnly() {
+    for (int round = 0; round < 10; ++round) {
+        TargetedWait state;
+        Require(scePthreadMutexInit(&state.mutex, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadCondInit(&state.cond, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+
+        TargetedWaitArgument targetArgument{&state, true};
+        TargetedWaitArgument otherArgument{&state, false};
+        Pthread target = nullptr;
+        Pthread other = nullptr;
+        Require(scePthreadCreate(&target, nullptr, TargetedWaiter, &targetArgument, nullptr) == SCE_OK);
+        Require(scePthreadCreate(&other, nullptr, TargetedWaiter, &otherArgument, nullptr) == SCE_OK);
+        Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+
+        while (state.ready.load() != 2)
+            std::this_thread::yield();
+
+        Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+        Require(scePthreadCondSignalto(&state.cond, target) == SCE_OK);
+        Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+
+        Require(scePthreadJoin(target, nullptr) == SCE_OK);
+        Require(scePthreadJoin(other, nullptr) == SCE_OK);
+        Require(state.targetResult.load() == 0);
+        Require(state.otherResult.load() == POSIX_ETIMEDOUT);
+
+        Require(scePthreadCondDestroy(&state.cond) == SCE_OK);
+        Require(scePthreadMutexDestroy(&state.mutex) == SCE_OK);
+    }
+}
+
+
+
+struct DisabledCancelWait {
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    Pthread target = nullptr;
+    bool recursive = false;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> cancelStarted{false};
+    std::atomic<bool> cancelReturned{false};
+    std::atomic<int> waitResult{-1};
+};
+
+static void* APS5_VABI DisabledCancelWaiter(void* arg) {
+    auto& state = *static_cast<DisabledCancelWait*>(arg);
+    Require(scePthreadSetcancelstate(GUEST_CANCEL_DISABLE, nullptr) == SCE_OK);
+    Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    if (state.recursive)
+        Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    state.entered.store(true, std::memory_order_release);
+    state.waitResult.store(scePthreadCondWait(&state.cond, &state.mutex), std::memory_order_release);
+    if (state.recursive)
+        Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+    Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+    return nullptr;
+}
+
+static void* APS5_VABI DisabledWaitCanceller(void* arg) {
+    auto& state = *static_cast<DisabledCancelWait*>(arg);
+    state.cancelStarted.store(true, std::memory_order_release);
+    Require(scePthreadCancel(state.target) == SCE_OK);
+    state.cancelReturned.store(true, std::memory_order_release);
+    return nullptr;
+}
+
+static void CancelDisabledWaitReturnsBeforeSignal(bool recursive) {
+    DisabledCancelWait state;
+    state.recursive = recursive;
+    PthreadMutexattr attr = nullptr;
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    if (recursive)
+        Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_RECURSIVE) == SCE_OK);
+    Require(scePthreadMutexInit(&state.mutex, &attr, nullptr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadCondInit(&state.cond, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadCreate(&state.target, nullptr, DisabledCancelWaiter, &state, nullptr) == SCE_OK);
+    while (!state.entered.load(std::memory_order_acquire))
+        std::this_thread::yield();
+
+    Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    Pthread canceller = nullptr;
+    Require(scePthreadCreate(&canceller, nullptr, DisabledWaitCanceller, &state, nullptr) == SCE_OK);
+    while (!state.cancelStarted.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!state.cancelReturned.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    const bool returnedBeforeSignal = state.cancelReturned.load(std::memory_order_acquire);
+    Require(scePthreadCondSignal(&state.cond) == SCE_OK);
+    Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+
+    Require(scePthreadJoin(canceller, nullptr) == SCE_OK);
+    Require(scePthreadJoin(state.target, nullptr) == SCE_OK);
+    Require(returnedBeforeSignal);
+    Require(state.waitResult.load(std::memory_order_acquire) == SCE_OK);
+    Require(scePthreadCondDestroy(&state.cond) == SCE_OK);
+    Require(scePthreadMutexDestroy(&state.mutex) == SCE_OK);
+}
+
+struct UnlockedTargetedWait {
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    std::atomic<bool> entered{false};
+    std::atomic<int> result{-1};
+};
+
+static void* APS5_VABI UntimedTargetWaiter(void* arg) {
+    auto& state = *static_cast<UnlockedTargetedWait*>(arg);
+    Require(scePthreadMutexLock(&state.mutex) == SCE_OK);
+    state.entered.store(true, std::memory_order_release);
+    state.result.store(scePthreadCondWait(&state.cond, &state.mutex), std::memory_order_release);
+    Require(scePthreadMutexUnlock(&state.mutex) == SCE_OK);
+    return nullptr;
+}
+
+static void SignalToWithoutMutex() {
+    for (int round = 0; round < 100; ++round) {
+        UnlockedTargetedWait state;
+        Require(scePthreadMutexInit(&state.mutex, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadCondInit(&state.cond, nullptr, nullptr) == SCE_OK);
+        Pthread target = nullptr;
+        Require(scePthreadCreate(&target, nullptr, UntimedTargetWaiter, &state, nullptr) == SCE_OK);
+        while (!state.entered.load(std::memory_order_acquire))
+            std::this_thread::yield();
+
+        int signalResult = SCE_KERNEL_ERROR_EPERM;
+        while (signalResult == SCE_KERNEL_ERROR_EPERM) {
+            signalResult = scePthreadCondSignalto(&state.cond, target);
+            if (signalResult == SCE_KERNEL_ERROR_EPERM)
+                std::this_thread::yield();
+        }
+        Require(signalResult == SCE_OK);
+        Require(scePthreadJoin(target, nullptr) == SCE_OK);
+        Require(state.result.load(std::memory_order_acquire) == SCE_OK);
+        Require(scePthreadCondDestroy(&state.cond) == SCE_OK);
+        Require(scePthreadMutexDestroy(&state.mutex) == SCE_OK);
+    }
+}
+
 static void SignalToEveryRound(bool recursive) {
     for (int round = 0; round < 200; ++round) {
         Signalled signalled;
@@ -240,6 +408,10 @@ int main() {
     MonotonicClockWait();
     DistantAbsoluteDeadline();
     SignalTo();
+    SignalToTargetOnly();
+    CancelDisabledWaitReturnsBeforeSignal(false);
+    CancelDisabledWaitReturnsBeforeSignal(true);
+    SignalToWithoutMutex();
     SignalToEveryRound(false);
     SignalToEveryRound(true);
 

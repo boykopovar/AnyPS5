@@ -959,6 +959,11 @@ static void finishThread(PthreadPrivate* self, void* retval) {
 #endif
 }
 
+bool ThreadCancel::Enabled() {
+    const auto& state = CurrentGuestState();
+    return state.current && state.cancelState == GUEST_CANCEL_ENABLE;
+}
+
 bool ThreadCancel::Requested() {
     return CurrentGuestState().current && !CurrentGuestState().exiting && CurrentGuestState().cancelState == GUEST_CANCEL_ENABLE && CurrentGuestState().current->cancelPending.load();
 }

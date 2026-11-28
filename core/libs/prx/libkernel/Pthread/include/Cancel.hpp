@@ -28,6 +28,7 @@ void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute);
 
 namespace ThreadCancel {
 
+bool Enabled();
 bool Requested();
 void Check();
 void* CleanupMark();
