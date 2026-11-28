@@ -442,7 +442,10 @@ void DrawPipeline::enqueue(Item item) {
     }
     static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr;
     if (!profile && !stats) return;
-    const auto now = std::chrono::steady_clock::now();
+    reportIfDue(std::chrono::steady_clock::now());
+}
+
+void DrawPipeline::reportIfDue(std::chrono::steady_clock::time_point now) {
     if (now - lastReport >= std::chrono::seconds(10)) report(now);
 }
 

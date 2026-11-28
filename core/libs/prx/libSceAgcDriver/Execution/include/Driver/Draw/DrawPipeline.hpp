@@ -21,6 +21,7 @@
 namespace AgcDriver::DriverDetail {
 
 class DrawPipeline {
+    friend struct DrawPipelineReportProbe;
 public:
     using Commit = std::function<void()>;
     using Range = std::pair<std::uint64_t, std::uint64_t>;
@@ -102,6 +103,7 @@ private:
     void enqueue(Item item);
     void run();
     void rethrowFailure();
+    void reportIfDue(std::chrono::steady_clock::time_point now);
     void report(std::chrono::steady_clock::time_point now);
     void countWrites(const std::vector<Range>& writes, bool added);
     void releaseWatch(Watch& watch);
