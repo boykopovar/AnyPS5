@@ -408,6 +408,10 @@ VkPipelineColorBlendAttachmentState keyedBlend(bool dynamicColorWriteMask, VkPip
     return blend;
 }
 
+bool AvoidsInterlockEpilog(const Context& context, std::span<const CompiledShader> shaders) {
+    return !context.orderedInterlockEpilogs && FragmentInterlock(shaders);
+}
+
 template<typename TValue>
 void appendKey(std::vector<std::byte>& key, const TValue& value) {
     static_assert(std::is_trivially_copyable_v<TValue>);
@@ -716,7 +720,7 @@ bool shadesPerSample(const ShaderRecompiler::RecompileResult& program) {
 
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, bool narrow) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || FragmentInterlock(shaders)) return false;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || AvoidsInterlockEpilog(context, shaders)) return false;
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
@@ -840,7 +844,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
 
-Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicColorWriteMask(context.dynamicColorWriteMask && !FragmentInterlock(shaders)), dynamicRendering(context.graphicsPipelineLibrary) {
+Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicColorWriteMask(context.dynamicColorWriteMask && !AvoidsInterlockEpilog(context, shaders)), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
     for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
     if (state.depth) boundAttachments.push_back(true);
@@ -1279,7 +1283,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     return framebuffer;
 }
 
-void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked) const {
+void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked, bool secondaryContents) const {
     const auto commands = recording.Commands();
     if (dynamicRendering) {
         const auto views = framebuffer.Views();
@@ -1304,13 +1308,14 @@ void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, Vk
         VkRenderingInfoKHR rendering{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
         rendering.renderArea = {{0, 0}, extent};
         rendering.layerCount = state.renderLayers;
+        if (secondaryContents) rendering.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
         const bool outputs = !state.rasterizerDiscard;
         rendering.colorAttachmentCount = outputs ? static_cast<std::uint32_t>(colors.size()) : 0u;
         rendering.pColorAttachments = outputs && !colors.empty() ? colors.data() : nullptr;
         if (outputs && depthFormat != VK_FORMAT_UNDEFINED) rendering.pDepthAttachment = &depth;
         if (outputs && depthFormat != VK_FORMAT_UNDEFINED && HasStencil(depthFormat)) rendering.pStencilAttachment = &depth;
         context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
-        Continue(recording, state, masked);
+        if (!secondaryContents) Continue(recording, state, masked);
         return;
     }
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -1538,7 +1543,7 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
-    const bool dynamicColorWriteMask = context.dynamicColorWriteMask && !FragmentInterlock(shaders);
+    const bool dynamicColorWriteMask = context.dynamicColorWriteMask && !AvoidsInterlockEpilog(context, shaders);
     for (const auto& blend : state.blends) append(key, keyedBlend(dynamicColorWriteMask, blend));
     key.Put(state.colorRop);
     append(key, narrowLibraryKeys);

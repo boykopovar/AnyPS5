@@ -27,6 +27,8 @@
 #include <type_traits>
 #include <vector>
 #include <limits>
+#include <charconv>
+#include <mutex>
 #include "GuestResolver.hpp"
 
 namespace {
@@ -37,15 +39,9 @@ struct SavedErrno {
 
 bool CopyResolverString(const char* source, std::string& destination) {
     const SavedErrno savedErrno;
-    auto address = reinterpret_cast<std::uintptr_t>(source);
-    for (;;) {
-        char value = 0;
-        if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address), sizeof(value))) return false;
-        if (value == 0) return true;
-        destination.push_back(value);
-        if (address == std::numeric_limits<std::uintptr_t>::max()) return false;
-        ++address;
-    }
+    const int error = CopyGuestString_nid_no_patch(source, 1024, destination);
+    if (error == 12) throw std::bad_alloc();
+    return error == 0;
 }
 
 template<typename TValue>
@@ -173,6 +169,58 @@ bool Ready() {
     return true;
 #endif
 }
+
+bool NumericService(const char* text, std::uint32_t& port) {
+    while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r' || *text == '\f' || *text == '\v') ++text;
+    const bool negative = *text == '-';
+    if (*text == '+' || negative) ++text;
+    if (*text < '0' || *text > '9') return false;
+    std::uint64_t value = 0;
+    for (; *text >= '0' && *text <= '9'; ++text) {
+        const auto digit = static_cast<unsigned>(*text - '0');
+        if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10) return false;
+        value = value * 10 + digit;
+    }
+    if (*text != 0) return false;
+    if (negative) value = std::uint64_t{0} - value;
+    if (value > std::numeric_limits<std::uint32_t>::max()) return false;
+    port = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool NamedServicePort(const char* name, int protocol, std::uint16_t& port) {
+    const SavedErrno savedErrno;
+    const char* transport = nullptr;
+    switch (protocol) {
+        case IPPROTO_TCP: transport = "tcp"; break;
+        case IPPROTO_UDP: transport = "udp"; break;
+        case 132: transport = "sctp"; break;
+        case 136: transport = "udplite"; break;
+    }
+#if defined(__linux__)
+    servent entry{};
+    servent* found = nullptr;
+    std::vector<char> storage(1024);
+    for (;;) {
+        const auto error = ::getservbyname_r(name, transport, &entry, storage.data(), storage.size(), &found);
+        if (error != ERANGE) {
+            if (error != 0 || !found) return false;
+            port = ntohs(static_cast<std::uint16_t>(found->s_port));
+            return true;
+        }
+        if (storage.size() > storage.max_size() / 2) throw std::bad_alloc();
+        storage.resize(storage.size() * 2);
+    }
+#else
+    static std::mutex serviceLock;
+    const std::lock_guard lock(serviceLock);
+    const auto* entry = ::getservbyname(name, transport);
+    if (!entry) return false;
+    port = ntohs(static_cast<std::uint16_t>(entry->s_port));
+    return true;
+#endif
+}
+
 #ifndef _WIN32
 void SetGuestSystemError(int hostError) {
     const int guestError = GuestErrnoFromHost_nid_no_patch(hostError);
@@ -402,6 +450,9 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         if ((hints->flags & ~0xd0f) != 0) return 3;
         if (hints->family != 0 && hints->family != 2 && hints->family != 28) return 5;
         if (hints->socketType != 0 && hints->socketType != 1 && hints->socketType != 2 && hints->socketType != 3) return 10;
+        if (hints->protocol != 0 &&
+            ((hints->socketType == 1 && hints->protocol != 6 && hints->protocol != 132) ||
+             (hints->socketType == 2 && hints->protocol != 17 && hints->protocol != 136))) return 12;
         nativeHints.ai_family = hints->family == 28 ? AF_INET6 : hints->family == 2 ? AF_INET : AF_UNSPEC;
         nativeHints.ai_socktype = hints->socketType == 1 ? SOCK_STREAM : (hints->socketType == 2 || rawQuery) ? SOCK_DGRAM : 0;
         nativeHints.ai_protocol = rawQuery ? IPPROTO_UDP : hints->protocol;
@@ -424,6 +475,10 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     if (node) node = nodeCopy.c_str();
     if (service) service = serviceCopy.c_str();
+    std::uint32_t port = 0;
+    const bool numericService = service && NumericService(service, port);
+    if (numericService && port > std::numeric_limits<std::uint16_t>::max()) return 9;
+    if (service && !numericService && hints && (hints->flags & 8)) return 8;
     const char* numericName = nullptr;
     if (node && hints && (hints->flags & 2)) {
         std::array<unsigned char, 4> v4{};
@@ -461,8 +516,29 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     int failure = 0;
     int lookupFailure = 0;
     for (std::size_t query = 0; query < queryCount; ++query) {
+        std::array<char, 6> numericPort{};
+        const char* nativeService = nullptr;
+        if (service) {
+            auto resolvedPort = static_cast<std::uint16_t>(port);
+            if (!numericService) {
+                try {
+                    if (!NamedServicePort(service, queries[query].ai_protocol, resolvedPort)) {
+                        lookupFailure = 9;
+                        continue;
+                    }
+                } catch (const std::bad_alloc&) {
+                    failure = 6;
+                    break;
+                }
+            }
+            const auto converted = std::to_chars(numericPort.data(), numericPort.data() + numericPort.size() - 1, resolvedPort);
+            if (converted.ec != std::errc{}) APS5_INVALID_ARG_EX;
+            *converted.ptr = 0;
+            nativeService = numericPort.data();
+            queries[query].ai_flags |= AI_NUMERICSERV;
+        }
         addrinfo* native = nullptr;
-        const auto error = ::getaddrinfo(node, service, &queries[query], &native);
+        const auto error = ::getaddrinfo(node, nativeService, &queries[query], &native);
         if (error) {
             if (error == EAI_SERVICE) { lookupFailure = 9; continue; }
             failure = GuestError(error);

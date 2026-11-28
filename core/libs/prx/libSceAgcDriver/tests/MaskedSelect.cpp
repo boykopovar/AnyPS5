@@ -440,6 +440,30 @@ int main() {
         return b.eliminate() != 0u && removed(written);
     });
 
+    passed &= run("selects replaced by an immediate are counted for refolding", [] {
+        const auto fullWave = [](bool immediate) {
+            Builder b;
+            auto& wave = b.threadBit(b.constant(0xffffffffu), b.constant(0xffffffffu));
+            auto& old = b.lane();
+            b.keep(b.select(wave, immediate ? b.constant(0u) : b.add(old, 1u), old));
+            return MaskedSelectEliminator{}.Eliminate(b.program);
+        };
+        const auto unreadLanes = [](bool immediate) {
+            Builder b;
+            auto& exec = b.mask(16u);
+            auto& old = b.lane();
+            auto& written = b.select(exec, immediate ? b.constant(0u) : b.add(old, 1u), old);
+            b.keep(b.select(exec, b.add(written, 2u), old));
+            return MaskedSelectEliminator{}.Eliminate(b.program);
+        };
+        const auto fullImmediate = fullWave(true);
+        const auto fullComputed = fullWave(false);
+        const auto unreadImmediate = unreadLanes(true);
+        const auto unreadComputed = unreadLanes(false);
+        return fullImmediate.removedSelects == fullComputed.removedSelects && fullImmediate.immediateSelects == fullComputed.immediateSelects + 1u &&
+               unreadImmediate.removedSelects == 1u && unreadImmediate.immediateSelects == 1u && unreadComputed.removedSelects == 1u && unreadComputed.immediateSelects == 0u;
+    });
+
     passed &= run("a partial wave's exec is not the full wave", [] {
         Builder b;
         auto& partial = b.threadBit(b.constant(0xffffffffu), b.constant(0x0000ffffu));

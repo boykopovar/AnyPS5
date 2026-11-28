@@ -31,7 +31,7 @@ std::string captureSession() {
 
 std::optional<std::set<std::uint64_t>> selectedPrograms() {
     const char* value = std::getenv("APS5_DUMP_SHADERS");
-    if (value == nullptr || std::string_view(value) == "1") return std::nullopt;
+    if (value == nullptr || std::string_view(value) == "1" || std::string_view(value) == "failed") return std::nullopt;
     std::set<std::uint64_t> programs;
     std::string_view rest(value);
     while (!rest.empty()) {
@@ -138,6 +138,8 @@ void Driver::reportSkip(const char* kind, const std::string& what) {
 }
 
 std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix) {
+    const char* policy = std::getenv("APS5_DUMP_SHADERS");
+    if (policy != nullptr && std::string_view(policy) == "failed" && suffix != ".prepare" && suffix != "_failed") return {};
     static AgcDriver::Mutex dumpMutex;
     static std::set<std::string> dumped;
     char hex[32];

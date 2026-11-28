@@ -1889,6 +1889,22 @@ struct WriteTracker {
             for (const auto& piece : entry.possiblePieces) {
                 if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
             }
+            if (!walked && walkedBesidePieces(block, entry, from, to, generation)) return true;
+        }
+        return false;
+    }
+
+    bool walkedBesidePieces(std::uint64_t block, const DriverPieces& entry, std::uint64_t from, std::uint64_t to, std::uint64_t generation) const {
+        const auto found = walkPages.find(block);
+        if (found == walkPages.end()) return false;
+        const auto touches = [&](const std::array<DriverPiece, 4>& pieces, std::uint64_t pageBegin) {
+            return std::any_of(pieces.begin(), pieces.end(), [&](const DriverPiece& piece) {
+                return piece.generation > generation && piece.begin < pageBegin + WritePageBytes && pageBegin < piece.end;
+            });
+        };
+        for (auto page = from / WritePageBytes; page <= (to - 1) / WritePageBytes; ++page) {
+            const auto pageBegin = page * WritePageBytes;
+            if (found->second.pages[page] > generation && !touches(entry.pieces, pageBegin) && !touches(entry.possiblePieces, pageBegin)) return true;
         }
         return false;
     }
