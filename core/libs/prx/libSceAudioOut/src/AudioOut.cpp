@@ -629,14 +629,21 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
 
 int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) try {
     const AudioOutCall call;
-    if (param == nullptr || num == 0) {
+    if (param == nullptr || num == 0 || num > 256) {
         return -2144993276;
     }
+    const int savedErrno = errno;
+    std::vector<AudioOutOutputParam> localParams(num);
+    if (!GuestCopyIn_nid_no_patch(localParams.data(), param, num * sizeof(AudioOutOutputParam))) {
+        errno = savedErrno;
+        return -2144993276;
+    }
+    errno = savedErrno;
 
     std::array<bool, PORTS_MAX> selected{};
     for (std::uint32_t i = 0; i < num; ++i) {
-        if (param[i].handle <= 0 || param[i].handle > PORTS_MAX) return -2144993277;
-        selected[param[i].handle - 1] = true;
+        if (localParams[i].handle <= 0 || localParams[i].handle > PORTS_MAX) return -2144993277;
+        selected[localParams[i].handle - 1] = true;
     }
     std::array<std::unique_lock<std::mutex>, PORTS_MAX> outputLocks;
     for (int index = 0; index < PORTS_MAX; ++index) {
@@ -645,26 +652,26 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     std::unique_lock<std::mutex> lock(g_mutex);
 
     for (std::uint32_t i = 0; i < num; i++) {
-        if (getPort(param[i].handle) == nullptr) {
+        if (getPort(localParams[i].handle) == nullptr) {
             return -2144993277;
         }
     }
 
-    Port& first = *getPort(param[0].handle);
+    Port& first = *getPort(localParams[0].handle);
     std::chrono::steady_clock::time_point reopenDeadline{};
     for (std::uint32_t i = 0; i < num; i++) {
-        Port& port = *getPort(param[i].handle);
+        Port& port = *getPort(localParams[i].handle);
         reopenStoppedDevice(port, lock, reopenDeadline);
         if (port.device == 0) {
-            outputVirtualPort(port, param[i].ptr, lock);
+            outputVirtualPort(port, localParams[i].ptr, lock);
         } else {
-            queueAudio(port, param[i].ptr, lock);
+            queueAudio(port, localParams[i].ptr, lock);
         }
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
-        if (param[i].ptr != nullptr) getPort(param[i].handle)->lastDataOutputTime = done;
+        if (localParams[i].ptr != nullptr) getPort(localParams[i].handle)->lastDataOutputTime = done;
     }
 
     return static_cast<int>(first.samplesNum);
