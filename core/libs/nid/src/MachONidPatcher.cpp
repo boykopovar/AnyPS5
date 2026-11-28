@@ -387,7 +387,11 @@ std::vector<bool> DylibOrdinalsArePrx(const std::vector<std::uint8_t>& binary, c
         if (command.Cmd != kLcLoadDylib && command.Cmd != kLcLoadWeakDylib && command.Cmd != kLcReexportDylib && command.Cmd != kLcLazyLoadDylib && command.Cmd != kLcLoadUpwardDylib) continue;
         const auto nameOffset = Read<std::uint32_t>(binary, offset + 8);
         if (nameOffset >= command.Size) throw std::runtime_error("dylib name out of bounds");
-        const auto name = Internal::ReadCStr(binary, offset + nameOffset);
+        const auto begin = binary.begin() + static_cast<std::ptrdiff_t>(offset + nameOffset);
+        const auto end = binary.begin() + static_cast<std::ptrdiff_t>(offset + command.Size);
+        const auto terminator = std::find(begin, end, std::uint8_t{0});
+        if (terminator == end) throw std::runtime_error("dylib name is not terminated within load command");
+        const std::string name(begin, terminator);
         result.push_back(name.size() >= 4 && name.compare(name.size() - 4, 4, ".prx") == 0);
     }
     return result;
