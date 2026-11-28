@@ -20,6 +20,7 @@ constexpr std::size_t MappingBytes = 0x10000;
 constexpr std::size_t NeighbourBytes = std::size_t {1} << 20;
 
 std::uintptr_t originalStack = 0;
+std::uintptr_t originalArgv = 0;
 std::string originalArgument;
 std::string originalPath;
 bool originalInArena = false;
@@ -77,7 +78,7 @@ void CheckMainThread(void*) {
     if (originalInArena) {
         Require(!InArena(address), "the main thread stack is outside the guest arena");
         Require(address != originalStack, "the main thread stack moved");
-        const auto kept = originalStack & ~(MappingAlignment - 1);
+        const auto kept = (originalArgv - sizeof(char*)) & ~(MappingAlignment - 1);
         const auto released = reinterpret_cast<const void*>(kept - MappingBytes);
         try {
             GuestArena::GuestArenaMarkUsed_nid_postfix(released, MappingBytes);
@@ -113,6 +114,7 @@ void Guest(void*, void*) {
 int main(int, char** argv) {
     int local = 0;
     originalStack = reinterpret_cast<std::uintptr_t>(&local);
+    originalArgv = reinterpret_cast<std::uintptr_t>(argv);
     originalInArena = InArena(originalStack);
     originalArgument = argv[0];
     char path[4096];
