@@ -8,8 +8,43 @@
 #include <cstdlib>
 #include <exception>
 #include <limits>
+#include <new>
 #include <source_location>
 #include <thread>
+#include <vector>
+
+#ifndef _WIN32
+std::size_t hostAllocationLimit = SIZE_MAX;
+void* operator new(std::size_t bytes) {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+#endif
+
+template<typename TCall>
+void Capped(TCall call) {
+#ifndef _WIN32
+    hostAllocationLimit = 1 << 20;
+#endif
+    call();
+#ifndef _WIN32
+    hostAllocationLimit = SIZE_MAX;
+#endif
+}
 
 namespace {
 
@@ -144,6 +179,7 @@ public:
     char16_t* Text() const { return reinterpret_cast<char16_t*>(static_cast<unsigned char*>(mapping) + 16); }
     char16_t** State() const { return reinterpret_cast<char16_t**>(static_cast<unsigned char*>(mapping) + Page + 16); }
     char16_t* Delimiters() const { return reinterpret_cast<char16_t*>(static_cast<unsigned char*>(mapping) + Page * 2 + 16); }
+    char16_t* At(std::size_t offset) const { return reinterpret_cast<char16_t*>(static_cast<unsigned char*>(mapping) + offset); }
 
     void Protect(std::size_t page, int protection) {
         Require(sceKernelMprotect(static_cast<unsigned char*>(mapping) + Page * page, Page, protection) == 0);
@@ -235,6 +271,60 @@ void ReadOnlyGuestTokens() {
 #endif
 }
 
+void InaccessibleGuestText() {
+    GuestStorage storage;
+    constexpr auto page = GuestStorage::Page;
+    const std::array<char16_t, 4> initial{'a', ',', 'b', 0};
+    auto* text = storage.At(page - sizeof(initial));
+    std::copy(initial.begin(), initial.end(), text);
+    auto* unreadable = storage.At(page + 16);
+    storage.Protect(1, 0);
+    Require(u_strpbrk_nid_postfix(text, u",") == text + 1);
+    Require(u_strspn_nid_postfix(text, u"a") == 1 && u_strcspn_nid_postfix(text, u"b") == 2);
+    Require(u_memrchr32_nid_postfix(text, 'b', 4) == text + 2);
+    Throws([&] { u_strpbrk_nid_postfix(unreadable, u","); });
+    Throws([&] { u_strpbrk_nid_postfix(text, unreadable); });
+    Throws([&] { u_strspn_nid_postfix(unreadable, u","); });
+    Throws([&] { u_strcspn_nid_postfix(text, unreadable); });
+    Throws([&] { u_memrchr32_nid_postfix(unreadable, 'a', 1); });
+    Throws([&] { u_memrchr32_nid_postfix(text, 'a', 5); });
+    Capped([&] {
+        Throws([&] { u_memrchr32_nid_postfix(text, 'a', std::numeric_limits<std::int32_t>::max()); });
+        Throws([&] { u_memrchr32_nid_postfix(reinterpret_cast<const char16_t*>(UINTPTR_MAX - 7), 'a', 8); });
+    });
+    char16_t* state = unreadable;
+    Throws([&] { u_strtok_r_nid_postfix(nullptr, u",", &state); });
+    Require(state == unreadable);
+    Throws([&] { u_strtok_r_nid_postfix(nullptr, u",", reinterpret_cast<char16_t**>(unreadable)); });
+    Throws([&] { u_strtok_r_nid_postfix(text, u",", reinterpret_cast<char16_t**>(unreadable)); });
+    Throws([&] { u_strtok_r_nid_postfix(text, unreadable, &state); });
+    Require(std::equal(initial.begin(), initial.end(), text));
+    state = nullptr;
+    Require(u_strtok_r_nid_postfix(text, u",", &state) == text && text[1] == 0 && state == text + 2);
+    Require(u_strtok_r_nid_postfix(nullptr, u",", &state) == text + 2 && state == nullptr);
+    text[1] = ',';
+    text[3] = 'c';
+    Throws([&] { u_strpbrk_nid_postfix(text, u":"); });
+    Throws([&] { u_strtok_r_nid_postfix(text + 2, u",", &state); });
+    Require(text[3] == 'c');
+}
+
+void ChunkedReverseSearch() {
+    std::vector<char16_t> text(0x1803, 'x');
+    const auto boundary = text.size() - 0x800;
+    text[boundary - 1] = 0xd83d;
+    text[boundary] = 0xde00;
+    text[boundary - 0x800] = 0xdc00;
+    text[3] = 'y';
+    Capped([&] {
+        Require(u_memrchr32_nid_postfix(text.data(), 0x1f600, static_cast<std::int32_t>(text.size())) == text.data() + boundary - 1);
+        Require(u_memrchr32_nid_postfix(text.data(), 0xde00, static_cast<std::int32_t>(text.size())) == nullptr);
+        Require(u_memrchr32_nid_postfix(text.data(), 0xdc00, static_cast<std::int32_t>(text.size())) == text.data() + boundary - 0x800);
+        Require(u_memrchr32_nid_postfix(text.data(), 'y', static_cast<std::int32_t>(text.size())) == text.data() + 3);
+        Require(u_memrchr32_nid_postfix(text.data(), 'x', static_cast<std::int32_t>(text.size())) == text.data() + text.size() - 1);
+    });
+}
+
 void IndependentState() {
     const auto tokenize = [](char16_t separator) {
         for (unsigned iteration = 0; iteration < 1000; ++iteration) {
@@ -262,5 +352,7 @@ int main() {
     AliasedDelimiters();
     GuestMappedTokens();
     ReadOnlyGuestTokens();
+    InaccessibleGuestText();
+    ChunkedReverseSearch();
     IndependentState();
 }
