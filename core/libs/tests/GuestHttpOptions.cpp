@@ -101,6 +101,23 @@ void CheckNonblock(int context) {
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
 }
 
+void CheckNamedChildren(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    Require(sceHttpSetAuthEnabled(pattern, 1) == 0 && sceHttpSetCookieEnabled(pattern, 3) == 0, "the template options could not be set");
+    const int connection = sceHttpCreateConnection(pattern, "example.com", "http", 80, 1);
+    Require(connection > 0 && connection != pattern, "sceHttpCreateConnection did not return a new id");
+    const int request = sceHttpCreateRequest(connection, 0, "/a", 0);
+    const int urlRequest = sceHttpCreateRequestWithURL2(connection, "GET", "http://example.com/b", 0);
+    Require(request > 0 && urlRequest > 0 && request != urlRequest && request != connection && urlRequest != connection, "the requests did not get new ids");
+    for (const int id : {connection, request, urlRequest}) {
+        Require(Get(sceHttpGetAuthEnabled, id) == 1 && Get(sceHttpGetCookieEnabled, id) == 3, "a connection or request did not take its parent's options");
+    }
+    Require(sceHttpSetCookieEnabled(request, 0) == 0 && Get(sceHttpGetCookieEnabled, request) == 0, "the cookie option could not be changed on a request");
+    Require(Get(sceHttpGetCookieEnabled, urlRequest) == 3 && Get(sceHttpGetCookieEnabled, connection) == 3, "changing one request changed its sibling or connection");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteRequest(urlRequest) == 0, "the requests could not be deleted");
+    Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
 std::array<std::byte, 64> g_process{};
 
 void SetSdkVersion(std::uint32_t version) {
@@ -343,6 +360,7 @@ int main() {
     CheckAuthEnabled(context);
     CheckCookieEnabled(context);
     CheckNonblock(context);
+    CheckNamedChildren(context);
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);
     CheckUnobservedOptions(context);

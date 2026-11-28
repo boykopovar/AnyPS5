@@ -46,8 +46,9 @@ if(BUILD_TESTING)
     target_link_libraries(guest_appcontent_entitlements_tests PRIVATE libSceAppContent libc)
     configure_windows_unwind(guest_appcontent_entitlements_tests)
     add_test(NAME guest_appcontent_entitlements COMMAND guest_appcontent_entitlements_tests)
+    add_test(NAME guest_appcontent_alias_collision COMMAND guest_appcontent_entitlements_tests alias-collision)
     if(WIN32)
-        set_tests_properties(guest_appcontent_entitlements PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_appcontent_entitlements guest_appcontent_alias_collision PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppContent>")
     endif()
 endif()

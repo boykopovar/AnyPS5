@@ -180,15 +180,6 @@ struct Fixture {
     }
 };
 
-bool Throws(Fixture& f, const char* text, bool last) {
-    try {
-        f.Parse(text, last);
-    } catch (const std::logic_error&) {
-        return true;
-    }
-    return false;
-}
-
 void TestLifecycle() {
     Fixture f;
     f.Mark();
@@ -305,26 +296,61 @@ void TestErrors() {
     Require(f.Parse("<a/>", true) == 0, "a parse after an abort starts a new document");
 }
 
-void TestUnmeasured() {
+void TestDoctypeEntitiesAndBoundaries() {
     Fixture f;
     f.Start();
-    Require(Throws(f, "<!DOCTYPE a><a/>", true), "a document type declaration");
+    Require(f.Parse("<!DOCTYPE a><a/>", true) == 0, "a document type declaration");
+    Require(f.Take() == "SD|N5: a>|SE:a|EE:a|ED|", "doctype node text");
+    Require(f.Parse("<!DOCTYPE a [<!ENTITY e \"v\">]><a/>", true) == 0, "doctype internal subset");
+    Require(f.Take() == "SD|N5: a [<!ENTITY e \"v\">]>|SE:a|EE:a|ED|", "doctype internal subset text");
+    Require(f.Parse("<a><!DOCTYPE b></a>", true) == static_cast<int>(0x8085000b), "doctype inside root fails");
     f.Take();
+
     Require(f.Parse("<a x=\"&amp;\">&amp; &lt;</a>", true) == 0, "references stay raw without the resolve-entity option");
     Require(f.Take() == "SD|SE:a,0=&amp;|CH:&amp; &lt;|EE:a|ED|", "raw references");
     Require(f.Parse("<a x=\"a<b\tc\"/>", true) == 0, "an attribute value is taken raw");
     Require(f.Take() == "SD|SE:a,0=a<b\tc|EE:a|ED|", "raw attribute value");
+
     _ZN3sce3Xml3Sax6Parser16setResolveEntityEb(&f.parser, true);
-    Require(Throws(f, "<a>&amp;</a>", true), "a reference with the resolve-entity option on");
-    Require(Throws(f, "<a x=\"&amp;\"/>", true), "a reference in an attribute with the resolve-entity option on");
+    Require(f.Parse("<a>&amp;&lt;&gt;&quot;&apos;</a>", true) == 0, "predefined entities resolve in text");
+    Require(f.Take() == "SD|SE:a|CH:&|CH:<|CH:>|CH:\"|CH:'|EE:a|ED|", "predefined entity text events");
+    Require(f.Parse("<a>&#65;&#x42;&#x20AC;</a>", true) == 0, "numeric entities resolve to UTF-8");
+    Require(f.Take() == "SD|SE:a|CH:A|CH:B|CH:\xE2\x82\xAC|EE:a|ED|", "numeric entity UTF-8 events");
+    Require(f.Parse("<a>&foo;</a>", true) == 0, "unknown named entity calls reference");
+    Require(f.Take() == "SD|SE:a|R5:foo|EE:a|ED|", "unknown named reference event");
+    Require(f.Parse("<a>&#x110000;</a>", true) == static_cast<int>(0x8085000b), "out-of-range numeric entity fails");
+    f.Take();
+    Require(f.Parse("<a x=\"&amp;&lt;&#65;&#x32;\"/>", true) == 0, "entities resolve in attribute values");
+    Require(f.Take() == "SD|SE:a,0=&<A2|EE:a|ED|", "decoded attribute value");
+    Require(f.Parse("<a>&a", false) == 0x00850001, "entity split across chunks waits for semicolon");
+    Require(f.Parse("mp;</a>", true) == 0, "entity split second chunk completes");
+    Require(f.Take() == "SD|SE:a|CH:&|EE:a|ED|", "split entity events");
+
     _ZN3sce3Xml3Sax6Parser16setResolveEntityEb(&f.parser, false);
-    Require(Throws(f, "<a>text", false), "character data cut by the chunk end");
-    Require(Throws(f, "<a", false), "a start tag cut by the chunk end");
-    Require(Throws(f, "<!-- x", false), "a comment cut by the chunk end");
-    Require(Throws(f, "text<a/>", true), "character data before the document element");
-    Require(Throws(f, "<a/><b/>", true), "an element after the document element");
-    Require(Throws(f, "</a>", true), "an end tag outside the document element");
-    Require(Throws(f, "<a x=\"1\"y=\"2\"/>", true), "attributes not separated by white space");
+    Require(f.Parse("<a>te", false) == 0x00850001, "character data cut by chunk end");
+    Require(f.Parse("xt</a>", true) == 0, "character data resumes");
+    Require(f.Take() == "SD|SE:a|CH:te|CH:xt|EE:a|ED|", "chunked character data events");
+    Require(f.Parse("<a x=\"1", false) == 0x00850001, "start tag cut across chunks");
+    Require(f.Parse("\"/>", true) == 0, "start tag resumes");
+    Require(f.Take() == "SD|SE:a,0=1|EE:a|ED|", "chunked start tag events");
+    Require(f.Parse("<a><!-- x", false) == 0x00850001, "comment cut across chunks");
+    Require(f.Parse(" --></a>", true) == 0, "comment resumes");
+    Require(f.Take() == "SD|SE:a|N11: x -->|EE:a|ED|", "chunked comment events");
+    Require(f.Parse("<ab></a", false) == 0x00850001, "end tag cut across chunks");
+    Require(f.Parse("b>", true) == 0, "end tag resumes");
+    Require(f.Take() == "SD|SE:ab|EE:ab|ED|", "chunked end tag events");
+
+    Require(f.Parse("text<a/>", true) == static_cast<int>(0x8085000b), "character data before root");
+    Require(f.Take() == "SD|ERR:8085000b|", "character data before root reported");
+    Require(f.Parse("<a/><b/>", true) == static_cast<int>(0x8085000b), "element after root");
+    f.Take();
+    Require(f.Parse("</a>", true) == static_cast<int>(0x8085000b), "end tag outside root");
+    f.Take();
+    Require(f.Parse("<![CDATA[x]]><a/>", true) == static_cast<int>(0x8085000b), "CDATA outside root");
+    f.Take();
+    Require(f.Parse("<a x=\"1\"y=\"2\"/>", true) == static_cast<int>(0x8085000e), "unseparated attributes");
+    f.Take();
+    Require(f.Parse("<>", true) == static_cast<int>(0x8085000e), "empty element name");
     f.Take();
 }
 
@@ -353,7 +379,7 @@ int main() {
     TestAttributeLookup();
     TestStreaming();
     TestErrors();
-    TestUnmeasured();
+    TestDoctypeEntitiesAndBoundaries();
     TestTagErrors();
     std::puts("ok");
     return 0;
