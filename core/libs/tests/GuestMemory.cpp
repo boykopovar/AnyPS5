@@ -1686,6 +1686,65 @@ static void CheckHintInsideReservation() {
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
 
+static void CheckAlignedHintInsideReservation() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t alignment = std::size_t{1} << 22;
+    void* reservation = nullptr;
+    Require(sceKernelReserveVirtualRange(&reservation, alignment * 2, 0, alignment) == 0);
+    auto* reserved = static_cast<unsigned char*>(reservation);
+    Require((reinterpret_cast<std::uintptr_t>(reserved) & (alignment - 1)) == 0);
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &phys) == 0);
+    void* direct = reserved + page;
+    Require(sceKernelMapDirectMemory(&direct, page, 3, 0, phys, alignment) == 0);
+    Require(direct == reserved + alignment);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(direct, 0, &info, sizeof(info)) == 0);
+    Require(info.is_direct && info.offset == static_cast<std::uint64_t>(phys));
+    Require(sceKernelVirtualQuery(reserved, 0, &info, sizeof(info)) == 0);
+    Require(!info.is_committed && info.protection == 0);
+    void* outside = reserved + alignment + page;
+    Require(sceKernelMapDirectMemory2(&outside, page, 0, 3, 0, phys + page, alignment) == 0);
+    auto* placed = static_cast<unsigned char*>(outside);
+    Require((reinterpret_cast<std::uintptr_t>(placed) & (alignment - 1)) == 0);
+    Require(placed < reserved || placed >= reserved + alignment * 2);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(placed), page) == 0);
+    void* flexible = reserved + 0x1000;
+    Require(sceKernelMapFlexibleMemory(&flexible, page, 3, 0) == 0);
+    Require(flexible == reserved + page);
+    Require(sceKernelVirtualQuery(flexible, 0, &info, sizeof(info)) == 0);
+    Require(info.is_flexible);
+    void* unaligned = reserved + page * 2 + 0x1000;
+    Require(sceKernelMapDirectMemory(&unaligned, page, 3, 0, phys + page * 2, 0) == 0);
+    Require(unaligned == reserved + page * 3);
+    Require(sceKernelVirtualQuery(unaligned, 0, &info, sizeof(info)) == 0);
+    Require(info.is_direct && info.offset == static_cast<std::uint64_t>(phys + page * 2));
+    void* top = reinterpret_cast<void*>(~std::uintptr_t{0x3fff});
+    Require(sceKernelMapDirectMemory(&top, page, 3, 0, phys + page * 3, 0) == 0);
+    Require(top != reinterpret_cast<void*>(~std::uintptr_t{0x3fff}));
+    Require(sceKernelVirtualQuery(top, 0, &info, sizeof(info)) == 0);
+    Require(info.is_direct && info.offset == static_cast<std::uint64_t>(phys + page * 3));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(top), page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), alignment * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
+}
+
+static void CheckSuperpageHintInsideReservation() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t superpage = std::size_t{1} << 21;
+    void* reservation = nullptr;
+    Require(sceKernelReserveVirtualRange(&reservation, superpage * 2, 0, superpage) == 0);
+    auto* reserved = static_cast<unsigned char*>(reservation);
+    Require((reinterpret_cast<std::uintptr_t>(reserved) & (superpage - 1)) == 0);
+    auto* small = static_cast<unsigned char*>(mmap_nid_postfix(reserved + page, page, 3, 0x1001002, -1, 0));
+    Require(small == reserved + page);
+    small[0] = 1;
+    auto* large = static_cast<unsigned char*>(mmap_nid_postfix(reserved + page * 2, superpage, 3, 0x1001002, -1, 0));
+    Require(large == reserved + superpage);
+    large[superpage - 1] = 2;
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), superpage * 2) == 0);
+}
+
 static void CheckReservedRangeIsNotCommitted() {
     constexpr std::size_t page = 0x4000;
     void* reserved = nullptr;
@@ -4517,6 +4576,7 @@ static void CheckPosixFixedAnonymousMapping() {
 static void CheckPosixFixedAnonymousReleasesFlexibleAccounting() {
     constexpr std::size_t page = 0x4000;
     constexpr int fixed = 0x1012;
+    constexpr int fixedShared = 0x1011;
     std::size_t before = 0;
     std::size_t available = 0;
     Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
@@ -4530,7 +4590,15 @@ static void CheckPosixFixedAnonymousReleasesFlexibleAccounting() {
     Require(mmap_nid_postfix(bytes + page, page, 3, fixed, -1, 0) == bytes + page);
     Require(bytes[0] == 0x31 && bytes[page] == 0 && bytes[page * 2] == 0x51);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - page * 2);
+    Require(mmap_nid_postfix(bytes + page * 2, page, 3, fixedShared, -1, 0) == bytes + page * 2);
+    Require(bytes[0] == 0x31 && bytes[page * 2] == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - page);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page * 3) == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    void* shared = mmap_nid_postfix(nullptr, page, 3, 0x1001, -1, 0);
+    Require(shared != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    Require(munmap_nid_postfix(shared, page) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
@@ -4588,6 +4656,156 @@ static void CheckSceKernelMmap() {
     Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
     Require(sceKernelMmap(probe, page, 3, 0x1012, -1, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
+}
+
+static void CheckPosixMappingFlags() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t fourMegabytes = std::size_t{1} << 22;
+    constexpr int alignedFourMegabytes = 22 << 24;
+    const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    const auto zeroed = [](const unsigned char* bytes, std::size_t length) {
+        return std::all_of(bytes, bytes + length, [](unsigned char value) { return value == 0; });
+    };
+    const auto reject = [&](void* address, int protection, int flags, int fd, std::int64_t offset, int error) {
+        *__error_nid_postfix() = 0;
+        Require(mmap_nid_postfix(address, page, protection, flags, fd, offset) == failed);
+        Require(*__error_nid_postfix() == error);
+    };
+    auto* shared = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page * 2, 3, 0x1001, -1, 0));
+    Require(shared != failed && (reinterpret_cast<std::uintptr_t>(shared) & (page - 1)) == 0 && zeroed(shared, page * 2));
+    shared[0] = 0x11;
+    shared[page * 2 - 1] = 0x12;
+    Require(shared[0] == 0x11 && shared[page * 2 - 1] == 0x12);
+    Require(mmap_nid_postfix(shared, page, 3, 0x1011, -1, 0) == shared);
+    Require(zeroed(shared, page) && shared[page * 2 - 1] == 0x12);
+    Require(mmap_nid_postfix(shared + page, page, 3, 0x5011, -1, 0) == shared + page);
+    Require(zeroed(shared, page * 2));
+    shared[page] = 0x13;
+    reject(shared, 3, 0x1011, 0, 0, 22);
+    reject(shared, 3, 0x1011, -1, 1, 22);
+    reject(shared + 1, 3, 0x1011, -1, 0, 22);
+    Require(shared[page] == 0x13);
+    Require(munmap_nid_postfix(shared, page * 2) == 0);
+    reject(nullptr, 3, 0x1001, 0, 0, 22);
+    reject(nullptr, 3, 0x1001, -1, 1, 22);
+    reject(nullptr, 3, 0x5001, -1, 0, 22);
+    reject(nullptr, 8, 0x1001, -1, 0, 22);
+    for (int hint : {0x200, 0x800, 0x20000, 0x40000}) {
+        for (int kind : {0x1, 0x2}) {
+            auto* mapped = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1000 | kind | hint, -1, 0));
+            Require(mapped != failed && zeroed(mapped, page));
+            mapped[page - 1] = 0x21;
+            Require(mapped[page - 1] == 0x21);
+            Require(munmap_nid_postfix(mapped, page) == 0);
+            reject(nullptr, 3, 0x1000 | kind | hint, 0, 0, 22);
+        }
+    }
+    for (int kind : {0x1001, 0x1002}) {
+        auto* aligned = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, kind | alignedFourMegabytes, -1, 0));
+        Require(aligned != failed && (reinterpret_cast<std::uintptr_t>(aligned) & (fourMegabytes - 1)) == 0 && zeroed(aligned, page));
+        Require(munmap_nid_postfix(aligned, page) == 0);
+    }
+    auto* smallest = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1002 | (14 << 24), -1, 0));
+    Require(smallest != failed && (reinterpret_cast<std::uintptr_t>(smallest) & (page - 1)) == 0);
+    Require(munmap_nid_postfix(smallest, page) == 0);
+    reject(nullptr, 3, 0x1002 | (2 << 24), -1, 0, 22);
+    reject(nullptr, 3, 0x1002 | (13 << 24), -1, 0, 22);
+    reject(nullptr, 3, 0x1002 | (64 << 24), -1, 0, 22);
+    reject(nullptr, 3, static_cast<int>(0xFF001002u), -1, 0, 22);
+    for (int shift : {47, 50, 63}) {
+        reject(nullptr, 3, 0x1001 | (shift << 24), -1, 0, 12);
+        reject(nullptr, 3, 0x1002 | (shift << 24), -1, 0, 12);
+    }
+    auto* largest = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1002 | (30 << 24), -1, 0));
+    Require(largest != failed && (reinterpret_cast<std::uintptr_t>(largest) & ((std::uintptr_t{1} << 30) - 1)) == 0);
+    Require(munmap_nid_postfix(largest, page) == 0);
+    auto* region = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page * 2, 3, 0x1002 | alignedFourMegabytes, -1, 0));
+    Require(region != failed && (reinterpret_cast<std::uintptr_t>(region) & (fourMegabytes - 1)) == 0);
+    region[0] = 0x31;
+    region[page] = 0x32;
+    Require(mmap_nid_postfix(region + page, page, 3, 0x1012 | alignedFourMegabytes, -1, 0) == region + page);
+    Require(zeroed(region + page, page) && region[0] == 0x31);
+    region[page] = 0x33;
+    Require(mmap_nid_postfix(region + page, page, 3, 0x1012 | (1 << 24), -1, 0) == region + page);
+    Require(zeroed(region + page, page) && region[0] == 0x31);
+    region[page] = 0x34;
+    reject(region + page, 3, 0x1012 | (13 << 24), -1, 0, 22);
+    reject(region + page, 3, 0x1012 | (64 << 24), -1, 0, 22);
+    Require(region[page] == 0x34);
+    for (int hint : {0x200, 0x800, 0x20000, 0x40000}) {
+        Require(mmap_nid_postfix(region + page, page, 3, 0x1012 | hint, -1, 0) == region + page);
+        Require(zeroed(region + page, page) && region[0] == 0x31);
+        region[page] = 0x35;
+    }
+    Require(munmap_nid_postfix(region, page * 2) == 0);
+    auto* hinted = static_cast<unsigned char*>(mmap_nid_postfix(region + page, page, 3, 0x1002 | alignedFourMegabytes, -1, 0));
+    Require(hinted != failed && (reinterpret_cast<std::uintptr_t>(hinted) & (fourMegabytes - 1)) == 0 && zeroed(hinted, page));
+    Require(munmap_nid_postfix(hinted, page) == 0);
+    void* reservation = nullptr;
+    Require(sceKernelReserveVirtualRange(&reservation, fourMegabytes * 2, 0, fourMegabytes) == 0);
+    auto* reserved = static_cast<unsigned char*>(reservation);
+    Require((reinterpret_cast<std::uintptr_t>(reserved) & (fourMegabytes - 1)) == 0);
+    Require(mmap_nid_postfix(reserved + page, page, 3, 0x1002 | alignedFourMegabytes, -1, 0) == reserved + fourMegabytes);
+    Require(zeroed(reserved + fourMegabytes, page));
+    auto* past = static_cast<unsigned char*>(mmap_nid_postfix(reserved + fourMegabytes + page, page, 3, 0x1002 | alignedFourMegabytes, -1, 0));
+    Require(past != failed && (reinterpret_cast<std::uintptr_t>(past) & (fourMegabytes - 1)) == 0 && past != reserved + fourMegabytes);
+    Require(munmap_nid_postfix(past, page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), fourMegabytes * 2) == 0);
+#if defined(__linux__) || defined(_WIN32)
+    const int object = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
+    Require(object >= 0 && ftruncate_nid_postfix(object, page) == 0);
+    auto* view = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1, object, 0));
+    Require(view != failed);
+    unsigned char marker = 0x40;
+    for (int hint : {0x200, 0x800, 0x20000, 0x40000, alignedFourMegabytes}) {
+        auto* mapped = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1 | hint, object, 0));
+        Require(mapped != failed);
+        if (hint == alignedFourMegabytes) Require((reinterpret_cast<std::uintptr_t>(mapped) & (fourMegabytes - 1)) == 0);
+        mapped[7] = ++marker;
+        Require(view[7] == marker);
+        Require(munmap_nid_postfix(mapped, page) == 0);
+    }
+    reject(nullptr, 3, 0x1 | (13 << 24), object, 0, 22);
+    for (int shift : {47, 50, 63}) {
+        reject(nullptr, 3, 0x1 | (shift << 24), object, 0, 12);
+        reject(nullptr, 3, 0x2 | (shift << 24), object, 0, 12);
+    }
+    for (int kind : {0x1, 0x2}) {
+        auto* copy = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, kind | alignedFourMegabytes, object, 0));
+        Require(copy != failed && (reinterpret_cast<std::uintptr_t>(copy) & (fourMegabytes - 1)) == 0 && copy[7] == marker);
+        Require(munmap_nid_postfix(copy, page) == 0);
+    }
+    auto* hintedCopy = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x2 | 0x800, object, 0));
+    Require(hintedCopy != failed && hintedCopy[7] == marker);
+    hintedCopy[7] = 0x7E;
+    Require(view[7] == marker);
+    Require(munmap_nid_postfix(hintedCopy, page) == 0);
+    void* fileReservation = nullptr;
+    Require(sceKernelReserveVirtualRange(&fileReservation, fourMegabytes * 2, 0, fourMegabytes) == 0);
+    auto* fileReserved = static_cast<unsigned char*>(fileReservation);
+    Require(mmap_nid_postfix(fileReserved + page, page, 3, 0x1 | alignedFourMegabytes, object, 0) == fileReserved + fourMegabytes);
+    fileReserved[fourMegabytes + 7] = ++marker;
+    Require(view[7] == marker);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(fileReserved), fourMegabytes * 2) == 0);
+    auto* placed = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page * 2, 3, 0x1002 | alignedFourMegabytes, -1, 0));
+    Require(placed != failed && (reinterpret_cast<std::uintptr_t>(placed) & (fourMegabytes - 1)) == 0);
+    for (int hint : {1 << 24, alignedFourMegabytes, 0x800}) {
+        Require(mmap_nid_postfix(placed + page, page, 3, 0x11 | hint, object, 0) == placed + page);
+        placed[page + 7] = ++marker;
+        Require(view[7] == marker);
+    }
+    view[7] = ++marker;
+    Require(mmap_nid_postfix(placed + page, page, 3, 0x12 | alignedFourMegabytes, object, 0) == placed + page);
+    Require(placed[page + 7] == marker);
+    placed[page + 7] = 0x7F;
+    Require(view[7] == marker);
+    reject(placed + page, 3, 0x11 | (64 << 24), object, 0, 22);
+    reject(placed + page, 3, 0x11 | (13 << 24), object, 0, 22);
+    Require(placed[page + 7] == 0x7F);
+    Require(munmap_nid_postfix(placed, page * 2) == 0);
+    Require(munmap_nid_postfix(view, page) == 0);
+    Require(close_nid_postfix(object) == 0);
+#endif
 }
 
 static void CheckVirtualQueryPartialMunmap() {
@@ -4883,6 +5101,7 @@ int main(int argc, char** argv) {
     CheckFlexibleMappingRefusesMeasuredFlags();
     CheckPrtApertures();
     CheckSceKernelMmap();
+    CheckPosixMappingFlags();
     CheckInternalMemoryAvailableSize();
     CheckVirtualQueryPartialMunmap();
     CheckMunmapOverUnmappedPages();
@@ -4932,6 +5151,8 @@ int main(int argc, char** argv) {
     CheckFixedVirtualReservation();
     CheckReservedRangeIsNotCommitted();
     CheckHintInsideReservation();
+    CheckAlignedHintInsideReservation();
+    CheckSuperpageHintInsideReservation();
     CheckNoOverwriteRefusesLiveMapping();
     CheckMlock();
     CheckSharedDirectMemoryLifecycle();
@@ -5018,7 +5239,6 @@ int main(int argc, char** argv) {
     reject(page, 8, 0x1002, -1, 0, 22);
     reject(page, 3, 0x1002, 0, 0, 22);
     reject(page, 3, 0x1002, -1, 1, 22);
-    reject(page, 3, 0x1001, -1, 0, 45); // shared
     reject(page, 3, 0x1012, -1, 0, 22);
     reject(page, 3, 0x2, 0, 0, 45);    // file-backed
     reject(page, 3, 0x22, -1, 0, 45);  // Linux MAP_ANON is not guest MAP_ANON
@@ -5186,7 +5406,7 @@ int main(int argc, char** argv) {
         Require(munmap_nid_postfix(mapped, 1) == 0);
     }
 
-    reject(page, 3, 0x2001002, -1, 0, 45);
+    reject(page, 3, 0x2001002, -1, 0, 22);
     constexpr std::size_t superpage = std::size_t{1} << 21;
     auto* aligned = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, superpage + page, 3, 0x1001002, -1, 0));
     Require(aligned != failed && (reinterpret_cast<std::uintptr_t>(aligned) & (superpage - 1)) == 0);
