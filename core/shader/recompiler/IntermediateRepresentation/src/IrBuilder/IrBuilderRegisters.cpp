@@ -1,5 +1,6 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrBuilderInternal.hpp"
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -118,15 +119,17 @@ IrValue* IrBuilder::vectorWindowIndex(VectorReg reg) {
 
 IrValue& IrBuilder::GetVectorReg(VectorReg reg) {
     IrValue* index = vectorWindowIndex(reg);
-    if (index != nullptr && program.Metadata().vectorWindowIndexedWrites) return Emit(IrOpcode::LoadVectorWindow, IrType::U32, {index});
+    if (index != nullptr && index->ImmediateU32() >= program.Metadata().vectorWindowIndexedWriteSlot) return Emit(IrOpcode::LoadVectorWindow, IrType::U32, {index});
     IrValue& operand = createRegisterOperand(program, RegisterBank::Vector, RegIndex(reg), IrType::VectorReg);
     return Emit(IrOpcode::GetVectorRegister, IrType::U32, {&operand});
 }
 
 void IrBuilder::SetVectorReg(VectorReg reg, IrValue& value) {
     if (IrValue* index = vectorWindowIndex(reg)) {
-        (void)Emit(IrOpcode::StoreVectorWindow, IrType::Void, {index, &value});
-        if (program.Metadata().vectorWindowIndexedWrites) return;
+        const auto& metadata = program.Metadata();
+        const auto slot = index->ImmediateU32();
+        if (slot >= std::min(metadata.vectorWindowIndexedReadSlot, metadata.vectorWindowIndexedWriteSlot)) (void)Emit(IrOpcode::StoreVectorWindow, IrType::Void, {index, &value});
+        if (slot >= metadata.vectorWindowIndexedWriteSlot) return;
     }
     IrValue& operand = createRegisterOperand(program, RegisterBank::Vector, RegIndex(reg), IrType::VectorReg);
     (void)Emit(IrOpcode::SetVectorRegister, IrType::Void, {&operand, &value});
@@ -134,8 +137,9 @@ void IrBuilder::SetVectorReg(VectorReg reg, IrValue& value) {
 
 void IrBuilder::SyncVectorWindow(bool toWindow) {
     const auto& metadata = program.Metadata();
+    const auto firstIndexedSlot = std::min(metadata.vectorWindowIndexedReadSlot, metadata.vectorWindowIndexedWriteSlot);
     const bool active = std::exchange(vectorWindowActive, false);
-    for (std::uint32_t slot = 0; slot < metadata.vectorWindowSize; ++slot) {
+    for (std::uint32_t slot = firstIndexedSlot; slot < metadata.vectorWindowSize; ++slot) {
         const auto reg = static_cast<VectorReg>(metadata.vectorWindowBase + slot);
         if (toWindow) (void)Emit(IrOpcode::StoreVectorWindow, IrType::Void, {&Constant(slot), &GetVectorReg(reg)});
         else SetVectorReg(reg, Emit(IrOpcode::LoadVectorWindow, IrType::U32, {&Constant(slot)}));

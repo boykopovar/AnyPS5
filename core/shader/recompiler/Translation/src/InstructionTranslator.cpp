@@ -643,6 +643,8 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     IrProgram program;
     program.SetWaveSize(options.waveSize);
     std::uint32_t windowBase = NumVectorRegs;
+    std::uint32_t indexedReadBase = NumVectorRegs;
+    std::uint32_t indexedWriteBase = NumVectorRegs;
     bool indexedWrites = false;
     std::unordered_set<std::uint32_t> relativeBlocks;
     for (const auto& cfgBlock : cfg.blocks) {
@@ -652,17 +654,27 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
             switch (instruction.op) {
                 case RdnaOpcode::VMovrelsB32:
                     windowBase = std::min(windowBase, instruction.source0.reg);
+                    indexedReadBase = std::min(indexedReadBase, instruction.source0.reg);
                     relativeBlocks.insert(cfgBlock.id);
                     break;
                 case RdnaOpcode::VMovreldB32:
                     windowBase = std::min(windowBase, instruction.destination.reg);
+                    indexedWriteBase = std::min(indexedWriteBase, instruction.destination.reg);
                     indexedWrites = true;
                     relativeBlocks.insert(cfgBlock.id);
                     break;
                 case RdnaOpcode::VMovrelsdB32:
                 case RdnaOpcode::VMovrelsd2B32:
+                    windowBase = std::min({windowBase, instruction.source0.reg, instruction.destination.reg});
+                    indexedReadBase = std::min(indexedReadBase, instruction.source0.reg);
+                    indexedWriteBase = std::min(indexedWriteBase, instruction.destination.reg);
+                    indexedWrites = true;
+                    relativeBlocks.insert(cfgBlock.id);
+                    break;
                 case RdnaOpcode::VSwaprelB32:
                     windowBase = std::min({windowBase, instruction.source0.reg, instruction.destination.reg});
+                    indexedReadBase = std::min({indexedReadBase, instruction.source0.reg, instruction.destination.reg});
+                    indexedWriteBase = std::min({indexedWriteBase, instruction.source0.reg, instruction.destination.reg});
                     indexedWrites = true;
                     relativeBlocks.insert(cfgBlock.id);
                     break;
@@ -676,6 +688,8 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         program.Metadata().vectorWindowBase = windowBase;
         program.Metadata().vectorWindowSize = vectorLimit - windowBase;
         program.Metadata().vectorWindowIndexedWrites = indexedWrites;
+        program.Metadata().vectorWindowIndexedReadSlot = indexedReadBase - windowBase;
+        program.Metadata().vectorWindowIndexedWriteSlot = indexedWriteBase - windowBase;
     }
     static const bool unscopedWindow = std::getenv("APS5_NO_SCOPED_VECTOR_WINDOW") != nullptr;
     const auto predecessors = blockPredecessors(cfg);
