@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+void SetSysmoduleLibcForLibkernelSources_nid_no_patch(KernelModule (*loader)(const char*), const char* (*sandbox)(), int (*ps4)());
+
 extern "C" {
 
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
@@ -17,7 +19,7 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleIsCalledFromSysModule(const void* address);
 int APS5_VABI sceSysmoduleIsCameraPreloaded(void);
 KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, std::size_t args, const void* argp, std::uint32_t flags, int* res);
-int APS5_VABI sceSysmoduleMapLibcForLibkernel();
+int APS5_VABI sceSysmoduleMapLibcForLibkernel(int* handle);
 int APS5_VABI sceSysmodulePreloadModuleForLibkernel();
 int APS5_VABI sceSysmoduleUnloadModuleByNameInternal(KernelModule handle, std::size_t args, const void* argp, std::uint32_t flags, int* res);
 

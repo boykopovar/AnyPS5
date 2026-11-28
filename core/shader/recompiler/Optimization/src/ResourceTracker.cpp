@@ -819,7 +819,9 @@ private:
         std::uint32_t addend = 0;
         value = SplitImmediateAddend(value, addend);
         while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), mask, value->Argument(0))) {
-            value = SplitImmediateAddend(value->Argument(1), addend);
+            std::uint32_t inner = 0;
+            value = SplitImmediateAddend(value->Argument(1), inner);
+            addend += inner;
         }
         std::uint32_t shift = 0;
         if (depth != 0u && value->Opcode() == IrOpcode::ShiftLeftLogical32 && value->ArgumentCount() == 2u && immediateU32(value->Argument(1), shift) && shift < 32u) {

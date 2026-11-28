@@ -26,6 +26,9 @@ class HeadingAnchorTests(unittest.TestCase):
         text = "## `ANYPS5_LOG_FILE` ##\n\n## a/b\n"
         self.assertEqual(feature("heading_anchors")(text), {"anyps5_log_file", "ab"})
 
+    def test_closing_hashes_are_dropped_from_crlf_lines(self):
+        self.assertEqual(feature("heading_anchors")("## Foo ##\r\n\r\n## Bar\r\n"), {"foo", "bar"})
+
     def test_link_text_is_used_not_the_destination(self):
         self.assertEqual(feature("heading_anchors")("## See [the usage guide](USAGE.md)\n"), {"see-the-usage-guide"})
 
