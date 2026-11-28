@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -65,17 +66,6 @@ void Fill(std::uint32_t tid, std::uint32_t* words) {
     if (kind == 1u) { words[0] = tid % 7u; words[1] = (tid * 3u) % 7u; words[2] = tid % 5u; }
     if (kind == 2u) { words[0] = floats[tid % 8u]; words[1] = floats[(tid / 2u + 3u) % 8u]; words[2] = floats[(tid + 5u) % 8u]; }
     if (kind == 3u) { words[0] = seed; words[1] = (tid & 4u) != 0u ? seed : seed + 1u; words[2] = seed * 3u; }
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {

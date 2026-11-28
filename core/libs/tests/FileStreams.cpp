@@ -1,6 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "tests/TemporaryFile.hpp"
 #include <array>
 #include <iterator>
@@ -17,6 +20,8 @@
 #include <sys/socket.h>
 #endif
 #include <iostream>
+#include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -27,13 +32,31 @@
 #include <atomic>
 #include <exception>
 #include <fcntl.h>
+#if defined(__GLIBC__)
+#include <gnu/libc-version.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <io.h>
+#include <sys/stat.h>
 #else
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
+
+#include <chrono>
+#include <future>
+
+extern "C" {
+extern FileStream* __stdinp_nid_postfix;
+extern FileStream* __stdoutp_nid_postfix;
+extern FileStream* __stderrp_nid_postfix;
+#ifdef _WIN32
+std::FILE* HostStandardErrorFile_nid_no_patch();
+std::FILE* HostStandardOutputFile_nid_no_patch();
+#endif
+}
 
 static void Require(bool condition, const char* message = "File stream check failed") {
     if (!condition) throw std::runtime_error(message);
@@ -1169,6 +1192,1009 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
     Require(std::remove(path.c_str()) == 0);
 }
 
+static int FreopenAliasesChild([[maybe_unused]] const std::string& base) {
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 116);
+#else
+        ::_exit(116);
+#endif
+    });
+    watchdog.detach();
+#ifdef _WIN32
+    const std::string target = base + ".freopen.aliases";
+    static std::FILE* replacement = nullptr;
+    replacement = std::fopen(target.c_str(), "w+b");
+    if (!replacement) return 110;
+    FileStream source(std::tmpfile());
+    FileStream alias(source.GetHandle());
+    std::FILE* const original = source.GetHandle();
+    alias.SetError();
+    flockfile_nid_postfix(&source);
+    const bool reopened = source.Reopen(target, "w+b", [](const std::filesystem::path&, const std::string&) {
+        return ::_dup(::_fileno(replacement));
+    });
+    const bool sameNative = reopened && source.RawHandle_nid_no_patch() == original;
+    const bool aliasesMatch = reopened && alias.RawHandle_nid_no_patch() == source.RawHandle_nid_no_patch()
+        && alias.GuestState().flags == source.GuestState().flags;
+    if (!sameNative || !aliasesMatch) ::TerminateProcess(::GetCurrentProcess(), 111);
+    auto writing = std::async(std::launch::async, [&] { return fputc_nid_postfix('R', &alias); });
+    if (writing.wait_for(std::chrono::milliseconds(100)) != std::future_status::timeout)
+        ::TerminateProcess(::GetCurrentProcess(), 113);
+    funlockfile_nid_postfix(&source);
+    if (writing.wait_for(std::chrono::seconds(2)) != std::future_status::ready)
+        ::TerminateProcess(::GetCurrentProcess(), 114);
+    const int written = writing.get();
+    if (replacement) { std::fclose(replacement); replacement = nullptr; }
+    if (source.IsOpen()) source.Close();
+    std::FILE* const readback = std::fopen(target.c_str(), "rb");
+    const bool preservedWrite = readback && std::fgetc(readback) == 'R';
+    if (readback) std::fclose(readback);
+    std::remove(target.c_str());
+    if (written != 'R' || !preservedWrite) return 115;
+#endif
+    FileStream failing(std::tmpfile());
+    FileStream failedAlias(failing.GetHandle());
+    const bool unexpectedlyOpened = failing.Reopen(std::filesystem::current_path(), "wb");
+    const bool bothClosed = !failing.IsOpen() && !failedAlias.IsOpen();
+    if (unexpectedlyOpened) failing.Close();
+    failedAlias.Detach();
+    finished.set_value();
+    return !unexpectedlyOpened && bothClosed ? 0 : 112;
+}
+
+static int FreopenStandardOwnerChild(const std::string& base) {
+    const std::string target = base + ".freopen.standard-owner";
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 125);
+#else
+        ::_exit(125);
+#endif
+    });
+    watchdog.detach();
+    FileStream* const stream = __stderrp_nid_postfix;
+    flockfile_nid_postfix(stream);
+    std::promise<void> entered;
+    auto closing = std::async(std::launch::async, [&] {
+        entered.set_value();
+        fcloseall_nid_postfix();
+    });
+    entered.get_future().wait();
+    if (closing.wait_for(std::chrono::milliseconds(100)) != std::future_status::timeout) return 120;
+    if (freopen_nid_postfix(target.c_str(), "wb", stream) != stream) return 121;
+    if (fputc_nid_postfix('S', stream) != 'S') return 122;
+    funlockfile_nid_postfix(stream);
+    if (closing.wait_for(std::chrono::seconds(2)) != std::future_status::ready) return 123;
+    closing.get();
+    std::FILE* const check = std::fopen(target.c_str(), "rb");
+    const bool written = check && std::fgetc(check) == 'S';
+    if (check) std::fclose(check);
+    std::remove(target.c_str());
+    finished.set_value();
+    return written ? 0 : 124;
+}
+
+static int FcloseallChild(const std::string& base) {
+    const std::string serialPath = base + ".fcloseall.serial";
+    FileStream* serial = fopen_nid_postfix(serialPath.c_str(), "wb");
+    if (!serial) return 60;
+#ifdef _WIN32
+    const HANDLE serialHandle = reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(serial->GetHandle())));
+#else
+    const int serialHandle = ::fileno(serial->GetHandle());
+#endif
+    std::promise<void> entered;
+    std::promise<int> completed;
+    auto completion = completed.get_future();
+    std::unique_lock registryLock(FileStream::RegistryMutex_nid_no_patch());
+    std::thread closer([&] {
+        entered.set_value();
+        completed.set_value(fclose_nid_postfix(serial));
+    });
+    entered.get_future().wait();
+    const bool closedEarly = completion.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
+#ifdef _WIN32
+    DWORD handleFlags = 0;
+    const bool stillOpen = ::GetHandleInformation(serialHandle, &handleFlags) != 0;
+#else
+    const bool stillOpen = ::fcntl(serialHandle, F_GETFD) != -1;
+#endif
+    registryLock.unlock();
+    closer.join();
+    const int closeResult = completion.get();
+    std::remove(serialPath.c_str());
+    if (closedEarly || !stillOpen || closeResult != 0) return 61;
+    const std::string pathFlush = base + ".fcloseall.flush";
+    const std::string pathReopen = base + ".fcloseall.reopen";
+    const std::string pathReopenSecond = base + ".fcloseall.reopen2";
+    const std::string pathSentinel = base + ".fcloseall.sentinel";
+    std::remove(pathFlush.c_str());
+    std::remove(pathReopen.c_str());
+    std::remove(pathReopenSecond.c_str());
+    std::remove(pathSentinel.c_str());
+
+    constexpr char payload[] = "fcloseall flush";
+    constexpr std::size_t payloadLen = sizeof(payload) - 1;
+
+    FileStream* flushStream = fopen_nid_postfix(pathFlush.c_str(), "wb");
+    if (!flushStream) return 10;
+    if (fwrite_nid_postfix(payload, 1, payloadLen, flushStream) != payloadLen) return 11;
+
+    FileStream* reopenStream = fopen_nid_postfix(pathReopen.c_str(), "wb");
+    if (!reopenStream) return 12;
+    reopenStream = freopen_nid_postfix(pathReopenSecond.c_str(), "wb", reopenStream);
+    if (!reopenStream) return 13;
+    if (fwrite_nid_postfix(payload, 1, payloadLen, reopenStream) != payloadLen) return 14;
+
+#ifdef _WIN32
+    const int duplicate = ::_dup(::_fileno(stdout));
+#else
+    const int duplicate = ::dup(::fileno(stdout));
+#endif
+    if (duplicate < 0) return 15;
+    FileStream* dupStream = fdopen_nid_postfix(duplicate, "w");
+    if (!dupStream) return 16;
+    if (!dupStream->IsOpen()) return 17;
+#ifdef _WIN32
+    const HANDLE duplicateHandle = reinterpret_cast<HANDLE>(::_get_osfhandle(duplicate));
+#endif
+
+    FileStream closedStatic(std::tmpfile());
+    if (closedStatic.Close() != 0) return 18;
+    if (closedStatic.IsOpen()) return 19;
+
+    if (!__stdoutp_nid_postfix->IsOpen() || !__stderrp_nid_postfix->IsOpen() || !__stdinp_nid_postfix->IsOpen()) return 20;
+    if (!_Stdout_nid_postfix.IsOpen() || !_Stderr_nid_postfix.IsOpen()) return 21;
+
+#ifdef _WIN32
+    std::FILE* const sentinelFile = std::fopen(pathSentinel.c_str(), "w");
+    if (!sentinelFile) return 25;
+    const int sentinelFd = ::_dup(::_fileno(sentinelFile));
+    if (sentinelFd < 0) { std::fclose(sentinelFile); return 26; }
+    if (::_dup2(sentinelFd, ::_fileno(stderr)) != 0) { ::_close(sentinelFd); std::fclose(sentinelFile); return 27; }
+    ::_close(sentinelFd);
+    std::fclose(sentinelFile);
+#else
+    std::FILE* const sentinelFile = std::freopen(pathSentinel.c_str(), "w", stderr);
+    if (!sentinelFile) return 25;
+#endif
+
+    fcloseall_nid_postfix();
+
+#ifdef _WIN32
+    DWORD duplicateFlags = 0;
+    if (::GetHandleInformation(duplicateHandle, &duplicateFlags) != 0 || ::GetLastError() != ERROR_INVALID_HANDLE) return 36;
+#else
+    errno = 0;
+    if (::fcntl(duplicate, F_GETFD) != -1 || errno != EBADF) return 36;
+#endif
+    if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 30;
+    if (_Stdout_nid_postfix.IsOpen() || _Stderr_nid_postfix.IsOpen()) return 31;
+    errno = 0;
+    if (fputc_nid_postfix('x', __stdoutp_nid_postfix) != -1 || errno != 9) return 32;
+    errno = 0;
+    if (fputc_nid_postfix('x', __stderrp_nid_postfix) != -1 || errno != 9) return 33;
+
+    fcloseall_nid_postfix();
+    if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen()) return 34;
+    if (closedStatic.IsOpen()) return 35;
+
+    std::FILE* const flushRead = std::fopen(pathFlush.c_str(), "rb");
+    if (!flushRead) return 40;
+    char buffer[payloadLen + 1]{};
+    const std::size_t read = std::fread(buffer, 1, payloadLen, flushRead);
+    std::fclose(flushRead);
+    if (read != payloadLen || std::memcmp(buffer, payload, payloadLen) != 0) return 41;
+
+    std::FILE* const reopenRead = std::fopen(pathReopenSecond.c_str(), "rb");
+    if (!reopenRead) return 42;
+    char reopenBuffer[payloadLen + 1]{};
+    const std::size_t reopenReadBytes = std::fread(reopenBuffer, 1, payloadLen, reopenRead);
+    std::fclose(reopenRead);
+    if (reopenReadBytes != payloadLen || std::memcmp(reopenBuffer, payload, payloadLen) != 0) return 43;
+    if (std::filesystem::exists(pathReopen)) {
+        std::error_code status;
+        if (std::filesystem::file_size(pathReopen, status) != 0) return 44;
+    }
+
+#ifdef _WIN32
+    std::FILE* const hostErr = HostStandardErrorFile_nid_no_patch();
+    if (!hostErr || std::fprintf(hostErr, "sentinel\n") < 0 || std::fflush(hostErr) != 0) return 50;
+#else
+    if (std::fprintf(stderr, "sentinel\n") < 0 || std::fflush(stderr) != 0) return 50;
+#endif
+
+    std::FILE* const sentinelCheck = std::fopen(pathSentinel.c_str(), "rb");
+    if (!sentinelCheck) return 51;
+    char sentinelBuffer[32]{};
+    const std::size_t sentinelRead = std::fread(sentinelBuffer, 1, sizeof(sentinelBuffer) - 1, sentinelCheck);
+    std::fclose(sentinelCheck);
+    if (sentinelRead < 9 || std::strstr(sentinelBuffer, "sentinel") == nullptr) return 52;
+
+    std::remove(pathFlush.c_str());
+    std::remove(pathReopen.c_str());
+    std::remove(pathReopenSecond.c_str());
+    std::remove(pathSentinel.c_str());
+    return 0;
+}
+
+static int FcloseallFcloseRaceChild(const std::string& base) {
+    const std::string racePath = base + ".fcloseall.race";
+    FileStream* raced = fopen_nid_postfix(racePath.c_str(), "wb");
+    if (!raced) return 80;
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 85);
+#else
+        ::_exit(85);
+#endif
+    });
+    watchdog.detach();
+    flockfile_nid_postfix(raced);
+    std::promise<void> fcloseEntered;
+    std::promise<void> fcloseallEntered;
+    std::promise<std::pair<int, int>> fcloseResult;
+    std::thread fcloseThread([&] {
+        fcloseEntered.set_value();
+        const int result = fclose_nid_postfix(raced);
+        fcloseResult.set_value({result, errno});
+    });
+    std::thread fcloseallThread([&] {
+        fcloseallEntered.set_value();
+        fcloseall_nid_postfix();
+    });
+    fcloseEntered.get_future().wait();
+    fcloseallEntered.get_future().wait();
+    auto fcloseFuture = fcloseResult.get_future();
+    if (fcloseFuture.wait_for(std::chrono::milliseconds(100)) != std::future_status::timeout) return 81;
+    funlockfile_nid_postfix(raced);
+    if (fcloseFuture.wait_for(std::chrono::seconds(3)) != std::future_status::ready) return 82;
+    fcloseThread.join();
+    fcloseallThread.join();
+    finished.set_value();
+    const auto [closeRc, closeError] = fcloseFuture.get();
+    if (closeRc != 0 && !(closeRc == -1 && closeError == 9)) return 83;
+    std::remove(racePath.c_str());
+    return 0;
+}
+
+static int FcloseallReadInProgressChild() {
+    int descriptors[2];
+#ifdef _WIN32
+    if (::_pipe(descriptors, 4096, _O_BINARY) != 0) return 60;
+    std::FILE* const native = ::_fdopen(descriptors[0], "rb");
+#else
+    if (::pipe(descriptors) != 0) return 60;
+    std::FILE* const native = ::fdopen(descriptors[0], "rb");
+#endif
+    if (!native) return 61;
+    FileStream* const reading = new FileStream(native, true);
+    auto readingLease = AcquireFileStreamLease_nid_no_patch(reading);
+    if (!readingLease.Valid()) return 71;
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(10)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 69);
+#else
+        ::_exit(69);
+#endif
+    });
+    watchdog.detach();
+    std::array<char, 4> buffer{};
+    auto read = std::async(std::launch::async, [&] { return fread_nid_postfix(buffer.data(), 1, buffer.size(), reading); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    for (;;) {
+        if (ftrylockfile_nid_postfix(reading) != 0) break;
+        funlockfile_nid_postfix(reading);
+        if (std::chrono::steady_clock::now() > deadline) return 62;
+        std::this_thread::yield();
+    }
+    auto closed = std::async(std::launch::async, [] { fcloseall_nid_postfix(); });
+    if (closed.wait_for(std::chrono::milliseconds(200)) != std::future_status::timeout) return 63;
+    if (!readingLease.Stream()->IsOpen()) return 64;
+    constexpr char payload[] = "data";
+#ifdef _WIN32
+    if (::_write(descriptors[1], payload, 4) != 4) return 65;
+#else
+    if (::write(descriptors[1], payload, 4) != 4) return 65;
+#endif
+    if (read.wait_for(std::chrono::seconds(3)) != std::future_status::ready) return 66;
+    if (read.get() != buffer.size() || std::memcmp(buffer.data(), payload, buffer.size()) != 0) return 67;
+    if (closed.wait_for(std::chrono::seconds(3)) != std::future_status::ready) return 68;
+    closed.get();
+    errno = 0;
+    if (fread_nid_postfix(buffer.data(), 1, buffer.size(), reading) != 0 || errno != 9) return 70;
+#ifdef _WIN32
+    ::_close(descriptors[1]);
+#else
+    ::close(descriptors[1]);
+#endif
+    finished.set_value();
+    return 0;
+}
+
+static int FreopenLockChild(const std::string& base) {
+    const std::string lockedPath = base + ".freopen.locked";
+    const std::string reopenPath = base + ".freopen.target";
+    FileStream* locked = fopen_nid_postfix(lockedPath.c_str(), "wb");
+    if (!locked) return 90;
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 95);
+#else
+        ::_exit(95);
+#endif
+    });
+    watchdog.detach();
+    flockfile_nid_postfix(locked);
+    std::promise<void> entered;
+    auto reopened = std::async(std::launch::async, [&] {
+        entered.set_value();
+        return freopen_nid_postfix(reopenPath.c_str(), "wb", locked);
+    });
+    entered.get_future().wait();
+    if (reopened.wait_for(std::chrono::milliseconds(100)) != std::future_status::timeout) return 91;
+    funlockfile_nid_postfix(locked);
+    if (reopened.wait_for(std::chrono::seconds(3)) != std::future_status::ready) return 92;
+    FileStream* const result = reopened.get();
+    if (!result) return 93;
+    if (fclose_nid_postfix(result) != 0) return 94;
+    finished.set_value();
+    std::remove(lockedPath.c_str());
+    std::remove(reopenPath.c_str());
+    return 0;
+}
+
+static int FcloseallLockChild(const std::string& base) {
+    const std::string lockedPath = base + ".fcloseall.locked";
+    const std::string otherPath = base + ".fcloseall.other";
+    FileStream* locked = fopen_nid_postfix(lockedPath.c_str(), "wb");
+    if (!locked) return 70;
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 75);
+#else
+        ::_exit(75);
+#endif
+    });
+    watchdog.detach();
+    flockfile_nid_postfix(locked);
+    std::promise<void> entered;
+    auto closer = std::async(std::launch::async, [&] {
+        entered.set_value();
+        fcloseall_nid_postfix();
+    });
+    entered.get_future().wait();
+    if (closer.wait_for(std::chrono::milliseconds(100)) != std::future_status::timeout) return 71;
+    FileStream* other = fopen_nid_postfix(otherPath.c_str(), "wb");
+    if (!other) return 72;
+    if (fclose_nid_postfix(other) != 0) return 73;
+    funlockfile_nid_postfix(locked);
+    if (closer.wait_for(std::chrono::seconds(2)) != std::future_status::ready) return 74;
+    closer.get();
+    finished.set_value();
+    std::remove(lockedPath.c_str());
+    std::remove(otherPath.c_str());
+    return 0;
+}
+
+static int OwnerLockedCloseChild(const std::string& base) {
+    const std::string closeAllPath = base + ".owner-locked.fcloseall";
+    const std::string closePath = base + ".owner-locked.fclose";
+    const std::string laterPath = base + ".owner-locked.later";
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 155);
+#else
+        ::_exit(155);
+#endif
+    });
+    watchdog.detach();
+    FileStream* closedByAll = fopen_nid_postfix(closeAllPath.c_str(), "wb");
+    if (!closedByAll) return 150;
+    flockfile_nid_postfix(closedByAll);
+    flockfile_nid_postfix(closedByAll);
+    fcloseall_nid_postfix();
+    try {
+        funlockfile_nid_postfix(closedByAll);
+        funlockfile_nid_postfix(closedByAll);
+    } catch (const std::exception&) {
+        return 151;
+    }
+    FileStream* closedDirectly = fopen_nid_postfix(closePath.c_str(), "wb");
+    if (!closedDirectly) return 152;
+    flockfile_nid_postfix(closedDirectly);
+    if (fclose_nid_postfix(closedDirectly) != 0) return 153;
+    try {
+        funlockfile_nid_postfix(closedDirectly);
+    } catch (const std::exception&) {
+        return 154;
+    }
+    auto later = std::async(std::launch::async, [&] {
+        int reopened = 0;
+        for (int i = 0; i < 8; ++i) {
+            FileStream* stream = fopen_nid_postfix(laterPath.c_str(), "wb");
+            if (!stream) return false;
+            const bool written = fputc_nid_postfix('L', stream) == 'L';
+            if (fclose_nid_postfix(stream) != 0 || !written) return false;
+            ++reopened;
+        }
+        return reopened == 8;
+    });
+    if (later.wait_for(std::chrono::seconds(2)) != std::future_status::ready) return 156;
+    if (!later.get()) return 157;
+    finished.set_value();
+    std::remove(closeAllPath.c_str());
+    std::remove(closePath.c_str());
+    std::remove(laterPath.c_str());
+    return 0;
+}
+
+static int ClosedStreamReopenChild(const std::string& base) {
+    const std::string path = base + ".closed-reopen";
+    const std::string missing = base + ".closed-reopen-missing";
+    std::remove(path.c_str());
+    std::remove(missing.c_str());
+    FileStream stream(std::tmpfile());
+    if (stream.Close() != 0 || stream.IsOpen()) return 130;
+    errno = 0;
+    if (freopen_nid_postfix(nullptr, "wb", &stream) != nullptr || errno != 9) return 131;
+    if (freopen_nid_postfix(path.c_str(), "wb", &stream) != &stream) return 132;
+    if (fputc_nid_postfix('A', &stream) != 'A') return 133;
+    if (fclose_nid_postfix(&stream) != 0 || stream.IsOpen()) return 134;
+    errno = 0;
+    if (freopen_nid_postfix(nullptr, "wb", &stream) != nullptr || errno != 9) return 135;
+    if (freopen_nid_postfix(missing.c_str(), "rb", &stream) != nullptr || stream.IsOpen()) return 136;
+    if (freopen_nid_postfix(path.c_str(), "ab", &stream) != &stream) return 137;
+    if (fputc_nid_postfix('B', &stream) != 'B') return 138;
+    fcloseall_nid_postfix();
+    if (stream.IsOpen()) return 139;
+    if (freopen_nid_postfix(path.c_str(), "ab", &stream) != &stream) return 140;
+    if (fputc_nid_postfix('C', &stream) != 'C') return 141;
+#ifdef _WIN32
+    const HANDLE native = reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(stream.GetHandle())));
+#else
+    const int native = ::fileno(stream.GetHandle());
+#endif
+    fcloseall_nid_postfix();
+    if (stream.IsOpen()) return 142;
+#ifdef _WIN32
+    DWORD flags = 0;
+    if (::GetHandleInformation(native, &flags) != 0 || ::GetLastError() != ERROR_INVALID_HANDLE) return 143;
+#else
+    errno = 0;
+    if (::fcntl(native, F_GETFD) != -1 || errno != EBADF) return 143;
+#endif
+    std::FILE* const read = std::fopen(path.c_str(), "rb");
+    if (!read) return 144;
+    char payload[4]{};
+    const bool contents = std::fread(payload, 1, sizeof(payload), read) == 3
+        && std::memcmp(payload, "ABC", 3) == 0;
+    std::fclose(read);
+    std::remove(path.c_str());
+    return contents ? 0 : 145;
+}
+
+static int FcloseallDescriptorReuseChild(const std::string& base) {
+    const std::string target = base + ".fcloseall-descriptor-target";
+    struct FileCleanup {
+        const std::string& target;
+        ~FileCleanup() {
+            std::remove(target.c_str());
+        }
+    } cleanup{target};
+    {
+        std::ofstream file(target, std::ios::binary | std::ios::trunc);
+        if (!file) return 171;
+        file << "0123456789";
+    }
+    const int descriptor = sceKernelOpen("/dev/urandom", SCE_KERNEL_O_RDONLY, 0);
+    if (descriptor < 0) return 172;
+    if (!File::IsRandomDevice(descriptor)) return 181;
+    FileStream* const stream = fdopen_nid_postfix(descriptor, "r");
+    if (!stream) {
+        sceKernelClose(descriptor);
+        return 173;
+    }
+    FileStream alias(stream->GetHandle());
+    fcloseall_nid_postfix();
+    if (alias.IsOpen()) return 174;
+#ifdef _WIN32
+    const bool descriptorClosed = ::_get_osfhandle(descriptor) == -1;
+#else
+    errno = 0;
+    const bool descriptorClosed = ::fcntl(descriptor, F_GETFD) == -1 && errno == EBADF;
+#endif
+    if (!descriptorClosed) return 184;
+#ifdef _WIN32
+    const int replacementDescriptor = ::_open(target.c_str(), _O_RDONLY | _O_BINARY);
+#else
+    const int replacementDescriptor = ::open(target.c_str(), O_RDONLY);
+#endif
+    if (replacementDescriptor < 0) return 175;
+    if (replacementDescriptor != descriptor) {
+#ifdef _WIN32
+        const int placement = ::_dup2(replacementDescriptor, descriptor);
+        const int surplusClose = ::_close(replacementDescriptor);
+        if (placement != 0) return 176;
+#else
+        const int placement = ::dup2(replacementDescriptor, descriptor);
+        const int surplusClose = ::close(replacementDescriptor);
+        if (placement != descriptor) return 176;
+#endif
+        if (surplusClose != 0) return 183;
+    }
+    FileStream* const reopened = fdopen_nid_postfix(descriptor, "r");
+    if (!reopened) return 185;
+    if (fileno_nid_postfix(reopened) != descriptor) {
+        fclose_nid_postfix(reopened);
+        return 186;
+    }
+    const bool staleRandomDevice = File::IsRandomDevice(descriptor);
+    std::array<char, 10> contents{};
+    if (sceKernelRead(descriptor, contents.data(), contents.size()) != static_cast<std::int64_t>(contents.size())) {
+        fclose_nid_postfix(reopened);
+        return 178;
+    }
+    if (fclose_nid_postfix(reopened) != 0) return 179;
+    if (staleRandomDevice) return 180;
+    return std::string_view(contents.data(), contents.size()) == "0123456789" ? 0 : 182;
+}
+
+static int ReopenSnapshotChild(const std::string& base) {
+    const std::string path = base + ".reopen-snapshot";
+    std::remove(path.c_str());
+    FileStream stream(std::tmpfile());
+    std::uint64_t cursor = std::numeric_limits<std::uint64_t>::max();
+    auto [selected, gate] = PinNextFileStream_nid_no_patch(cursor);
+    if (selected != &stream || gate != stream.GatePtr_nid_no_patch()) return 150;
+    FileStreamLease_nid_no_patch selection(selected, gate);
+    std::lock_guard<std::recursive_mutex> gateLock(*gate);
+    const std::uint64_t originalSnapshot = cursor + 1;
+    if (!IsFileStreamInSnapshot_nid_no_patch(selected, originalSnapshot)) return 151;
+    if (fclose_nid_postfix(&stream) != 0) return 152;
+    if (AcquireFileStreamLease_nid_no_patch(&stream).Valid()) return 153;
+    auto reopenLease = AcquireFileStreamLease_nid_no_patch(&stream, true);
+    if (!reopenLease.Valid() || reopenLease.Gate() != gate) return 154;
+    const auto reservation = ReserveFileStreamReopen_nid_no_patch(&stream);
+    if (!reservation || *reservation == 0) return 155;
+    struct ReservationCleanup {
+        std::uint64_t reservation;
+        ~ReservationCleanup() { CancelFileStreamReopenReservation_nid_no_patch(reservation); }
+    } cleanup{*reservation};
+    FileStream intervening(std::tmpfile());
+    std::uint64_t interveningCursor = std::numeric_limits<std::uint64_t>::max();
+    auto [interveningSelection, interveningGate] = PinNextFileStream_nid_no_patch(interveningCursor);
+    if (interveningSelection != &intervening) return 156;
+    FileStreamLease_nid_no_patch interveningLease(interveningSelection, interveningGate);
+    const std::uint64_t reservedSnapshot = interveningCursor + 1;
+    if (IsFileStreamInSnapshot_nid_no_patch(selected, reservedSnapshot)) return 157;
+#ifdef _WIN32
+    if (!stream.Reopen(std::filesystem::path(path), "wb", [](const std::filesystem::path& filename, const std::string&) {
+            return ::_wopen(filename.c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+        })) return 158;
+#else
+    if (!stream.Reopen(std::filesystem::path(path), "wb",
+        [](const std::filesystem::path& filename, const std::string& mode) {
+            return std::fopen(filename.string().c_str(), mode.c_str());
+        })) return 158;
+#endif
+    PublishFileStreamReopen_nid_no_patch(&stream, *reservation);
+    cleanup.reservation = 0;
+    if (IsFileStreamInSnapshot_nid_no_patch(selected, originalSnapshot)) return 159;
+    if (IsFileStreamInSnapshot_nid_no_patch(selected, reservedSnapshot)) return 160;
+    if (!IsFileStreamInSnapshot_nid_no_patch(selected, std::numeric_limits<std::uint64_t>::max())) return 161;
+    if (fputc_nid_postfix('R', &stream) != 'R') return 162;
+    fcloseall_nid_postfix();
+    if (stream.IsOpen() || intervening.IsOpen()) return 163;
+    std::FILE* const read = std::fopen(path.c_str(), "rb");
+    const bool contents = read && std::fgetc(read) == 'R';
+    if (read) std::fclose(read);
+    std::remove(path.c_str());
+    return contents ? 0 : 164;
+}
+
+static std::atomic<int> g_failingClosingDescriptors{0};
+
+static void* FailFirstClosingDescriptor(int) {
+    if (g_failingClosingDescriptors.fetch_sub(1) > 0) throw std::bad_alloc();
+    return nullptr;
+}
+
+static void EndFailedClosingDescriptor(void*) {}
+
+static bool DescriptorOpen(int descriptor) {
+#ifdef _WIN32
+    return ::_get_osfhandle(descriptor) != -1;
+#else
+    return ::fcntl(descriptor, F_GETFD) != -1;
+#endif
+}
+
+#ifdef _WIN32
+static int OpenPlaceholderDirectory(const wchar_t*) {
+    return ::_open("NUL", _O_RDONLY | _O_BINARY);
+}
+
+static std::atomic<int> g_placeholderDirectory{-1};
+
+static int OpenRecordedPlaceholderDirectory(const wchar_t*) {
+    const int descriptor = ::_open("NUL", _O_RDONLY | _O_BINARY);
+    g_placeholderDirectory = descriptor;
+    return descriptor;
+}
+
+static int FailDirectoryOpenNameTooLong(const wchar_t*) {
+    errno = ENAMETOOLONG;
+    return -1;
+}
+
+static void ForgetPlaceholderDirectory(int) {}
+
+static void FailDirectoryDuplicate(int, int) {
+    throw std::bad_alloc();
+}
+#endif
+
+static int FreopenExceptionCleanupChild(const std::string& base) {
+    const std::string path = base + ".freopen-exception";
+    std::remove(path.c_str());
+    FileStream* stream = fopen_nid_postfix(path.c_str(), "wb");
+    if (!stream) return 190;
+    g_failingClosingDescriptors = 1;
+    LibcRegisterClosedDescriptors_nid_no_patch(&FailFirstClosingDescriptor, &EndFailedClosingDescriptor);
+    errno = 0;
+    FileStream* const failed = freopen_nid_postfix(path.c_str(), "rb", stream);
+    const int failedError = errno;
+    if (g_failingClosingDescriptors.load() > 0) return 191;
+    if (failed != nullptr || failedError != 12) return 192;
+    if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 193;
+    stream = fopen_nid_postfix(path.c_str(), "rb");
+    if (!stream) return 198;
+    g_failingClosingDescriptors = 1;
+    errno = 0;
+    FileStream* const deviceFailed = freopen_nid_postfix("/dev/urandom", "r", stream);
+    const int deviceError = errno;
+    if (g_failingClosingDescriptors.load() > 0) return 199;
+    if (deviceFailed != nullptr || deviceError != 12) return 180;
+    if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 181;
+    for (const char* target : {path.c_str(), "/dev/urandom"}) {
+        stream = fopen_nid_postfix(path.c_str(), "rb");
+        if (!stream) return 182;
+        g_failingClosingDescriptors = 1000;
+        errno = 0;
+        FileStream* const persistent = freopen_nid_postfix(target, "rb", stream);
+        const int persistentError = errno;
+        g_failingClosingDescriptors = 0;
+        if (persistent != nullptr || persistentError != 12) return 183;
+        if (!AcquireFileStreamLease_nid_no_patch(stream).Valid() || !stream->IsOpen()) return 184;
+#ifdef _WIN32
+        const int descriptor = ::_fileno(stream->RawHandle_nid_no_patch());
+#else
+        const int descriptor = ::fileno(stream->RawHandle_nid_no_patch());
+#endif
+        if (!DescriptorOpen(descriptor)) return 260;
+        if (fclose_nid_postfix(stream) != 0) return 261;
+        if (DescriptorOpen(descriptor)) return 262;
+    }
+#ifdef _WIN32
+    const std::string directoryName = base + ".freopen-exception.dir";
+    std::error_code removed;
+    std::filesystem::remove_all(directoryName, removed);
+    if (!std::filesystem::create_directory(directoryName)) return 194;
+    stream = fopen_nid_postfix(path.c_str(), "rb");
+    if (!stream) return 195;
+    LibcRegisterDirectoryStreams_nid_no_patch(&OpenPlaceholderDirectory, &ForgetPlaceholderDirectory, &FailDirectoryDuplicate);
+    errno = 0;
+    FileStream* const directoryFailed = freopen_nid_postfix(directoryName.c_str(), "rb", stream);
+    const int directoryError = errno;
+    if (directoryFailed != nullptr || directoryError != 12) return 196;
+    if (AcquireFileStreamLease_nid_no_patch(stream).Valid()) return 197;
+    stream = fopen_nid_postfix(path.c_str(), "rb");
+    if (!stream) return 263;
+    LibcRegisterDirectoryStreams_nid_no_patch(&FailDirectoryOpenNameTooLong, &ForgetPlaceholderDirectory, &FailDirectoryDuplicate);
+    errno = 0;
+    FileStream* const longFailed = freopen_nid_postfix(directoryName.c_str(), "rb", stream);
+    const int longError = errno;
+    if (longFailed != nullptr || longError != 63) {
+        std::cerr << "freopen of a directory whose open fails with ENAMETOOLONG set errno " << longError << '\n';
+        return 264;
+    }
+    errno = 0;
+    if (fopen_nid_postfix(directoryName.c_str(), "rb") != nullptr || errno != 63) return 265;
+    LibcRegisterDirectoryStreams_nid_no_patch(&OpenRecordedPlaceholderDirectory, &ForgetPlaceholderDirectory, &FailDirectoryDuplicate);
+    errno = 0;
+    FileStream* const standardFailed = freopen_nid_postfix(directoryName.c_str(), "rb", __stdinp_nid_postfix);
+    const int standardError = errno;
+    if (standardFailed != nullptr || standardError != 12) return 266;
+    if (g_placeholderDirectory < 0) return 267;
+    if (DescriptorOpen(g_placeholderDirectory)) return 268;
+    std::filesystem::remove(directoryName, removed);
+#endif
+    std::remove(path.c_str());
+    return 0;
+}
+
+static int FcloseallClosedHostStandardChild() {
+#ifdef _WIN32
+    static_cast<void>(::_close(1));
+    static_cast<void>(::_close(2));
+    if (::_get_osfhandle(1) != -1 || ::_get_osfhandle(2) != -1) return 200;
+#else
+    static_cast<void>(::close(1));
+    static_cast<void>(::close(2));
+    errno = 0;
+    if (::fcntl(1, F_GETFD) != -1 || ::fcntl(2, F_GETFD) != -1 || errno != EBADF) return 200;
+#endif
+    try {
+        fcloseall_nid_postfix();
+    } catch (...) {
+        return 201;
+    }
+    if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 202;
+    return 0;
+}
+
+static int FcloseallExhaustedHostStandardChild(const std::string& base) {
+#ifdef _WIN32
+    const std::string path = base + ".fcloseall.exhausted";
+    FileStream* const stream = fopen_nid_postfix(path.c_str(), "wb");
+    if (!stream) return 210;
+    auto lease = AcquireFileStreamLease_nid_no_patch(stream);
+    if (!lease.Valid()) return 214;
+    std::vector<std::FILE*> exhaustedStreams;
+    const int streamLimit = ::_getmaxstdio();
+    exhaustedStreams.reserve(static_cast<std::size_t>(streamLimit));
+    for (int i = 0; i < streamLimit; ++i) {
+        std::FILE* extra = std::fopen("NUL", "w");
+        if (!extra) break;
+        exhaustedStreams.push_back(extra);
+    }
+    bool threw = false;
+    try {
+        fcloseall_nid_postfix();
+    } catch (...) {
+        threw = true;
+    }
+    for (std::FILE* extra : exhaustedStreams) std::fclose(extra);
+    std::remove(path.c_str());
+    if (threw) return 211;
+    if (lease.Stream()->IsOpen()) return 212;
+    if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 213;
+#else
+    static_cast<void>(base);
+#endif
+    return 0;
+}
+
+static int ClosedAliasReopenChild(const std::string& base) {
+    const std::string first = base + ".closed-alias.first";
+    const std::string second = base + ".closed-alias.second";
+    std::FILE* const native = std::tmpfile();
+    if (!native) return 220;
+    FileStream a(native);
+    FileStream b(native);
+    fcloseall_nid_postfix();
+    if (a.IsOpen() || b.IsOpen()) return 221;
+    if (freopen_nid_postfix(first.c_str(), "wb", &a) != &a) return 222;
+    if (freopen_nid_postfix(second.c_str(), "wb", &b) != &b) return 223;
+    if (a.RawHandle_nid_no_patch() == b.RawHandle_nid_no_patch()) return 224;
+    if (fputc_nid_postfix('A', &a) != 'A' || fputc_nid_postfix('B', &b) != 'B') return 225;
+    if (fclose_nid_postfix(&a) != 0 || fclose_nid_postfix(&b) != 0) return 226;
+    std::FILE* const shared = std::tmpfile();
+    if (!shared) return 269;
+    FileStream source(shared);
+    FileStream closedAlias(shared);
+    if (fclose_nid_postfix(&source) != 0 || closedAlias.IsOpen()) return 270;
+    const std::string third = base + ".closed-alias.third";
+    if (freopen_nid_postfix(third.c_str(), "wb", &source) != &source) return 271;
+    const bool joined = closedAlias.IsOpen();
+    if (fclose_nid_postfix(&source) != 0) return 272;
+    std::remove(third.c_str());
+    if (joined) return 273;
+    const auto contents = [](const std::string& path) {
+        std::FILE* const read = std::fopen(path.c_str(), "rb");
+        if (!read) return std::string();
+        std::string text;
+        for (int character; (character = std::fgetc(read)) != EOF;) text.push_back(static_cast<char>(character));
+        std::fclose(read);
+        return text;
+    };
+    const bool separate = contents(first) == "A" && contents(second) == "B";
+    std::remove(first.c_str());
+    std::remove(second.c_str());
+    return separate ? 0 : 227;
+}
+
+static int FreopenExhaustedSlotsChild(const std::string& base) {
+#ifdef _WIN32
+    const std::string source = base + ".exhausted-slots.source";
+    const std::string target = base + ".exhausted-slots.target";
+    std::FILE* const seed = std::fopen(target.c_str(), "wb");
+    if (!seed || std::fputs("kept", seed) < 0 || std::fclose(seed) != 0) return 230;
+    FileStream* const stream = fopen_nid_postfix(source.c_str(), "wb");
+    if (!stream) return 231;
+    const int savedLimit = ::_getmaxstdio();
+    if (::_setmaxstdio(64) != 64) return 236;
+    std::vector<std::FILE*> fillers;
+    for (int i = 0; i < 64; ++i) {
+        std::FILE* extra = std::fopen("NUL", "w");
+        if (!extra) break;
+        fillers.push_back(extra);
+    }
+    const int duplicate = ::_open("NUL", _O_RDONLY);
+    const bool descriptorsLeft = duplicate >= 0;
+    if (descriptorsLeft) ::_close(duplicate);
+    errno = 0;
+    FileStream* const reopened = descriptorsLeft ? freopen_nid_postfix(target.c_str(), "wb", stream) : nullptr;
+    const int reopenError = errno;
+    const bool wrote = reopened && fputc_nid_postfix('Z', reopened) == 'Z';
+    for (std::FILE* extra : fillers) std::fclose(extra);
+    ::_setmaxstdio(savedLimit);
+    if (!descriptorsLeft) return 232;
+    if (reopened != stream) {
+        std::cerr << "freopen with a full stream table failed, errno " << reopenError << '\n';
+        return 233;
+    }
+    if (!wrote || fclose_nid_postfix(stream) != 0) return 234;
+    std::FILE* const read = std::fopen(target.c_str(), "rb");
+    const bool replaced = read && std::fgetc(read) == 'Z' && std::fgetc(read) == EOF;
+    if (read) std::fclose(read);
+    std::remove(source.c_str());
+    std::remove(target.c_str());
+    return replaced ? 0 : 235;
+#else
+    static_cast<void>(base);
+    return 0;
+#endif
+}
+
+static int FreopenFailedLockChild(const std::string& base) {
+    std::FILE* const recorded = std::tmpfile();
+    if (!recorded) return 243;
+    NoteExplicitNativeLock_nid_no_patch(recorded);
+    const std::uint32_t suspended = SuspendExplicitNativeLocks_nid_no_patch(recorded);
+    NoteExplicitNativeLock_nid_no_patch(recorded);
+    DropIdleExplicitNativeLocks_nid_no_patch(recorded);
+    const bool kept = ForgetExplicitNativeLock_nid_no_patch(recorded);
+    const bool single = !ForgetExplicitNativeLock_nid_no_patch(recorded);
+    std::fclose(recorded);
+    if (suspended != 1 || !kept || !single) return 244;
+#if defined(__GLIBC__)
+    unsigned major = 0;
+    unsigned minor = 0;
+    const bool keepsFailedStream = std::sscanf(::gnu_get_libc_version(), "%u.%u", &major, &minor) == 2
+        && (major < 2 || (major == 2 && minor < 41));
+    if (!keepsFailedStream) return 0;
+    const std::string path = base + ".failed-lock";
+    const std::string missing = base + ".failed-lock-missing/output";
+    FileStream* const stream = fopen_nid_postfix(path.c_str(), "wb");
+    if (!stream) return 240;
+    std::FILE* const previous = stream->RawHandle_nid_no_patch();
+    flockfile_nid_postfix(stream);
+    errno = 0;
+    if (freopen_nid_postfix(missing.c_str(), "rb", stream) != nullptr) return 241;
+    const int lockedElsewhere = std::async(std::launch::async, [previous] {
+        const int result = ::ftrylockfile(previous);
+        if (result == 0) ::funlockfile(previous);
+        return result;
+    }).get();
+    funlockfile_nid_postfix(stream);
+    std::remove(path.c_str());
+    return lockedElsewhere != 0 ? 0 : 242;
+#endif
+    static_cast<void>(base);
+    return 0;
+}
+
+static int RunFcloseallChild(const char* self, const char* base, const char* mode = "--fcloseall-child") {
+#ifdef _WIN32
+    static_cast<void>(self);
+    wchar_t executable[32768];
+    Require(::GetModuleFileNameW(nullptr, executable, 32768) != 0);
+    std::wstring widenedBase;
+    for (const char character : std::string_view(base)) widenedBase.push_back(static_cast<wchar_t>(static_cast<unsigned char>(character)));
+    std::wstring widenedMode;
+    for (const char character : std::string_view(mode)) widenedMode.push_back(static_cast<wchar_t>(static_cast<unsigned char>(character)));
+    std::wstring command = std::wstring(L"\"") + executable + L"\" \"" + widenedBase + L"\" " + widenedMode;
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    Require(::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process) != 0);
+    ::CloseHandle(process.hThread);
+    if (::WaitForSingleObject(process.hProcess, 30000) != WAIT_OBJECT_0) {
+        ::TerminateProcess(process.hProcess, 99);
+        ::CloseHandle(process.hProcess);
+        return 99;
+    }
+    DWORD code = 99;
+    ::GetExitCodeProcess(process.hProcess, &code);
+    ::CloseHandle(process.hProcess);
+    return static_cast<int>(code);
+#else
+    const pid_t pid = ::fork();
+    if (pid < 0) return 97;
+    if (pid == 0) {
+        char* const arguments[] = {const_cast<char*>(self), const_cast<char*>(base), const_cast<char*>(mode), nullptr};
+        ::execv(self, arguments);
+        ::_exit(98);
+    }
+    int status = 0;
+    if (::waitpid(pid, &status, 0) != pid) return 99;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+#endif
+}
+
+static void CheckWideStateAfterAliasReopen(const std::string& base) {
+    const std::string path = base + ".wide-reopen";
+    std::FILE* replacement = std::fopen(path.c_str(), "wb");
+    Require(replacement != nullptr && std::fputs("Q", replacement) >= 0 && std::fclose(replacement) == 0, "Seeding the wide reopen replacement");
+    FileStream stream(std::tmpfile());
+    FileStream alias(stream.GetHandle());
+    Require(fputws_nid_postfix(u"\U0001f600", &stream) == 2, "Seeding supplementary wide input");
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == 0xd83d, "Leaving a pending low surrogate on the source");
+    rewind_nid_postfix(&alias);
+    Require(getwc_nid_postfix(&alias) == 0xd83d, "Leaving a pending low surrogate on the alias");
+    Require(freopen_nid_postfix(path.c_str(), "rb", &stream) == &stream, "Reopening a source with pending wide state");
+    Require(getwc_nid_postfix(&alias) == u'Q', "Reopen must discard the alias's old low surrogate");
+    Require(getwc_nid_postfix(&stream) == -1, "Reopen must discard the source's old low surrogate");
+    Require(fclose_nid_postfix(&stream) == 0 && !alias.IsOpen(), "Closing the reopened source must detach its alias");
+    Require(std::remove(path.c_str()) == 0, "Removing the wide reopen replacement");
+}
+
+static void CheckPushbackStateAfterAliasReopen() {
+#ifdef _WIN32
+    const std::filesystem::path device("NUL");
+#else
+    const std::filesystem::path device("/dev/null");
+#endif
+    FileStream stream(std::tmpfile());
+    FileStream alias(stream.GetHandle());
+    Require(fputs_nid_postfix("AB", &stream) >= 0, "Seeding the alias pushback file");
+    rewind_nid_postfix(&alias);
+    Require(alias.IsRegularFile(), "The alias of a temporary file must be a regular file");
+    Require(fgetc_nid_postfix(&alias) == 'A', "Reading through the alias");
+    Require(ungetc_nid_postfix('Q', &alias) == 'Q' && alias.PushbackLive() && alias.PushedBackBytes() == "Q", "Recording a pushed-back byte on the alias");
+    Require(stream.Reopen(device, "rb"), "Reopening the source onto the null device");
+    Require(!stream.IsRegularFile(), "The reopened source must not be a regular file");
+    Require(!alias.IsRegularFile(), "Reopen must reset the alias's regular-file cache");
+    Require(!alias.PushbackLive() && alias.PushedBackBytes().empty(), "Reopen must discard the alias's recorded pushback");
+    Require(!stream.PushbackLive() && stream.PushedBackBytes().empty(), "Reopen must leave the source without recorded pushback");
+    Require(fclose_nid_postfix(&stream) == 0 && !alias.IsOpen(), "Closing the reopened source must detach its alias");
+}
+
+static void CheckAliasSynchronizationSkipsLaterRegistrations() {
+    FileStream stream(std::tmpfile());
+    FileStream alias(stream.GetHandle());
+    const std::uint64_t snapshot = FileStreamRegistrySnapshot_nid_no_patch();
+    FileStream later(stream.GetHandle());
+    Require(later.GatePtr_nid_no_patch() == stream.GatePtr_nid_no_patch(), "A stream on the same native handle shares its gate");
+    stream.SetError();
+    const auto flags = stream.GuestState().flags;
+    Require(alias.GuestState().flags != flags && later.GuestState().flags != flags, "Only the source carries the error before synchronization");
+    SynchronizeFileStreamAliases_nid_no_patch(&stream, stream.RawHandle_nid_no_patch(), snapshot);
+    Require(alias.GuestState().flags == flags, "Synchronization must update an alias registered before the snapshot");
+    Require(later.GuestState().flags != flags, "Synchronization must leave a stream registered after the snapshot unchanged");
+    later.Detach();
+    alias.Detach();
+    Require(fclose_nid_postfix(&stream) == 0, "Closing the synchronization source");
+}
+
 static void CheckZeroSizedTransfers(const std::string& base) {
     const std::string path = base + ".zero";
     auto* stream = fopen_nid_postfix(path.c_str(), "w+b");
@@ -1323,6 +2349,23 @@ static void CheckOrdinaryCharacterScans() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-standard-owner-child") == 0) return FreopenStandardOwnerChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-aliases-child") == 0) return FreopenAliasesChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-child") == 0) return FcloseallChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-descriptor-reuse-child") == 0) return FcloseallDescriptorReuseChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-lock-child") == 0) return FcloseallLockChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-closed-host-standard-child") == 0) return FcloseallClosedHostStandardChild();
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-exhausted-host-standard-child") == 0) return FcloseallExhaustedHostStandardChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-fclose-race-child") == 0) return FcloseallFcloseRaceChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-read-in-progress-child") == 0) return FcloseallReadInProgressChild();
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-lock-child") == 0) return FreopenLockChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--owner-locked-close-child") == 0) return OwnerLockedCloseChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--reopen-snapshot-child") == 0) return ReopenSnapshotChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-exception-child") == 0) return FreopenExceptionCleanupChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--closed-alias-reopen-child") == 0) return ClosedAliasReopenChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-exhausted-slots-child") == 0) return FreopenExhaustedSlotsChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--freopen-failed-lock-child") == 0) return FreopenFailedLockChild(argv[1]);
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
     CheckShortCharacterScans();
@@ -1330,6 +2373,9 @@ int main(int argc, char** argv) {
     CheckOrdinaryCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
     CheckZeroSizedTransfersOnNullStream();
+    CheckWideStateAfterAliasReopen(argv[1]);
+    CheckPushbackStateAfterAliasReopen();
+    CheckAliasSynchronizationSkipsLaterRegistrations();
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckUnbufferedStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
@@ -1453,5 +2499,44 @@ int main(int argc, char** argv) {
     Require(ferror_nid_postfix(stream) != 0);
     static_cast<void>(fclose_nid_postfix(stream));
     Require(std::remove(argv[1]) == 0);
+    const int reopenSnapshot = RunFcloseallChild(argv[0], argv[1], "--reopen-snapshot-child");
+    Require(reopenSnapshot == 0, "reopen snapshot publication child failed");
+    const int closedReopen = RunFcloseallChild(argv[0], argv[1], "--closed-reopen-child");
+    Require(closedReopen == 0, "closed-stream reopen and close-all child failed");
+    const int descriptorReuse = RunFcloseallChild(argv[0], argv[1], "--fcloseall-descriptor-reuse-child");
+    Require(descriptorReuse == 0, "fcloseall descriptor reuse child failed");
+    const int childResult = RunFcloseallChild(argv[0], argv[1]);
+    Require(childResult == 0, "fcloseall child failed");
+    const int lockResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-lock-child");
+    Require(lockResult == 0, "fcloseall locked-stream child failed");
+    const int ownerLocked = RunFcloseallChild(argv[0], argv[1], "--owner-locked-close-child");
+    if (ownerLocked != 0) std::cerr << "owner-locked close child exit " << ownerLocked << '\n';
+    Require(ownerLocked == 0, "closing a stream its own thread has locked child failed");
+    const int closedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-closed-host-standard-child");
+    Require(closedHostStandard == 0, "fcloseall with closed host standard descriptors child failed");
+    const int exhaustedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-exhausted-host-standard-child");
+    Require(exhaustedHostStandard == 0, "fcloseall with exhausted host stream slots child failed");
+    const int raceResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-fclose-race-child");
+    Require(raceResult == 0, "fcloseall racing fclose child failed");
+    const int readInProgress = RunFcloseallChild(argv[0], argv[1], "--fcloseall-read-in-progress-child");
+    Require(readInProgress == 0, "fcloseall waiting for an in-progress read child failed");
+    const int freopenLock = RunFcloseallChild(argv[0], argv[1], "--freopen-lock-child");
+    Require(freopenLock == 0, "freopen locked-stream child failed");
+    const int freopenAliases = RunFcloseallChild(argv[0], argv[1], "--freopen-aliases-child");
+    Require(freopenAliases == 0, "freopen alias-state child failed");
+    const int freopenException = RunFcloseallChild(argv[0], argv[1], "--freopen-exception-child");
+    if (freopenException != 0) std::cerr << "freopen exception cleanup child exit " << freopenException << '\n';
+    Require(freopenException == 0, "freopen exception cleanup child failed");
+    const int closedAlias = RunFcloseallChild(argv[0], argv[1], "--closed-alias-reopen-child");
+    if (closedAlias != 0) std::cerr << "closed alias reopen child exit " << closedAlias << '\n';
+    Require(closedAlias == 0, "reopening closed aliases joined their new files");
+    const int exhaustedSlots = RunFcloseallChild(argv[0], argv[1], "--freopen-exhausted-slots-child");
+    if (exhaustedSlots != 0) std::cerr << "freopen exhausted stream slots child exit " << exhaustedSlots << '\n';
+    Require(exhaustedSlots == 0, "freopen with a full host stream table failed");
+    const int failedLock = RunFcloseallChild(argv[0], argv[1], "--freopen-failed-lock-child");
+    if (failedLock != 0) std::cerr << "freopen failed locked-stream child exit " << failedLock << '\n';
+    Require(failedLock == 0, "a failed freopen unlocked the replaced native stream");
+    const int freopenStandard = RunFcloseallChild(argv[0], argv[1], "--freopen-standard-owner-child");
+    Require(freopenStandard == 0, "freopen standard-stream owner child failed");
     std::cout << "PASS: stream objects, file operations, EOF and error handling\n";
 }

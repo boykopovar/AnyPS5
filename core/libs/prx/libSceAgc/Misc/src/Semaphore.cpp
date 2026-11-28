@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/Misc/include/Semaphore.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -61,7 +63,15 @@ int APS5_VABI sceAgcGetSemaphoreLabel(std::uint32_t index, void** label) {
     if (semaphoreBytes == 0) return GRAPHICS5_ERROR_SEMAPHORE_MEMORY_UNREGISTERED;
     if (index >= semaphoreBytes / semaphoreLabelBytes) return GRAPHICS5_ERROR_OUT_OF_RANGE;
     Agc::Command::Require(label != nullptr, __func__, "null semaphore label output");
-    *label = semaphoreMemory + static_cast<std::uint64_t>(index) * semaphoreLabelBytes;
+    void* result = semaphoreMemory + static_cast<std::uint64_t>(index) * semaphoreLabelBytes;
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite write(label, sizeof(*label));
+        writable = write.Open() && GuestWritable_nid_no_patch(label, sizeof(*label)) && GuestCopyOut_nid_no_patch(label, &result, sizeof(result));
+    }
+    errno = savedErrno;
+    Agc::Command::Require(writable, __func__, "unwritable semaphore label output");
     return 0;
 }
 

@@ -1149,19 +1149,11 @@ int APS5_VABI _ZN3JSC6JSCell11analyzeHeapEPS0_RNS_12HeapAnalyzerE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC6JSCell11getCallDataEPS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC6JSCell12dumpToStreamEPKS0_RN3WTF11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN3JSC6JSCell13estimatedSizeEPS0_RNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC6JSCell16getConstructDataEPS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 

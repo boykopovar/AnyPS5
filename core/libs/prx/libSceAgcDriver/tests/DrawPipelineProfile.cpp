@@ -9,6 +9,7 @@
 #include <cstring>
 #include <vector>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <exception>
@@ -16,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <semaphore>
 #include <stdexcept>
 #include <string>
@@ -219,8 +221,92 @@ void TestDecodeDrainSkip() {
 
 }
 
+void TestPendingWriteBlocks() {
+    using namespace AgcDriver::DriverDetail;
+    using Range = DrawFinisher::Range;
+    auto& finisher = DrawFinisher::Get();
+    finisher.Drain();
+    const bool off = std::getenv("APS5_NO_PENDING_WRITE_BLOCKS") != nullptr;
+    const bool verify = std::getenv("APS5_VERIFY_PENDING_WRITE_BLOCKS") != nullptr;
+    Check(DrawFinisher::PendingWriteBlocks() == !off && DrawFinisher::VerifyPendingWriteBlocks() == verify, "pending write blocks: the switches do not follow their environment variables");
+    constexpr std::uint64_t Base = 0x200000000ull;
+    const Range written{Base, Base + 0x1000};
+    const Range sameBlock{Base + 0x2000, Base + 0x3000};
+    const Range otherBlock{Base + 0x400000, Base + 0x401000};
+    const Range farBlock{Base + 0x800000, Base + 0x801000};
+    const Range wide{Base + 0x10000000, Base + 0x30000000};
+    std::atomic<int> step{0};
+    const auto waitFor = [&step](int value) {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (step.load(std::memory_order_acquire) < value) {
+            if (std::chrono::steady_clock::now() > until) {
+                std::cerr << "pending write blocks: a step did not come within 5 s\n";
+                std::_Exit(1);
+            }
+            std::this_thread::yield();
+        }
+    };
+    const auto overlaps = [&](Range range) {
+        const std::array<Range, 1> ranges{range};
+        return finisher.PendingOverlapsAny(ranges);
+    };
+    const auto writer = [](std::optional<Range> range) {
+        DrawFinisher::Pending held;
+        held.unknown = !range.has_value();
+        if (range) held.writes.push_back(*range);
+        return held;
+    };
+    const auto answered = [] { return DrawFinisher::PendingBlockTotals().answered; };
+    {
+        step.store(0);
+        finisher.Enqueue([&] { waitFor(1); }, writer(written));
+        Check(overlaps(written), "pending write blocks: an overlap with a pending writer was not found");
+        Check(!overlaps(sameBlock), "pending write blocks: a range beside the written bytes overlapped");
+        const auto before = answered();
+        Check(!overlaps(otherBlock), "pending write blocks: a range in another block overlapped");
+        Check(off ? answered() == before : answered() == before + 1u, "pending write blocks: a range in an uncounted block was not answered by the blocks, or was with the blocks off");
+        step.store(1);
+        finisher.Drain();
+    }
+    {
+        step.store(0);
+        finisher.Enqueue([&] { waitFor(1); }, writer(std::nullopt));
+        Check(overlaps(farBlock), "pending write blocks: a pending job with unknown writes did not overlap every range");
+        step.store(1);
+        finisher.Drain();
+    }
+    {
+        step.store(0);
+        finisher.Enqueue([] {}, writer(written));
+        finisher.Drain();
+        finisher.Enqueue([&] { waitFor(1); }, writer(farBlock));
+        const auto before = answered();
+        Check(!overlaps(written), "pending write blocks: a finished job still overlapped");
+        Check(off || answered() == before + 1u, "pending write blocks: the block of a finished job stayed counted");
+        Check(overlaps(farBlock), "pending write blocks: the second pending writer was not found");
+        step.store(1);
+        finisher.Drain();
+    }
+    {
+        step.store(0);
+        finisher.Enqueue([&] { waitFor(1); }, writer(wide));
+        const auto before = answered();
+        Check(overlaps(Range{wide.first + 0x8000000, wide.first + 0x8001000}), "pending write blocks: a range inside a wide pending write did not overlap");
+        Check(!overlaps(otherBlock), "pending write blocks: a range outside a wide pending write overlapped");
+        Check(answered() == before, "pending write blocks: a wide pending write was answered by the blocks");
+        step.store(1);
+        finisher.Drain();
+    }
+    Check(!verify || DrawFinisher::PendingBlockTotals().verified != 0u, "pending write blocks: the verify mode checked no answer");
+}
+
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "--pending-write-blocks") == 0) {
+            TestPendingWriteBlocks();
+            std::cout << "Pending write blocks passed\n";
+            return 0;
+        }
         if (argc == 2 && std::strcmp(argv[1], "--untimed") == 0) {
             TestUntimedCommits();
             std::cout << "Draw pipeline untimed commits passed\n";

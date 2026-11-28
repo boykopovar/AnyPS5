@@ -147,6 +147,7 @@ struct DeviceFunctions {
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
     PFN_vkCmdFillBuffer cmdFillBuffer = nullptr;
     TrackedFunction<PFN_vkCmdBindPipeline> cmdBindPipeline;
+    TrackedFunction<PFN_vkCmdExecuteCommands> cmdExecuteCommands;
     PFN_vkCmdBindDescriptorSets cmdBindDescriptorSets = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
@@ -271,6 +272,8 @@ struct Context {
     bool samplerFilterMinmax = false;
     bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
+    bool borderColorSwizzle = false;
+    bool borderColorSwizzleFromImage = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
@@ -301,6 +304,7 @@ struct Context {
     bool individuallyFreeDescriptorSets = false;
     bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
+    bool orderedInterlockEpilogs = false;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
@@ -524,6 +528,8 @@ std::uint32_t StorageTableCapacity(const Context& context);
 std::uint32_t SamplerTableCapacity(const Context& context);
 bool ImageTableUpdateAfterBind(const Context& context);
 bool SamplerTableUpdateAfterBind(const Context& context);
+
+void DestroyRecordingPools(const Context& context);
 
 }
 

@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Registration preparation at submit]
+
+- [Registration preparation at submit](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/Submission.cpp) (libSceAgcDriver) - `Driver::Submit` waits only for pool-held preparations of programs it binds (`*_PGM_LO/HI` by `SET_SH_REG` or `SET_SH_REG_INDIRECT`). It waits for all queued ones if a pair is half written, a draw (dispatch) has no graphics (compute) pair written before it, a list has an invalid register, a predicated or `COND_EXEC`-guarded write sets a program register; a REWIND uses the same pre-REWIND scan and its released tail waits only for those program addresses. Not covered: a program re-registered at an address an earlier submission bound, used without rebinding while this one writes another graphics pair; its first draw waits in the queue worker, unbounded (74 s for the largest shader seen). Longest submit wait on Ghost of Yōtei, cold: 3.2 s, 7 s total over 900 s (RTX 4090).
