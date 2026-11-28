@@ -1,7 +1,11 @@
 #include "Ngs2Test.hpp"
 
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstring>
+#include <initializer_list>
+#include <limits>
 #include <vector>
 #include <thread>
 #include <atomic>
@@ -577,6 +581,75 @@ static void TestCallbackOrder(bool custom, bool shared, bool reverse, std::uint3
     ResetBuffers(firstBuffer);
 }
 
+template <typename TSample>
+static std::vector<std::uint8_t> PackLittleEndianSamples(std::initializer_list<TSample> values) {
+    std::vector<std::uint8_t> bytes;
+    bytes.reserve(values.size() * sizeof(TSample));
+    for (const TSample value : values) {
+        std::array<std::uint8_t, sizeof(TSample)> raw{};
+        std::memcpy(raw.data(), &value, sizeof(value));
+        bytes.insert(bytes.end(), raw.begin(), raw.end());
+    }
+    return bytes;
+}
+
+static void CheckFloatingPcmCase(std::uint32_t waveformType, const std::vector<std::uint8_t>& data, bool checkPassThroughValues) {
+    const auto firstBuffer = usedBuffers;
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 1);
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {waveformType, 1, 48000, 0, 0, 0}});
+    const Ngs2WaveformBlock block{0, static_cast<std::uint32_t>(data.size()), 0, 0, 4, 0, 0};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, data.data(), 0, 1, &block});
+    Patch(voice, master);
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+    std::array<float, 64> samples{};
+    const Ngs2RenderBufferInfo output{samples.data(), sizeof(samples), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+    Require(sceNgs2SystemRender(system, &output, 1) == SCE_NGS2_OK);
+    if (checkPassThroughValues) {
+        Require(samples[0] == 0.0f && samples[1] == 0.0f && samples[2] == 0.0f);
+        Require(samples[3] == 1.5f && samples[4] == -2.25f);
+    }
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    ResetBuffers(firstBuffer);
+}
+
+static void TestFloatingPcmPassThrough() {
+    const auto f32Finite = PackLittleEndianSamples<float>({
+        1.5f,
+        -2.25f,
+        std::bit_cast<float>(0x00000001u),
+        std::bit_cast<float>(0x80000001u),
+    });
+    CheckFloatingPcmCase(SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, f32Finite, true);
+
+    const auto f64Finite = PackLittleEndianSamples<double>({
+        1.5,
+        -2.25,
+        std::bit_cast<double>(0x3800000000000001ull),
+        std::bit_cast<double>(0xb800000000000001ull),
+    });
+    CheckFloatingPcmCase(SCE_NGS2_WAVEFORM_TYPE_PCM_F64L, f64Finite, true);
+
+    const auto f32NonFinite = PackLittleEndianSamples<float>({
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::quiet_NaN(),
+        0.5f,
+    });
+    CheckFloatingPcmCase(SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, f32NonFinite, false);
+
+    const auto f64NonFinite = PackLittleEndianSamples<double>({
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::quiet_NaN(),
+        0.5,
+    });
+    CheckFloatingPcmCase(SCE_NGS2_WAVEFORM_TYPE_PCM_F64L, f64NonFinite, false);
+}
+
 int main() {
     for (const auto& test : Cases) TestSampler(test);
     for (std::uint32_t mode = 0; mode < 6; ++mode) TestStreaming(mode);
@@ -596,5 +669,6 @@ int main() {
     TestParallelJobs(false, true);
     TestParallelJobs(true, false, true);
     TestSamplerPublication();
+    TestFloatingPcmPassThrough();
     return 0;
 }

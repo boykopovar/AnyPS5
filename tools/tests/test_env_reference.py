@@ -64,6 +64,16 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_1_SERIAL"][0][1], 3)
 
+    def test_computed_names_use_the_exclusive_loop_bound(self):
+        for start, bound, expected in ((2, 4, {"ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"}),
+                                       (2, 2, set()), (0, 0, set())):
+            with self.subTest(start=start, bound=bound):
+                root = self.fixture(f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                self.assertEqual(set(env_reference.reads([root / "core"], BOTH)), expected)
+
     def test_a_computed_name_no_reader_uses_is_not_a_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
@@ -72,6 +82,21 @@ class ComputedEnvironmentTests(unittest.TestCase):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_SERIAL" + suffix;\n'
                             'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
+
+    def test_computed_names_resolve_binary_and_suffixed_integer_literals(self):
+        for start, bound, offset, constants in (
+            ("0u", "0b10UL", "1u", ""),
+            ("0b0", "Count", "0b1", "constexpr std::size_t Count = 0b1'0ULL;\n"),
+            ("0ULL", "items.size()", "0x1u",
+             "using Items = std::array<int, 0b10U>;\nItems items;\n"),
+        ):
+            with self.subTest(start=start, bound=bound, offset=offset):
+                root = self.fixture(constants + f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    f'    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + {offset}) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                names = env_reference.reads([root / "core"], BOTH)
+                self.assertEqual(set(names), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
 
     def test_a_loop_bound_through_a_constant_array_size_resolves_every_slot(self):
         root = self.fixture('inline constexpr std::size_t Slots = 4;\n'
@@ -85,6 +110,20 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
                                       "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_4_SERIAL"][0][1], 6)
+
+    def test_computed_names_do_not_treat_bound_expression_prefixes_as_literals(self):
+        for expression, bound, declarations in (
+            ("2 * 2", "Slots", ""),
+            ("1 << 2", "serials.size()", "using Serials = std::array<int, Slots>;\nSerials serials;\n"),
+        ):
+            with self.subTest(expression=expression, bound=bound):
+                root = self.fixture(f'constexpr std::size_t Slots = {expression};\n' + declarations
+                                    + f'for (std::size_t slot = 0; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                names = env_reference.reads([root / "core"], BOTH)
+                self.assertEqual(set(names), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
 
     def test_a_computed_name_without_a_loop_is_an_undetermined_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
@@ -265,7 +304,10 @@ class EnvReferenceTests(unittest.TestCase):
                  ('environmentCount("ANYPS5_G", 0x10, Maximum, "message")', "integer", "0x10"),
                  ('MebibytesFromEnvironment("ANYPS5_H_MIB", 1\'024)', "integer", "1'024"),
                  ('std::getenv("ANYPS5_I") ? 1 : 0x2A', "string", "0x2A"),
-                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"))
+                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"),
+                 ('std::getenv("ANYPS5_K") ? 1 : -1L', "string", "-1"),
+                 ('std::getenv("ANYPS5_L") ? 1 : - 0x20', "string", "-0x20"),
+                 ('std::getenv("ANYPS5_M") ? 1 : +64', "string", "+64"))
         source.write_text("".join(f"static auto value{index} = {line[0]};\n" for index, line in enumerate(lines)), encoding="utf-8")
         found = env_reference.reads([root / "core"])
         for index, (line, kind, default) in enumerate(lines):
@@ -852,6 +894,29 @@ class SourceFileFilterTests(unittest.TestCase):
             (root / "src" / "d.hpp").write_text("x", encoding="utf-8")
             names = [path.name for path in env_reference.source_files(root)]
             self.assertEqual(names, ["a.cpp", "d.hpp"])
+
+    def test_source_files_matches_path_suffix_for_leading_dot_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = (
+                ("Source.cpp", "APS5_SOURCE"),
+                (".tracked.cpp", "APS5_TRACKED"),
+                ("..cpp", "APS5_PHANTOM"),
+                (".cpp", "APS5_DOTONLY"),
+            )
+            for filename, env_name in fixtures:
+                (root / filename).write_text(f'getenv("{env_name}");\n', encoding="utf-8")
+            expected_names = sorted(
+                filename for filename, _ in fixtures
+                if Path(filename).suffix in env_reference.EXTENSIONS
+            )
+            expected_env = {
+                env_name for filename, env_name in fixtures
+                if Path(filename).suffix in env_reference.EXTENSIONS
+            }
+            names = [path.name for path in env_reference.source_files(root)]
+            self.assertEqual(names, expected_names)
+            self.assertEqual(set(env_reference.reads([root])), expected_env)
 class HelperTests(unittest.TestCase):
     def test_library_of_names_the_library_or_core_component(self):
         self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/Export.cpp"), "libSceFoo")
@@ -864,6 +929,62 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(len(blanked), len(text))
         self.assertIn('getenv("ANYPS5_A")', blanked)
         self.assertNotIn("ANYPS5_B", blanked)
+
+    def test_fast_cpp_scanners_match_cpp_token_on_literals_and_digit_separators(self):
+        samples = [
+            'int n = 1\'000\'000; auto s = u8R"d(getenv("APS5_RAW"))d"; // APS5_C\r\nauto a = getenv("APS5_OK");\n',
+            'char c = L\'x\'; /* block\nAPS5_B */ auto b = _wgetenv(L"ANYPS5_W");\n',
+            'int x = 0x1\'2; /* unclosed comment\nauto k = "APS5_KEEP";\n',
+        ]
+        for sample in samples:
+            expected_cpp = env_reference.CPP_TOKEN.sub(
+                lambda m: env_reference.NON_NEWLINE.sub(" ", m.group())
+                if m.lastgroup in ("comment", "raw", "char") else m.group(),
+                sample,
+            )
+            expected_blank = env_reference.CPP_TOKEN.sub(
+                lambda m: m.group() if m.group("code") else " " * len(m.group()),
+                sample,
+            )
+            expected_uncommented = env_reference.CPP_TOKEN.sub(
+                lambda m: " " * len(m.group()) if m.group("comment") else m.group(),
+                sample,
+            )
+            self.assertEqual(env_reference.cpp_reads(sample), expected_cpp)
+            self.assertEqual(env_reference._blank_non_code(sample), expected_blank)
+            self.assertEqual(env_reference.uncommented(sample), expected_uncommented)
+
+    def test_unterminated_block_comment_matches_cpp_token_and_reads(self):
+        samples = [
+            'auto a = getenv("APS5_BEFORE"); /* unclosed getenv("APS5_AFTER")',
+            '/* closed */ auto a = getenv("APS5_BEFORE"); /* unclosed // getenv("APS5_LINE")\ngetenv("APS5_AFTER")',
+        ]
+        for sample in samples:
+            expected_cpp = env_reference.CPP_TOKEN.sub(
+                lambda m: env_reference.NON_NEWLINE.sub(" ", m.group())
+                if m.lastgroup in ("comment", "raw", "char") else m.group(),
+                sample,
+            )
+            expected_blank = env_reference.CPP_TOKEN.sub(
+                lambda m: m.group() if m.group("code") else " " * len(m.group()),
+                sample,
+            )
+            expected_uncommented = env_reference.CPP_TOKEN.sub(
+                lambda m: " " * len(m.group()) if m.group("comment") else m.group(),
+                sample,
+            )
+            self.assertEqual(env_reference.cpp_reads(sample), expected_cpp)
+            self.assertEqual(env_reference._blank_non_code(sample), expected_blank)
+            self.assertEqual(env_reference.uncommented(sample), expected_uncommented)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Unclosed.cpp").write_text(samples[1], encoding="utf-8")
+            self.assertEqual(set(env_reference.reads([root])), {"APS5_BEFORE", "APS5_AFTER"})
+
+    def test_anchored_line_reads_preserve_word_boundaries(self):
+        text = 'foo_std::getenv("APS5_NO"); foo_wgetenv(L"APS5_NO2"); std::getenv("APS5_YES"); std::_wgetenv(L"APS5_YES2");'
+        names = [m.group("name") for _, m in env_reference.line_reads(text)]
+        self.assertEqual(names, ["APS5_YES", "APS5_YES2"])
 
     def test_list_names_writes_sorted_tab_separated_rows(self):
         found = {"ANYPS5_B": [("core/a.cpp", 3, "getenv", "1")],

@@ -40,6 +40,7 @@ STT_FUNC = 2
 STT_TLS = 6
 STT_GNU_IFUNC = 10
 SHN_LORESERVE = 0xFF00
+SHN_ABS = 0xFFF1
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
@@ -266,6 +267,11 @@ class Module:
                 continue
             yield name, shndx, value, kind
 
+    def image_exports(self):
+        for name, section, address, kind in self.exported_symbols():
+            if section not in (SHN_ABS, SHN_COMMON) and kind != STT_TLS:
+                yield name, section, address, kind
+
     def exports(self):
         found = {}
         thread_local = {}
@@ -307,6 +313,8 @@ class Module:
                     elif info & 0xffffffff == R_X86_64_64:
                         _, section, value, kind, _, _ = self.symbol(info >> 32)
                         if section in (0, SHN_COMMON) or kind in (STT_TLS, STT_GNU_IFUNC):
+                            continue
+                        if section == SHN_ABS and self.unpack("<H", 16)[0] != 2:
                             continue
                         address = (value + addend) & 0xffffffffffffffff
                     else:
@@ -368,8 +376,8 @@ class Namer:
 
 def ghidra_symbols(module, namer):
     rows = {(address, False, "imp_" + namer.resolve(symbol), symbol) for address, symbol in module.imports().items()}
-    exported_functions = {address for _, section, address, kind in module.exported_symbols()
-                          if kind in (STT_FUNC, STT_GNU_IFUNC) and section != SHN_COMMON}
+    image_exports = list(module.image_exports())
+    exported_functions = {address for _, _, address, kind in image_exports if kind in (STT_FUNC, STT_GNU_IFUNC)}
     for address, name in module.lifecycle_array_functions():
         if address not in exported_functions and any(flags & PF_X and start <= address < start + size and
                                                      offset + address - start < len(module.data)
@@ -385,9 +393,7 @@ def ghidra_symbols(module, namer):
     entry = module.entry_point()
     if entry is not None and entry not in exported_functions and not any(address == entry and function for address, function, _, _ in rows):
         rows.add((entry, True, "elf_entry", "elf_entry"))
-    for symbol, section, address, kind in module.exported_symbols():
-        if kind == STT_TLS or section == SHN_COMMON:
-            continue
+    for symbol, _, address, kind in image_exports:
         function = kind in (STT_FUNC, STT_GNU_IFUNC) and any(flags & PF_X and start <= address < start + size and
                                                           offset + address - start < len(module.data)
                                                           for start, offset, size, flags in module.loads)
@@ -595,8 +601,10 @@ def annotate(module_path, prefix, namer):
     stubs = find_stubs(listing, slots, namer)
     functions = {}
     address_exports = {}
-    for symbol, section, address, kind in module.exported_symbols():
-        if kind == STT_FUNC and section != SHN_COMMON and any(start <= address < start + len(code) for start, code in segments):
+    export_labels = {}
+    for symbol, section, address, kind in module.image_exports():
+        export_labels.setdefault(address, []).append(symbol)
+        if kind == STT_FUNC and any(start <= address < start + len(code) for start, code in segments):
             name = namer.resolve(symbol)
             functions.setdefault(address, set()).add(name)
         elif kind == STT_OBJECT and any(address in span for span in module.load_memory_ranges):
@@ -608,7 +616,7 @@ def annotate(module_path, prefix, namer):
     branch_targets = {address: ", ".join(sorted(names)) for address, names in functions.items()}
     branch_targets.update(stubs)
     try:
-        unwind_labels = module.unwind_labels(exports.keys() | stubs.keys() | slots.keys() | {entry})
+        unwind_labels = module.unwind_labels(export_labels.keys() | stubs.keys() | slots.keys() | {entry})
     except ModuleError as error:
         print(f"{source}: skipping unwind labels: {error}", file=sys.stderr)
         unwind_labels = {}
@@ -618,7 +626,7 @@ def annotate(module_path, prefix, namer):
         branch_targets.update(unwind_labels)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry, unwind_labels, address_exports))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, export_labels, branch_targets, namer, entry, unwind_labels, address_exports))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
@@ -636,7 +644,7 @@ def parse_arguments(argv):
     parser.add_argument("--no-names", action="store_true", help="print NIDs without loading the database")
     formats = parser.add_mutually_exclusive_group()
     formats.add_argument("--symbols-json", action="store_true", help="inspect imports and exports as JSON offline without objdump or output files")
-    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map with labels for indexed unwind ranges; omits TLS and unallocated common symbols; needs no objdump")
+    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map with labels for indexed unwind ranges; omits absolute, TLS and unallocated common symbols; needs no objdump")
     args = parser.parse_args(argv)
     if (args.symbols_json or args.symbols_ghidra) and args.out is not None:
         mode = "--symbols-json" if args.symbols_json else "--symbols-ghidra"

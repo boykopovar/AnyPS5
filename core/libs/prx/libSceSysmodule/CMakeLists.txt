@@ -1,5 +1,6 @@
 add_library(libSceSysmodule SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceSysmodule PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceSysmodule PRIVATE libkernel_sys)
 configure_windows_unwind(libSceSysmodule)
 
 if(BUILD_TESTING)

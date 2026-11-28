@@ -9,6 +9,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #ifdef _WIN32
@@ -25,8 +26,13 @@ inline const wchar_t* ConfiguredEntitlements() { return _wgetenv(L"ANYPS5_ENTITL
 inline const char* ConfiguredEntitlements() { return std::getenv("ANYPS5_ENTITLEMENTS"); }
 #endif
 
+inline bool HasConfiguredEntitlements() {
+    const auto* configured = ConfiguredEntitlements();
+    return configured != nullptr && configured[0] != 0;
+}
+
 inline std::filesystem::path EntitlementsPath() {
-    if (const auto* configured = ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return configured;
+    if (HasConfiguredEntitlements()) return ConfiguredEntitlements();
 #ifdef _WIN32
     wchar_t module[MAX_PATH];
     const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
@@ -54,19 +60,35 @@ struct ParsedEntry {
 inline std::vector<ParsedEntry> ParseEntries() {
     std::vector<ParsedEntry> list;
     const auto path = EntitlementsPath();
+    std::error_code error;
+    if (std::filesystem::is_directory(path, error)) {
+        throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
+    }
     std::ifstream file(path);
     if (!file) {
-        if (ConfiguredEntitlements() != nullptr || std::filesystem::exists(path)) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
+        error.clear();
+        if (HasConfiguredEntitlements() || std::filesystem::exists(path, error) || error) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
         return list;
     }
+    bool firstLine = true;
     std::string line;
     while (std::getline(file, line)) {
+        if (firstLine) {
+            firstLine = false;
+            if (line.size() >= 3 &&
+                static_cast<unsigned char>(line[0]) == 0xEF &&
+                static_cast<unsigned char>(line[1]) == 0xBB &&
+                static_cast<unsigned char>(line[2]) == 0xBF) {
+                line.erase(0, 3);
+            }
+        }
         line.erase(std::min(line.find_first_of("#;"), line.size()));
         const auto first = line.find_first_not_of(" \t\r");
         if (first == std::string::npos) continue;
         const auto trimmed = line.substr(first, line.find_last_not_of(" \t\r") + 1 - first);
         const auto delimiter = trimmed.find_first_of("= \t");
         const auto label = delimiter == std::string::npos ? trimmed : trimmed.substr(0, delimiter);
+        if (label.empty()) throw std::runtime_error("NpEntitlementAccess: empty entitlement label in " + path.string());
         if (label.size() >= 17) throw std::runtime_error("NpEntitlementAccess: entitlement label '" + label + "' in " + path.string() + " is longer than 16 characters");
         std::string target;
         if (delimiter != std::string::npos) {
@@ -78,8 +100,10 @@ inline std::vector<ParsedEntry> ParseEntries() {
         if (target.size() >= 16) throw std::runtime_error("NpEntitlementAccess: mount target '" + target + "' in " + path.string() + " is longer than 15 characters");
         list.push_back({label, target});
     }
+    if (file.bad()) {
+        throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
+    }
     return list;
 }
 
 }
-

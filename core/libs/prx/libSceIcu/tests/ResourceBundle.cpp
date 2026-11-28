@@ -113,7 +113,48 @@ void Run() {
 
 } // namespace UresHasNext
 
+namespace {
+
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using LocaleGetter = const char* (APS5_VABI*)(const UResourceBundle*, std::int32_t*);
+
+static_assert(std::is_same_v<decltype(&ures_getLocale_nid_postfix), LocaleGetter>);
+static_assert(std::is_same_v<decltype(&ures_getLocaleInternal_nid_postfix), LocaleGetter>);
+
+void CheckLocaleGetters() {
+    const char name[] = "fr_FR";
+    const char* entry = name;
+    struct BundlePrefix {
+        const char* key;
+        const char* const* data;
+    };
+    static_assert(offsetof(BundlePrefix, data) == 8);
+    const BundlePrefix prefix{"resource-key", &entry};
+    const auto* bundle = reinterpret_cast<const UResourceBundle*>(&prefix);
+    const auto* invalid = reinterpret_cast<const UResourceBundle*>(UINTPTR_MAX);
+
+    for (const LocaleGetter get : {ures_getLocale_nid_postfix, ures_getLocaleInternal_nid_postfix}) {
+        for (std::int32_t status : {0, -128}) {
+            const auto incoming = status;
+            Require(get(bundle, &status) == name && status == incoming);
+        }
+        std::int32_t status = 15;
+        Require(get(invalid, &status) == nullptr && status == 15);
+        Require(get(invalid, nullptr) == nullptr);
+        status = -128;
+        Require(get(nullptr, &status) == nullptr && status == 1);
+        status = 0;
+        RequireThrows([&] { get(invalid, &status); });
+        const BundlePrefix empty{};
+        RequireThrows([&] { get(reinterpret_cast<const UResourceBundle*>(&empty), &status); });
+    }
+}
+
+}
+
 void CheckIcuResourceBundle() {
     UresClose::Run();
     UresHasNext::Run();
+    CheckLocaleGetters();
 }

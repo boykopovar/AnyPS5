@@ -31,11 +31,15 @@ public:
     }
 
     ~FrameTimingLog() {
-        worker.request_stop();
+        {
+            std::lock_guard lock(mutex);
+            worker.request_stop();
+        }
         changed.notify_one();
     }
 
     void Enqueue(Report report) {
+        if (!report) throw std::invalid_argument("frame timing log report is empty");
         {
             std::lock_guard lock(mutex);
             if (failure != nullptr) std::rethrow_exception(failure);
@@ -47,10 +51,19 @@ public:
     }
 
     void Finish() {
-        worker.request_stop();
+        std::lock_guard finishLock(finishMutex);
+        {
+            std::lock_guard lock(mutex);
+            worker.request_stop();
+        }
         changed.notify_one();
         if (worker.joinable()) worker.join();
-        if (failure != nullptr) std::rethrow_exception(failure);
+        std::exception_ptr error;
+        {
+            std::lock_guard lock(mutex);
+            error = failure;
+        }
+        if (error != nullptr) std::rethrow_exception(error);
     }
 
 private:
@@ -85,8 +98,14 @@ private:
             file.close();
             requireGood();
         } catch (...) {
+            const auto current = std::current_exception();
+            try {
+                if (file.is_open()) file.close();
+            } catch (...) {
+            }
             std::lock_guard lock(mutex);
-            failure = std::current_exception();
+            pending.clear();
+            failure = current;
         }
     }
 
@@ -94,6 +113,7 @@ private:
     std::array<char, 65536> buffer{};
     std::ofstream file;
     std::mutex mutex;
+    std::mutex finishMutex;
     std::condition_variable changed;
     std::vector<Report> pending;
     std::exception_ptr failure;

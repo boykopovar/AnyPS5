@@ -254,6 +254,23 @@ class NumbersTests(unittest.TestCase):
                                                   ["perf", "perf numbers missing"])),
                          (set(), {"perf numbers missing"}))
 
+    def test_periodic_summary_rows_of_two_runs_count(self):
+        env = {"APS5_DUMP_FRAMES": "20", "APS5_DUMP_FRAMES_EVERY": "100", "APS5_TRACE_SUMMARY_EVERY": "10"}
+        first = json.loads(summary("9ca3cec82242"))
+        first.update(env=env, window={"spec": "summary_every 10", "first_present": 2932, "ms": 10006.512}, presents=172,
+                     frame_ms={"p50": 58.35, "p90": 60.27, "p99": 61.917, "max": 62.587}, gpu_busy_ms_per_present=46.55)
+        second = json.loads(summary("cc25449add3d"))
+        second.update(env=env, window={"spec": "summary_every 10", "first_present": 2992, "ms": 10019.394}, presents=176,
+                      frame_ms={"p50": 56.966, "p90": 58.68, "p99": 61.146, "max": 61.276}, gpu_busy_ms_per_present=45.613)
+        for record in (first, second):
+            record["trace"] = ""
+        body = json.dumps(first) + "\n" + json.dumps(second)
+        self.assertTrue(pr_labels.has_numbers(body))
+        self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body, ["perf", "perf numbers missing"])),
+                         (set(), {"perf numbers missing"}))
+        second["window"]["spec"] = "summary_every 30"
+        self.assertFalse(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
+
     def test_counts(self):
         cases = [
             ("", False),
