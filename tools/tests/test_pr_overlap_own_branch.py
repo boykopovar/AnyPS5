@@ -164,6 +164,10 @@ class BranchResolutionTests(unittest.TestCase):
         run("branch", "contrib/topic")
         self.assertEqual(pr_overlap.resolve_branch("contrib/topic"), run("rev-parse", "HEAD"))
 
+    def test_resolves_a_branch_whose_name_starts_with_a_dash(self):
+        run("update-ref", "refs/heads/-b", "HEAD")
+        self.assertEqual(pr_overlap.resolve_branch("-b"), run("rev-parse", "HEAD"))
+
     def test_uses_the_configured_push_repository_and_destination_branch(self):
         run("remote", "add", "fork", "https://github.com/reader/project.git")
         run("remote", "set-url", "--push", "fork", "git@github.com:writer/project.git")
