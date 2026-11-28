@@ -78,7 +78,7 @@ int APS5_VABI sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, siz
             APS5_INVALID_ARG_EX;
         }
     }
-    throw std::runtime_error(std::string(__func__) + ": icon file not found");
+    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
 }
 
 int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata) {

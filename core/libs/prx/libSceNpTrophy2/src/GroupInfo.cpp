@@ -144,7 +144,7 @@ int APS5_VABI sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, vo
             APS5_INVALID_ARG_EX;
         }
     }
-    throw std::runtime_error(std::string(__func__) + ": icon file not found");
+    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
 }
 
 }
