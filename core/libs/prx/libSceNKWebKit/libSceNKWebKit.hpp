@@ -81,6 +81,7 @@
 #include "prx/libSceNKWebKit/include/WebSocketFrameExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfStringDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/EventExports.hpp"
 #include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
 #include "prx/libSceNKWebKit/include/ScriptExecutableExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
