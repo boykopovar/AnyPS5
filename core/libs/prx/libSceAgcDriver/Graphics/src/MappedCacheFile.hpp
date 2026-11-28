@@ -56,7 +56,11 @@ public:
         }
         if (startThread && bytes >= TrimmedFromBytes) {
             auto* self = created.get();
-            created->trimmer = startThread([self] { self->trim(); });
+            try {
+                created->trimmer = startThread([self] { self->trim(); });
+            } catch (const std::system_error&) {
+                return nullptr;
+            }
         }
         return created;
     }

@@ -265,6 +265,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
     const auto onDisk = readHeader();
     if (liveBytes == settledBytes && onDisk == settledFile) return;
     const bool fileUnchanged = holdsFile && settledFile.has_value() && onDisk == settledFile;
+    if (!fileUnchanged) holdsFile = false;
     const auto started = std::chrono::steady_clock::now();
     const auto settle = [&](const std::optional<FileHeader>& file) {
         settledBytes = liveBytes;

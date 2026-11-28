@@ -252,9 +252,9 @@ int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::f
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, mapped, mapped-low-memory, mapped-no-slot or mapped-no-protection");
+    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, external-merge, mapped, mapped-low-memory, mapped-no-slot, mapped-no-protection or mapped-no-helper");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-no-slot" || mode == "mapped-no-protection", "unknown mode");
+    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "external-merge" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-no-slot" || mode == "mapped-no-protection" || mode == "mapped-no-helper", "unknown mode");
 #ifndef _WIN32
     if (mode == "read-retry" || mode.starts_with("mapped")) return 77;
 #endif
@@ -265,6 +265,20 @@ int main(int argc, char** argv) {
         ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
     } cleanup{root};
 #ifdef _WIN32
+    if (mode == "mapped-no-helper") {
+        const auto refused = MappedCacheFile::Create(root / "refused", MappedCacheFile::TrimmedFromBytes, std::size_t{16} << 20u, [](std::function<void()>) -> std::thread {
+            throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
+        });
+        Check(refused == nullptr, "a mapped file whose helper thread could not start was handed out");
+        Check(std::filesystem::is_empty(root), "a mapped file whose helper thread could not start left its temporary file");
+        std::vector<std::unique_ptr<MappedCacheFile>> windowed;
+        for (int index = 0; index < 4; ++index) {
+            windowed.push_back(MappedCacheFile::Create(root / ("windowed-" + std::to_string(index)), 8192, 4096, {}));
+            Check(windowed.back() != nullptr, "a mapped file whose helper thread could not start kept its window slot");
+        }
+        std::puts("mapped-no-helper: a helper thread that cannot start rejects the mapping, removes its file and frees its slot");
+        return 0;
+    }
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
     _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", root.wstring().c_str());
 #else
@@ -310,6 +324,29 @@ int main(int argc, char** argv) {
         cache.reset();
         Check(caches.empty(), "the first-save test leaked Vulkan objects");
         std::puts("first-save: the save after a cache's first one in a new folder wrote the file without reading it back");
+        return 0;
+    }
+    if (mode == "external-merge") {
+        {
+            PipelineCache writer(context, properties);
+            Grow(writer.Handle(), 96);
+            writer.SaveNow();
+        }
+        const auto external = Read(file);
+        Check(external.size() == 24 + 96, "the second writer did not update the cache file");
+        auto before = creations.load();
+        cache->SaveNow();
+        Check(creations == before + 1 && Read(file) == external, "a smaller cache did not merge and keep the other writer's file");
+        for (const std::size_t bytes : {std::size_t{128}, std::size_t{160}}) {
+            Grow(cache->Handle(), bytes);
+            before = creations.load();
+            cache->SaveNow();
+            Check(creations == before + 1, "a cache that lacks another writer's entries saved over the file without merging it");
+            Check(Read(file).size() == 24 + bytes, "the save after an external merge did not write the grown cache");
+        }
+        cache.reset();
+        Check(caches.empty(), "the external-merge test leaked Vulkan objects");
+        std::puts("external-merge: a cache kept merging the file after another writer changed it, also after settling without a write");
         return 0;
     }
 #ifdef _WIN32

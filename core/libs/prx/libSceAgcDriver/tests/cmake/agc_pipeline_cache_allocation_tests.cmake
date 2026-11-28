@@ -17,13 +17,15 @@ if(BUILD_TESTING)
     endforeach()
     add_test(NAME agc_pipeline_cache_first_save COMMAND agc_pipeline_cache_allocation_tests first-save)
     set_tests_properties(agc_pipeline_cache_first_save PROPERTIES TIMEOUT 25)
+    add_test(NAME agc_pipeline_cache_external_merge COMMAND agc_pipeline_cache_allocation_tests external-merge)
+    set_tests_properties(agc_pipeline_cache_external_merge PROPERTIES TIMEOUT 25)
     if(WIN32)
-        set_tests_properties(agc_pipeline_cache_first_save PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_pipeline_cache_first_save agc_pipeline_cache_external_merge PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME agc_pipeline_cache_read_retry COMMAND agc_pipeline_cache_allocation_tests read-retry)
         set_tests_properties(agc_pipeline_cache_read_retry PROPERTIES TIMEOUT 25 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-        foreach(mode mapped mapped-low-memory mapped-no-slot mapped-no-protection)
+        foreach(mode mapped mapped-low-memory mapped-no-slot mapped-no-protection mapped-no-helper)
             string(REPLACE "-" "_" name ${mode})
             add_test(NAME agc_pipeline_cache_${name} COMMAND agc_pipeline_cache_allocation_tests ${mode})
             set_tests_properties(agc_pipeline_cache_${name} PROPERTIES TIMEOUT 25 ENVIRONMENT_MODIFICATION
