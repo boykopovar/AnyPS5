@@ -137,6 +137,8 @@ struct RudpSocket {
 std::map<int, RudpSocket> g_sockets;
 std::vector<std::pair<int, uint16_t>> g_held_bindings;
 TimedWait::Condition g_accept_changed;
+int g_accept_waiters = 0;
+bool g_ending = false;
 
 struct RudpPoll {
     std::size_t capacity;
@@ -177,6 +179,17 @@ struct RudpPollWaitRegistration {
     }
 };
 
+struct RudpAcceptWaitRegistration {
+    std::unique_lock<std::mutex>& lock;
+
+    ~RudpAcceptWaitRegistration() {
+        if (!lock.owns_lock()) {
+            lock.lock();
+        }
+        if (--g_accept_waiters == 0) g_accept_changed.NotifyAll();
+    }
+};
+
 bool valid_ctx(int ctx) {
     return g_ctx.count(ctx) != 0;
 }
@@ -212,7 +225,8 @@ int enable_internal_io_thread() {
 extern "C" {
 
 int APS5_VABI sceRudpInit_nid_postfix(void* mem_pool, int mem_pool_size) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::unique_lock<std::mutex> lk(g_mutex);
+    g_polls_changed.Wait(lk, [] { return !g_ending; });
     if (g_inited) {
         return RUDP_ERROR_ALREADY_INITIALIZED;
     }
@@ -270,6 +284,7 @@ int APS5_VABI sceRudpEnd(void) {
         if (const int inside = waiters_inside(poll)) leaving.emplace(id, inside);
     }
     g_inited = false;
+    g_ending = true;
     g_ctx.clear();
     g_polls.clear();
     g_handler = nullptr;
@@ -280,6 +295,9 @@ int APS5_VABI sceRudpEnd(void) {
     g_polls_changed.NotifyAll();
     g_accept_changed.NotifyAll();
     g_polls_changed.Wait(lk, [] { return g_polls_leaving.empty(); });
+    g_accept_changed.Wait(lk, [] { return g_accept_waiters == 0; });
+    g_ending = false;
+    g_polls_changed.NotifyAll();
     return 0;
 }
 
@@ -761,10 +779,9 @@ int APS5_VABI sceRudpAccept(int ctxId, GuestRudpEventHandler handler, void* hand
     if (g_ctx.at(ctxId).options.at(RUDP_OPTION_NONBLOCK) != 0) {
         return RUDP_ERROR_WOULDBLOCK;
     }
+    ++g_accept_waiters;
+    const RudpAcceptWaitRegistration registration{lk};
     g_accept_changed.Wait(lk, [ctxId] { return !g_inited || !valid_ctx(ctxId); });
-    if (!g_inited) {
-        throw std::runtime_error("sceRudpAccept: a waiting accept ended by sceRudpEnd");
-    }
     return RUDP_ERROR_CANCELLED;
 }
 
