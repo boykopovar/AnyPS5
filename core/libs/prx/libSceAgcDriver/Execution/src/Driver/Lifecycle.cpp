@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestArenaDriverMemory.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -68,8 +69,8 @@ constexpr std::uint64_t DriverMemoryAddress = MacOsDriverMemoryBase;
 constexpr std::size_t DriverMemoryBytes = DriverMemorySpan;
 constexpr std::uint64_t FsTableAddress = RetargetPs5DriverMemory(0xfe0040000ull);
 #else
-constexpr std::uint64_t DriverMemoryAddress = 0xfe0000000ull + GuestArena::GuestAddressOffset;
-constexpr std::size_t DriverMemoryBytes = 2u << 20u;
+constexpr std::uint64_t DriverMemoryAddress = GuestArena::AgcDriverMemoryAddress;
+constexpr std::size_t DriverMemoryBytes = GuestArena::AgcDriverMemoryBytes;
 constexpr std::uint64_t FsTableAddress = DriverMemoryAddress + 0x40000ull;
 #endif
 constexpr std::uint64_t FsTableSlotBytes = 16u;
