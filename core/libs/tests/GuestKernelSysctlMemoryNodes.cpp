@@ -229,65 +229,48 @@ void CheckHwPhysmemSysctl() {
 void CheckVmOvercommitSysctl() {
     int mib[4] = {};
     std::size_t mibLen = 4;
-    *__error_nid_postfix() = 0;
+    *__error_nid_postfix() = 77;
     Require(sysctlnametomib_nid_postfix("vm.overcommit", mib, &mibLen) == -1);
     Require(*__error_nid_postfix() == 2);
+    Require(mibLen == 4);
 
-    *__error_nid_postfix() = 77;
-    std::size_t length = 0;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, &length, nullptr, 0) == 0);
-    Require(length == sizeof(int));
-    Require(*__error_nid_postfix() == 77);
+    std::size_t length = 77;
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
+    Require(length == 77);
 
-    int value = -1;
+    int value = 0x5a5a5a5a;
     length = sizeof(value);
-    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == 0);
-    Require(length == sizeof(value));
-    Require(value == 0);
-    Require(*__error_nid_postfix() == 77);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
 
-    value = -1;
+    value = 0x5a5a5a5a;
     length = sizeof(value);
-    Require(sysctlbyname_nid_postfix("vm.overcommit.", &value, &length, nullptr, 0) == 0);
-    Require(length == sizeof(value));
-    Require(value == 0);
+    Require(sysctlbyname_nid_postfix("vm.overcommit.", &value, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
 
-    std::array<std::uint8_t, 4> shortBuf{};
-    shortBuf.fill(0xAA);
+    unsigned char bytes[4] = {0xaa, 0xaa, 0xaa, 0xaa};
     length = 2;
-    *__error_nid_postfix() = 0;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", shortBuf.data(), &length, nullptr, 0) == -1);
-    Require(*__error_nid_postfix() == 12);
-    Require(length == 2);
-    Require(shortBuf[2] == 0xAA && shortBuf[3] == 0xAA);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", bytes, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
+    Require(length == 2 && bytes[0] == 0xaa && bytes[1] == 0xaa && bytes[2] == 0xaa && bytes[3] == 0xaa);
 
-    shortBuf.fill(0xAA);
-    length = 0;
-    *__error_nid_postfix() = 0;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", shortBuf.data(), &length, nullptr, 0) == -1);
-    Require(*__error_nid_postfix() == 12);
-    Require(length == 0);
-    Require(shortBuf[0] == 0xAA);
-
-    std::array<std::uint8_t, 8> bigBuf{};
-    bigBuf.fill(0xCC);
-    length = bigBuf.size();
-    *__error_nid_postfix() = 77;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", bigBuf.data(), &length, nullptr, 0) == 0);
-    Require(length == sizeof(int));
-    Require(*__error_nid_postfix() == 77);
-    int bigVal = -1;
-    std::memcpy(&bigVal, bigBuf.data(), sizeof(bigVal));
-    Require(bigVal == 0);
-    for (std::size_t i = sizeof(int); i < bigBuf.size(); ++i) {
-        Require(bigBuf[i] == 0xCC);
-    }
-
-    int newValue = 1;
+    int written = 1;
+    value = 0x5a5a5a5a;
     length = sizeof(value);
-    *__error_nid_postfix() = 0;
-    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &newValue, sizeof(newValue)) == -1);
-    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &written, sizeof(written)) == -1);
+    Require(*__error_nid_postfix() == 2);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
+
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("vm.overcommit", nullptr, nullptr, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
 
     length = sizeof(value);
     *__error_nid_postfix() = 0;
