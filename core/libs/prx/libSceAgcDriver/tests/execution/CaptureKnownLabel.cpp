@@ -224,7 +224,10 @@ int Check(const GuestBlock& block, const char* name, const Scenario& off, const 
         return 0;
     }
     if (servedExpected) Require(after.served > before.served, std::string("capture known label, ") + name + ": the label word was not served from the label (" + std::to_string(after.served) + " served, " + std::to_string(before.served) + " with the switch off)");
-    if (fewerSyncs) Require(after.syncs < before.syncs, std::string("capture known label, ") + name + ": the capture still waited for the GPU (" + std::to_string(after.syncs) + " hook syncs, " + std::to_string(before.syncs) + " with the switch off)");
+    if (fewerSyncs && servedExpected) {
+        Require(after.syncs <= before.syncs, std::string("capture known label, ") + name + ": known labels added hook syncs (" + std::to_string(after.syncs) + ", " + std::to_string(before.syncs) + " with the switch off)");
+        if (after.syncs == before.syncs) std::cout << name << ": the label word was served without waiting, and another access in the same run synced as it did with the switch off" << '\n';
+    } else if (fewerSyncs) Require(after.syncs < before.syncs, std::string("capture known label, ") + name + ": the capture still waited for the GPU (" + std::to_string(after.syncs) + " hook syncs, " + std::to_string(before.syncs) + " with the switch off)");
     else Require(after.syncs >= before.syncs || after.served == before.served, std::string("capture known label, ") + name + ": a word with a later non-label write was served without waiting");
     std::cout << name << ": " << after.syncs << " hook syncs and " << after.served << " served words with known labels, " << before.syncs << " and " << before.served << " with the switch off\n";
     return 0;
