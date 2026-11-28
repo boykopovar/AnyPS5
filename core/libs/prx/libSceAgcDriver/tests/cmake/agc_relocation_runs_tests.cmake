@@ -1,0 +1,10 @@
+add_test_executable(agc_relocation_runs_tests EXCLUDE_FROM_ALL tests/RelocationRuns.cpp)
+target_include_directories(agc_relocation_runs_tests PRIVATE ${LIBS_INCLUDE_DIR})
+set_target_properties(agc_relocation_runs_tests PROPERTIES CXX_EXTENSIONS OFF)
+target_link_libraries(agc_relocation_runs_tests PRIVATE libc)
+configure_windows_unwind(agc_relocation_runs_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_relocation_runs_tests)
+    set_tests_properties(agc_relocation_runs PROPERTIES TIMEOUT 30)
+endif()

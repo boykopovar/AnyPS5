@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/EvpDigest.hpp"
@@ -71,3 +72,4 @@ inline constexpr std::int32_t LibreSsl3MaximumDigestSize = 64;
 bool IsNativePkeyMethod_nid_no_patch(const void* method);
 LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
     const unsigned char** input, std::int64_t length);
+bool ReadDerObjectFromBio_nid_no_patch(LibreSsl::Bio* bio, std::vector<unsigned char>& result);

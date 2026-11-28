@@ -58,6 +58,8 @@ int main() {
         RequireThrows("EXT_x", "");
         RequireThrows("EXT_x ", "");
         RequireThrows("\tEXT_x", "");
+        RequireThrows("EXT_x", reinterpret_cast<const char*>(1));
+        RequireThrows("EXT_x EXT_z", reinterpret_cast<const char*>(0xdeadbeefull));
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GLContext extension query unexpectedly threw: %s\n", error.what());
         return 1;

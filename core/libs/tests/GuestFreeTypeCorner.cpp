@@ -142,6 +142,15 @@ void CheckVectorTransformScaled() {
     Require(Throws([&] { FT_Vector_Transform_Scaled_nid_postfix(&target, nullptr, INT64_MIN); }) &&
             Throws([&] { FT_Vector_Transform_Scaled_nid_postfix(nullptr, &identity, INT64_MAX); }) && SameVector(target, vector),
         "FT_Vector_Transform_Scaled checks 0x10000 * scaling before the null test");
+    static const FreeType::GuestVector readOnlyVector{100, -200};
+    static const FreeType::GuestMatrix readOnlyMatrix{0x18000, 0x8000, -0x10000, 0x20000};
+    errno = 71;
+    FT_Vector_Transform_Scaled_nid_postfix(reinterpret_cast<FreeType::GuestVector*>(0x10), &identity, 1);
+    Require(errno == 71, "FT_Vector_Transform_Scaled preserves errno on an unreadable vector");
+    FT_Vector_Transform_Scaled_nid_postfix(&target, reinterpret_cast<const FreeType::GuestMatrix*>(0x10), 1);
+    Require(errno == 71 && SameVector(target, vector), "FT_Vector_Transform_Scaled leaves target unchanged on an unreadable matrix");
+    FT_Vector_Transform_Scaled_nid_postfix(const_cast<FreeType::GuestVector*>(&readOnlyVector), &readOnlyMatrix, 1);
+    Require(errno == 71 && SameVector(readOnlyVector, {100, -200}), "FT_Vector_Transform_Scaled ignores a read-only vector without changing errno");
 }
 
 void CheckSqrtFixed() {
@@ -207,6 +216,13 @@ void CheckSynthesizeVerticalMetrics() {
         "ft_synthesize_vertical_metrics keeps a non-zero advance");
     ft_synthesize_vertical_metrics_nid_postfix(nullptr, 0);
     ft_synthesize_vertical_metrics_nid_postfix(nullptr, 300);
+    static const FreeType::GuestGlyphMetrics readOnlyMetrics{100, 200, 10, 50, 80, 0, 0, 0};
+    errno = 71;
+    ft_synthesize_vertical_metrics_nid_postfix(reinterpret_cast<FreeType::GuestGlyphMetrics*>(0x10), 0);
+    Require(errno == 71, "ft_synthesize_vertical_metrics preserves errno on an unreadable metrics pointer");
+    ft_synthesize_vertical_metrics_nid_postfix(const_cast<FreeType::GuestGlyphMetrics*>(&readOnlyMetrics), 0);
+    Require(errno == 71 && readOnlyMetrics.vertBearingX == 0 && readOnlyMetrics.vertBearingY == 0 && readOnlyMetrics.vertAdvance == 0,
+        "ft_synthesize_vertical_metrics ignores a read-only metrics pointer without changing errno");
 }
 
 void CheckServiceListLookup() {
@@ -222,6 +238,56 @@ void CheckServiceListLookup() {
     Require(ft_service_list_lookup_nid_postfix(nullptr, nullptr) == nullptr, "ft_service_list_lookup returns null for null inputs");
 }
 
+struct CornerVector {
+    std::int64_t inX;
+    std::int64_t inY;
+    std::int64_t outX;
+    std::int64_t outY;
+    int expected;
+};
+
+void CheckCornerOrientationMeasured() {
+    const CornerVector vectors[] = {
+        {5, 0, 3, 7, 7},
+        {-5, 0, 3, 7, -7},
+        {5, 0, 3, -7, -7},
+        {-5, 0, 3, -7, 7},
+        {3, 5, 7, 3, -1},
+        {3, -5, 7, 3, 1},
+        {3, 5, -7, 3, 1},
+        {3, -5, -7, 3, -1},
+        {3, 5, 7, 0, 5},
+        {3, 5, -7, 0, -5},
+        {3, -5, 7, 0, -5},
+        {3, -5, -7, 0, 5},
+        {5, 3, 0, 7, -5},
+        {-5, 3, 0, 7, 5},
+        {5, 3, 0, -7, 5},
+        {-5, 3, 0, -7, -5},
+        {5, 0, 0, 5, 5},
+        {100, 0, 0, 100, 100},
+        {2147483647LL, 0, 0, 2147483647LL, 2147483647},
+        {1099511627776LL, 0, 0, 1099511627776LL, 0},
+        {-2147483647LL, 0, 0, 2147483647LL, -2147483647},
+        {2147483647LL, 0, 0, -2147483647LL, -2147483647},
+        {0, 5, 7, 3, -7},
+        {0, -5, 7, 3, 7},
+        {0, 5, -7, 3, 7},
+        {0, -5, -7, 3, -7},
+        {0, 5, 3, 7, -3},
+        {0, -5, 3, -7, 3},
+        {0, 100, 100, 100, -100},
+        {0, 2147483647LL, 5, 5, -5},
+        {0, 1099511627776LL, 5, 5, -5},
+        {0, 5, 7, 0, -7},
+        {0, 5, 0, 7, 0},
+    };
+    for (const CornerVector& vector : vectors) {
+        Require(ft_corner_orientation_nid_postfix(vector.inX, vector.inY, vector.outX, vector.outY) == vector.expected,
+            "ft_corner_orientation returns the value measured on a PS5");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -229,10 +295,7 @@ int main() {
     Require(ft_corner_orientation_nid_postfix(0, 1, 1, 0) == -1, "clockwise 90-degree turn is -1");
     Require(ft_corner_orientation_nid_postfix(1, 2, 2, 4) == 0, "collinear parallel vectors are 0");
     Require(ft_corner_orientation_nid_postfix(1, 0, -1, 0) == 0, "collinear opposite vectors are 0");
-    Require(ft_corner_orientation_nid_postfix(0, 0, 5, 5) == 0, "zero input vector is 0");
-    Require(ft_corner_orientation_nid_postfix(5, 5, 0, 0) == 0, "zero output vector is 0");
-    Require(ft_corner_orientation_nid_postfix(1000000000LL, 0, 0, 1000000000LL) == 1, "large counter-clockwise coordinates");
-    Require(ft_corner_orientation_nid_postfix(0, 1000000000LL, 1000000000LL, 0) == -1, "large clockwise coordinates");
+    CheckCornerOrientationMeasured();
 
     Require(ft_corner_is_flat_nid_postfix(100, 0, 100, 0) == 1, "parallel vectors are flat");
     Require(ft_corner_is_flat_nid_postfix(1000, 1, 1000, -1) == 1, "nearly parallel vectors are flat");

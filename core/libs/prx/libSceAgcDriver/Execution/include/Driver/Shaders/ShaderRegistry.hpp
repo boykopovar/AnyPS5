@@ -358,12 +358,27 @@ ShaderRecompiler::RectListShaders PreparedRectangle(const ShaderSnapshot& snapsh
 ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, const std::shared_ptr<const ShaderSnapshot>& fragment, std::uint64_t vertexId, std::uint64_t fragmentId, const ShaderRecompiler::SpirvTarget& target);
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
+struct SplitTableCallParts;
+struct SplitTableCallPart {
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+};
+std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount);
+std::size_t SplitTableCallPartCount(const SplitTableCallParts& parts);
+std::uint32_t SplitTableCallStateSlots(const SplitTableCallParts& parts);
+bool SplitTableCallContinues(const SplitTableCallParts& parts);
+std::optional<std::size_t> SplitTableCallPartOf(const SplitTableCallParts& parts, std::uint64_t target);
+std::uint32_t SplitTableCallTargetSlot(const SplitTableCallParts& parts);
+SplitTableCallPart CompileSplitTableCallPart(ShaderMemory& memory, SplitTableCallParts& parts, std::size_t part, const ShaderRecompiler::RecompileRequest& request);
+std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemory* const> memories, SplitTableCallParts& parts, std::span<const std::size_t> which, const ShaderRecompiler::RecompileRequest& request);
+void ForEachSplitTableCallPart(std::size_t count, const std::function<void(std::size_t)>& work);
 struct OwnedRecompileRequest {
     ShaderRecompiler::RecompileRequest request;
     std::vector<std::uint32_t> code;
     std::vector<std::byte> header;
     std::vector<std::uint32_t> userData;
     std::vector<std::uint32_t> fallbacks;
+    std::vector<std::uint32_t> splitState;
     std::vector<std::vector<std::byte>> regionBytes;
     std::vector<ShaderRecompiler::MemoryRegion> regions;
     std::vector<std::vector<std::uint32_t>> linkedWords;

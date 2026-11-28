@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVANALYSIS_HPP
 
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "SplitStateAbi.hpp"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -56,6 +57,13 @@ inline constexpr std::uint32_t MeshWindowDescriptorSet = 3u;
 inline constexpr std::uint32_t MeshWindowSlots = 256u;
 inline constexpr std::uint32_t MeshWindowHeaderDwords = 4u + MeshWindowSlots;
 inline constexpr std::uint32_t MeshWindowSlotDwords = 65536u;
+inline constexpr std::uint32_t SplitStateDescriptorSet = SplitStateAbi::DescriptorSet;
+inline constexpr std::uint32_t SplitStateCapacityDword = SplitStateAbi::CapacityDword;
+inline constexpr std::uint32_t SplitStateGroupBaseDword = SplitStateAbi::GroupBaseDword;
+inline constexpr std::uint32_t SplitStateGroupCountDword = SplitStateAbi::GroupCountDword;
+inline constexpr std::uint32_t SplitStateGroupListDword = SplitStateAbi::GroupListDword;
+inline constexpr std::uint32_t SplitStateGroupListOffsetDword = SplitStateAbi::GroupListOffsetDword;
+inline constexpr std::uint32_t SplitStateHeaderDwords = SplitStateAbi::HeaderDwords;
 [[nodiscard]] std::uint32_t FunctionLdsDwords(const IrProgram& program);
 [[nodiscard]] std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program, std::uint32_t dwords);
 [[nodiscard]] std::unordered_set<const IrValue*> WaveUniformValues(const IrProgram& program);

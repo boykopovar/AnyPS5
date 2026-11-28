@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
@@ -305,6 +306,72 @@ void EncoderAppendNum(Encoder* enc, unsigned salt, T val) {
     enc->size += static_cast<unsigned>(sizeof(T));
 }
 
+bool LoadStringImpl(StringImpl*& impl, const String* string) {
+    return GuestCopyIn_nid_no_patch(&impl, string, sizeof(impl));
+}
+
+template<typename Character>
+bool CopyGuestLatin1(Character* destination, const unsigned char* source, std::size_t length) {
+    unsigned char chunk[4096];
+    for (std::size_t offset = 0; offset < length; offset += sizeof(chunk)) {
+        std::size_t count = std::min(sizeof(chunk), length - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, source + offset, count)) return false;
+        if (destination) std::copy_n(chunk, count, destination + offset);
+    }
+    return true;
+}
+
+template<typename Character>
+bool AppendReplacement(Character* out, unsigned& dst, unsigned& first, const unsigned char* replacement, unsigned length) {
+    if (first == std::numeric_limits<unsigned>::max()) {
+        first = dst;
+        if (!CopyGuestLatin1(out + dst, replacement, length)) return false;
+    } else {
+        std::copy_n(out + first, length, out + dst);
+    }
+    dst += length;
+    return true;
+}
+
+constexpr std::size_t splitIteratorStateOffset = offsetof(SplitResultIterator, position);
+constexpr std::size_t splitIteratorStateBytes = offsetof(SplitResultIterator, isDone) + sizeof(bool) - splitIteratorStateOffset;
+
+bool LoadSplitIterator(SplitResultIterator& iterator, const SplitResultIterator* self) {
+    return GuestCopyIn_nid_no_patch(&iterator, self, sizeof(iterator));
+}
+
+bool StoreSplitIterator(SplitResultIterator* self, const SplitResultIterator& iterator) {
+    return GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(self) + splitIteratorStateOffset,
+        reinterpret_cast<const unsigned char*>(&iterator) + splitIteratorStateOffset, splitIteratorStateBytes);
+}
+
+void FindNextSubstring(SplitResultIterator& iterator, const SplitResult& res) {
+    const auto& str = res.string;
+    while (iterator.position <= str.length) {
+        unsigned sepPos = str.length;
+        for (unsigned i = iterator.position; i < str.length; ++i) {
+            char16_t ch = str.is8Bit ? static_cast<const unsigned char*>(str.data)[i] : static_cast<const char16_t*>(str.data)[i];
+            if (ch == res.separator) {
+                sepPos = i;
+                break;
+            }
+        }
+        if (sepPos != str.length) {
+            if (res.allowEmptyEntries || sepPos > iterator.position) {
+                iterator.length = sepPos - iterator.position;
+                return;
+            }
+            ++iterator.position;
+        } else {
+            break;
+        }
+    }
+    iterator.length = str.length - iterator.position;
+    if (!iterator.length && !res.allowEmptyEntries) {
+        iterator.isDone = true;
+    }
+}
+
 template<typename T>
 void VectorAppend(Vector<T>& vec, T&& item) {
     if (vec.size >= vec.capacity) {
@@ -380,6 +447,8 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl7replaceEDsPKhj(const Stri
     }
     std::size_t newLength = static_cast<std::size_t>(self->length) - matchCount + static_cast<std::size_t>(matchCount) * repStrLength;
     if (newLength > 0x7FFFFFFF) throw std::length_error("string length overflow");
+    if (!CopyGuestLatin1<unsigned char>(nullptr, replacement, repStrLength)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    unsigned first = std::numeric_limits<unsigned>::max();
     if (is8Bit) {
         unsigned char* out = nullptr;
         auto res = _ZN3WTF10StringImpl19createUninitializedEjRPh(static_cast<unsigned>(newLength), out);
@@ -387,10 +456,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl7replaceEDsPKhj(const Stri
         for (unsigned i = 0; i < self->length; ++i) {
             unsigned char ch = static_cast<const unsigned char*>(self->data)[i];
             if (ch == pattern) {
-                if (repStrLength) {
-                    std::memcpy(out + dst, replacement, repStrLength);
-                    dst += repStrLength;
-                }
+                if (repStrLength && !AppendReplacement(out, dst, first, replacement, repStrLength)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             } else {
                 out[dst++] = ch;
             }
@@ -403,9 +469,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl7replaceEDsPKhj(const Stri
     for (unsigned i = 0; i < self->length; ++i) {
         char16_t ch = static_cast<const char16_t*>(self->data)[i];
         if (ch == pattern) {
-            for (unsigned j = 0; j < repStrLength; ++j) {
-                out[dst++] = replacement[j];
-            }
+            if (repStrLength && !AppendReplacement(out, dst, first, replacement, repStrLength)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         } else {
             out[dst++] = ch;
         }
@@ -414,44 +478,31 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl7replaceEDsPKhj(const Stri
 }
 
 void APS5_VABI _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv(SplitResultIterator* self) {
-    if (!self || !self->result) throw std::invalid_argument("SplitResult::Iterator: null this");
-    const auto& res = *self->result;
-    const auto& str = res.string;
-    while (self->position <= str.length) {
-        unsigned sepPos = str.length;
-        for (unsigned i = self->position; i < str.length; ++i) {
-            char16_t ch = str.is8Bit ? static_cast<const unsigned char*>(str.data)[i] : static_cast<const char16_t*>(str.data)[i];
-            if (ch == res.separator) {
-                sepPos = i;
-                break;
-            }
-        }
-        if (sepPos != str.length) {
-            if (res.allowEmptyEntries || sepPos > self->position) {
-                self->length = sepPos - self->position;
-                return;
-            }
-            ++self->position;
-        } else {
-            break;
-        }
-    }
-    self->length = str.length - self->position;
-    if (!self->length && !res.allowEmptyEntries) {
-        self->isDone = true;
-    }
+    if (!self) throw std::invalid_argument("SplitResult::Iterator: null this");
+    SplitResultIterator iterator;
+    if (!LoadSplitIterator(iterator, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!iterator.result) throw std::invalid_argument("SplitResult::Iterator: null this");
+    SplitResult result;
+    if (!GuestCopyIn_nid_no_patch(&result, iterator.result, sizeof(result))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    FindNextSubstring(iterator, result);
+    if (!StoreSplitIterator(self, iterator)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 NKWebKit::WtfAbi::SplitResultIterator& APS5_VABI _ZN3WTF10StringView11SplitResult8IteratorppEv(SplitResultIterator* self) {
-    if (!self || !self->result) throw std::invalid_argument("SplitResult::Iterator: null this");
-    const auto& str = self->result->string;
-    self->position += self->length;
-    if (self->position < str.length) {
-        ++self->position;
-        _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv(self);
-    } else if (!self->isDone) {
-        self->isDone = true;
+    if (!self) throw std::invalid_argument("SplitResult::Iterator: null this");
+    SplitResultIterator iterator;
+    if (!LoadSplitIterator(iterator, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!iterator.result) throw std::invalid_argument("SplitResult::Iterator: null this");
+    SplitResult result;
+    if (!GuestCopyIn_nid_no_patch(&result, iterator.result, sizeof(result))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    iterator.position += iterator.length;
+    if (iterator.position < result.string.length) {
+        ++iterator.position;
+        FindNextSubstring(iterator, result);
+    } else if (!iterator.isDone) {
+        iterator.isDone = true;
     }
+    if (!StoreSplitIterator(self, iterator)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return *self;
 }
 
@@ -551,7 +602,7 @@ NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEd(Encoder* s
     return *self;
 }
 
-bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const Decoder* self, unsigned long size) {
+bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const Decoder* self, std::size_t size) {
     if (!self) throw std::invalid_argument("Decoder::bufferIsLargeEnoughToContain: null this");
     if (!self->bufferData || !self->bufferPosition) return false;
     std::size_t remaining = (self->bufferData + self->bufferSize >= self->bufferPosition) ? static_cast<std::size_t>((self->bufferData + self->bufferSize) - self->bufferPosition) : 0;
@@ -689,16 +740,18 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL8passwordEv(const URL* self) {
 
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(const String* self, char16_t separator) {
     if (!self) throw std::invalid_argument("String::splitAllowingEmptyEntries: null this");
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     Vector<String> result;
-    if (!self->impl) {
+    if (!impl) {
         VectorAppend(result, String());
         return result;
     }
-    bool is8Bit = !!(self->impl->hashAndFlags & 4);
+    bool is8Bit = !!(impl->hashAndFlags & 4);
     unsigned start = 0;
-    for (unsigned i = 0; i <= self->impl->length; ++i) {
-        if (i == self->impl->length || (is8Bit ? static_cast<const unsigned char*>(self->impl->data)[i] : static_cast<const char16_t*>(self->impl->data)[i]) == separator) {
-            VectorAppend(result, Substring(self->impl, start, i - start));
+    for (unsigned i = 0; i <= impl->length; ++i) {
+        if (i == impl->length || (is8Bit ? static_cast<const unsigned char*>(impl->data)[i] : static_cast<const char16_t*>(impl->data)[i]) == separator) {
+            VectorAppend(result, Substring(impl, start, i - start));
             start = i + 1;
         }
     }
@@ -707,14 +760,16 @@ NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String25sp
 
 NKWebKit::WtfAbi::Vector<char16_t> APS5_VABI _ZNK3WTF6String29charactersWithNullTerminationEv(const String* self) {
     if (!self) throw std::invalid_argument("String::charactersWithNullTermination: null this");
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     Vector<char16_t> result;
-    if (!self->impl || !self->impl->length) {
+    if (!impl || !impl->length) {
         VectorAppend(result, char16_t{0});
         return result;
     }
-    bool is8Bit = !!(self->impl->hashAndFlags & 4);
-    for (unsigned i = 0; i < self->impl->length; ++i) {
-        char16_t ch = is8Bit ? static_cast<const unsigned char*>(self->impl->data)[i] : static_cast<const char16_t*>(self->impl->data)[i];
+    bool is8Bit = !!(impl->hashAndFlags & 4);
+    for (unsigned i = 0; i < impl->length; ++i) {
+        char16_t ch = is8Bit ? static_cast<const unsigned char*>(impl->data)[i] : static_cast<const char16_t*>(impl->data)[i];
         VectorAppend(result, std::move(ch));
     }
     VectorAppend(result, char16_t{0});
@@ -723,14 +778,16 @@ NKWebKit::WtfAbi::Vector<char16_t> APS5_VABI _ZNK3WTF6String29charactersWithNull
 
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String5splitEDs(const String* self, char16_t separator) {
     if (!self) throw std::invalid_argument("String::split: null this");
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     Vector<String> result;
-    if (!self->impl) return result;
-    bool is8Bit = !!(self->impl->hashAndFlags & 4);
+    if (!impl) return result;
+    bool is8Bit = !!(impl->hashAndFlags & 4);
     unsigned start = 0;
-    for (unsigned i = 0; i <= self->impl->length; ++i) {
-        if (i == self->impl->length || (is8Bit ? static_cast<const unsigned char*>(self->impl->data)[i] : static_cast<const char16_t*>(self->impl->data)[i]) == separator) {
+    for (unsigned i = 0; i <= impl->length; ++i) {
+        if (i == impl->length || (is8Bit ? static_cast<const unsigned char*>(impl->data)[i] : static_cast<const char16_t*>(impl->data)[i]) == separator) {
             if (i > start) {
-                VectorAppend(result, Substring(self->impl, start, i - start));
+                VectorAppend(result, Substring(impl, start, i - start));
             }
             start = i + 1;
         }
@@ -740,44 +797,56 @@ NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZNK3WTF6String5spl
 
 float APS5_VABI _ZNK3WTF6String7toFloatEPb(const String* self, bool* ok) {
     if (!self) throw std::invalid_argument("String::toFloat: null this");
-    if (!self->impl) {
-        if (ok) *ok = false;
-        return 0.0f;
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    bool parsed = false;
+    float value = 0.0f;
+    if (impl && (impl->hashAndFlags & 4)) {
+        value = _ZN3WTF17charactersToFloatEPKhmPb(static_cast<const unsigned char*>(impl->data), impl->length, ok ? &parsed : nullptr);
+    } else if (impl) {
+        value = _ZN3WTF17charactersToFloatEPKDsmPb(static_cast<const char16_t*>(impl->data), impl->length, ok ? &parsed : nullptr);
     }
-    if (self->impl->hashAndFlags & 4) {
-        return _ZN3WTF17charactersToFloatEPKhmPb(static_cast<const unsigned char*>(self->impl->data), self->impl->length, ok);
-    }
-    return _ZN3WTF17charactersToFloatEPKDsmPb(static_cast<const char16_t*>(self->impl->data), self->impl->length, ok);
+    if (ok && !GuestCopyOut_nid_no_patch(ok, &parsed, sizeof(parsed))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return value;
 }
 
 double APS5_VABI _ZNK3WTF6String8toDoubleEPb(const String* self, bool* ok) {
     if (!self) throw std::invalid_argument("String::toDouble: null this");
-    if (!self->impl) {
-        if (ok) *ok = false;
-        return 0.0;
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    bool parsed = false;
+    double value = 0.0;
+    if (impl && (impl->hashAndFlags & 4)) {
+        value = _ZN3WTF18charactersToDoubleEPKhmPb(static_cast<const unsigned char*>(impl->data), impl->length, ok ? &parsed : nullptr);
+    } else if (impl) {
+        value = _ZN3WTF18charactersToDoubleEPKDsmPb(static_cast<const char16_t*>(impl->data), impl->length, ok ? &parsed : nullptr);
     }
-    if (self->impl->hashAndFlags & 4) {
-        return _ZN3WTF18charactersToDoubleEPKhmPb(static_cast<const unsigned char*>(self->impl->data), self->impl->length, ok);
-    }
-    return _ZN3WTF18charactersToDoubleEPKDsmPb(static_cast<const char16_t*>(self->impl->data), self->impl->length, ok);
+    if (ok && !GuestCopyOut_nid_no_patch(ok, &parsed, sizeof(parsed))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return value;
 }
 
 NKWebKit::WtfAbi::String APS5_VABI _ZNKR3WTF6String12isolatedCopyEv(const String* self) {
     if (!self) throw std::invalid_argument("String::isolatedCopy: null this");
-    if (!self->impl) return String();
-    if (self->impl->hashAndFlags & 4) {
-        return _ZN3WTF10StringImpl6createEPKhj(static_cast<const unsigned char*>(self->impl->data), self->impl->length);
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!impl) return String();
+    if (impl->hashAndFlags & 4) {
+        return _ZN3WTF10StringImpl6createEPKhj(static_cast<const unsigned char*>(impl->data), impl->length);
     }
-    return _ZN3WTF10StringImpl6createEPKDsj(static_cast<const char16_t*>(self->impl->data), self->impl->length);
+    return _ZN3WTF10StringImpl6createEPKDsj(static_cast<const char16_t*>(impl->data), impl->length);
 }
 
 NKWebKit::WtfAbi::String APS5_VABI _ZNO3WTF6String12isolatedCopyEv(String* self) {
     if (!self) throw std::invalid_argument("String::isolatedCopy: null this");
-    if (!self->impl) return String();
-    if (_ZNK3WTF6String27isSafeToSendToAnotherThreadEv(self)) {
-        return String(std::exchange(self->impl, nullptr));
+    StringImpl* impl = nullptr;
+    if (!LoadStringImpl(impl, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!impl) return String();
+    const auto* local = reinterpret_cast<const String*>(&impl);
+    if (_ZNK3WTF6String27isSafeToSendToAnotherThreadEv(local)) {
+        StringImpl* moved = nullptr;
+        if (!GuestCopyOut_nid_no_patch(self, &moved, sizeof(moved))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return String(impl);
     }
-    return _ZNKR3WTF6String12isolatedCopyEv(self);
+    return _ZNKR3WTF6String12isolatedCopyEv(local);
 }
-
 }

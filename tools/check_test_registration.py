@@ -1,4 +1,7 @@
+from collections import defaultdict
 import argparse
+import ast
+import itertools
 import json
 import re
 import subprocess
@@ -6,14 +9,28 @@ import sys
 from pathlib import Path
 
 TEST_OUTPUT = r"tests[\\/]"
+_TEST_EXEC_PATH = re.compile(rf"^{TEST_OUTPUT}(?:.*[\\/])?([^\\/]+)$")
 SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
 COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|set_property|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
+_COMMAND_HINT = re.compile(r"(?:add_test|set_tests_properties|set_property|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.I)
 ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
+_PAREN = re.compile(r"[()]")
+_QUOTE_ESCAPE = re.compile(r"\\(\r?\n|.)", re.S)
+_QUOTE_ESCAPES = {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t", ";": r"\;"}
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_]\w*=")
+_PATH_SPLIT = re.compile(r"[\\/]")
+_YAML_SEQUENCE = re.compile(r"-\s+")
+_YAML_KEY = re.compile(r"(['\"]?)([A-Za-z_][\w.-]*)\1\s*:(?:\s+(.*)|$)")
+_YAML_INDENT = re.compile(r"[1-9]")
+_HASH_COMMENT = re.compile(r"\s#")
+_TEST_SCRIPT_NAME = re.compile(r"^test_\w+\.py$")
 
 KNOWN_UNRUN = set()
 SANITIZER_SKIPPED_LIBRARIES = {"libSceAddressSanitizer"}
+SET_VARIABLE = re.compile(r'^[ \t]*set\(\s*(\w+)\s+"?([^"\s()]+)"?\s*\)', re.M | re.I)
+VARIABLE = re.compile(r"\$\{(\w+)\}")
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:->\s*[^;{]+)?(?:try\s*)?\{")
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
@@ -25,25 +42,133 @@ CPP_TOKEN = re.compile(
     r'|(?P<string>(?:u8|u|U|L)?"(?:\\[\s\S]|[^"\\])*")'
     r"|(?P<char>(?:u8|u|U|L)?'(?:\\[\s\S]|[^'\\])*')"
     r"|(?P<code>(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S)")
+_NON_CODE_TRIGGER = re.compile(r'//|/\*|"|\'')
+_RAW_BODY = re.compile(r'"(?P<delimiter>[^\s()\\]{0,16})\([\s\S]*?\)(?P=delimiter)"')
+_STRING_BODY = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+_CHAR_BODY = re.compile(r"'(?:\\[\s\S]|[^'\\])*'")
+_CODE_TOKEN = re.compile(r"(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S")
+_PRE_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'")
+_STRING_PREFIXES = frozenset(("u8", "u", "U", "L"))
+_RAW_PREFIXES = frozenset(("R", "u8R", "uR", "UR", "LR"))
+
+
+def _blank_span(span, fill=" "):
+    if "\n" not in span:
+        return fill * len(span)
+    return "\n".join(fill * len(line) for line in span.split("\n"))
+
+
+def _token_before(text, index, floor):
+    scan_start = index
+    while scan_start > floor and text[scan_start - 1] in _PRE_TOKEN_CHARS:
+        scan_start -= 1
+    if scan_start == index:
+        return None, None, index
+    last_start = index
+    last_token = None
+    for token in _CODE_TOKEN.finditer(text, scan_start):
+        if token.start() >= index:
+            break
+        if token.end() > index:
+            return token.start(), token.group(), token.end()
+        last_start = token.start()
+        last_token = token.group()
+        if token.end() == index:
+            return last_start, last_token, index
+    return None, None, index
+
 
 def cpp_source(text, keep_strings=False):
-    text = text.replace("\\\n", "").replace("\\\r\n", "")
-
-    def mask(match):
-        if match.group("code") is not None or keep_strings and match.group("string") is not None:
-            return match.group()
-        return re.sub(r"[^\n]", " ", match.group())
-
-    return CPP_TOKEN.sub(mask, text)
+    if "\\\n" in text:
+        text = text.replace("\\\n", "")
+    if "\\\r\n" in text:
+        text = text.replace("\\\r\n", "")
+    out = []
+    pos = 0
+    cursor = 0
+    floor = 0
+    no_block_close = False
+    length = len(text)
+    while cursor < length:
+        trigger = _NON_CODE_TRIGGER.search(text, cursor)
+        if trigger is None:
+            break
+        index = trigger.start()
+        token = trigger.group()
+        if token == "//":
+            end = text.find("\n", index + 2)
+            if end == -1:
+                end = length
+            out.append(text[pos:index])
+            out.append(" " * (end - index))
+            pos = cursor = floor = end
+        elif token == "/*":
+            if no_block_close:
+                cursor = floor = index + 2
+                continue
+            close = text.find("*/", index + 2)
+            if close == -1:
+                no_block_close = True
+                cursor = floor = index + 2
+                continue
+            end = close + 2
+            out.append(text[pos:index])
+            out.append(_blank_span(text[index:end]))
+            pos = cursor = floor = end
+        elif token == '"':
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            if tok_text in _RAW_PREFIXES:
+                raw_match = _RAW_BODY.match(text, index)
+                if raw_match is not None:
+                    end = raw_match.end()
+                    out.append(text[pos:tok_start])
+                    out.append(_blank_span(text[tok_start:end]))
+                    pos = cursor = floor = end
+                    continue
+            str_match = _STRING_BODY.match(text, index)
+            if str_match is not None:
+                start = tok_start if tok_text in _STRING_PREFIXES else index
+                end = str_match.end()
+                if not keep_strings:
+                    out.append(text[pos:start])
+                    out.append(_blank_span(text[start:end]))
+                    pos = end
+                cursor = floor = end
+            else:
+                cursor = floor = index + 1
+        else:
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            char_match = _CHAR_BODY.match(text, index)
+            if char_match is not None:
+                start = tok_start if tok_text in _STRING_PREFIXES else index
+                end = char_match.end()
+                out.append(text[pos:start])
+                out.append(_blank_span(text[start:end]))
+                pos = cursor = floor = end
+            else:
+                cursor = floor = index + 1
+    if not out:
+        return text
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def ninja(build):
     program, generator = None, None
+    configurations = []
     for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
             program = line.partition("=")[2]
         elif line.startswith("CMAKE_GENERATOR:"):
             generator = line.partition("=")[2]
+        elif line.startswith("CMAKE_CONFIGURATION_TYPES:"):
+            configurations = list(filter(None, line.partition("=")[2].split(";")))
     if generator not in ("Ninja", "Ninja Multi-Config"):
         raise ValueError(f"test registration audit requires a Ninja generator, got {generator!r}")
     if not program or program.endswith("-NOTFOUND"):
@@ -56,42 +181,46 @@ def ninja(build):
         if codepage not in encodings:
             raise ValueError(f"unsupported Ninja build-file encoding: {codepage!r}")
         encoding = encodings[codepage]
-    return program, encoding
+    return program, encoding, configurations if generator == "Ninja Multi-Config" else []
+
+
+def ninja_outputs(build, *arguments):
+    program, encoding, configurations = ninja(build)
+    manifests = [("-f", f"build-{configuration}.ninja") for configuration in configurations]
+    for manifest in manifests or [()]:
+        yield subprocess.run([program, "-C", str(build), *manifest, "-t", *arguments],
+                             capture_output=True, text=True, encoding=encoding, check=True).stdout
 
 
 def built(build):
-    program, encoding = ninja(build)
-    listed = subprocess.run([program, "-C", str(build), "-t", "targets", "all"],
-                            capture_output=True, text=True, encoding=encoding, check=True).stdout
     names = set()
-    for line in listed.splitlines():
-        path, _, rule = line.partition(": ")
-        if "EXECUTABLE" not in rule:
-            continue
-        found = re.match(rf"^{TEST_OUTPUT}(?:.*[\\/])?([^\\/]+)$", path)
-        if not found:
-            continue
-        name = found.group(1)
-        if name.endswith(".exe"):
-            name = name[:-4]
-        if name:
-            names.add(name)
+    for output in ninja_outputs(build, "targets", "all"):
+        for line in output.splitlines():
+            path, _, rule = line.partition(": ")
+            if "EXECUTABLE" not in rule:
+                continue
+            found = _TEST_EXEC_PATH.match(path)
+            if not found:
+                continue
+            name = found.group(1)
+            if name.endswith(".exe"):
+                name = name[:-4]
+            if name:
+                names.add(name)
     return names
 
 
 def compiled(build):
-    program, encoding = ninja(build)
-    database = subprocess.run([program, "-C", str(build), "-t", "compdb"],
-                              capture_output=True, text=True, encoding=encoding, check=True).stdout
     sources = set()
-    for entry in json.loads(database):
-        command = entry.get("command") or " ".join(entry.get("arguments", []))
-        if not COMPILE_FLAG.search(command):
-            continue
-        file = Path(entry["file"])
-        if not file.is_absolute():
-            file = Path(entry["directory"]) / file
-        sources.add(file.resolve())
+    for database in ninja_outputs(build, "compdb"):
+        for entry in json.loads(database):
+            command = entry.get("command") or " ".join(entry.get("arguments", []))
+            if not COMPILE_FLAG.search(command):
+                continue
+            file = Path(entry["file"])
+            if not file.is_absolute():
+                file = Path(entry["directory"]) / file
+            sources.add(file.resolve())
     return sources
 
 
@@ -105,6 +234,15 @@ def skipped_libraries(build):
         if name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
             enabled = enabled or on
     return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
+
+
+def source_directory(build):
+    cache = Path(build) / "CMakeCache.txt"
+    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition("=")
+        if name == "CMAKE_HOME_DIRECTORY:INTERNAL" and value:
+            return Path(value)
+    raise ValueError(f"CMAKE_HOME_DIRECTORY is not set in {cache}")
 
 
 def unbuilt_exports(root, sources, skipped=()):
@@ -138,48 +276,80 @@ def unbuilt_exports(root, sources, skipped=()):
     return unbuilt
 
 
+def _mask_cmake(content):
+    content_parts = []
+    code_parts = []
+    pos = 0
+    for match in LEXICAL.finditer(content):
+        start, end = match.span()
+        if start > pos:
+            chunk = content[pos:start]
+            content_parts.append(chunk)
+            code_parts.append(chunk)
+        token = match.group()
+        if match.group("comment") is not None:
+            blanked = _blank_span(token, " ")
+            content_parts.append(blanked)
+            code_parts.append(blanked)
+        else:
+            content_parts.append(token)
+            code_parts.append(_blank_span(token, "_"))
+        pos = end
+    if not pos:
+        return content, content
+    tail = content[pos:]
+    content_parts.append(tail)
+    code_parts.append(tail)
+    return "".join(content_parts), "".join(code_parts)
+
+
 def commands(content):
     content = content.removeprefix("\ufeff")
-    content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
-                          if match.group("comment") is not None else match.group(), content)
-    code = LEXICAL.sub(lambda match: re.sub(r"[^\n]", "_", match.group()), content)
+    if _COMMAND_HINT.search(content) is None:
+        return
+    content, code = _mask_cmake(content)
     parsed_until = 0
     for command in COMMAND.finditer(code):
         if command.start() < parsed_until:
             continue
         name = command.group(1).lower()
         if name in SCOPE_START or name.removeprefix("end") in SCOPE_START or name in {"else", "elseif"}:
-            depth, position = 1, command.end()
-            while position < len(code) and depth:
-                depth += (code[position] == "(") - (code[position] == ")")
-                position += 1
-            if depth:
+            depth = 1
+            for paren in _PAREN.finditer(code, command.end()):
+                depth += 1 if paren.group() == "(" else -1
+                if depth == 0:
+                    parsed_until = paren.end()
+                    break
+            else:
                 raise ValueError(f"unterminated {name} command at position {command.start()}")
-            parsed_until = position
             yield name, []
             continue
         position, arguments = command.end(), []
-        while position < len(content):
-            if content[position].isspace():
+        length = len(content)
+        while position < length:
+            ch = content[position]
+            if ch.isspace():
                 position += 1
                 continue
-            if content[position] == ")":
+            if ch == ")":
                 parsed_until = position + 1
-                yield command.group(1).lower(), arguments
+                yield name, arguments
                 break
-            if content[position] == "#":
+            if ch == "#":
                 position = content.find("\n", position)
                 if position < 0:
-                    position = len(content)
+                    position = length
                 continue
             token = ARGUMENT.match(content, position)
             if token is None:
                 raise ValueError(f"invalid CTest argument at position {position}")
             argument = token.group(0)
             if argument.startswith('"'):
-                argument = re.sub(r"\\(\r?\n|.)",
-                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t", ";": r"\;"}.get(match[1], match[1]),
-                                  argument[1:-1], flags=re.S)
+                inner = argument[1:-1]
+                if "\\" in inner:
+                    argument = _QUOTE_ESCAPE.sub(lambda match: _QUOTE_ESCAPES.get(match[1], match[1]), inner)
+                else:
+                    argument = inner
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
                 argument = argument[width:-width].removeprefix("\n")
@@ -189,8 +359,7 @@ def commands(content):
             raise ValueError(f"unterminated {command.group(1)} command at position {command.start()}")
 
 
-def registered(build):
-    names = set()
+def testfile_commands(build):
     pending = [Path(build)]
     visited = set()
     while pending:
@@ -202,11 +371,19 @@ def registered(build):
         if directory in visited or not file.is_file():
             continue
         visited.add(directory)
-        tests, latest = [], {}
-        for command, arguments in commands(file.read_text(encoding="utf-8", errors="replace")):
+        entries = list(commands(file.read_text(encoding="utf-8", errors="replace")))
+        for command, arguments in entries:
             if command == "subdirs":
                 pending.extend(directory / argument for argument in arguments)
-            elif command == "add_test" and arguments:
+        yield entries
+
+
+def registered(build):
+    names = set()
+    for entries in testfile_commands(build):
+        tests, latest = [], {}
+        for command, arguments in entries:
+            if command == "add_test" and arguments:
                 test = [arguments[1:], False]
                 tests.append(test)
                 latest[arguments[0]] = test
@@ -222,9 +399,9 @@ def registered(build):
             if disabled:
                 continue
             for index, argument in enumerate(arguments):
-                if index and (argument.startswith("-") or re.match(r"^[A-Za-z_]\w*=", argument)):
+                if index and (argument.startswith("-") or _ENV_ASSIGN.match(argument)):
                     continue
-                base = re.split(r"[\\/]", argument)[-1]
+                base = _PATH_SPLIT.split(argument)[-1]
                 if base.endswith(".exe"):
                     base = base[:-4]
                 if base:
@@ -238,21 +415,50 @@ def listed(root):
     return sorted(set(filter(None, output.split("\0"))))
 
 
+def folded_run_lines(lines, content_indent):
+    paragraph = []
+    for line in lines:
+        text = line.lstrip(" ")
+        if text.strip():
+            indent = len(line) - len(text)
+            if content_indent is None:
+                content_indent = indent
+            if indent == content_indent:
+                paragraph.append(text)
+                continue
+        if paragraph:
+            yield " ".join(paragraph)
+            paragraph = []
+        if text.strip():
+            yield line
+    if paragraph:
+        yield " ".join(paragraph)
+
+
 def workflow_run_lines(content):
     parents = []
     step_key_indent = None
     block_indent = None
+    folded = None
+    content_indent = None
     for line in content.splitlines():
         text = line.lstrip()
+        indent = len(line) - len(text)
+        if folded is not None:
+            if not text or indent > block_indent:
+                folded.append(line)
+                continue
+            yield from folded_run_lines(folded, content_indent)
+            folded = None
+            block_indent = None
         if not text or text.startswith("#"):
             continue
-        indent = len(line) - len(text)
         if block_indent is not None:
             if indent > block_indent:
                 yield line
                 continue
             block_indent = None
-        sequence = re.match(r"-\s+", text)
+        sequence = _YAML_SEQUENCE.match(text)
         while parents and (parents[-1][0] > indent or
                            (parents[-1][0] == indent and not (sequence and parents[-1][1] == "steps"))):
             parents.pop()
@@ -264,7 +470,7 @@ def workflow_run_lines(content):
             text = text[sequence.end():]
             if step:
                 step_key_indent = key_indent
-        match = re.match(r"(['\"]?)([A-Za-z_][\w.-]*)\1\s*:(?:\s+(.*)|$)", text)
+        match = _YAML_KEY.match(text)
         if match is None:
             continue
         key, value = match[2], match[3] or ""
@@ -273,9 +479,15 @@ def workflow_run_lines(content):
         if step and key_indent == step_key_indent and key == "run":
             if value.startswith(("|", ">")):
                 block_indent = key_indent
+                if value.startswith(">"):
+                    folded = []
+                    explicit = _YAML_INDENT.search(value.split()[0])
+                    content_indent = key_indent + int(explicit[0]) if explicit else None
             elif value:
                 yield value
         parents.append((key_indent, key))
+    if folded is not None:
+        yield from folded_run_lines(folded, content_indent)
 
 
 def disabled_properties(command, arguments):
@@ -315,11 +527,12 @@ def is_disabled(value):
     return value is not None and value.upper() in ("1", "ON", "YES", "TRUE", "Y")
 
 
-def run_scripts(root, files):
+def run_scripts(root, files, invocations=None):
     run = set()
+    root_path = Path(root)
     for name in files:
         if name.endswith("CMakeLists.txt") or name.endswith(".cmake"):
-            content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
+            content = (root_path / name).read_text(encoding="utf-8", errors="replace")
             tests = []
             scopes = []
             for index, (command, arguments) in enumerate(commands(content)):
@@ -362,24 +575,112 @@ def run_scripts(root, files):
                                     test[2] = updated
                                 elif updated != test[2]:
                                     test[2] = None, test[2][1] and updated[1]
-            for _, arguments, value, _ in tests:
-                if not value[1]:
-                    run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
+            if tests:
+                variables = dict(SET_VARIABLE.findall(content)) if invocations is not None else None
+                for _, arguments, value, _ in tests:
+                    if not value[1]:
+                        run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
+                        if invocations is not None:
+                            invocations.append([VARIABLE.sub(lambda match: variables.get(match.group(1), match.group()), argument)
+                                                .rpartition("}")[2].lstrip("/") for argument in arguments])
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
-            for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
+            for line in workflow_run_lines((root_path / name).read_text(encoding="utf-8", errors="replace")):
                 if line.lstrip().startswith("#"):
                     continue
-                line = re.split(r"\s#", line)[0]
+                line = _HASH_COMMENT.split(line, 1)[0]
                 if "python" in line:
                     run.update(token[2:] if token.startswith("./") else token for token in SCRIPT.findall(line))
+                    if invocations is not None:
+                        tokens = [token.strip("'\"") for token in line.split()]
+                        invocations.append([token[2:] if token.startswith("./") else token for token in tokens])
     return {name for name in run if SCRIPT.fullmatch(name)}
+
+
+def unittest_classes(path):
+    classes = {node.name: node for node in ast.parse(path.read_text(encoding="utf-8", errors="replace")).body
+               if isinstance(node, ast.ClassDef)}
+
+    def lineage(name, seen):
+        found = {name}
+        for base in classes[name].bases:
+            base = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", None)
+            if base in classes and base not in seen:
+                found |= lineage(base, seen | {base})
+            elif base:
+                found.add(base)
+        return found
+
+    def tested(name):
+        return name in classes and any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test")
+                                       for item in classes[name].body)
+
+    return [name for name in classes if any(base.endswith("TestCase") for base in lineage(name, {name}))
+            and any(tested(base) for base in lineage(name, {name}))]
+
+
+def _unselected_classes_from(root, files, invocations):
+    selections = defaultdict(list)
+    for arguments in invocations:
+        for index, argument in enumerate(arguments):
+            if SCRIPT.fullmatch(argument):
+                selections[argument].append(
+                    list(itertools.takewhile(lambda token: token not in {"&&", "||", ";", "|"}, arguments[index + 1:])))
+    by_base = defaultdict(list)
+    for path, found in selections.items():
+        by_base[path.rpartition("/")[2]].append((path, found))
+    root_path = Path(root)
+    unselected = {}
+    for name in files:
+        base = name.rpartition("/")[2]
+        if not _TEST_SCRIPT_NAME.match(base):
+            continue
+        candidates = by_base.get(base)
+        if not candidates:
+            continue
+        runs = [names for path, found in candidates if name == path or name.endswith("/" + path) for names in found]
+        if not runs:
+            continue
+        if any(not any(argument.partition(".")[0].isidentifier() for argument in names) for names in runs):
+            continue
+        classes = unittest_classes(root_path / name)
+        selected = set()
+        for names in runs:
+            if not any(argument.partition(".")[0] in classes for argument in names):
+                selected.update(classes)
+            selected.update(names)
+        if missing := [cls for cls in classes if cls not in selected]:
+            unselected[name] = missing
+    return unselected
+
+
+def unselected_classes(root):
+    files = listed(root)
+    invocations = []
+    run_scripts(root, files, invocations)
+    return _unselected_classes_from(root, files, invocations)
+
+
+def _unrun_scripts_from(files, run):
+    run_by_base = defaultdict(list)
+    for path in run:
+        run_by_base[path.rpartition("/")[2]].append(path)
+    scripts = [name for name in files if _TEST_SCRIPT_NAME.match(name.rpartition("/")[2])]
+    unrun = []
+    for name in scripts:
+        paths = run_by_base.get(name.rpartition("/")[2])
+        if not paths or not any(name == path or name.endswith("/" + path) for path in paths):
+            unrun.append(name)
+    return scripts, unrun
 
 
 def unrun_scripts(root):
     files = listed(root)
     run = run_scripts(root, files)
-    scripts = [name for name in files if re.match(r"^test_\w+\.py$", name.rpartition("/")[2])]
-    return scripts, [name for name in scripts if not any(name == path or name.endswith("/" + path) for path in run)]
+    return _unrun_scripts_from(files, run)
+
+
+_DEFAULT_UNRUN_SCRIPTS = unrun_scripts
+_DEFAULT_UNSELECTED_CLASSES = unselected_classes
 
 
 def main(argv=None):
@@ -391,21 +692,36 @@ def main(argv=None):
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--json", action="store_true", help="emit registration audit results as JSON")
     output.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
-    parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
+    parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree, "
+                                                                "and every test class of a script that is only run class by class")
     args = parser.parse_args(argv)
     if args.scripts:
         try:
-            scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
+            root = Path(__file__).resolve().parents[1]
+            if unrun_scripts is _DEFAULT_UNRUN_SCRIPTS and unselected_classes is _DEFAULT_UNSELECTED_CLASSES:
+                files = listed(root)
+                invocations = []
+                run = run_scripts(root, files, invocations)
+                scripts, unrun = _unrun_scripts_from(files, run)
+                unselected = _unselected_classes_from(root, files, invocations)
+            else:
+                scripts, unrun = unrun_scripts(root)
+                unselected = unselected_classes(root)
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             parser.error(f"--scripts reads the source tree from git, so run it in a git checkout: {error}")
         if args.json:
-            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun,
+            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun, "unselected": unselected,
                               "registered": sorted(set(scripts) - set(unrun))}, sort_keys=True))
-            return int(bool(unrun))
+            return int(bool(unrun or unselected))
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
+        for name, classes in unselected.items():
+            print(f"error: {name} runs only some of its test classes; never run: {', '.join(classes)}")
         if unrun:
             print(f"{len(unrun)} test script(s) would never run: register each with add_test, or run it from a workflow")
+        if unselected:
+            print(f"{len(unselected)} test script(s) leave test classes unrun: name each class in an add_test, or run the whole script")
+        if unrun or unselected:
             return 1
         print(f"{len(scripts)} test script(s), each run by an add_test or a workflow")
         return 0
@@ -413,7 +729,7 @@ def main(argv=None):
         every = sorted(built(args.build))
         run = registered(args.build)
         skipped = skipped_libraries(args.build)
-        unbuilt = None if skipped is None else unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
+        unbuilt = None if skipped is None else unbuilt_exports(source_directory(args.build), compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:

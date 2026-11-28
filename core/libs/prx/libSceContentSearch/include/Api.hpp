@@ -26,6 +26,6 @@ int APS5_VABI sceContentBinderTerminate();
 int APS5_VABI sceContentSearchGetApplicationLastUpdateId(std::int64_t* lastUpdateId);
 int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index);
 int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::int64_t* numOfApplication, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchSearchApplication();
+int APS5_VABI sceContentSearchSearchApplication(const void* columnSet, std::uint32_t columnSetLength, const void* orderByConditions, std::uint32_t orderByConditionsLength, const void* aggregatedConditions, std::uint32_t aggregatedConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfApplications, void* infos, std::int64_t* lastUpdateId);
 
 }

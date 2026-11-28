@@ -346,6 +346,86 @@ static void CheckCreateArguments() {
     Require(allocations == 0);
 }
 
+static void CheckRackCreateArguments() {
+    constexpr int outputError = static_cast<int>(0x804A8010u);
+    constexpr int bufferError = static_cast<int>(0x804A8020u);
+    constexpr int allocatorError = static_cast<int>(0x804A8023u);
+    constexpr int systemError = static_cast<int>(0x804A8201u);
+    constexpr uintptr_t sentinel = 0x5a5a;
+    constexpr uintptr_t invalid = 0x1234;
+    const auto system = CreateSystem();
+    Ngs2SubmixerRackOption bad{};
+    bad.rack_option.size = sizeof(bad);
+    bad.rack_option.max_grain_samples = 256;
+    bad.rack_option.max_voices = 1;
+    bad.max_channels = 2;
+    bad.max_inputs = 1;
+    Ngs2ContextBufferInfo query{};
+    Status(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, nullptr, &query), SCE_NGS2_OK, "rack buffer query failed");
+    const auto buffer = Buffer(query);
+    Ngs2ContextBufferInfo noHost = buffer;
+    noHost.host_buffer = nullptr;
+    const Ngs2BufferAllocator allocator{CountedAllocate, CountedRelease, 0};
+    const Ngs2BufferAllocator noAlloc{nullptr, CountedRelease, 0};
+    const Ngs2BufferAllocator noFree{CountedAllocate, nullptr, 0};
+
+    struct CreateCase {
+        uintptr_t system;
+        const Ngs2RackOption* option;
+        const Ngs2ContextBufferInfo* buffer;
+        bool handle;
+        int expected;
+        const char* label;
+    };
+    for (const auto& c : {CreateCase{system, nullptr, nullptr, true, bufferError, "a null buffer info"},
+                          CreateCase{system, nullptr, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{system, &bad.rack_option, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
+                          CreateCase{system, &bad.rack_option, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
+                          CreateCase{invalid, nullptr, nullptr, true, bufferError, "a null buffer info and invalid system"},
+                          CreateCase{invalid, nullptr, &noHost, true, bufferError, "a null host buffer and invalid system"},
+                          CreateCase{system, &bad.rack_option, &buffer, false, outputError, "a null handle and bad option"},
+                          CreateCase{system, &bad.rack_option, &buffer, true, SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS, "a bad option"},
+                          CreateCase{invalid, nullptr, &buffer, true, systemError, "an invalid system"}}) {
+        uintptr_t created = sentinel;
+        Returned(sceNgs2RackCreate(c.system, SCE_NGS2_RACK_ID_SUBMIXER, c.option, c.buffer, c.handle ? &created : nullptr), c.expected, "sceNgs2RackCreate", c.label);
+        Require(created == sentinel);
+    }
+    uintptr_t created = sentinel;
+    Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, nullptr, &buffer, &created), SCE_NGS2_OK, "sceNgs2RackCreate", "valid arguments");
+    Require(created != sentinel);
+    Status(sceNgs2RackDestroy(created, nullptr), SCE_NGS2_OK, "rack destroy failed");
+
+    struct AllocatorCase {
+        uintptr_t system;
+        const Ngs2RackOption* option;
+        const Ngs2BufferAllocator* allocator;
+        bool handle;
+        int expected;
+        const char* label;
+    };
+    for (const auto& c : {AllocatorCase{system, nullptr, nullptr, true, allocatorError, "a null allocator"},
+                          AllocatorCase{system, nullptr, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{system, &bad.rack_option, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
+                          AllocatorCase{system, &bad.rack_option, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
+                          AllocatorCase{invalid, nullptr, nullptr, true, allocatorError, "a null allocator and invalid system"},
+                          AllocatorCase{invalid, nullptr, &noAlloc, true, allocatorError, "a null alloc handler and invalid system"},
+                          AllocatorCase{system, &bad.rack_option, &allocator, false, outputError, "a null handle and bad option"},
+                          AllocatorCase{system, &bad.rack_option, &allocator, true, SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS, "a bad option"},
+                          AllocatorCase{system, &bad.rack_option, &noFree, true, SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS, "a null free handler and bad option"},
+                          AllocatorCase{invalid, nullptr, &allocator, true, systemError, "an invalid system"},
+                          AllocatorCase{invalid, nullptr, &noFree, true, systemError, "a null free handler and invalid system"}}) {
+        uintptr_t allocated = sentinel;
+        Returned(sceNgs2RackCreateWithAllocator(c.system, SCE_NGS2_RACK_ID_SUBMIXER, c.option, c.allocator, c.handle ? &allocated : nullptr), c.expected, "sceNgs2RackCreateWithAllocator", c.label);
+        Require(allocated == sentinel && allocations == 0);
+    }
+    uintptr_t allocated = sentinel;
+    Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_SUBMIXER, nullptr, &allocator, &allocated), SCE_NGS2_OK, "sceNgs2RackCreateWithAllocator", "valid arguments");
+    Require(allocated != sentinel && allocations == 1);
+    Status(sceNgs2RackDestroy(allocated, nullptr), SCE_NGS2_OK, "rack destroy failed");
+    Require(allocations == 0);
+    Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
+}
+
 static void CheckSystemOption() {
     constexpr int outputError = static_cast<int>(0x804A8010u);
     constexpr int sizeError = static_cast<int>(0x804A8013u);
@@ -517,6 +597,15 @@ static void CheckDestroyGuestPointers() {
     Returned(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "sceNgs2SystemDestroy", "a null buffer info after a refused destroy");
 }
 
+static void CheckRackInfoGuestPointers() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Returned(sceNgs2RackGetInfo(rack, reinterpret_cast<Ngs2RackInfo*>(0x10), sizeof(Ngs2RackInfo)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackGetInfo", "an unwritable info");
+    Ngs2RackInfo info{};
+    Returned(sceNgs2RackGetInfo(rack, &info, sizeof(info)), SCE_NGS2_OK, "sceNgs2RackGetInfo", "a writable info");
+    Require(info.rack_handle == rack && info.rack_id == SCE_NGS2_RACK_ID_REVERB);
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -552,6 +641,8 @@ int main(int argc, char** argv) {
         CheckCreateArguments();
         CheckRackCreateGuestPointers();
         CheckDestroyGuestPointers();
+        CheckRackCreateArguments();
+        CheckRackInfoGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();

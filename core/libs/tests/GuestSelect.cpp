@@ -184,8 +184,8 @@ static void ReusedDescriptorNumberIsSelectedFresh() {
     Require(send_nid_postfix(reused, "r", 1, 0) == 1);
     GuestDescriptorSet read{};
     read.Add(reused);
-    const GuestTimeval none{0, 0};
-    Require(select_nid_postfix(reused + 1, read.words.data(), nullptr, nullptr, &none) == 1 && read.Has(reused));
+    const GuestTimeval second{1, 0};
+    Require(select_nid_postfix(reused + 1, read.words.data(), nullptr, nullptr, &second) == 1 && read.Has(reused));
     char byte{};
     Require(recv_nid_postfix(reused, &byte, sizeof(byte), 0) == 1 && byte == 'r');
     Require(close_nid_postfix(reused) == 0 && close_nid_postfix(held) == 0);

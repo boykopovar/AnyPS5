@@ -1,4 +1,5 @@
 #include "prx/libc/include/WindowsMappings.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <initializer_list>
 #include <utility>
@@ -146,6 +147,99 @@ static void CheckEvictKeepsWrittenPages() {
     CloseHandle(section);
 }
 
+static void CheckOpenHostWriteCollected() {
+    constexpr std::size_t bytes = 2 * 1024 * 1024;
+    constexpr std::size_t step = 65536;
+    auto& mappings = GuestArena::WindowsMappings::Get();
+    auto* reserved = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * bytes));
+    Require(reserved != nullptr);
+    const auto start = (reinterpret_cast<std::uintptr_t>(reserved) + bytes - 1) & ~static_cast<std::uintptr_t>(bytes - 1);
+    auto* base = reinterpret_cast<unsigned char*>(start);
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr);
+    mappings.Map(base, bytes, section, 0, PAGE_READWRITE, true, true);
+    std::vector<void*> pages(bytes / 4096);
+    const auto collect = [&] {
+        std::size_t count = pages.size();
+        Require(mappings.Collect(start, bytes, pages.data(), &count, true));
+        std::vector<std::uintptr_t> collected;
+        for (std::size_t index = 0; index < count; ++index) collected.push_back(reinterpret_cast<std::uintptr_t>(pages[index]));
+        return collected;
+    };
+    const auto covers = [](const std::vector<std::uintptr_t>& collected, std::uintptr_t from, std::uintptr_t to) {
+        for (auto page = from & ~std::uintptr_t{4095}; page < to; page += 4096) {
+            if (std::find(collected.begin(), collected.end(), page) == collected.end()) return false;
+        }
+        return true;
+    };
+    base[step + 7] = 1;
+    collect();
+    Require(collect().empty());
+    const auto hostBegin = start + 3 * step + 100;
+    const auto hostBytes = 2 * step;
+    Require(mappings.BeginHostWrite(hostBegin, hostBytes));
+    base[3 * step + 200] = 2;
+    const auto open = collect();
+    Require(covers(open, hostBegin, hostBegin + hostBytes));
+    Require(std::is_sorted(open.begin(), open.end()) && std::adjacent_find(open.begin(), open.end()) == open.end());
+    Require(open.front() >= start && open.back() < start + bytes);
+    Require(covers(collect(), hostBegin, hostBegin + hostBytes));
+    mappings.EndHostWrite(hostBegin, hostBytes);
+    Require(collect().empty());
+    mappings.Reset(base, bytes);
+    Require(VirtualFree(reserved, 2 * bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS));
+    Require(VirtualFree(reserved, 0, MEM_RELEASE));
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
+static void CheckSectionEndingAPageEarlyIsRejected() {
+    constexpr std::size_t reservation = 128 * 1024;
+    constexpr std::size_t sectionBytes = 112 * 1024;
+    auto& mappings = GuestArena::WindowsMappings::Get();
+    auto* reserved = static_cast<unsigned char*>(mappings.Reserve(nullptr, reservation));
+    Require(reserved != nullptr);
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sectionBytes, nullptr);
+    Require(section != nullptr);
+    bool rejected = false;
+    try {
+        mappings.Map(reserved, reservation, section, 0, PAGE_READWRITE, false, false, PAGE_EXECUTE_READWRITE, sectionBytes);
+    } catch (const std::runtime_error& failure) {
+        rejected = std::string(failure.what()).find("extends a whole page past its section") != std::string::npos;
+    }
+    Require(rejected);
+    Require(VirtualFree(reserved, 0, MEM_RELEASE));
+    CloseHandle(section);
+}
+
+static void CheckSectionEndingLessThanAPageEarlyIsMapped() {
+    constexpr std::size_t reservation = 128 * 1024;
+    constexpr std::size_t sectionBytes = 116 * 1024;
+    auto& mappings = GuestArena::WindowsMappings::Get();
+    auto* reserved = static_cast<unsigned char*>(mappings.Reserve(nullptr, reservation));
+    Require(reserved != nullptr);
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sectionBytes, nullptr);
+    Require(section != nullptr);
+    mappings.Map(reserved, reservation, section, 0, PAGE_READWRITE, false, false, PAGE_READWRITE, sectionBytes);
+    constexpr std::size_t guestPage = 0x4000;
+    const auto start = reinterpret_cast<std::uintptr_t>(reserved);
+    for (std::size_t at = 0; at < reservation; at += guestPage) {
+        std::uint32_t protection = 0;
+        Require(mappings.Protection(start + at, &protection) && protection == PAGE_READWRITE);
+    }
+    mappings.Reset(reserved, reservation);
+    for (std::size_t at = 0; at < reservation; at += guestPage) {
+        std::uint32_t protection = 0;
+        Require(!mappings.Protection(start + at, &protection));
+    }
+    MEMORY_BASIC_INFORMATION released{};
+    Require(VirtualQuery(reserved, &released, sizeof released) == sizeof released);
+    Require(released.BaseAddress == reserved && released.RegionSize == reservation && released.State == MEM_RESERVE);
+    Require(VirtualFree(reserved, 0, MEM_RELEASE));
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2) CheckMetadataMismatch(static_cast<unsigned>(argv[1][0] - '0'));
@@ -153,6 +247,9 @@ int main(int argc, char** argv) {
             CheckValidRelease();
             CheckTouchedPagesAnyOrder();
             CheckEvictKeepsWrittenPages();
+            CheckOpenHostWriteCollected();
+            CheckSectionEndingAPageEarlyIsRejected();
+            CheckSectionEndingLessThanAPageEarlyIsMapped();
         }
     } catch (const std::exception& failure) {
         std::fprintf(stderr, "%s\n", failure.what());

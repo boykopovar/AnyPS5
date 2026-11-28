@@ -40,10 +40,13 @@ extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maxi
 extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" bool GuestReadable_nid_no_patch(const void* source, std::size_t bytes);
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" long double PowerScaled_nid_no_patch(long double base, long double exp, short* scale);
 extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t destinationPitch, const void* source, std::size_t sourcePitch, std::size_t rowBytes, std::size_t rows);
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" void GuestFaultCopyReinstall_nid_no_patch();
 extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module = false);
@@ -56,6 +59,7 @@ extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to);
 // directory instead of the run directory; the prefix matches whole path components only.
 extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* hostPath);
 extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix);
+extern "C" std::uint64_t PathAliasGeneration_nid_no_patch();
 using PathProvider = std::filesystem::path (*)(const std::filesystem::path& root);
 extern "C" void AddPathProvider_nid_no_patch(const char* guestPath, PathProvider provide);
 extern "C" void RecordWrittenPath_nid_no_patch(const std::filesystem::path& path);

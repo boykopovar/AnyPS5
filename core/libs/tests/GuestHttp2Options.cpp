@@ -155,6 +155,8 @@ int main() {
         Require(sceHttp2RemoveRequestHeader(invalid, "X-Test") == InvalidId);
         Require(sceHttp2SetAuthInfoCallback(invalid, nullptr, nullptr) == InvalidId);
         Require(sceHttp2SetPreSendCallback(invalid, nullptr, nullptr) == InvalidId);
+        Require(sceHttp2SetRedirectCallback(invalid, nullptr, nullptr) == InvalidId);
+        if (invalid != context) Require(sceHttp2SetSslCallback(invalid, nullptr, nullptr) == InvalidId);
         if (invalid != context) Require(sceHttp2AuthCacheFlush(invalid) == InvalidId);
         if (invalid != context && invalid != box) Require(sceHttp2SetRequestContentLength(invalid, 42) == InvalidId);
         Require(sceHttp2RedirectCacheFlush(invalid) == 0);

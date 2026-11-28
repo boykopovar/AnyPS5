@@ -5,6 +5,7 @@
 #include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <stdexcept>
@@ -376,8 +377,13 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
         if (param == nullptr) continue;
         const auto& number = param->numberText;
         if (param->type != JsonType::Number || number.find_first_of(".eE") != std::string::npos) throw std::runtime_error("param.json " + key + " is not an integer");
-        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), result.userDefinedParams[index]);
-        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size()) throw std::runtime_error("param.json " + key + " exceeds int32 range");
+        std::int64_t value = 0;
+        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), value);
+        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() || value < std::numeric_limits<std::int32_t>::min() ||
+            value > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("param.json " + key + " exceeds 32-bit range");
+        }
+        result.userDefinedParams[index] = static_cast<std::int32_t>(static_cast<std::uint32_t>(value));
     }
     return result;
 }

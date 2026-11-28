@@ -130,6 +130,9 @@ ConversionInput conversionInput(const std::vector<std::uint8_t>& executable) {
 }
 
 void grammarAccepted() {
+    const auto metadata = ParsePatchFile("\xef\xbb\xbf" "format = 1\nmain_target = \"sample.elf\"\n");
+    require(metadata.Entries.empty() && metadata.MainTarget == "sample.elf", "a leading UTF-8 BOM hid patch metadata");
+
     const auto file = ParsePatchFile(
         "# leading comment\n"
         "format = 1 # trailing comment\n"

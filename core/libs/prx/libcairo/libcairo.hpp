@@ -12,3 +12,6 @@
 #include "prx/libcairo/include/SurfacePattern.hpp"
 #include "prx/libcairo/include/GlyphDrawing.hpp"
 #include "prx/libcairo/include/ContextFontOptions.hpp"
+#include "prx/libcairo/include/FontFace.hpp"
+#include "prx/libcairo/include/FontPipeline.hpp"
+#include "prx/libcairo/include/Device.hpp"

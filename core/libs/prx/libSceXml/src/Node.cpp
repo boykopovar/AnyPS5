@@ -1,7 +1,6 @@
 #include "prx/libSceXml/src/Node.hpp"
 
 #include "prx/libSceXml/src/Document.hpp"
-#include "prx/libSceXml/src/DomReader.hpp"
 
 #include <stdexcept>
 
@@ -16,10 +15,6 @@ const Generation* GenerationOf(const XmlNode* self) {
     const Generation* generation = static_cast<const Generation*>(self->id.first);
     if (!generation->alive) throw std::logic_error("sce::Xml::Dom::Node: reading a node after its builder parsed again or terminated reads freed memory in 13.42");
     return generation;
-}
-
-std::uint64_t OffsetOf(const XmlNode* self) {
-    return reinterpret_cast<std::uint64_t>(self->id.second);
 }
 
 }
@@ -39,19 +34,19 @@ void NodeDestroy(XmlNode*) {
 std::uint32_t NodeTypeOf(const XmlNode* self) {
     const Generation* generation = GenerationOf(self);
     if (generation == nullptr) return InvalidNodeType;
-    return Reader(generation->buffers).NodeType(OffsetOf(self));
+    return GenerationNodeType(*generation, self->id);
 }
 
 bool NodeHasChildNodes(const XmlNode* self) {
     const Generation* generation = GenerationOf(self);
     if (generation == nullptr) return false;
-    return Reader(generation->buffers).HasChildNodes(OffsetOf(self));
+    return GenerationHasChildNodes(*generation, self->id);
 }
 
 bool NodeHasAttributes(const XmlNode* self) {
     const Generation* generation = GenerationOf(self);
     if (generation == nullptr) return false;
-    return Reader(generation->buffers).HasAttributes(OffsetOf(self));
+    return GenerationHasAttributes(*generation, self->id);
 }
 
 }

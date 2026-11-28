@@ -1,0 +1,5 @@
+# libSceNpSignaling
+
+## change [Unsettled connection and peer queries]
+
+- [Unsettled connection and peer queries](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - the four make firmware 13.42's checks in order ([reading](https://github.com/boykopovar/AnyPS5/issues/21845#issuecomment-6939309861), disassembly only, not run on a console): NOT_INITIALIZED, then INVALID_ARGUMENT for a null `outStatus`, `stats`, peer or output (the peer address and port of `sceNpSignalingGetConnectionStatus` may be null), and `sceNpSignalingGetConnectionFromPeerAddressA` then CTX_NOT_FOUND. `sceNpSignalingGetConnectionStatus` reports a known context's connection as inactive (`*outStatus = 0`, the peer outputs untouched, 0), the console's answer for a connection that doesn't exist, as none does here; an unwritable status gives INVALID_ARGUMENT, a host-safety fallback. For an unknown context the console answers CTX_NOT_FOUND only above an SDK threshold whose source wasn't read, so that case throws, as the other three do past their checks

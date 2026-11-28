@@ -114,6 +114,15 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assert_findings(body(f"- [x] Depends on: {answer}\n- [x] AI-assisted: yes\n"),
                                      ["fill Depends on with #N or none"])
 
+    def test_depends_on_answer_is_on_its_own_line_or_a_list(self):
+        for answer in ("\t#12", " - #12", "\n- #12", "\n  - #3\n  - #4", "\r\n  * none", "\n\n+ none"):
+            with self.subTest(answer=answer):
+                self.assert_passes(body(f"- [x] Depends on:{answer}\n- [x] AI-assisted: yes\n"))
+        for following in ("\nNone of the tests ran on Windows.\n", "\n#12 is unrelated.\n", "\n\nnone\n", "\n- [x] None of the above\n"):
+            with self.subTest(following=following):
+                self.assert_findings(body(f"- [x] AI-assisted: yes\n- [x] Depends on:{following}"),
+                                     ["fill Depends on with #N or none"])
+
     def test_sections_must_have_content(self):
         checklist = "- [x] Depends on: none\n- [x] AI-assisted: yes\n"
         self.assert_findings(body(checklist, what="<!-- nothing -->"), ["fill the '### What' section"])
@@ -124,7 +133,7 @@ class PullRequestTemplateTests(unittest.TestCase):
     def test_a_heading_at_another_level_or_case_is_named(self):
         checklist = "- [x] Depends on: none\n- [x] AI-assisted: yes\n"
         cases = {
-            "## What": "add the '### What' heading of the template; found '## What'",
+            "# What": "add the '### What' heading of the template; found '# What'",
             "  ### what  ": "add the '### What' heading of the template; found '### what'",
             "#WHAT": "add the '### What' heading of the template; found '#WHAT'",
         }
@@ -132,6 +141,18 @@ class PullRequestTemplateTests(unittest.TestCase):
             with self.subTest(heading=heading):
                 self.assert_findings(body(checklist).replace("### What", heading), [finding])
         self.assert_findings(body(checklist).replace("### What", "### Whatever"), ["add the '### What' heading of the template"])
+
+    def test_level_two_template_headings_pass(self):
+        checklist = "- [x] Depends on: none\n- [x] AI-assisted: yes\n"
+        text = body(checklist).replace("### ", "## ")
+        self.assert_passes(text)
+        self.assert_passes(text + "\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n  - Fixed x.\n")
+
+    def test_level_two_headings_keep_every_requirement(self):
+        checklist = "- [ ] One topic per PR\n- [x] Depends on: none\n"
+        text = body(checklist, what="\n## Summary by CodeRabbit\nFixed x.").replace("### ", "## ")
+        self.assert_findings(text, ["fill the '### What' section", "unchecked: One topic per PR",
+                                    "answer AI-assisted with yes or no"])
 
     def test_a_body_without_template_headings_names_each_heading(self):
         text = "What\nFix x.\n\nTested\nNot tested.\n\nChecklist\n- [x] Depends on: none\n- [x] AI-assisted: yes\n"
@@ -151,5 +172,25 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assertIn("[pr-title] Pull request title is not Conventional Commits", result.stdout)
 
 
+def template_test_shard(index, count):
+    if not 0 <= index < count:
+        raise ValueError("shard index must be within the shard count")
+    suites = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    tests = [test for suite in suites for test in suite]
+    return unittest.TestSuite(tests[index::count])
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--shard":
+        if len(sys.argv) != 3 or "/" not in sys.argv[2]:
+            print("usage: test_check_conventions_pr_template.py --shard INDEX/COUNT", file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            index, count = (int(part) for part in sys.argv[2].split("/", 1))
+            suite = template_test_shard(index, count)
+        except ValueError as error:
+            print(f"invalid shard: {error}", file=sys.stderr)
+            raise SystemExit(2)
+        result = unittest.TextTestRunner().run(suite)
+        raise SystemExit(0 if result.wasSuccessful() else 1)
     unittest.main()

@@ -37,8 +37,11 @@ static Ngs2CustomSubmixerRackOption MixerOption(std::uint32_t channels, std::uin
 
 static int CreateMixerRack(std::uint32_t channels, std::uint32_t modules, const Ngs2CustomModuleOption* moduleOption, std::uint32_t stateSize) {
     const auto system = CreateSystem();
+    const auto valid = MixerOption(channels, modules, nullptr, 0);
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &valid.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
     auto option = MixerOption(channels, modules, moduleOption, stateSize);
-    Ngs2ContextBufferInfo info{};
     uintptr_t rack = 0;
     const int result = sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &info, &rack);
     sceNgs2SystemDestroy(system, nullptr);

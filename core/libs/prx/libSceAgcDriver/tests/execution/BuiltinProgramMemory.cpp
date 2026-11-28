@@ -100,6 +100,7 @@ void DepthCopyProgramsAreNotCaptured() {
         for (std::uint32_t i = 0; i < words; ++i) queue.shader[0x00cu + i] = 0u;
         queue.context[0x1b3u] = queue.context[0x1b4u] = 0x8002u;
         queue.context[0x1c5u] = 1u;
+        queue.context[0x31cu] = 10u << 2u;
         queue.context[0x08eu] = 0xfu;
         queue.context[0x08fu] = 1u;
         queue.context[0x203u] = 0u;
@@ -125,6 +126,7 @@ void StencilCopyProgramsAreNotCaptured() {
         for (std::uint32_t i = 0; i < words; ++i) queue.shader[0x00cu + i] = 0u;
         queue.context[0x1b3u] = queue.context[0x1b4u] = 0x8002u;
         queue.context[0x1c5u] = 2u;
+        queue.context[0x31cu] = 10u << 2u;
         queue.context[0x08eu] = 0xfu;
         queue.context[0x08fu] = 3u;
         queue.context[0x203u] = 0u;

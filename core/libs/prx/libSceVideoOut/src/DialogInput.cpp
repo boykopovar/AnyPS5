@@ -35,10 +35,12 @@ void DialogInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
                     return;
             }
             break;
-        case SDL_MOUSEWHEEL:
+        case SDL_MOUSEWHEEL: {
             if (event.wheel.windowID != windowId || event.wheel.y == 0) return;
-            kind = event.wheel.y > 0 ? ModalDialogInputKind::Previous : ModalDialogInputKind::Next;
+            const bool previous = (event.wheel.y > 0) != (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED);
+            kind = previous ? ModalDialogInputKind::Previous : ModalDialogInputKind::Next;
             break;
+        }
         case SDL_MOUSEBUTTONDOWN:
             if (event.button.windowID != windowId) return;
             if (event.button.button == SDL_BUTTON_LEFT) kind = ModalDialogInputKind::Confirm;

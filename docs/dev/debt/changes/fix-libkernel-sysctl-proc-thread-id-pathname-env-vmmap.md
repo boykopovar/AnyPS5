@@ -1,0 +1,9 @@
+# libkernel
+
+## change [kern.proc.env]
+
+- [kern.proc.env](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - which variables, if any, the console starts an application with is unverified. `sysctl` {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_ENV`, pid} gives a size of 0 for the calling process, the empty start-up environment `environ` and libc's `getenv` also begin with, and a read into a buffer fails with `EINVAL` before the pid is looked up, as a payload process on a PS5 (firmware 11.60) [measured](https://github.com/boykopovar/AnyPS5/pull/22788#issuecomment-6974329255) for its own pid, pid 1, -1 and 0x7fffffff with 4096- and 24576-byte buffers. Other pids and -1 fail with `ESRCH` for the size, where that console gave 0 for pid 1; a write returns `EPERM`. PS5VR (PPSA99177) reads it for its own pid at start-up.
+
+## change [kern.proc.vmmap]
+
+- [kern.proc.vmmap](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - whether a PS5 application may read its own map, and what types and paths the console reports, is unverified. `sysctl` {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_VMMAP`, pid} returns one 144-byte `kinfo_vmentry`, as [`kinfo_getvmmap`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/lib/libutil/kinfo_getvmmap.c) reads them, per used range of the guest address-space arena, in address order: type `KVME_TYPE_DEFAULT`, the protection `sceKernelVirtualQuery` gives the range's first page (0 where none), and 0 offset, object, resident page counts, flags and an empty path. Ranges outside the arena are not reported. The arena lock is taken per range, not for the whole walk as FreeBSD holds the map lock, so another thread's `mmap` or `munmap` can change the list between two records. Other processes' pids and -1 fail with `ESRCH`, a write with `EPERM` and a short buffer with `ENOMEM`.

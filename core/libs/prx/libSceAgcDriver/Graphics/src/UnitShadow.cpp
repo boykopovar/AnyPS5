@@ -94,6 +94,7 @@ struct UnitShadow {
     // whether a slab -> import copy was recorded at that generation.
     std::vector<std::uint64_t> generation;
     std::vector<std::uint8_t> published;
+    std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>> produced;
     // Slab k covers units [k * SlabUnits(), (k + 1) * SlabUnits()), made on demand; a failed
     // allocation is not retried before the noted present.
     std::vector<std::shared_ptr<ShadowSlab>> slabs;
@@ -113,6 +114,17 @@ struct UnitShadow {
         liveUnits = live;
     }
 };
+
+void AddProducedSpan(std::vector<std::pair<std::uint32_t, std::uint32_t>>& spans, std::uint32_t from, std::uint32_t to) {
+    auto at = std::lower_bound(spans.begin(), spans.end(), std::pair{from, to});
+    if (at != spans.begin() && std::prev(at)->second >= from) --at;
+    while (at != spans.end() && at->first <= to) {
+        from = std::min(from, at->first);
+        to = std::max(to, at->second);
+        at = spans.erase(at);
+    }
+    spans.insert(at, {from, to});
+}
 
 struct Shadows {
     SlimMutex mutex;
@@ -197,6 +209,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
     const auto units = (import.base + import.bytes - shadow->base + UnitBytes - 1) / UnitBytes;
     shadow->generation.assign(static_cast<std::size_t>(units), 0);
     shadow->published.assign(static_cast<std::size_t>(units), 0);
+    shadow->produced.assign(static_cast<std::size_t>(units), {});
     const auto slabs = (units + SlabUnits() - 1) / SlabUnits();
     shadow->slabs.assign(static_cast<std::size_t>(slabs), nullptr);
     shadow->slabFailedUntil.assign(static_cast<std::size_t>(slabs), 0);
@@ -435,21 +448,28 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
                 ++ended;
                 continue;
             }
-            const auto [begin, end] = shadow->UnitRange(unit);
-            if (end <= begin) continue;
-            const VkBufferCopy region{(unit - slab->firstUnit) * UnitBytes + (begin - shadow->UnitBegin(unit)), begin - shadow->importBase + shadow->importLead, end - begin};
-            if (!copies.empty() && copies.back().slab == slab && copies.back().regions.back().dstOffset + copies.back().regions.back().size == region.dstOffset) {
-                copies.back().regions.back().size += region.size;
-                ranges.back().second = end;
-            } else {
-                if (copies.empty() || copies.back().slab != slab) copies.push_back({slab, {}});
-                copies.back().regions.push_back(region);
-                ranges.emplace_back(begin, end);
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            bool copied = false;
+            for (const auto& [from, to] : shadow->produced[unit]) {
+                const auto begin = std::max(unitBegin, shadow->UnitBegin(unit) + from);
+                const auto end = std::min(unitEnd, shadow->UnitBegin(unit) + to);
+                if (end <= begin) continue;
+                const VkBufferCopy region{(unit - slab->firstUnit) * UnitBytes + (begin - shadow->UnitBegin(unit)), begin - shadow->importBase + shadow->importLead, end - begin};
+                if (!copies.empty() && copies.back().slab == slab && copies.back().regions.back().dstOffset + copies.back().regions.back().size == region.dstOffset) {
+                    copies.back().regions.back().size += region.size;
+                    ranges.back().second = end;
+                } else {
+                    if (copies.empty() || copies.back().slab != slab) copies.push_back({slab, {}});
+                    copies.back().regions.push_back(region);
+                    ranges.emplace_back(begin, end);
+                }
+                bytes += end - begin;
+                copied = true;
             }
             shadow->published[unit] = 1;
             ++ended;
+            if (!copied) continue;
             slab->lastUse = Recorder::Presents();
-            bytes += end - begin;
             ++units;
         }
         shadow->liveUnits -= ended;
@@ -673,18 +693,22 @@ bool AnyPublishInProgress() {
 }
 
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
-    if (!UnitShadowEnabled() || bytes == 0) return false;
-    auto& registry = Registry();
-    std::lock_guard lock(registry.mutex);
-    return anyShadowedLocked(registry, address, bytes);
+    return !LiveUnitsClear(address, bytes);
 }
 
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (!UnitShadowEnabled() || ranges.empty()) return false;
-    auto& registry = Registry();
-    std::lock_guard lock(registry.mutex);
+    auto& copy = ThreadScratch<std::shared_ptr<const LiveRanges>, LiveRangesTag>();
+    const auto serial = liveSerial.load(std::memory_order_acquire);
+    if (copy == nullptr || copy->serial != serial) {
+        auto published = publishedLive.load(std::memory_order_acquire);
+        copy = published != nullptr && published->serial == serial ? std::move(published) : currentLiveRanges();
+    }
+    if (copy->ranges.empty()) return false;
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && anyShadowedLocked(registry, begin, static_cast<std::size_t>(end - begin))) return true;
+        if (end <= begin) continue;
+        const auto it = std::upper_bound(copy->ranges.begin(), copy->ranges.end(), begin, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
+        if (it != copy->ranges.end() && it->first < end) return true;
     }
     return false;
 }
@@ -917,10 +941,15 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
                     ++lost;
                     continue;
                 }
+                const auto from = static_cast<std::uint32_t>(std::max(begin, shadow->UnitBegin(unit)) - shadow->UnitBegin(unit));
+                const auto to = static_cast<std::uint32_t>(std::min(end, shadow->UnitBegin(unit + 1)) - shadow->UnitBegin(unit));
+                auto& produced = shadow->produced[unit];
                 if (!shadow->Live(unit)) {
                     ++shadow->liveUnits;
                     turnedLive = true;
+                    produced.clear();
                 }
+                AddProducedSpan(produced, from, to);
                 shadow->generation[unit] = generation;
                 shadow->published[unit] = 0;
                 current->lastUse = present;
@@ -991,6 +1020,20 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
     if (TraceEnabled()) std::fprintf(stderr, "[shadow] retire import 0x%llx+0x%llx: %zu units published, %llu dropped (memory no longer registered)\n", static_cast<unsigned long long>(import.base), static_cast<unsigned long long>(import.bytes), published, static_cast<unsigned long long>(dropped));
     registry.byBase.erase(found);
     liveChanged();
+}
+
+bool RetireShadowReadsRegistered(const HostImport& import) {
+    if (!UnitShadowEnabled()) return false;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    const auto shadow = find(registry, import);
+    if (shadow == nullptr || shadow->liveUnits == 0) return false;
+    for (std::uint64_t unit = 0; unit < shadow->Units(); ++unit) {
+        if (!shadow->Live(unit)) continue;
+        const auto [begin, end] = shadow->UnitRange(unit);
+        if (end > begin) return true;
+    }
+    return false;
 }
 
 void PublishAllShadows(const Context& context, PublishReason reason) {

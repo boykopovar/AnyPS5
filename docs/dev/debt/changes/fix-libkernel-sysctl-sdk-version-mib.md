@@ -1,0 +1,5 @@
+# libkernel
+
+## change `sysctl` {1, 46} throws
+
+- [kern.sdk_version](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - the console's firmware version is not modeled: `sysctlbyname` and `sysctl` {1, 46}, which `sysctlnametomib` gives as in the kernel data below, report `0x01000000` (1.00), the value `sceKernelGetSystemSwVersion` reports, and a write returns -1 with `EPERM`. The major version is byte 3 and the minor byte 2, in hex digits that read as decimal, as [Capy Mobile](https://github.com/khalifa007/CapyMobile/blob/2758c016/src/ps5/platform.c#L64-L71) (PPSA92280, which only displays it), [remote_lua_loader](https://github.com/n0llptr/remote_lua_loader/blob/7c2840e475/savedata/misc.lua#L195-L209) and the [lapse payload](https://github.com/NetflixNHack/Netflix-N-Hack/blob/605eb93ba5/PS4/payloads/lapse.js#L436-L450) read it. In firmware 10.01 kernel data (offsets from VA 0xffffffff82510000) it is a read-only constant at MIB {1, 46} holding `0x10010000` (+0x1783d50), so the low two bytes are 0 there

@@ -3,6 +3,7 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketBorrow.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
@@ -10,10 +11,12 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #ifdef _WIN32
 #include <ws2tcpip.h>
+#include <afunix.h>
 #else
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/un.h>
 #endif
 #include <algorithm>
 #include <atomic>
@@ -24,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <set>
@@ -570,6 +574,220 @@ static void BorrowedUnixReadiness() {
 }
 #endif
 
+static void UnixSocketGuestPath() {
+    const auto before = Descriptors();
+    const std::string guestPath = "/anyps5-curl-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000000) + ".sock";
+    const auto hostPath = ResolvePath_nid_no_patch(guestPath.c_str()).string();
+    sockaddr_un address{};
+    Require(hostPath.size() < sizeof(address.sun_path));
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, hostPath.c_str(), hostPath.size() + 1);
+    const auto listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    Require(listener != CURL_SOCKET_BAD);
+    Require(::bind(listener, reinterpret_cast<const sockaddr*>(&address), static_cast<int>(sizeof(address))) == 0);
+    Require(::listen(listener, 1) == 0);
+    std::string request;
+    std::thread worker([&] {
+        const auto peer = ::accept(listener, nullptr, nullptr);
+        if (peer == CURL_SOCKET_BAD) return;
+        char bytes[512];
+        while (request.find("\r\n\r\n") == std::string::npos) {
+            const auto received = ::recv(peer, bytes, sizeof(bytes), 0);
+            if (received <= 0) break;
+            request.append(bytes, static_cast<std::size_t>(received));
+        }
+        const auto response = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(Body.size()) + "\r\nConnection: close\r\n\r\n" + Body;
+        std::size_t sent = 0;
+        while (sent < response.size()) {
+#ifdef _WIN32
+            const auto count = ::send(peer, response.data() + sent, static_cast<int>(response.size() - sent), 0);
+#else
+            const auto count = ::send(peer, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
+#endif
+            if (count <= 0) break;
+            sent += static_cast<std::size_t>(count);
+        }
+        NativeClose(peer);
+    });
+    State state;
+    auto* easy = Easy("http://localhost/unix-socket", state, false);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_UNIX_SOCKET_PATH, guestPath.c_str()) == CURLE_OK);
+    const auto result = static_cast<CURLcode>(curl_easy_perform_nid_postfix(easy));
+    curl_easy_cleanup_nid_postfix(easy);
+#ifdef _WIN32
+    ::shutdown(listener, SD_BOTH);
+#else
+    ::shutdown(listener, SHUT_RDWR);
+#endif
+    NativeClose(listener);
+    worker.join();
+    std::filesystem::remove(hostPath);
+    Require(result == CURLE_OK);
+    Require(request.starts_with("GET /unix-socket HTTP/1.1\r\n"));
+    Require(state.output == Body);
+    Require(Descriptors() == before);
+}
+
+static void MultiWakeupPoll() {
+    const auto before = Descriptors();
+    Require(curl_multi_wakeup_nid_postfix(nullptr) == CURLM_BAD_HANDLE);
+    auto* multi = curl_multi_init_nid_postfix();
+    Require(multi != nullptr);
+    int pair[2]{};
+    Require(socketpair_nid_postfix(1, 1, 0, pair) == 0);
+
+    guest_curl_waitfd extra{pair[1], CURL_WAIT_POLLIN, 0};
+    int ready = -1;
+    const auto baselineStart = std::chrono::steady_clock::now();
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 60, &ready) == CURLM_OK);
+    const auto baselineElapsed = std::chrono::steady_clock::now() - baselineStart;
+    Require(ready == 0 && extra.revents == 0);
+    Require(baselineElapsed >= std::chrono::milliseconds(25));
+
+    Require(curl_multi_wakeup_nid_postfix(multi) == CURLM_OK);
+    Require(curl_multi_wakeup_nid_postfix(multi) == CURLM_OK);
+    extra.revents = 0;
+    ready = -1;
+    const auto prePollStart = std::chrono::steady_clock::now();
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 3000, &ready) == CURLM_OK);
+    const auto prePollElapsed = std::chrono::steady_clock::now() - prePollStart;
+    Require(ready == 0 && extra.revents == 0);
+    Require(prePollElapsed < std::chrono::milliseconds(1500));
+
+    extra.revents = 0;
+    ready = -1;
+    const auto drainedPollStart = std::chrono::steady_clock::now();
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 60, &ready) == CURLM_OK);
+    Require(std::chrono::steady_clock::now() - drainedPollStart >= std::chrono::milliseconds(25));
+    Require(ready == 0 && extra.revents == 0);
+
+    for (int round = 0; round < 3; ++round) {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool wakerReady = false;
+        bool pollArmed = false;
+        std::int32_t wakeResult = -1;
+
+        std::thread waker([&] {
+            {
+                std::lock_guard lock(mutex);
+                wakerReady = true;
+            }
+            cv.notify_one();
+            {
+                std::unique_lock lock(mutex);
+                cv.wait(lock, [&] { return pollArmed; });
+            }
+            wakeResult = curl_multi_wakeup_nid_postfix(multi);
+        });
+
+        {
+            std::unique_lock lock(mutex);
+            cv.wait(lock, [&] { return wakerReady; });
+            pollArmed = true;
+        }
+        cv.notify_one();
+
+        extra.revents = 0;
+        ready = -1;
+        const auto wakeStart = std::chrono::steady_clock::now();
+        const auto pollResult = curl_multi_poll_nid_postfix(multi, &extra, 1, 4000, &ready);
+        const auto wakeElapsed = std::chrono::steady_clock::now() - wakeStart;
+
+        waker.join();
+        Require(wakeResult == CURLM_OK);
+        Require(pollResult == CURLM_OK);
+        Require(ready == 0 && extra.revents == 0);
+        Require(wakeElapsed < std::chrono::milliseconds(1500));
+    }
+
+    extra.revents = 0;
+    ready = -1;
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 20, &ready) == CURLM_OK);
+    Require(ready == 0 && extra.revents == 0);
+
+    Require(send_nid_postfix(pair[0], "w", 1, 0) == 1);
+    extra.revents = 0;
+    ready = -1;
+    Require(curl_multi_poll_nid_postfix(multi, &extra, 1, 1000, &ready) == CURLM_OK);
+    Require(ready == 1 && (extra.revents & CURL_WAIT_POLLIN) != 0);
+    char byte = 0;
+    Require(recv_nid_postfix(pair[1], &byte, 1, 0) == 1 && byte == 'w');
+
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(curl_multi_cleanup_nid_postfix(multi) == CURLM_OK);
+    Require(Descriptors() == before);
+}
+
+struct PauseState {
+    std::string output;
+    int writeCalls = 0;
+    bool pausedOnce = false;
+    bool resumed = false;
+};
+
+static size_t APS5_VABI WritePauseOnce(char* bytes, size_t size, size_t count, void* opaque) {
+    auto* state = static_cast<PauseState*>(opaque);
+    const auto length = size * count;
+    ++state->writeCalls;
+    if (!state->pausedOnce && length > 0) {
+        state->pausedOnce = true;
+        return CURL_WRITEFUNC_PAUSE;
+    }
+    if (length > 0) Require(state->resumed);
+    state->output.append(bytes, length);
+    return length;
+}
+
+static void ReceivePauseReplay() {
+    const auto before = Descriptors();
+    Server server;
+    PauseState state;
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, server.Url().c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_PROXY, "") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOSIGNAL, std::int64_t{1}) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT_MS, std::int64_t{5000}) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, WritePauseOnce) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &state) == CURLE_OK);
+
+    auto* multi = curl_multi_init_nid_postfix();
+    Require(multi != nullptr);
+    Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_OK);
+
+    int running = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    do {
+        Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK);
+        if (state.pausedOnce && !state.resumed) {
+            Require(state.output.empty());
+            Require(running == 1);
+            int extraRunning = -1;
+            Require(curl_multi_perform_nid_postfix(multi, &extraRunning) == CURLM_OK);
+            Require(extraRunning == 1 && state.output.empty());
+            state.resumed = true;
+            Require(curl_easy_pause_nid_postfix(easy, CURLPAUSE_CONT) == CURLE_OK);
+            Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK);
+        }
+        if (running > 0) {
+            int ready = 0;
+            Require(curl_multi_poll_nid_postfix(multi, nullptr, 0, 50, &ready) == CURLM_OK);
+        }
+        Require(std::chrono::steady_clock::now() < deadline);
+    } while (running > 0);
+
+    Done(multi, easy);
+    Require(state.pausedOnce && state.resumed);
+    Require(state.writeCalls >= 2);
+    Require(state.output == Body);
+    Require(curl_multi_remove_handle_nid_postfix(multi, easy) == CURLM_OK);
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(curl_multi_cleanup_nid_postfix(multi) == CURLM_OK);
+    Require(Descriptors() == before);
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
@@ -583,5 +801,8 @@ int main() {
     ConnectOnly();
     CallbackOwnership();
     ErrorsAndExtraDescriptors();
+    MultiWakeupPoll();
+    ReceivePauseReplay();
+    UnixSocketGuestPath();
     curl_global_cleanup_nid_postfix();
 }

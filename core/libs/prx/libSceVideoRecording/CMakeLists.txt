@@ -1,0 +1,16 @@
+add_library(libSceVideoRecording SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoRecording PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVideoRecording PRIVATE libkernel_sys)
+configure_windows_unwind(libSceVideoRecording)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_recording_ps4_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoRecordingPs4.cpp)
+    target_include_directories(guest_video_recording_ps4_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_recording_ps4_tests PRIVATE libSceVideoRecording libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_video_recording_ps4_tests)
+    add_test(NAME guest_video_recording_ps4 COMMAND guest_video_recording_ps4_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_recording_ps4 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoRecording>")
+    endif()
+endif()

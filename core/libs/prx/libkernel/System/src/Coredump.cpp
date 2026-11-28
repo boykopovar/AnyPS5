@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <atomic>
 #include <cstdio>
-#include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -16,6 +16,7 @@
 static std::atomic<uint64_t> g_coredumpHandler{0};
 static std::atomic<uint64_t> g_coredumpContext{0};
 static std::atomic<std::uint32_t> coredumpSdkVersion{0};
+static std::mutex g_coredumpHandlerMutex;
 
 static constexpr int SCE_COREDUMP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x81180000u);
 static constexpr int SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER = static_cast<int>(0x81180003u);
@@ -24,21 +25,24 @@ static bool validUserFileFlags(std::uint32_t userValue) {
     return coredumpSdkVersion.load(std::memory_order_relaxed) < 0x06500000 || (userValue & 0xc0000000u) != 0x40000000u;
 }
 
+static int userFileResult() {
+    return g_coredumpHandler.load(std::memory_order_relaxed) ? SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER : 0;
+}
+
 extern "C" {
 
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_size, uint64_t context) {
+    std::lock_guard<std::mutex> lock(g_coredumpHandlerMutex);
     if (g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180002u);
     if (!handler || stack_size < 0x4000 || stack_size >= 0x20000000) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
-    coredumpSdkVersion.store(sdkVersion, std::memory_order_relaxed);
+    coredumpSdkVersion.store(ApplicationCompiledSdkVersion(), std::memory_order_relaxed);
     g_coredumpHandler.store(handler, std::memory_order_relaxed);
     g_coredumpContext.store(context, std::memory_order_relaxed);
     return 0;
 }
 
 int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
+    std::lock_guard<std::mutex> lock(g_coredumpHandlerMutex);
     if (!g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180001u);
     g_coredumpHandler.store(0, std::memory_order_relaxed);
     g_coredumpContext.store(0, std::memory_order_relaxed);
@@ -47,15 +51,19 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
 
 int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_t unknown, const char* typeName, const char* what) {
     (void)unknown;
-    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
+    std::string type;
+    std::string message;
+    const bool typeCopied = CopyGuestString_nid_no_patch(typeName, 65536, type) == 0;
+    const bool whatCopied = CopyGuestString_nid_no_patch(what, 65536, message) == 0;
+    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeCopied ? type.c_str() : "(unknown)", whatCopied ? ", what(): " : "", message.c_str());
     return 0;
 }
 
 int APS5_VABI sceCoredumpAttachUserFile(std::uint32_t userValue, const char* path) {
     if (!path || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
     std::string guestPath;
-    if (CopyGuestPath_nid_no_patch(path, guestPath) != 0) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
+    if (const int copied = CopyGuestPath_nid_no_patch(path, guestPath); copied != 0 && copied != 63) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
+    return userFileResult();
 }
 
 int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size) {
@@ -67,7 +75,7 @@ int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size) {
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(std::uint32_t userValue, const void* mem, std::int32_t size, const char* name) {
     (void)mem;
     if (!name || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    return size < 0 ? 0 : SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
+    return size < 0 ? 0 : userFileResult();
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type) {

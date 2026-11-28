@@ -23,9 +23,18 @@ BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
 EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
 FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
+_STATEMENT_DELIM = re.compile(r"[()[\]{};]")
+_LAMBDA_BEFORE = re.compile(r"\b(?:co_await|co_yield|throw)$")
+_QUALIFIED_KEYWORDS = frozenset({
+    "return", "else", "do", "throw", "co_return", "co_await", "co_yield",
+    "and", "or", "not", "xor", "bitand", "bitor", "compl",
+})
+_WRAPPER_CANDIDATE = re.compile(r"\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{")
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 ELF_SYMBOL_TAGS = {
+    2: "DT_PLTRELSZ", 7: "DT_RELA", 8: "DT_RELASZ", 9: "DT_RELAENT",
+    17: "DT_REL", 18: "DT_RELSZ", 20: "DT_PLTREL", 23: "DT_JMPREL",
     4: "DT_HASH", 5: "DT_STRTAB", 6: "DT_SYMTAB",
     10: "DT_STRSZ", 11: "DT_SYMENT", 0x6ffffef5: "DT_GNU_HASH",
     0x61000035: "DT_SCE_STRTAB", 0x61000037: "DT_SCE_STRSZ", 0x61000039: "DT_SCE_SYMTAB",
@@ -75,7 +84,7 @@ def elf_sections(path, data):
     return [unpack("<IIQQQQIIQQ", data, section_offset + index * 64, path, f"section header {index}") for index in range(section_count)]
 
 
-def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
+def elf_program_dynamic_symbols(path, data, sections=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     ident, program_offset, program_size, program_count = header[0], header[5], header[9], header[10]
     if ident[6] != 1 or header[3] != 1:
@@ -141,7 +150,8 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
     symbol_size = dynamic.get(11)
-    if section_symbol_count == 0 and symbol_address is None:
+    section_symbol_count = max((section[5] // 24 for section in sections or () if section[1] == 11), default=None)
+    if sections is not None and not section_symbol_count and symbol_address is None:
         if not needed_offsets:
             return {}, set(), set()
         if string_address is None or not string_size:
@@ -184,6 +194,27 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
                     break
                 symbol_index += 1
         symbol_count = maximum + 1
+        if not visited_chain_entries:
+            if section_symbol_count is not None:
+                symbol_count = max(symbol_count, section_symbol_count)
+            else:
+                if 17 in dynamic or dynamic.get(18, 0):
+                    raise AuditError(f"{path}: DT_REL cannot bound an empty GNU hash symbol table")
+                for address_tag, size_tag, name in ((7, 8, "DT_RELA"), (23, 2, "DT_JMPREL")):
+                    if address_tag not in dynamic and not dynamic.get(size_tag, 0):
+                        continue
+                    relocation_address, relocation_size = dynamic.get(address_tag), dynamic.get(size_tag)
+                    if relocation_address is None or relocation_size is None or relocation_size % 24:
+                        raise AuditError(f"{path}: incomplete or invalid {name} relocation table")
+                    if dynamic.get(9, 24) != 24 or (address_tag == 23 and dynamic.get(20) != 7):
+                        raise AuditError(f"{path}: {name} needs ELF64 RELA entries")
+                    if not relocation_size:
+                        continue
+                    relocation_offset = file_offset(relocation_address, relocation_size, f"{name} relocation table")
+                    for position in range(relocation_offset, relocation_offset + relocation_size, 24):
+                        _, info, _ = unpack("<QQq", data, position, path, f"{name} relocation")
+                        if info & 0xffffffff:
+                            symbol_count = max(symbol_count, (info >> 32) + 1)
     if symbol_count is None:
         if section_symbol_count is None:
             raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
@@ -274,9 +305,11 @@ def elf_exports(path, data):
             if name == 0 or index == 0 or binding not in (1, 2, 10) or visibility not in (0, 3):
                 continue
             names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name").split(MODULE_SUFFIX, 1)[0])
-    section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
-    if elf_has_dynamic_segment(path, data, header) and names != elf_program_dynamic_symbols(path, data, section_symbol_count)[1]:
-        raise AuditError(f"{path}: ELF section exports disagree with PT_DYNAMIC")
+    if elf_has_dynamic_segment(path, data, header):
+        runtime_exports = elf_program_dynamic_symbols(path, data, sections)[1]
+        if any(section[1] == 11 for section in sections) and names != runtime_exports:
+            raise AuditError(f"{path}: ELF section exports disagree with PT_DYNAMIC")
+        return runtime_exports
     return names
 
 
@@ -319,10 +352,11 @@ def elf_imports(path, data):
             if not terminated:
                 raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
     if elf_has_dynamic_segment(path, data, header):
-        section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
-        runtime_imports, _, runtime_needed = elf_program_dynamic_symbols(path, data, section_symbol_count)
-        if symbols != runtime_imports or needed != runtime_needed:
+        runtime_imports, _, runtime_needed = elf_program_dynamic_symbols(path, data, sections)
+        section_types = {section[1] for section in sections}
+        if (11 in section_types and symbols != runtime_imports) or (6 in section_types and needed != runtime_needed):
             raise AuditError(f"{path}: ELF section imports or dependencies disagree with PT_DYNAMIC")
+        return runtime_imports, runtime_needed
     return symbols, needed
 
 
@@ -345,20 +379,27 @@ def pe_headers(path, data):
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
+    mappings = [(section[2], max(section[1], section[3]), section[3], section[4]) for section in sections if max(section[1], section[3]) > 0]
+    if headers_size:
+        mappings.append((0, headers_size, headers_size, 0))
+
     def to_offset(address, length):
-        if address < headers_size and length <= headers_size - address:
-            take(data, address, length, path, f"header data at RVA 0x{address:x}")
-            return address, min(headers_size, len(data))
-        for section in sections:
-            virtual, raw_size, raw_offset = section[2], section[3], section[4]
-            if address < virtual:
-                continue
-            relative = address - virtual
-            if relative >= raw_size or length > raw_size - relative:
-                continue
-            take(data, raw_offset + relative, length, path, f"data at RVA 0x{address:x}")
-            return raw_offset + relative, min(raw_offset + raw_size, len(data))
-        raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        matches = [mapping for mapping in mappings if mapping[0] <= address < mapping[0] + mapping[1]]
+        if len(matches) > 1:
+            raise AuditError(f"{path}: overlapping PE mappings at RVA 0x{address:x}")
+        if not matches:
+            raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        virtual, _, raw_size, raw_offset = matches[0]
+        relative = address - virtual
+        if relative >= raw_size or length > raw_size - relative:
+            raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        following = [mapping[0] for mapping in mappings if address < mapping[0] < virtual + raw_size]
+        boundary = min(following, default=virtual + raw_size)
+        if length > boundary - address:
+            raise AuditError(f"{path}: read at RVA 0x{address:x} crosses overlapping PE mappings")
+        offset = raw_offset + relative
+        take(data, offset, length, path, f"data at RVA 0x{address:x}")
+        return offset, min(raw_offset + boundary - virtual, len(data))
 
     return to_offset, optional + directory, count
 
@@ -462,11 +503,16 @@ def macho_uleb(data, offset, end, path):
 
 def macho_exports(path, data):
     tries = []
-    for kind, offset, _ in macho_commands(path, data):
-        if kind == 0x80000022:
-            tries.append(unpack("<II", data, offset + 40, path, "Mach-O dyld info command"))
+    for kind, offset, length in macho_commands(path, data):
+        if kind in (0x22, 0x80000022):
+            fields = 40
         elif kind == 0x80000033:
-            tries.append(unpack("<II", data, offset + 8, path, "Mach-O exports trie command"))
+            fields = 8
+        else:
+            continue
+        if length < fields + 8:
+            raise AuditError(f"{path}: Mach-O load command 0x{kind:x} is too short for its export range")
+        tries.append(unpack("<II", data, offset + fields, path, "Mach-O export offset and size"))
     tries = [trie for trie in tries if trie[1]]
     if len(tries) > 1:
         raise AuditError(f"{path}: Mach-O image has more than one export trie")
@@ -659,6 +705,15 @@ def read_modules(directories):
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
+def module_registry_name(module):
+    return module if module.endswith(".guest.prx") else module + ".guest.prx"
+
+
+def modules_with_registries(registries, modules):
+    stems = {path.name.removesuffix(".registry.json") for path in registries}
+    return {module for module in modules if any(stem + "." + module_registry_name(module) in stems for stem in stems)}
+
+
 def nids_of(name, aliases):
     if name in aliases:
         return aliases[name]
@@ -672,29 +727,67 @@ def hashed_nid(symbol):
         return symbol
 
 
+def _is_qualified(text, pos):
+    end = pos
+    while end > 0 and text[end - 1].isspace():
+        end -= 1
+    if end == 0:
+        return False
+    character = text[end - 1]
+    if character == ".":
+        return True
+    if character == ">":
+        return end >= 2 and text[end - 2] == "-"
+    if character == ":" and end >= 2 and text[end - 2] == ":":
+        index = end - 2
+        while index > 0 and text[index - 1].isspace():
+            index -= 1
+        if index == 0:
+            return False
+        if text[index - 1] == ">":
+            return True
+        word_end = index
+        while index > 0 and (text[index - 1].isalnum() or text[index - 1] == "_"):
+            index -= 1
+        return index < word_end and text[index:word_end] not in _QUALIFIED_KEYWORDS
+    return False
+
+
+def _iter_top_level_statements(body):
+    braces, parens, start = 0, 0, 1
+    limit = len(body) - 1
+    if limit > 1:
+        for match in _STATEMENT_DELIM.finditer(body, 1, limit):
+            character = match.group()
+            if character == "(" or character == "[":
+                parens += 1
+            elif character == ")" or character == "]":
+                parens -= 1
+            elif character == "{":
+                braces += 1
+            elif character == "}":
+                braces -= 1
+                if not braces and not parens:
+                    end = match.end()
+                    yield start, body[start:end]
+                    start = end
+            elif not braces and not parens:
+                end = match.end()
+                yield start, body[start:end]
+                start = end
+    yield start, body[start:-1]
+
+
 def top_level_statements(body):
-    braces, parens, start, parts = 0, 0, 1, []
-    for i, character in enumerate(body[1:-1], 1):
-        if character in "([":
-            parens += 1
-        elif character in ")]":
-            parens -= 1
-        elif character == "{":
-            braces += 1
-        elif character == "}":
-            braces -= 1
-            if not braces and not parens:
-                parts.append((start, body[start:i + 1]))
-                start = i + 1
-        elif character == ";" and not braces and not parens:
-            parts.append((start, body[start:i + 1]))
-            start = i + 1
-    parts.append((start, body[start:-1]))
-    return parts
+    return list(_iter_top_level_statements(body))
 
 
 def function_exit(body):
-    for _, statement in top_level_statements(body):
+    if "return" not in body and "goto" not in body:
+        return False
+    for _, statement in _iter_top_level_statements(body):
+        if "return" not in statement and "goto" not in statement:
+            continue
         depth, end, capture_depth, callable_scope = 0, 0, 0, False
         for match in FLOW_TOKEN.finditer(statement):
             if match.start() < end:
@@ -704,7 +797,7 @@ def function_exit(body):
                 before = statement[:match.start()].rstrip()
                 if not depth and not statement.startswith("[[", match.start()) and (
                         not before or before[-1] in "=({,:;?!~&|+-*/%^<>" or before.endswith("]]")
-                        or re.search(r"\b(?:co_await|co_yield|throw)$", before)):
+                        or _LAMBDA_BEFORE.search(before)):
                     capture_depth = depth + 1
                 depth += 1
             elif token == "(":
@@ -727,6 +820,8 @@ def function_exit(body):
 
 
 def branch_variants(body):
+    if "#" not in body:
+        return iter((body,))
     root = []
     lists, groups = [root], []
     position = 0
@@ -793,28 +888,92 @@ def variant_calls(body):
 
 def unconditional_calls(body):
     names = set()
-    for offset, statement in top_level_statements(body):
+    if "(" not in body:
+        return names
+    has_exit = "return" in body or "goto" in body
+    for offset, statement in _iter_top_level_statements(body):
         block = statement.strip()
         if block.startswith("{") and block.endswith("}"):
             names |= unconditional_calls(block)
-        elif not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+        elif "(" in statement and not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+            has_brace = "{" in statement or "}" in statement
             for call in progress.CALL.finditer(statement):
-                before = statement[:call.start()]
-                if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
+                if (not has_brace or statement.count("{", 0, call.start()) == statement.count("}", 0, call.start())) and not _is_qualified(body, offset + call.start()):
                     names.add(call.group(1))
-        if function_exit("{" + statement + "}"):
+        if has_exit and function_exit("{" + statement + "}"):
             break
     return names
 
 
-def always_stub_calls(text):
-    helpers = {}
-    possible = progress.stub_calls(text)
-    for match in progress.STUB_WRAPPER.finditer(text):
-        if match.group(1) not in possible:
+def _calls_any_unconditionally(body, calls):
+    if "(" not in body or not any(call_name in body for call_name in calls):
+        return False
+    has_exit = "return" in body or "goto" in body
+    for offset, statement in _iter_top_level_statements(body):
+        block = statement.strip()
+        if block.startswith("{") and block.endswith("}"):
+            if _calls_any_unconditionally(block, calls):
+                return True
+        elif "(" in statement and not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+            has_brace = "{" in statement or "}" in statement
+            for call in progress.CALL.finditer(statement):
+                if call.group(1) in calls and (not has_brace or statement.count("{", 0, call.start()) == statement.count("}", 0, call.start())) and not _is_qualified(body, offset + call.start()):
+                    return True
+        if has_exit and function_exit("{" + statement + "}"):
+            break
+    return False
+
+
+def _iter_stub_wrappers(text):
+    if "(" not in text or "{" not in text:
+        return
+    position = 0
+    for candidate in _WRAPPER_CANDIDATE.finditer(text):
+        end = candidate.end()
+        if end <= position:
             continue
-        body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
-        helpers.setdefault(match.group(1), []).extend(variant_calls(body))
+        param_end = candidate.start()
+        bound = max(position, text.rfind(";", position, param_end) + 1, text.rfind("{", position, param_end) + 1)
+        if bound == 0 or text[bound - 1] == "\n":
+            search_start = bound
+        else:
+            newline = text.find("\n", bound, param_end)
+            if newline < 0:
+                continue
+            search_start = newline + 1
+        if "(" not in text[search_start:param_end]:
+            continue
+        match = progress.STUB_WRAPPER.search(text, search_start, end)
+        if match is not None:
+            yield match
+            position = match.end()
+
+
+def always_stub_calls(text):
+    if progress.STUB not in text:
+        return {progress.STUB}
+    wrapper_bodies = {}
+    raw_targets = {}
+    for match in _iter_stub_wrappers(text):
+        name = match.group(1)
+        open_brace = match.end() - 1
+        close_brace = progress.body_end(text, open_brace)
+        body_inner = text[open_brace:close_brace]
+        wrapper_bodies.setdefault(name, []).append(text[open_brace:close_brace + 1])
+        if "(" in body_inner:
+            raw_targets.setdefault(name, set()).update(call.group(1) for call in progress.CALL.finditer(body_inner))
+    possible = {progress.STUB}
+    while True:
+        found = {name for name, targets in raw_targets.items() if name not in possible and targets & possible}
+        if not found:
+            break
+        possible |= found
+    helpers = {}
+    for name, bodies in wrapper_bodies.items():
+        if name not in possible:
+            continue
+        for body in bodies:
+            helpers.setdefault(name, []).extend(variant_calls(body))
     calls = {progress.STUB}
     while True:
         found = {name for name, bodies in helpers.items() if name not in calls and all(targets & calls for targets in bodies)}
@@ -823,19 +982,46 @@ def always_stub_calls(text):
         calls |= found
 
 
+def _library_cpp_sources(library):
+    paths = []
+    case_insensitive = os.name == "nt"
+    stack = [os.fspath(library)]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name != "tests":
+                        stack.append(entry.path)
+                elif (entry.name.lower().endswith(".cpp") if case_insensitive else entry.name.endswith(".cpp")) and entry.is_file():
+                    paths.append(entry.path)
+    paths.sort()
+    return (Path(path).read_text(encoding="utf-8", errors="ignore") for path in paths)
+
+
 def conditional_stubs(library):
     conditional = set()
-    flavor = PureWindowsPath if os.name == "nt" else Path
-    library_flavored = flavor(str(library))
-    for source in library.rglob("*.cpp"):
-        if "tests" in flavor(str(source)).relative_to(library_flavored).parts:
+    for raw in _library_cpp_sources(library):
+        if "APS5_VABI" not in raw and progress.STUB not in raw and "\\\n" not in raw and "\\\r\n" not in raw:
             continue
-        text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
+        text = progress.code(raw)
+        if "APS5_VABI" not in text:
+            if progress.STUB in text:
+                always_stub_calls(text)
+            continue
+        matches = [(match.group(1), match.end() - 1) for match in progress.DEFINITION.finditer(text)]
+        if not matches:
+            if progress.STUB in text:
+                always_stub_calls(text)
+            continue
         calls = always_stub_calls(text)
-        for match in progress.DEFINITION.finditer(text):
-            body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
-            if not all(targets & calls for targets in variant_calls(body)):
-                conditional.add(match.group(1))
+        for name, open_brace in matches:
+            body = text[open_brace:progress.body_end(text, open_brace) + 1]
+            if "#" not in body:
+                if not _calls_any_unconditionally(body, calls):
+                    conditional.add(name)
+            elif not all(_calls_any_unconditionally(variant, calls) for variant in branch_variants(body)):
+                conditional.add(name)
     return conditional
 
 
@@ -850,12 +1036,16 @@ def source_stub_classes(source):
     partial = set()
     shared = {}
     done_by_library = {}
-    for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
+    libraries = sorted(item for item in Path(source).iterdir() if item.is_dir())
+    library_groups = {}
+    if Path(source) == progress.PRX:
+        library_groups = {g["name"]: g for g in progress.collect_libraries()["groups"]}
+    for library in libraries:
         aliases = {}
         for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
-        group = progress.scan_library(library)
+        group = library_groups.get(library.name) or progress.scan_library(library)
         shared[library.name] = progress.shared_source_owners(library)
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
         done_by_library[library.name] = done
@@ -999,6 +1189,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if name:
             if name in tuple("libSceGnmDriver_padebug" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
                 name = "libSceGnmDriver.prx"
+            if name in tuple("libSceSsl2" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
+                name = "libSceSsl.prx"
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
                     normalized = name[:-len(suffix)] + ".prx"
@@ -1048,6 +1240,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         exact = {provider for provider, names in guest_names.items() if filename in names.files}
         return exact or {provider for provider, names in guest_names.items() if name in names}
 
+    host_libc_follows = "libSceLibcInternal.prx" in {needed_name(name) for name in needed_libraries} and "libSceLibcInternal.prx" not in modules
+
     def resolve(symbol, record):
         library = record["library"]
         hosts = exports.get(symbol, [])
@@ -1056,7 +1250,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
             selected = guest_matches(library)
             guests = [provider for provider in guests if provider in selected]
             if library in modules:
-                hosts = []
+                fallback = host_libc_follows and not guests and system_library(library) == "libc.prx"
+                hosts = [provider for provider in hosts if provider == "libc.prx"] if fallback else []
         elif hosts:
             module = record.get("module")
             if searched is not None and not module:
@@ -1089,13 +1284,15 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
             resolved_nid = hashed_nid(nid)
             providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
-        kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)
+        named_host = system_library(library)
+        selected = [named_host] if named_host in windows_libraries and named_host in providers else providers
+        kind = classify(resolved_nid, library, selected, stubs, guest_providers, partial)
         record["class"] = kind
         record["providers"] = providers
         if kind != "absent":
             record["unsearched_providers"] = []
-        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
-        record["name"] = next((stubs[(provider, resolved_nid)] for provider in providers if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
+        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and named_host not in providers and "libc.prx" not in providers
+        record["name"] = next((stubs[(provider, resolved_nid)] for provider in selected if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
     ordered = sorted(records.values(), key=lambda record: (record["class"], record["library"] or "", record.get("module") or "", record["nid"]))
     check_conservation(len(imports) + sum(len(symbols) for symbols, _ in (module_imports or {}).values()), ordered)
     missing = defaultdict(int)
@@ -1307,7 +1504,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="classify the imports of a converted game against the built system libraries")
     parser.add_argument("registries", nargs="+", type=Path, help="JSON written by 'relinker --registry'")
     parser.add_argument("--libs", action="append", required=True, help="directory of built .prx files; repeat for several")
-    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited")
+    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited, from its registry when that is passed")
     parser.add_argument("--source", default=str(PRX), help="core/libs/prx tree used to find throwing stubs (default: this repository's)")
     parser.add_argument("--names", help="aerolib.csv style file (NID, name per line) used to name absent imports")
     parser.add_argument("--json", type=Path, help="write the full result to this file")
@@ -1334,6 +1531,8 @@ def main(argv=None):
         exports, libraries = built_libraries(args.libs)
         host_dependencies, windows = built_host_dependencies(args.libs)
         module_imports, module_exports = read_modules(args.modules)
+        for module in modules_with_registries(args.registries, module_imports):
+            module_imports[module] = ([], module_imports[module][1])
         modules = set(module_imports)
         modules |= {name.removesuffix(".guest.prx") for name in modules if name.endswith(".guest.prx")}
         modules = ModuleNames(modules, fold=bool(windows))

@@ -101,12 +101,26 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
         if (tracked) RemoveWaitRecord(records, record);
         if (!state->_alive) return ULT_ERROR_STATE;
     }
-    if (push) {
-        const auto slot = pool._free;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(pool._data.data() + slot * pool._dataSize, source, state->_dataSize);
+    const auto slot = push ? pool._free : state->_head;
+    auto& available = push ? pool._spaceAvailable : state->_dataAvailable;
+    const int savedErrno = errno;
+    bool copied;
+    try {
+        copied = push ? GuestCopyIn_nid_no_patch(pool._data.data() + slot * pool._dataSize, source, state->_dataSize)
+                      : GuestCopyOut_nid_no_patch(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
+    } catch (...) {
         errno = savedErrno;
-        if (!copied) return ULT_ERROR_NULL;
+        lock.unlock();
+        available.notify_one();
+        throw;
+    }
+    errno = savedErrno;
+    if (!copied) {
+        lock.unlock();
+        available.notify_one();
+        return ULT_ERROR_NULL;
+    }
+    if (push) {
         pool._free = pool._next[slot];
         pool._next[slot] = UINT32_MAX;
         if (state->_tail == UINT32_MAX) state->_head = slot;
@@ -114,11 +128,6 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
         state->_tail = slot;
         ++state->_queuedItems;
     } else {
-        const auto slot = state->_head;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
-        errno = savedErrno;
-        if (!copied) return ULT_ERROR_NULL;
         state->_head = pool._next[slot];
         if (state->_head == UINT32_MAX) state->_tail = UINT32_MAX;
         pool._next[slot] = pool._free;
@@ -216,6 +225,13 @@ UltThreadIdentity UltCurrentThreadIdentity_nid_no_patch() {
     std::uintptr_t thread;
     std::memcpy(&thread, self, sizeof(thread));
     return {reinterpret_cast<void*>(thread), 1};
+}
+
+UltThreadIdentity UltCurrentOwnerIdentity_nid_no_patch() {
+    if (gCurrentUlthread == nullptr) return UltCurrentThreadIdentity_nid_no_patch();
+    void* name = nullptr;
+    std::memcpy(&name, gCurrentUlthread->_name, sizeof(name));
+    return {name, 2};
 }
 
 bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue) {
@@ -430,7 +446,7 @@ int APS5_VABI sceUltMutexLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
-        if (state->_attribute == 0) {
+        if ((state->_attribute & 1) == 0) {
             return ULT_ERROR_STATE;
         }
         ++state->_lockCount;
@@ -454,7 +470,7 @@ int APS5_VABI sceUltMutexLock(void* mutex) {
     if (!state->_alive) {
         return ULT_ERROR_STATE;
     }
-    state->_ownerIdentity = UltCurrentThreadIdentity_nid_no_patch();
+    state->_ownerIdentity = UltCurrentOwnerIdentity_nid_no_patch();
     state->_owner = self;
     state->_lockCount = 1;
     return ULT_OK;
@@ -476,7 +492,7 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
-        if (state->_attribute == 0) {
+        if ((state->_attribute & 1) == 0) {
             return ULT_ERROR_STATE;
         }
         ++state->_lockCount;
@@ -485,7 +501,7 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
     if (state->_lockCount != 0) {
         return ULT_ERROR_BUSY;
     }
-    state->_ownerIdentity = UltCurrentThreadIdentity_nid_no_patch();
+    state->_ownerIdentity = UltCurrentOwnerIdentity_nid_no_patch();
     state->_owner = self;
     state->_lockCount = 1;
     return ULT_OK;
@@ -1211,7 +1227,6 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     std::lock_guard stateLock(state->_mutex);
     if (!state->_alive) return ULT_ERROR_STATE;
     if (const int status = ValidateWaitRecords(waitingThreads, capacity); status != ULT_OK) return status;
-    if (state->_lockCount != 0 && (state->_attribute != 0 || state->_lockCount > 1 || state->_ownerIdentity.type != 1)) NotImplemented_nid_no_patch(__func__);
     UltMutexInfo localInfo{};
     localInfo.size = sizeof(UltMutexInfo);
     localInfo.object = object;
@@ -1220,6 +1235,7 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     localInfo.owner = state->_ownerIdentity.thread;
     localInfo.ownerType = state->_ownerIdentity.type;
     localInfo.attributes = state->_attribute;
+    localInfo.lockCount = (state->_attribute & 1) ? state->_lockCount : 0;
     localInfo.waitingThreads = state->_waiters;
     const std::size_t count = std::min<std::size_t>(capacity, state->_waiterRecords.size());
     UltMutexInfo previousInfo{};

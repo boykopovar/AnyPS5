@@ -18,7 +18,7 @@ char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer) 
 }
 
 void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length) {
-    if (buffer == nullptr && length != 0) NotImplemented_nid_no_patch(__func__);
+    if (buffer == nullptr && length != 0) throw std::invalid_argument("ERR_error_string_n: null buffer");
     if (length == 0) return;
     char local[64];
     const std::size_t capacity = std::min(length, sizeof(local));

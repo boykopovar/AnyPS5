@@ -148,6 +148,25 @@ void CheckUnreadableEntriesArray() {
     Require(sceKernelMemoryPoolBatch(nullptr, 0, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
 }
 
+void CheckPoolProtectDropsUndefinedBits() {
+    void* flexible = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flexible, GuestPageSize, 3, 0) == 0 && flexible != nullptr);
+    KernelMemoryPoolBatchEntry poolEntry{};
+    poolEntry.op = 3;
+    poolEntry.protect.addr = flexible;
+    poolEntry.protect.len = GuestPageSize;
+    poolEntry.protect.prot = 0x09;
+    int processed = -1;
+    Require(sceKernelMemoryPoolBatch(&poolEntry, 1, &processed, 0) == 0 && processed == 1);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(flexible, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    poolEntry.protect.prot = 0x0B;
+    processed = -1;
+    Require(sceKernelMemoryPoolBatch(&poolEntry, 1, &processed, 0) == 0 && processed == 1);
+    Require(sceKernelVirtualQuery(flexible, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), GuestPageSize) == 0);
+}
+
 } // namespace
 
 int main() {
@@ -155,5 +174,6 @@ int main() {
     CheckPartialProcessing();
     CheckUnwritableResultSlot();
     CheckUnreadableEntriesArray();
+    CheckPoolProtectDropsUndefinedBits();
     return 0;
 }

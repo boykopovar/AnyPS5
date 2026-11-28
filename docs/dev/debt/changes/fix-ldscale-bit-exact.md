@@ -1,0 +1,5 @@
+# libc
+
+## add Functional
+
+- [_LDscale and _LDunscale](../../../core/libs/prx/libc/src/MathExact.cpp) (libc) edit the sign, exponent and fraction bits as the `libc.prx` bundled with PPSA10122 01.101.000 does (0x2300 and 0x2130), with no floating-point operation, so the result does not depend on the caller's x87 precision and no exception flag is raised. A result of `_LDscale` that becomes subnormal is rounded in the direction `_Fltrounds` reports, overflow gives a signed infinity, and a value whose 64 fraction bits and one more would all be shifted out becomes `+0` whatever its sign. A nonzero fraction with a clear integer bit is normalized first, and an infinity is recognized without its integer bit. A million arguments per function, non-canonical encodings and shifts beyond 32 bits included, give the same bits, return value and exception flags as that code run natively on Windows at 64-, 53- and 24-bit precision, and at 64-bit precision in each rounding direction. Other SDK versions and the system `libSceLibcInternal` are not compared

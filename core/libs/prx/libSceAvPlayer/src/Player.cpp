@@ -4,11 +4,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <cstring>
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace AvPlayer {
 
@@ -16,6 +18,13 @@ namespace {
 
 bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
     return std::ranges::equal(left, right, [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+}
+
+bool IsPs4Process() {
+    const int savedErrno = errno;
+    const bool ps4 = sceKernelIsPs4Process() != 0;
+    errno = savedErrno;
+    return ps4;
 }
 
 bool SameLanguage(const char* preferred, const char* code) {
@@ -50,20 +59,28 @@ AvPlayerMemAllocator WithGuestHeapFallback(AvPlayerMemAllocator memory) {
 
 std::uint32_t DetectSourceType(std::string_view path) {
     std::string_view name = path;
-    if (name.find("://") != std::string_view::npos) name = name.substr(0, name.find_first_of("?#"));
+    const auto scheme = name.find("://");
+    if (scheme != std::string_view::npos) {
+        name = name.substr(0, name.find_first_of("?#"));
+        const auto pathStart = name.find('/', scheme + 3);
+        if (pathStart == std::string_view::npos) return SourceTypeUnknown;
+        name.remove_prefix(pathStart + 1);
+    }
+    const auto slash = name.rfind('/');
+    if (slash != std::string_view::npos) name.remove_prefix(slash + 1);
     const auto dot = name.rfind('.');
     if (dot == std::string_view::npos) return SourceTypeUnknown;
-    auto extension = name.substr(dot);
-    extension = extension.substr(0, extension.find('/'));
-    for (const auto mp4 : {".mp4", ".m4v", ".m3d", ".m4a", ".mov"}) {
+    const auto extension = name.substr(dot);
+    for (const auto mp4 : {".mp4", ".m4v", ".m4a", ".mov"}) {
         if (EqualsIgnoreCase(extension, mp4)) return SourceTypeFileMp4;
     }
+    if (EqualsIgnoreCase(extension, ".webm")) return SourceTypeWebm;
     if (EqualsIgnoreCase(extension, ".m3u8")) return SourceTypeHls;
     return SourceTypeUnknown;
 }
 
 Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
-    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), videoBuffers(bufferCount) {
+    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), ps4Process(IsPs4Process()), videoBuffers(bufferCount) {
     if (init.file_replacement.open && init.file_replacement.close && init.file_replacement.read_offset && init.file_replacement.size) {
         file = init.file_replacement;
     }
@@ -183,8 +200,8 @@ void Player::autoStart() {
             Stop();
             return;
         }
-        if (info.type == StreamTypeVideo && (video == -1 || SameLanguage(language, info.details.video.language_code))) video = index;
-        if (info.type == Ps5StreamTypeAudio && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
+        if (info.type == guestStreamType(StreamTypeVideo) && (video == -1 || SameLanguage(language, info.details.video.language_code))) video = index;
+        if (info.type == guestStreamType(StreamTypeAudio) && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
     }
     if (video != -1) EnableStream(static_cast<std::uint32_t>(video));
     if (audio != -1) EnableStream(static_cast<std::uint32_t>(audio));
@@ -221,6 +238,7 @@ int Player::AddSource(std::string_view path, std::uint32_t sourceType) {
         state = State::Error;
         return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     }
+    activeSourceType = sourceType;
     if (opened->StreamCount() == 0) {
         source = std::move(opened);
         previous = state;
@@ -248,7 +266,7 @@ int Player::StreamCount() {
 int Player::GetStreamInfo(std::uint32_t index, AvPlayerStreamInfo& info) {
     std::lock_guard lock(mutex);
     if (!source || !source->GetStreamInfo(index, info)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (info.type == StreamTypeAudio) info.type = Ps5StreamTypeAudio;
+    info.type = guestStreamType(info.type);
     return SCE_OK;
 }
 
@@ -256,10 +274,15 @@ int Player::GetStreamInfoEx(std::uint32_t index, AvPlayerStreamInfoEx& info) {
     std::lock_guard lock(mutex);
     AvPlayerStreamInfoEx described{};
     if (!source || !source->GetStreamInfoEx(index, described)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (described.type == StreamTypeAudio) described.type = Ps5StreamTypeAudio;
+    described.type = guestStreamType(described.type);
     described.this_size = info.this_size;
     info = described;
     return SCE_OK;
+}
+
+std::uint32_t Player::guestStreamType(std::uint32_t type) const {
+    if (type == StreamTypeVideo) return ps4Process ? Ps4StreamTypeVideo : Ps5StreamTypeVideo;
+    return ps4Process ? Ps4StreamTypeAudio : Ps5StreamTypeAudio;
 }
 
 int Player::EnableStream(std::uint32_t index) {
@@ -351,10 +374,11 @@ int Player::SetLooping(bool enabled) {
 int Player::SetTrickSpeed(std::int32_t trickSpeed) {
     std::lock_guard lock(mutex);
     if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    if (state == State::Stop || state == State::EndOfFile || state == State::Error) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    speed = trickSpeed;
-    source->SetSpeed(trickSpeed);
+    if (trickSpeed != NormalSpeed && trickSpeed > -400 && trickSpeed < 400) return SCE_AVPLAYER_ERROR_NOT_SUPPORTED;
+    if (activeSourceType != SourceTypeFileMp4 && activeSourceType != SourceTypeWebm) return SCE_AVPLAYER_ERROR_NOT_SUPPORTED;
+    const auto appliedSpeed = std::clamp(trickSpeed, -3200, 3200);
+    speed = appliedSpeed;
+    source->SetSpeed(appliedSpeed);
     return SCE_OK;
 }
 
@@ -405,6 +429,11 @@ bool Player::IsActive() {
 std::uint64_t Player::CurrentTime() {
     std::lock_guard lock(mutex);
     return source ? source->CurrentTime() : 0;
+}
+
+std::int32_t Player::TrickSpeedForTest() {
+    std::lock_guard lock(mutex);
+    return speed;
 }
 
 void Player::SetClockTimeForTest(double milliseconds) {

@@ -375,11 +375,13 @@ def main(argv=None):
                         help=f"split: move the entries of {INDEX} into {DEBT_DIR}/; resolve: during a rebase stopped on {INDEX}, apply the stopped commit's entry changes to {DEBT_DIR}/ and stage them")
     args = parser.parse_args(argv)
     try:
-        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").removesuffix("\n"))
         if os.name == "nt" and not root.is_dir():
             root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
     except subprocess.CalledProcessError as error:
         parser.error(f"not a git repository: {error}")
+    except OSError as error:
+        parser.error(f"cannot run git: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)
 
 

@@ -10,6 +10,7 @@
 //   Corporation and others.  All Rights Reserved.
 
 #include "prx/libSceIcu/include/InventoryExports.hpp"
+#include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -21,6 +22,9 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include "prx/libSceIcu/include/LegacyExports.hpp"
+#include <cerrno>
+#include <limits>
 
 namespace {
 
@@ -90,13 +94,23 @@ std::set<std::string>& DefaultNames() {
 }
 
 const char* SetSystemDefault() {
-    std::string name = Canonicalize(SystemLocaleId().c_str());
+    const std::string& system = SystemLocaleId();
+    std::string name = Icu::DefaultLocaleId(system.c_str())
+                           ? Icu::CanonicalLocaleName(system.c_str())
+                           : Canonicalize(system.c_str());
     if (LanguageLength(name) >= LanguageCapacity) name.clear();
-    std::lock_guard lock(defaultMutex);
     defaultName = DefaultNames().insert(std::move(name)).first->c_str();
     return defaultName;
 }
 
+}
+
+bool Icu::DefaultLocaleId(const char* locale) {
+    static constexpr std::string_view id = "i-default";
+    return locale && std::strncmp(locale, id.data(), id.size()) == 0 &&
+           (locale[id.size()] == '\0' || locale[id.size()] == '_' ||
+            locale[id.size()] == '-' || locale[id.size()] == '.' ||
+            locale[id.size()] == '@');
 }
 
 extern "C" {
@@ -106,17 +120,77 @@ const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix() {
 }
 
 const char* APS5_VABI uloc_getDefault() {
-    {
-        std::lock_guard lock(defaultMutex);
-        if (defaultName) return defaultName;
-    }
-    return SetSystemDefault();
+    std::lock_guard lock(defaultMutex);
+    return defaultName ? defaultName : SetSystemDefault();
 }
 
+}
+
+namespace {
+
+bool CopyLocaleId(const char* source, std::string& copied) {
+    constexpr int GuestOutOfMemory = 12;
+    constexpr int GuestNameTooLong = 63;
+    constexpr std::size_t maxSize = std::numeric_limits<std::int32_t>::max();
+    for (std::size_t size = 256;; size = std::min(size * 2, maxSize)) {
+        const int savedErrno = errno;
+        const int error = CopyGuestString_nid_no_patch(source, size, copied);
+        errno = savedErrno;
+        if (error == 0) return true;
+        if (error == GuestOutOfMemory) return false;
+        if (error != GuestNameTooLong) NotImplemented_nid_no_patch("uloc_setDefault: unreadable locale ID");
+        if (size == maxSize) return false;
+    }
+}
+
+bool ResolveName(const char* id, std::string& resolved) {
+    std::int32_t status = 0;
+    const int savedErrno = errno;
+    const std::int32_t length = uloc_getName_nid_postfix(id, nullptr, 0, &status);
+    errno = savedErrno;
+    if ((status > 0 && status != Icu::BufferOverflow) || length < 0) return false;
+    if (length == 0) {
+        resolved.clear();
+        return true;
+    }
+    if (length == std::numeric_limits<std::int32_t>::max()) return false;
+    resolved.assign(static_cast<std::size_t>(length) + 1, '\0');
+    status = 0;
+    const std::int32_t written = uloc_getName_nid_postfix(id, resolved.data(), length + 1, &status);
+    errno = savedErrno;
+    if (status > 0 || written < 0 || written > length) return false;
+    resolved.resize(static_cast<std::size_t>(written));
+    return true;
+}
+
+void StoreExplicitDefault(std::string name) {
+    if (LanguageLength(name) >= LanguageCapacity) name.clear();
+    std::lock_guard lock(defaultMutex);
+    defaultName = DefaultNames().insert(std::move(name)).first->c_str();
+}
+
+}
+
+extern "C" {
+
 void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::int32_t* status) {
-    if (Icu::Failure(status)) return;
-    if (newDefaultLocale) NotImplemented_nid_no_patch("uloc_setDefault with a locale ID, which ICU resolves through uloc_getName");
-    SetSystemDefault();
+    Icu::RequireStatus(status);
+    std::int32_t incoming = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&incoming, status, sizeof(incoming));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch("uloc_setDefault: unreadable UErrorCode");
+    if (incoming > 0) return;
+    if (!newDefaultLocale) {
+        std::lock_guard lock(defaultMutex);
+        SetSystemDefault();
+        return;
+    }
+    std::string copied;
+    if (!CopyLocaleId(newDefaultLocale, copied)) return;
+    std::string resolved;
+    if (!ResolveName(copied.c_str(), resolved)) return;
+    StoreExplicitDefault(std::move(resolved));
 }
 
 }

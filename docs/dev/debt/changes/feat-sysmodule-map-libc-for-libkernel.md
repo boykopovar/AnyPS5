@@ -1,0 +1,5 @@
+# libSceSysmodule
+
+## add Functional
+
+- [sceSysmodulePreloadModuleForLibkernel and sceSysmoduleMapLibcForLibkernel](../../../core/libs/prx/libSceSysmodule/Export.cpp) (libSceSysmodule) - the PS5 preload marks the relinker's already-provided system libraries ready for libc mapping instead of walking and loading the firmware's 31-module title list; the PS4 preload throws because its module list and process gates are not modelled. The PS4 map path omits its internal-process exclusion flags and exposes the title-process path. Module mapping uses `sceKernelLoadStartModule`, which starts the module, in place of the firmware's unavailable `__sys_dynlib_load_prx`, and propagates the loader result rather than the syscall wrapper's exact error. An unreadable output pointer throws while preserving errno instead of faulting as the firmware does. Closes when: both preload module lists and PS4 process flags are modelled, the dynlib load syscall is available, and bad guest memory and loader failures are measured on a PS5.

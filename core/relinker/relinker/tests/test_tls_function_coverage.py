@@ -589,6 +589,13 @@ def main():
             alias_tail[0x1258:0x1260] = bytes.fromhex("64 8b 04 25 28 00 00 00")
             convert("symbol-alias-unreachable-tls-tail", alias_tail,
                     "Unsupported Windows guest TLS instruction", error_offset=0x1258)
+            data_tail = make_image("register", "symbol", 0x68)
+            data_tail[0x1250:0x1268] = bytes.fromhex("66 0f 78 c0 01 02") * 4
+            unwind = make_image("register", "unwind")
+            data_tail[0x900:0x9a0] = unwind[0x900:0x9a0]
+            data_tail[232:344] = unwind[232:344]
+            struct.pack_into("<H", data_tail, 56, 5)
+            convert("symbol-data-after-unwind-range", data_tail)
             for metadata in ("unwind", "symbol"):
                 convert(f"branch-into-cut-tail-{metadata}",
                         make_image("register", metadata, 0x50, TLS_LOAD + bytes.fromhex("eb 00 8b 40 f0 c3")))
@@ -609,6 +616,17 @@ def main():
             fs66_overlap[0x1209:0x1216] = bytes.fromhex("66 66 66 66 64 48 8b 04 25 78 56 00 00")
             fs66_overlap[0x1216:0x121B] = b"\xe8" + struct.pack("<i", 0x1211 - 0x121B)
             convert("overlapping-fs-prefix-66", fs66_overlap, "Code analysis: overlapping instruction boundaries")
+            overlapping_non_fs = make_image("register", "unwind")
+            overlapping_non_fs[0x1209:0x1211] = bytes.fromhex("48 c7 c0 64 00 00 00 90")
+            overlapping_non_fs[0x1211:0x1216] = b"\xe8" + struct.pack("<i", 0x120D - 0x1216)
+            convert("overlapping-non-fs-immediate-64", overlapping_non_fs)
+            builder_overlap = make_image("register", "unwind")
+            builder_overlap[0x1209:0x1211] = bytes.fromhex("48 b8 00 00 64 fe ff 00")
+            builder_overlap[0x1211:0x1216] = b"\xe8" + struct.pack("<i", 0x120D - 0x1216)
+            convert("overlapping-sub-instruction-64-fe-ff", builder_overlap)
+            cut_tail_rel32 = make_image("register", "unwind", 0x51, TLS_LOAD + bytes.fromhex("8b 40 f0") + b"\xe9" + bytes.fromhex("64 fe ff ff"))
+            cut_tail_rel32[0x10b8] = 0xc3
+            convert("cut-tail-rel32-contains-64", cut_tail_rel32)
             external = make_image("register", "unwind")
             external[0x1300:0x1310] = external[0x1240:0x1250]
             external[0x1240:0x1250] = b"\xe8" + struct.pack("<i", 0x1300 - 0x1245) + b"\xc3" + b"\x90" * 10
@@ -793,6 +811,12 @@ def main():
             conflicting[232:344] = unwind[232:344]
             struct.pack_into("<H", conflicting, 56, 5)
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
+            two_unwind = make_image("register", "unwind")
+            struct.pack_into("<IIQQ", two_unwind, 0x928, 20, 0x2c, 0x1200, 0x48)
+            struct.pack_into("<IQQ", two_unwind, 0x98c, 2, 0x1200, 0x910)
+            struct.pack_into("<QQ", two_unwind, 0x9a0, 0x1200, 0x928)
+            struct.pack_into("<QQ", two_unwind, 264, 48, 48)
+            convert("conflicting-unwind-extents", two_unwind, "Code analysis: conflicting function ranges")
             convert("branch-into-gs", make_image("register", "unwind", body=bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3")),
                     "Branch enters a guest GS instruction", error_offset=0x11243)
 

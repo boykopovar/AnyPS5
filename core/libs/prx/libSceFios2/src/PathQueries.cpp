@@ -3,8 +3,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
-#include <filesystem>
 #include <limits>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -52,6 +53,29 @@ int ComparePaths(const char* left, const char* right, std::size_t count, bool li
     return 0;
 }
 
+std::string NormalizeGuestPath(std::string_view path) {
+    std::vector<std::string_view> parts;
+    const bool absolute = !path.empty() && path.front() == '/';
+    std::size_t start = 0;
+    while (start < path.size()) {
+        const std::size_t end = std::min(path.find('/', start), path.size());
+        const std::string_view part = path.substr(start, end - start);
+        if (part == "..") {
+            if (!parts.empty() && parts.back() != "..") parts.pop_back();
+            else if (!absolute) parts.push_back(part);
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        start = end + 1;
+    }
+    std::string normalized = absolute ? "/" : "";
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i != 0) normalized += '/';
+        normalized += parts[i];
+    }
+    return normalized;
+}
+
 }
 
 extern "C" {
@@ -63,7 +87,7 @@ std::size_t APS5_VABI sceFiosPathNormalize(char* output, const char* path, std::
     if (copyError == 14) return static_cast<std::size_t>(SCE_FIOS_ERROR_BAD_PTR);
     if (copyError != 0) return static_cast<std::size_t>(SCE_FIOS_ERROR_PATH_TOO_LONG);
     std::replace(input.begin(), input.end(), '\\', '/');
-    std::string normalized = std::filesystem::path(input).lexically_normal().generic_string();
+    std::string normalized = NormalizeGuestPath(input);
     if (normalized.empty()) normalized = ".";
     while (normalized.size() > 1 && normalized.back() == '/') normalized.pop_back();
     if (normalized.size() + 1 > capacity) {

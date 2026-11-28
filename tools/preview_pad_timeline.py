@@ -3,11 +3,12 @@ import json
 import sys
 from pathlib import Path
 
+from pad_input import MAX_SEQUENCE
 from pad_timeline import compile_timeline, load_timeline
 
 
 def preview(document, repeat=1, gap_ms=200):
-    compiled = compile_timeline(document, 1, repeat, gap_ms)
+    compiled = compile_timeline(document, MAX_SEQUENCE, repeat, gap_ms)
     events = []
     for line in compiled.splitlines()[1:]:
         at_ms, hold_ms, buttons, *axes = map(int, line.split())
