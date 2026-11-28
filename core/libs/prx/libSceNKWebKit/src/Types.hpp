@@ -589,6 +589,20 @@ public:
     SizeValue size{ 0.0, 0.0 };
 };
 
+struct WKGeolocationProviderBase {
+    std::uint32_t version;
+    const void* clientInfo;
+};
+
+class GeolocationManager final : public ObjectOf<ObjectType::GeolocationManager> {
+public:
+    WKGeolocationProviderBase provider{0, nullptr};
+    bool hasProvider = false;
+    Retained<Object> lastPosition;
+    bool hasError = false;
+    std::u16string lastErrorMessage;
+};
+
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
 public:
     std::u16string path;

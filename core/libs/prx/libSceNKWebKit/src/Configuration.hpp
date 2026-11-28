@@ -184,6 +184,7 @@ public:
     explicit ProcessPool(Retained<ProcessPoolConfiguration> config) : configuration(std::move(config)) {}
 
     Retained<ProcessPoolConfiguration> configuration;
+    mutable Retained<GeolocationManager> geolocationManager;
     bool usesSingleWebProcess = false;
     bool accessibilityEnabled = false;
     bool processTerminationEnabled = true;
