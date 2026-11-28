@@ -66,6 +66,8 @@ struct NpTicketObject {
 };
 static_assert(sizeof(NpTicketObject) == 0x20);
 
+bool NpPushInitialized_nid_no_patch();
+
 extern "C" {
 
 int APS5_VABI sceNpAsmAbort(void);
