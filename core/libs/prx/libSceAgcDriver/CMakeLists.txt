@@ -1211,7 +1211,6 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
-target_sources(agc_driver_sample_order_retention_tests PRIVATE tests/AllocationFailure.cpp)
 target_sources(agc_driver_command_encoder_tests PRIVATE Graphics/src/CommandEncoder.cpp tests/AllocationFailure.cpp)
 target_compile_definitions(agc_driver_command_encoder_tests PRIVATE APS5_ENCODER_TEST_CLOCK=1)
 if(NOT ANYPS5_AGC_EXECUTION_TESTS OR "CommandEncoder" IN_LIST ANYPS5_AGC_EXECUTION_TESTS)
