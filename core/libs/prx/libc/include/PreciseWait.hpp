@@ -4,17 +4,34 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
 
 inline constexpr std::uint64_t PreciseHundredNanosToQpcTicks(unsigned long long hundredNanos, std::uint64_t freq) {
-    if (freq == 10000000ULL) [[likely]] {
-        return hundredNanos;
+    if (hundredNanos == 0 || freq == 0) [[unlikely]] {
+        return 0;
     }
-    const std::uint64_t wholeSeconds = hundredNanos / 10000000ULL;
-    const std::uint64_t remHundredNanos = hundredNanos % 10000000ULL;
-    return wholeSeconds * freq + (remHundredNanos * freq + 9999999ULL) / 10000000ULL;
+    if (freq == 10000000ULL) [[likely]] {
+        return static_cast<std::uint64_t>(hundredNanos);
+    }
+    constexpr std::uint64_t kHundredNanosPerSec = 10000000ULL;
+    constexpr std::uint64_t kMaxTicks = (std::numeric_limits<std::uint64_t>::max)();
+    const std::uint64_t totalHns = static_cast<std::uint64_t>(hundredNanos);
+    const std::uint64_t wholeSeconds = totalHns / kHundredNanosPerSec;
+    const std::uint64_t remHns = totalHns % kHundredNanosPerSec;
+    if (wholeSeconds > 0 && freq > kMaxTicks / wholeSeconds) [[unlikely]] {
+        return kMaxTicks;
+    }
+    const std::uint64_t wholeTicks = wholeSeconds * freq;
+    const std::uint64_t freqWhole = freq / kHundredNanosPerSec;
+    const std::uint64_t freqRem = freq % kHundredNanosPerSec;
+    const std::uint64_t remTicks = remHns * freqWhole + (remHns * freqRem + kHundredNanosPerSec - 1ULL) / kHundredNanosPerSec;
+    if (remTicks > kMaxTicks - wholeTicks) [[unlikely]] {
+        return kMaxTicks;
+    }
+    return wholeTicks + remTicks;
 }
 
 inline constexpr std::uint64_t PrecisePauseThresholdTicks(std::uint64_t freq) {
@@ -42,14 +59,20 @@ inline void PreciseSpinPause() {
 inline void PreciseSleepWaitableTimerWithHandle(HANDLE handle, unsigned long long sleepHundredNanos) {
     bool slept = false;
     if (handle != nullptr && handle != INVALID_HANDLE_VALUE) [[likely]] {
+        constexpr unsigned long long kMaxTimerHundredNanos = static_cast<unsigned long long>((std::numeric_limits<LONGLONG>::max)());
+        const unsigned long long clampedTimerHns = sleepHundredNanos > kMaxTimerHundredNanos ? kMaxTimerHundredNanos : sleepHundredNanos;
         LARGE_INTEGER due;
-        due.QuadPart = -static_cast<LONGLONG>(sleepHundredNanos);
+        due.QuadPart = -static_cast<LONGLONG>(clampedTimerHns);
         if (SetWaitableTimer(handle, &due, 0, nullptr, nullptr, FALSE) != FALSE) [[likely]] {
             slept = (WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0);
         }
     }
     if (!slept) [[unlikely]] {
-        std::this_thread::sleep_for(std::chrono::nanoseconds(sleepHundredNanos * 100ULL));
+        constexpr unsigned long long kMaxFallbackHundredNanos =
+            static_cast<unsigned long long>((std::chrono::nanoseconds::max)().count()) / 100ULL;
+        const unsigned long long clampedFallbackHns =
+            sleepHundredNanos > kMaxFallbackHundredNanos ? kMaxFallbackHundredNanos : sleepHundredNanos;
+        std::this_thread::sleep_for(std::chrono::nanoseconds(clampedFallbackHns * 100ULL));
     }
 }
 
@@ -97,7 +120,9 @@ inline void PreciseSleepFromCounterWithTimer(
         deltaTicks = PreciseHundredNanosToQpcTicks(hundredNanos, freq);
         pauseThresholdTicks = PrecisePauseThresholdTicks(freq);
     }
-    const std::uint64_t deadlineTicks = static_cast<std::uint64_t>(counter.QuadPart) + deltaTicks;
+    constexpr std::uint64_t kMaxTicks = (std::numeric_limits<std::uint64_t>::max)();
+    const std::uint64_t startTicks = static_cast<std::uint64_t>(counter.QuadPart);
+    const std::uint64_t deadlineTicks = deltaTicks > kMaxTicks - startTicks ? kMaxTicks : startTicks + deltaTicks;
     const bool useSpinTail = allowSpinTail || hundredNanos >= kMinTimerSpinSleepHundredNanos;
     if (!useSpinTail || hundredNanos > kSpinTailHundredNanos) [[unlikely]] {
         const HANDLE handle = useCustomTimer ? timerHandle : PreciseWaitThreadTimer();
@@ -178,7 +203,8 @@ inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned lo
     if (nanos == 0) {
         return;
     }
-    const std::uint64_t deadlineNanos = startNanos + nanos;
+    constexpr std::uint64_t kMaxNanos = (std::numeric_limits<std::uint64_t>::max)();
+    const std::uint64_t deadlineNanos = nanos > kMaxNanos - startNanos ? kMaxNanos : startNanos + nanos;
 #ifdef __linux__
     if (nanos > 15000ULL) [[unlikely]] {
         const unsigned long long spinTailNanos = allowLowSlack ? PreciseLinuxSpinTailNanos_nid_no_patch() : 100000ULL;
@@ -243,11 +269,14 @@ inline void PreciseSleepUs(unsigned long long micros) {
     if (micros == 0) {
         return;
     }
+    constexpr unsigned long long kMaxUll = (std::numeric_limits<unsigned long long>::max)();
 #ifdef _WIN32
-    PreciseSleepHundredNanos(micros * 10ULL);
+    const unsigned long long hundredNanos = micros > kMaxUll / 10ULL ? kMaxUll : micros * 10ULL;
+    PreciseSleepHundredNanos(hundredNanos);
     return;
 #elif !defined(__EMSCRIPTEN__)
-    PreciseSleepNanos(micros * 1000ULL);
+    const unsigned long long nanos = micros > kMaxUll / 1000ULL ? kMaxUll : micros * 1000ULL;
+    PreciseSleepNanos(nanos);
     return;
 #else
     std::this_thread::sleep_for(std::chrono::microseconds(micros));
@@ -255,6 +284,43 @@ inline void PreciseSleepUs(unsigned long long micros) {
 }
 
 using PreciseHundredNanos = std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>;
+
+#ifndef __SIZEOF_INT128__
+inline constexpr std::uint64_t PreciseCeilMulDiv64(std::uint64_t a, std::uint64_t b, std::uint64_t den) {
+    constexpr std::uint64_t kMaxU64 = (std::numeric_limits<std::uint64_t>::max)();
+    if (a <= (kMaxU64 - 1ULL) / b) {
+        return (a * b - 1ULL) / den + 1ULL;
+    }
+    const std::uint64_t aLo = a & 0xffffffffULL;
+    const std::uint64_t aHi = a >> 32;
+    const std::uint64_t bLo = b & 0xffffffffULL;
+    const std::uint64_t bHi = b >> 32;
+    const std::uint64_t p0 = aLo * bLo;
+    const std::uint64_t p1 = aLo * bHi;
+    const std::uint64_t p2 = aHi * bLo;
+    const std::uint64_t p3 = aHi * bHi;
+    const std::uint64_t mid = (p0 >> 32) + (p1 & 0xffffffffULL) + (p2 & 0xffffffffULL);
+    std::uint64_t lo = (p0 & 0xffffffffULL) | (mid << 32);
+    std::uint64_t hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+    if (lo == 0ULL) {
+        --hi;
+    }
+    --lo;
+    std::uint64_t q = 0;
+    std::uint64_t rem = hi;
+    for (int i = 0; i < 64; ++i) {
+        const bool carry = (rem >> 63) != 0;
+        rem = (rem << 1) | (lo >> 63);
+        lo <<= 1;
+        q <<= 1;
+        if (carry || rem >= den) {
+            rem -= den;
+            q |= 1ULL;
+        }
+    }
+    return q + 1ULL;
+}
+#endif
 
 template <class TTick, class TDuration>
 inline constexpr std::uint64_t PreciseDeadlineTicks(TDuration deadline) {
@@ -277,7 +343,41 @@ inline constexpr std::uint64_t PreciseDeadlineTicks(TDuration deadline) {
         const auto nanos = static_cast<std::uint64_t>(deadline.count());
         return (nanos - 1) / nanosPerTick + 1;
     } else {
-        return static_cast<std::uint64_t>(std::chrono::ceil<TTick>(deadline).count());
+        using Ratio = std::ratio_divide<typename TDuration::period, typename TTick::period>;
+        constexpr std::uint64_t num = static_cast<std::uint64_t>(Ratio::num);
+        constexpr std::uint64_t den = static_cast<std::uint64_t>(Ratio::den);
+        constexpr std::uint64_t maxTicks = static_cast<std::uint64_t>((TTick::max)().count());
+        const std::uint64_t count = static_cast<std::uint64_t>(deadline.count());
+#ifdef __SIZEOF_INT128__
+        const unsigned __int128 scaled = static_cast<unsigned __int128>(count) * num;
+        const unsigned __int128 ceiled = (scaled - 1) / den + 1;
+        if (ceiled > maxTicks) [[unlikely]] {
+            throw std::overflow_error("precise deadline is out of range");
+        }
+        return static_cast<std::uint64_t>(ceiled);
+#else
+        const std::uint64_t qCount = count / den;
+        const std::uint64_t rCount = count % den;
+        if (qCount > 0 && num > maxTicks / qCount) [[unlikely]] {
+            throw std::overflow_error("precise deadline is out of range");
+        }
+        const std::uint64_t wholeTicks = qCount * num;
+        std::uint64_t remTicks = 0;
+        if (rCount > 0) {
+            const std::uint64_t qNum = num / den;
+            const std::uint64_t rNum = num % den;
+            const std::uint64_t remWhole = rCount * qNum;
+            const std::uint64_t remFrac = rNum > 0 ? PreciseCeilMulDiv64(rCount, rNum, den) : 0ULL;
+            if (remWhole > maxTicks || remFrac > maxTicks - remWhole) [[unlikely]] {
+                throw std::overflow_error("precise deadline is out of range");
+            }
+            remTicks = remWhole + remFrac;
+        }
+        if (remTicks > maxTicks - wholeTicks) [[unlikely]] {
+            throw std::overflow_error("precise deadline is out of range");
+        }
+        return wholeTicks + remTicks;
+#endif
     }
 }
 
