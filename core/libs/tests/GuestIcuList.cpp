@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +9,12 @@
 #include <cstring>
 #include <exception>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -326,6 +333,115 @@ void Enumeration() {
     Require(heap.live.empty() && heap.unknownReleases == 0, "close releases an enumeration without a list");
 }
 
+template<class F>
+bool RejectsKeepingErrno(F call) {
+    errno = 71;
+    const bool thrown = Throws(call);
+    return thrown && errno == 71;
+}
+
+std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 4096;
+#endif
+}
+
+char* MapPages(std::size_t bytes) {
+#ifdef _WIN32
+    void* pages = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(pages != nullptr, "pages are mapped");
+#else
+    void* pages = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(pages != MAP_FAILED, "pages are mapped");
+#endif
+    return static_cast<char*>(pages);
+}
+
+void Protect(char* page, std::size_t bytes, bool readable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, bytes, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "a page is protected");
+#else
+    Require(mprotect(page, bytes, readable ? PROT_READ : PROT_NONE) == 0, "a page is protected");
+#endif
+}
+
+void UnmapPages(char* pages, std::size_t bytes) {
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, bytes);
+#endif
+}
+
+void GuestPointers() {
+    const std::size_t pageSize = PageSize();
+    char* pages = MapPages(2 * pageSize);
+    Protect(pages + pageSize, pageSize, false);
+    char* tail = pages + pageSize - 4;
+    std::memcpy(tail, "abc", 4);
+    auto* readOnlyStatus = reinterpret_cast<std::int32_t*>(pages);
+    readOnlyStatus[0] = Success;
+    readOnlyStatus[1] = -1;
+    Protect(pages, pageSize, true);
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    const auto* unmappedText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+
+    const std::int32_t allocations = heap.allocations;
+    Require(RejectsKeepingErrno([&] { ulist_createEmptyList_nid_postfix(unmappedStatus); }), "an unreadable status is refused at creation");
+    Require(heap.allocations == allocations, "an unreadable status allocates nothing");
+    UList* list = ulist_createEmptyList_nid_postfix(readOnlyStatus);
+    Require(list != nullptr && readOnlyStatus[0] == Success, "a read-only success status creates a list");
+    heap.exhausted = true;
+    Require(RejectsKeepingErrno([&] { ulist_createEmptyList_nid_postfix(readOnlyStatus); }), "a memory error is not written to a read-only status");
+    heap.exhausted = false;
+
+    Require(RejectsKeepingErrno([&] { ulist_addItemEndList_nid_postfix(list, "borrowed", 0, unmappedStatus); }), "an unreadable status is refused at the end");
+    Require(RejectsKeepingErrno([&] { ulist_addItemBeginList_nid_postfix(list, "borrowed", 0, unmappedStatus); }), "an unreadable status is refused at the beginning");
+    Require(ulist_getListSize_nid_postfix(list) == 0, "an unreadable status adds nothing");
+    ulist_addItemEndList_nid_postfix(list, tail, 0, readOnlyStatus);
+    Add(list, "alphabet");
+    Require(ulist_getListSize_nid_postfix(list) == 2, "a read-only success status adds an item");
+
+    Require(ulist_containsString_nid_postfix(list, "alphabet", 8) == 1, "an item ending at a page end is passed");
+    Require(ulist_containsString_nid_postfix(list, tail, 3) == 1, "a string ending at a page end is found");
+    Require(ulist_containsString_nid_postfix(list, unmappedText, 5) == 0, "a length no item has does not read the string");
+    Require(RejectsKeepingErrno([&] { ulist_containsString_nid_postfix(list, unmappedText, 3); }), "an unreadable string to find is refused");
+    Require(RejectsKeepingErrno([&] { ulist_removeString_nid_postfix(list, unmappedText); }), "an unreadable string to remove is refused");
+    Require(ulist_getListSize_nid_postfix(list) == 2, "an unreadable string removes nothing");
+
+    UEnumeration* enumeration = KeywordValues(list);
+    std::int32_t status = Success;
+    std::int32_t length = -1;
+    Require(RejectsKeepingErrno([&] { ulist_count_keyword_values_nid_postfix(enumeration, unmappedStatus); }), "count with an unreadable status");
+    Require(RejectsKeepingErrno([&] { ulist_reset_keyword_values_iterator_nid_postfix(enumeration, unmappedStatus); }), "reset with an unreadable status");
+    Require(RejectsKeepingErrno([&] { ulist_next_keyword_value_nid_postfix(enumeration, &length, unmappedStatus); }), "next with an unreadable status");
+    ulist_reset_keyword_values_iterator_nid_postfix(enumeration, readOnlyStatus);
+    Require(RejectsKeepingErrno([&] { ulist_next_keyword_value_nid_postfix(enumeration, readOnlyStatus + 1, &status); }), "next with a read-only length");
+    Require(readOnlyStatus[1] == -1, "a read-only length is untouched");
+    Require(RejectsKeepingErrno([&] { ulist_next_keyword_value_nid_postfix(enumeration, unmappedStatus, &status); }), "next with an unmapped length");
+    ulist_reset_keyword_values_iterator_nid_postfix(enumeration, &status);
+    Require(ulist_next_keyword_value_nid_postfix(enumeration, &length, &status) == tail && length == 3, "the length of an item at a page end");
+    Require(ulist_count_keyword_values_nid_postfix(enumeration, readOnlyStatus) == 2, "count with a read-only success status");
+
+    Require(ulist_removeString_nid_postfix(list, tail) == 1 && ulist_getListSize_nid_postfix(list) == 1, "a string ending at a page end is removed");
+    uenum_close_nid_postfix(enumeration);
+
+    UList* unreadable = NewList();
+    Add(unreadable, unmappedText);
+    Require(RejectsKeepingErrno([&] { ulist_containsString_nid_postfix(unreadable, "ab", 2); }), "an unreadable item is refused when found");
+    Require(RejectsKeepingErrno([&] { ulist_removeString_nid_postfix(unreadable, "ab"); }), "an unreadable item is refused when removed");
+    ulist_deleteList_nid_postfix(unreadable);
+    Require(heap.live.empty() && heap.unknownReleases == 0, "guest pointer refusals leak nothing");
+    UnmapPages(pages, 2 * pageSize);
+}
+
 }
 
 int main() {
@@ -340,6 +456,7 @@ int main() {
     Refusals();
     Exhaustion();
     Enumeration();
+    GuestPointers();
     u_cleanup_nid_postfix();
     std::puts("ICU list tests passed");
     return 0;
