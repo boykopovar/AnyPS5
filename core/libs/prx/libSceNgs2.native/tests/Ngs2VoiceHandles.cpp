@@ -153,6 +153,23 @@ int main(int argc, char** argv) {
         const Ngs2VoiceCommand badLevels{5, 0, 0x11, 1, {.levels = reinterpret_cast<const float*>(0x10)}};
         Status(sceNgs2VoiceRunCommands(voice, &badLevels, 1), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "VoiceRunCommands accepted unreadable matrix levels");
         Require(errno == 71);
+        Status(sceNgs2VoiceRunCommands(voice, nullptr, 0), SCE_NGS2_OK, "zero voice command batch failed");
+        constexpr std::size_t maxCommands = 4096;
+        const std::vector<Ngs2VoiceCommand> maxBatch(maxCommands, stop);
+        Status(sceNgs2VoiceRunCommands(voice, maxBatch.data(), maxBatch.size()), SCE_NGS2_OK, "maximum voice command batch failed");
+        const std::vector<Ngs2VoiceCommand> overMaxBatch(maxCommands + 1, stop);
+        const auto runThrowsInvalid = [&](const Ngs2VoiceCommand* list, std::size_t count) {
+            try {
+                sceNgs2VoiceRunCommands(voice, list, count);
+                return false;
+            } catch (const std::invalid_argument&) {
+                return true;
+            }
+        };
+        Require(runThrowsInvalid(nullptr, 1));
+        Require(runThrowsInvalid(overMaxBatch.data(), overMaxBatch.size()));
+        Require(runThrowsInvalid(maxBatch.data(), SIZE_MAX));
+        Require(runThrowsInvalid(reinterpret_cast<const Ngs2VoiceCommand*>(std::uintptr_t{0x10}), SIZE_MAX));
         Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
         for (auto name : Names) if (selected(name)) Invalid(name, voice);
         Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
