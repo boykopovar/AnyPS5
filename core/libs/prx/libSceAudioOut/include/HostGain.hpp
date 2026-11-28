@@ -32,28 +32,47 @@ public:
 
     void Apply(std::int16_t* samples, std::size_t frames, unsigned channels, std::uint32_t target) {
         if (Bypass(target)) return;
-        for (std::size_t frame = 0; frame < frames; ++frame) {
+        const auto distance = current < target ? target - current : current - target;
+        const auto rampFrames = distance == 0 ? 0 : std::min<std::size_t>(frames, distance / step + (distance % step != 0));
+        std::size_t frame = 0;
+        for (; frame < rampFrames; ++frame) {
             const std::int64_t gain = advance(target);
             for (unsigned channel = 0; channel < channels; ++channel) {
                 std::int16_t& sample = samples[frame * channels + channel];
-                const std::int64_t scaled = (static_cast<std::int64_t>(sample) * gain + Unity / 2) >> 16;
-                sample = static_cast<std::int16_t>(std::clamp<std::int64_t>(scaled, std::numeric_limits<std::int16_t>::min(), std::numeric_limits<std::int16_t>::max()));
+                sample = scale(sample, gain);
             }
         }
+        if (frame == frames) return;
+        const std::int64_t gain = current;
+        for (std::size_t index = frame * channels; index < frames * channels; ++index) samples[index] = scale(samples[index], gain);
     }
 
     void Apply(float* samples, std::size_t frames, unsigned channels, std::uint32_t target) {
         if (Bypass(target)) return;
-        for (std::size_t frame = 0; frame < frames; ++frame) {
+        const auto distance = current < target ? target - current : current - target;
+        const auto rampFrames = distance == 0 ? 0 : std::min<std::size_t>(frames, distance / step + (distance % step != 0));
+        std::size_t frame = 0;
+        for (; frame < rampFrames; ++frame) {
             const float gain = static_cast<float>(advance(target)) / static_cast<float>(Unity);
             for (unsigned channel = 0; channel < channels; ++channel) {
                 auto& sample = samples[frame * channels + channel];
                 sample = gain == 0.0f ? 0.0f : sample * gain;
             }
         }
+        if (frame == frames) return;
+        const float gain = static_cast<float>(current) / static_cast<float>(Unity);
+        for (std::size_t index = frame * channels; index < frames * channels; ++index) {
+            auto& sample = samples[index];
+            sample = gain == 0.0f ? 0.0f : sample * gain;
+        }
     }
 
 private:
+    static std::int16_t scale(std::int16_t sample, std::int64_t gain) {
+        const std::int64_t scaled = (static_cast<std::int64_t>(sample) * gain + Unity / 2) >> 16;
+        return static_cast<std::int16_t>(std::clamp<std::int64_t>(scaled, std::numeric_limits<std::int16_t>::min(), std::numeric_limits<std::int16_t>::max()));
+    }
+
     std::uint32_t advance(std::uint32_t target) {
         if (current < target) current = target - current <= step ? target : current + step;
         else if (current > target) current = current - target <= step ? target : current - step;
