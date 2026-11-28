@@ -27,7 +27,7 @@ bool ReadFieldAt(const void* base, std::size_t offset, T& value) {
     if (!base) return false;
     const auto address = reinterpret_cast<std::uintptr_t>(base);
     if (offset > ~std::uintptr_t{0} - address) return false;
-    const auto* field = reinterpret_cast<const unsigned char*>(base) + offset;
+    const auto* field = reinterpret_cast<const unsigned char*>(address + offset);
     ErrnoGuard guard;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(field, sizeof(T));
     return GuestReadable_nid_no_patch(field, sizeof(T)) && GuestCopyIn_nid_no_patch(&value, field, sizeof(T));
