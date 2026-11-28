@@ -1,15 +1,19 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 extern "C" {
 void APS5_VABI sceLibcInternalUnknown6_112_6yplvTHbxpE_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch(GuestLocale::NumpunctFacet* self);
 }
 
 namespace {
@@ -36,6 +40,39 @@ void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
+}
+
+void CheckNumpunctDestructors() {
+    using Destructor = void (APS5_VABI*)(GuestLocale::NumpunctFacet*);
+    for (const Destructor destroy : {libSceLibcInternalInventory_167_nid_no_patch, sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch}) {
+        GuestLocale::NumpunctFacet facet{};
+        NumpunctConstruct_nid_no_patch(&facet, 0);
+        const GuestLocale::NumpunctFacet before = facet;
+        releases = 0;
+        lastReleased = nullptr;
+        destroy(&facet);
+        Require(releases == 3 && lastReleased == before.truename, "the numpunct<char> destructor releases the grouping and both bool names");
+        bool rejected = false;
+        try {
+            destroy(nullptr);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        Require(rejected, "the numpunct<char> destructor rejects a null facet");
+    }
+    auto* facet = static_cast<GuestLocale::NumpunctFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::NumpunctFacet)));
+    NumpunctConstruct_nid_no_patch(facet, 0);
+    releases = 0;
+    lastReleased = nullptr;
+    _ZNSt8numpunctIcED0Ev_nid_postfix(facet);
+    Require(releases == 4 && lastReleased == facet, "the numpunct<char> deleting destructor tidies the facet and then releases it");
+    bool rejected = false;
+    try {
+        _ZNSt8numpunctIcED0Ev_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "the numpunct<char> deleting destructor rejects a null facet");
 }
 
 }
@@ -72,6 +109,7 @@ int main() {
         Require(releases == 1 && lastReleased == object, "the deleting destructor releases the object");
     }
 
+    CheckNumpunctDestructors();
     std::puts("libc internal deleting destructor checks passed");
     return 0;
 }

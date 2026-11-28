@@ -660,8 +660,8 @@ int APS5_VABI libSceLibcInternalInventory_166_nid_no_patch() {
 }
 APS5_EXPORT("1eVdDzPtzD4", libSceLibcInternalInventory_166_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_167_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_167_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
 }
 APS5_EXPORT("qEob3o53s2M", libSceLibcInternalInventory_167_nid_no_patch);
 
