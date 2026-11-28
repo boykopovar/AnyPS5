@@ -63,10 +63,14 @@ constexpr unsigned char ClassMask = 0xc0;
 constexpr unsigned char TagNumberMask = 0x1f;
 constexpr unsigned char ContextTag0 = 0xa0;
 constexpr unsigned char ContextTag1 = 0xa1;
+constexpr unsigned char EncDataTag = 0x80;
 
 constexpr unsigned char Pkcs7Prefix[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07};
 constexpr unsigned char DataType = 1;
 constexpr unsigned char SignedType = 2;
+constexpr unsigned char EnvelopedType = 3;
+constexpr unsigned char SignedAndEnvelopedType = 4;
+constexpr unsigned char DigestType = 5;
 constexpr unsigned char EncryptedType = 6;
 
 void PutError(int reason) {
@@ -279,6 +283,29 @@ void FreeCrlElement(void* element) {
     X509_CRL_free_nid_postfix(static_cast<LibreSsl3X509Crl*>(element));
 }
 
+void FreeEncContent(LibreSsl3Pkcs7EncContent* data) {
+    if (!data) return;
+    FreeObject(data->contentType);
+    FreeAlgor_nid_no_patch(data->algorithm);
+    FreeString(data->encData);
+    free_nid_postfix(data);
+}
+
+void FreeRecipInfo(void* element) {
+    auto* info = static_cast<LibreSsl3Pkcs7RecipInfo*>(element);
+    if (!info) return;
+    FreeString(info->version);
+    if (info->issuerAndSerial) {
+        FreeName_nid_no_patch(info->issuerAndSerial->issuer);
+        FreeString(info->issuerAndSerial->serial);
+        free_nid_postfix(info->issuerAndSerial);
+    }
+    FreeAlgor_nid_no_patch(info->keyEncAlgor);
+    FreeString(info->encKey);
+    FreeCertificateElement(info->cert);
+    free_nid_postfix(info);
+}
+
 void FreeAttribute(void* element) {
     auto* attribute = static_cast<LibreSsl3X509Attribute*>(element);
     if (!attribute) return;
@@ -307,6 +334,33 @@ void FreeSignerInfo(void* element) {
 
 void FreePkcs7(LibreSsl3Pkcs7* pkcs7);
 
+void FreeEnvelope(LibreSsl3Pkcs7Envelope* data) {
+    if (!data) return;
+    FreeString(data->version);
+    FreeStack(data->recipientInfo, FreeRecipInfo);
+    FreeEncContent(data->encData);
+    free_nid_postfix(data);
+}
+
+void FreeSignEnvelope(LibreSsl3Pkcs7SignEnvelope* data) {
+    if (!data) return;
+    FreeString(data->version);
+    FreeStack(data->mdAlgs, FreeAlgorElement);
+    FreeStack(data->cert, FreeCertificateElement);
+    FreeStack(data->crl, FreeCrlElement);
+    FreeStack(data->signerInfo, FreeSignerInfo);
+    FreeEncContent(data->encData);
+    FreeStack(data->recipientInfo, FreeRecipInfo);
+    free_nid_postfix(data);
+}
+
+void FreeEncrypted(LibreSsl3Pkcs7Encrypt* data) {
+    if (!data) return;
+    FreeString(data->version);
+    FreeEncContent(data->encData);
+    free_nid_postfix(data);
+}
+
 void FreeSigned(LibreSsl3Pkcs7Signed* data) {
     if (!data) return;
     FreeString(data->version);
@@ -315,6 +369,15 @@ void FreeSigned(LibreSsl3Pkcs7Signed* data) {
     FreeStack(data->crl, FreeCrlElement);
     FreeStack(data->signerInfo, FreeSignerInfo);
     FreePkcs7(data->contents);
+    free_nid_postfix(data);
+}
+
+void FreeDigest(LibreSsl3Pkcs7Digest* data) {
+    if (!data) return;
+    FreeString(data->version);
+    FreeAlgor_nid_no_patch(data->md);
+    FreePkcs7(data->contents);
+    FreeString(data->digest);
     free_nid_postfix(data);
 }
 
@@ -333,10 +396,18 @@ void FreePkcs7(LibreSsl3Pkcs7* pkcs7) {
             FreeString(static_cast<Asn1String*>(pkcs7->d));
         } else if (type == SignedType) {
             FreeSigned(static_cast<LibreSsl3Pkcs7Signed*>(pkcs7->d));
+        } else if (type == EnvelopedType) {
+            FreeEnvelope(static_cast<LibreSsl3Pkcs7Envelope*>(pkcs7->d));
+        } else if (type == SignedAndEnvelopedType) {
+            FreeSignEnvelope(static_cast<LibreSsl3Pkcs7SignEnvelope*>(pkcs7->d));
+        } else if (type == EncryptedType) {
+            FreeEncrypted(static_cast<LibreSsl3Pkcs7Encrypt*>(pkcs7->d));
+        } else if (type == DigestType) {
+            FreeDigest(static_cast<LibreSsl3Pkcs7Digest*>(pkcs7->d));
         } else if (type == 0) {
             FreeType(pkcs7->d);
         } else {
-            NotImplemented_nid_no_patch("PKCS7_free: enveloped, digested or encrypted content");
+            NotImplemented_nid_no_patch("PKCS7_free: unsupported content");
         }
     }
     FreeObject(pkcs7->type);
@@ -477,6 +548,61 @@ LibreSsl3Pkcs7IssuerAndSerial* DecodeIssuerAndSerial(std::span<const unsigned ch
     return nullptr;
 }
 
+LibreSsl3Pkcs7RecipInfo* DecodeRecipInfo(std::span<const unsigned char>& input) {
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* info = static_cast<LibreSsl3Pkcs7RecipInfo*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7RecipInfo)));
+    if (!info) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    Tlv version;
+    Tlv key;
+    bool ok = Next(body, IntegerTag, version) && (info->version = NewInteger(version.encoded)) != nullptr &&
+              (info->issuerAndSerial = DecodeIssuerAndSerial(body)) != nullptr &&
+              (info->keyEncAlgor = DecodeAlgor_nid_no_patch(body)) != nullptr && Next(body, OctetStringTag, key) &&
+              (info->encKey = NewString(OctetStringType, key.content)) != nullptr;
+    if (ok && !body.empty()) {
+        PutError(SequenceLengthMismatch);
+        ok = false;
+    }
+    if (ok) return info;
+    FreeRecipInfo(info);
+    return nullptr;
+}
+
+LibreSsl3Pkcs7EncContent* DecodeEncContent(std::span<const unsigned char>& input) {
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* data = static_cast<LibreSsl3Pkcs7EncContent*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7EncContent)));
+    if (!data) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    try {
+        Tlv object;
+        Tlv encrypted;
+        bool ok = Next(body, ObjectTag, object) && (data->contentType = NewObject(object.content)) != nullptr &&
+                  (data->algorithm = DecodeAlgor_nid_no_patch(body)) != nullptr;
+        if (ok && Peek(body, ContextTag0))
+            NotImplemented_nid_no_patch("d2i_PKCS7: constructed OCTET STRING");
+        if (ok && Peek(body, EncDataTag))
+            ok = ReadTlv(body, encrypted) && (data->encData = NewString(OctetStringType, encrypted.content)) != nullptr;
+        if (ok && !body.empty()) {
+            PutError(SequenceLengthMismatch);
+            ok = false;
+        }
+        if (ok) return data;
+        FreeEncContent(data);
+        return nullptr;
+    } catch (...) {
+        FreeEncContent(data);
+        throw;
+    }
+}
+
 LibreSsl3Pkcs7SignerInfo* DecodeSignerInfo(std::span<const unsigned char>& input) {
     Tlv sequence;
     if (!Next(input, SequenceTag, sequence)) return nullptr;
@@ -512,6 +638,73 @@ LibreSsl3X509Crl* DecodeCrl(std::span<const unsigned char>& input) {
     LibreSsl3X509Crl* crl = d2i_X509_CRL_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(input.size()));
     if (crl) input = input.subspan(static_cast<std::size_t>(cursor - input.data()));
     return crl;
+}
+
+LibreSsl3Pkcs7Envelope* DecodeEnvelope(std::span<const unsigned char>& input) {
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* data = static_cast<LibreSsl3Pkcs7Envelope*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7Envelope)));
+    if (!data) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    try {
+        Tlv version;
+        Tlv list;
+        bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
+                  Next(body, SetTag, list) &&
+                  (data->recipientInfo = DecodeList<LibreSsl3Pkcs7RecipInfo>(list.content, DecodeRecipInfo, FreeRecipInfo)) != nullptr &&
+                  (data->encData = DecodeEncContent(body)) != nullptr;
+        if (ok && !body.empty()) {
+            PutError(SequenceLengthMismatch);
+            ok = false;
+        }
+        if (ok) return data;
+        FreeEnvelope(data);
+        return nullptr;
+    } catch (...) {
+        FreeEnvelope(data);
+        throw;
+    }
+}
+
+LibreSsl3Pkcs7SignEnvelope* DecodeSignEnvelope(std::span<const unsigned char>& input) {
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* data = static_cast<LibreSsl3Pkcs7SignEnvelope*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7SignEnvelope)));
+    if (!data) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    try {
+        Tlv version;
+        Tlv list;
+        bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
+                  Next(body, SetTag, list) &&
+                  (data->recipientInfo = DecodeList<LibreSsl3Pkcs7RecipInfo>(list.content, DecodeRecipInfo, FreeRecipInfo)) != nullptr &&
+                  Next(body, SetTag, list) &&
+                  (data->mdAlgs = DecodeList<LibreSsl3X509Algor>(list.content, DecodeAlgor_nid_no_patch, FreeAlgorElement)) != nullptr &&
+                  (data->encData = DecodeEncContent(body)) != nullptr;
+        if (ok && Peek(body, ContextTag0))
+            ok = ReadTlv(body, list) &&
+                 (data->cert = DecodeList<LibreSsl3Certificate>(list.content, DecodeCertificate_nid_no_patch, FreeCertificateElement)) != nullptr;
+        if (ok && Peek(body, ContextTag1))
+            ok = ReadTlv(body, list) && (data->crl = DecodeList<LibreSsl3X509Crl>(list.content, DecodeCrl, FreeCrlElement)) != nullptr;
+        ok = ok && Next(body, SetTag, list) &&
+             (data->signerInfo = DecodeList<LibreSsl3Pkcs7SignerInfo>(list.content, DecodeSignerInfo, FreeSignerInfo)) != nullptr;
+        if (ok && !body.empty()) {
+            PutError(SequenceLengthMismatch);
+            ok = false;
+        }
+        if (ok) return data;
+        FreeSignEnvelope(data);
+        return nullptr;
+    } catch (...) {
+        FreeSignEnvelope(data);
+        throw;
+    }
 }
 
 LibreSsl3Pkcs7* DecodePkcs7(std::span<const unsigned char>& input, int depth);
@@ -551,12 +744,107 @@ LibreSsl3Pkcs7Signed* DecodeSigned(std::span<const unsigned char>& input, int de
     return nullptr;
 }
 
+LibreSsl3Pkcs7Encrypt* DecodeEncrypted(std::span<const unsigned char>& input, int depth) {
+    if (depth > MaxNesting) {
+        PutError(NestedTooDeep);
+        return nullptr;
+    }
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* data = static_cast<LibreSsl3Pkcs7Encrypt*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7Encrypt)));
+    if (!data) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    try {
+        Tlv version;
+        bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
+                  (data->encData = DecodeEncContent(body)) != nullptr;
+        if (ok && !body.empty()) {
+            PutError(SequenceLengthMismatch);
+            ok = false;
+        }
+        if (ok) return data;
+        FreeEncrypted(data);
+        return nullptr;
+    } catch (...) {
+        FreeEncrypted(data);
+        throw;
+    }
+}
+
+LibreSsl3Pkcs7Digest* DecodeDigest(std::span<const unsigned char>& input, int depth) {
+    if (depth > MaxNesting) {
+        PutError(NestedTooDeep);
+        return nullptr;
+    }
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* data = static_cast<LibreSsl3Pkcs7Digest*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7Digest)));
+    if (!data) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    Tlv version;
+    Tlv digest;
+    bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
+              (data->md = DecodeAlgor_nid_no_patch(body)) != nullptr &&
+              (data->contents = DecodePkcs7(body, depth + 1)) != nullptr &&
+              Next(body, OctetStringTag, digest) &&
+              (data->digest = NewString(OctetStringType, digest.content)) != nullptr;
+    if (ok && !body.empty()) {
+        PutError(SequenceLengthMismatch);
+        ok = false;
+    }
+    if (ok) return data;
+    FreeDigest(data);
+    return nullptr;
+}
+
 void* DecodeContent(int type, std::span<const unsigned char> content, int depth) {
     if (type == SignedType) {
         LibreSsl3Pkcs7Signed* data = DecodeSigned(content, depth + 1);
         if (data && !content.empty()) {
             PutError(SequenceLengthMismatch);
             FreeSigned(data);
+            return nullptr;
+        }
+        return data;
+    }
+    if (type == EnvelopedType) {
+        LibreSsl3Pkcs7Envelope* data = DecodeEnvelope(content);
+        if (data && !content.empty()) {
+            PutError(SequenceLengthMismatch);
+            FreeEnvelope(data);
+            return nullptr;
+        }
+        return data;
+    }
+    if (type == SignedAndEnvelopedType) {
+        LibreSsl3Pkcs7SignEnvelope* data = DecodeSignEnvelope(content);
+        if (data && !content.empty()) {
+            PutError(SequenceLengthMismatch);
+            FreeSignEnvelope(data);
+            return nullptr;
+        }
+        return data;
+    }
+    if (type == EncryptedType) {
+        LibreSsl3Pkcs7Encrypt* data = DecodeEncrypted(content, depth + 1);
+        if (data && !content.empty()) {
+            PutError(SequenceLengthMismatch);
+            FreeEncrypted(data);
+            return nullptr;
+        }
+        return data;
+    }
+    if (type == DigestType) {
+        LibreSsl3Pkcs7Digest* data = DecodeDigest(content, depth + 1);
+        if (data && !content.empty()) {
+            PutError(SequenceLengthMismatch);
+            FreeDigest(data);
             return nullptr;
         }
         return data;
@@ -568,7 +856,7 @@ void* DecodeContent(int type, std::span<const unsigned char> content, int depth)
         return nullptr;
     }
     if (type == 0) return DecodeAny(value);
-    if (type != DataType) NotImplemented_nid_no_patch("d2i_PKCS7: enveloped, digested or encrypted content");
+    if (type != DataType) NotImplemented_nid_no_patch("d2i_PKCS7: unsupported content");
     if (value.tag == (OctetStringTag | ConstructedFlag)) NotImplemented_nid_no_patch("d2i_PKCS7: constructed OCTET STRING");
     if (value.tag != OctetStringTag) {
         PutError(WrongTag);
@@ -590,19 +878,24 @@ LibreSsl3Pkcs7* DecodePkcs7(std::span<const unsigned char>& input, int depth) {
         PutError(MallocFailure);
         return nullptr;
     }
-    Tlv object;
-    bool ok = Next(body, ObjectTag, object) && (pkcs7->type = NewObject(object.content)) != nullptr;
-    if (ok && !body.empty()) {
-        Tlv content;
-        ok = Next(body, ContextTag0, content) && (pkcs7->d = DecodeContent(ContentType(pkcs7->type), content.content, depth)) != nullptr;
+    try {
+        Tlv object;
+        bool ok = Next(body, ObjectTag, object) && (pkcs7->type = NewObject(object.content)) != nullptr;
+        if (ok && !body.empty()) {
+            Tlv content;
+            ok = Next(body, ContextTag0, content) && (pkcs7->d = DecodeContent(ContentType(pkcs7->type), content.content, depth)) != nullptr;
+        }
+        if (ok && !body.empty()) {
+            PutError(SequenceLengthMismatch);
+            ok = false;
+        }
+        if (ok) return pkcs7;
+        FreePkcs7(pkcs7);
+        return nullptr;
+    } catch (...) {
+        FreePkcs7(pkcs7);
+        throw;
     }
-    if (ok && !body.empty()) {
-        PutError(SequenceLengthMismatch);
-        ok = false;
-    }
-    if (ok) return pkcs7;
-    FreePkcs7(pkcs7);
-    return nullptr;
 }
 
 }
