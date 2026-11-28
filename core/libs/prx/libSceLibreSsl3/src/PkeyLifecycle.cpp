@@ -286,8 +286,10 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -332,6 +334,33 @@ int MacKeyRejection(int type) {
     }
 }
 
+template<typename TValue>
+TValue ReadGuestValue(const TValue* address, const char* function, const char* what) {
+    TValue copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, address, sizeof(copy));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": " + what);
+    return copy;
+}
+
+template<typename TValue>
+void RequireReadableGuest(const TValue* address, const char* function, const char* what) {
+    unsigned char buffer[sizeof(TValue)]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(buffer, address, sizeof(buffer));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": " + what);
+}
+
+template<typename TValue>
+void RequireWritableGuest(TValue* address, const char* function, const char* what) {
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(address, sizeof(*address));
+    errno = savedErrno;
+    if (!writable) throw std::invalid_argument(std::string(function) + ": " + what);
+}
+
 void ReleasePkeyData(LibreSsl3EvpPkey* key) {
     if (!key->key) return;
     if (key->method) {
@@ -362,14 +391,24 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_nid_disambig1_nid_postfix(void) {
 
 void APS5_VABI EVP_PKEY_free_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key) {
     if (!key) return;
+    const LibreSsl3EvpPkey copy = ReadGuestValue(key, __func__, "unreadable key");
+    RequireWritableGuest(key, __func__, "unwritable key");
     auto references = std::atomic_ref<std::int32_t>(key->references);
     if (references.fetch_sub(1, std::memory_order_acq_rel) > 1) return;
-    if (key->type == EcType && key->key) {
-        EC_KEY_free_nid_postfix(static_cast<EcKey*>(key->key));
+    if (copy.type == EcType && copy.key) {
+        auto* ecKey = static_cast<EcKey*>(copy.key);
+        try {
+            RequireReadableGuest(ecKey, __func__, "unreadable EC key");
+            RequireWritableGuest(ecKey, __func__, "unwritable EC key");
+        } catch (...) {
+            references.fetch_add(1, std::memory_order_relaxed);
+            throw;
+        }
+        EC_KEY_free_nid_postfix(ecKey);
         key->key = nullptr;
     }
-    if (IsNativePkeyMethod_nid_no_patch(key->method)) {
-        const auto* method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
+    if (IsNativePkeyMethod_nid_no_patch(copy.method)) {
+        const auto* method = static_cast<const LibreSsl3PkeyAsn1Method*>(copy.method);
         if (method->keyFree != nullptr) method->keyFree(key);
         key->key = nullptr;
         key->method = nullptr;
@@ -399,19 +438,43 @@ int APS5_VABI EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key,
 int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* to,
     const LibreSsl3EvpPkey* from) {
     if (!to || !from) return 0;
-    if (to->type != from->type) {
+    const LibreSsl3EvpPkey toCopy = ReadGuestValue(to, __func__, "unreadable destination key");
+    const LibreSsl3EvpPkey fromCopy = ReadGuestValue(from, __func__, "unreadable source key");
+    if (toCopy.type != fromCopy.type) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, DifferentKeyTypes);
         return 0;
     }
-    if (to->type != EcType) NotImplemented_nid_no_patch("EVP_PKEY_copy_parameters for non-EC key types");
-    const auto* sourceKey = static_cast<const EcKey*>(from->key);
-    auto* destinationKey = static_cast<EcKey*>(to->key);
-    if (!sourceKey || !sourceKey->group) {
+    if (toCopy.type != EcType) NotImplemented_nid_no_patch("EVP_PKEY_copy_parameters for non-EC key types");
+    const auto* sourceKey = static_cast<const EcKey*>(fromCopy.key);
+    auto* destinationKey = static_cast<EcKey*>(toCopy.key);
+    if (!sourceKey) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MissingParameters);
+        return 0;
+    }
+    RequireReadableGuest(sourceKey, __func__, "unreadable source EC key");
+    const EcGroup* sourceGroup = ReadGuestValue(&sourceKey->group, __func__, "unreadable source EC group pointer");
+    if (!sourceGroup) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MissingParameters);
         return 0;
     }
     if (!destinationKey) return 0;
-    return EC_KEY_set_group_nid_postfix(destinationKey, sourceKey->group);
+    RequireReadableGuest(sourceGroup, __func__, "unreadable source EC group");
+    RequireReadableGuest(destinationKey, __func__, "unreadable destination EC key");
+    RequireWritableGuest(destinationKey, __func__, "unwritable destination EC key");
+    const EcPoint* destinationPublicKey = ReadGuestValue(&destinationKey->publicKey, __func__, "unreadable destination EC public key pointer");
+    if (destinationPublicKey) {
+        RequireReadableGuest(destinationPublicKey, __func__, "unreadable destination EC public key");
+    }
+    const EcPrivateKey* destinationPrivateKey = ReadGuestValue(&destinationKey->privateKey, __func__, "unreadable destination EC private key pointer");
+    if (destinationPrivateKey) {
+        RequireReadableGuest(destinationPrivateKey, __func__, "unreadable destination EC private key");
+    }
+    EcGroup* destinationGroup = ReadGuestValue(&destinationKey->group, __func__, "unreadable destination EC group pointer");
+    if (destinationGroup) {
+        RequireReadableGuest(destinationGroup, __func__, "unreadable destination EC group");
+        RequireWritableGuest(destinationGroup, __func__, "unwritable destination EC group");
+    }
+    return EC_KEY_set_group_nid_postfix(destinationKey, sourceGroup);
 }
 
 LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(int type, void*, const unsigned char* key, int keyLength) {

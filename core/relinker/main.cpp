@@ -14,10 +14,15 @@
 #include <relinker/patching/GamePatch.hpp>
 #include <algorithm>
 #include <filesystem>
+#include <locale>
+#include <map>
 #include <iostream>
 #include <iterator>
 #include <random>
+#include <sstream>
+#include <streambuf>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -51,6 +56,52 @@ struct RegistryContents {
     std::string Registry;
     std::string Needed;
 };
+
+class ConversionOutput {
+public:
+    explicit ConversionOutput(const bool json)
+        : standardOutput(json ? std::cout.rdbuf(std::cerr.rdbuf()) : nullptr) {}
+
+    ConversionOutput(const ConversionOutput&) = delete;
+    ConversionOutput& operator=(const ConversionOutput&) = delete;
+
+    ~ConversionOutput() {
+        if (standardOutput) std::cout.rdbuf(standardOutput);
+    }
+
+    void WriteJson(std::string_view document) const {
+        std::ostream output(standardOutput);
+        output << document << std::flush;
+        if (!output) throw Domain::RelinkerException("Could not write dry-run JSON to stdout");
+    }
+
+private:
+    std::streambuf* standardOutput;
+};
+
+using OutputKinds = std::map<std::filesystem::path, std::string_view>;
+
+std::string DryRunJson(const Cli::Args& args, const std::vector<ConvertedExecutable>& executables, const std::vector<std::filesystem::path>& paths, const OutputKinds& kinds) {
+    const auto& main = executables.front();
+    const auto platform = args.toWindows ? "windows" : args.toMacos ? "macos" : "linux";
+    std::ostringstream json;
+    json.imbue(std::locale::classic());
+    json << "{\n  \"schemaVersion\": 1,\n"
+         << "  \"target\": \"" << platform << "\",\n"
+         << "  \"convertedExecutables\": " << executables.size() << ",\n"
+         << "  \"convertedModules\": " << main.GuestArtifacts.size() << ",\n"
+         << "  \"externalPrxReferences\": " << main.Result.RegistryEntries.size() << ",\n"
+         << "  \"outputs\": [\n";
+    for (std::size_t index = 0; index < paths.size(); ++index) {
+        const auto& path = paths[index];
+        const auto kind = kinds.find(path);
+        if (index != 0) json << ",\n";
+        json << "    {\"kind\": \"" << (kind == kinds.end() ? "other" : kind->second) << "\", \"path\": "
+             << Relinker::EncodeJsonString(Io::Utf8Path(path), "dry run output path") << '}';
+    }
+    json << "\n  ]\n}\n";
+    return json.str();
+}
 
 ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, const std::string& targetName, const std::vector<Relinker::GamePatch::PatchEntry>& patches, Cli::ConsoleProgress& progress) {
     Io::FileReader fileReader;
@@ -301,6 +352,7 @@ int Run(const int argc, char* argv[]) {
         return 0;
     }
 
+    const ConversionOutput conversionOutput(args.dryRunJson);
     Cli::ConsoleProgress progress(std::cout);
     try {
         if (!args.verifyPatchesPath.empty()) return RunVerifyPatches(args);
@@ -476,6 +528,21 @@ int Run(const int argc, char* argv[]) {
 
         if (args.dryRun) {
             progress.Finish();
+            if (args.dryRunJson) {
+                OutputKinds kinds;
+                for (const auto& executable : executables) kinds.emplace(Io::NativePath(executable.OutputPath), "executable");
+                for (const auto& artifact : guestArtifacts) kinds.emplace(artifact.Path, "module");
+                for (const auto& path : registryPaths) kinds.emplace(path, "registry");
+                for (const auto& path : neededPaths) kinds.emplace(path, "needed-libraries");
+                if (!manifestPath.empty()) kinds.emplace(manifestPath, "patch-manifest");
+                if (desktopEntry) {
+                    kinds.emplace(desktopEntry->IconPath, "desktop-icon");
+                    kinds.emplace(desktopEntry->EntryPath, "desktop-entry");
+                }
+                if (args.windowsDiagnostics) kinds.emplace(windowsDiagnosticsPath, "windows-diagnostics");
+                conversionOutput.WriteJson(DryRunJson(args, executables, outputPaths, kinds));
+                return 0;
+            }
             std::cout << "\nDry run complete\n"
                       << "Converted executables: " << executables.size() << '\n'
                       << "Converted modules: " << guestArtifacts.size() << '\n'
@@ -485,7 +552,10 @@ int Run(const int argc, char* argv[]) {
             return 0;
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        if (args.windowsDiagnostics) {
+            if (!guestArtifacts.empty()) std::filesystem::create_directories(outputDirectory);
+            fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        }
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;
@@ -526,7 +596,8 @@ int Run(const int argc, char* argv[]) {
             std::replace(relative.begin(), relative.end(), '\\', '/');
             modulePaths.push_back(std::move(relative));
         }
-        Cli::RuntimeLayout::Print(std::cout, Io::Utf8Path(Io::NativePath(absPath).filename()), modulePaths, extraPaths);
+        const bool includeBundledLibraries = Cli::RuntimeLayout::IncludesBundledLibraries(args.runPath, args.toWindows);
+        Cli::RuntimeLayout::Print(std::cout, Io::Utf8Path(Io::NativePath(absPath).filename()), modulePaths, extraPaths, includeBundledLibraries);
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);
@@ -534,7 +605,7 @@ int Run(const int argc, char* argv[]) {
     } catch (const Domain::RelinkerException& e) {
         progress.Finish();
         std::cerr << "FAIL: " << e.what();
-        if (e.FailureOffset != 0) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
+        if (e.HasFailureOffset) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
         std::cerr << "\n";
         if (!e.InputPath.empty()) std::cerr << "Input: " << e.InputPath << '\n';
         return 2;

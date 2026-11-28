@@ -260,5 +260,18 @@ class ConcurrencyGroupTests(unittest.TestCase):
         self.assertEqual(self.workflow_line("cancel-in-progress:"), "cancel-in-progress: ${{ github.event_name != 'push' }}")
 
 
+class TestGraphCacheTests(unittest.TestCase):
+    def test_both_selectors_diff_from_the_matched_cache_key(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        sections = workflow.split("      - name: Select the tests the change reaches\n")
+        self.assertEqual(len(sections), 3)
+        for preceding, following in zip(sections, sections[1:]):
+            restore = preceding.rsplit("      - if: ${{ inputs.select }}\n", 1)[1]
+            select = following.split("\n      - ", 1)[0]
+            self.assertIn("id: test-graph-cache", restore)
+            self.assertIn("GRAPH_KEY: ${{ steps.test-graph-cache.outputs.cache-matched-key }}", select)
+            self.assertIn('git diff --name-only -z "$graph_base" HEAD', select)
+
+
 if __name__ == "__main__":
     unittest.main()

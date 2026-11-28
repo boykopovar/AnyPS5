@@ -1,6 +1,28 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include <cerrno>
 #include <limits>
+#include <stdexcept>
+
+namespace {
+
+void RequireGuestArrayRange(const void* source, void* destination, std::size_t count, std::size_t size) {
+    const int savedErrno = errno;
+    if (count != 0 && size != 0) {
+        bool accessible = false;
+        if (size <= std::numeric_limits<std::size_t>::max() / count) {
+            const auto bytes = count * size;
+            accessible = GuestReadable_nid_no_patch(source, bytes) && GuestWritable_nid_no_patch(destination, bytes);
+        }
+        errno = savedErrno;
+        if (!accessible) throw std::invalid_argument("guest array range is not accessible");
+    } else {
+        errno = savedErrno;
+    }
+}
+
+}
 
 extern "C" {
 void APS5_VABI __cxa_vec_cleanup_nid_postfix(void* array, std::size_t count, std::size_t size, void (APS5_VABI *destroy)(void*)) {
@@ -22,6 +44,7 @@ void APS5_VABI __cxa_vec_ctor_nid_postfix(void* array, std::size_t count, std::s
 }
 void APS5_VABI __cxa_vec_cctor_nid_postfix(void* destination, void* source, std::size_t count, std::size_t size, void (APS5_VABI *copy)(void*, void*), void (APS5_VABI *destroy)(void*)) {
     if (!copy) return;
+    RequireGuestArrayRange(source, destination, count, size);
     std::size_t complete = 0;
     try {
         for (; complete < count; ++complete)

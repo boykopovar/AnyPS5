@@ -1,0 +1,5 @@
+# libSceLibcInternal
+
+## add Functional
+
+- [_Hypot, _FHypot and _LHypot](../../../core/libs/prx/libSceLibcInternal/ScaledHypot.cpp) (libSceLibcInternal) - return `hypot`, `hypotf` or `hypotl` of the arguments scaled by two to minus the written exponent, not the module's own scaled algorithm: for (0.1, 0.2) firmware 13.42 is 1 ulp higher, and other last-bit differences are possible. `_FHypot` and `_LHypot` were measured only at (3, 4) and (inf, NaN). An unwritable exponent throws where the module faults. Signalling NaNs, directed rounding and exception flags are not compared. The exponent rule, the zero, NaN and infinity cases and the 0 stored first follow firmware 13.42's `libSceLibcInternal.sprx` run natively on a PC, not a console ([BunnyFl in #12363](https://github.com/boykopovar/AnyPS5/pull/12363)); the prototypes are Dinkumware's [xmath.h](https://github.com/ganboing/crt.vc12/blob/f1d47126bf13d1c9dccaa6c53b72217fd0474968/src/xmath.h). Closes when: compared bit for bit with the module.
