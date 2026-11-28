@@ -463,17 +463,28 @@ struct SampledKeyProofEntry {
     std::uint64_t dccAddress = 0;
     std::uint64_t guestBytes = 0;
     std::uint32_t format = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t mipCount = 0;
+    std::uint32_t baseArray = 0;
+    std::uint32_t depthOrLastArray = 0;
+    TextureDimension dimension = TextureDimension::k2D;
+    TextureTileMode tileMode = TextureTileMode::kLinear;
     bool dccAlphaOnMsb = false;
+    bool dccPipeAligned = false;
     DccKeyProof proof;
 };
 
 constexpr std::size_t SampledKeyProofSlots = 1024;
 struct SampledKeyProofTag {};
 
-SampledKeyProofEntry& sampledKeyProofSlot(std::uint64_t dccAddress, std::uint64_t guestBytes, std::uint32_t format, bool dccAlphaOnMsb) {
+SampledKeyProofEntry& sampledKeyProofSlot(const GuestTextureResource& resource, std::uint64_t guestBytes) {
     auto& proofs = HostThreadLocal<std::unique_ptr<std::array<SampledKeyProofEntry, SampledKeyProofSlots>>, SampledKeyProofTag>();
     if (proofs == nullptr) proofs = std::make_unique<std::array<SampledKeyProofEntry, SampledKeyProofSlots>>();
-    const auto hash = dccAddress ^ (guestBytes * 0x9e3779b97f4a7c15ull) ^ (static_cast<std::uint64_t>(format) << 32u) ^ (dccAlphaOnMsb ? 0x94d049bb133111ebull : 0ull);
+    auto hash = resource.dccAddress ^ (guestBytes * 0x9e3779b97f4a7c15ull) ^ (static_cast<std::uint64_t>(resource.format) << 32u) ^ (resource.dccAlphaOnMsb ? 0x94d049bb133111ebull : 0ull);
+    hash ^= (static_cast<std::uint64_t>(resource.width) * 0xbf58476d1ce4e5b9ull) ^ (static_cast<std::uint64_t>(resource.height) << 17u);
+    hash ^= (static_cast<std::uint64_t>(resource.mipCount) << 41u) ^ (static_cast<std::uint64_t>(resource.baseArray) << 47u) ^ (static_cast<std::uint64_t>(resource.depthOrLastArray) << 53u);
+    hash ^= (static_cast<std::uint64_t>(resource.dimension) << 11u) ^ (static_cast<std::uint64_t>(resource.tileMode) << 23u) ^ (resource.dccPipeAligned ? 0x517cc1b727220a95ull : 0ull);
     return (*proofs)[(hash ^ (hash >> 29u)) % SampledKeyProofSlots];
 }
 
@@ -1104,12 +1115,20 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             return *scanned;
         }
         const auto scanStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        auto& memo = sampledKeyProofSlot(resource.dccAddress, guestBytes, resource.format, resource.dccAlphaOnMsb);
-        if (memo.dccAddress != resource.dccAddress || memo.guestBytes != guestBytes || memo.format != resource.format || memo.dccAlphaOnMsb != resource.dccAlphaOnMsb) {
+        auto& memo = sampledKeyProofSlot(resource, guestBytes);
+        if (memo.dccAddress != resource.dccAddress || memo.guestBytes != guestBytes || memo.format != resource.format || memo.width != resource.width || memo.height != resource.height || memo.mipCount != resource.mipCount || memo.baseArray != resource.baseArray || memo.depthOrLastArray != resource.depthOrLastArray || memo.dimension != resource.dimension || memo.tileMode != resource.tileMode || memo.dccAlphaOnMsb != resource.dccAlphaOnMsb || memo.dccPipeAligned != resource.dccPipeAligned) {
             memo.dccAddress = resource.dccAddress;
             memo.guestBytes = guestBytes;
             memo.format = resource.format;
+            memo.width = resource.width;
+            memo.height = resource.height;
+            memo.mipCount = resource.mipCount;
+            memo.baseArray = resource.baseArray;
+            memo.depthOrLastArray = resource.depthOrLastArray;
+            memo.dimension = resource.dimension;
+            memo.tileMode = resource.tileMode;
             memo.dccAlphaOnMsb = resource.dccAlphaOnMsb;
+            memo.dccPipeAligned = resource.dccPipeAligned;
             memo.proof = {};
         }
         const auto scans = KeyProofCounts().scanned;

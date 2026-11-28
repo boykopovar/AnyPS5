@@ -1269,11 +1269,6 @@ void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     auto* keys = block + KeysOffset;
     const auto surface = AddressOf(texels);
     const auto meta = AddressOf(keys);
-    // Every mip of this chain fits the one tail block, so its real key array is the single
-    // 4096-key meta block at the start of the chain (the console's shared tail), not the
-    // slices back to back. Zero the real array as the game's 0000 clear does and poison the
-    // rest of the key space, so a scan that wanders past the array fails deterministically
-    // instead of on whatever the heap happens to hold.
     constexpr std::size_t RealKeyBytes = 4096;
     std::memset(texels, 0x55, SurfaceBytes);
     std::memset(keys, 0x00, RealKeyBytes);

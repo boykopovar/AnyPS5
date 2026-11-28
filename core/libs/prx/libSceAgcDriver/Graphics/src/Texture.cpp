@@ -4860,7 +4860,7 @@ bool StorageTexture::keysFillMatches(std::uint64_t address, std::size_t bytes, b
 
 bool StorageTexture::keysReplacedByClear() const {
     const auto keyCount = DccKeyBytes(guestBytes);
-    if (keyCount == 0 || keyCount != DccKeyCount(descriptor, guestBytes) || keyProof.generation == 0 || keyProof.keys != uploadedKeys || keyProof.mixedSignature != uploadedMixedSignature || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    if (keyCount == 0 || keyCount != DccSliceKeyExtent(descriptor, guestBytes) || keyProof.generation == 0 || keyProof.keys != uploadedKeys || keyProof.mixedSignature != uploadedMixedSignature || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
     if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(descriptor.dccAddress, keyCount)) return false;
     if (!GuestMemory::CpuWroteSince(descriptor.dccAddress, keyCount, keyProof.generation)) return false;
     const auto keys = ReadDccKeys(descriptor.dccAddress, guestBytes);
@@ -4870,7 +4870,7 @@ bool StorageTexture::keysReplacedByClear() const {
 void StorageTexture::MarkDirty() {
     if (descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle || uploadedMixedClear()) && !IsDccClear(filledKeys)) {
         traceKeyStore("first write", descriptor, guestBytes);
-        if (!keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        if (!keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, uploadedMixedClear() ? DccSliceKeyExtent(descriptor, guestBytes) : DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
         uploadedMixedSignature = 0;
         keyProof = {};
@@ -8551,7 +8551,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (profile) Profile().storageGpu += timer.lap();
             forgetStored();
             traceKeyStore("block write-back", descriptor, guestBytes);
-            if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+            if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, uploadedMixedClear() ? DccSliceKeyExtent(descriptor, guestBytes) : DccKeyCount(descriptor, guestBytes));
             uploadedKeys = DccKeys::Uncompressed;
             uploadedMixedSignature = 0;
             keyProof = {};
@@ -8731,7 +8731,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // metadata is host-imported (no CPU wait for the title's key-writing kernels), else a CPU
         // store (APS5_CPU_DCC_KEYS=1 keeps the CPU store; see DccMetadata.hpp).
         traceKeyStore("layer write-back", descriptor, guestBytes);
-        if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, uploadedMixedClear() ? DccSliceKeyExtent(descriptor, guestBytes) : DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
         uploadedMixedSignature = 0;
         keyProof = {};
@@ -8879,7 +8879,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // The texels now hold the whole image, so later reads must see them rather than a fast clear
     // (the keys may be host-imported although the texels were not: then a recorded fill, else a CPU store).
     traceKeyStore("cpu write-back", descriptor, guestBytes);
-    if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+    if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, uploadedMixedClear() ? DccSliceKeyExtent(descriptor, guestBytes) : DccKeyCount(descriptor, guestBytes));
     uploadedKeys = DccKeys::Uncompressed;
     uploadedMixedSignature = 0;
     keyProof = {};

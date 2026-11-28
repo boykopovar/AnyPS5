@@ -18411,13 +18411,10 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-// The mixed-key scan reads each slice's console DCC extent (ceil(w/512) x ceil(h/512) x 4096 keys
-// per 4-byte R64KBX layer, layers back to back), not guestBytes / 256, and fills each uniformly
-// cleared layer over that layer's own guest bytes only.
 void mixedKeySliceLayoutTests() {
-    constexpr std::size_t layerKeys = 5 * 4 * 4096; // 2400x1800: ceil(2400/512) x ceil(1800/512) x 4096
+    constexpr std::size_t layerKeys = 5 * 4 * 4096;
     constexpr std::size_t arrayKeys = 4 * layerKeys;
-    constexpr std::size_t multiMipKeys = 320 * 1024; // more than any count the 3200x1800 mip chain can ask for
+    constexpr std::size_t multiMipKeys = 320 * 1024;
     constexpr std::size_t keyBytes = arrayKeys + multiMipKeys;
     std::vector<std::byte> memory(keyBytes + 65536);
     auto* keys = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(memory.data()) + 65535) & ~std::uintptr_t{65535});
@@ -18455,21 +18452,19 @@ void mixedKeySliceLayoutTests() {
     const auto layerBytes = slices[1].byteOffset;
     Require(layerBytes != 0 && layerBytes / 256 < layerKeys, "the 2400x1800 layer's console key extent should be larger than its bytes / 256");
 
-    // Layer 0 cleared by the game (its console extent of 0x00), layers 1-3 uncompressed.
     std::fill_n(keys, arrayKeys, std::uint8_t{0xff});
     std::fill_n(keys, layerKeys, std::uint8_t{0x00});
     auto mixed = MixedKeyClearRuns(layered, geometry.guestBytes);
     Require(mixed.has_value() && mixed->keys == DccKeys::Clear0000, "a layer whose console key extent is all 0x00 was not filled");
     Require(mixed->runs.size() == 1 && mixed->runs[0].first == 0 && mixed->runs[0].second == static_cast<std::size_t>(layerBytes / 256), "the fill of layer 0 does not cover exactly layer 0's guest bytes (it reached into layer 1)");
+    Require(DccSliceKeyExtent(layered, geometry.guestBytes) == arrayKeys, "DccSliceKeyExtent must cover all four layers' console key arrays");
 
-    // Layers 0-2 cleared, layer 3 uncompressed: three fills on the layers' own bytes, none on layer 3.
     std::fill_n(keys, 3 * layerKeys, std::uint8_t{0x00});
     mixed = MixedKeyClearRuns(layered, geometry.guestBytes);
     Require(mixed.has_value() && mixed->runs.size() == 3, "three cleared layers did not give three fills");
     for (std::size_t layer = 0; layer < 3; ++layer) Require(mixed->runs[layer].first == static_cast<std::size_t>(slices[layer].byteOffset / 256) && mixed->runs[layer].second == static_cast<std::size_t>((slices[layer].byteOffset + slices[layer].byteSize) / 256), "a cleared layer's fill is not that layer's guest bytes");
     Require(mixed->runs.back().second <= static_cast<std::size_t>(slices[3].byteOffset / 256), "the fill reached into the uncompressed layer 3");
 
-    // One layer mixed under the console layout: no fill at all for it.
     std::fill_n(keys, arrayKeys, std::uint8_t{0xff});
     std::fill_n(keys + layerKeys / 2, layerKeys / 2, std::uint8_t{0x00});
     Require(!MixedKeyClearRuns(layered, geometry.guestBytes).has_value(), "a layer with mixed keys was filled");
@@ -18484,8 +18479,6 @@ void mixedKeySliceLayoutTests() {
     std::fill_n(keys, arrayKeys, std::uint8_t{0x00});
     Require(TextureClearKeyState(layered, geometry.guestBytes).keys == DccKeys::Clear0000, "a surface whose every slice extent is 0x00 is not one 0000 clear");
 
-    // An 8-byte mip chain (the Body Type surface's shape): keys uncompressed up to a page boundary,
-    // then zero memory past it. Its levels' key order is not known, so nothing is filled.
     GuestTextureResource chain{};
     chain.baseAddress = 0x100100000000ull;
     chain.width = 3200;
@@ -18494,6 +18487,7 @@ void mixedKeySliceLayoutTests() {
     chain.lastLevel = 4;
     chain.tileMode = TextureTileMode::kR64KBX;
     chain.dimension = TextureDimension::k2D;
+    chain.dccPipeAligned = true;
     chain.format = 71;
     chain.dstSelX = 4;
     chain.dstSelY = 5;
@@ -18502,14 +18496,18 @@ void mixedKeySliceLayoutTests() {
     chain.dccAddress = reinterpret_cast<std::uint64_t>(keys + arrayKeys);
     Require(BytesPerElement(chain.format) == 8, "the mip-chain DCC test format is not 8 bytes per texel");
     const auto chainGeometry = DescribeSurface(chain);
-    Require(chainGeometry.mips.size() == 5, "the mip-chain DCC test surface does not have 5 levels");
+    const auto chainSlices = DccSlices(chain);
+    Require(chainGeometry.mips.size() == 5 && chainSlices.size() == 5, "the mip-chain DCC test surface does not have 5 levels");
+    const auto chainExtent = DccSliceKeyExtent(chain, chainGeometry.guestBytes);
+    Require(chainExtent < multiMipKeys, "the mip-chain DCC extent does not fit in the test buffer");
     auto* chainKeys = keys + arrayKeys;
     std::fill_n(chainKeys, multiMipKeys, std::uint8_t{0x00});
     std::fill_n(chainKeys, 22 * 4096, std::uint8_t{0xff});
     Require(!MixedKeyClearRuns(chain, chainGeometry.guestBytes).has_value(), "a mip chain whose keys turn to zero memory part way was filled");
-    std::fill_n(chainKeys, multiMipKeys, std::uint8_t{0x00});
+    std::fill_n(chainKeys, multiMipKeys, std::uint8_t{0x55});
+    std::fill_n(chainKeys, chainExtent, std::uint8_t{0x00});
     mixed = MixedKeyClearRuns(chain, chainGeometry.guestBytes);
-    Require(mixed.has_value() && mixed->runs.size() == chainGeometry.mips.size(), "a mip chain whose keys are all 0x00 was not filled level by level");
+    Require(mixed.has_value() && mixed->runs.size() == chainGeometry.mips.size(), "a pipe-aligned mip chain whose console extent keys are all 0x00 was not filled level by level");
 }
 
 void mixedKeyClearTests(const Device& device, Recorder& recorder) {
@@ -18726,6 +18724,40 @@ void mixedKeyClearTests(const Device& device, Recorder& recorder) {
         }
         recorder.Sync();
         Require(smallImage->UploadedKeys() == DccKeys::Uncompressed && smallImage->UploadedMixedSignature() == 0u, "StorageTexture::MarkDirty keeps a mixed slice unfilled (stored texels stand)");
+        {
+            GuestTextureResource pipeArray = smallResource;
+            pipeArray.tileMode = TextureTileMode::kR64KBX;
+            pipeArray.dimension = TextureDimension::k2DArray;
+            pipeArray.depthOrLastArray = 1;
+            pipeArray.baseArray = 0;
+            pipeArray.dccPipeAligned = true;
+            const auto pipeArrayGeom = DescribeSurface(pipeArray);
+            const auto pipeArrayExtent = DccSliceKeyExtent(pipeArray, pipeArrayGeom.guestBytes);
+            Require(pipeArrayGeom.guestBytes <= keyOffset && pipeArrayExtent == 8192u && DccKeyBytes(pipeArrayGeom.guestBytes) < 4096u, "pipe-aligned 2-layer test surface did not match expected key extent");
+            std::fill_n(texels, pipeArrayGeom.guestBytes, std::byte{0x80});
+            std::fill_n(keys, pipeArrayExtent, std::byte{0xff});
+            markKeys(pipeArrayExtent);
+            DccKeyProof pipeProof{};
+            const auto pipeUncomp = ProvedClearKeyState(pipeArray, pipeArrayGeom.guestBytes, pipeProof);
+            Require(pipeUncomp.keys == DccKeys::Uncompressed && pipeUncomp.mixedSignature == 0u, "all-0xff pipe-aligned array must be uncompressed");
+            std::fill_n(keys + 4096u, 4096u, std::byte{0x00});
+            markKeys(pipeArrayExtent);
+            const auto pipeMixed = ProvedClearKeyState(pipeArray, pipeArrayGeom.guestBytes, pipeProof);
+            Require(pipeMixed.keys == DccKeys::Uncompressed && pipeMixed.mixedSignature != 0u, "ProvedClearKeyState missed key writes past guestBytes/256 in layer 1");
+            auto pipeImage = StorageTexture::Create(context, detiler, pipeArray, 0);
+            Require(pipeImage != nullptr && pipeImage->UploadedMixedSignature() != 0u, "pipe-aligned mixed array did not record a mixed signature on upload");
+            {
+                std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+                pipeImage->MarkDirty();
+            }
+            recorder.Sync();
+            Require(keys[4096u] == std::byte{0xff} && keys[pipeArrayExtent - 1u] == std::byte{0xff}, "StorageTexture::MarkDirty left clear keys past guestBytes/256 in a mixed-clear pipe-aligned array");
+            const auto afterWrite = TextureClearKeyState(pipeArray, pipeArrayGeom.guestBytes);
+            Require(afterWrite.keys == DccKeys::Uncompressed && afterWrite.mixedSignature == 0u, "pipe-aligned mixed array still reported a mixed clear after MarkDirty");
+            pipeImage.reset();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+        }
 
         TextureCache storageRevalidateCache(context);
         auto storageShaderCtx = context;

@@ -559,8 +559,6 @@ std::optional<std::uint32_t> mixedClearPattern(VkFormat clearFormat, DccKeys key
     return pattern;
 }
 
-// A slice the fill cannot serve: mixed keys under the console layout, or one non-fillable clear
-// code (register/single). Reported once per surface; the slice's stored texels stand.
 void ReportMixedSliceOnce(const GuestTextureResource& resource, std::size_t sliceIndex, std::span<const std::uint8_t> keys) {
     static AgcDriver::Mutex mutex;
     static std::set<std::pair<std::uint64_t, std::uint64_t>> reported;
@@ -584,8 +582,6 @@ bool FillableClear(std::uint8_t byte) {
     return keys == DccKeys::Clear0000 || keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111;
 }
 
-// With more than one mip level per layer the console order of the levels' key arrays is not
-// known here, so such a surface fills only when every slice's keys are the same clear code.
 std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& resource, std::span<const DccSlice> slices, bool wholeOnly) {
     if (!MixedKeyClearEnabled() || resource.dccAddress == 0 || IsBlockCompressed(resource.format) || slices.empty()) return std::nullopt;
     const auto elementBytes = BytesPerElement(resource.format);
@@ -600,9 +596,6 @@ std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& res
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
     for (std::size_t sliceIndex = 0; sliceIndex < slices.size(); ++sliceIndex) {
         const auto& slice = slices[sliceIndex];
-        // The slice's key array sits where DccSlices put it (the console extent back to back for
-        // the non-chain surfaces, the console chain order for the pipe-aligned mip chains), so
-        // the scan never reads past the surface's own key array.
         const auto count = slice.keyCount;
         const auto meta = resource.dccAddress + slice.keyOffset;
         if (count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(meta), count)) return std::nullopt;
@@ -620,23 +613,18 @@ std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& res
                     return std::nullopt;
                 }
                 clearByte = raw.front();
-                // The fill covers the slice's own guest bytes (key units of 256 bytes), not its
-                // key array: the console extent can be larger than the slice.
                 fillRuns.emplace_back(static_cast<std::size_t>(slice.byteOffset / 256), static_cast<std::size_t>((slice.byteOffset + slice.byteSize + 255) / 256));
                 mix(slice.byteOffset);
                 mix(count);
                 continue;
             }
         }
-        if (uniform && !wholeOnly) continue; // all 0xff: the slice's texels stand as stored
+        if (uniform && !wholeOnly) continue;
         if (uniform) return std::nullopt;
         ReportMixedSliceOnce(resource, sliceIndex, std::span(raw));
         if (wholeOnly) return std::nullopt;
     }
     if (!clearByte.has_value()) return std::nullopt;
-    // A key array holding no uncompressed code is a uniform clear, not a mixed one: the clear
-    // serves through the uniform path, and a fill here would clobber stored results the staged
-    // clear does not cover.
     if (!wholeOnly && !sawUncompressed) return std::nullopt;
     const auto clearKeys = ByteKeys(*clearByte);
     const auto pattern = mixedClearPattern(DccClearTextureFormat(resource.format), clearKeys, elementBytes, resource.dccAlphaOnMsb);
@@ -907,13 +895,6 @@ std::vector<DccSlice> DccSlices(const GuestTextureResource& resource) {
     if (resource.dccAddress == 0 || resource.width == 0 || resource.height == 0) return slices;
     const auto geometry = DescribeSurface(resource);
     const auto mips = static_cast<std::uint32_t>(geometry.mips.size());
-    // A pipe-aligned R64KBX surface with more than one mip level carries its keys in the
-    // console chain order, per array layer: the shared tail block (4096 keys) first, then the
-    // other levels from the smallest to level 0, each rounded to whole meta blocks (the same
-    // offsets DccMipKeyOffset gives a color target's mips); every tail level reads the shared
-    // block at the chain's start. Other surfaces carry their slices' key arrays back to back,
-    // at the console extent when pipe-aligned, else one key per 256 of the slice's bytes.
-    // Either way a scan of a slice never reads past that slice's own key array.
     const auto elementBytes = BytesPerElement(resource.format);
     const bool chain = !geometry.thick && resource.dccPipeAligned && mips > 1 && elementBytes != 0 && resource.tileMode == TextureTileMode::kR64KBX;
     std::uint32_t firstTail = mips;
@@ -958,10 +939,17 @@ std::vector<DccSlice> DccSlices(const GuestTextureResource& resource) {
     return slices;
 }
 
+std::size_t DccSliceKeyExtent(const GuestTextureResource& resource, std::uint64_t surfaceBytes) {
+    auto extent = DccKeyCount(resource, surfaceBytes);
+    if (resource.dccAddress == 0 || !resource.dccPipeAligned || !MixedKeyClearEnabled() || resource.width == 0 || resource.height == 0 || IsBlockCompressed(resource.format)) return extent;
+    const auto slices = DccSlices(resource);
+    if (slices.size() <= 1) return extent;
+    for (const auto& slice : slices) extent = std::max(extent, static_cast<std::size_t>(slice.keyOffset + slice.keyCount));
+    return extent;
+}
+
 std::optional<MixedKeyClear> MixedKeyClearRuns(const GuestTextureResource& resource, std::uint64_t guestBytes) {
     static_cast<void>(guestBytes);
-    // Zero-sized surfaces have no geometry to slice (DescribeSurface would refuse them), and the
-    // old scan never needed geometry either: serve them as stored.
     if (resource.dccAddress == 0 || resource.width == 0 || resource.height == 0 || IsBlockCompressed(resource.format)) return std::nullopt;
     auto mixed = MixedKeyClearSlices(resource, DccSlices(resource), DescribeSurface(resource).mips.size() > 1);
     if (mixed.has_value() && DccClearTextureFormat(resource.format) == ResolveTextureFormat(resource.format) && IsConvertedTextureFormat(resource.format) && (mixed->keys == DccKeys::Clear0001 || mixed->keys == DccKeys::Clear1110)) return std::nullopt;
@@ -1002,6 +990,19 @@ bool KeyFastPath() {
     return enabled;
 }
 
+namespace {
+
+std::size_t proofKeyCount(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    auto count = DccKeyBytes(guestBytes);
+    if (resource.dccAddress == 0 || !resource.dccPipeAligned || !MixedKeyClearEnabled() || resource.width == 0 || resource.height == 0 || IsBlockCompressed(resource.format)) return count;
+    const auto slices = DccSlices(resource);
+    if (slices.size() <= 1) return count;
+    for (const auto& slice : slices) count = std::max(count, static_cast<std::size_t>(slice.keyOffset + slice.keyCount));
+    return count;
+}
+
+}
+
 DccKeyState ProvedClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof) {
     if (resource.dccAddress == 0) return {};
     auto& counters = Proofs();
@@ -1009,7 +1010,7 @@ DccKeyState ProvedClearKeyState(const GuestTextureResource& resource, std::uint6
         counters.scanned.fetch_add(1, std::memory_order_relaxed);
         return TextureClearKeyState(resource, guestBytes);
     }
-    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    const auto count = proofKeyCount(resource, guestBytes);
     // The collect precedes the scan: a write landing between them is stamped above `collected`, so
     // the proof it would invalidate is never taken as current.
     const auto collected = count == 0 ? 0 : GuestMemory::CollectWrites(resource.dccAddress, count);
@@ -1043,7 +1044,7 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
 }
 
 DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeys keys) {
-    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    const auto count = proofKeyCount(resource, guestBytes);
     if (!KeyFastPath() || resource.dccAddress == 0 || count == 0 || keys == DccKeys::Mixed || keys == DccKeys::Unreadable || !GuestMemory::GpuMutex().HeldByThisThread()) return {};
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return {};
@@ -1058,7 +1059,7 @@ DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t 
 
 bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof) {
     if (proof.pendingNote == 0) return true;
-    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    const auto count = proofKeyCount(resource, guestBytes);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return false;
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || recorder->Id() != proof.pendingRecorder || recorder->NewestWriteNote(resource.dccAddress, count) != proof.pendingNote) return false;

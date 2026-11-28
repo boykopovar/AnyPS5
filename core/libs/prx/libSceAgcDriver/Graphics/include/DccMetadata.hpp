@@ -27,10 +27,7 @@ const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes);
-// One slice of the guest surface (one mip level of one array layer) and where it sits in the
-// bytes, plus where its DCC keys sit in the metadata (keyOffset and keyCount in bytes, one key
-// byte per 256 of surface: the console meta extent where the console rounds the keys, the slice's
-// own bytes otherwise; tail levels of a mip chain share the chain's tail block).
+std::size_t DccSliceKeyExtent(const GuestTextureResource& resource, std::uint64_t surfaceBytes);
 struct DccSlice {
     std::uint64_t byteOffset = 0;
     std::uint64_t byteSize = 0;
@@ -39,7 +36,6 @@ struct DccSlice {
     std::uint64_t keyOffset = 0;
     std::size_t keyCount = 0;
 };
-// The texture's slices, each array layer's mip levels, in guest-byte order (from its geometry).
 std::vector<DccSlice> DccSlices(const GuestTextureResource& resource);
 std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes);
 std::optional<std::size_t> DccMipKeyOffset(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, std::uint32_t mipCount, std::uint32_t firstTailLevel, std::uint32_t level);
@@ -148,8 +144,6 @@ struct MixedKeyClear {
     DccKeys keys = DccKeys::Uncompressed;
     std::uint32_t pattern = 0;
     std::uint64_t signature = 0;
-    // Slice-aligned fill ranges in key units (guest bytes / 256): the byte range of each slice
-    // whose keys are all one fillable clear code, in slice order.
     std::vector<std::pair<std::size_t, std::size_t>> runs;
 };
 bool MixedKeyClearEnabled();
