@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
+#include <iphlpapi.h>
 #include <fcntl.h>
 #include <io.h>
 #else
@@ -16,6 +17,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -90,6 +92,8 @@ constexpr int GuestDontWait = 0x80;
 constexpr int GuestNoSignal = 0x20000;
 constexpr int GuestSendFlags = GuestNoSignal | GuestDontWait;
 constexpr int GuestReceiveFlags = GuestPeek | GuestWaitAll | GuestDontWait;
+constexpr int GuestKeptStatusFlags = 0x8 | 0x40 | 0x80 | 0x200 | 0x10000;
+constexpr int GuestPosixSharedMemoryFlag = 0x100;
 int NativeSendFlags(int flags) {
 #ifdef _WIN32
     static_cast<void>(flags);
@@ -142,6 +146,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     int type;
     std::mutex modeMutex;
     GuestSockets::SocketOptionState options;
+    int statusFlags = 0;
     bool receiveShut = false;
     bool sendShut = false;
     bool localAddressCleared = false;
@@ -164,6 +169,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool externalPeer = false;
     bool pairCreated = false;
     std::optional<GuestSockets::LocalCredentials> peerCredentials;
+    bool connectWait = false;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -388,7 +394,28 @@ bool ConnectedDatagramDestination(const Socket& socket, const sockaddr_storage& 
     return PeerConnected(socket);
 }
 constexpr std::int64_t NotAnswered = -2;
+bool UnknownScope(const sockaddr_in6& address) {
+    const auto& host = address.sin6_addr;
+    if (address.sin6_scope_id == 0 || (!IN6_IS_ADDR_LINKLOCAL(&host) && !IN6_IS_ADDR_MC_LINKLOCAL(&host) && !IN6_IS_ADDR_MC_NODELOCAL(&host))) return false;
+#ifdef _WIN32
+    NET_LUID luid{};
+    return ConvertInterfaceIndexToLuid(address.sin6_scope_id, &luid) != NO_ERROR;
+#else
+    char name[IF_NAMESIZE];
+    return if_indextoname(address.sin6_scope_id, name) == nullptr;
+#endif
+}
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
+    if (socket.type == 2 && socket.family == 28 && destination.ss_family == AF_INET6) {
+        const auto& remote = reinterpret_cast<const sockaddr_in6&>(destination);
+        if (remote.sin6_port != 0) return NotAnswered;
+        if (UnknownScope(remote)) return Fail(6);
+        int ipv6Only = 0;
+        socklen_t size = sizeof(ipv6Only);
+        if (IN6_IS_ADDR_V4MAPPED(&remote.sin6_addr)
+            && (::getsockopt(socket.value, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&ipv6Only), &size) || !ipv6Only)) return NotAnswered;
+        return Fail(49);
+    }
     if (socket.type != 2 || socket.family != 2 || destination.ss_family != AF_INET) return NotAnswered;
     const auto& remote = reinterpret_cast<const sockaddr_in&>(destination);
     if (remote.sin_port != 0) return NotAnswered;
@@ -773,7 +800,7 @@ constexpr short NativePollIn = POLLIN;
 constexpr short NativePollPriority = POLLPRI;
 #endif
 constexpr PollFlag RequestFlags[] = {
-    {0x1, NativePollIn}, {GuestPollPriority, NativePollPriority}, {0x4, POLLOUT}, {0x40, POLLRDNORM}, {0x80, POLLRDBAND}, {0x100, POLLWRBAND}};
+    {0x1, NativePollIn}, {GuestPollPriority, NativePollPriority}, {0x4, POLLOUT}, {0x40, POLLRDNORM}, {0x80, POLLRDBAND}};
 constexpr PollFlag StatusFlags[] = {{0x8, POLLERR}, {0x10, POLLHUP}, {GuestPollInvalid, POLLNVAL}};
 template <typename Descriptor>
 bool UrgentPending(Descriptor descriptor) {
@@ -1119,7 +1146,7 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
         if (level != 0) return 22;
         const bool handledByFreeBsd = (!set && option == GuestLocalPeerCredentials) || option == GuestLocalCredentials || option == GuestLocalConnectWait;
         if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
-        return 45;
+        return set ? 42 : 45;
     }
     const bool ownProtocol = level == 17 && socket.type == 2 && socket.family == 2;
     const bool ownFamily = socket.family == 2 && level == 0;
@@ -2001,10 +2028,10 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0); // F_GETFL, O_RDWR
+    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0) | socket->statusFlags;
     if (command == 4) {
         const int flags = static_cast<int>(argument);
-        if ((flags & ~7) != 0) return Fail(45);
+        if ((flags & GuestPosixSharedMemoryFlag) != 0) return Fail(45);
 #ifdef _WIN32
         unsigned long enabled = (flags & 4) != 0;
         if (ioctlsocket(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
@@ -2013,6 +2040,7 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         if (::ioctl(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
 #endif
         socket->options.nonblocking = enabled != 0;
+        socket->statusFlags = flags & GuestKeptStatusFlags;
         return 0;
     }
     if ((command >= 7 && command <= 9) || (command >= 11 && command <= 13) || command == 15 || command == 16) return Fail(9);
@@ -2042,6 +2070,14 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->pairCreated && level == 0 && option == GuestLocalConnectWait) {
+        if (length < sizeof(int)) return Fail(22);
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, value, sizeof(enable))) return Fail(14);
+        std::lock_guard lock(socket->modeMutex);
+        socket->connectWait = enable != 0;
+        return 0;
+    }
     if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, true));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
@@ -2069,7 +2105,12 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family == GuestUnix && socket->pairCreated && level == 0 && (option == GuestLocalPeerCredentials || option == GuestLocalCredentials || option == GuestLocalConnectWait)) {
-        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, option, value, &declared);
+        bool connectWait = false;
+        {
+            std::lock_guard lock(socket->modeMutex);
+            connectWait = socket->connectWait;
+        }
+        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, connectWait, option, value, &declared);
         if (error != 0) return Fail(error);
         return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
     }
@@ -2362,6 +2403,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         {
             std::lock_guard modeLock(listener->modeMutex);
             inheritNonblocking = listener->options.nonblocking;
+            accepted->statusFlags = listener->statusFlags;
             accepted->options.noSignal = listener->options.noSignal;
             accepted->options.keptFlags = listener->options.keptFlags;
             accepted->options.sendTimeout = listener->options.sendTimeout;
@@ -2616,6 +2658,8 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
         return error == 0 ? 0 : Fail(error);
     }
     if (File::IoctlRequestMalformed(request)) return Fail(25);
+    std::vector<unsigned char> input;
+    if (!File::CopyIoctlInput(request, argument, input)) return Fail(14);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     const auto command = static_cast<std::uint32_t>(request);
@@ -2625,7 +2669,6 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
     if (request != 0x8004667e && request != 0x4004667f) {
         const char group = static_cast<char>((request >> 8) & 0xff);
         const bool internet = socket->family == 2 || socket->family == 28;
@@ -2639,7 +2682,7 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     unsigned long value = 0;
     if (request == 0x8004667e) {
         int enable = 0;
-        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(14);
+        std::memcpy(&enable, input.data(), sizeof(enable));
         value = enable != 0;
     }
 #ifdef _WIN32
@@ -3157,8 +3200,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     ReceivedRights rights;
     bool controlTruncated = false;
     bool shut = ReceiveEnded(*socket);
+    const bool emptyStream = socket->type == 1 && total == 0 && !passing;
+    if (emptyStream && !shut) {
+        if (const int error = ReceiveAnsweredHere(*socket, 0)) return Fail(error);
+    }
     std::vector<unsigned char> stamps;
-    if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
+    if (!shut && !emptyStream && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveEnded(*socket);

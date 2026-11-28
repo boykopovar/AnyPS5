@@ -151,7 +151,7 @@ void PresentationScaler::RecordBlit(VkCommandBuffer commands, VkImage destinatio
 
 void PresentationScaler::RecordBlitFrom(const Graphics::Context& context, VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width, std::uint32_t height, VkFilter filter, VkImage destinationImage, std::uint32_t destinationWidth, std::uint32_t destinationHeight, std::uint32_t layer) {
     Graphics::Require(image != VK_NULL_HANDLE && width != 0 && height != 0, "presentation blit source is unavailable");
-    RecordStretchFrom(context, commands, image, layout, width, height, filter, destinationImage, ComputeContainRect_nid_postfix(width, height, destinationWidth, destinationHeight), layer);
+    RecordStretchFrom(context, commands, image, layout, width, height, filter, destinationImage, ComputePresentationRect_nid_postfix(width, height, destinationWidth, destinationHeight), layer);
 }
 
 void PresentationScaler::RecordStretch(VkCommandBuffer commands, VkImage destinationImage, const AspectFitRect& destination) {
@@ -173,7 +173,7 @@ void PresentationScaler::RecordStretchFrom(const Graphics::Context& context, VkC
 }
 
 std::vector<AspectFitRect> PresentationScaler::LetterboxBands(std::uint32_t width, std::uint32_t height, std::uint32_t destinationWidth, std::uint32_t destinationHeight) {
-    const auto rect = ComputeContainRect_nid_postfix(width, height, destinationWidth, destinationHeight);
+    const auto rect = ComputePresentationRect_nid_postfix(width, height, destinationWidth, destinationHeight);
     const auto right = rect.x + static_cast<std::int32_t>(rect.width);
     const auto bottom = rect.y + static_cast<std::int32_t>(rect.height);
     std::vector<AspectFitRect> bands;

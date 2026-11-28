@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 
@@ -35,7 +36,7 @@ int APS5_VABI __sys_opmc_set_ctr_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_opmc_set_hw_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_osem_close_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_osem_open_nid_disambig1_nid_postfix();
-int APS5_VABI __sys_randomized_path_nid_disambig1_nid_postfix();
+int APS5_VABI __sys_randomized_path_nid_disambig1_nid_postfix(const char* set, char* get, std::size_t* length);
 int APS5_VABI __sys_rdup_nid_disambig1_nid_postfix(int pid, int fd);
 int APS5_VABI __sys_regmgr_call_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_set_uevt_nid_disambig1_nid_postfix();
