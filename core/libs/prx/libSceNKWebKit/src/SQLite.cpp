@@ -204,12 +204,14 @@
 #include "prx/libSceNKWebKitRequirements/include/Sqlite.hpp"
 #include "prx/libSceIcu/Properties.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -257,9 +259,96 @@ constexpr int AutoVacuumIncremental = 2;
 bool isDatabaseOpeningForbidden = false;
 std::mutex isDatabaseOpeningForbiddenMutex;
 
-template<typename T> T& Checked(T* value) {
+void RequireReadableGuestBytes(const void* pointer, std::size_t bytes, const char* function) {
+    if (!bytes) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, bytes);
+    if (!GuestReadable_nid_no_patch(pointer, bytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CopyInGuest(void* destination, const void* source, std::size_t bytes, const char* function) {
+    if (!bytes) return;
+    RequireReadableGuestBytes(source, bytes, function);
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+class GuestWriteScope {
+public:
+    GuestWriteScope(void* pointer, std::size_t bytes, const char* function, bool requireReadable = true)
+        : guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        if (!pointer) throw std::invalid_argument("null WebCore SQLite object");
+        if (!bytes) return;
+        if (requireReadable) RequireReadableGuestBytes(pointer, bytes, function);
+        if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    GuestWriteScope(const GuestWriteScope&) = delete;
+    GuestWriteScope& operator=(const GuestWriteScope&) = delete;
+
+private:
+    GuestArena::HostWrite guard;
+};
+
+template<typename T>
+class GuestWriteRef : private GuestWriteScope {
+public:
+    GuestWriteRef(T* pointer, const char* function, bool requireReadable = true)
+        : GuestWriteScope(pointer, sizeof(T), function, requireReadable), ptr(pointer) {}
+    T& Ref() const { return *ptr; }
+
+private:
+    T* ptr;
+};
+
+template<typename T> const T& CheckedRead(const T* value, const char* function) {
     if (!value) throw std::invalid_argument("null WebCore SQLite object");
+    RequireReadableGuestBytes(value, sizeof(T), function);
     return *value;
+}
+
+struct CopiedString {
+    bool isNull = true;
+    std::u16string units;
+};
+
+CopiedString CopyGuestStringImpl(const StringImpl* impl, const char* function) {
+    CopiedString result;
+    if (!impl) return result;
+    StringImpl header{};
+    CopyInGuest(&header, impl, sizeof(header), function);
+    result.isNull = false;
+    if (!header.length) return result;
+    const bool is8Bit = (header.hashAndFlags & 4) != 0;
+    const std::size_t unitSize = is8Bit ? 1 : sizeof(char16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t bytes = static_cast<std::size_t>(header.length) * unitSize;
+    RequireReadableGuestBytes(header.data, bytes, function);
+    result.units.resize(header.length);
+    if (is8Bit) {
+        std::vector<unsigned char> raw(header.length);
+        if (!GuestCopyIn_nid_no_patch(raw.data(), header.data, bytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        for (unsigned i = 0; i < header.length; ++i) result.units[i] = raw[i];
+    } else {
+        if (!GuestCopyIn_nid_no_patch(result.units.data(), header.data, bytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return result;
+}
+
+CopiedString CopyGuestString(const String* string, const char* function) {
+    if (!string) throw std::invalid_argument("null WebCore SQLite object");
+    StringImpl* impl = nullptr;
+    CopyInGuest(&impl, string, sizeof(impl), function);
+    return CopyGuestStringImpl(impl, function);
+}
+
+String FromCopiedString(const CopiedString& copied) {
+    if (copied.isNull) return String();
+    String result;
+    _ZN3WTF6StringC1EPKDsj(&result, copied.units.data(), static_cast<unsigned>(copied.units.size()));
+    return result;
 }
 
 class LockHolder {
@@ -326,29 +415,6 @@ bool IsSpaceOrNewline(char16_t character) {
     return u_charDirection_nid_postfix(character) == WhiteSpaceNeutral;
 }
 
-const char16_t* Upconvert(const StringImpl* text, std::u16string& storage) {
-    static const char16_t anyCharacter = 0;
-    const auto view = View(text);
-    if (!view.length) return &anyCharacter;
-    if (!view.is8Bit) return static_cast<const char16_t*>(view.data);
-    storage.resize(view.length);
-    for (unsigned i = 0; i < view.length; ++i) storage[i] = Unit(view, i);
-    return storage.data();
-}
-
-template<typename T> void Resize(Vector<T>& vector, std::size_t size) {
-    if (size > vector.capacity) {
-        const auto capacity = std::max(size, std::max<std::size_t>(16, vector.capacity + vector.capacity / 4 + 1));
-        if (capacity > std::numeric_limits<unsigned>::max() / sizeof(T)) throw std::length_error("WTF::Vector capacity overflow");
-        auto* buffer = static_cast<T*>(_ZN3WTF10fastMallocEm(capacity * sizeof(T)));
-        if (vector.size) std::memcpy(buffer, vector.buffer, vector.size * sizeof(T));
-        if (vector.buffer) _ZN3WTF8fastFreeEPv(vector.buffer);
-        vector.buffer = buffer;
-        vector.capacity = static_cast<unsigned>(capacity);
-    }
-    vector.size = static_cast<unsigned>(size);
-}
-
 int LastError(SQLiteDatabase& db) {
     return db.db ? sqlite3_errcode_nid_postfix(db.db) : db.openError;
 }
@@ -359,16 +425,16 @@ void SetOpenErrorMessage(SQLiteDatabase& db, const char* message) {
     std::swap(db.openErrorMessage.buffer, replacement.buffer);
 }
 
-int Prepare(SQLiteStatement& statement) {
-    auto& db = Checked(statement.database);
+int Prepare(SQLiteStatement& statement, const char* function) {
+    GuestWriteScope dbAccess(statement.database, sizeof(SQLiteDatabase), function, true);
+    auto& db = *statement.database;
     LockHolder databaseLock(db.lockingMutex);
-    const auto view = View(statement.query.impl);
+    const auto copied = CopyGuestStringImpl(statement.query.impl, function);
     unsigned start = 0;
-    unsigned end = view.length;
-    while (start < end && IsSpaceOrNewline(Unit(view, start))) ++start;
-    while (end > start && IsSpaceOrNewline(Unit(view, end - 1))) --end;
-    const auto* characters = static_cast<const unsigned char*>(view.data);
-    StringView stripped{characters ? characters + start * (view.is8Bit ? 1 : 2) : nullptr, end - start, view.is8Bit};
+    unsigned end = static_cast<unsigned>(copied.units.size());
+    while (start < end && IsSpaceOrNewline(copied.units[start])) ++start;
+    while (end > start && IsSpaceOrNewline(copied.units[end - 1])) --end;
+    StringView stripped{copied.units.empty() ? nullptr : copied.units.data() + start, end - start, false};
     const CString query = _ZNK3WTF10StringView4utf8ENS_14ConversionModeE(&stripped, LenientConversion);
     const char* tail = nullptr;
     int error = sqlite3_prepare_v2_nid_postfix(db.db, Bytes(query), static_cast<int>(query.buffer->length + 1),
@@ -377,8 +443,9 @@ int Prepare(SQLiteStatement& statement) {
     return error;
 }
 
-int Step(SQLiteStatement& statement) {
-    auto& db = Checked(statement.database);
+int Step(SQLiteStatement& statement, const char* function) {
+    GuestWriteScope dbAccess(statement.database, sizeof(SQLiteDatabase), function, true);
+    auto& db = *statement.database;
     LockHolder databaseLock(db.lockingMutex);
     if (!statement.statement) return SqliteOk;
     if (db.db) db.lastChangesCount = sqlite3_total_changes_nid_postfix(db.db);
@@ -399,14 +466,14 @@ int Reset(SQLiteStatement& statement) {
     return status;
 }
 
-int PrepareAndStep(SQLiteStatement& statement) {
-    if (const int error = Prepare(statement)) return error;
-    return Step(statement);
+int PrepareAndStep(SQLiteStatement& statement, const char* function) {
+    if (const int error = Prepare(statement, function)) return error;
+    return Step(statement, function);
 }
 
-bool ExecuteCommand(SQLiteStatement& statement) {
-    if (!statement.statement && Prepare(statement) != SqliteOk) return false;
-    const bool done = Step(statement) == SqliteDone;
+bool ExecuteCommand(SQLiteStatement& statement, const char* function) {
+    if (!statement.statement && Prepare(statement, function) != SqliteOk) return false;
+    const bool done = Step(statement, function) == SqliteDone;
     Finalize(statement);
     return done;
 }
@@ -415,43 +482,89 @@ int ColumnCount(SQLiteStatement& statement) {
     return statement.statement ? sqlite3_data_count_nid_postfix(statement.statement) : 0;
 }
 
-bool HasColumn(SQLiteStatement& statement, int col) {
-    if (!statement.statement && PrepareAndStep(statement) != SqliteRow) return false;
+bool HasColumn(SQLiteStatement& statement, int col, const char* function) {
+    if (!statement.statement && PrepareAndStep(statement, function) != SqliteRow) return false;
     return ColumnCount(statement) > col;
 }
 
-int GetColumnInt(SQLiteStatement& statement, int col) {
-    return HasColumn(statement, col) ? sqlite3_column_int_nid_postfix(statement.statement, col) : 0;
+int GetColumnInt(SQLiteStatement& statement, int col, const char* function) {
+    return HasColumn(statement, col, function) ? sqlite3_column_int_nid_postfix(statement.statement, col) : 0;
 }
 
-String GetColumnText(SQLiteStatement& statement, int col) {
-    if (!HasColumn(statement, col)) return String();
+String GetColumnText(SQLiteStatement& statement, int col, const char* function) {
+    if (!HasColumn(statement, col, function)) return String();
     const auto* text = static_cast<const char16_t*>(sqlite3_column_text16_nid_postfix(statement.statement, col));
     const auto bytes = sqlite3_column_bytes16_nid_postfix(statement.statement, col);
     return FromCharacters(text, static_cast<unsigned>(bytes / sizeof(char16_t)));
 }
 
-template<typename T> void GetColumnBlobAsVector(SQLiteStatement& statement, int col, Vector<T>& result) {
-    const void* blob = HasColumn(statement, col) ? sqlite3_column_blob_nid_postfix(statement.statement, col) : nullptr;
+template<typename T> void GetColumnBlobAsVector(SQLiteStatement& statement, int col, Vector<T>* resultPtr, const char* function) {
+    GuestWriteScope resultAccess(resultPtr, sizeof(Vector<T>), function, true);
+    auto& result = *resultPtr;
+    if (result.size > result.capacity || (result.capacity > 0 && !result.buffer) || (result.capacity == 0 && result.buffer != nullptr))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const void* blob = HasColumn(statement, col, function) ? sqlite3_column_blob_nid_postfix(statement.statement, col) : nullptr;
     if (!blob) {
         result.clear();
         return;
     }
     const int size = sqlite3_column_bytes_nid_postfix(statement.statement, col);
-    Resize(result, static_cast<std::size_t>(size));
-    for (int i = 0; i < size; ++i) result[i] = static_cast<T>(static_cast<const unsigned char*>(blob)[i]);
+    if (size < 0) {
+        result.clear();
+        return;
+    }
+    const std::size_t count = static_cast<std::size_t>(size);
+    if (count <= result.capacity) {
+        if (count > 0) {
+            if (!result.buffer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+            GuestWriteScope bufferAccess(result.buffer, count * sizeof(T), function, false);
+            std::vector<T> converted(count);
+            for (std::size_t i = 0; i < count; ++i)
+                converted[i] = static_cast<T>(static_cast<const unsigned char*>(blob)[i]);
+            if (!GuestCopyOut_nid_no_patch(result.buffer, converted.data(), count * sizeof(T)))
+                NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        result.size = static_cast<unsigned>(count);
+        return;
+    }
+    const auto capacity = std::max(count, std::max<std::size_t>(16, result.capacity + result.capacity / 4 + 1));
+    if (capacity > std::numeric_limits<unsigned>::max() / sizeof(T))
+        throw std::length_error("WTF::Vector capacity overflow");
+    auto* buffer = static_cast<T*>(_ZN3WTF10fastMallocEm(capacity * sizeof(T)));
+    for (std::size_t i = 0; i < count; ++i)
+        buffer[i] = static_cast<T>(static_cast<const unsigned char*>(blob)[i]);
+    if (result.buffer) _ZN3WTF8fastFreeEPv(result.buffer);
+    result.buffer = buffer;
+    result.capacity = static_cast<unsigned>(capacity);
+    result.size = static_cast<unsigned>(count);
 }
 
-int BindBlob(SQLiteStatement& statement, int index, const void* blob, int size) {
+int BindBlob(SQLiteStatement& statement, int index, const void* blob, int size, const char* function) {
     if (!statement.statement) return SqliteError;
+    if (size < 0) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (blob && size > 0) {
+        const auto bytes = static_cast<std::size_t>(size);
+        RequireReadableGuestBytes(blob, bytes, function);
+        std::vector<unsigned char> copy(bytes);
+        if (!GuestCopyIn_nid_no_patch(copy.data(), blob, bytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        return sqlite3_bind_blob_nid_postfix(statement.statement, index, copy.data(), size, SqliteTransient);
+    }
     return sqlite3_bind_blob_nid_postfix(statement.statement, index, blob, size, SqliteTransient);
 }
 
-int BindText(SQLiteStatement& statement, int index, const StringImpl* text) {
-    std::u16string storage;
-    const auto* characters = Upconvert(text, storage);
-    return sqlite3_bind_text16_nid_postfix(statement.statement, index, characters,
-        static_cast<int>(sizeof(char16_t) * View(text).length), SqliteTransient);
+int CheckedUtf16BindBytes(std::size_t unitCount, const char* function) {
+    if (unitCount > static_cast<std::size_t>(std::numeric_limits<int>::max()) / sizeof(char16_t))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return static_cast<int>(unitCount * sizeof(char16_t));
+}
+
+int BindText(SQLiteStatement& statement, int index, const StringImpl* text, const char* function) {
+    const auto copied = CopyGuestStringImpl(text, function);
+    const int byteCount = CheckedUtf16BindBytes(copied.units.size(), function);
+    static const char16_t anyCharacter = 0;
+    const char16_t* characters = copied.units.empty() ? &anyCharacter : copied.units.data();
+    return sqlite3_bind_text16_nid_postfix(statement.statement, index, characters, byteCount, SqliteTransient);
 }
 
 struct ScopedStatement {
@@ -462,23 +575,23 @@ struct ScopedStatement {
     SQLiteStatement value;
 };
 
-bool ExecuteCommand(SQLiteDatabase& db, String sql) {
+bool ExecuteCommand(SQLiteDatabase& db, String sql, const char* function) {
     ScopedStatement statement(db, std::move(sql));
-    return ExecuteCommand(statement.value);
+    return ExecuteCommand(statement.value, function);
 }
 
-bool ReturnTextResults(SQLiteStatement& statement, int col, std::vector<String>& results) {
+bool ReturnTextResults(SQLiteStatement& statement, int col, std::vector<String>& results, const char* function) {
     results.clear();
     if (statement.statement) Finalize(statement);
-    if (Prepare(statement) != SqliteOk) return false;
-    while (Step(statement) == SqliteRow) results.push_back(GetColumnText(statement, col));
+    if (Prepare(statement, function) != SqliteOk) return false;
+    while (Step(statement, function) == SqliteRow) results.push_back(GetColumnText(statement, col, function));
     const bool result = LastError(*statement.database) == SqliteDone;
     Finalize(statement);
     return result;
 }
 
-int RunVacuumCommand(SQLiteDatabase& db) {
-    ExecuteCommand(db, Concatenate(u"VACUUM;"));
+int RunVacuumCommand(SQLiteDatabase& db, const char* function) {
+    ExecuteCommand(db, Concatenate(u"VACUUM;"), function);
     return LastError(db);
 }
 
@@ -504,15 +617,15 @@ void OverrideUnauthorizedFunctions(SQLiteDatabase& db) {
     }
 }
 
-void UseWALJournalMode(SQLiteDatabase& db) {
+void UseWALJournalMode(SQLiteDatabase& db, const char* function) {
     db.useWAL = true;
     {
         ScopedStatement walStatement(db, Concatenate(u"PRAGMA journal_mode=WAL;"));
-        PrepareAndStep(walStatement.value);
+        PrepareAndStep(walStatement.value, function);
     }
     TransactionInProgressAutoCounter transactionCounter;
     ScopedStatement checkpointStatement(db, Concatenate(u"PRAGMA wal_checkpoint(TRUNCATE)"));
-    if (PrepareAndStep(checkpointStatement.value) == SqliteRow) GetColumnInt(checkpointStatement.value, 0);
+    if (PrepareAndStep(checkpointStatement.value, function) == SqliteRow) GetColumnInt(checkpointStatement.value, 0, function);
 }
 
 void Close(SQLiteDatabase& db) {
@@ -534,7 +647,7 @@ void Close(SQLiteDatabase& db) {
     SetOpenErrorMessage(db, nullptr);
 }
 
-bool OpenDatabase(SQLiteDatabase& db, const String& filename, int openMode) {
+bool OpenDatabase(SQLiteDatabase& db, const String& filename, int openMode, const char* function) {
     static std::once_flag initialized;
     std::call_once(initialized, [] {
         if (sqlite3_initialize_nid_postfix() != SqliteOk) throw std::runtime_error("Failed to initialize SQLite");
@@ -577,70 +690,123 @@ bool OpenDatabase(SQLiteDatabase& db, const String& filename, int openMode) {
     }
     {
         TransactionInProgressAutoCounter transactionCounter;
-        ExecuteCommand(db, Concatenate(u"PRAGMA temp_store = MEMORY;"));
+        ExecuteCommand(db, Concatenate(u"PRAGMA temp_store = MEMORY;"), function);
     }
-    if (openMode != OpenModeReadOnly) UseWALJournalMode(db);
+    if (openMode != OpenModeReadOnly) UseWALJournalMode(db, function);
     return db.db != nullptr;
+}
+
+bool TryCopyInGuest(void* destination, const void* source, std::size_t bytes) noexcept {
+    if (!bytes) return true;
+    if (!source) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+    return GuestReadable_nid_no_patch(source, bytes) && GuestCopyIn_nid_no_patch(destination, source, bytes);
 }
 
 int APS5_VABI CallCollationFunction(void* argument, int aLength, const void* a, int bLength, const void* b) {
     auto* callable = static_cast<CollationFunction*>(argument)->callableWrapper;
-    if (!callable) NotImplemented_nid_no_patch("WTF::Function::operator()");
+    if (!callable) return 0;
+    CollationCallable callableCopy{};
+    if (!TryCopyInGuest(&callableCopy, callable, sizeof(callableCopy)) || !callableCopy.vtable) return 0;
+    void* slot = nullptr;
+    if (!TryCopyInGuest(&slot, callableCopy.vtable + NKWebKit::WebCoreAbi::CollationCallSlot, sizeof(slot)) || !slot) return 0;
     using Call = int (APS5_VABI*)(CollationCallable*, int, const void*, int, const void*);
-    return reinterpret_cast<Call>(callable->vtable[NKWebKit::WebCoreAbi::CollationCallSlot])(callable, aLength, a, bLength, b);
+    return reinterpret_cast<Call>(slot)(callable, aLength, a, bLength, b);
 }
 
 void APS5_VABI DestroyCollationFunction(void* argument) {
     auto* function = static_cast<CollationFunction*>(argument);
     if (auto* callable = function->callableWrapper) {
-        using Destroy = void (APS5_VABI*)(CollationCallable*);
-        reinterpret_cast<Destroy>(callable->vtable[NKWebKit::WebCoreAbi::CollationDeletingDestructorSlot])(callable);
+        CollationCallable callableCopy{};
+        void* slot = nullptr;
+        if (TryCopyInGuest(&callableCopy, callable, sizeof(callableCopy)) && callableCopy.vtable &&
+            TryCopyInGuest(&slot, callableCopy.vtable + NKWebKit::WebCoreAbi::CollationDeletingDestructorSlot, sizeof(slot)) && slot) {
+            using Destroy = void (APS5_VABI*)(CollationCallable*);
+            reinterpret_cast<Destroy>(slot)(callable);
+        }
     }
     delete function;
 }
 
-void Commit(SQLiteTransaction& transaction) {
+void Commit(SQLiteTransaction* self, const char* function) {
+    GuestWriteScope txAccess(self, sizeof(SQLiteTransaction), function, true);
+    auto& transaction = *self;
     if (!transaction.inProgress) return;
-    auto& db = Checked(transaction.db);
-    transaction.inProgress = !ExecuteCommand(db, Concatenate(u"COMMIT"));
+    GuestWriteScope dbAccess(transaction.db, sizeof(SQLiteDatabase), function, true);
+    auto& db = *transaction.db;
+    transaction.inProgress = !ExecuteCommand(db, Concatenate(u"COMMIT"), function);
     db.transactionInProgress = transaction.inProgress;
 }
 
-void Rollback(SQLiteTransaction& transaction) {
+void Rollback(SQLiteTransaction* self, const char* function) {
+    GuestWriteScope txAccess(self, sizeof(SQLiteTransaction), function, true);
+    auto& transaction = *self;
     if (!transaction.inProgress) return;
-    auto& db = Checked(transaction.db);
-    ExecuteCommand(db, Concatenate(u"ROLLBACK"));
+    GuestWriteScope dbAccess(transaction.db, sizeof(SQLiteDatabase), function, true);
+    auto& db = *transaction.db;
+    ExecuteCommand(db, Concatenate(u"ROLLBACK"), function);
     transaction.inProgress = false;
     db.transactionInProgress = false;
 }
 
-void ConstructStatement(SQLiteStatement* self, SQLiteDatabase* db, const String* sql) {
-    new (&Checked(self)) SQLiteStatement{&Checked(db), String(Checked(sql)), nullptr};
+void ConstructDatabase(SQLiteDatabase* self, const char* function) {
+    GuestWriteScope dbAccess(self, sizeof(SQLiteDatabase), function, false);
+    new (self) SQLiteDatabase();
 }
 
-void DestroyStatement(SQLiteStatement* self) {
-    auto& statement = Checked(self);
+void DestroyDatabase(SQLiteDatabase* self, const char* function) {
+    GuestWriteScope dbAccess(self, sizeof(SQLiteDatabase), function, true);
+    Close(*self);
+    self->~SQLiteDatabase();
+}
+
+void ConstructStatement(SQLiteStatement* self, SQLiteDatabase* db, const String* sql, const char* function) {
+    if (!self || !db || !sql) throw std::invalid_argument("null WebCore SQLite object");
+    GuestWriteScope stmtAccess(self, sizeof(SQLiteStatement), function, false);
+    String copiedSql = FromCopiedString(CopyGuestString(sql, function));
+    new (self) SQLiteStatement{db, std::move(copiedSql), nullptr};
+}
+
+void DestroyStatement(SQLiteStatement* self, const char* function) {
+    GuestWriteScope stmtAccess(self, sizeof(SQLiteStatement), function, true);
+    auto& statement = *self;
     Finalize(statement);
     statement.~SQLiteStatement();
 }
 
-void ConstructTransaction(SQLiteTransaction* self, SQLiteDatabase* db, bool readOnly) {
-    new (&Checked(self)) SQLiteTransaction{&Checked(db), false, readOnly};
+void ConstructTransaction(SQLiteTransaction* self, SQLiteDatabase* db, bool readOnly, const char* function) {
+    if (!self || !db) throw std::invalid_argument("null WebCore SQLite object");
+    GuestWriteScope txAccess(self, sizeof(SQLiteTransaction), function, false);
+    new (self) SQLiteTransaction{db, false, readOnly};
 }
 
-void DestroyTransaction(SQLiteTransaction* self) {
-    Rollback(Checked(self));
+void DestroyTransaction(SQLiteTransaction* self, const char* function) {
+    Rollback(self, function);
 }
 
-void MoveScope(SQLiteStatementAutoResetScope* self, SQLiteStatementAutoResetScope* other) {
-    auto& scope = Checked(self);
-    auto& from = Checked(other);
-    scope.statement = from.statement;
-    from.statement = nullptr;
+void MoveScope(SQLiteStatementAutoResetScope* self, SQLiteStatementAutoResetScope* other, const char* function) {
+    if (!self || !other) throw std::invalid_argument("null WebCore SQLite object");
+    GuestWriteScope selfAccess(self, sizeof(SQLiteStatementAutoResetScope), function, false);
+    GuestWriteScope otherAccess(other, sizeof(SQLiteStatementAutoResetScope), function, true);
+    SQLiteStatement* stmt = nullptr;
+    CopyInGuest(&stmt, other, sizeof(stmt), function);
+    SQLiteStatement* cleared = nullptr;
+    if (self != other && !GuestCopyOut_nid_no_patch(other, &cleared, sizeof(cleared)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(self, &stmt, sizeof(stmt))) {
+        if (self != other) GuestCopyOut_nid_no_patch(other, &stmt, sizeof(stmt));
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
 }
 
-void DestroyScope(SQLiteStatementAutoResetScope* self) {
-    if (auto* statement = Checked(self).statement) Reset(*statement);
+void DestroyScope(SQLiteStatementAutoResetScope* self, const char* function) {
+    GuestWriteScope selfAccess(self, sizeof(SQLiteStatementAutoResetScope), function, true);
+    SQLiteStatement* statement = nullptr;
+    CopyInGuest(&statement, self, sizeof(statement), function);
+    if (statement) {
+        GuestWriteScope stmtAccess(statement, sizeof(SQLiteStatement), function, true);
+        Reset(*statement);
+    }
 }
 
 }  // namespace
@@ -648,97 +814,106 @@ void DestroyScope(SQLiteStatementAutoResetScope* self) {
 extern "C" {
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabaseC1Ev(SQLiteDatabase* self) {
-    new (&Checked(self)) SQLiteDatabase();
+    ConstructDatabase(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabaseC2Ev(SQLiteDatabase* self) {
-    new (&Checked(self)) SQLiteDatabase();
+    ConstructDatabase(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabaseD1Ev(SQLiteDatabase* self) {
-    Close(Checked(self));
-    self->~SQLiteDatabase();
+    DestroyDatabase(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabaseD2Ev(SQLiteDatabase* self) {
-    Close(Checked(self));
-    self->~SQLiteDatabase();
+    DestroyDatabase(self, __func__);
 }
 
 bool APS5_VABI _ZN7WebCore14SQLiteDatabase4openERKN3WTF6StringENS0_8OpenModeE(SQLiteDatabase* self, const String* filename,
     int openMode) {
-    return OpenDatabase(Checked(self), Checked(filename), openMode);
+    GuestWriteRef dbAccess(self, __func__);
+    const String nameCopy = FromCopiedString(CopyGuestString(filename, __func__));
+    return OpenDatabase(dbAccess.Ref(), nameCopy, openMode, __func__);
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase5closeEv(SQLiteDatabase* self) {
-    Close(Checked(self));
+    GuestWriteRef dbAccess(self, __func__);
+    Close(dbAccess.Ref());
 }
 
 bool APS5_VABI _ZN7WebCore14SQLiteDatabase14executeCommandERKN3WTF6StringE(SQLiteDatabase* self, const String* sql) {
-    return ExecuteCommand(Checked(self), String(Checked(sql)));
+    GuestWriteRef dbAccess(self, __func__);
+    return ExecuteCommand(dbAccess.Ref(), FromCopiedString(CopyGuestString(sql, __func__)), __func__);
 }
 
 bool APS5_VABI _ZN7WebCore14SQLiteDatabase11tableExistsERKN3WTF6StringE(SQLiteDatabase* self, const String* tableName) {
-    auto& db = Checked(self);
-    const auto& name = Checked(tableName);
+    GuestWriteRef dbAccess(self, __func__);
+    auto& db = dbAccess.Ref();
+    const String nameCopy = FromCopiedString(CopyGuestString(tableName, __func__));
     if (!db.db) return false;
     ScopedStatement statement(db, Concatenate(u"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?;"));
-    if (Prepare(statement.value) != SqliteOk || BindText(statement.value, 1, name.impl) != SqliteOk
-        || Step(statement.value) != SqliteRow)
+    if (Prepare(statement.value, __func__) != SqliteOk || BindText(statement.value, 1, nameCopy.impl, __func__) != SqliteOk
+        || Step(statement.value, __func__) != SqliteRow)
         return false;
-    return View(GetColumnText(statement.value, 0).impl).length != 0;
+    return View(GetColumnText(statement.value, 0, __func__).impl).length != 0;
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase14clearAllTablesEv(SQLiteDatabase* self) {
-    auto& db = Checked(self);
+    GuestWriteRef dbAccess(self, __func__);
+    auto& db = dbAccess.Ref();
     std::vector<String> tables;
     {
         ScopedStatement statement(db, Concatenate(u"SELECT name FROM sqlite_master WHERE type='table';"));
-        if (!ReturnTextResults(statement.value, 0, tables)) return;
+        if (!ReturnTextResults(statement.value, 0, tables, __func__)) return;
     }
     for (const auto& table : tables) {
         if (EqualsLiteral(table, u"sqlite_sequence")) continue;
-        ExecuteCommand(db, Concatenate(u"DROP TABLE ", table));
+        ExecuteCommand(db, Concatenate(u"DROP TABLE ", table), __func__);
     }
 }
 
 int APS5_VABI _ZN7WebCore14SQLiteDatabase16runVacuumCommandEv(SQLiteDatabase* self) {
-    return RunVacuumCommand(Checked(self));
+    GuestWriteRef dbAccess(self, __func__);
+    return RunVacuumCommand(dbAccess.Ref(), __func__);
 }
 
 int APS5_VABI _ZN7WebCore14SQLiteDatabase27runIncrementalVacuumCommandEv(SQLiteDatabase* self) {
-    auto& db = Checked(self);
+    GuestWriteRef dbAccess(self, __func__);
+    auto& db = dbAccess.Ref();
     if (!db.db) NotImplemented_nid_no_patch(__func__);
     LockHolder locker(db.authorizerLock);
     EnableAuthorizer(db, false);
-    ExecuteCommand(db, Concatenate(u"PRAGMA incremental_vacuum"));
+    ExecuteCommand(db, Concatenate(u"PRAGMA incremental_vacuum"), __func__);
     EnableAuthorizer(db, true);
     return LastError(db);
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase9interruptEv(SQLiteDatabase* self) {
-    auto& db = Checked(self);
+    GuestWriteRef dbAccess(self, __func__);
+    auto& db = dbAccess.Ref();
     LockHolder locker(db.databaseClosingMutex);
     if (db.db) sqlite3_interrupt_nid_postfix(db.db);
 }
 
 int APS5_VABI _ZN7WebCore14SQLiteDatabase9lastErrorEv(SQLiteDatabase* self) {
-    return LastError(Checked(self));
+    const auto& db = CheckedRead(self, __func__);
+    return db.db ? sqlite3_errcode_nid_postfix(db.db) : db.openError;
 }
 
 const char* APS5_VABI _ZN7WebCore14SQLiteDatabase12lastErrorMsgEv(SQLiteDatabase* self) {
-    auto& db = Checked(self);
+    const auto& db = CheckedRead(self, __func__);
     if (db.db) return sqlite3_errmsg_nid_postfix(db.db);
     return db.openErrorMessage.buffer ? Bytes(db.openErrorMessage) : "database is not open";
 }
 
 bool APS5_VABI _ZN7WebCore14SQLiteDatabase27turnOnIncrementalAutoVacuumEv(SQLiteDatabase* self) {
-    auto& db = Checked(self);
+    GuestWriteRef dbAccess(self, __func__);
+    auto& db = dbAccess.Ref();
     int autoVacuumMode;
     int error;
     {
         ScopedStatement statement(db, Concatenate(u"PRAGMA auto_vacuum"));
-        autoVacuumMode = GetColumnInt(statement.value, 0);
+        autoVacuumMode = GetColumnInt(statement.value, 0, __func__);
         error = LastError(db);
     }
     if (error != SqliteRow) return false;
@@ -746,23 +921,34 @@ bool APS5_VABI _ZN7WebCore14SQLiteDatabase27turnOnIncrementalAutoVacuumEv(SQLite
     case AutoVacuumIncremental:
         return true;
     case AutoVacuumFull:
-        return ExecuteCommand(db, Concatenate(u"PRAGMA auto_vacuum = 2"));
+        return ExecuteCommand(db, Concatenate(u"PRAGMA auto_vacuum = 2"), __func__);
     default:
-        if (!ExecuteCommand(db, Concatenate(u"PRAGMA auto_vacuum = 2"))) return false;
-        RunVacuumCommand(db);
+        if (!ExecuteCommand(db, Concatenate(u"PRAGMA auto_vacuum = 2"), __func__)) return false;
+        RunVacuumCommand(db, __func__);
         return LastError(db) == SqliteOk;
     }
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase20setCollationFunctionERKN3WTF6StringEONS1_8FunctionIFiiPKviS7_EEE(SQLiteDatabase* self,
     const String* collationName, CollationFunction* collationFunction) {
-    auto& db = Checked(self);
-    const auto name = Utf8(Checked(collationName));
-    auto& function = Checked(collationFunction);
+    GuestWriteRef dbAccess(self, __func__);
+    auto& db = dbAccess.Ref();
+    const auto name = Utf8(FromCopiedString(CopyGuestString(collationName, __func__)));
+    GuestWriteScope fnAccess(collationFunction, sizeof(CollationFunction), __func__, true);
+    CollationCallable* callable = nullptr;
+    CopyInGuest(&callable, collationFunction, sizeof(callable), __func__);
     if (!db.db) NotImplemented_nid_no_patch(__func__);
-    auto* functionObject = new CollationFunction{std::exchange(function.callableWrapper, nullptr)};
-    sqlite3_create_collation_v2_nid_postfix(db.db, Bytes(name), SqliteUtf8, functionObject, CallCollationFunction,
-        DestroyCollationFunction);
+    auto functionObject = std::make_unique<CollationFunction>(CollationFunction{callable});
+    CollationCallable* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(collationFunction, &cleared, sizeof(cleared)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const int status = sqlite3_create_collation_v2_nid_postfix(db.db, Bytes(name), SqliteUtf8, functionObject.get(),
+        CallCollationFunction, DestroyCollationFunction);
+    if (status == SqliteOk) {
+        functionObject.release();
+    } else {
+        GuestCopyOut_nid_no_patch(collationFunction, &callable, sizeof(callable));
+    }
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase29setIsDatabaseOpeningForbiddenEb(bool isForbidden) {
@@ -772,82 +958,102 @@ void APS5_VABI _ZN7WebCore14SQLiteDatabase29setIsDatabaseOpeningForbiddenEb(bool
 
 void APS5_VABI _ZN7WebCore15SQLiteStatementC1ERNS_14SQLiteDatabaseERKN3WTF6StringE(SQLiteStatement* self, SQLiteDatabase* db,
     const String* sql) {
-    ConstructStatement(self, db, sql);
+    ConstructStatement(self, db, sql, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15SQLiteStatementC2ERNS_14SQLiteDatabaseERKN3WTF6StringE(SQLiteStatement* self, SQLiteDatabase* db,
     const String* sql) {
-    ConstructStatement(self, db, sql);
+    ConstructStatement(self, db, sql, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15SQLiteStatementD1Ev(SQLiteStatement* self) {
-    DestroyStatement(self);
+    DestroyStatement(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15SQLiteStatementD2Ev(SQLiteStatement* self) {
-    DestroyStatement(self);
+    DestroyStatement(self, __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement7prepareEv(SQLiteStatement* self) {
-    return Prepare(Checked(self));
+    GuestWriteRef stmtAccess(self, __func__);
+    return Prepare(stmtAccess.Ref(), __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement4stepEv(SQLiteStatement* self) {
-    return Step(Checked(self));
+    GuestWriteRef stmtAccess(self, __func__);
+    return Step(stmtAccess.Ref(), __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement8finalizeEv(SQLiteStatement* self) {
-    return Finalize(Checked(self));
+    GuestWriteRef stmtAccess(self, __func__);
+    return Finalize(stmtAccess.Ref());
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement5resetEv(SQLiteStatement* self) {
-    return Reset(Checked(self));
+    GuestWriteRef stmtAccess(self, __func__);
+    return Reset(stmtAccess.Ref());
 }
 
 bool APS5_VABI _ZN7WebCore15SQLiteStatement14executeCommandEv(SQLiteStatement* self) {
-    return ExecuteCommand(Checked(self));
+    GuestWriteRef stmtAccess(self, __func__);
+    return ExecuteCommand(stmtAccess.Ref(), __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement8bindBlobEiPKvi(SQLiteStatement* self, int index, const void* blob, int size) {
-    return BindBlob(Checked(self), index, blob, size);
+    GuestWriteRef stmtAccess(self, __func__);
+    return BindBlob(stmtAccess.Ref(), index, blob, size, __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement8bindBlobEiRKN3WTF6StringE(SQLiteStatement* self, int index, const String* text) {
-    std::u16string storage;
-    const auto* impl = Checked(text).impl;
-    const auto* characters = Upconvert(impl, storage);
-    return BindBlob(Checked(self), index, characters, static_cast<int>(View(impl).length * sizeof(char16_t)));
+    GuestWriteRef stmtAccess(self, __func__);
+    const auto copied = CopyGuestString(text, __func__);
+    const int byteCount = CheckedUtf16BindBytes(copied.units.size(), __func__);
+    static const char16_t anyCharacter = 0;
+    const char16_t* characters = copied.units.empty() ? &anyCharacter : copied.units.data();
+    return BindBlob(stmtAccess.Ref(), index, characters, byteCount, __func__);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement8bindTextEiRKN3WTF6StringE(SQLiteStatement* self, int index, const String* text) {
-    return BindText(Checked(self), index, Checked(text).impl);
+    GuestWriteRef stmtAccess(self, __func__);
+    const auto copied = CopyGuestString(text, __func__);
+    const int byteCount = CheckedUtf16BindBytes(copied.units.size(), __func__);
+    static const char16_t anyCharacter = 0;
+    const char16_t* characters = copied.units.empty() ? &anyCharacter : copied.units.data();
+    return sqlite3_bind_text16_nid_postfix(stmtAccess.Ref().statement, index, characters, byteCount, SqliteTransient);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement7bindIntEii(SQLiteStatement* self, int index, int integer) {
-    return sqlite3_bind_int_nid_postfix(Checked(self).statement, index, integer);
+    const auto& statement = CheckedRead(self, __func__);
+    return sqlite3_bind_int_nid_postfix(statement.statement, index, integer);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement9bindInt64Eil(SQLiteStatement* self, int index, std::int64_t integer) {
-    return sqlite3_bind_int64_nid_postfix(Checked(self).statement, index, integer);
+    const auto& statement = CheckedRead(self, __func__);
+    return sqlite3_bind_int64_nid_postfix(statement.statement, index, integer);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement10bindDoubleEid(SQLiteStatement* self, int index, double number) {
-    return sqlite3_bind_double_nid_postfix(Checked(self).statement, index, number);
+    const auto& statement = CheckedRead(self, __func__);
+    return sqlite3_bind_double_nid_postfix(statement.statement, index, number);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement8bindNullEi(SQLiteStatement* self, int index) {
-    return sqlite3_bind_null_nid_postfix(Checked(self).statement, index);
+    const auto& statement = CheckedRead(self, __func__);
+    return sqlite3_bind_null_nid_postfix(statement.statement, index);
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6StringEdEEE(SQLiteStatement* self, int index,
     const SQLValue* value) {
-    auto& statement = Checked(self);
-    const auto& variant = Checked(value);
+    GuestWriteRef stmtAccess(self, __func__);
+    auto& statement = stmtAccess.Ref();
+    if (!value) throw std::invalid_argument("null WebCore SQLite object");
+    SQLValue variant{};
+    CopyInGuest(&variant, value, sizeof(variant), __func__);
     switch (variant.index) {
     case 0:
         return sqlite3_bind_null_nid_postfix(statement.statement, index);
     case 1:
-        return BindText(statement, index, variant.string);
+        return BindText(statement, index, variant.string, __func__);
     case 2:
         return sqlite3_bind_double_nid_postfix(statement.statement, index, variant.number);
     }
@@ -855,18 +1061,20 @@ int APS5_VABI _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6St
 }
 
 unsigned APS5_VABI _ZNK7WebCore15SQLiteStatement18bindParameterCountEv(const SQLiteStatement* self) {
-    auto* statement = Checked(self).statement;
+    auto* statement = CheckedRead(self, __func__).statement;
     return statement ? sqlite3_bind_parameter_count_nid_postfix(statement) : 0;
 }
 
 bool APS5_VABI _ZN7WebCore15SQLiteStatement12isColumnNullEi(SQLiteStatement* self, int col) {
-    auto& statement = Checked(self);
-    return HasColumn(statement, col) && sqlite3_column_type_nid_postfix(statement.statement, col) == SqliteNull;
+    GuestWriteRef stmtAccess(self, __func__);
+    auto& statement = stmtAccess.Ref();
+    return HasColumn(statement, col, __func__) && sqlite3_column_type_nid_postfix(statement.statement, col) == SqliteNull;
 }
 
 bool APS5_VABI _ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi(SQLiteStatement* self, int col) {
-    auto& statement = Checked(self);
-    if (!statement.statement && Prepare(statement) != SqliteOk) return false;
+    GuestWriteRef stmtAccess(self, __func__);
+    auto& statement = stmtAccess.Ref();
+    if (!statement.statement && Prepare(statement, __func__) != SqliteOk) return false;
     const char* declared = statement.statement ? sqlite3_column_decltype_nid_postfix(statement.statement, col) : nullptr;
     if (!declared) NotImplemented_nid_no_patch(__func__);
     return std::strlen(declared) == 4 && (declared[0] | 0x20) == 'b' && (declared[1] | 0x20) == 'l'
@@ -874,26 +1082,31 @@ bool APS5_VABI _ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi(SQLiteStat
 }
 
 String APS5_VABI _ZN7WebCore15SQLiteStatement13getColumnTextEi(SQLiteStatement* self, int col) {
-    return GetColumnText(Checked(self), col);
+    GuestWriteRef stmtAccess(self, __func__);
+    return GetColumnText(stmtAccess.Ref(), col, __func__);
 }
 
 double APS5_VABI _ZN7WebCore15SQLiteStatement15getColumnDoubleEi(SQLiteStatement* self, int col) {
-    auto& statement = Checked(self);
-    return HasColumn(statement, col) ? sqlite3_column_double_nid_postfix(statement.statement, col) : 0.0;
+    GuestWriteRef stmtAccess(self, __func__);
+    auto& statement = stmtAccess.Ref();
+    return HasColumn(statement, col, __func__) ? sqlite3_column_double_nid_postfix(statement.statement, col) : 0.0;
 }
 
 int APS5_VABI _ZN7WebCore15SQLiteStatement12getColumnIntEi(SQLiteStatement* self, int col) {
-    return GetColumnInt(Checked(self), col);
+    GuestWriteRef stmtAccess(self, __func__);
+    return GetColumnInt(stmtAccess.Ref(), col, __func__);
 }
 
 std::int64_t APS5_VABI _ZN7WebCore15SQLiteStatement14getColumnInt64Ei(SQLiteStatement* self, int col) {
-    auto& statement = Checked(self);
-    return HasColumn(statement, col) ? sqlite3_column_int64_nid_postfix(statement.statement, col) : 0;
+    GuestWriteRef stmtAccess(self, __func__);
+    auto& statement = stmtAccess.Ref();
+    return HasColumn(statement, col, __func__) ? sqlite3_column_int64_nid_postfix(statement.statement, col) : 0;
 }
 
 String APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsStringEi(SQLiteStatement* self, int col) {
-    auto& statement = Checked(self);
-    if (!HasColumn(statement, col)) return String();
+    GuestWriteRef stmtAccess(self, __func__);
+    auto& statement = stmtAccess.Ref();
+    if (!HasColumn(statement, col, __func__)) return String();
     const void* blob = sqlite3_column_blob_nid_postfix(statement.statement, col);
     if (!blob) return String(NKWebKit::WtfAbi::EmptyStringImpl());
     const int size = sqlite3_column_bytes_nid_postfix(statement.statement, col);
@@ -903,69 +1116,85 @@ String APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsStringEi(SQLiteSta
 
 void APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
     SQLiteStatement* self, int col, Vector<char>* result) {
-    GetColumnBlobAsVector(Checked(self), col, Checked(result));
+    GuestWriteRef stmtAccess(self, __func__);
+    GetColumnBlobAsVector(stmtAccess.Ref(), col, result, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIhLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
     SQLiteStatement* self, int col, Vector<unsigned char>* result) {
-    GetColumnBlobAsVector(Checked(self), col, Checked(result));
+    GuestWriteRef stmtAccess(self, __func__);
+    GetColumnBlobAsVector(stmtAccess.Ref(), col, result, __func__);
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransactionC1ERNS_14SQLiteDatabaseEb(SQLiteTransaction* self, SQLiteDatabase* db, bool readOnly) {
-    ConstructTransaction(self, db, readOnly);
+    ConstructTransaction(self, db, readOnly, __func__);
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransactionC2ERNS_14SQLiteDatabaseEb(SQLiteTransaction* self, SQLiteDatabase* db, bool readOnly) {
-    ConstructTransaction(self, db, readOnly);
+    ConstructTransaction(self, db, readOnly, __func__);
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransactionD1Ev(SQLiteTransaction* self) {
-    DestroyTransaction(self);
+    DestroyTransaction(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransactionD2Ev(SQLiteTransaction* self) {
-    DestroyTransaction(self);
+    DestroyTransaction(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransaction5beginEv(SQLiteTransaction* self) {
-    auto& transaction = Checked(self);
+    GuestWriteRef txAccess(self, __func__);
+    auto& transaction = txAccess.Ref();
     if (transaction.inProgress) return;
-    auto& db = Checked(transaction.db);
-    transaction.inProgress = ExecuteCommand(db, Concatenate(transaction.readOnly ? u"BEGIN" : u"BEGIN IMMEDIATE"));
+    GuestWriteRef dbAccess(transaction.db, __func__);
+    auto& db = dbAccess.Ref();
+    transaction.inProgress = ExecuteCommand(db, Concatenate(transaction.readOnly ? u"BEGIN" : u"BEGIN IMMEDIATE"), __func__);
     db.transactionInProgress = transaction.inProgress;
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransaction6commitEv(SQLiteTransaction* self) {
-    Commit(Checked(self));
+    Commit(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore17SQLiteTransaction8rollbackEv(SQLiteTransaction* self) {
-    Rollback(Checked(self));
+    Rollback(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_(SQLiteStatementAutoResetScope* self,
     SQLiteStatementAutoResetScope* other) {
-    MoveScope(self, other);
+    MoveScope(self, other, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC2EOS0_(SQLiteStatementAutoResetScope* self,
     SQLiteStatementAutoResetScope* other) {
-    MoveScope(self, other);
+    MoveScope(self, other, __func__);
 }
 
 SQLiteStatementAutoResetScope& APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeaSEOS0_(SQLiteStatementAutoResetScope* self,
     SQLiteStatementAutoResetScope* other) {
-    auto& scope = Checked(self);
-    std::swap(scope.statement, Checked(other).statement);
-    return scope;
+    GuestWriteRef selfAccess(self, __func__);
+    GuestWriteScope otherAccess(other, sizeof(SQLiteStatementAutoResetScope), __func__, true);
+    if (self != other) {
+        SQLiteStatement* selfStmt = nullptr;
+        SQLiteStatement* otherStmt = nullptr;
+        CopyInGuest(&selfStmt, self, sizeof(selfStmt), __func__);
+        CopyInGuest(&otherStmt, other, sizeof(otherStmt), __func__);
+        if (!GuestCopyOut_nid_no_patch(self, &otherStmt, sizeof(otherStmt)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!GuestCopyOut_nid_no_patch(other, &selfStmt, sizeof(selfStmt))) {
+            GuestCopyOut_nid_no_patch(self, &selfStmt, sizeof(selfStmt));
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
+    }
+    return selfAccess.Ref();
 }
 
 void APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeD1Ev(SQLiteStatementAutoResetScope* self) {
-    DestroyScope(self);
+    DestroyScope(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeD2Ev(SQLiteStatementAutoResetScope* self) {
-    DestroyScope(self);
+    DestroyScope(self, __func__);
 }
 
 }
