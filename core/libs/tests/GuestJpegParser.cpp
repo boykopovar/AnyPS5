@@ -193,6 +193,9 @@ int main() {
     Require(_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() == 0, "a second Finalize did not return 0");
     Require(errno == 71, "Finalize changed errno");
     TestExtract();
+    errno = 71;
+    Require(libSceJpegParserUnknown_EU_minus_X_plus_AriMlg_nid_no_patch() == static_cast<int>(0x809D4054u), "EU-X+AriMlg did not return 0x809D4054");
+    Require(errno == 71, "EU-X+AriMlg changed errno");
     std::puts("JpegParser tests passed");
     return 0;
 }

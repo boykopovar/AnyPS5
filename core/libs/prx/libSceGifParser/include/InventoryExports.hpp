@@ -17,5 +17,6 @@ int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser22gifParserWriteMetadataERKS
 int APS5_VABI libSceGifParserUnknown_YtzTVdv9KoE_nid_no_patch();
 int APS5_VABI libSceGifParserUnknown_OTz_minus_uftEt84_nid_no_patch();
 int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser25gifParserExtractThumbnailERKSsRNS_9ThumbnailE();
+int APS5_VABI libSceGifParserUnknown_DTWP8QPsnTM_nid_no_patch(const void* source, const void* destination, const void* info, std::int32_t* result);
 
 }
