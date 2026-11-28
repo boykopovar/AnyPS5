@@ -237,6 +237,11 @@ VkFormat TextureDetiler::ImageElementFormat(std::uint32_t elementBytes) {
     }
 }
 
+bool TextureDetiler::UsesWordGroups(bool wordGroupsFaulty, std::uint32_t elementBytes, bool equation, bool retile, bool image) {
+    if (wordGroupsFaulty || elementBytes >= 4u) return false;
+    return image ? retile && !equation : !retile || !equation;
+}
+
 VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image) {
     Require(std::has_single_bit(elementBytes) && elementBytes <= 16u, "unsupported element size for texture detiling");
     const auto key = PipelineKey(tileMode, elementBytes, retile, thick, image);
@@ -272,7 +277,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         values[2] = 2u;
         std::copy(equation->bits.begin(), equation->bits.end(), values.begin() + 4);
     }
-    const bool words = elementBytes < 4u && (image ? retile && values[2] != 2u : !retile || values[2] != 2u);
+    const bool words = UsesWordGroups(context.detileWordGroupsFaulty, elementBytes, values[2] == 2u, retile, image);
     auto& shader = image ? (words ? imageWordModule : imageModule) : (words ? wordModule : module);
     if (shader == VK_NULL_HANDLE) {
         if (!image) shader = CreateShaderModule(context, TEXTURE_DETILE_WORDS_SPV, sizeof(TEXTURE_DETILE_WORDS_SPV), "vkCreateShaderModule detile words");
