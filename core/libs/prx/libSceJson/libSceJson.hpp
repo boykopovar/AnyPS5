@@ -1,2 +1,3 @@
 #pragma once
-#include "prx/libSceJson/include/Exports.hpp"
+
+#include "prx/libSceJson/include/Api.hpp"
