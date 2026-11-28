@@ -112,6 +112,9 @@ constexpr std::size_t ParallelAtlasOffset = 0x840000;
 constexpr std::size_t ParallelStencilOffset = 0x860000;
 constexpr std::size_t ParallelStencilPlaneOffset = 0x880000;
 constexpr std::size_t ParallelD16Offset = 0x8a0000;
+constexpr std::size_t StreamedSecondaryOffset = 0x8c0000;
+constexpr std::size_t StreamedSecondaryStride = 0x20000;
+constexpr std::uint32_t StreamedSecondaryDraws = 4;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -777,6 +780,42 @@ void ParallelAtlasCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::
     Require(pooled == (parallel ? 8u : 0u), std::to_string(pooled) + " of the case's 8 depth-only draws were recorded on the recording pool, expected " + (parallel ? "all" : "none"));
 }
 
+float StreamedSecondaryDepth(std::uint32_t draw) {
+    return 0.125f * static_cast<float>(draw + 1);
+}
+
+int StreamedSecondariesCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    const char* parallelAtlasSwitch = std::getenv("APS5_PARALLEL_ATLAS");
+    if (parallelAtlasSwitch == nullptr || parallelAtlasSwitch[0] == '\0' || parallelAtlasSwitch[0] == '0' || std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr || std::getenv("APS5_GPU_CHECKPOINTS") != nullptr || !AgcDriver::VulkanDeviceTestAccess::ContextOf(device).graphicsPipelineLibrary) {
+        std::puts("skipped, pooled depth-only recording needs APS5_PARALLEL_ATLAS and a graphics pipeline library");
+        return VulkanTestSkipped;
+    }
+    auto* recorder = AgcDriver::Graphics::Recorder::Active();
+    Require(recorder != nullptr, "the device has no active recorder");
+    device.WaitIdle();
+    const auto recorded = AgcDriver::Graphics::RecordingPool::RecordedBuffers();
+    const auto before = recorder->StreamCounts();
+    for (std::uint32_t draw = 0; draw < StreamedSecondaryDraws; ++draw) {
+        DrawDepth(device, reinterpret_cast<std::uintptr_t>(block.At(StreamedSecondaryOffset + draw * StreamedSecondaryStride)), {128, 128}, VK_FORMAT_D32_SFLOAT, StreamedSecondaryDepth(draw), 0, 0, std::nullopt, true, false);
+        Require(recorder->Deferred(), "pooled draw " + std::to_string(draw) + " executed its secondary command buffer outside a streamed batch");
+    }
+    device.WaitIdle();
+    const auto after = recorder->StreamCounts();
+    const auto pooled = AgcDriver::Graphics::RecordingPool::RecordedBuffers() - recorded;
+    const auto streamed = after.deferred - before.deferred;
+    const auto replayed = after.replayed - before.replayed;
+    std::cout << "streamed secondaries: " << pooled << " pooled draws in " << streamed << " streamed batches, " << replayed << " replayed, " << after.direct - before.direct << " direct, " << after.demoted - before.demoted << " demoted\n";
+    Require(pooled == StreamedSecondaryDraws, std::to_string(pooled) + " of " + std::to_string(StreamedSecondaryDraws) + " depth-only draws were recorded on the recording pool");
+    Require(streamed != 0 && replayed == streamed && after.direct == before.direct && after.demoted == before.demoted && after.replayFailed == before.replayFailed, "the batches that executed the pooled secondary command buffers were not all streamed and replayed");
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    for (std::uint32_t draw = 0; draw < StreamedSecondaryDraws; ++draw) {
+        Load(device, block.At(StreamedSecondaryOffset + draw * StreamedSecondaryStride), shape, 0, output);
+        Expect(output, Bits(StreamedSecondaryDepth(draw)), "streamed secondary draw " + std::to_string(draw));
+    }
+    std::puts("streamed secondaries test passed");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     try {
         const bool evicting = argc > 1 && std::string(argv[1]) == "--evicting";
@@ -784,6 +823,7 @@ int main(int argc, char** argv) {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
+        if (argc > 1 && std::string(argv[1]) == "--streamed-secondaries") return StreamedSecondariesCase(*device, block, output);
         const auto present = [&] {
             if (!evicting) return;
             AgcDriver::Graphics::Recorder::CountPresent();

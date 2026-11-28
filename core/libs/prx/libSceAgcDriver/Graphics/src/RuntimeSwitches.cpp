@@ -37,6 +37,11 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_STAGE_POOL_REUSE",
     "APS5_INDEX_IN_PLACE_BEHIND_WRITER",
     "APS5_WIDE_LIBRARY_KEYS",
+    "APS5_NO_RECORD_ENCODER",
+    "APS5_NO_ADAPTIVE_ENCODER",
+    "APS5_QUIESCED_SEGMENTS",
+    "APS5_DIRECT_BATCHES",
+    "APS5_NO_STREAMED_PUSH_DESCRIPTORS",
     "APS5_NO_WIDE_TABLE_COPY_HLE",
     "APS5_NO_SAMPLED_LOOKUP_MEMO",
     "APS5_NO_DCC_MIP_FAST_CLEAR",
@@ -69,6 +74,11 @@ struct SwitchValues {
             std::getenv("APS5_NO_STAGE_POOL_REUSE") != nullptr,
             std::getenv("APS5_INDEX_IN_PLACE_BEHIND_WRITER") != nullptr,
             std::getenv("APS5_WIDE_LIBRARY_KEYS") != nullptr,
+            std::getenv("APS5_NO_RECORD_ENCODER") != nullptr,
+            std::getenv("APS5_NO_ADAPTIVE_ENCODER") != nullptr,
+            std::getenv("APS5_QUIESCED_SEGMENTS") != nullptr,
+            std::getenv("APS5_DIRECT_BATCHES") != nullptr,
+            std::getenv("APS5_NO_STREAMED_PUSH_DESCRIPTORS") != nullptr,
             std::getenv("APS5_NO_WIDE_TABLE_COPY_HLE") != nullptr,
             std::getenv("APS5_NO_SAMPLED_LOOKUP_MEMO") != nullptr,
             std::getenv("APS5_NO_DCC_MIP_FAST_CLEAR") != nullptr,
@@ -152,6 +162,12 @@ bool InArm(const AbSchedule::Arm& arm, RuntimeSwitch id) {
 
 namespace RuntimeSwitches {
 
+namespace {
+
+std::atomic<std::uint64_t> generation{0};
+
+}
+
 const char* Name(RuntimeSwitch id) {
     return SwitchNames.at(static_cast<std::size_t>(id));
 }
@@ -161,7 +177,11 @@ bool Set(RuntimeSwitch id) {
 }
 
 void Assign(RuntimeSwitch id, bool set) {
-    Values().set.at(static_cast<std::size_t>(id)).store(set, std::memory_order_relaxed);
+    if (Values().set.at(static_cast<std::size_t>(id)).exchange(set, std::memory_order_relaxed) != set) generation.fetch_add(1, std::memory_order_release);
+}
+
+std::uint64_t Generation() {
+    return generation.load(std::memory_order_acquire);
 }
 
 std::optional<RuntimeSwitch> Find(std::string_view name) {

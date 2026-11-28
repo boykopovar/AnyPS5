@@ -270,7 +270,7 @@ int main(int argc, char** argv) {
         std::printf("pipeline readback: %s, %.*s, LTO %s%s\n", device->DeviceName().c_str(), static_cast<int>(mode.size()), mode.data(), optimize ? "enabled" : "disabled", force ? " (explicit test override)" : " (production policy)");
         trace.resolve = context.deviceProc;
         trace.create = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
-        trace.bind = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
+        trace.bind = reinterpret_cast<PFN_vkCmdBindPipeline>(AgcDriver::Graphics::CommandThunk("vkCmdBindPipeline", context.deviceProc(context.device, "vkCmdBindPipeline"), context.device));
         trace.draw = context.Function<PFN_vkCmdDraw>("vkCmdDraw");
         trace.functions = context.functions != nullptr ? *context.functions : DeviceFunctions{};
         trace.functions.cmdBindPipeline = BindPipeline;

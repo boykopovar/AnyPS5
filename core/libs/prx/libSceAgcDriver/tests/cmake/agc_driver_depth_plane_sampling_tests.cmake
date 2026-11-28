@@ -3,8 +3,11 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_depth_plane_sampling_evicting PROPERTIES ENVIRONMENT "APS5_DEPTH_PLANE_COPY_MIB=1" SKIP_RETURN_CODE 77 TIMEOUT 120)
     add_test(NAME agc_driver_depth_plane_sampling_per_use COMMAND agc_driver_depth_plane_sampling_tests)
     set_tests_properties(agc_driver_depth_plane_sampling_per_use PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_DEPTH_PLANE_REUSE=1" SKIP_RETURN_CODE 77 TIMEOUT 120)
+    add_test(NAME agc_driver_depth_plane_sampling_streamed_secondaries COMMAND agc_driver_depth_plane_sampling_tests --streamed-secondaries)
+    set_tests_properties(agc_driver_depth_plane_sampling_streamed_secondaries PROPERTIES ENVIRONMENT "APS5_PARALLEL_ATLAS=1" SKIP_RETURN_CODE 77 TIMEOUT 30
+            FAIL_REGULAR_EXPRESSION "SYNC-HAZARD-|VUID-|was not found but was requested by env var VK_INSTANCE_LAYERS")
     if(WIN32)
-        set_tests_properties(agc_driver_depth_plane_sampling_evicting agc_driver_depth_plane_sampling_per_use PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_depth_plane_sampling_evicting agc_driver_depth_plane_sampling_per_use agc_driver_depth_plane_sampling_streamed_secondaries PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -56,9 +56,9 @@ struct BindTrace {
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
         functions = const_cast<AgcDriver::Graphics::DeviceFunctions*>(context.functions);
         Require(functions != nullptr, "native pipeline bind table is unavailable");
-        NativeBind = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
-        NativeDraw = reinterpret_cast<PFN_vkCmdDraw>(context.deviceProc(context.device, "vkCmdDraw"));
-        NativeDrawIndexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(context.deviceProc(context.device, "vkCmdDrawIndexed"));
+        NativeBind = reinterpret_cast<PFN_vkCmdBindPipeline>(AgcDriver::Graphics::CommandThunk("vkCmdBindPipeline", context.deviceProc(context.device, "vkCmdBindPipeline"), context.device));
+        NativeDraw = reinterpret_cast<PFN_vkCmdDraw>(AgcDriver::Graphics::CommandThunk("vkCmdDraw", context.deviceProc(context.device, "vkCmdDraw"), context.device));
+        NativeDrawIndexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(AgcDriver::Graphics::CommandThunk("vkCmdDrawIndexed", context.deviceProc(context.device, "vkCmdDrawIndexed"), context.device));
         functions->cmdBindPipeline = CountBind;
         functions->cmdDraw = CountDraw;
         functions->cmdDrawIndexed = CountDrawIndexed;
