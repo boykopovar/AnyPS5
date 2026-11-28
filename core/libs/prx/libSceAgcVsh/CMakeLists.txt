@@ -53,6 +53,7 @@ add_library(libSceAgcVsh SHARED EXCLUDE_FROM_ALL
 
 target_include_directories(libSceAgcVsh PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceAgcVsh PRIVATE libSceAgcDriver libc)
+configure_windows_unwind(libSceAgcVsh)
 
 option(APS5_AGC_CREATE_LOG "Logging sceAgcCreateShader Ok status" ON)
 
