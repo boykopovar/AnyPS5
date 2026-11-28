@@ -7,15 +7,23 @@
 
 extern "C" {
 
-void* APS5_VABI pthread_getspecific_nid_postfix(PthreadKey key) {
+void* APS5_VABI pthread_getspecific_nid_no_patch(PthreadKey key) {
     return scePthreadGetspecific(key);
 }
-
-int APS5_VABI pthread_setspecific_nid_postfix(PthreadKey key, void* value) {
-    return PosixThread::ToErrno(scePthreadSetspecific(key, value));
+void* APS5_VABI pthread_getspecific_nid_postfix(PthreadKey key) {
+    return pthread_getspecific_nid_no_patch(key);
 }
 
-int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor) {
+
+int APS5_VABI pthread_setspecific_nid_no_patch(PthreadKey key, void* value) {
+    return PosixThread::ToErrno(scePthreadSetspecific(key, value));
+}
+int APS5_VABI pthread_setspecific_nid_postfix(PthreadKey key, void* value) {
+    return pthread_setspecific_nid_no_patch(key, value);
+}
+
+
+int APS5_VABI pthread_key_create_nid_no_patch(PthreadKey* key, pthread_key_destructor_func_t destructor) {
     if (!key) return PosixThread::GUEST_EINVAL;
     PthreadKey created = 0;
     if (const int result = scePthreadKeyCreate(&created, destructor)) return PosixThread::ToErrno(result);
@@ -25,9 +33,17 @@ int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destru
     }
     return 0;
 }
+int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor) {
+    return pthread_key_create_nid_no_patch(key, destructor);
+}
 
-int APS5_VABI pthread_key_delete_nid_postfix(PthreadKey key) {
+
+int APS5_VABI pthread_key_delete_nid_no_patch(PthreadKey key) {
     return PosixThread::ToErrno(scePthreadKeyDelete(key));
 }
+int APS5_VABI pthread_key_delete_nid_postfix(PthreadKey key) {
+    return pthread_key_delete_nid_no_patch(key);
+}
+
 
 }

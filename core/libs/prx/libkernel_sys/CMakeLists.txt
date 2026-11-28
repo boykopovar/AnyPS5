@@ -7,3 +7,4 @@ target_sources(${LIB_NAME} PRIVATE NamedObject.cpp)
 configure_windows_unwind(${LIB_NAME})
 
 target_sources(${LIB_NAME} PRIVATE Wait.cpp Uuid.cpp Lwfs.cpp NormalizePath.cpp)
+target_sources(${LIB_NAME} PRIVATE Forwards.cpp)

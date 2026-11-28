@@ -209,7 +209,7 @@ extern "C" void KsemAfterFindForTests_nid_no_patch(void (*hook)(std::intptr_t id
 
 extern "C" {
 
-int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
+int APS5_VABI ksem_init_nid_no_patch(std::intptr_t* idp, unsigned int value) {
     if (value > SemValueMax) return Fail(GuestEinval);
     const int descriptor = ReserveDescriptor();
     if (descriptor < 0) return Fail(GuestEnospc);
@@ -234,8 +234,12 @@ int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
     close_nid_postfix(descriptor);
     return Fail(GuestEnospc);
 }
+int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
+    return ksem_init_nid_no_patch(idp, value);
+}
 
-int APS5_VABI ksem_post_nid_postfix(std::intptr_t id) {
+
+int APS5_VABI ksem_post_nid_no_patch(std::intptr_t id) {
     const auto ksem = Find(id);
     if (!ksem) return Fail(GuestEinval);
     std::lock_guard lock(ksem->lock);
@@ -246,16 +250,28 @@ int APS5_VABI ksem_post_nid_postfix(std::intptr_t id) {
     ksem->changed = Timestamp();
     return 0;
 }
+int APS5_VABI ksem_post_nid_postfix(std::intptr_t id) {
+    return ksem_post_nid_no_patch(id);
+}
 
-int APS5_VABI ksem_wait_nid_postfix(std::intptr_t id) {
+
+int APS5_VABI ksem_wait_nid_no_patch(std::intptr_t id) {
     return Wait(id, false, nullptr);
 }
-
-int APS5_VABI ksem_trywait_nid_postfix(std::intptr_t id) {
-    return Wait(id, true, nullptr);
+int APS5_VABI ksem_wait_nid_postfix(std::intptr_t id) {
+    return ksem_wait_nid_no_patch(id);
 }
 
-int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const KernelTimespec* abstime) {
+
+int APS5_VABI ksem_trywait_nid_no_patch(std::intptr_t id) {
+    return Wait(id, true, nullptr);
+}
+int APS5_VABI ksem_trywait_nid_postfix(std::intptr_t id) {
+    return ksem_trywait_nid_no_patch(id);
+}
+
+
+int APS5_VABI ksem_timedwait_nid_no_patch(std::intptr_t id, const KernelTimespec* abstime) {
     KernelTimespec deadline{};
     if (abstime != nullptr) {
         if (!GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return Fail(GuestEfault);
@@ -263,8 +279,12 @@ int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const KernelTimespec*
     }
     return Wait(id, false, abstime != nullptr ? &deadline : nullptr);
 }
+int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const KernelTimespec* abstime) {
+    return ksem_timedwait_nid_no_patch(id, abstime);
+}
 
-int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value) {
+
+int APS5_VABI ksem_getvalue_nid_no_patch(std::intptr_t id, int* value) {
     const auto ksem = Find(id);
     if (!ksem) return Fail(GuestEinval);
     int count = 0;
@@ -277,8 +297,12 @@ int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value) {
     if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count))) return Fail(GuestEfault);
     return 0;
 }
+int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value) {
+    return ksem_getvalue_nid_no_patch(id, value);
+}
 
-int APS5_VABI ksem_destroy_nid_postfix(std::intptr_t id) {
+
+int APS5_VABI ksem_destroy_nid_no_patch(std::intptr_t id) {
     const auto ksem = Find(id);
     if (!ksem) return Fail(GuestEinval);
     {
@@ -289,5 +313,9 @@ int APS5_VABI ksem_destroy_nid_postfix(std::intptr_t id) {
     }
     return close_nid_postfix(static_cast<int>(id));
 }
+int APS5_VABI ksem_destroy_nid_postfix(std::intptr_t id) {
+    return ksem_destroy_nid_no_patch(id);
+}
+
 
 }

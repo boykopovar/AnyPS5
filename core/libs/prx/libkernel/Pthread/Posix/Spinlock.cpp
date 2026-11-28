@@ -23,7 +23,7 @@ bool tryAcquire(PthreadSpinlockPrivate* spinlock) {
 
 extern "C" {
 
-int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int pshared) {
+int APS5_VABI pthread_spin_init_nid_no_patch(PthreadSpinlockPrivate** lock, int pshared) {
     if (!lock) return PosixThread::GUEST_EINVAL;
     if (pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
     auto* spinlock = new (std::nothrow) PthreadSpinlockPrivate;
@@ -34,8 +34,12 @@ int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int p
     }
     return 0;
 }
+int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int pshared) {
+    return pthread_spin_init_nid_no_patch(lock, pshared);
+}
 
-int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
+
+int APS5_VABI pthread_spin_destroy_nid_no_patch(PthreadSpinlockPrivate** lock) {
     if (!lock) return PosixThread::GUEST_EINVAL;
     PthreadSpinlockPrivate* spinlock = nullptr;
     if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
@@ -46,16 +50,22 @@ int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
     delete spinlock;
     return 0;
 }
+int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
+    return pthread_spin_destroy_nid_no_patch(lock);
+}
 
-int APS5_VABI pthread_spin_trylock_nid_postfix(PthreadSpinlockPrivate** lock) {
+int APS5_VABI pthread_spin_trylock_nid_no_patch(PthreadSpinlockPrivate** lock) {
     if (!lock) return PosixThread::GUEST_EINVAL;
     PthreadSpinlockPrivate* spinlock = nullptr;
     if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
     if (!spinlock) return PosixThread::GUEST_EINVAL;
     return tryAcquire(spinlock) ? 0 : GUEST_EBUSY;
 }
+int APS5_VABI pthread_spin_trylock_nid_postfix(PthreadSpinlockPrivate** lock) {
+    return pthread_spin_trylock_nid_no_patch(lock);
+}
 
-int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
+int APS5_VABI pthread_spin_lock_nid_no_patch(PthreadSpinlockPrivate** lock) {
     if (!lock) return PosixThread::GUEST_EINVAL;
     PthreadSpinlockPrivate* spinlock = nullptr;
     if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
@@ -73,8 +83,11 @@ int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
     }
     return 0;
 }
+int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
+    return pthread_spin_lock_nid_no_patch(lock);
+}
 
-int APS5_VABI pthread_spin_unlock_nid_postfix(PthreadSpinlockPrivate** lock) {
+int APS5_VABI pthread_spin_unlock_nid_no_patch(PthreadSpinlockPrivate** lock) {
     if (!lock) return PosixThread::GUEST_EINVAL;
     PthreadSpinlockPrivate* spinlock = nullptr;
     if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
@@ -84,5 +97,9 @@ int APS5_VABI pthread_spin_unlock_nid_postfix(PthreadSpinlockPrivate** lock) {
         return GUEST_EPERM;
     return 0;
 }
+int APS5_VABI pthread_spin_unlock_nid_postfix(PthreadSpinlockPrivate** lock) {
+    return pthread_spin_unlock_nid_no_patch(lock);
+}
+
 
 }

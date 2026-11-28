@@ -96,7 +96,7 @@ int ScanAfterCaughtSignal(int nfds, void* readfds, void* writefds, void* exceptf
 
 extern "C" {
 
-int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask) {
+int APS5_VABI pselect_nid_no_patch(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask) {
     Timeval limit{};
     const Timeval* wait = nullptr;
     if (timeout != nullptr) {
@@ -118,5 +118,9 @@ int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void*
     *__error_nid_postfix() = error;
     return result;
 }
+int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask) {
+    return pselect_nid_no_patch(nfds, readfds, writefds, exceptfds, timeout, sigmask);
+}
+
 
 }

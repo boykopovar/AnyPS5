@@ -85,52 +85,92 @@ int ProcessGroupError(int descriptor, const char* pipeMessage) {
 }
 
 extern "C" {
-int APS5_VABI cfsetspeed_nid_postfix(void* attributes, std::uint32_t speed) {
+int APS5_VABI cfsetspeed_nid_no_patch(void* attributes, std::uint32_t speed) {
     if (attributes == nullptr) throw std::invalid_argument("cfsetspeed: attributes is null");
     auto* bytes = static_cast<std::byte*>(attributes);
     std::memcpy(bytes + offsetof(GuestTermios, inputSpeed), &speed, sizeof(speed));
     std::memcpy(bytes + offsetof(GuestTermios, outputSpeed), &speed, sizeof(speed));
     return 0;
 }
+int APS5_VABI cfsetspeed_nid_postfix(void* attributes, std::uint32_t speed) {
+    return cfsetspeed_nid_no_patch(attributes, speed);
+}
 
-int APS5_VABI tcgetattr_nid_postfix(int descriptor, void* attributes) {
+
+int APS5_VABI tcgetattr_nid_no_patch(int descriptor, void* attributes) {
     static_cast<void>(attributes);
     return Fail(TerminalError(descriptor));
 }
+int APS5_VABI tcgetattr_nid_postfix(int descriptor, void* attributes) {
+    return tcgetattr_nid_no_patch(descriptor, attributes);
+}
 
-int APS5_VABI tcsetattr_nid_postfix(int descriptor, int action, const void* attributes) {
+
+int APS5_VABI tcsetattr_nid_no_patch(int descriptor, int action, const void* attributes) {
     if ((action & SetSoft) != 0 && attributes == nullptr) throw std::invalid_argument("tcsetattr: attributes is null");
     const int mode = action & ~SetSoft;
     if (mode != SetNow && mode != SetDrain && mode != SetFlush) return Fail(InvalidArgument);
     if (attributes == nullptr) return Fail(BadAddress);
     return Fail(TerminalError(descriptor));
 }
+int APS5_VABI tcsetattr_nid_postfix(int descriptor, int action, const void* attributes) {
+    return tcsetattr_nid_no_patch(descriptor, action, attributes);
+}
 
-int APS5_VABI tcsendbreak_nid_postfix(int descriptor, int duration) {
+
+int APS5_VABI tcsendbreak_nid_no_patch(int descriptor, int duration) {
     static_cast<void>(duration);
     return Fail(TerminalError(descriptor));
 }
+int APS5_VABI tcsendbreak_nid_postfix(int descriptor, int duration) {
+    return tcsendbreak_nid_no_patch(descriptor, duration);
+}
 
-int APS5_VABI tcdrain_nid_postfix(int descriptor) { return Fail(TerminalError(descriptor)); }
 
-int APS5_VABI tcflush_nid_postfix(int descriptor, int queue) {
+int APS5_VABI tcdrain_nid_no_patch(int descriptor) { return Fail(TerminalError(descriptor)); }
+
+int APS5_VABI tcflush_nid_no_patch(int descriptor, int queue) {
     if (queue != InputQueue && queue != OutputQueue && queue != BothQueues) return Fail(InvalidArgument);
     return Fail(TerminalError(descriptor));
 }
+int APS5_VABI tcflush_nid_postfix(int descriptor, int queue) {
+    return tcflush_nid_no_patch(descriptor, queue);
+}
 
-int APS5_VABI tcflow_nid_postfix(int descriptor, int action) {
+int APS5_VABI tcdrain_nid_postfix(int descriptor) {
+    return tcdrain_nid_no_patch(descriptor);
+}
+
+
+int APS5_VABI tcflow_nid_no_patch(int descriptor, int action) {
     if (action < OutputOff || action > InputOn) return Fail(InvalidArgument);
     return Fail(TerminalError(descriptor));
 }
-
-int APS5_VABI tcgetpgrp_nid_postfix(int descriptor) {
-    return Fail(ProcessGroupError(descriptor, "tcgetpgrp: the SIGIO owner of a pipe is not supported"));
+int APS5_VABI tcflow_nid_postfix(int descriptor, int action) {
+    return tcflow_nid_no_patch(descriptor, action);
 }
 
-int APS5_VABI tcsetpgrp_nid_postfix(int descriptor, int group) {
+
+int APS5_VABI tcgetpgrp_nid_no_patch(int descriptor) {
+    return Fail(ProcessGroupError(descriptor, "tcgetpgrp: the SIGIO owner of a pipe is not supported"));
+}
+int APS5_VABI tcgetpgrp_nid_postfix(int descriptor) {
+    return tcgetpgrp_nid_no_patch(descriptor);
+}
+
+
+int APS5_VABI tcsetpgrp_nid_no_patch(int descriptor, int group) {
     static_cast<void>(group);
     return Fail(ProcessGroupError(descriptor, "tcsetpgrp: the SIGIO owner of a pipe is not supported"));
 }
-
-int APS5_VABI tcgetsid_nid_postfix(int descriptor) { return Fail(TerminalError(descriptor)); }
+int APS5_VABI tcsetpgrp_nid_postfix(int descriptor, int group) {
+    return tcsetpgrp_nid_no_patch(descriptor, group);
 }
+
+
+int APS5_VABI tcgetsid_nid_no_patch(int descriptor) { return Fail(TerminalError(descriptor)); }
+}
+int APS5_VABI tcgetsid_nid_postfix(int descriptor) {
+    return tcgetsid_nid_no_patch(descriptor);
+}
+

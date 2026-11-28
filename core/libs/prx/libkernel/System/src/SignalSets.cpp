@@ -32,15 +32,23 @@ int Fill(GuestSignalSet* set, std::uint32_t word) {
 }
 
 extern "C" {
-int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet* set) {
+int APS5_VABI sigemptyset_nid_no_patch(GuestSignalSet* set) {
     return Fill(set, 0);
 }
-
-int APS5_VABI sigfillset_nid_postfix(GuestSignalSet* set) {
-    return Fill(set, ~0u);
+int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet* set) {
+    return sigemptyset_nid_no_patch(set);
 }
 
-int APS5_VABI sigaddset_nid_postfix(GuestSignalSet* set, int signal) {
+
+int APS5_VABI sigfillset_nid_no_patch(GuestSignalSet* set) {
+    return Fill(set, ~0u);
+}
+int APS5_VABI sigfillset_nid_postfix(GuestSignalSet* set) {
+    return sigfillset_nid_no_patch(set);
+}
+
+
+int APS5_VABI sigaddset_nid_no_patch(GuestSignalSet* set, int signal) {
     if (!ValidSignal(signal)) return RejectSignal();
     GuestSignalSet value;
     if (!GuestCopyIn_nid_no_patch(&value, set, sizeof(value))) return Fault();
@@ -48,8 +56,12 @@ int APS5_VABI sigaddset_nid_postfix(GuestSignalSet* set, int signal) {
     if (!GuestCopyOut_nid_no_patch(set, &value, sizeof(value))) return Fault();
     return 0;
 }
+int APS5_VABI sigaddset_nid_postfix(GuestSignalSet* set, int signal) {
+    return sigaddset_nid_no_patch(set, signal);
+}
 
-int APS5_VABI sigdelset_nid_postfix(GuestSignalSet* set, int signal) {
+
+int APS5_VABI sigdelset_nid_no_patch(GuestSignalSet* set, int signal) {
     if (!ValidSignal(signal)) return RejectSignal();
     GuestSignalSet value;
     if (!GuestCopyIn_nid_no_patch(&value, set, sizeof(value))) return Fault();
@@ -57,13 +69,21 @@ int APS5_VABI sigdelset_nid_postfix(GuestSignalSet* set, int signal) {
     if (!GuestCopyOut_nid_no_patch(set, &value, sizeof(value))) return Fault();
     return 0;
 }
+int APS5_VABI sigdelset_nid_postfix(GuestSignalSet* set, int signal) {
+    return sigdelset_nid_no_patch(set, signal);
+}
 
-int APS5_VABI sigismember_nid_postfix(const GuestSignalSet* set, int signal) {
+
+int APS5_VABI sigismember_nid_no_patch(const GuestSignalSet* set, int signal) {
     if (!ValidSignal(signal)) return RejectSignal();
     GuestSignalSet value;
     if (!GuestCopyIn_nid_no_patch(&value, set, sizeof(value))) return Fault();
     return (value.bits[WordIndex(signal)] & Bit(signal)) != 0 ? 1 : 0;
 }
+int APS5_VABI sigismember_nid_postfix(const GuestSignalSet* set, int signal) {
+    return sigismember_nid_no_patch(set, signal);
+}
+
 }
 #define APS5_SIGNAL_ASM_FUNCTION(name) APS5_ASM_FUNCTION(name)
 #if defined(_WIN32) || defined(__APPLE__)

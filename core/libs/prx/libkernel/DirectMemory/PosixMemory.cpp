@@ -297,20 +297,22 @@ void* Map(void* address, std::size_t length, int protection,
         return failed(GuestNoMemory);
     }
 }
-
 }
 
 extern "C" {
 
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
+void* APS5_VABI mmap_nid_no_patch(void* address, std::size_t length, int protection,
                                 int flags, int descriptor, std::int64_t offset) noexcept {
     int error = 0;
     void* mapped = Map(address, length, protection, flags, descriptor, offset, error);
     if (error != 0) SetError(error);
     return mapped;
 }
+void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept {
+    return mmap_nid_no_patch(address, length, protection, flags, descriptor, offset);
+}
 
-int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
+int APS5_VABI munmap_nid_no_patch(void* address, std::size_t length) noexcept {
     const auto failed = [](int error) {
         SetError(error);
         return -1;
@@ -332,8 +334,12 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return failed(GuestInvalid);
     }
 }
+int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
+    return munmap_nid_no_patch(address, length);
+}
 
-int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept {
+
+int APS5_VABI mprotect_nid_no_patch(void* address, std::size_t length, int protection) noexcept {
     const auto failed = [](int error) {
         SetError(error);
         return -1;
@@ -354,27 +360,47 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
         return failed(GuestInvalid);
     }
 }
+int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept {
+    return mprotect_nid_no_patch(address, length, protection);
+}
 
-int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
+
+int APS5_VABI mlock_nid_no_patch(const void* address, std::size_t length) {
     return ForwardPosixLock(sceKernelMlock_nid_postfix(const_cast<void*>(address), length));
 }
-
-int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
-    return ForwardPosixLock(sceKernelMunlock_nid_postfix(const_cast<void*>(address), length));
+int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
+    return mlock_nid_no_patch(address, length);
 }
 
-int APS5_VABI mlockall_nid_postfix(int flags) {
+
+int APS5_VABI munlock_nid_no_patch(const void* address, std::size_t length) {
+    return ForwardPosixLock(sceKernelMunlock_nid_postfix(const_cast<void*>(address), length));
+}
+int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
+    return munlock_nid_no_patch(address, length);
+}
+
+
+int APS5_VABI mlockall_nid_no_patch(int flags) {
     (void)flags;
     SetError(GuestNotPermitted);
     return -1;
 }
+int APS5_VABI mlockall_nid_postfix(int flags) {
+    return mlockall_nid_no_patch(flags);
+}
 
-int APS5_VABI munlockall_nid_postfix() {
+
+int APS5_VABI munlockall_nid_no_patch() {
     SetError(GuestNotPermitted);
     return -1;
 }
+int APS5_VABI munlockall_nid_postfix(void) {
+    return munlockall_nid_no_patch();
+}
 
-int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
+
+int APS5_VABI msync_nid_no_patch(void* address, std::size_t length, int flags) {
     const auto failed = [](int error) {
         SetError(error);
         return -1;
@@ -391,8 +417,12 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
     if ((flags & GuestSyncInvalidate) != 0) return failed(GuestBusy);
     return 0;
 }
+int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
+    return msync_nid_no_patch(address, length, flags);
+}
 
-int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
+
+int APS5_VABI madvise_nid_no_patch(void* address, std::size_t length, int advice) {
     if (advice == GuestAdviceProtect) return 0;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
     if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
@@ -401,6 +431,10 @@ int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice)
     }
     return 0;
 }
+int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
+    return madvise_nid_no_patch(address, length, advice);
+}
+
 
 int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int advice) {
     if (advice == GuestAdviceProtect) return 0;
@@ -411,7 +445,7 @@ int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int a
     return 0;
 }
 
-int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char* vec) {
+int APS5_VABI mincore_nid_no_patch(const void* address, std::size_t length, char* vec) {
     const auto failed = [](int error) {
         SetError(error);
         return -1;
@@ -445,5 +479,9 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
     }
     return 0;
 }
+int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char* vec) {
+    return mincore_nid_no_patch(address, length, vec);
+}
+
 
 }
