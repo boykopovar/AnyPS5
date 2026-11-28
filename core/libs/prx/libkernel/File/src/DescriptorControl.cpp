@@ -131,6 +131,7 @@ struct Entry {
     std::shared_ptr<int> owner;
     bool pipe = false;
     bool fixedSizeWrites = false;
+    bool nullDevice = false;
 };
 
 std::mutex g_mutex;
@@ -197,6 +198,16 @@ Entry InitialEntry(int fd) {
     return {false, std::make_shared<int>(status)};
 }
 
+const bool g_standardNullDevices = [] {
+    for (int fd = 0; fd <= 2; ++fd) {
+        if (!DescriptorIsOpen_nid_no_patch(fd) || !WindowsHandleIsNullDevice_nid_no_patch(WindowsDescriptorHandle_nid_no_patch(fd))) continue;
+        auto entry = InitialEntry(fd);
+        entry.nullDevice = true;
+        g_entries.emplace(fd, std::move(entry));
+    }
+    return true;
+}();
+
 void SetHostAppend(int fd, bool append, const char* function) {
     const int translation = ::_setmode(fd, _O_BINARY);
     if (translation == -1 || ::_setmode(fd, translation) == -1)
@@ -224,7 +235,7 @@ void ApplyHostStatus(int fd, Kind kind, int changed, int next, const char* funct
         for (const auto& [descriptor, entry] : g_entries)
             if (entry.status == status && DescriptorIsOpen_nid_no_patch(descriptor)) SetHostAppend(descriptor, (next & Append) != 0, function);
     }
-    if ((changed & Nonblocking) && kind == Kind::Device) Unsupported(function, "changing O_NONBLOCK", kind, fd);
+    if ((changed & Nonblocking) && kind == Kind::Device && !g_entries.at(fd).nullDevice) Unsupported(function, "changing O_NONBLOCK", kind, fd);
     if ((changed & Nonblocking) && kind == Kind::Pipe) SetPipeNonblocking(fd, (next & Nonblocking) != 0, function);
 }
 

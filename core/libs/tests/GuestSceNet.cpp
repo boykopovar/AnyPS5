@@ -820,6 +820,28 @@ static void CheckUnboundSocketName() {
     }
 }
 
+#ifdef _WIN32
+static bool ThrowsNonblockingUnimplemented(int descriptor) {
+    try {
+        sceKernelFcntl(descriptor, 4, 4);
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).rfind("fcntl: changing O_NONBLOCK on a character device is not implemented", 0) == 0;
+    }
+    return false;
+}
+
+static void CheckKernelFcntlKeepsSocketPlaceholder() {
+    const int socket = sceNetSocket("kernel-fcntl", 2, 2, 17);
+    Require(socket >= 0);
+    const int copy = dup_nid_postfix(socket);
+    Require(copy >= 0);
+    Require(ThrowsNonblockingUnimplemented(socket));
+    Require(ThrowsNonblockingUnimplemented(copy));
+    Require(close_nid_postfix(copy) == 0);
+    Require(sceNetSocketClose(socket) == 0);
+}
+#endif
+
 static void CheckConnectedDatagramSendto() {
     for (const int family : {2, 28}) {
         const std::uint32_t addressSize = family == 2 ? 16 : 28;
@@ -3320,6 +3342,9 @@ int main(int argc, char** argv) {
     CheckTcpNoDelay();
     CheckLinkLocalAllNodesIpv6();
     CheckUnboundSocketName();
+#ifdef _WIN32
+    CheckKernelFcntlKeepsSocketPlaceholder();
+#endif
     CheckUnboundDatagramReceive();
     CheckConnectedDatagramSendto();
     CheckUnboundDatagramShutdown();
