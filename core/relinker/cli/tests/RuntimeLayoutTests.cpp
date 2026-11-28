@@ -68,6 +68,17 @@ void topLevelModule() {
         "a module outside any directory was not listed as a file");
 }
 
+void emptyPathComponents() {
+    requireText(print("eboot.elf", {"sce_module//libc.prx", "Media/Plugins/"}),
+        Header + "  |-- eboot.elf\n" + Libraries +
+        "        |-- Media/\n"
+        "              |-- Plugins\n"
+        "        |-- sce_module/\n"
+        "              |-- libc.prx\n"
+        "\n",
+        "empty module path components were listed as files");
+}
+
 void controlCharacters() {
     const auto executable = std::string("title\n") + '\x1b' + "[2J.exe";
     const auto module = std::string("prx/module") + '\r' + '\x7f' + ".prx";
@@ -87,6 +98,7 @@ int main() {
         extraExecutables();
         moduleTree();
         topLevelModule();
+        emptyPathComponents();
         controlCharacters();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

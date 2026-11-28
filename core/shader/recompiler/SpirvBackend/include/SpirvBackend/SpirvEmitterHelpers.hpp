@@ -127,6 +127,7 @@ void EmitReturnReleasingScratch(SpirvEmitterState& state);
 void VerifyScratchPoolReturns(const SpirvEmitterState& state, const std::vector<std::uint32_t>& words);
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
 std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t index);
+std::uint32_t EmitQwordAtomicLockPointer(SpirvEmitterState& state, std::uint32_t guest);
 std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index);
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem);
 std::uint32_t EmitMemoryElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t rawIndex);
@@ -166,6 +167,7 @@ void EmitF16DenormPreserve(SpirvEmitterState& state);
 std::uint32_t EmitF16BitsToF32(SpirvEmitterState& state, std::uint32_t bits);
 std::uint32_t EmitF16BitsToF32AnyNan(SpirvEmitterState& state, std::uint32_t bits);
 std::uint32_t EmitF16BitsToF32Decoded(SpirvEmitterState& state, std::uint32_t bits);
+bool SignExtendedU32(const IrValue& root);
 void EmitProgram(SpirvEmitterState& state);
 void DefineGetBdaPointer(SpirvEmitterState& state);
 void DefineDot2F32F16Function(SpirvEmitterState& state);
@@ -286,7 +288,11 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     const auto exchanged = state.module.AllocateId();
     state.module.AddFunction(spv::OpBranch, preheader);
     EmitLabel(state, preheader);
-    state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    if (kind == ResourceKind::Image && type != TypeU32(state)) {
+        state.module.AddFunction(spv::OpAtomicIAdd, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone), state.module.Constant(spv::OpConstant, type, 0u, 0u));
+    } else {
+        state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    }
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, header);
     state.module.AddFunction(spv::OpPhi, type, observed, initial, preheader, exchanged, cont);

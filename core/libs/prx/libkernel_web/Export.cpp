@@ -157,9 +157,8 @@ int APS5_VABI __sys_osem_open_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI __sys_randomized_path_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_randomized_path_nid_disambig1_nid_postfix(const char* set, char* get, std::size_t* length) {
+    return GuestRandomizedPath_nid_no_patch(set, get, length);
 }
 
 int APS5_VABI __sys_rdup_nid_disambig1_nid_postfix(int pid, int fd) {
