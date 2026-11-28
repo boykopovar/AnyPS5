@@ -3651,6 +3651,7 @@ struct StalePlanes {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::atomic<std::uint64_t> begin{std::numeric_limits<std::uint64_t>::max()};
     std::atomic<std::uint64_t> end{0};
+    std::atomic<std::uint64_t> serial{1};
 };
 
 StalePlanes& stalePlanes() {
@@ -3667,6 +3668,7 @@ void publishStaleHull(StalePlanes& planes) {
     }
     planes.begin.store(begin, std::memory_order_release);
     planes.end.store(end, std::memory_order_release);
+    planes.serial.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void noteStalePlane(std::uint64_t begin, std::uint64_t end) {
@@ -3833,6 +3835,7 @@ void storeStaleStencil(DepthSurface& surface) {
 }
 
 void retire(DepthSurface& surface) {
+    if (!surface.retired) surfacesSerial.fetch_add(1, std::memory_order_release);
     surface.retired = true;
     for (auto* owners : {&depthOwners(), &stencilOwners()}) {
         std::erase_if(*owners, [&](const auto& entry) { return entry.second.surface == &surface; });
@@ -4389,6 +4392,15 @@ bool DepthSurfacePendingResultsOverlap(std::uint64_t address, std::size_t bytes)
         const bool pending = surface->pendingClear != 0u || surface->AnyStale() || surface->stencilStale || surface->stencilFill.has_value() || surface->depthFill.has_value();
         return surface->active->load(std::memory_order_acquire) && !surface->retired && pending && surface->Overlaps(address, bytes);
     });
+}
+
+bool DepthPlanesStaleOver(std::uint64_t address, std::size_t bytes) {
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    return bytes != 0u && overlapsStalePlane(address, end);
+}
+
+std::uint64_t StalePlanesSerial() {
+    return stalePlanes().serial.load(std::memory_order_acquire);
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope) {

@@ -26,9 +26,13 @@
 #include <vector>
 
 namespace AgcDriver { class VulkanDevice; }
-namespace AgcDriver::GuestMemory { struct WriteSubscription; }
+namespace AgcDriver::GuestMemory {
+struct WriteSubscription;
+class ProofBreakTrace;
+}
 
 namespace AgcDriver::Graphics {
+class ProofWorkTrace;
 
 class Recorder;
 
@@ -212,6 +216,19 @@ struct PresyncSurface {
 
 class ShaderResources {
 public:
+    struct ExitStamp {
+        std::uint64_t epoch = 0;
+        std::uint64_t proof = 0;
+        std::uint64_t pending = 0;
+        std::uint64_t releases = 0;
+        std::uint64_t unwatch = 0;
+        std::uint64_t importSet = 0;
+        std::uint64_t allocations = 0;
+        std::uint64_t retired = 0;
+        std::uint64_t surfaces = 0;
+        bool operator==(const ExitStamp&) const = default;
+    };
+    enum class StampAge : std::uint8_t { Current, OwnFlushes, OwnWalk, OtherThreads, Pending, OtherInput, Count };
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
     ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, bool deviceStaging = false);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
@@ -373,6 +390,7 @@ public:
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
     static std::uint64_t DepthGuardRefusals();
+    static std::uint64_t TextureReleases();
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     static std::size_t LookupLogCapacity();
     bool ChecksFaults() const { return bda != nullptr; }
@@ -390,6 +408,7 @@ public:
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
     static bool EpochProofs();
+    void AgeLastFullWalkForTest(std::chrono::steady_clock::duration age) { lastFullWalk = std::chrono::steady_clock::now() - age; }
     bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
     bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }
@@ -819,11 +838,23 @@ private:
     // no image other than the object's own sources has results pending over its surfaces and
     // regions, so those checks are skipped (see fastRevalidate).
     std::uint64_t pendingSerialSeen = 0;
-    std::uint64_t provedEpoch = 0;
-    std::uint64_t provedProof = 0;
-    std::uint64_t provedPending = 0;
-    std::uint64_t provedRetired = 0;
-    bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
+    ExitStamp currentExitStamp() const;
+    ExitStamp proved;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> flushRanges;
+    bool flushUnscoped = true;
+    std::uint64_t planesClean = 0;
+    std::uint64_t mappingsClean = 0;
+    template<typename Visit>
+    void visitKeySpans(Visit&& visit) const;
+    void recordFlushRanges();
+    bool stalePlanesRead();
+    bool imagesRemapped(std::uint64_t generation);
+    std::string rangeOwner(std::uint64_t address, std::uint64_t bytes) const;
+    void reportVerifiedWork(const ProofWorkTrace& work) const;
+    void reportVerifiedStore(std::uint64_t exitSerial, std::uint64_t startSerial, std::uint64_t endSerial, const GuestMemory::ProofBreakTrace& trace) const;
+    bool refreshPerUseCopies();
+    StampAge provedAge = StampAge::Current;
+    bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report, std::uint64_t* flushBreaks = nullptr, const GuestMemory::ProofBreakTrace* trace = nullptr);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
     bool importsReconcilable = false;
