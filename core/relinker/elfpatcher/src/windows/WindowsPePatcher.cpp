@@ -50,9 +50,12 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         if (header.Type != 7 || header.FileSize == 0) continue;
         const auto templateRva = image.GetRva(header.MappedAddress, header.FileSize);
         const auto templateEnd = static_cast<std::uint64_t>(templateRva) + header.FileSize;
-        for (const auto& import : relocations.Imports)
-            if (import.TargetRva < templateEnd && static_cast<std::uint64_t>(import.TargetRva) + 8 > templateRva)
+        for (auto& import : relocations.Imports) {
+            if (import.TargetRva >= templateEnd || static_cast<std::uint64_t>(import.TargetRva) + 8 <= templateRva) continue;
+            if (import.TargetRva < templateRva || static_cast<std::uint64_t>(import.TargetRva) + 8 > templateEnd)
                 throw Domain::RelinkerException("Runtime-bound executable TLS template relocation is not supported", header.MappedAddress + import.TargetRva - templateRva);
+            import.TlsOffset = CheckedRva(import.TargetRva - templateRva);
+        }
         for (const auto rva : relocations.TlsModuleRelocations) {
             if (rva >= templateEnd || static_cast<std::uint64_t>(rva) + 8 <= templateRva) continue;
             if (rva < templateRva || templateEnd - rva < 8)
@@ -87,21 +90,21 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    std::uint32_t tlsIndex = 0;
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
+    WindowsTlsLayout tlsLayout;
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsLayout, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
     for (const auto rva : relocations.TlsModuleRelocations) {
-        if (tlsIndex == 0) throw Domain::RelinkerException("Executable TLS relocation has no TLS block", rva);
+        if (tlsLayout.IndexRva == 0) throw Domain::RelinkerException("Executable TLS relocation has no TLS block", rva);
         bool written = false;
         for (auto& section : sections) {
             if (!section.Writable(rva, 8)) continue;
-            Io::WriteU64(section.Data, rva - section.Rva, image.GetImageBase() + tlsIndex);
+            Io::WriteU64(section.Data, rva - section.Rva, image.GetImageBase() + tlsLayout.IndexRva);
             written = true;
             break;
         }
         if (!written) throw Domain::RelinkerException("Executable TLS target is unmapped", rva);
         relocations.BaseRelocations.push_back(rva);
     }
-    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
+    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsLayout.IndexRva, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
@@ -124,7 +127,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     if (dependencyDiagnostics)
         for (const auto& import : relocations.Imports) diagnostics += import.Name + '\n';
     report(8500);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports);
+    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports, tlsLayout);
     report(9000);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;
