@@ -542,29 +542,28 @@ int APS5_VABI sceAvSettingGetHdmiKsvList(std::uint64_t argument1, void* list) {
     return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdmiMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdmiMonitorInfo(std::uint64_t argument1, void* info) {
+    if (info == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdmiRawEdid() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdmiRawEdid(void* edid) {
+    if (edid == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetMorpheusPuStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetMorpheusPuStatus(void) {
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetNativeHdmiMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetNativeHdmiMonitorInfo(std::uint64_t argument1, void* info) {
+    if (info == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetRawHdmiMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetRawHdmiMonitorInfo(void* info) {
+    if (info == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingInit() {
