@@ -71,6 +71,7 @@
 #include "prx/libSceNKWebKit/include/PalCryptoDigestExports.hpp"
 #include "prx/libSceNKWebKit/include/ProxyServerExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
+#include "prx/libSceNKWebKit/include/ImageBufferBackendExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreGeometryDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreLayoutExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreTransformExports.hpp"
