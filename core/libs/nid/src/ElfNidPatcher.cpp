@@ -245,35 +245,177 @@ void RebuildGnuHash(
         std::memset(elf.data() + sectionOffset + requiredSize, 0, sectionSize - requiredSize);
 }
 
-void RemapDynamicNeededOffsets(
+std::vector<std::size_t> DynamicEntryOffsets(const std::vector<std::uint8_t>& elf, const Elf64_Ehdr& ehdr) {
+    using namespace Internal;
+
+    const auto readEntries = [&](std::uint64_t offset, std::uint64_t size, const char* table) {
+        if (size % sizeof(Elf64_Dyn) != 0u)
+            throw std::runtime_error(std::string("invalid ELF ") + table + " size");
+        RequireElfRange(elf, offset, size, table);
+
+        std::vector<std::size_t> entries;
+        const auto count = static_cast<std::size_t>(size / sizeof(Elf64_Dyn));
+        for (std::size_t index = 0u; index < count; ++index) {
+            const auto entryOffset = static_cast<std::size_t>(offset) + index * sizeof(Elf64_Dyn);
+            if (Read<Elf64_Dyn>(elf, entryOffset).d_tag == kDtNull) break;
+            entries.push_back(entryOffset);
+        }
+        return entries;
+    };
+
+    if (ehdr.e_phnum != 0u) {
+        if (ehdr.e_phoff == 0u || ehdr.e_phentsize != sizeof(Elf64_Phdr))
+            throw std::runtime_error("invalid ELF program header table for PT_DYNAMIC lookup");
+        RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
+
+        bool foundDynamicSegment = false;
+        std::vector<std::size_t> offsets;
+        for (std::uint16_t i = 0u; i < ehdr.e_phnum; ++i) {
+            const auto phdr = Read<Elf64_Phdr>(elf, static_cast<std::size_t>(ehdr.e_phoff) + i * sizeof(Elf64_Phdr));
+            if (phdr.p_type != 2u) continue;
+            if (foundDynamicSegment) throw std::runtime_error("multiple PT_DYNAMIC segments");
+            foundDynamicSegment = true;
+            offsets = readEntries(phdr.p_offset, phdr.p_filesz, "dynamic segment");
+        }
+        if (foundDynamicSegment) return offsets;
+    }
+
+    std::vector<std::size_t> offsets;
+    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
+        const auto shdr = Read<Elf64_Shdr>(elf, static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr));
+        if (shdr.sh_type != kShtDynamic) continue;
+        if (shdr.sh_entsize != sizeof(Elf64_Dyn))
+            throw std::runtime_error("invalid ELF dynamic section layout");
+        auto entries = readEntries(shdr.sh_offset, shdr.sh_size, "dynamic section");
+        offsets.insert(offsets.end(), entries.begin(), entries.end());
+    }
+    return offsets;
+}
+
+void ValidateExecutableDynamicStringTable(
+    const std::vector<std::uint8_t>& elf,
+    const Elf64_Ehdr& ehdr,
+    std::uint64_t dynStrOffset,
+    std::uint64_t dynStrSize
+) {
+    using namespace Internal;
+
+    std::size_t standardAddressCount = 0u;
+    std::size_t standardSizeCount = 0u;
+    std::size_t sceAddressCount = 0u;
+    std::size_t sceSizeCount = 0u;
+    std::uint64_t standardAddress = 0u;
+    std::uint64_t standardSize = 0u;
+    std::uint64_t sceAddress = 0u;
+    std::uint64_t sceSize = 0u;
+    const auto dynamicEntries = DynamicEntryOffsets(elf, ehdr);
+    for (const auto entryOffset : dynamicEntries) {
+        const auto entry = Read<Elf64_Dyn>(elf, entryOffset);
+        if (entry.d_tag == 5) {
+            ++standardAddressCount;
+            standardAddress = entry.d_val;
+        }
+        if (entry.d_tag == 10) {
+            ++standardSizeCount;
+            standardSize = entry.d_val;
+        }
+        if (entry.d_tag == kDtOsStrtab) {
+            ++sceAddressCount;
+            sceAddress = entry.d_val;
+        }
+        if (entry.d_tag == kDtOsStrsz) {
+            ++sceSizeCount;
+            sceSize = entry.d_val;
+        }
+    }
+
+    const bool hasStandardPair = standardAddressCount == 1u && standardSizeCount == 1u;
+    const bool hasScePair = sceAddressCount == 1u && sceSizeCount == 1u;
+    const bool hasAnyStandardTag = standardAddressCount != 0u || standardSizeCount != 0u;
+    const bool hasAnySceTag = sceAddressCount != 0u || sceSizeCount != 0u;
+    if (!hasAnyStandardTag && !hasAnySceTag) return;
+    if (!hasStandardPair && hasAnyStandardTag)
+        throw std::runtime_error("ELF executable requires exactly one complete DT_STRTAB/DT_STRSZ pair");
+    if (!hasScePair && hasAnySceTag)
+        throw std::runtime_error("ELF executable requires exactly one complete DT_OS_STRTAB/DT_OS_STRSZ pair");
+    if (hasStandardPair && hasScePair)
+        throw std::runtime_error("ELF executable has ambiguous dynamic string table tags");
+
+    if (ehdr.e_phoff == 0u || ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0u) {
+        throw std::runtime_error("ELF executable dynamic string table has no valid program header table");
+    }
+    RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
+    std::vector<Elf64_Phdr> segments;
+    segments.reserve(ehdr.e_phnum);
+    for (std::uint16_t index = 0u; index < ehdr.e_phnum; ++index) {
+        segments.push_back(Read<Elf64_Phdr>(elf, static_cast<std::size_t>(ehdr.e_phoff) + index * sizeof(Elf64_Phdr)));
+    }
+
+    if (hasScePair) {
+        constexpr std::uint32_t kPtSceDynlibData = 0x61000000u;
+        const Elf64_Phdr* sceDynlib = nullptr;
+        for (const auto& segment : segments) {
+            if (segment.p_type != kPtSceDynlibData) continue;
+            if (sceDynlib) throw std::runtime_error("multiple PT_SCE_DYNLIBDATA segments for executable string table");
+            sceDynlib = &segment;
+        }
+        if (!sceDynlib) throw std::runtime_error("missing PT_SCE_DYNLIBDATA for SCE executable string table");
+        RequireElfRange(elf, sceDynlib->p_offset, sceDynlib->p_filesz, "SCE dynamic data");
+        if (sceAddress > sceDynlib->p_filesz || sceSize > sceDynlib->p_filesz - sceAddress ||
+            sceSize != dynStrSize || sceDynlib->p_offset > UINT64_MAX - sceAddress ||
+            sceDynlib->p_offset + sceAddress != dynStrOffset) {
+            throw std::runtime_error("DT_OS_STRTAB does not match .dynstr section");
+        }
+        RequireElfRange(elf, sceDynlib->p_offset + sceAddress, sceSize, "SCE dynamic string table");
+        return;
+    }
+
+    if (standardSize != dynStrSize)
+        throw std::runtime_error("DT_STRTAB does not match .dynstr section");
+
+    bool mapped = false;
+    std::uint64_t mappedOffset = 0u;
+    for (const auto& segment : segments) {
+        if (segment.p_type != 1u || (segment.p_flags & 4u) == 0u || standardAddress < segment.p_vaddr)
+            continue;
+        const auto relativeOffset = standardAddress - segment.p_vaddr;
+        if (relativeOffset >= segment.p_filesz || standardSize > segment.p_filesz - relativeOffset)
+            continue;
+        if (segment.p_offset > UINT64_MAX - relativeOffset)
+            throw std::runtime_error("DT_STRTAB file offset overflow");
+        const auto candidateOffset = segment.p_offset + relativeOffset;
+        if (mapped && candidateOffset != mappedOffset)
+            throw std::runtime_error("DT_STRTAB maps to ambiguous file ranges");
+        mapped = true;
+        mappedOffset = candidateOffset;
+    }
+    if (!mapped || mappedOffset != dynStrOffset)
+        throw std::runtime_error("DT_STRTAB does not match .dynstr section");
+    RequireElfRange(elf, mappedOffset, standardSize, "dynamic string table");
+}
+
+void RemapDynamicNameOffsets(
     std::vector<std::uint8_t>& elf,
     const Elf64_Ehdr& ehdr,
     const std::vector<std::pair<std::uint32_t, std::uint32_t>>& oldToNewOffset
 ) {
     using namespace Internal;
 
-    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
-        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
-        const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
-        if (shdr.sh_type != kShtDynamic) continue;
+    for (const auto entryOffset : DynamicEntryOffsets(elf, ehdr)) {
+        const auto dyn = Read<Elf64_Dyn>(elf, entryOffset);
+        if (!IsDynamicNameTag(dyn.d_tag)) continue;
 
-        const std::size_t dynOffset = static_cast<std::size_t>(shdr.sh_offset);
-        const std::size_t dynCount = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Dyn);
+        const auto oldNameOffset = static_cast<std::uint32_t>(dyn.d_val);
+        const auto mapped = std::find_if(
+            oldToNewOffset.begin(), oldToNewOffset.end(),
+            [&](const auto& entry) { return entry.first == oldNameOffset; }
+        );
+        if (mapped == oldToNewOffset.end()) continue;
 
-        for (std::size_t d = 0u; d < dynCount; ++d) {
-            const std::size_t entryOffset = dynOffset + d * sizeof(Elf64_Dyn);
-            const auto dyn = Read<Elf64_Dyn>(elf, entryOffset);
-            if (!IsDynamicNameTag(dyn.d_tag)) continue;
-
-            const auto oldNameOffset = static_cast<std::uint32_t>(dyn.d_val);
-            const auto mapped = std::find_if(
-                oldToNewOffset.begin(), oldToNewOffset.end(),
-                [&](const auto& entry) { return entry.first == oldNameOffset; }
-            );
-            if (mapped == oldToNewOffset.end()) continue;
-
-            Write(elf, entryOffset + offsetof(Elf64_Dyn, d_val), static_cast<std::uint64_t>(mapped->second));
-        }
+        const auto value = IsPackedDynamicNameTag(dyn.d_tag)
+            ? (dyn.d_val & 0xffffffff00000000ull) | mapped->second
+            : static_cast<std::uint64_t>(mapped->second);
+        Write(elf, entryOffset + offsetof(Elf64_Dyn, d_val), value);
     }
 }
 
@@ -343,23 +485,11 @@ std::vector<std::uint32_t> CollectDynamicNameOffsets(const std::vector<std::uint
     using namespace Internal;
 
     std::vector<std::uint32_t> offsets;
-
-    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
-        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
-        const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
-        if (shdr.sh_type != kShtDynamic) continue;
-
-        const std::size_t dynOffset = static_cast<std::size_t>(shdr.sh_offset);
-        const std::size_t dynCount = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Dyn);
-
-        for (std::size_t d = 0u; d < dynCount; ++d) {
-            const auto dyn = Read<Elf64_Dyn>(elf, dynOffset + d * sizeof(Elf64_Dyn));
-            if (dyn.d_tag == kDtNull) break;
-            if (!IsDynamicNameTag(dyn.d_tag)) continue;
+    for (const auto entryOffset : DynamicEntryOffsets(elf, ehdr)) {
+        const auto dyn = Read<Elf64_Dyn>(elf, entryOffset);
+        if (IsDynamicNameTag(dyn.d_tag))
             offsets.push_back(static_cast<std::uint32_t>(dyn.d_val));
-        }
     }
-
     return offsets;
 }
 
@@ -398,11 +528,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
-        if (shdr.sh_type == kShtDynamic) {
-            if (shdr.sh_entsize != sizeof(Elf64_Dyn) || shdr.sh_size % sizeof(Elf64_Dyn))
-                throw std::runtime_error("invalid ELF dynamic section layout");
-            hasDynamic = true;
-        }
+        if (shdr.sh_type == kShtDynamic) hasDynamic = true;
         if (shdr.sh_type == kShtDynsym) {
             if (shdr.sh_entsize != sizeof(Elf64_Sym) || shdr.sh_size % sizeof(Elf64_Sym) || shdr.sh_link >= ehdr.e_shnum)
                 throw std::runtime_error("invalid ELF dynsym layout");
@@ -481,6 +607,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     }
 
     if (dynStrOffset == 0u) throw std::runtime_error("no .dynstr section");
+    if (options.executable) ValidateExecutableDynamicStringTable(elf, ehdr, dynStrOffset, dynStrSize);
 
     const std::vector<std::uint8_t> origDynStr(
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),
@@ -515,6 +642,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     };
 
     std::vector<SymbolNameUse> uses;
+    std::vector<std::size_t> versymOffsetsToReset;
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint16_t>> patchedExports;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
@@ -541,7 +669,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             if (options.executable || isUnversioned) {
                 newValue = importMap.at(symName);
                 if (options.executable && newValue != symName && versymOffset != 0u)
-                    Write(elf, versymOffset + i * sizeof(std::uint16_t), std::uint16_t{1});
+                    versymOffsetsToReset.push_back(versymOffset + i * sizeof(std::uint16_t));
             }
         }
 
@@ -592,6 +720,16 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     for (const auto offset : preservedOffsets)
         preservedToNewOffset.emplace_back(offset, valueOffsets.at(ReadCStr(origDynStr, offset)));
 
+    std::uint64_t relocatedSceDynlibSourceOffset = 0;
+    std::uint64_t relocatedSceDynlibOffset = 0;
+    std::uint64_t relocatedSceDynlibSize = 0;
+    bool relocatedSceDynlib = false;
+    std::uint64_t relocatedDynamicSourceOffset = 0;
+    std::uint64_t relocatedDynamicOffset = 0;
+    std::uint64_t relocatedDynamicAddress = 0;
+    std::uint64_t relocatedDynamicSize = 0;
+    bool relocatedDynamic = false;
+
     if (newDynStr.size() > dynStrSize && options.executable) {
         if (ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0 || ehdr.e_phnum >= 0xfffdu)
             throw std::runtime_error("invalid ELF program header table for string growth");
@@ -615,12 +753,121 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (!hasPhdr) segments.insert(segments.begin(), Elf64_Phdr{6, 4, 0, 0, 0, 0, 0, 8});
         const auto fileOffset = align(elf.size());
         const auto address = align(virtualEnd);
+        const auto newDynStrSize = static_cast<std::uint64_t>(newDynStr.size());
+        const auto inputSize = static_cast<std::uint64_t>(elf.size());
+        if (newDynStrSize > UINT64_MAX - inputSize)
+            throw std::runtime_error("ELF string segment overflow");
+        const auto maximumAlignmentPadding = std::max<std::uint64_t>(0x100000u, inputSize + newDynStrSize);
         const auto tableSize = (segments.size() + 1u) * sizeof(Elf64_Phdr);
-        const auto segmentSize = tableSize + newDynStr.size();
-        if (segmentSize > UINT64_MAX - address || segmentSize > SIZE_MAX - fileOffset) throw std::runtime_error("ELF string segment overflow");
+        if (tableSize > UINT64_MAX - fileOffset)
+            throw std::runtime_error("ELF program header table overflow");
+        const auto minimumDataOffset = fileOffset + tableSize;
+
         for (auto& segment : segments) {
             if (segment.p_type != 6) continue;
             segment = {6, 4, fileOffset, address, address, tableSize, tableSize, 8};
+        }
+
+        const auto dynamicEntries = DynamicEntryOffsets(elf, ehdr);
+        std::size_t standardAddressCount = 0;
+        std::size_t standardSizeCount = 0;
+        std::size_t sceAddressCount = 0;
+        std::size_t sceSizeCount = 0;
+        for (const auto entryOffset : dynamicEntries) {
+            const auto entry = Read<Elf64_Dyn>(elf, entryOffset);
+            if (entry.d_tag == 5) ++standardAddressCount;
+            if (entry.d_tag == 10) ++standardSizeCount;
+            if (entry.d_tag == kDtOsStrtab) ++sceAddressCount;
+            if (entry.d_tag == kDtOsStrsz) ++sceSizeCount;
+        }
+        const bool hasStandardPair = standardAddressCount == 1 && standardSizeCount == 1;
+        const bool hasScePair = sceAddressCount == 1 && sceSizeCount == 1;
+        if ((!hasStandardPair && !hasScePair) ||
+            (standardAddressCount != 0 && !hasStandardPair) ||
+            (standardSizeCount != 0 && !hasStandardPair) ||
+            (sceAddressCount != 0 && !hasScePair) ||
+            (sceSizeCount != 0 && !hasScePair) ||
+            (hasStandardPair && hasScePair))
+            throw std::runtime_error("ELF executable requires exactly one complete DT_STRTAB/DT_STRSZ pair");
+
+        std::size_t sceDynlibIndex = segments.size();
+        std::uint64_t sceDynlibSourceOffset = 0;
+        std::uint64_t sceDynlibSize = 0;
+        std::uint64_t sceDynlibOffset = minimumDataOffset;
+        if (hasScePair) {
+            constexpr std::uint32_t kPtSceDynlibData = 0x61000000u;
+            for (std::size_t index = 0; index < segments.size(); ++index) {
+                if (segments[index].p_type != kPtSceDynlibData) continue;
+                if (sceDynlibIndex != segments.size())
+                    throw std::runtime_error("multiple PT_SCE_DYNLIBDATA segments for executable string growth");
+                sceDynlibIndex = index;
+            }
+            if (sceDynlibIndex == segments.size())
+                throw std::runtime_error("missing PT_SCE_DYNLIBDATA for SCE executable string growth");
+            const auto& sceDynlib = segments[sceDynlibIndex];
+            RequireElfRange(elf, sceDynlib.p_offset, sceDynlib.p_filesz, "SCE dynamic data");
+            sceDynlibSourceOffset = sceDynlib.p_offset;
+            sceDynlibSize = sceDynlib.p_filesz;
+
+            const auto alignToSegment = [](std::uint64_t value, std::uint64_t alignment, std::uint64_t segmentAddress) {
+                if (alignment <= 1u) return value;
+                if ((alignment & (alignment - 1u)) != 0u)
+                    throw std::runtime_error("invalid PT_SCE_DYNLIBDATA alignment");
+                const auto mask = alignment - 1u;
+                const auto current = value & mask;
+                const auto target = segmentAddress & mask;
+                const auto delta = (target - current) & mask;
+                if (delta > UINT64_MAX - value)
+                    throw std::runtime_error("ELF SCE dynamic data offset overflow");
+                return value + delta;
+            };
+            if (sceDynlib.p_align > 1u) {
+                const auto mask = sceDynlib.p_align - 1u;
+                if ((sceDynlib.p_align & mask) != 0u ||
+                    (sceDynlib.p_offset & mask) != (sceDynlib.p_vaddr & mask))
+                    throw std::runtime_error("invalid PT_SCE_DYNLIBDATA alignment");
+            }
+            sceDynlibOffset = alignToSegment(minimumDataOffset, sceDynlib.p_align, sceDynlib.p_vaddr);
+            if (sceDynlibOffset - minimumDataOffset > maximumAlignmentPadding)
+                throw std::runtime_error("PT_SCE_DYNLIBDATA alignment padding exceeds safety limit");
+        }
+
+        const auto dataPrefixSize = sceDynlibOffset - fileOffset;
+        if (sceDynlibSize > UINT64_MAX - dataPrefixSize ||
+            newDynStrSize > UINT64_MAX - dataPrefixSize - sceDynlibSize)
+            throw std::runtime_error("ELF string segment overflow");
+        const auto segmentSize = dataPrefixSize + sceDynlibSize + newDynStrSize;
+        if (segmentSize > UINT64_MAX - address || segmentSize > SIZE_MAX - fileOffset)
+            throw std::runtime_error("ELF string segment overflow");
+        const auto newDynStrOffset = sceDynlibOffset + sceDynlibSize;
+
+        if (hasScePair) {
+            auto& sceDynlib = segments[sceDynlibIndex];
+            sceDynlib.p_offset = sceDynlibOffset;
+            sceDynlib.p_filesz = sceDynlibSize + newDynStrSize;
+            sceDynlib.p_memsz = std::max(sceDynlib.p_memsz, sceDynlib.p_filesz);
+            relocatedSceDynlibSourceOffset = sceDynlibSourceOffset;
+            relocatedSceDynlibOffset = sceDynlibOffset;
+            relocatedSceDynlibSize = sceDynlibSize;
+            relocatedSceDynlib = true;
+
+            for (auto& segment : segments) {
+                if (segment.p_type != 2u || segment.p_offset < sceDynlibSourceOffset) continue;
+                const auto relativeOffset = segment.p_offset - sceDynlibSourceOffset;
+                if (relativeOffset > sceDynlibSize || segment.p_filesz > sceDynlibSize - relativeOffset) continue;
+                const auto oldVirtualAddress = segment.p_vaddr;
+                const auto oldPhysicalAddress = segment.p_paddr;
+                segment.p_offset = sceDynlibOffset + relativeOffset;
+                segment.p_vaddr = address + (segment.p_offset - fileOffset);
+                if (oldPhysicalAddress == oldVirtualAddress) segment.p_paddr = segment.p_vaddr;
+                if (segment.p_align > 1u && segment.p_offset % segment.p_align != segment.p_vaddr % segment.p_align)
+                    throw std::runtime_error("invalid relocated PT_DYNAMIC alignment");
+                relocatedDynamicSourceOffset = sceDynlibSourceOffset + relativeOffset;
+                relocatedDynamicOffset = segment.p_offset;
+                relocatedDynamicAddress = segment.p_vaddr;
+                relocatedDynamicSize = segment.p_filesz;
+                relocatedDynamic = true;
+            }
         }
         segments.push_back({1, 4, fileOffset, address, address, segmentSize, segmentSize, 4096});
         elf.resize(static_cast<std::size_t>(fileOffset + segmentSize), 0);
@@ -628,34 +875,29 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             Write(elf, fileOffset + index * sizeof(Elf64_Phdr), segments[index]);
         Write(elf, offsetof(Elf64_Ehdr, e_phoff), fileOffset);
         Write(elf, offsetof(Elf64_Ehdr, e_phnum), static_cast<std::uint16_t>(segments.size()));
-        dynStrOffset = static_cast<std::size_t>(fileOffset + tableSize);
+        dynStrOffset = static_cast<std::size_t>(newDynStrOffset);
         dynStrSize = newDynStr.size();
-        const auto stringAddress = address + tableSize;
+        const auto stringAddress = address + (newDynStrOffset - fileOffset);
         const auto sectionOffset = ehdr.e_shoff + dynSymSectionLink * sizeof(Elf64_Shdr);
         auto strings = Read<Elf64_Shdr>(elf, sectionOffset);
         strings.sh_offset = dynStrOffset;
         strings.sh_addr = stringAddress;
         strings.sh_size = dynStrSize;
         Write(elf, sectionOffset, strings);
-        bool foundAddress = false;
-        bool foundSize = false;
-        for (std::size_t index = 0; index < ehdr.e_shnum; ++index) {
-            const auto section = Read<Elf64_Shdr>(elf, ehdr.e_shoff + index * sizeof(Elf64_Shdr));
-            if (section.sh_type != kShtDynamic) continue;
-            RequireElfRange(elf, section.sh_offset, section.sh_size, "dynamic");
-            for (std::uint64_t offset = 0; offset + sizeof(Elf64_Dyn) <= section.sh_size; offset += sizeof(Elf64_Dyn)) {
-                auto entry = Read<Elf64_Dyn>(elf, section.sh_offset + offset);
-                if (entry.d_tag == kDtNull) break;
-                if (entry.d_tag == 5) { entry.d_val = stringAddress; foundAddress = true; }
-                if (entry.d_tag == 10) { entry.d_val = dynStrSize; foundSize = true; }
-                Write(elf, section.sh_offset + offset, entry);
-            }
+
+        for (const auto entryOffset : dynamicEntries) {
+            auto entry = Read<Elf64_Dyn>(elf, entryOffset);
+            if (entry.d_tag == 5) entry.d_val = stringAddress;
+            if (entry.d_tag == 10) entry.d_val = dynStrSize;
+            if (entry.d_tag == kDtOsStrtab) entry.d_val = newDynStrOffset - sceDynlibOffset;
+            if (entry.d_tag == kDtOsStrsz) entry.d_val = dynStrSize;
+            Write(elf, entryOffset, entry);
         }
-        if (!foundAddress || !foundSize) throw std::runtime_error("ELF executable lacks DT_STRTAB or DT_STRSZ");
     }
     if (newDynStr.size() > dynStrSize) {
         throw std::runtime_error("rebuilt .dynstr exceeds original section size; relinking with a larger section is required");
     }
+    for (const auto offset : versymOffsetsToReset) Write(elf, offset, std::uint16_t{1});
     newDynStr.resize(dynStrSize, 0u);
 
     std::vector<std::string> newSymbolNames(symCount);
@@ -666,7 +908,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     std::memcpy(elf.data() + dynStrOffset, newDynStr.data(), newDynStr.size());
 
-    RemapDynamicNeededOffsets(elf, ehdr, preservedToNewOffset);
+    RemapDynamicNameOffsets(elf, ehdr, preservedToNewOffset);
     RemapVerneedOffsets(elf, ehdr, preservedToNewOffset);
 
     if (gnuHashOffset != 0u) {
@@ -677,6 +919,26 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         RebuildGnuHash(elf, gnuHashOffset, gnuHashSize, symCount, newSymbolNames);
     }
     if (sysvHashOffset != 0u) RebuildSysvHash(elf, sysvHashOffset, newSymbolNames);
+    if (relocatedSceDynlib) {
+        std::copy_n(
+            elf.begin() + static_cast<std::size_t>(relocatedSceDynlibSourceOffset),
+            static_cast<std::size_t>(relocatedSceDynlibSize),
+            elf.begin() + static_cast<std::size_t>(relocatedSceDynlibOffset)
+        );
+    }
+    if (relocatedDynamic) {
+        for (std::uint16_t index = 0; index < ehdr.e_shnum; ++index) {
+            const auto sectionOffset = static_cast<std::size_t>(ehdr.e_shoff) + index * sizeof(Elf64_Shdr);
+            auto section = Read<Elf64_Shdr>(elf, sectionOffset);
+            if (section.sh_type != kShtDynamic ||
+                section.sh_offset != relocatedDynamicSourceOffset ||
+                section.sh_size != relocatedDynamicSize)
+                continue;
+            section.sh_offset = relocatedDynamicOffset;
+            section.sh_addr = relocatedDynamicAddress;
+            Write(elf, sectionOffset, section);
+        }
+    }
 }
 
 }
