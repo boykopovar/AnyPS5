@@ -1,12 +1,22 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -117,6 +127,66 @@ void TestNullRange() {
     Require(threw);
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 2) == 0);
+#endif
+    }
+
+    unsigned char* Guard() const { return base + pageSize; }
+};
+
+template <typename Action>
+bool ThrowsNotImplemented(Action&& action) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == "_ZNK3WTF14MediaTimeRange12toJSONStringEv not implemented";
+    }
+    return false;
+}
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK3WTF14MediaTimeRange12toJSONStringEv(reinterpret_cast<const MediaTimeRange*>(0x10))); }));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK3WTF14MediaTimeRange12toJSONStringEv(reinterpret_cast<const MediaTimeRange*>(pages.Guard()))); }));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK3WTF14MediaTimeRange12toJSONStringEv(reinterpret_cast<const MediaTimeRange*>(pages.Guard() - 16))); }));
+
+    const MediaTimeRange valid{Rational(1, 2, Valid), Rational(1, 2, Valid)};
+    unsigned char* boundary = pages.Guard() - sizeof(MediaTimeRange);
+    auto* placed = ::new (boundary) MediaTimeRange(valid);
+    const String result = _ZNK3WTF14MediaTimeRange12toJSONStringEv(placed);
+    Require(result.impl != nullptr);
+    Require(std::string(static_cast<const char*>(result.impl->data), result.impl->length) == "{\"start\":" + Half + ",\"end\":" + Half + "}");
+}
+
 }
 
 int main() {
@@ -125,5 +195,6 @@ int main() {
     TestDoubleTimes();
     TestWholeRange();
     TestNullRange();
+    TestGuestPointers();
     return 0;
 }
