@@ -3271,8 +3271,8 @@ private:
     }
 };
 
-std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, int, int, std::uint32_t>, std::unique_ptr<LayeredDepthStorage>>& layeredStorages() {
-    static auto* storages = new std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, int, int, std::uint32_t>, std::unique_ptr<LayeredDepthStorage>>();
+std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, int, int, std::uint32_t, VkFormat>, std::unique_ptr<LayeredDepthStorage>>& layeredStorages() {
+    static auto* storages = new std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, int, int, std::uint32_t, VkFormat>, std::unique_ptr<LayeredDepthStorage>>();
     return *storages;
 }
 
@@ -5534,7 +5534,7 @@ std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, Dept
     const auto bytesPerTexel = d16 ? 2u : 4u;
     surface.RequireStorable(resource);
     Require(!DescribeSurface(resource).levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
-    const std::tuple key{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray};
+    const std::tuple key{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray, target.format};
     auto found = layeredStorages().find(key);
     if (found == layeredStorages().end()) found = layeredStorages().emplace(key, std::make_unique<LayeredDepthStorage>(context, resource, target, bytesPerTexel, resource.baseArray, layers)).first;
     else static_cast<void>(found->second->storage->Refresh());
