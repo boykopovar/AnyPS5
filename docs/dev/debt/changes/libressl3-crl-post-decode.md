@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [d2i_X509_CRL](../../../core/libs/prx/libSceLibreSsl3/src/X509Crl.cpp) (libSceLibreSsl3) - not measured on a PS5. A CRL with one IDP extension throws (not decoded); `certificateIssuer` decodes `directoryName` only (others throw); the revoked stack has no comparator. Taking LibreSSL's [bf24a103](https://github.com/libressl/openbsd/commit/bf24a103424334af46d2cf695b6e60f39ce9e3a8), the extension scan continues past a critical AKID, delta CRL indicator or IDP (an unhandled critical extension still stops both), so a later unhandled critical extension or noncritical freshest CRL extension sets `EXFLAG_CRITICAL` or `EXFLAG_FRESHEST` (affecting `get_delta_sk` under `X509_V_FLAG_USE_DELTAS`) where LibreSSL 4.0.0 stops and leaves them unset. Hash, cached extensions, reasons and flags unaffected by the scan follow 4.0.0 [`crl_set_issuers` and `crl_cb`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_crl.c#L189-L340).

@@ -10,6 +10,8 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -20,10 +22,13 @@ namespace {
 
 constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
+constexpr int NestedAsn1Error = 58;
 constexpr int LengthMismatch = 62;
 constexpr int MallocFailure = 65;
+constexpr int AuxError = 100;
 constexpr int BadObjectHeader = 102;
 constexpr int BooleanWrongLength = 106;
+constexpr int ExplicitTagNotConstructed = 120;
 constexpr int FieldMissing = 121;
 constexpr int HeaderTooLong = 123;
 constexpr int IllegalCharacters = 124;
@@ -32,6 +37,7 @@ constexpr int InvalidUtf8String = 134;
 constexpr int MissingEndOfContents = 137;
 constexpr int MstringNotUniversal = 139;
 constexpr int MstringWrongTag = 140;
+constexpr int NoMatchingChoiceType = 143;
 constexpr int NullIsWrongLength = 144;
 constexpr int SequenceLengthMismatch = 148;
 constexpr int SequenceNotConstructed = 149;
@@ -63,9 +69,25 @@ constexpr int UniversalStringType = 28;
 constexpr int BmpStringType = 30;
 constexpr int NegativeType = 0x100;
 
+constexpr int TooLarge = 223;
+constexpr int TooSmall = 224;
+constexpr int WrongIntegerType = 225;
+
+constexpr int CrlNumberNid = 88;
+constexpr int AuthorityKeyIdNid = 90;
+constexpr int DeltaCrlNid = 140;
 constexpr int CrlReasonNid = 141;
+constexpr int IssuingDistributionPointNid = 770;
 constexpr int CertificateIssuerNid = 771;
+constexpr int FreshestCrlNid = 857;
+constexpr int GeneralNameDirectory = 4;
+constexpr std::uint64_t GeneralNameMax = 8;
 constexpr int CrlReasonRemoveFromCrl = 8;
+constexpr int NoCrlReason = -1;
+constexpr int AllCrlReasons = 0x807f;
+constexpr int InvalidFlag = 0x80;
+constexpr int CriticalFlag = 0x200;
+constexpr int FreshestFlag = 0x1000;
 
 constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr std::int64_t BitsLeftMask = 0x07;
@@ -74,6 +96,7 @@ constexpr int ObjectDynamic = 0x01;
 constexpr int ObjectDynamicData = 0x08;
 
 constexpr unsigned char Constructed = 0x20;
+constexpr unsigned char ContextSpecificClass = 0x80;
 constexpr unsigned char ClassMask = 0xc0;
 constexpr unsigned char TagNumberMask = 0x1f;
 constexpr std::uint64_t MaxTagNumberBeforeShift = std::numeric_limits<std::int32_t>::max() >> 7;
@@ -396,6 +419,17 @@ void FreeRevokedElement(void* revoked) {
     FreeRevoked(static_cast<LibreSsl3Revoked*>(revoked));
 }
 
+void FreeIssuerName(void* element) {
+    auto* name = static_cast<LibreSslGeneralName*>(element);
+    if (!name) return;
+    if (name->type == GeneralNameDirectory) FreeName(static_cast<LibreSslX509Name*>(name->value));
+    free_nid_postfix(name);
+}
+
+void FreeIssuerNames(void* element) {
+    FreeStack(static_cast<const LibreSsl3Stack*>(element), FreeIssuerName);
+}
+
 void FreeCrl(LibreSsl3X509Crl* crl) {
     if (!crl) return;
     LibreSsl3CrlInfo* info = crl->crl;
@@ -411,6 +445,10 @@ void FreeCrl(LibreSsl3X509Crl* crl) {
     }
     FreeAlgor(crl->sigAlg);
     FreeString(crl->signature);
+    AUTHORITY_KEYID_free_nid_postfix(crl->akid);
+    ASN1_INTEGER_free_nid_postfix(crl->crlNumber);
+    ASN1_INTEGER_free_nid_postfix(crl->baseCrlNumber);
+    FreeStack(crl->issuers, FreeIssuerNames);
     free_nid_postfix(crl);
 }
 
@@ -463,21 +501,128 @@ void* GetExtension(const LibreSsl3Stack* extensions, int nid, int* crit, int* id
     return X509V3_EXT_d2i_nid_postfix(const_cast<LibreSsl3X509Extension*>(extension));
 }
 
-int EnumeratedValue(const Asn1String* value) {
-    if (!value || value->type != EnumeratedType) return 0;
-    if (value->length <= 0 || value->length > 4 || !value->data) return 0;
-    std::uint32_t result = 0;
-    for (int index = 0; index < value->length; ++index) result = (result << 8) | value->data[index];
-    if (result > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) return 0;
-    return static_cast<int>(result);
+int EnumeratedValue(const Asn1String& value) {
+    if (value.length < 0) return -1;
+    if (value.type != EnumeratedType && value.type != (EnumeratedType | NegativeType)) {
+        PutError(WrongIntegerType);
+        return -1;
+    }
+    if (value.length != 0 && !value.data) throw std::invalid_argument("d2i_X509_CRL: CRL reason without data");
+    std::uint64_t magnitude = 0;
+    for (int index = 0; index < value.length; ++index) {
+        if (magnitude > (std::numeric_limits<std::uint64_t>::max() >> 8)) {
+            PutError(TooLarge);
+            return -1;
+        }
+        magnitude = (magnitude << 8) | value.data[index];
+    }
+    if (value.type & NegativeType) {
+        const auto minMagnitude = static_cast<std::uint64_t>(0) -
+            static_cast<std::uint64_t>(static_cast<std::int64_t>(std::numeric_limits<int>::min()));
+        if (magnitude > minMagnitude) {
+            PutError(TooSmall);
+            return -1;
+        }
+        return static_cast<int>(static_cast<std::int64_t>(0 - magnitude));
+    }
+    if (magnitude > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+        PutError(TooLarge);
+        return -1;
+    }
+    return static_cast<int>(magnitude);
 }
 
-int EntryReason(const LibreSsl3Stack* extensions) {
-    void* value = GetExtension(extensions, CrlReasonNid, nullptr, nullptr);
-    if (!value) return 0;
-    const int reason = EnumeratedValue(static_cast<const Asn1String*>(value));
-    FreeString(static_cast<Asn1String*>(value));
-    return reason;
+bool HasSingleExtension(const LibreSsl3Stack* extensions, int nid) {
+    const LibreSslAsn1Object* object = LibreSsl3::ObjectByNid(nid);
+    if (!object) throw std::logic_error("d2i_X509_CRL: no object for an extension NID");
+    const int first = FindExtension(extensions, object, -1);
+    return first >= 0 && FindExtension(extensions, object, first) < 0;
+}
+
+const LibreSsl3X509Extension& ExtensionAt(const LibreSsl3Stack& extensions, int index) {
+    if (!extensions.data) throw std::invalid_argument("d2i_X509_CRL: null extension array");
+    const auto* extension = static_cast<const LibreSsl3X509Extension*>(static_cast<const void*>(extensions.data[index]));
+    if (!extension) throw std::invalid_argument("d2i_X509_CRL: null extension");
+    return *extension;
+}
+
+LibreSsl3Stack* DecodeCertificateIssuers(const LibreSsl3X509Extension* extension);
+
+bool SetEntryIssuers(LibreSsl3X509Crl* crl) {
+    const LibreSsl3Stack* entries = crl->crl->revoked;
+    if (!entries) return true;
+    const LibreSslAsn1Object* issuerObject = LibreSsl3::ObjectByNid(CertificateIssuerNid);
+    if (!issuerObject) throw std::logic_error("d2i_X509_CRL: no object for an extension NID");
+    const LibreSsl3Stack* current = nullptr;
+    for (int index = 0; index < entries->num; ++index) {
+        if (!entries->data) throw std::invalid_argument("d2i_X509_CRL: null revoked array");
+        auto* entry = static_cast<LibreSsl3Revoked*>(static_cast<void*>(entries->data[index]));
+        if (!entry) throw std::invalid_argument("d2i_X509_CRL: null revoked entry");
+        const int issuerPosition = FindExtension(entry->extensions, issuerObject, -1);
+        if (issuerPosition >= 0) {
+            if (FindExtension(entry->extensions, issuerObject, issuerPosition) >= 0) {
+                crl->flags |= InvalidFlag;
+                return true;
+            }
+            LibreSsl3Stack* decoded = DecodeCertificateIssuers(&ExtensionAt(*entry->extensions, issuerPosition));
+            if (!decoded) {
+                crl->flags |= InvalidFlag;
+                return true;
+            }
+            if (!crl->issuers) {
+                crl->issuers = reinterpret_cast<const LibreSsl3Stack*>(sk_new_nid_postfix(nullptr));
+                if (!crl->issuers) {
+                    FreeIssuerNames(decoded);
+                    PutError(AuxError);
+                    return false;
+                }
+            }
+            if (!sk_push_nid_postfix(
+                    const_cast<LibreSslStack*>(reinterpret_cast<const LibreSslStack*>(crl->issuers)), decoded)) {
+                FreeIssuerNames(decoded);
+                PutError(AuxError);
+                return false;
+            }
+            current = decoded;
+        }
+        entry->issuer = current;
+        int position = -1;
+        auto* reason = static_cast<Asn1String*>(GetExtension(entry->extensions, CrlReasonNid, &position, nullptr));
+        if (!reason && position != -1) {
+            crl->flags |= InvalidFlag;
+            return true;
+        }
+        entry->reason = reason ? EnumeratedValue(*reason) : NoCrlReason;
+        FreeString(reason);
+        const LibreSsl3Stack* extensions = entry->extensions;
+        for (int extension = 0; extensions && extension < extensions->num; ++extension) {
+            const LibreSsl3X509Extension& value = ExtensionAt(*extensions, extension);
+            if (value.critical <= 0 || OBJ_obj2nid_nid_postfix(value.object) == CertificateIssuerNid) continue;
+            crl->flags |= CriticalFlag;
+            break;
+        }
+    }
+    return true;
+}
+
+bool CacheExtensions(LibreSsl3X509Crl* crl) {
+    const LibreSsl3Stack* extensions = crl->crl->extensions;
+    if (HasSingleExtension(extensions, IssuingDistributionPointNid))
+        NotImplemented_nid_no_patch("d2i_X509_CRL: an issuing distribution point extension");
+    crl->akid = GetExtension(extensions, AuthorityKeyIdNid, nullptr, nullptr);
+    crl->crlNumber = static_cast<Asn1String*>(GetExtension(extensions, CrlNumberNid, nullptr, nullptr));
+    crl->baseCrlNumber = static_cast<Asn1String*>(GetExtension(extensions, DeltaCrlNid, nullptr, nullptr));
+    if (crl->baseCrlNumber && !crl->crlNumber) crl->flags |= InvalidFlag;
+    for (int index = 0; extensions && index < extensions->num; ++index) {
+        const LibreSsl3X509Extension& extension = ExtensionAt(*extensions, index);
+        const int nid = OBJ_obj2nid_nid_postfix(extension.object);
+        if (nid == FreshestCrlNid) crl->flags |= FreshestFlag;
+        if (extension.critical <= 0) continue;
+        if (nid == IssuingDistributionPointNid || nid == AuthorityKeyIdNid || nid == DeltaCrlNid) continue;
+        crl->flags |= CriticalFlag;
+        break;
+    }
+    return SetEntryIssuers(crl);
 }
 
 bool IsStringTag(unsigned char tag) {
@@ -911,45 +1056,32 @@ LibreSsl3Asn1Type* DecodeAnyType(const Tlv& value) {
 LibreSsl3X509Algor* DecodeAlgor(std::span<const unsigned char>& input) {
     Tlv sequence;
     if (!Next(input, SequenceTag, sequence)) return nullptr;
-    auto* algor = static_cast<LibreSsl3X509Algor*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Algor)));
+    std::unique_ptr<LibreSsl3X509Algor, void (*)(LibreSsl3X509Algor*)> algor(
+        static_cast<LibreSsl3X509Algor*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Algor))), FreeAlgor);
     if (!algor) {
         PutError(MallocFailure);
         return nullptr;
     }
     std::span<const unsigned char> body = sequence.content;
     Tlv object;
-    if (!Next(body, ObjectTag, object)) {
-        free_nid_postfix(algor);
-        return nullptr;
-    }
+    if (!Next(body, ObjectTag, object)) return nullptr;
     algor->algorithm = NewObject(object.content);
-    if (!algor->algorithm) {
-        free_nid_postfix(algor);
-        return nullptr;
-    }
+    if (!algor->algorithm) return nullptr;
     if (!body.empty()) {
         if (IsEndOfContents(body)) {
             PutError(UnexpectedEndOfContents);
-            FreeAlgor(algor);
             return nullptr;
         }
         Tlv parameter;
-        if (!ReadTlv(body, parameter)) {
-            FreeAlgor(algor);
-            return nullptr;
-        }
+        if (!ReadTlv(body, parameter)) return nullptr;
         algor->parameter = DecodeAnyType(parameter);
-        if (!algor->parameter) {
-            FreeAlgor(algor);
-            return nullptr;
-        }
+        if (!algor->parameter) return nullptr;
     }
     if (!body.empty()) {
         PutError(SequenceLengthMismatch);
-        FreeAlgor(algor);
         return nullptr;
     }
-    return algor;
+    return algor.release();
 }
 
 bool TwoDigits(std::span<const unsigned char>& text, int& value) {
@@ -1113,7 +1245,8 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         PutError(SequenceNotConstructed);
         return nullptr;
     }
-    auto* entry = static_cast<LibreSslX509NameEntry*>(calloc_nid_postfix(1, sizeof(LibreSslX509NameEntry)));
+    std::unique_ptr<LibreSslX509NameEntry, void (*)(void*)> entry(
+        static_cast<LibreSslX509NameEntry*>(calloc_nid_postfix(1, sizeof(LibreSslX509NameEntry))), FreeNameEntry);
     if (!entry) {
         PutError(MallocFailure);
         return nullptr;
@@ -1127,7 +1260,6 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         if (IsEndOfContents(body)) {
             if (!expectEnd) {
                 PutError(UnexpectedEndOfContents);
-                FreeNameEntry(entry);
                 return nullptr;
             }
             body = body.subspan(2);
@@ -1136,38 +1268,29 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         }
         if (fields == 0) {
             entry->object = DecodeNameObject(body);
-            if (!entry->object) {
-                FreeNameEntry(entry);
-                return nullptr;
-            }
+            if (!entry->object) return nullptr;
         } else {
             entry->value = DecodeNameValue(body);
-            if (!entry->value) {
-                FreeNameEntry(entry);
-                return nullptr;
-            }
+            if (!entry->value) return nullptr;
         }
     }
     if (expectEnd) {
         if (!IsEndOfContents(body)) {
             PutError(MissingEndOfContents);
-            FreeNameEntry(entry);
             return nullptr;
         }
         body = body.subspan(2);
     }
     if (!header.indefinite && !body.empty()) {
         PutError(SequenceLengthMismatch);
-        FreeNameEntry(entry);
         return nullptr;
     }
     if (fields < 2) {
         PutError(FieldMissing);
-        FreeNameEntry(entry);
         return nullptr;
     }
     input = input.subspan(Consumed(input, body));
-    return entry;
+    return entry.release();
 }
 
 bool DecodeRelativeName(std::span<const unsigned char>& input, int set, LibreSslX509Name* name) {
@@ -1192,12 +1315,10 @@ bool DecodeRelativeName(std::span<const unsigned char>& input, int set, LibreSsl
             expectEnd = false;
             break;
         }
-        LibreSslX509NameEntry* entry = DecodeNameEntry(body, set);
+        std::unique_ptr<LibreSslX509NameEntry, void (*)(void*)> entry(DecodeNameEntry(body, set), FreeNameEntry);
         if (!entry) return false;
-        if (!Push(reinterpret_cast<LibreSsl3Stack*>(name->entries), entry)) {
-            FreeNameEntry(entry);
-            return false;
-        }
+        if (!Push(reinterpret_cast<LibreSsl3Stack*>(name->entries), entry.get())) return false;
+        entry.release();
     }
     if (expectEnd) {
         PutError(MissingEndOfContents);
@@ -1225,53 +1346,240 @@ LibreSslX509Name* DecodeName(std::span<const unsigned char>& input) {
         PutError(WrongTag);
         return nullptr;
     }
-    auto* name = static_cast<LibreSslX509Name*>(calloc_nid_postfix(1, sizeof(LibreSslX509Name)));
+    std::unique_ptr<LibreSslX509Name, void (*)(LibreSslX509Name*)> name(
+        static_cast<LibreSslX509Name*>(calloc_nid_postfix(1, sizeof(LibreSslX509Name))), FreeName);
     if (!name) {
         PutError(MallocFailure);
         return nullptr;
     }
     name->entries = reinterpret_cast<LibreSslStack*>(NewStack());
-    if (!name->entries) {
-        free_nid_postfix(name);
-        return nullptr;
-    }
-    std::span<const unsigned char> body = input.subspan(header.headerLength, header.length);
-    bool expectEnd = header.indefinite;
-    int set = 0;
-    while (!body.empty()) {
-        if (IsEndOfContents(body)) {
-            if (!expectEnd) {
-                PutError(UnexpectedEndOfContents);
-                FreeName(name);
+    if (!name->entries) return nullptr;
+    try {
+        std::span<const unsigned char> body = input.subspan(header.headerLength, header.length);
+        bool expectEnd = header.indefinite;
+        int set = 0;
+        while (!body.empty()) {
+            if (IsEndOfContents(body)) {
+                if (!expectEnd) {
+                    PutError(UnexpectedEndOfContents);
+                    return nullptr;
+                }
+                body = body.subspan(2);
+                expectEnd = false;
+                break;
+            }
+            if (!DecodeRelativeName(body, set, name.get())) return nullptr;
+            if (set == std::numeric_limits<int>::max()) {
+                PutError(TooLong);
                 return nullptr;
             }
-            body = body.subspan(2);
+            ++set;
+        }
+        if (expectEnd) {
+            PutError(MissingEndOfContents);
+            return nullptr;
+        }
+        const std::size_t consumed = Consumed(input, body);
+        if (!StoreNameEncodings(name.get(), input.first(consumed))) return nullptr;
+        input = input.subspan(consumed);
+        return name.release();
+    } catch (const std::bad_alloc&) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+}
+
+void PutNestedErrors(int count) {
+    for (int index = 0; index < count; ++index) PutError(NestedAsn1Error);
+}
+
+bool ReadIdentifier(std::span<const unsigned char> input, unsigned char& identifier, std::uint64_t& number,
+    std::size_t& headerLength) {
+    if (input.empty()) return false;
+    identifier = input[0];
+    number = static_cast<std::uint64_t>(identifier & TagNumberMask);
+    headerLength = 1;
+    if (number == TagNumberMask) {
+        number = 0;
+        for (;;) {
+            if (headerLength == input.size()) return false;
+            const unsigned char octet = input[headerLength++];
+            if (number > MaxTagNumberBeforeShift) return false;
+            number = (number << 7) | (octet & 0x7f);
+            if (!(octet & 0x80)) break;
+        }
+    }
+    return true;
+}
+
+bool ReadLength(std::span<const unsigned char> input, unsigned char identifier, std::size_t& headerLength,
+    std::size_t& length, bool& indefinite) {
+    if (headerLength == input.size()) {
+        PutError(BadObjectHeader);
+        return false;
+    }
+    const unsigned char first = input[headerLength++];
+    if (first == 0x80) {
+        if (!(identifier & Constructed)) {
+            PutError(BadObjectHeader);
+            return false;
+        }
+        indefinite = true;
+        length = input.size() - headerLength;
+        return true;
+    }
+    indefinite = false;
+    std::uint64_t decoded = first & 0x7f;
+    if (first & 0x80) {
+        std::size_t count = first & 0x7f;
+        if (count == 0x7f || input.size() - headerLength < count) {
+            PutError(BadObjectHeader);
+            return false;
+        }
+        while (count != 0 && input[headerLength] == 0) {
+            ++headerLength;
+            --count;
+        }
+        if (count > sizeof(std::uint64_t)) {
+            PutError(BadObjectHeader);
+            return false;
+        }
+        decoded = 0;
+        for (; count != 0; --count) decoded = (decoded << 8) | input[headerLength++];
+        if (decoded > MaxLength) {
+            PutError(BadObjectHeader);
+            return false;
+        }
+    }
+    if (decoded > input.size() - headerLength) {
+        PutError(TooLong);
+        return false;
+    }
+    length = static_cast<std::size_t>(decoded);
+    return true;
+}
+
+std::unique_ptr<LibreSslGeneralName, void (*)(void*)> DecodeGeneralName(std::span<const unsigned char>& input) {
+    std::unique_ptr<LibreSslGeneralName, void (*)(void*)> empty(nullptr, FreeIssuerName);
+    unsigned char identifier = 0;
+    std::uint64_t number = 0;
+    std::size_t headerLength = 0;
+    if (!ReadIdentifier(input, identifier, number, headerLength)) {
+        PutError(BadObjectHeader);
+        PutNestedErrors(3);
+        return empty;
+    }
+    if ((identifier & ClassMask) != ContextSpecificClass || number > GeneralNameMax) {
+        PutError(NoMatchingChoiceType);
+        return empty;
+    }
+    std::size_t length = 0;
+    bool indefinite = false;
+    if (!ReadLength(input, identifier, headerLength, length, indefinite)) {
+        PutNestedErrors(number == GeneralNameDirectory ? 2 : 3);
+        return empty;
+    }
+    if (number != GeneralNameDirectory) NotImplemented_nid_no_patch("X509_CRL certificateIssuer: GeneralName form");
+    if (!(identifier & Constructed)) {
+        PutError(ExplicitTagNotConstructed);
+        PutError(NestedAsn1Error);
+        return empty;
+    }
+    std::unique_ptr<LibreSslGeneralName, void (*)(void*)> general(
+        static_cast<LibreSslGeneralName*>(calloc_nid_postfix(1, sizeof(LibreSslGeneralName))), FreeIssuerName);
+    if (!general) {
+        PutError(MallocFailure);
+        PutError(NestedAsn1Error);
+        return empty;
+    }
+    std::span<const unsigned char> encoded = input.subspan(headerLength, length);
+    if (encoded.empty()) {
+        PutError(BadObjectHeader);
+        PutNestedErrors(4);
+        return empty;
+    }
+    if (IsEndOfContents(encoded)) {
+        PutError(WrongTag);
+        PutNestedErrors(4);
+        return empty;
+    }
+    std::unique_ptr<LibreSslX509Name, void (*)(LibreSslX509Name*)> directory(DecodeName(encoded), FreeName);
+    if (!directory) {
+        PutNestedErrors(4);
+        return empty;
+    }
+    if (indefinite) {
+        if (!IsEndOfContents(encoded)) {
+            PutError(MissingEndOfContents);
+            PutError(NestedAsn1Error);
+            return empty;
+        }
+        encoded = encoded.subspan(2);
+    } else if (!encoded.empty()) {
+        PutError(SequenceLengthMismatch);
+        PutError(NestedAsn1Error);
+        return empty;
+    }
+    general->type = GeneralNameDirectory;
+    general->value = directory.release();
+    input = input.subspan(Consumed(input, encoded));
+    return general;
+}
+
+LibreSsl3Stack* DecodeIssuerNames(std::span<const unsigned char> content, bool expectEnd) {
+    std::unique_ptr<LibreSsl3Stack, void (*)(void*)> names(NewStack(), FreeIssuerNames);
+    if (!names) return nullptr;
+    while (!content.empty()) {
+        if (IsEndOfContents(content)) {
+            if (!expectEnd) {
+                PutError(UnexpectedEndOfContents);
+                return nullptr;
+            }
+            content = content.subspan(2);
             expectEnd = false;
             break;
         }
-        if (!DecodeRelativeName(body, set, name)) {
-            FreeName(name);
+        auto general = DecodeGeneralName(content);
+        if (!general) {
+            PutError(NestedAsn1Error);
             return nullptr;
         }
-        if (set == std::numeric_limits<int>::max()) {
-            PutError(TooLong);
-            FreeName(name);
-            return nullptr;
-        }
-        ++set;
+        if (!Push(names.get(), general.get())) return nullptr;
+        general.release();
     }
     if (expectEnd) {
         PutError(MissingEndOfContents);
-        FreeName(name);
         return nullptr;
     }
-    const std::size_t consumed = Consumed(input, body);
-    if (!StoreNameEncodings(name, input.first(consumed))) {
-        FreeName(name);
+    return names.release();
+}
+
+LibreSsl3Stack* DecodeCertificateIssuers(const LibreSsl3X509Extension* extension) {
+    const auto* value = static_cast<const Asn1String*>(extension->value);
+    if (!value) throw std::invalid_argument("X509_CRL: null certificateIssuer value");
+    if (value->length < 0) throw std::invalid_argument("X509_CRL: negative certificateIssuer length");
+    if (value->length > 0 && !value->data) throw std::invalid_argument("X509_CRL: null certificateIssuer data");
+    const std::span<const unsigned char> input(value->data, static_cast<std::size_t>(value->length));
+    unsigned char identifier = 0;
+    std::uint64_t number = 0;
+    std::size_t headerLength = 0;
+    if (!ReadIdentifier(input, identifier, number, headerLength)) {
+        PutError(BadObjectHeader);
+        PutError(NestedAsn1Error);
         return nullptr;
     }
-    input = input.subspan(consumed);
-    return name;
+    if ((identifier & ClassMask) != 0 || number != SequenceType) {
+        PutError(WrongTag);
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    std::size_t length = 0;
+    bool indefinite = false;
+    if (!ReadLength(input, identifier, headerLength, length, indefinite)) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    return DecodeIssuerNames(input.subspan(headerLength, length), indefinite);
 }
 
 LibreSsl3Revoked* DecodeRevoked(std::span<const unsigned char>& input) {
@@ -1315,7 +1623,6 @@ LibreSsl3Revoked* DecodeRevoked(std::span<const unsigned char>& input) {
         FreeRevoked(revoked);
         return nullptr;
     }
-    revoked->reason = EntryReason(revoked->extensions);
     return revoked;
 }
 
@@ -1380,51 +1687,112 @@ bool DecodeCrlInfo(std::span<const unsigned char> body, LibreSsl3CrlInfo* info) 
     return true;
 }
 
+void AppendHeader(std::vector<unsigned char>& output, unsigned char tag, std::size_t length) {
+    output.push_back(tag);
+    if (length < 0x80) {
+        output.push_back(static_cast<unsigned char>(length));
+        return;
+    }
+    unsigned char octets[sizeof(length)];
+    std::size_t count = 0;
+    for (std::size_t remaining = length; remaining != 0; remaining >>= 8)
+        octets[count++] = static_cast<unsigned char>(remaining);
+    output.push_back(static_cast<unsigned char>(0x80 | count));
+    while (count != 0) output.push_back(octets[--count]);
+}
+
+void ReparseTlv(std::span<const unsigned char>& input, Tlv& value) {
+    if (!ReadTlv(input, value)) throw std::logic_error("d2i_X509_CRL: a decoded signature algorithm does not parse again");
+}
+
+std::vector<unsigned char> AlgorithmEncoding(std::span<const unsigned char> encoded) {
+    Tlv sequence;
+    ReparseTlv(encoded, sequence);
+    std::span<const unsigned char> body = sequence.content;
+    Tlv object;
+    ReparseTlv(body, object);
+    std::vector<unsigned char> content;
+    AppendHeader(content, ObjectTag, object.content.size());
+    content.insert(content.end(), object.content.begin(), object.content.end());
+    if (!body.empty()) {
+        Tlv parameter;
+        ReparseTlv(body, parameter);
+        if (parameter.tag == BitStringTag) {
+            const unsigned char unusedBits = parameter.content.size() > 1 ? parameter.content.front() : 0;
+            AppendHeader(content, BitStringTag, parameter.content.size());
+            content.push_back(unusedBits);
+            content.insert(content.end(), parameter.content.begin() + 1, parameter.content.end());
+            if (parameter.content.size() > 1) content.back() &= static_cast<unsigned char>(0xff << unusedBits);
+        } else {
+            if (parameter.tag != NullTag && parameter.tag != IntegerTag && parameter.tag != OctetStringTag &&
+                parameter.tag != ObjectTag && !IsStringTag(parameter.tag))
+                NotImplemented_nid_no_patch("d2i_X509_CRL: hashing a signature algorithm with a BOOLEAN parameter");
+            AppendHeader(content, parameter.tag, parameter.content.size());
+            content.insert(content.end(), parameter.content.begin(), parameter.content.end());
+        }
+    }
+    std::vector<unsigned char> output;
+    AppendHeader(output, SequenceTag, content.size());
+    output.insert(output.end(), content.begin(), content.end());
+    return output;
+}
+
+std::vector<unsigned char> SignatureEncoding(const Asn1String& signature) {
+    const auto length = static_cast<std::size_t>(signature.length);
+    std::vector<unsigned char> output;
+    AppendHeader(output, BitStringTag, length + 1);
+    output.push_back(length == 0 ? 0 : static_cast<unsigned char>(signature.flags & BitsLeftMask));
+    if (length != 0) output.insert(output.end(), signature.data, signature.data + length);
+    return output;
+}
+
+void HashCrl(LibreSsl3X509Crl* crl, std::span<const unsigned char> infoEncoding, std::span<const unsigned char> algorithmEncoding) {
+    const std::vector<unsigned char> algorithm = AlgorithmEncoding(algorithmEncoding);
+    const std::vector<unsigned char> signature = SignatureEncoding(*crl->signature);
+    std::vector<unsigned char> header;
+    AppendHeader(header, SequenceTag, infoEncoding.size() + algorithm.size() + signature.size());
+    Sha512Context context;
+    if (!SHA512_Init_nid_postfix(&context)) throw std::runtime_error("d2i_X509_CRL: SHA-512 initialization failed");
+    for (const std::span<const unsigned char> part : {std::span<const unsigned char>(header), infoEncoding,
+             std::span<const unsigned char>(algorithm), std::span<const unsigned char>(signature)}) {
+        if (!SHA512_Update_nid_postfix(&context, part.data(), part.size()))
+            throw std::runtime_error("d2i_X509_CRL: SHA-512 update failed");
+    }
+    if (!SHA512_Final_nid_postfix(crl->hash, &context)) throw std::runtime_error("d2i_X509_CRL: SHA-512 finalization failed");
+}
+
 LibreSsl3X509Crl* DecodeCrl(std::span<const unsigned char>& input) {
     Tlv outer;
     if (!Next(input, SequenceTag, outer)) return nullptr;
-    auto* crl = static_cast<LibreSsl3X509Crl*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Crl)));
+    std::unique_ptr<LibreSsl3X509Crl, void (*)(LibreSsl3X509Crl*)> crl(
+        static_cast<LibreSsl3X509Crl*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Crl))), FreeCrl);
     if (!crl) {
         PutError(MallocFailure);
         return nullptr;
     }
     crl->references = 1;
+    crl->idpReasons = AllCrlReasons;
     crl->crl = static_cast<LibreSsl3CrlInfo*>(calloc_nid_postfix(1, sizeof(LibreSsl3CrlInfo)));
-    if (!crl->crl) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!crl->crl) return nullptr;
     std::span<const unsigned char> body = outer.content;
     Tlv tbs;
-    if (!Next(body, SequenceTag, tbs)) {
-        FreeCrl(crl);
-        return nullptr;
-    }
-    if (!DecodeCrlInfo(tbs.content, crl->crl)) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!Next(body, SequenceTag, tbs)) return nullptr;
+    if (!DecodeCrlInfo(tbs.content, crl->crl)) return nullptr;
+    const std::span<const unsigned char> algorithmStart = body;
     crl->sigAlg = DecodeAlgor(body);
-    if (!crl->sigAlg) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!crl->sigAlg) return nullptr;
+    const std::span<const unsigned char> algorithmEncoding = algorithmStart.first(algorithmStart.size() - body.size());
     Tlv signature;
-    if (!Next(body, BitStringTag, signature)) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!Next(body, BitStringTag, signature)) return nullptr;
     crl->signature = NewBitString(signature.content);
-    if (!crl->signature) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!crl->signature) return nullptr;
     if (!body.empty()) {
         PutError(SequenceLengthMismatch);
-        FreeCrl(crl);
         return nullptr;
     }
-    return crl;
+    HashCrl(crl.get(), tbs.encoded, algorithmEncoding);
+    if (!CacheExtensions(crl.get())) return nullptr;
+    return crl.release();
 }
 
 bool SameString(const Asn1String* first, const Asn1String* second) {
@@ -1451,15 +1819,20 @@ bool SameName(const LibreSslX509Name* first, const LibreSslX509Name* second) {
 
 bool IssuerMatches(const LibreSslX509Name* crlIssuer, const LibreSslX509Name* certificateIssuer,
     const LibreSsl3Revoked* revoked) {
-    if (revoked->issuer) NotImplemented_nid_no_patch("X509_CRL_get0_by_cert");
-    if (!certificateIssuer) return true;
-    return SameName(certificateIssuer, crlIssuer);
-}
-
-bool NamesCertificateIssuer(const LibreSsl3Revoked* revoked) {
-    const LibreSslAsn1Object* object = LibreSsl3::ObjectByNid(CertificateIssuerNid);
-    if (!object) throw std::logic_error("X509_CRL_get0_by_cert: no certificateIssuer object");
-    return FindExtension(revoked->extensions, object, -1) >= 0;
+    if (!revoked->issuer) {
+        if (!certificateIssuer) return true;
+        return SameName(certificateIssuer, crlIssuer);
+    }
+    if (revoked->issuer->num < 0) throw std::invalid_argument("X509_CRL_get0_by_cert: negative issuer count");
+    const LibreSslX509Name* name = certificateIssuer ? certificateIssuer : crlIssuer;
+    for (int index = 0; index < revoked->issuer->num; ++index) {
+        if (!revoked->issuer->data) throw std::invalid_argument("X509_CRL_get0_by_cert: null issuer array");
+        const auto* general = static_cast<const LibreSslGeneralName*>(static_cast<const void*>(revoked->issuer->data[index]));
+        if (!general) throw std::invalid_argument("X509_CRL_get0_by_cert: null issuer name");
+        if (general->type != GeneralNameDirectory) continue;
+        if (SameName(name, static_cast<const LibreSslX509Name*>(general->value))) return true;
+    }
+    return false;
 }
 
 }
@@ -1513,14 +1886,11 @@ int APS5_VABI X509_CRL_get0_by_cert_nid_postfix(LibreSsl3X509Crl* crl, LibreSsl3
     const LibreSsl3Stack* entries = crl->crl->revoked;
     if (!entries) return 0;
     if (entries->num < 0) throw std::invalid_argument(std::string(__func__) + ": negative revoked count");
-    bool entryIssuers = false;
     for (int index = 0; index < entries->num; ++index) {
         if (!entries->data) throw std::invalid_argument(std::string(__func__) + ": null revoked array");
         auto* entry = static_cast<LibreSsl3Revoked*>(static_cast<void*>(entries->data[index]));
         if (!entry) throw std::invalid_argument(std::string(__func__) + ": null revoked entry");
-        if (NamesCertificateIssuer(entry)) entryIssuers = true;
         if (!SameString(entry->serialNumber, serial)) continue;
-        if (entryIssuers) NotImplemented_nid_no_patch("X509_CRL_get0_by_cert: certificateIssuer entry extension");
         if (!IssuerMatches(crl->crl->issuer, issuer, entry)) continue;
         if (revoked) *revoked = entry;
         return entry->reason == CrlReasonRemoveFromCrl ? 2 : 1;
