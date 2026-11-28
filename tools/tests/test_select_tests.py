@@ -1045,6 +1045,7 @@ class CTestIndexFileTests(unittest.TestCase):
             self.assertEqual(total, count + 1)
 
 
+@unittest.skipUnless(shutil.which("ctest"), "needs ctest")
 class PlanTests(unittest.TestCase):
     def test_unresolved_selected_command_keeps_unselected_build_targets(self):
         build = mock.Mock()
