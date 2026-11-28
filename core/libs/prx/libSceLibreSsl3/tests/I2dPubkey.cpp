@@ -116,7 +116,8 @@ void RequireEncodedKey(LibreSsl3EvpPkey* key, const std::vector<unsigned char>& 
     unsigned char* allocated = nullptr;
     const int allocatedLength = i2d_PUBKEY_nid_postfix(key, &allocated);
     Require(allocatedLength == sizeOnly && allocated != nullptr);
-    Require(std::memcmp(allocated, expected.data(), expected.size()) == 0);
+    unsigned char* allocatedBase = allocated - allocatedLength;
+    Require(std::memcmp(allocatedBase, expected.data(), expected.size()) == 0);
 
     std::vector<unsigned char> manual(expected.size() + 4, 0xcc);
     unsigned char* writePointer = manual.data();
@@ -126,7 +127,7 @@ void RequireEncodedKey(LibreSsl3EvpPkey* key, const std::vector<unsigned char>& 
     Require(std::memcmp(manual.data(), expected.data(), expected.size()) == 0);
     Require(manual[expected.size()] == 0xcc);
 
-    free_nid_postfix(allocated);
+    free_nid_postfix(allocatedBase);
 }
 
 void TestRsaRoundTrip() {
@@ -138,13 +139,13 @@ void TestRsaRoundTrip() {
     const int sizeOnly = i2d_PUBKEY_nid_postfix(key, nullptr);
     unsigned char* allocated = nullptr;
     Require(i2d_PUBKEY_nid_postfix(key, &allocated) == sizeOnly && allocated != nullptr);
-    const unsigned char* cursor = allocated;
+    const unsigned char* cursor = allocated - sizeOnly;
     LibreSsl3EvpPkey* redecoded = d2i_PUBKEY_nid_postfix(nullptr, &cursor, sizeOnly);
-    Require(redecoded != nullptr && cursor == allocated + sizeOnly);
+    Require(redecoded != nullptr && cursor == allocated);
     Require(redecoded->type == RsaType);
     RequireEncodedKey(redecoded, RsaSpkiDer);
 
-    free_nid_postfix(allocated);
+    free_nid_postfix(allocated - sizeOnly);
     EVP_PKEY_free_nid_disambig1_nid_postfix(redecoded);
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
 }
@@ -161,9 +162,9 @@ void TestEcP256RoundTrip() {
     unsigned char* allocated = nullptr;
     const int allocatedLength = i2d_PUBKEY_nid_postfix(key, &allocated);
     Require(allocatedLength == static_cast<int>(P256SpkiDer.size()) && allocated != nullptr);
-    Require(std::memcmp(allocated + allocatedLength - uncompressed.size(), uncompressed.data(),
+    Require(std::memcmp(allocated - uncompressed.size(), uncompressed.data(),
                 uncompressed.size()) == 0);
-    free_nid_postfix(allocated);
+    free_nid_postfix(allocated - allocatedLength);
 
     ec->conversionForm = PointConversionCompressed;
     const int compressedSize = i2d_PUBKEY_nid_postfix(key, nullptr);

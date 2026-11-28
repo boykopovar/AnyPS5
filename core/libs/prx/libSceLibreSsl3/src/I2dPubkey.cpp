@@ -203,7 +203,7 @@ int APS5_VABI i2d_PUBKEY_nid_postfix(LibreSsl3EvpPkey* key, unsigned char** outp
             return -1;
         }
         std::memcpy(allocated, encoded.data(), encoded.size());
-        next = allocated;
+        next = allocated + encoded.size();
     }
     if (!GuestCopyOut_nid_no_patch(output, &next, sizeof(next))) {
         if (allocated) free_nid_postfix(allocated);
