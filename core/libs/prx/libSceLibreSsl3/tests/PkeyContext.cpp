@@ -1618,6 +1618,36 @@ void DigestSignInitWithoutDigest() {
     ReleaseKey(key);
 }
 
+void DigestFinalWithoutDigestMethod() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    LibreSsl3PkeyContext* pctx = nullptr;
+    Require(EVP_DigestSignInit_nid_postfix(md, &pctx,
+        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix()), nullptr, key) == 1);
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    const auto* digest = md->digest;
+    md->digest = nullptr;
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = 0;
+    Require(EVP_DigestSignFinal_nid_postfix(md, nullptr, &length) == 0);
+    Require(length == 0);
+    ExpectErrors({EvpCode(111)});
+    length = signature.size();
+    Require(EVP_DigestSignFinal_nid_postfix(md, signature.data(), &length) == 0);
+    Require(length == signature.size());
+    ExpectErrors({EvpCode(111)});
+    unsigned int signatureLength = 1;
+    Require(EVP_SignFinal_nid_postfix(md, signature.data(), &signatureLength, key) == 0);
+    Require(signatureLength == 0);
+    ExpectErrors({EvpCode(111)});
+    Require(EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha256Signature, 256, key) == 0);
+    ExpectErrors({EvpCode(111)});
+    md->digest = digest;
+    EVP_MD_CTX_free_nid_postfix(md);
+    ReleaseKey(key);
+}
+
 EcKey* NewEcKey(const char* privateScalar, int curve) {
     auto* key = EC_KEY_new_by_curve_name_nid_postfix(curve);
     Require(key != nullptr && key->group != nullptr);
@@ -1771,9 +1801,10 @@ void EcdhDerivation() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(destination);
 }
 
-class ReadOnlyLength {
+template<class T>
+class ReadOnlyValue {
 public:
-    explicit ReadOnlyLength(std::size_t value) {
+    explicit ReadOnlyValue(const T& value) {
 #ifdef _WIN32
         SYSTEM_INFO info {};
         GetSystemInfo(&info);
@@ -1792,7 +1823,7 @@ public:
 #endif
     }
 
-    ~ReadOnlyLength() {
+    ~ReadOnlyValue() {
 #ifdef _WIN32
         VirtualFree(page, 0, MEM_RELEASE);
 #else
@@ -1800,12 +1831,14 @@ public:
 #endif
     }
 
-    std::size_t* Get() const { return static_cast<std::size_t*>(page); }
+    T* Get() const { return static_cast<T*>(page); }
 
 private:
     void* page = nullptr;
     std::size_t size = 0;
 };
+
+using ReadOnlyLength = ReadOnlyValue<std::size_t>;
 
 void GuestOutputLengths() {
     auto* key = NewNativeKey(LibreSsl3PkeyRsa);
@@ -1841,6 +1874,94 @@ void GuestOutputLengths() {
     ReleaseKey(key);
 }
 
+void GuestContextPointers() {
+    constexpr int P256 = 415;
+    auto* unmappedContext = reinterpret_cast<LibreSsl3PkeyContext*>(std::uintptr_t {0x10});
+    auto* unmappedKey = reinterpret_cast<LibreSsl3EvpPkey*>(std::uintptr_t {0x10});
+    auto* unmappedDigest = reinterpret_cast<LibreSsl3::DigestContext*>(std::uintptr_t {0x10});
+    std::array<unsigned char, 256> buffer {};
+    std::size_t length = buffer.size();
+    unsigned int signatureLength = 0;
+
+    errno = 71;
+    Require(Throws([&] { EVP_PKEY_CTX_new_nid_postfix(unmappedKey, nullptr); }));
+    Require(Throws([&] { EVP_PKEY_CTX_free_nid_postfix(unmappedContext); }));
+    Require(Throws([&] { EVP_PKEY_CTX_ctrl_nid_postfix(unmappedContext, -1, -1, 1, 0, nullptr); }));
+    Require(Throws([&] { EVP_PKEY_derive_init_nid_postfix(unmappedContext); }));
+    Require(Throws([&] { EVP_PKEY_derive_set_peer_nid_postfix(unmappedContext, nullptr); }));
+    Require(Throws([&] { EVP_PKEY_derive_nid_postfix(unmappedContext, buffer.data(), &length); }));
+    Require(Throws([&] { EVP_PKEY_encrypt_init_nid_postfix(unmappedContext); }));
+    Require(Throws([&] {
+        EVP_PKEY_encrypt_nid_postfix(unmappedContext, buffer.data(), &length, MessageBytes(), MessageLength);
+    }));
+    Require(Throws([&] { EVP_PKEY_decrypt_init_nid_postfix(unmappedContext); }));
+    Require(Throws([&] {
+        EVP_PKEY_decrypt_nid_postfix(unmappedContext, buffer.data(), &length, Pkcs1Cipher, sizeof(Pkcs1Cipher));
+    }));
+    Require(Throws([&] { EVP_PKEY_sign_init_nid_postfix(unmappedContext); }));
+    Require(Throws([&] {
+        EVP_PKEY_sign_nid_postfix(unmappedContext, buffer.data(), &length, DigestSha1, sizeof(DigestSha1));
+    }));
+    Require(Throws([&] { EVP_PKEY_verify_init_nid_postfix(unmappedContext); }));
+    Require(Throws([&] {
+        EVP_PKEY_verify_nid_postfix(unmappedContext, Pkcs1Sha1Signature, 256, DigestSha1, sizeof(DigestSha1));
+    }));
+    Require(Throws([&] { EVP_DigestSignFinal_nid_postfix(unmappedDigest, buffer.data(), &length); }));
+    Require(Throws([&] { EVP_SignFinal_nid_postfix(unmappedDigest, buffer.data(), &signatureLength, nullptr); }));
+    Require(Throws([&] { EVP_VerifyFinal_nid_postfix(unmappedDigest, Pkcs1Sha1Signature, 256, nullptr); }));
+    Require(errno == 71 && length == buffer.size() && signatureLength == 0);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    LibreSsl3PkeyContext* signing = nullptr;
+    Require(EVP_DigestSignInit_nid_postfix(md, &signing, static_cast<const LibreSsl3::DigestMethod*>(EVP_sha1_nid_postfix()),
+        nullptr, key) == 1);
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    auto* realContext = md->keyContext;
+    md->keyContext = unmappedContext;
+    Require(Throws([&] { EVP_DigestSignFinal_nid_postfix(md, buffer.data(), &length); }));
+    md->keyContext = realContext;
+    Require(errno == 71);
+    EVP_MD_CTX_free_nid_postfix(md);
+
+    auto* context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+    Require(context != nullptr);
+    Require(EVP_PKEY_encrypt_init_nid_postfix(context) == 1);
+    ReadOnlyValue<LibreSsl3PkeyContext> readOnly(*context);
+    Require(Throws([&] { EVP_PKEY_sign_init_nid_postfix(readOnly.Get()); }));
+    Require(Throws([&] { EVP_PKEY_verify_init_nid_postfix(readOnly.Get()); }));
+    Require(Throws([&] { EVP_PKEY_decrypt_init_nid_postfix(readOnly.Get()); }));
+    Require(readOnly.Get()->operation == LibreSsl3PkeyOperationEncrypt);
+    length = 0;
+    Require(EVP_PKEY_encrypt_nid_postfix(readOnly.Get(), nullptr, &length, MessageBytes(), MessageLength) == 1);
+    Require(length == 256 && errno == 71);
+    Require(ERR_get_error_nid_postfix() == 0);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+
+    auto* own = NewEcPkey(NewEcKey("C88F01F510D9AC3F70A292DAA2316DE544E9AAB8AFE84049C62A9C57862D1433", P256));
+    auto* peer = NewEcPkey(NewEcKey("C6EF9C5D78AE012A011164ACB397CE2088685D8F06BF9BE0B283AB46476BEE53", P256));
+    auto* derivation = EVP_PKEY_CTX_new_nid_postfix(own, nullptr);
+    Require(derivation != nullptr);
+    Require(EVP_PKEY_derive_init_nid_postfix(derivation) == 1);
+    Require(Throws([&] { EVP_PKEY_derive_set_peer_nid_postfix(derivation, unmappedKey); }));
+    Require(derivation->peerKey == nullptr);
+    Require(EVP_PKEY_derive_set_peer_nid_postfix(derivation, peer) == 1);
+    Require(peer->references == 2);
+    ReadOnlyValue<LibreSsl3PkeyContext> readOnlyDerivation(*derivation);
+    Require(Throws([&] { EVP_PKEY_derive_init_nid_postfix(readOnlyDerivation.Get()); }));
+    Require(Throws([&] { EVP_PKEY_derive_set_peer_nid_postfix(readOnlyDerivation.Get(), peer); }));
+    Require(readOnlyDerivation.Get()->operation == LibreSsl3PkeyOperationDerive);
+    Require(readOnlyDerivation.Get()->peerKey == peer && peer->references == 2);
+    Require(errno == 71);
+    Require(ERR_get_error_nid_postfix() == 0);
+    EVP_PKEY_CTX_free_nid_postfix(derivation);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(peer);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(own);
+}
+
 int main() {
     std::array<void*, 10> api{reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Calloc_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
@@ -1874,8 +1995,10 @@ int main() {
     RsaPaddingDigestList();
     Sha512_256Signatures();
     DigestSignInitWithoutDigest();
+    DigestFinalWithoutDigestMethod();
     EcdhDerivation();
     GuestOutputLengths();
+    GuestContextPointers();
     Require(allocations.empty());
     std::puts("LibreSSL3 EVP_PKEY_CTX RSA encryption and signature tests passed");
 }
