@@ -248,7 +248,7 @@ def inspect_capture(run_dir, window_kind, window, title_id, content_version=None
         window = parse_window(f"{window[0]}:{window[1]}")
         directory = Path(os.path.abspath(run_dir))
         for part in (directory, *directory.parents):
-            if part.is_symlink() or (part.exists() and getattr(part.stat(), "st_file_attributes", 0) & 0x400):
+            if part.is_symlink() or (os.path.lexists(part) and getattr(part.lstat(), "st_file_attributes", 0) & 0x400):
                 raise ValueError("capture directory cannot contain links or reparse points")
         raw, summary_artifact = read_regular(directory / "aps5-summary.jsonl", MAX_SUMMARY_BYTES)
         if not raw:

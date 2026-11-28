@@ -333,6 +333,24 @@ class BoundsAndLinks(CaptureFixture):
                 self.assertEqual(self.capture_fixture()["state"], "invalid")
                 self.assertEqual(self.capture_fixture(metadata_only=True)["state"], "invalid")
 
+    def test_capture_directory_reached_through_a_junction_rejected(self):
+        if os.name != "nt":
+            self.skipTest("junctions are Windows-only")
+        import _winapi
+        self.write_summary()
+        self.write_trace()
+        self.assertEqual(self.capture_fixture()["state"], "complete")
+        links = tempfile.TemporaryDirectory()
+        self.addCleanup(links.cleanup)
+        link = Path(links.name).resolve() / "link"
+        _winapi.CreateJunction(str(self.directory), str(link))
+        self.addCleanup(os.rmdir, link)
+        for metadata_only in (False, True):
+            with self.subTest(metadata_only=metadata_only):
+                result = performance_capture.inspect_capture(link, "frames", (3, 2), "PPSA00001", "01.000.000", metadata_only)
+                self.assertEqual(result["state"], "invalid")
+                self.assertIn("reparse points", result["reason"])
+
 
 class LossEvidence(CaptureFixture):
     def test_loss_distinctions(self):
