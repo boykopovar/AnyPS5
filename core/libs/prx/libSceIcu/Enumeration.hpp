@@ -27,4 +27,9 @@ void APS5_VABI uenum_close_nid_postfix(UEnumeration*);
 std::int32_t APS5_VABI uenum_count_nid_postfix(UEnumeration*, std::int32_t*);
 const char16_t* APS5_VABI uenum_unext_nid_postfix(UEnumeration*, std::int32_t*, std::int32_t*);
 const char* APS5_VABI uenum_next_nid_postfix(UEnumeration*, std::int32_t*, std::int32_t*);
+UEnumeration* APS5_VABI uenum_openCharStringsEnumeration_nid_postfix(const char* const* strings, std::int32_t count, std::int32_t* status);
+UEnumeration* APS5_VABI uenum_openUCharStringsEnumeration_nid_postfix(const char16_t* const* strings, std::int32_t count, std::int32_t* status);
+void APS5_VABI uenum_reset_nid_postfix(UEnumeration*, std::int32_t*);
+const char* APS5_VABI uenum_nextDefault_nid_postfix(UEnumeration*, std::int32_t*, std::int32_t*);
+const char16_t* APS5_VABI uenum_unextDefault_nid_postfix(UEnumeration*, std::int32_t*, std::int32_t*);
 }
