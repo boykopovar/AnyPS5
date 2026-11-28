@@ -194,7 +194,7 @@ void CheckCase(AgcDriver::VulkanDevice& device, std::uint32_t width, std::uint32
     Require(std::equal(expected.begin(), expected.end(), block.registered), "extra-mip refresh or the next writeback lost a CPU-written sibling or changed guest bounds");
     const auto singlePassMoves = StorageTexture::SinglePassMoves() - singlePassBefore;
     Require(singlePass || singlePassMoves == 0u, "the linear-copy fixture used the disabled direct-image path");
-    std::printf("extra-mip transfer profile: direct-enabled=%u direct-image-moves=%llu\n", singlePass ? 1u : 0u, static_cast<unsigned long long>(singlePassMoves));
+    std::printf("extra-mip transfer profile: direct-enabled=%u direct-image-moves=%llu\n", context.singlePassStorage ? 1u : 0u, static_cast<unsigned long long>(singlePassMoves));
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         texture.reset();
@@ -294,7 +294,7 @@ void CheckDraw(AgcDriver::VulkanDevice& device, bool recorded, std::uint32_t lay
     const std::uint32_t value = std::bit_cast<std::uint32_t>(1.0f);
     std::memcpy(expected.data() + 65536u + offset, &value, sizeof(value));
     for (std::size_t index = 0; index < expected.size(); ++index) {
-        Require(expected[index] == block.registered[index], "extra-mip draw mismatch: layers=" + std::to_string(layers) + " offset=" + std::to_string(offset) + " byte=" + std::to_string(index) + " actual=" + std::to_string(std::to_integer<unsigned>(block.registered[index])) + " expected=" + std::to_string(std::to_integer<unsigned>(expected[index])));
+        if (expected[index] != block.registered[index]) Require(false, "extra-mip draw mismatch: layers=" + std::to_string(layers) + " offset=" + std::to_string(offset) + " byte=" + std::to_string(index) + " actual=" + std::to_string(std::to_integer<unsigned>(block.registered[index])) + " expected=" + std::to_string(std::to_integer<unsigned>(expected[index])));
     }
     ClearCachedTextures(context.device);
     std::printf("extra-mip actual draw passed: recorded=%u first-array-slice=%u mip=%u physical=%u\n", recorded ? 1u : 0u, layer, mip, geometry.imageLevels);
@@ -396,6 +396,7 @@ struct ReadbackCopy {
 PFN_vkGetDeviceProcAddr readbackDeviceProc = nullptr;
 PFN_vkCmdCopyImageToBuffer readbackCopyImageToBuffer = nullptr;
 std::array<VkImage, 3> readbackImages{};
+std::array<std::uint32_t, 3> readbackImageLayers{};
 std::vector<ReadbackCopy> readbackCopies;
 bool captureReadback = false;
 
@@ -404,8 +405,11 @@ VKAPI_ATTR void VKAPI_CALL CaptureReadbackCopy(VkCommandBuffer commands, VkImage
         const auto found = std::find(readbackImages.begin(), readbackImages.end(), image);
         Require(found != readbackImages.end(), "extra-mip diagnostic readback copied an unexpected image");
         const auto levels = found == readbackImages.begin() ? 3u : 1u;
+        const auto layers = readbackImageLayers[static_cast<std::size_t>(found - readbackImages.begin())];
         for (std::uint32_t index = 0; index < count; ++index) {
-            Require(regions[index].imageSubresource.mipLevel < levels, "extra-mip diagnostic copy exceeds the physical mip chain");
+            const auto& subresource = regions[index].imageSubresource;
+            Require(subresource.mipLevel < levels, "extra-mip diagnostic copy exceeds the physical mip chain");
+            Require(subresource.baseArrayLayer < layers && subresource.layerCount != 0u && (subresource.layerCount == VK_REMAINING_ARRAY_LAYERS || subresource.layerCount <= layers - subresource.baseArrayLayer), "extra-mip diagnostic copy exceeds the backing image array layers");
             readbackCopies.push_back({image, regions[index]});
         }
     }
@@ -454,6 +458,14 @@ void CheckReadback(AgcDriver::VulkanDevice& device) {
     const auto geometry = DescribeSurface(descriptor);
     GuestBlock block(static_cast<std::size_t>(geometry.guestBytes));
     descriptor.baseAddress = reinterpret_cast<std::uintptr_t>(block.Surface());
+    Require(geometry.imageLevels == 3u && geometry.layers == 2u, "extra-mip diagnostic fixture does not have a three-level chain and two layers");
+    const std::array baseValues{std::byte{0xa5}, std::byte{0x3c}};
+    for (std::uint32_t layer = 0; layer < geometry.layers; ++layer) {
+        for (std::uint32_t y = 0; y < descriptor.height; ++y) {
+            const auto offset = geometry.GuestOffset(layer, geometry.mips[0]) + y * geometry.mips[0].pitchBytes;
+            std::fill_n(block.Surface() + offset, descriptor.width * 4u, baseValues[layer]);
+        }
+    }
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
     auto texture = StorageTexture::Create(context, *context.detiler, descriptor, 0);
     if (auto* recorder = Recorder::Active()) recorder->Sync();
@@ -463,13 +475,26 @@ void CheckReadback(AgcDriver::VulkanDevice& device) {
     StorageTexture::FlushDumpSelected("closed extra-mip fixture gate");
     Require(!std::filesystem::exists(name), "extra-mip readback ignored its closed gate");
     { std::ofstream gate("extra-mip-readback.ready"); Require(gate.good(), "cannot create extra-mip readback fixture gate"); }
-    Require(geometry.imageLevels == 3u && geometry.layers == 2u, "extra-mip diagnostic fixture does not have a three-level chain and two layers");
     readbackImages = {texture->Image(), texture->Image(3), texture->Image(4)};
+    readbackImageLayers.fill(geometry.imageLayers);
     Require(readbackImages[0] != readbackImages[1] && readbackImages[0] != readbackImages[2] && readbackImages[1] != readbackImages[2], "extra-mip diagnostic fixture does not have distinct tail images");
     readbackCopies.clear();
     captureReadback = true;
     StorageTexture::FlushDumpSelected("extra-mip fixture readback");
     captureReadback = false;
+    for (const auto& copy : readbackCopies) {
+        const auto& region = copy.region;
+        const auto& subresource = region.imageSubresource;
+        if (copy.image != readbackImages[0] || subresource.mipLevel != 0u) continue;
+        const auto layers = subresource.layerCount == VK_REMAINING_ARRAY_LAYERS ? geometry.imageLayers - subresource.baseArrayLayer : subresource.layerCount;
+        const auto rowLength = region.bufferRowLength == 0u ? region.imageExtent.width : region.bufferRowLength;
+        const auto imageHeight = region.bufferImageHeight == 0u ? region.imageExtent.height : region.bufferImageHeight;
+        const auto layerBytes = VkDeviceSize{rowLength} * imageHeight * region.imageExtent.depth * 4u;
+        for (std::uint32_t index = 0; index < layers; ++index) {
+            const auto layer = subresource.baseArrayLayer + index;
+            Require(region.bufferOffset + index * layerBytes == geometry.LinearLayerOffset(layer) + geometry.mips[0].linearOffset, "extra-mip diagnostic copy writes a base layer to another destination slot");
+        }
+    }
     for (std::uint32_t mip = 0; mip < descriptor.mipCount; ++mip) {
         const auto image = readbackImages[mip < 3u ? 0u : mip - 2u];
         const auto physicalMip = mip < 3u ? mip : 0u;
@@ -492,7 +517,7 @@ void CheckReadback(AgcDriver::VulkanDevice& device) {
         for (std::uint32_t y = 0; y < descriptor.height; ++y) {
             for (std::uint32_t x = 0; x < descriptor.width * 4u; ++x) {
                 const auto offset = layer * geometry.mips[0].linearSize + y * geometry.mips[0].pitchBytes + x;
-                Require(pixels[offset] == std::byte{0xa5}, "extra-mip diagnostic readback changed a base-level pixel");
+                Require(pixels[offset] == baseValues[layer], "extra-mip diagnostic readback changed a base-level pixel or swapped array layers");
             }
         }
     }
