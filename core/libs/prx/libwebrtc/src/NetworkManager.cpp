@@ -84,9 +84,8 @@ void CopyIn(void* destination, const void* source, std::size_t bytes, const std:
 class GuestWriteScope {
 public:
     GuestWriteScope(void* pointer, std::size_t bytes, const std::string& message)
-        : guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        : savedErrno(), guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
         if (!bytes) return;
-        ErrnoGuard guardErrno;
         if (!pointer || !guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
             throw std::invalid_argument(message);
     }
@@ -94,6 +93,7 @@ public:
     GuestWriteScope& operator=(const GuestWriteScope&) = delete;
 
 private:
+    ErrnoGuard savedErrno;
     GuestArena::HostWrite guard;
 };
 
