@@ -295,7 +295,7 @@ def triage(paths):
         "format": "anyps5-run-triage", "version": 1,
         "input_reports": len(paths), "unique_runs": len(seen), "duplicate_reports": len(paths) - len(seen),
         "groups": [summarize_group(identity, groups[identity])
-                   for identity in sorted(groups, key=lambda key: tuple(map(str, key)))],
+                   for identity in sorted(groups, key=lambda key: tuple((value is not None, str(value)) for value in key))],
     }
 
 

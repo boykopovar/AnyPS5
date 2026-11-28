@@ -502,6 +502,17 @@ class RunReportTriageTests(unittest.TestCase):
         for hidden in ("a7c41e9b05d2438f8e1b6a90c3d5f712", "copied.json", "Example Game", "General.cpp"):
             self.assertNotIn(hidden, result.stdout)
 
+    def test_triage_orders_a_missing_value_apart_from_the_text_none(self):
+        with tempfile.TemporaryDirectory() as directory:
+            unknown = self.write_report(directory, "unknown.json", game={"contentVersion": None}, run={"id": "4" * 32})
+            named = self.write_report(directory, "named.json", game={"contentVersion": "None"}, run={"id": "5" * 32})
+            result = self.triage(unknown, named)
+            reversed_result = self.triage(named, unknown)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(reversed_result.returncode, 0, reversed_result.stderr)
+        self.assertEqual(result.stdout, reversed_result.stdout)
+        self.assertEqual([group["content_version"] for group in json.loads(result.stdout)["groups"]], [None, "None"])
+
     def test_triage_marks_missing_function_evidence_by_coverage(self):
         clean = self.fixtures / "stop-none.json"
         recovered = self.fixtures / "killed-recovered.json"
