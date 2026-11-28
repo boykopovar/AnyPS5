@@ -38,7 +38,7 @@ struct HostImport {
     std::shared_ptr<const GuestAllocations::Range> range {};
     std::vector<std::shared_ptr<const GuestAllocations::Range>> ranges {};
     // Identity for the life of this import (see HostImportSerial); 0 until first asked for.
-    std::uint64_t serial = 0;
+    mutable std::uint64_t serial = 0;
     bool unwatched = false;
     bool settleOnDemand = false;
     bool dmaBuf = false;
@@ -524,6 +524,7 @@ public:
     bool SpaceOnly() const;
     std::shared_ptr<const void> ReleaseSpace();
     bool RetakeSpace();
+    bool RebaseSpace();
     bool SpaceHeld() const;
     void HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial);
     bool ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough);
@@ -702,6 +703,23 @@ private:
     std::uint64_t spaceHeldBy = 0;
     std::unique_ptr<RetainedAddressSpace> retention;
     void ensureRetention();
+    bool takeSpace(std::shared_ptr<const AddressSpace> current);
+    struct SpaceOwner {
+        std::uint64_t begin;
+        std::uint64_t end;
+        std::uint64_t bufferEnd;
+        std::uint64_t directSerial;
+        std::weak_ptr<ImageMirror> mirror;
+        std::weak_ptr<Buffer> buffer;
+        bool writable;
+        bool runCut;
+        bool sparse;
+        bool hostBacked;
+    };
+    std::vector<SpaceOwner> spaceOwners;
+    bool spaceOwnersNoted = false;
+    bool spaceOwnersUsable = false;
+    void noteSpaceOwners();
     mutable std::uint64_t tableSerial = 0;
     mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> tableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while

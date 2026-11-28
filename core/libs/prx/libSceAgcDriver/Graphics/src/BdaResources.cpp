@@ -351,6 +351,19 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
         attachStorePages();
     }
+    takeTable(context, memory);
+}
+
+std::shared_ptr<Buffer> BdaResources::Retable(const Context& context, const GuestBufferMemory& memory) {
+    Require(table != nullptr, "BDA page table was not requested");
+    auto previous = std::move(table);
+    table.reset();
+    tableBytes = 0;
+    takeTable(context, memory);
+    return previous;
+}
+
+void BdaResources::takeTable(const Context& context, const GuestBufferMemory& memory) {
     const auto cached = memory.CachedAddressTable();
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
     if (!cached.has_value()) built = memory.AddressRanges();
