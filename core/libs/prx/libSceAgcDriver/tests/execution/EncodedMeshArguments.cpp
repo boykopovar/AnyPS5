@@ -103,6 +103,7 @@ bool MeshArgumentsOutliveAThrowAfterTheirKernel(const Context& context, Recorder
         }
         observed = gate.Observed();
     }
+    recorder.Sync();
     if (!threw) return false;
     Require(ownedWhenQueued, "the mesh argument buffer was not owned by the caller when its kernel was queued, so a throw before the helper returned released it under the queued kernel");
     Require(observed && aliveAtReplay.load(std::memory_order_acquire), "the mesh argument buffer was released before the encoder replayed the kernel that writes it");
@@ -203,7 +204,6 @@ int main() {
         Require(queued == 6, "the mesh argument kernel bypassed the encoder window: " + std::to_string(queued) + " commands queued, expected the leading barrier plus the kernel's barrier, bind, push constants, dispatch and barrier");
         recorder->Sync();
         Require(MeshArgumentsOutliveAThrowAfterTheirKernel(context, *recorder, record), "the mesh argument kernel was not queued on the GPU indirect path");
-        recorder->Sync();
         if (SampleOrderOwnersOutliveAFailedRetention(context, *recorder)) recorder->Sync();
         else std::printf("sample-order retention failure skipped, no allocation failure hook in this build\n");
         std::cout << "encoded mesh arguments test passed\n";
