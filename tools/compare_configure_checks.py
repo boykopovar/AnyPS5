@@ -14,10 +14,12 @@ def main(argv=None):
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
     args = parser.parse_args(argv)
-    try:
-        before, after = checks(args.baseline), checks(args.candidate)
-    except (OSError, UnicodeError, ValueError) as error:
-        parser.error(str(error))
+    def load(path):
+        try:
+            return checks(path)
+        except (OSError, ValueError) as error:
+            parser.error(f"{path}: {error}")
+    before, after = load(args.baseline), load(args.candidate)
     def record(value):
         return {"value": value[0], "help": value[1]}
     added = [{"name": name, **record(after[name])} for name in sorted(after.keys() - before.keys())]

@@ -4,10 +4,23 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -15,16 +28,21 @@ template<typename TElement>
 using InFunction = int (APS5_VABI*)(const void*, void*, const char*, const char*, const char**, TElement*, TElement*, TElement**);
 template<typename TElement>
 using OutFunction = int (APS5_VABI*)(const void*, void*, const TElement*, const TElement*, const TElement**, char*, char*, char**);
+using LengthFunction = int (APS5_VABI*)(const void*, void*, const char*, const char*, std::size_t);
 
 constexpr InFunction<char16_t> In16 = &_ZNKSt7codecvtIDsc9_MbstatetE5do_inERS0_PKcS4_RS4_PDsS6_RS6__nid_postfix;
 constexpr OutFunction<char16_t> Out16 = &_ZNKSt7codecvtIDsc9_MbstatetE6do_outERS0_PKDsS4_RS4_PcS6_RS6__nid_postfix;
+constexpr LengthFunction Length16 = &CodecvtUtf16Length_nid_no_patch;
 constexpr InFunction<char32_t> In32 = &_ZNKSt7codecvtIDic9_MbstatetE5do_inERS0_PKcS4_RS4_PDiS6_RS6__nid_postfix;
 constexpr OutFunction<char32_t> Out32 = &_ZNKSt7codecvtIDic9_MbstatetE6do_outERS0_PKDiS4_RS4_PcS6_RS6__nid_postfix;
+constexpr LengthFunction Length32 = &_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix;
 
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDsc9_MbstatetE5do_inERS0_PKcS4_RS4_PDsS6_RS6__nid_postfix), InFunction<char16_t>>);
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDsc9_MbstatetE6do_outERS0_PKDsS4_RS4_PcS6_RS6__nid_postfix), OutFunction<char16_t>>);
+static_assert(std::is_same_v<decltype(&CodecvtUtf16Length_nid_no_patch), LengthFunction>);
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDic9_MbstatetE5do_inERS0_PKcS4_RS4_PDiS6_RS6__nid_postfix), InFunction<char32_t>>);
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDic9_MbstatetE6do_outERS0_PKDiS4_RS4_PcS6_RS6__nid_postfix), OutFunction<char32_t>>);
+static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix), LengthFunction>);
 
 constexpr int Ok = 0;
 constexpr int Partial = 1;
@@ -372,6 +390,243 @@ void CheckUtf32OutHeader() {
     Require(headed.result == Ok && headed.produced == Bytes({0xef, 0xbb, 0xbf, 0x41}) && Started(first) == 1, "char32 do_out generates a byte order mark before the first character");
 }
 
+int g_noconvCalls = 0;
+
+int APS5_VABI NoConvIn16(const void*, void*, const char* first1, const char*, const char** mid1, char16_t* first2, char16_t*, char16_t** mid2) {
+    ++g_noconvCalls;
+    *mid1 = first1 + (first1 != nullptr ? 1 : 0);
+    *mid2 = first2;
+    return 3;
+}
+
+template<typename TCall>
+void RequireInvalid(TCall call, const char* message) {
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, message);
+}
+
+class GuardedInput {
+public:
+    GuardedInput() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr, "guarded input allocation succeeds");
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guarded input page protection succeeds");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0, "host page size is available");
+        pageSize = static_cast<std::size_t>(size);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED, "guarded input allocation succeeds");
+        memory = static_cast<char*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0, "guarded input page protection succeeds");
+#endif
+    }
+
+    ~GuardedInput() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    GuardedInput(const GuardedInput&) = delete;
+    GuardedInput& operator=(const GuardedInput&) = delete;
+
+    std::pair<const char*, const char*> Place(const std::string& bytes) {
+        Require(bytes.size() <= pageSize, "guarded input fits inside one page");
+        char* start = memory + pageSize - bytes.size();
+        if (!bytes.empty()) std::memcpy(start, bytes.data(), bytes.size());
+        return {start, start + bytes.size()};
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t pageSize = 0;
+};
+
+template<typename TElement>
+void CheckLengthMatchesIn(LengthFunction length, InFunction<TElement> in, const TestFacet& facet, std::uint64_t initialState0, const std::string& bytes, std::size_t maxUnits, int expectedBytes, std::uint64_t expectedState0, const char* message) {
+    std::uint64_t lenState[2] = {initialState0, 0x8899aabbccddeeffULL};
+    std::uint64_t inState[2] = {initialState0, 0x8899aabbccddeeffULL};
+    const int measured = length(facet.Get(), lenState, bytes.data(), bytes.data() + bytes.size(), maxUnits);
+    const auto converted = RunIn(in, facet, inState, bytes, maxUnits);
+    Require(measured == expectedBytes, message);
+    Require(lenState[0] == expectedState0 && lenState[1] == 0x8899aabbccddeeffULL, message);
+    if (converted.result != Error) {
+        Require(static_cast<std::ptrdiff_t>(measured) == converted.consumed, message);
+        Require(lenState[0] == inState[0], message);
+    } else {
+        Require(static_cast<std::ptrdiff_t>(measured) <= converted.consumed, message);
+        Require(lenState[0] == inState[0], message);
+        std::uint64_t prefixState[2] = {initialState0, 0x8899aabbccddeeffULL};
+        const auto prefix = RunIn(in, facet, prefixState, bytes.substr(0, static_cast<std::size_t>(measured)), maxUnits);
+        Require(prefix.result == (measured == 0 ? Partial : Ok), message);
+        Require(prefix.consumed == measured && prefix.produced == converted.produced, message);
+    }
+}
+
+void CheckUtf16Length() {
+    const TestFacet plain(In16, Utf16Maxcode, 0);
+    CheckLengthMatchesIn(Length16, In16, plain, 0, "abcde", 0, 0, 0, "char16 do_length with max=0 consumes 0 bytes and preserves state");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, "abcde", 1, 1, 1, "char16 do_length counts 1 ASCII unit");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, "abcde", 3, 3, 1, "char16 do_length stops at max ASCII units");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, "abcde", 100, 5, 1, "char16 do_length stops at input end");
+
+    const std::string mixed = Bytes({0x41, 0xc3, 0xa9, 0xe2, 0x82, 0xac});
+    CheckLengthMatchesIn(Length16, In16, plain, 0, mixed, 1, 1, 1, "char16 do_length multibyte max=1");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, mixed, 2, 3, 1, "char16 do_length multibyte max=2");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, mixed, 3, 6, 1, "char16 do_length multibyte max=3");
+
+    const std::string supplementary = Bytes({0xf0, 0x9f, 0x98, 0x80});
+    std::uint64_t splitState[2] = {0, 0};
+    Require(Length16(plain.Get(), splitState, supplementary.data(), supplementary.data() + supplementary.size(), 1) == 3, "char16 do_length supplementary max=1 consumes 3 lead bytes");
+    Require(Pending(splitState) == 0xde00, "char16 do_length supplementary max=1 saves low surrogate in state");
+    Require(Length16(plain.Get(), splitState, supplementary.data() + 3, supplementary.data() + 4, 1) == 1, "char16 do_length completes low surrogate from state");
+    Require(Pending(splitState) == 1, "char16 do_length clears pending surrogate to 1");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, supplementary, 2, 4, 1, "char16 do_length supplementary max=2 consumes all 4 bytes");
+
+    const std::string withSupp = Bytes({0x41, 0xf0, 0x9f, 0x98, 0x80, 0x5a});
+    CheckLengthMatchesIn(Length16, In16, plain, 0, withSupp, 2, 4, 0xde00, "char16 do_length stops after high surrogate when budget is 2");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, withSupp, 3, 5, 1, "char16 do_length finishes surrogate pair when budget is 3");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, withSupp, 4, 6, 1, "char16 do_length includes trailing ASCII when budget is 4");
+
+    CheckLengthMatchesIn(Length16, In16, plain, 0, "", 5, 0, 0, "char16 do_length empty input returns 0");
+    std::uint64_t nullState[2] = {};
+    Require(Length16(plain.Get(), nullState, nullptr, nullptr, 5) == 0 && Pending(nullState) == 0, "char16 do_length accepts null empty range");
+
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0xe2, 0x82}), 4, 0, 0, "char16 do_length stops at truncated sequence");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0x41, 0xe2, 0x82}), 4, 1, 1, "char16 do_length counts prefix before truncated sequence");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0x80, 0x41}), 4, 0, 0, "char16 do_length stops on invalid lead byte");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0x41, 0x80, 0x42}), 4, 1, 1, "char16 do_length stops on invalid mid-stream byte");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0xc3, 0x41}), 4, 0, 0, "char16 do_length stops on invalid continuation byte");
+    CheckLengthMatchesIn(Length16, In16, plain, 0xde00, Bytes({0x41}), 4, 0, 0xde00, "char16 do_length requires continuation byte when low surrogate is pending");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0xf0, 0x9f, 0x98, 0x41}), 2, 3, 0xde00, "char16 do_length stops before invalid surrogate tail byte");
+
+    const std::string noncanonical = Bytes({0xf8, 0x80, 0x80, 0x81, 0x81});
+    CheckLengthMatchesIn(Length16, In16, plain, 0, noncanonical, 1, 5, 1, "char16 do_length accepts legacy 5-byte sequence");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, noncanonical.substr(0, 4), 1, 0, 0, "char16 do_length stops on truncated 5-byte sequence");
+
+    const TestFacet asciiMax(In16, 0x7f, 0);
+    CheckLengthMatchesIn(Length16, In16, asciiMax, 0, Bytes({0x41, 0xc3, 0xa9}), 4, 1, 1, "char16 do_length stops at maxcode");
+    const TestFacet wideMax(In16, Utf32Maxcode, 0);
+    CheckLengthMatchesIn(Length16, In16, wideMax, 0, Bytes({0xf4, 0x90, 0x80, 0x80}), 4, 0, 0, "char16 do_length clamps maxcode to U+10FFFF");
+
+    const TestFacet consume(In16, Utf16Maxcode, ConsumeHeader);
+    CheckLengthMatchesIn(Length16, In16, consume, 0, Bytes({0xef, 0xbb, 0xbf, 0x41}), 0, 0, 0, "char16 do_length max=0 does not consume BOM");
+    CheckLengthMatchesIn(Length16, In16, plain, 0xde00, Bytes({0x80, 0x41}), 0, 0, 0xde00, "char16 do_length max=0 preserves non-zero state");
+    CheckLengthMatchesIn(Length16, In16, consume, 0, Bytes({0xef, 0xbb, 0xbf, 0x80}), 1, 0, 1, "char16 do_length stops cleanly on BOM followed by invalid byte");
+    CheckLengthMatchesIn(Length16, In16, consume, 0, Bytes({0xef, 0xbb, 0xbf, 0x41}), 1, 4, 1, "char16 do_length consumes BOM and first unit when state=0");
+    CheckLengthMatchesIn(Length16, In16, consume, 0, Bytes({0xef, 0xbb, 0xbf}), 1, 0, 0, "char16 do_length rolls back BOM alone");
+    CheckLengthMatchesIn(Length16, In16, consume, 0, Bytes({0xef, 0xbb, 0xbf, 0xe2, 0x82}), 1, 0, 0, "char16 do_length rolls back BOM before truncated char");
+    CheckLengthMatchesIn(Length16, In16, consume, 1, Bytes({0xef, 0xbb, 0xbf, 0x41}), 1, 3, 1, "char16 do_length keeps BOM as 0xfeff when state is non-initial");
+    CheckLengthMatchesIn(Length16, In16, consume, 1, Bytes({0xef, 0xbb, 0xbf, 0x41}), 2, 4, 1, "char16 do_length counts BOM + A as 2 units when state is non-initial");
+    CheckLengthMatchesIn(Length16, In16, plain, 0, Bytes({0xef, 0xbb, 0xbf, 0x41}), 1, 3, 1, "char16 do_length keeps BOM without ConsumeHeader");
+
+    const TestFacet virtualRetry(RecordIn16, Utf16Maxcode, ConsumeHeader);
+    const std::string bomBytes = Bytes({0xef, 0xbb, 0xbf, 0x41});
+    std::uint64_t retryState[2] = {};
+    g_retries = 0;
+    Require(Length16(virtualRetry.Get(), retryState, bomBytes.data(), bomBytes.data() + bomBytes.size(), 1) == 4, "char16 do_length retries BOM through vtable do_in");
+    Require(g_retries == 1 && g_retryFirst == bomBytes.data() + 3, "char16 do_length BOM retry passes post-BOM pointer");
+
+    std::uint64_t largeBudgetState16[2] = {};
+    Require(Length16(plain.Get(), largeBudgetState16, mixed.data(), mixed.data() + mixed.size(), std::numeric_limits<std::size_t>::max()) == 6 && Pending(largeBudgetState16) == 1, "char16 do_length handles SIZE_MAX budget without allocation");
+
+    const TestFacet noconvFacet(NoConvIn16, Utf16Maxcode, ConsumeHeader);
+    const std::string noconvBytes = Bytes({0xef, 0xbb, 0xbf, 'a', 'b', 'c', 'd', 'e', 'f'});
+    std::uint64_t noconvState[2] = {};
+    g_noconvCalls = 0;
+    Require(Length16(noconvFacet.Get(), noconvState, noconvBytes.data(), noconvBytes.data() + noconvBytes.size(), 4) == 4, "char16 do_length handles noconv up to max from original cursor");
+    noconvState[0] = 0;
+    Require(Length16(noconvFacet.Get(), noconvState, noconvBytes.data(), noconvBytes.data() + noconvBytes.size(), 10) == 9, "char16 do_length handles noconv up to last1 from original cursor");
+    Require(g_noconvCalls == 2, "char16 do_length reaches noconv override through BOM retry");
+
+    GuardedInput guarded;
+    const auto [guardStart, guardEnd] = guarded.Place(Bytes({0xf0, 0x9f, 0x98, 0x80, 0x41}));
+    std::uint64_t guardState[2] = {};
+    Require(Length16(plain.Get(), guardState, guardStart, guardEnd, 10) == 5 && Pending(guardState) == 1, "char16 do_length does not read past last1");
+
+    RequireInvalid([&] { Length16(nullptr, guardState, guardStart, guardEnd, 1); }, "char16 do_length rejects null facet");
+    RequireInvalid([&] { Length16(plain.Get(), nullptr, guardStart, guardEnd, 1); }, "char16 do_length rejects null state");
+    RequireInvalid([&] { Length16(plain.Get(), guardState, nullptr, guardEnd, 1); }, "char16 do_length rejects null first with non-null last");
+    RequireInvalid([&] { Length16(plain.Get(), guardState, guardStart, nullptr, 1); }, "char16 do_length rejects non-null first with null last");
+    RequireInvalid([&] { Length16(plain.Get(), guardState, guardEnd, guardStart, 1); }, "char16 do_length rejects reversed range");
+}
+
+void CheckUtf32Length() {
+    const TestFacet plain(In32, Utf32Maxcode, 0);
+    CheckLengthMatchesIn(Length32, In32, plain, 0, "abcde", 0, 0, 0, "char32 do_length with max=0 consumes 0 bytes and preserves state");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, "abcde", 1, 1, 1, "char32 do_length counts 1 ASCII unit");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, "abcde", 3, 3, 1, "char32 do_length stops at max ASCII units");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, "abcde", 100, 5, 1, "char32 do_length stops at input end");
+
+    const std::string multi = Bytes({0x41, 0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80, 0xfd, 0xbf, 0xbf, 0xbf, 0xbf, 0xbf, 0xff, 0xbf, 0xbf, 0xbf, 0xbf, 0xbf});
+    CheckLengthMatchesIn(Length32, In32, plain, 0, multi, 1, 1, 1, "char32 do_length max=1");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, multi, 2, 3, 1, "char32 do_length max=2");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, multi, 3, 6, 1, "char32 do_length max=3");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, multi, 4, 10, 1, "char32 do_length supplementary max=4 consumes 4-byte sequence as 1 unit");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, multi, 6, 22, 1, "char32 do_length decodes 1..6 byte sequences");
+
+    const std::string supplementary = Bytes({0xf0, 0x9f, 0x98, 0x80});
+    CheckLengthMatchesIn(Length32, In32, plain, 0, supplementary, 1, 4, 1, "char32 do_length supplementary budget 1 consumes all 4 bytes");
+
+    CheckLengthMatchesIn(Length32, In32, plain, 0, "", 5, 0, 0, "char32 do_length empty input returns 0");
+    std::uint64_t nullState[2] = {};
+    Require(Length32(plain.Get(), nullState, nullptr, nullptr, 5) == 0 && Started(nullState) == 0, "char32 do_length accepts null empty range");
+
+    CheckLengthMatchesIn(Length32, In32, plain, 0, Bytes({0xe2, 0x82}), 4, 0, 0, "char32 do_length stops at truncated sequence");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, Bytes({0x41, 0xe2, 0x82}), 4, 1, 1, "char32 do_length counts prefix before truncated sequence");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, Bytes({0x80, 0x41}), 4, 0, 0, "char32 do_length stops on invalid lead byte");
+    CheckLengthMatchesIn(Length32, In32, plain, 0, Bytes({0x41, 0xc3, 0x42}), 4, 1, 1, "char32 do_length stops on invalid continuation byte");
+
+    const TestFacet unicodeMax(In32, Utf16Maxcode, 0);
+    CheckLengthMatchesIn(Length32, In32, unicodeMax, 0, Bytes({0xf4, 0x90, 0x80, 0x80}), 4, 0, 1, "char32 do_length stops at maxcode=0x10ffff");
+    const TestFacet asciiConsume(In32, 0x7f, ConsumeHeader);
+    CheckLengthMatchesIn(Length32, In32, asciiConsume, 0, Bytes({0xef, 0xbb, 0xbf, 0x41}), 1, 4, 1, "char32 do_length drops BOM before checking maxcode");
+    const TestFacet asciiPlain(In32, 0x7f, 0);
+    CheckLengthMatchesIn(Length32, In32, asciiPlain, 0, Bytes({0xef, 0xbb, 0xbf, 0x41}), 1, 0, 1, "char32 do_length rejects kept BOM above maxcode");
+
+    const TestFacet consume(In32, Utf32Maxcode, ConsumeHeader);
+    CheckLengthMatchesIn(Length32, In32, consume, 0, Bytes({0xef, 0xbb, 0xbf, 0x41}), 0, 0, 0, "char32 do_length max=0 preserves BOM state");
+    CheckLengthMatchesIn(Length32, In32, plain, 1, Bytes({0xef, 0xbb, 0xbf, 0x41}), 0, 0, 1, "char32 do_length max=0 preserves non-zero state");
+    CheckLengthMatchesIn(Length32, In32, consume, 0, Bytes({0xef, 0xbb, 0xbf, 0x80}), 1, 0, 1, "char32 do_length stops cleanly on BOM followed by invalid byte");
+    CheckLengthMatchesIn(Length32, In32, consume, 0, Bytes({0xef, 0xbb, 0xbf}), 1, 0, 0, "char32 do_length rolls back BOM alone");
+    CheckLengthMatchesIn(Length32, In32, consume, 1, Bytes({0xef, 0xbb, 0xbf, 0x41}), 1, 3, 1, "char32 do_length keeps BOM when state is non-initial");
+    CheckLengthMatchesIn(Length32, In32, consume, 1, Bytes({0xef, 0xbb, 0xbf, 0x41}), 2, 4, 1, "char32 do_length consumes BOM + A when state is non-initial and max=2");
+
+    const TestFacet virtualRetry(RecordIn32, Utf32Maxcode, ConsumeHeader);
+    const std::string bomBytes = Bytes({0xef, 0xbb, 0xbf, 0x41});
+    std::uint64_t retryState[2] = {};
+    g_retries = 0;
+    Require(Length32(virtualRetry.Get(), retryState, bomBytes.data(), bomBytes.data() + bomBytes.size(), 1) == 4, "char32 do_length retries BOM through vtable do_in");
+    Require(g_retries == 1 && g_retryFirst == bomBytes.data() + 3, "char32 do_length BOM retry passes post-BOM pointer");
+
+    std::uint64_t largeBudgetState32[2] = {};
+    Require(Length32(plain.Get(), largeBudgetState32, multi.data(), multi.data() + multi.size(), std::numeric_limits<std::size_t>::max()) == 22 && Started(largeBudgetState32) == 1, "char32 do_length handles SIZE_MAX budget without allocation");
+
+    GuardedInput guarded;
+    const auto [guardStart, guardEnd] = guarded.Place(Bytes({0xf0, 0x9f, 0x98, 0x80, 0x41}));
+    std::uint64_t guardState[2] = {};
+    Require(Length32(plain.Get(), guardState, guardStart, guardEnd, 10) == 5 && Started(guardState) == 1, "char32 do_length does not read past last1");
+
+    RequireInvalid([&] { Length32(nullptr, guardState, guardStart, guardEnd, 1); }, "char32 do_length rejects null facet");
+    RequireInvalid([&] { Length32(plain.Get(), nullptr, guardStart, guardEnd, 1); }, "char32 do_length rejects null state");
+    RequireInvalid([&] { Length32(plain.Get(), guardState, nullptr, guardEnd, 1); }, "char32 do_length rejects null first with non-null last");
+    RequireInvalid([&] { Length32(plain.Get(), guardState, guardStart, nullptr, 1); }, "char32 do_length rejects non-null first with null last");
+    RequireInvalid([&] { Length32(plain.Get(), guardState, guardEnd, guardStart, 1); }, "char32 do_length rejects reversed range");
+}
+
 }
 
 int main() {
@@ -397,5 +652,7 @@ int main() {
     CheckUtf32OutMaxcode();
     CheckUtf32OutRoom();
     CheckUtf32OutHeader();
+    CheckUtf16Length();
+    CheckUtf32Length();
     return 0;
 }

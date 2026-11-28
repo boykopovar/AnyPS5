@@ -539,7 +539,7 @@ void CollectOutputs(const IrProgram& program, ShaderStageInputInfo inputInfo, Sh
 
 std::uint16_t SamplerUseOf(IrOpcode opcode, std::uint32_t flags, IrShaderStage stage) {
     if (opcode == IrOpcode::ImageGatherRaw) {
-        return SamplerUseGather;
+        return static_cast<std::uint16_t>((flags & RdnaImageSampleFlagLod) != 0u ? SamplerUseGather | SamplerUseGatherLod : SamplerUseGather);
     }
     if (opcode == IrOpcode::ImageQueryLod) {
         return SamplerUseQueryLod;
@@ -625,7 +625,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
             return inst->Opcode() == IrOpcode::BitwiseXor32;
         });
     });
-    next.usesFaultBuffer = next.usesFaultBuffer || std::ranges::any_of(program.Blocks(), [](const auto& block) {
+    next.usesFaultBuffer = next.usesFaultBuffer || (program.Metadata().splitState && program.Resources().stage == IrShaderStage::Compute) || std::ranges::any_of(program.Blocks(), [](const auto& block) {
         return std::ranges::any_of(block->Instructions(), [](const IrValue* inst) {
             return SharedAccessOf(inst->Opcode()) == SharedAccess::Atomic && inst->Type() == IrType::U64;
         });

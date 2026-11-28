@@ -9,6 +9,7 @@
 namespace {
 
 constexpr int SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED = static_cast<int>(0x8178000A);
+constexpr int NullArgumentResult = static_cast<int>(0x81780001);
 
 }
 
@@ -30,8 +31,10 @@ int APS5_VABI sceEsvmEngineGetVideoPlaybackQuality() {
     return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceEsvmEngineInitializeCdm() {
+int APS5_VABI sceEsvmEngineInitializeCdm(void* argument1) {
+    if (argument1 == nullptr) return NullArgumentResult;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceEsvmEngineMediaKeySessionDecryptAudioData() {
@@ -241,8 +244,10 @@ int APS5_VABI sceEsvmEnginePushAccessUnit() {
     return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceEsvmEngineQueryVideoMemory() {
+int APS5_VABI sceEsvmEngineQueryVideoMemory(void* argument1) {
+    if (argument1 == nullptr) return NullArgumentResult;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceEsvmEngineRemoveDecoder() {
@@ -266,8 +271,10 @@ int APS5_VABI libSceEsvmEngineUnknown_TLCfQqZ_minus_6AU_nid_no_patch() {
 }
 APS5_EXPORT("TLCfQqZ-6AU", libSceEsvmEngineUnknown_TLCfQqZ_minus_6AU_nid_no_patch);
 
-int APS5_VABI libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch() {
+int APS5_VABI libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch(void* argument1) {
+    if (argument1 == nullptr) return NullArgumentResult;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("Y6Rtwfuj0Bw", libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch);
 

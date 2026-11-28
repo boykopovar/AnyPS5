@@ -1034,6 +1034,107 @@ void CheckKnownZeroShared() {
     Require(KnownZeroPages(region.first, Bytes).empty(), "shared memory is known zero");
 }
 
+void CheckResidentRunNoAccessTransitions() {
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Large = 4 * Bytes;
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(section && first, "cannot allocate resident no-access transition test memory");
+    mappings.ForgetSection(section);
+    const auto address = reinterpret_cast<std::uintptr_t>(first);
+    const auto tryCollect = [&](std::uintptr_t at, std::size_t bytes, Collection mode = Collection::All) {
+        std::array<void*, 64> pages{};
+        std::size_t count = pages.size();
+        const bool ok = mappings.Collect(at, bytes, pages.data(), &count, true, mode);
+        std::set<std::size_t> result;
+        if (ok) {
+            for (std::size_t i = 0; i < count; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        }
+        return std::make_pair(ok, result);
+    };
+    DWORD previous;
+    mappings.Map(first, Large, section, 0, PAGE_NOACCESS, true, true);
+    Require(mappings.ResidentRunHasNoAccess(address), "a resident run mapped PAGE_NOACCESS did not mark hasNoAccess");
+    Require(!tryCollect(address, Large).first, "a resident run mapped PAGE_NOACCESS was collected");
+    mappings.SetProtection(address, Large, PAGE_READWRITE);
+    Require(VirtualProtect(first, Large, PAGE_READWRITE, &previous), "cannot restore full resident run protection");
+    Require(!mappings.ResidentRunHasNoAccess(address), "restoring a full resident run via SetProtection did not clear hasNoAccess");
+    Require(tryCollect(address, Large).first, "a full resident run restored via SetProtection failed to collect");
+
+    mappings.SetProtection(address + Page, Page, PAGE_NOACCESS);
+    Require(VirtualProtect(first + Page, Page, PAGE_NOACCESS, &previous), "cannot protect first resident page no-access");
+    Require(mappings.ResidentRunHasNoAccess(address), "protecting a page of a resident run PAGE_NOACCESS did not set hasNoAccess");
+    Require(!tryCollect(address, Large).first, "a resident run with a PAGE_NOACCESS page was collected");
+    Require(!tryCollect(address + Page, Page).first, "a PAGE_NOACCESS page of a resident run was collected");
+    Require(tryCollect(address, Page).first, "an accessible prefix of a partially no-access resident run failed to collect");
+    Require(tryCollect(address + 2 * Page, Large - 2 * Page).first, "an accessible suffix of a partially no-access resident run failed to collect");
+
+    mappings.SetProtection(address + 3 * Page, Page, PAGE_NOACCESS);
+    Require(VirtualProtect(first + 3 * Page, Page, PAGE_NOACCESS, &previous), "cannot protect second resident page no-access");
+    mappings.SetProtection(address + Page, Page, PAGE_READWRITE);
+    Require(VirtualProtect(first + Page, Page, PAGE_READWRITE, &previous), "cannot restore first resident page");
+    Require(mappings.ResidentRunHasNoAccess(address), "restoring one of two PAGE_NOACCESS pages cleared hasNoAccess prematurely");
+    Require(tryCollect(address + Page, Page).first, "a restored page of a partially no-access resident run failed to collect");
+    Require(!tryCollect(address, Large).first, "a resident run with a remaining PAGE_NOACCESS page was collected");
+
+    mappings.SetProtection(address + 3 * Page, Page, PAGE_READWRITE);
+    Require(VirtualProtect(first + 3 * Page, Page, PAGE_READWRITE, &previous), "cannot restore second resident page");
+    Require(!mappings.ResidentRunHasNoAccess(address), "restoring the last PAGE_NOACCESS page via SetProtection did not clear hasNoAccess");
+    Require(tryCollect(address, Large).first, "a resident run restored via partial SetProtection failed to collect");
+
+    mappings.Commit(first + 2 * Page, Page, PAGE_NOACCESS, Page, true);
+    Require(mappings.ResidentRunHasNoAccess(address), "Commit PAGE_NOACCESS on a resident page did not set hasNoAccess");
+    Require(!tryCollect(address, Large).first, "a resident run with a Commit PAGE_NOACCESS page was collected");
+    mappings.Commit(first + 2 * Page, Page, PAGE_READWRITE, Page, true);
+    Require(!mappings.ResidentRunHasNoAccess(address), "Commit PAGE_READWRITE restoring the last no-access page did not clear hasNoAccess");
+    Require(tryCollect(address, Large).first, "a resident run restored via partial Commit failed to collect");
+
+    mappings.Commit(first, Large, PAGE_NOACCESS, Page, true);
+    Require(mappings.ResidentRunHasNoAccess(address), "Commit PAGE_NOACCESS over a full resident run did not set hasNoAccess");
+    Require(!tryCollect(address, Large).first, "a resident run committed PAGE_NOACCESS was collected");
+    mappings.Commit(first, Large, PAGE_READWRITE, Page, true);
+    Require(!mappings.ResidentRunHasNoAccess(address), "Commit PAGE_READWRITE over a full resident run did not clear hasNoAccess");
+    Require(tryCollect(address, Large).first, "a resident run restored via full Commit failed to collect");
+    static_cast<volatile unsigned char*>(first)[2 * Page + Small] = 0x42;
+    const auto [ok, written] = tryCollect(address, Large, Collection::Armed);
+    Require(ok && written == std::set<std::size_t>{(2 * Page + Small) / Small}, "a restored resident run lost subsequent writes");
+
+    mappings.Reset(first, Large);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
+void CheckKnownZeroMarks() {
+    constexpr std::size_t Large = 0x40000;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* unwatched = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* resident = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(memory && unwatched && section && resident, "cannot allocate known zero marks test memory");
+    const auto before = mappings.KnownZeroMarks();
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto committed = mappings.KnownZeroMarks();
+    Require(committed > before, "a watched commit did not advance the known zero marks");
+    mappings.ForgetKnownZero(reinterpret_cast<std::uintptr_t>(memory), Bytes);
+    Require(KnownZeroPages(memory, Bytes).empty(), "a forgotten range stayed known zero");
+    mappings.Commit(unwatched, Bytes, PAGE_READWRITE, Bytes, false);
+    Require(mappings.KnownZeroMarks() == committed, "forgetting or an unwatched commit advanced the known zero marks");
+    mappings.ForgetSection(section);
+    mappings.Map(resident, Large, section, 0, PAGE_READWRITE, true, true);
+    Require(mappings.KnownZeroMarks() > committed, "a fresh resident run did not advance the known zero marks");
+    mappings.Reset(resident, Large);
+    mappings.ForgetSection(section);
+    mappings.Reset(unwatched, Bytes);
+    mappings.Reset(memory, Bytes);
+    VirtualFree(resident, 0, MEM_RELEASE);
+    VirtualFree(unwatched, 0, MEM_RELEASE);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
 int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
@@ -1073,6 +1174,8 @@ int main(int argc, char** argv) {
         CheckKnownZeroResident();
         CheckKnownZeroShared();
         CheckKnownZeroFirstReads();
+        CheckKnownZeroMarks();
+        CheckResidentRunNoAccessTransitions();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

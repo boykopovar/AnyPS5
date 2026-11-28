@@ -1,5 +1,8 @@
 #include "prx/libcairo/include/Path.hpp"
 
+#include <CairoBackend.h>
+
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cmath>
@@ -9,6 +12,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -96,6 +100,99 @@ void ExpectThrowsPreservingErrno(Fn&& fn, int line) {
 
 #define EXPECT_REJECTED(...) ExpectThrowsPreservingErrno([&] { __VA_ARGS__; }, __LINE__)
 
+CairoContext* CreateContext() {
+    CairoSurface* surface = cairo_image_surface_create(0, 16, 16);
+    CHECK(surface != nullptr);
+    CairoContext* context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    CHECK(context != nullptr);
+    return context;
+}
+
+void LongDashes() {
+    constexpr int count = 5000;
+    std::vector<double> dashes(count);
+    for (int i = 0; i < count; ++i)
+        dashes[static_cast<std::size_t>(i)] = 1.0 + i % 7;
+    CairoContext* context = CreateContext();
+    cairo_set_dash(context, dashes.data(), count, 2.5);
+    CHECK(cairo_get_dash_count(context) == count);
+    std::vector<double> retrieved(count, -1.0);
+    double offset = -1.0;
+    cairo_get_dash(context, retrieved.data(), &offset);
+    CHECK(retrieved == dashes);
+    CHECK(Close(offset, 2.5));
+    cairo_destroy(context);
+}
+
+void InvalidDashFromCairo() {
+    constexpr int count = 5000;
+    std::vector<double> dashes(count, 3.0);
+    dashes[4500] = -1.0;
+    CairoContext* context = CreateContext();
+    cairo_set_dash(context, dashes.data(), count, 0.0);
+    CHECK(aps5_cairo_status(reinterpret_cast<cairo_t*>(context)) == CAIRO_STATUS_INVALID_DASH);
+    cairo_destroy(context);
+}
+
+struct GuardedDoubles {
+    void* base = nullptr;
+    std::size_t bytes = 0;
+    double* data = nullptr;
+
+    explicit GuardedDoubles(std::size_t count) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        const std::size_t page = info.dwPageSize;
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        CHECK(pageSize > 0);
+        const auto page = static_cast<std::size_t>(pageSize);
+#endif
+        const std::size_t readable = (count * sizeof(double) + page - 1) / page * page;
+        bytes = readable + page;
+#ifdef _WIN32
+        base = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        CHECK(base != nullptr);
+        DWORD previous = 0;
+        CHECK(VirtualProtect(static_cast<char*>(base) + readable, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        base = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(base != MAP_FAILED);
+        CHECK(mprotect(static_cast<char*>(base) + readable, page, PROT_NONE) == 0);
+#endif
+        data = reinterpret_cast<double*>(static_cast<char*>(base) + readable) - count;
+        for (std::size_t i = 0; i < count; ++i)
+            data[i] = 1.0 + static_cast<double>(i % 5);
+    }
+
+    ~GuardedDoubles() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, bytes);
+#endif
+    }
+};
+
+void UnreadableDashTail() {
+    constexpr int count = 5000;
+    const GuardedDoubles guarded(count);
+    CairoContext* context = CreateContext();
+    cairo_set_dash(context, guarded.data, count, 0.0);
+    CHECK(cairo_get_dash_count(context) == count);
+    EXPECT_REJECTED(cairo_set_dash(context, guarded.data, count + 1, 0.0));
+    EXPECT_REJECTED(cairo_set_dash(context, guarded.data, 0x7fffffff, 0.0));
+    CHECK(cairo_get_dash_count(context) == count);
+    std::vector<double> retrieved(count);
+    double offset = -1.0;
+    cairo_get_dash(context, retrieved.data(), &offset);
+    CHECK(std::equal(retrieved.begin(), retrieved.end(), guarded.data));
+    cairo_destroy(context);
+}
+
 } // namespace
 
 int main() {
@@ -144,10 +241,43 @@ int main() {
     cairo_device_to_user_distance(context, &dx, &dy);
     CHECK(Close(dx, 5.0) && Close(dy, -2.0));
 
+    using CoordinateTransform = void (APS5_VABI*)(CairoContext*, double*, double*);
+    const std::array<CoordinateTransform, 4> coordinateTransforms{
+        cairo_user_to_device,
+        cairo_user_to_device_distance,
+        cairo_device_to_user,
+        cairo_device_to_user_distance,
+    };
+    for (CoordinateTransform transform : coordinateTransforms) {
+        double first = 7.0;
+        double second = 11.0;
+        EXPECT_REJECTED(transform(context, nullptr, &second));
+        CHECK(Close(second, 11.0));
+        EXPECT_REJECTED(transform(context, &first, nullptr));
+        CHECK(Close(first, 7.0));
+        EXPECT_REJECTED(transform(context, badDouble, &second));
+        CHECK(Close(second, 11.0));
+        EXPECT_REJECTED(transform(context, &first, badDouble));
+        CHECK(Close(first, 7.0));
+        EXPECT_REJECTED(transform(context, roDoubles, &second));
+        CHECK(Close(second, 11.0));
+        EXPECT_REJECTED(transform(context, &first, roDoubles));
+        CHECK(Close(first, 7.0));
+    }
+
+    double backendAliased = 2.0;
+    aps5_cairo_user_to_device(
+        reinterpret_cast<cairo_t*>(context),
+        &backendAliased,
+        &backendAliased);
+
+    double aliased = 2.0;
+    cairo_user_to_device(context, &aliased, &aliased);
+    CHECK(Close(aliased, backendAliased));
+
     EXPECT_REJECTED(cairo_set_dash(context, nullptr, 2, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, badDouble, 2, 0.5));
     const std::array<double, 2> dashPattern{4.0, 2.0};
-    EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 4097, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 0x7fffffff, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, badDouble, 0x7fffffff, 0.5));
     cairo_set_dash(context, dashPattern.data(), 2, 1.5);
@@ -202,5 +332,9 @@ int main() {
     CHECK(Close(x1, 0.0) && Close(y1, 0.0) && Close(x2, 128.0) && Close(y2, 128.0));
 
     cairo_destroy(context);
+
+    LongDashes();
+    InvalidDashFromCairo();
+    UnreadableDashTail();
     std::puts("guest Cairo context guest pointer tests passed");
 }

@@ -11,11 +11,11 @@ extern "C" {
 
 
 int APS5_VABI _ZN15AbstractStorage12Serializable12readExternalESt10shared_ptrINS_7ContentEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0005u);
 }
 
 int APS5_VABI _ZN15AbstractStorage12Serializable13writeExternalESt10shared_ptrINS_7ContentEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0005u);
 }
 
 int APS5_VABI _ZN15AbstractStorage12SerializableC1Ev() {
@@ -31,11 +31,11 @@ void APS5_VABI _ZN15AbstractStorage12SerializableD1Ev(void*) {}
 void APS5_VABI _ZN15AbstractStorage12SerializableD2Ev(void*) {}
 
 int APS5_VABI _ZN15AbstractStorage14MemfileContent12readExternalESt10shared_ptrINS_7ContentEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0002u);
 }
 
 int APS5_VABI _ZN15AbstractStorage14MemfileContent13writeExternalESt10shared_ptrINS_7ContentEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0002u);
 }
 
 int APS5_VABI _ZN15AbstractStorage14MemfileContent14CreateInstanceESbIcSt11char_traitsIcENS_8StlAllocIcEEEN3paf6common9SharedPtrINS6_6BufferEEE() {
@@ -259,7 +259,7 @@ int APS5_VABI _ZN15AbstractStorage4Item14GetStorageNameEv() {
 }
 
 int APS5_VABI _ZN15AbstractStorage4Item6RenameERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0005u);
 }
 
 int APS5_VABI _ZN15AbstractStorage4Item7GetNameERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() {
@@ -427,11 +427,11 @@ int APS5_VABI _ZNK15AbstractStorage14MemfileContent7GetStatEPNS_4StatE(const voi
 }
 
 int APS5_VABI _ZNK15AbstractStorage4Item12GetThumbnailEPSt10shared_ptrINS_7ContentEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0005u);
 }
 
 int APS5_VABI _ZNK15AbstractStorage4Item15CreateThumbnailEPvPSt10shared_ptrINS_7ContentEE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809e0005u);
 }
 
 int APS5_VABI _ZNK15AbstractStorage6Folder7GetTypeEv(const void*) {

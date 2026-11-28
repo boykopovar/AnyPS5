@@ -187,7 +187,6 @@ GeometryLayout ComputeGeometryLayout(const char* function, const Shader* front, 
     ValidateGeometryHalf(function, back);
     ValidateGeometryHalf(function, front);
     GeometryLayout layout{};
-    if (back->embedded_constant_buffer_size_dqw != 0) Fail(function, "fusing a back half with an embedded constant buffer is not implemented");
     const auto program = FrontProgramBytes(function, front);
     layout.frontBytes = program.programBytes;
     layout.backOffset = AlignUp(layout.frontBytes, FusedCodeAlignment);

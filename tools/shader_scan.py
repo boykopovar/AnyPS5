@@ -1,4 +1,5 @@
 import functools
+import os
 import re
 from pathlib import Path
 
@@ -9,6 +10,23 @@ TEXTURE_FORMATS = f"{AGC_DRIVER}Graphics/src/TextureFormat.cpp"
 SCANNED_DIRECTORIES = (RECOMPILER.rstrip("/"), AGC_DRIVER.rstrip("/"))
 FORMS = ("base", "vop3", "dpp16", "dpp8")
 TEST_PATH = re.compile(r"/tests?/")
+COMMENT_OR_LITERAL = re.compile(r'//|/\*|["\']')
+_BRACE_OR_QUOTE = re.compile(r'[{}"\']')
+_RAW_PREFIX = re.compile(r"(?<![\w.])(?:u8|[uUL])?R$")
+_RAW_OPENING = re.compile(r'"([^ ()\\\s]{0,16})\(')
+_DECODE_PREFIX = re.compile(r"^(?:decode|lookup)")
+_HEX_WORD = re.compile(r"\b0x([0-9a-fA-F]+)u?\b")
+_OPCODE_REF = re.compile(r"RdnaOpcode::(\w+)")
+_FAMILY_CASE = re.compile(r"case\s+RdnaInstructionFamily::(\w+)\s*:")
+_EXP_CASE = re.compile(r"case\s+RdnaInstructionFamily::EXP\s*:")
+_STRING_LITERAL = re.compile(r'"((?:\\.|[^"\\])*)"')
+_WHITESPACE = re.compile(r"\s+")
+_ENUM_ENTRY = re.compile(r"(\w+)\s*=\s*(\d+)")
+_RANGE_ENTRY = re.compile(r"\{\s*(\d+)u?\s*,\s*(\d+)u?\s*\}")
+_SAMPLED_ENTRY = re.compile(r"\{\s*IrBufferFormat::(\w+)\s*,\s*true\b")
+_FORMAT_LOOKUP = re.compile(r"\{\s*(\d+)\s*,\s*VK_FORMAT_")
+_REMAP_TARGET = re.compile(r"\?\s*(\d+)\s*:")
+_REMAP_EQ = re.compile(r"==\s*(\d+)")
 
 
 class ScanError(Exception):
@@ -18,6 +36,20 @@ class ScanError(Exception):
 
 def skip_literal(source, start):
     quote = source[start]
+    if quote == '"' and start and source[start - 1] == "R":
+        if _RAW_PREFIX.search(source, max(start - 4, 0), start):
+            opening = _RAW_OPENING.match(source, start)
+            if opening:
+                closing = ")" + opening.group(1) + '"'
+                end = source.find(closing, opening.end())
+                if end >= 0:
+                    return end + len(closing) - 1
+    if quote == "'" and start + 1 < len(source) and source[start + 1] in "0123456789abcdefABCDEF":
+        begin = start
+        while begin and (source[begin - 1].isalnum() or source[begin - 1] in "_.'"):
+            begin -= 1
+        if begin < start and (source[begin].isdigit() or (source[begin] == "." and source[begin + 1].isdigit())):
+            return start
     j = start + 1
     while j < len(source) and source[j] != quote and source[j] != "\n":
         j += 2 if source[j] == "\\" else 1
@@ -26,26 +58,38 @@ def skip_literal(source, start):
 
 @functools.cache
 def strip_comments(source):
-    out, i, n = [], 0, len(source)
+    out = []
+    pos = 0
+    i = 0
+    n = len(source)
     while i < n:
-        c, nxt = source[i], source[i + 1] if i + 1 < n else ""
-        if c == "/" and nxt == "/":
-            end = source.find("\n", i)
+        match = COMMENT_OR_LITERAL.search(source, i)
+        if match is None:
+            break
+        start = match.start()
+        token = match.group()
+        if token == "//":
+            end = source.find("\n", start + 2)
             stop = n if end < 0 else end
-            out.append(" " * (stop - i))
-            i = stop
-        elif c == "/" and nxt == "*":
-            end = source.find("*/", i + 2)
+            out.append(source[pos:start])
+            out.append(" " * (stop - start))
+            pos = i = stop
+        elif token == "/*":
+            end = source.find("*/", start + 2)
             stop = n if end < 0 else end + 2
-            out.append(re.sub(r"[^\n]", " ", source[i:stop]))
-            i = stop
-        elif c in "\"'":
-            j = skip_literal(source, i)
-            out.append(source[i:j + 1])
-            i = j + 1
+            out.append(source[pos:start])
+            span = source[start:stop]
+            if "\n" not in span:
+                out.append(" " * (stop - start))
+            else:
+                out.append("\n".join(" " * len(line) for line in span.split("\n")))
+            pos = i = stop
         else:
-            out.append(c)
-            i += 1
+            j = skip_literal(source, start)
+            i = j + 1
+    if not out:
+        return source
+    out.append(source[pos:])
     return "".join(out)
 
 
@@ -56,31 +100,56 @@ def body_after(source, header):
     opening = source.find("{", match.end() - 1)
     if opening < 0:
         return None
-    depth, i = 0, opening
-    while i < len(source):
-        c = source[i]
-        if c in "\"'":
-            i = skip_literal(source, i)
-        elif c == "{":
+    depth = 0
+    i = opening
+    while True:
+        hit = _BRACE_OR_QUOTE.search(source, i)
+        if hit is None:
+            return None
+        pos = hit.start()
+        c = hit.group()
+        if c == "{":
             depth += 1
+            i = pos + 1
         elif c == "}":
             depth -= 1
             if depth == 0:
-                return source[opening + 1:i]
-        i += 1
-    return None
+                return source[opening + 1:pos]
+            i = pos + 1
+        else:
+            i = skip_literal(source, pos) + 1
+
+
+@functools.cache
+def _function_pattern(name):
+    return re.compile(rf"\b{name}\s*\([^)]*\)\s*(?:const\s*)?\{{")
+
+
+@functools.cache
+def _array_pattern(name):
+    return re.compile(rf"\b{name}\s*(?:\[[^\]]*\])?\s*=?\s*\{{")
+
+
+@functools.cache
+def _case_pattern(kind):
+    return re.compile(rf"case\s+{kind}::(\w+)\s*:")
+
+
+@functools.cache
+def _emit_pattern(emit):
+    return re.compile(rf"\bTranslationContext::{emit}\s*\(")
 
 
 def function_body(source, name):
-    return body_after(source, re.compile(rf"\b{name}\s*\([^)]*\)\s*(?:const\s*)?\{{"))
+    return body_after(source, _function_pattern(name))
 
 
 def array_body(source, name):
-    return body_after(source, re.compile(rf"\b{name}\s*(?:\[[^\]]*\])?\s*=?\s*\{{"))
+    return body_after(source, _array_pattern(name))
 
 
 def case_names(body, kind):
-    return set(re.findall(rf"case\s+{kind}::(\w+)\s*:", body))
+    return set(_case_pattern(kind).findall(body))
 
 
 def need(value, what):
@@ -94,9 +163,11 @@ def joined(files, prefix):
                      if path.startswith(prefix) and not TEST_PATH.search(path))
 
 
-def search(files, what, extract):
+def search(files, what, extract, needle=None):
     for path, raw in files.items():
         if TEST_PATH.search(path):
+            continue
+        if needle is not None and needle not in raw:
             continue
         found = extract(strip_comments(raw))
         if found is not None:
@@ -180,7 +251,7 @@ def scan_decoder(files):
         starts = [(m.start(), m.group(1)) for m in BLOCK.finditer(text)] + [(len(text), "")]
         for (at, name), (stop, _) in zip(starts, starts[1:]):
             block = text[at:stop]
-            key = re.sub(r"^(decode|lookup)", "", name.lower())
+            key = _DECODE_PREFIX.sub("", name.lower())
             table = next((k for k in TABLE_KEYS if key.startswith(k)), None)
             if table:
                 entries = d.tables.setdefault(TABLE_ENCODING.get(table, table.upper()), {})
@@ -189,22 +260,23 @@ def scan_decoder(files):
                         entries[int(number.group(1), 16)] = m.group(2)
                 for m in PAIR.finditer(block):
                     entries[int(m.group(1), 16)] = m.group(2)
-            else:
-                numbers = [int(m.group(1), 16) for m in re.finditer(r"\b0x([0-9a-fA-F]+)u?\b", block)]
-                for opcode in re.findall(r"RdnaOpcode::(\w+)", block):
-                    d.loose.setdefault(opcode, set()).update(numbers)
+            elif "RdnaOpcode::" in block:
+                numbers = [int(m.group(1), 16) for m in _HEX_WORD.finditer(block)]
+                if numbers:
+                    for opcode in _OPCODE_REF.findall(block):
+                        d.loose.setdefault(opcode, set()).update(numbers)
     d.tables = {k: v for k, v in d.tables.items() if v}
     for encoding in REQUIRED_TABLES:
         if not d.tables.get(encoding):
             raise ScanError(f"no {encoding} opcode table")
 
     def required(name):
-        return search(files, f"{name}()", lambda text: function_body(text, name))
+        return search(files, f"{name}()", lambda text: function_body(text, name), needle=name)
 
     for name in ("isUnsupportedVop3EncodedVop2Alias", "isVop2LiteralMadOpcode"):
-        d.vop3_vop2_refused.update(int(m, 16) for m in re.findall(r"0x([0-9a-fA-F]+)u?", required(name)))
+        d.vop3_vop2_refused.update(int(m, 16) for m in CASE_NUMBER.findall(required(name)))
     dispatch = joined(files, DECODER)
-    d.families = set(re.findall(r"case\s+RdnaInstructionFamily::(\w+)\s*:", dispatch))
+    d.families = set(_FAMILY_CASE.findall(dispatch))
     d.no_dpp = case_names(required("hasDppForm"), "RdnaOpcode")
     d.no_dpp8 = case_names(required("acceptsDpp8"), "RdnaOpcode")
     return d
@@ -252,11 +324,11 @@ def translator_cases(files):
     text = joined(files, f"{RECOMPILER}Translation/")
     names = set()
     for emit in ("emitScalar", "emitVector", "emitMemory", "emitInterpolation"):
-        body = need(body_after(text, re.compile(rf"\bTranslationContext::{emit}\s*\(")), f"TranslationContext::{emit}()")
+        body = need(body_after(text, _emit_pattern(emit)), f"TranslationContext::{emit}()")
         names |= case_names(body, "RdnaOpcode")
     if not names:
         raise ScanError("no RdnaOpcode cases in the translator")
-    if re.search(r"case\s+RdnaInstructionFamily::EXP\s*:", text):
+    if _EXP_CASE.search(text):
         names.add("Exp")
     return names
 
@@ -290,39 +362,39 @@ THROW = re.compile(r"""\bthrow\b(?:[^;"']|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*
 def unsupported_throws(files):
     sites = []
     for path, raw in files.items():
-        if not path.startswith(RECOMPILER) or TEST_PATH.search(path):
+        if not path.startswith(RECOMPILER) or TEST_PATH.search(path) or "throw" not in raw:
             continue
         text = strip_comments(raw)
         for m in THROW.finditer(text):
             statement = m.group(0)
             if statement == "throw;":
                 continue
-            message = "…".join(re.findall(r'"((?:\\.|[^"\\])*)"', statement))
+            message = "…".join(_STRING_LITERAL.findall(statement))
             if not UNSUPPORTED.search(message) and not UNSUPPORTED_TYPES.search(statement):
                 continue
             sites.append({"file": path[len(RECOMPILER):], "line": text.count("\n", 0, m.start()) + 1,
-                          "message": message or re.sub(r"\s+", " ", statement)})
+                          "message": message or _WHITESPACE.sub(" ", statement)})
     return sorted(sites, key=lambda s: (s["file"], s["line"]))
 
 
 def image_formats(files):
-    enum_text = search(files, "IrBufferFormat enum", lambda text: array_body(text, r"enum\s+class\s+IrBufferFormat\s*:\s*[\w:]+"))
-    names = {int(m.group(2)): m.group(1) for m in re.finditer(r"(\w+)\s*=\s*(\d+)", enum_text)}
-    defined = search(files, "DefinedImageFormats", lambda text: array_body(text, "DefinedImageFormats"))
-    ranges = [(int(m.group(1)), int(m.group(2))) for m in re.finditer(r"\{\s*(\d+)u?\s*,\s*(\d+)u?\s*\}", defined)]
+    enum_text = search(files, "IrBufferFormat enum", lambda text: array_body(text, r"enum\s+class\s+IrBufferFormat\s*:\s*[\w:]+"), needle="IrBufferFormat")
+    names = {int(m.group(2)): m.group(1) for m in _ENUM_ENTRY.finditer(enum_text)}
+    defined = search(files, "DefinedImageFormats", lambda text: array_body(text, "DefinedImageFormats"), needle="DefinedImageFormats")
+    ranges = [(int(m.group(1)), int(m.group(2))) for m in _RANGE_ENTRY.finditer(defined)]
     if not ranges:
         raise ScanError("no DefinedImageFormats ranges")
-    info_table = search(files, "kFormatInfoTable", lambda text: array_body(text, "kFormatInfoTable"))
-    sampled = set(re.findall(r"\{\s*IrBufferFormat::(\w+)\s*,\s*true\b", info_table))
-    buffer = case_names(search(files, "GetFormatInfo()", lambda text: function_body(text, "GetFormatInfo")), "IrBufferFormat")
+    info_table = search(files, "kFormatInfoTable", lambda text: array_body(text, "kFormatInfoTable"), needle="kFormatInfoTable")
+    sampled = set(_SAMPLED_ENTRY.findall(info_table))
+    buffer = case_names(search(files, "GetFormatInfo()", lambda text: function_body(text, "GetFormatInfo"), needle="GetFormatInfo"), "IrBufferFormat")
     if TEXTURE_FORMATS not in files:
         raise ScanError(TEXTURE_FORMATS)
     text = strip_comments(files[TEXTURE_FORMATS])
-    host = {int(n) for n in re.findall(r"\{\s*(\d+)\s*,\s*VK_FORMAT_", array_body(text, "kFormatLookup") or "")}
+    host = {int(n) for n in _FORMAT_LOOKUP.findall(array_body(text, "kFormatLookup") or "")}
     remap = function_body(text, "remapGuestFormat") or ""
-    target = re.search(r"\?\s*(\d+)\s*:", remap)
+    target = _REMAP_TARGET.search(remap)
     if target and int(target.group(1)) in host:
-        host.update(int(n) for n in re.findall(r"==\s*(\d+)", remap))
+        host.update(int(n) for n in _REMAP_EQ.findall(remap))
     if not host:
         raise ScanError("no kFormatLookup entries")
     values = [value for first, last in ranges for value in range(first, last + 1)]
@@ -342,11 +414,22 @@ def throw_areas(sites):
 
 def read_tree(root):
     files = {}
+    root_path = Path(root)
     for directory in SCANNED_DIRECTORIES:
-        base = Path(root) / directory
-        for path in base.rglob("*"):
-            if path.is_file():
-                files[path.relative_to(root).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
+        base = root_path / directory
+        if not base.exists():
+            continue
+        stack = [(os.fspath(base), directory)]
+        while stack:
+            current_dir, rel_dir = stack.pop()
+            with os.scandir(current_dir) as entries:
+                for entry in entries:
+                    rel_path = f"{rel_dir}/{entry.name}"
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append((entry.path, rel_path))
+                    elif entry.is_file():
+                        with open(entry.path, encoding="utf-8", errors="replace") as handle:
+                            files[rel_path] = handle.read()
     return dict(sorted(files.items()))
 
 

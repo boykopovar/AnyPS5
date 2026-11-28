@@ -1,0 +1,74 @@
+#ifndef CORE_LIBS_PRX_LIBC_INCLUDE_NUMERICLIMITS_HPP
+#define CORE_LIBS_PRX_LIBC_INCLUDE_NUMERICLIMITS_HPP
+
+#include <cstdint>
+
+extern const std::int32_t _ZNSt14numeric_limitsIbE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIbE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIbE9is_signedE_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIbE9is_moduloE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIcE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIcE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIcE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIaE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIaE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIaE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIhE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIhE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIhE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIsE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIsE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIsE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsItE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsItE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsItE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIiE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIiE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIiE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIjE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIjE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIjE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIlE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIlE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIlE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsImE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsImE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsImE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIxE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIxE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIxE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIyE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIyE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIyE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIwE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIwE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIwE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIDsE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIDsE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIDsE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIDiE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIDiE8digits10E_nid_postfix;
+extern const bool _ZNSt14numeric_limitsIDiE9is_signedE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE8digits10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE12max_digits10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE12max_exponentE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE14max_exponent10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE12min_exponentE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIfE14min_exponent10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE8digits10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE12max_digits10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE12max_exponentE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE14max_exponent10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE12min_exponentE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIdE14min_exponent10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE6digitsE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE8digits10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE12max_digits10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE12max_exponentE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE14max_exponent10E_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE12min_exponentE_nid_postfix;
+extern const std::int32_t _ZNSt14numeric_limitsIeE14min_exponent10E_nid_postfix;
+
+#endif // CORE_LIBS_PRX_LIBC_INCLUDE_NUMERICLIMITS_HPP

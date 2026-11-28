@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 
 class LightBarPacer {
 public:
@@ -16,11 +17,11 @@ public:
     }
 
     bool Due(const Color& color, Clock::time_point now) const {
-        return Pending(color) && now >= next;
+        return Pending(color) && (!next.has_value() || now >= *next);
     }
 
     void Result(const Color& color, Clock::time_point now, bool succeeded) {
-        next = now + Interval;
+        next = now > Clock::time_point::max() - Interval ? Clock::time_point::max() : now + Interval;
         if (!succeeded) return;
         last = color;
         sent = true;
@@ -28,13 +29,13 @@ public:
 
     void Reset() {
         sent = false;
-        next = {};
+        next.reset();
     }
 
 private:
     Color last{};
     bool sent = false;
-    Clock::time_point next{};
+    std::optional<Clock::time_point> next;
 };
 
 class TriggerEffectCache {

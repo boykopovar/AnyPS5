@@ -4,12 +4,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <new>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 using NKWebKit::WebCoreAbi::CustomHeaderFields;
 using NKWebKit::WebCoreAbi::HTTPHeaderField;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::URL;
 
 using Destructor = void(APS5_VABI*)(CustomHeaderFields*);
 
@@ -91,10 +95,96 @@ static void AssignsAndRefuses() {
     Require(ThrowsInvalidArgument([] { _ZN7WebCore18CustomHeaderFieldsD2Ev(nullptr); }));
 }
 
+static String Wide(std::string_view text) {
+    std::u16string units(text.begin(), text.end());
+    return _ZN3WTF10StringImpl6createEPKDsj(units.data(), static_cast<unsigned>(units.size()));
+}
+
+struct TestURL {
+    String storage;
+    URL url;
+};
+
+static TestURL MakeURL(std::string_view scheme, std::string_view host, bool wide = false) {
+    const std::string text = std::string(scheme) + "://" + std::string(host) + "/";
+    TestURL result{wide ? Wide(text) : Latin1(text.c_str()), {}};
+    const unsigned schemeEnd = static_cast<unsigned>(scheme.size());
+    const unsigned userStart = schemeEnd + 3;
+    const unsigned hostEnd = userStart + static_cast<unsigned>(host.size());
+    result.url.impl = result.storage.impl;
+    result.url.bits = 1U | (scheme == "https" ? 2U : 0U) | (schemeEnd << 6);
+    result.url.userStart = userStart;
+    result.url.userEnd = userStart;
+    result.url.passwordEnd = userStart;
+    result.url.hostEnd = hostEnd;
+    result.url.pathAfterLastSlash = hostEnd + 1;
+    result.url.pathEnd = hostEnd + 1;
+    result.url.queryEnd = hostEnd + 1;
+    return result;
+}
+
+static bool Matches(std::initializer_list<const char*> domains, const TestURL& url, bool wide = false) {
+    CustomHeaderFields fields;
+    for (const char* domain : domains) fields.thirdPartyDomains.append(wide ? Wide(domain) : Latin1(domain));
+    return _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&fields, &url.url);
+}
+
+static void MatchesThirdPartyDomains() {
+    const auto sub = MakeURL("https", "sub.example.com");
+    Require(!Matches({}, sub));
+    Require(Matches({"sub.example.com"}, sub));
+    Require(Matches({"other.net", "*.example.com"}, sub));
+    Require(!Matches({"*.example.com"}, MakeURL("https", "example.com")));
+    Require(Matches({"example.com"}, MakeURL("https", "example.com")));
+    Require(!Matches({"*.co.uk"}, MakeURL("https", "a.example.co.uk")));
+    Require(Matches({"*.example.co.uk"}, MakeURL("https", "a.example.co.uk")));
+    Require(Matches({"*.b.example.co.uk"}, MakeURL("https", "a.b.example.co.uk")));
+    Require(!Matches({"Example.com"}, MakeURL("https", "example.com")));
+    Require(!Matches({"*.Example.com"}, sub));
+    Require(!Matches({"*.example.com"}, MakeURL("https", "SUB.EXAMPLE.COM")));
+    Require(Matches({"*.EXAMPLE.COM"}, MakeURL("https", "SUB.EXAMPLE.COM")));
+    Require(!Matches({"*example.com", "*", "*."}, sub));
+    Require(!Matches({"*.github.io"}, MakeURL("https", "a.user.github.io")));
+    Require(Matches({"*.user.github.io"}, MakeURL("https", "a.user.github.io")));
+    Require(Matches({"*.a.user.github.io"}, MakeURL("https", "b.a.user.github.io")));
+    const auto ip = MakeURL("http", "192.168.0.1");
+    Require(Matches({"192.168.0.1"}, ip));
+    Require(!Matches({"*.168.0.1"}, ip));
+    const auto file = MakeURL("file", "");
+    Require(Matches({""}, file));
+    Require(!Matches({"*.a", "a"}, file));
+    CustomHeaderFields nullEntry;
+    nullEntry.thirdPartyDomains.append(String());
+    Require(_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&nullEntry, &file.url));
+    Require(!_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&nullEntry, &sub.url));
+    auto invalid = MakeURL("https", "sub.example.com");
+    invalid.url.bits &= ~1U;
+    Require(!Matches({"*.example.com", "sub.example.com"}, invalid));
+    Require(Matches({""}, invalid));
+    const auto wide = MakeURL("https", "sub.example.com", true);
+    Require(Matches({"*.example.com"}, wide));
+    Require(Matches({"*.example.com"}, wide, true));
+    Require(Matches({"sub.example.com"}, sub, true));
+    Require(!Matches({"*.com"}, wide, true));
+    CustomHeaderFields fields;
+    fields.thirdPartyDomains.append(Latin1("*.example.com"));
+    const auto references = fields.thirdPartyDomains.buffer[0].impl->refCount;
+    const auto urlReferences = sub.storage.impl->refCount;
+    Require(_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&fields, &sub.url));
+    Require(fields.thirdPartyDomains.buffer[0].impl->refCount == references && sub.storage.impl->refCount == urlReferences);
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(nullptr, &sub.url); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&fields, nullptr); }));
+    CustomHeaderFields unreadable;
+    NKWebKit::WtfAbi::StringImpl broken{3, 4, nullptr, 4};
+    unreadable.thirdPartyDomains.append(String(&broken));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&unreadable, &sub.url); }));
+}
+
 int main() {
     ConstructsEmpty();
     CopiesIndependently();
     AssignsAndRefuses();
+    MatchesThirdPartyDomains();
     std::puts("CustomHeaderFields passed");
     return 0;
 }

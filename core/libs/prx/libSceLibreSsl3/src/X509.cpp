@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -46,10 +47,20 @@ std::int64_t IntegerValue(const Asn1String* integer) {
 
 template <typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<const T>(source).CopyIn(destination);
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    return GuestPtr<T>(destination).CopyOut(value);
+}
+
+template <typename T>
+T CopyIn(const T* source, const char* function) {
+    T value{};
+    if (!CopyGuestInPreservingErrno(value, source))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
 }
 
 template <typename T>
@@ -72,25 +83,35 @@ int APS5_VABI X509_up_ref_nid_postfix(LibreSsl3X509* certificate) {
 }
 
 std::int64_t APS5_VABI X509_get_version_nid_postfix(const LibreSsl3X509* certificate) {
-    if (!certificate || !certificate->certInfo)
+    if (!certificate)
         throw std::invalid_argument("X509_get_version requires certificate info");
-    return IntegerValue(certificate->certInfo->version);
+    const auto* const info = CopyIn(certificate, __func__).certInfo;
+    if (!info)
+        throw std::invalid_argument("X509_get_version requires certificate info");
+    return IntegerValue(CopyIn(&info->version, __func__));
 }
 
 int APS5_VABI X509_set_version_nid_postfix(LibreSsl3X509* certificate, std::int64_t version) {
     if (!certificate) return 0;
     if (version < 0 || version > 2) return 0;
-    if (!certificate->certInfo)
+    auto* const info = CopyIn(certificate, __func__).certInfo;
+    if (!info)
         throw std::invalid_argument("X509_set_version requires certificate info");
-    auto& info = *certificate->certInfo;
-    if (!info.version) {
-        auto* integer = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
+    auto* integer = CopyIn(&info->version, __func__);
+    if (!GuestWritable_nid_no_patch(&info->version, sizeof(info->version)) || !GuestWritable_nid_no_patch(&info->encModified, sizeof(info->encModified)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!integer) {
+        integer = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
         if (!integer) return 0;
         integer->type = IntegerType;
-        info.version = integer;
+        if (!CopyGuestOutPreservingErrno(&info->version, integer)) {
+            free_nid_postfix(integer);
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
     }
-    info.encModified = 1;
-    return ASN1_INTEGER_set_nid_postfix(info.version, version);
+    if (!CopyGuestOutPreservingErrno(&info->encModified, std::int32_t{1}))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return ASN1_INTEGER_set_nid_postfix(integer, version);
 }
 
 }

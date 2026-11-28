@@ -47,7 +47,7 @@ static std::string Hex(const unsigned char* data, std::size_t size) {
 }
 
 static std::uint32_t Word(const std::vector<unsigned char>& bytes, std::size_t index) {
-    return std::uint32_t(bytes[4 * index]) << 24 | std::uint32_t(bytes[4 * index + 1]) << 16 | std::uint32_t(bytes[4 * index + 2]) << 8 | bytes[4 * index + 3];
+    return std::uint32_t(bytes[4 * index + 3]) << 24 | std::uint32_t(bytes[4 * index + 2]) << 16 | std::uint32_t(bytes[4 * index + 1]) << 8 | bytes[4 * index];
 }
 
 static AesKey Sentinel() {
@@ -276,7 +276,7 @@ int main() {
 
     AesKey fipsKey {};
     Require(AES_set_encrypt_key_nid_postfix(Bytes("2b7e151628aed2a6abf7158809cf4f3c").data(), 128, &fipsKey) == 0, "FIPS-197 appendix A key");
-    Require(fipsKey.roundKeys[4] == 0xa0fafe17 && fipsKey.roundKeys[43] == 0xb6630ca6, "FIPS-197 appendix A.1 expansion");
+    Require(fipsKey.roundKeys[4] == 0x17fefaa0 && fipsKey.roundKeys[43] == 0xa60c63b6, "FIPS-197 appendix A.1 expansion");
     AesKey bad {};
     bad.rounds = 7;
     bad.roundKeys[0] = 1;
@@ -322,6 +322,40 @@ int main() {
         "25ba3c22a06bc7fb4388a2833393427054fb808b9c137949cab22ff547ba186c6c3d632985d1fbd9e3e36578701be0f34a7459f9c8e8f9c256a156bc8d083799"
         "42107758e9ec98f066329ea193f8858b8ec6bff6829ca03b9e49af7edba96125603deb1015ca71be2b73aef0857d7781",
         "AES-256 decrypt schedule");
+    RequireSchedule(&AES_set_encrypt_key_nid_postfix, "000102030405060708090a0b0c0d0e0f",
+        "000102030405060708090a0b0c0d0e0fd6aa74fdd2af72fadaa678f1d6ab76feb692cf0b643dbdf1be9bc5006830b3feb6ff744ed2c2c9bf6c590cbf0469bf41"
+        "47f7f7bc95353e03f96c32bcfd058dfd3caaa3e8a99f9deb50f3af57adf622aa5e390f7df7a69296a7553dc10aa31f6b14f9701ae35fe28c440adf4d4ea9c026"
+        "47438735a41c65b9e016baf4aebf7ad2549932d1f08557681093ed9cbe2c974e13111d7fe3944a17f307a78b4d2b30c5",
+        "PS5 firmware 11.60 AES-128 encrypt schedule of the key 00 01 02 ...");
+    RequireSchedule(&AES_set_encrypt_key_nid_postfix, "000102030405060708090a0b0c0d0e0f1011121314151617",
+        "000102030405060708090a0b0c0d0e0f10111213141516175846f2f95c43f4fe544afef55847f0fa4856e2e95c43f4fe40f949b31cbabd4d48f043b810b7b342"
+        "58e151ab04a2a5557effb5416245080c2ab54bb43a02f8f662e3a95d66410c08f501857297448d7ebdf1c6ca87f33e3ce510976183519b6934157c9ea351f1e0"
+        "1ea0372a995309167c439e77ff12051edd7e0e887e2fff68608fc842f9dcc154859f5f237a8d5a3dc0c02952beefd63ade601e7827bcdf2ca223800fd8aeda32"
+        "a4970a331a78dc09c418c271e3a41d5d",
+        "PS5 firmware 11.60 AES-192 encrypt schedule of the key 00 01 02 ...");
+    RequireSchedule(&AES_set_encrypt_key_nid_postfix, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fa573c29fa176c498a97fce93a572c09c1651a8cd0244beda1a5da4c10640bade"
+        "ae87dff00ff11b68a68ed5fb03fc15676de1f1486fa54f9275f8eb5373b8518dc656827fc9a799176f294cec6cd5598b3de23a75524775e727bf9eb45407cf39"
+        "0bdc905fc27b0948ad5245a4c1871c2f45f5a66017b2d387300d4d33640a820a7ccff71cbeb4fe5413e6bbf0d261a7dff01afafee7a82979d7a5644ab3afe640"
+        "2541fe719bf500258813bbd55a721c0a4e5a6699a9f24fe07e572baacdf8cdea24fc79ccbf0979e9371ac23c6d68de36",
+        "PS5 firmware 11.60 AES-256 encrypt schedule of the key 00 01 02 ...");
+    RequireSchedule(&AES_set_decrypt_key_nid_postfix, "000102030405060708090a0b0c0d0e0f",
+        "13111d7fe3944a17f307a78b4d2b30c513aa29be9c8faff6f770f58000f7bf031362a4638f2586486bff5a76f7874a838d82fc749c47222be4dadc3e9c7810f5"
+        "72e3098d11c5de5f789dfe1578a2cccb2ec410276326d7d26958204a003f32dea8a2f5044de2c7f50a7ef79869671294c7c6e391e54032f1479c306d6319e50c"
+        "a0db02992286d160a2dc029c2485d5618c56dff0825dd3f9805ad3fc8659d7fd000102030405060708090a0b0c0d0e0f",
+        "PS5 firmware 11.60 AES-128 decrypt schedule of the key 00 01 02 ...");
+    RequireSchedule(&AES_set_decrypt_key_nid_postfix, "000102030405060708090a0b0c0d0e0f1011121314151617",
+        "a4970a331a78dc09c418c271e3a41d5dd6bebd0dc209ea494db073803e021bb98fb999c973b26839c7f9d89d85c68c72f77d6ec1423f54ef5378317f14b75744"
+        "1147659047cf663b9b0ece8dfc0bf1f0dcc1a8b667053f7dcc5c194ab5423a2ec6deb0ab791e2364a4055fbe568803abdd1b7cdaf28d5c158a49ab1dbbc497cb"
+        "78c4f708318d3cd69655b701bfc093cf60dcef10299524ce62dbef152f9620cf4b4ecbdb4d4dcfda5752d7c74949cbde1a1f181d1e1b1c194742c7d74949cbde"
+        "000102030405060708090a0b0c0d0e0f",
+        "PS5 firmware 11.60 AES-192 decrypt schedule of the key 00 01 02 ...");
+    RequireSchedule(&AES_set_decrypt_key_nid_postfix, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "24fc79ccbf0979e9371ac23c6d68de3634f1d1ffbfceaa2ffce9e25f2558016e5e1648eb384c350a7571b746dc80e684c8a305808b3f7bd043274870d9b1e331"
+        "b5708e13665a7de14d3d824ca9f151c274da7ba3439c7e50c81833a09a96ab413ca69715d32af3f22b67ffade4ccd38ef85fc4f3374605f38b844df0528e98e1"
+        "de69409aef8c64e7f84d0c5fcfab2c23aed55816cf19c100bcc24803d90ad51115c668bd31e5247d17c168b837e6207c7fd7850f61cc991673db890365c89d12"
+        "2a2840c924234cc026244cc5202748c41a1f181d1e1b1c191217101516131411000102030405060708090a0b0c0d0e0f",
+        "PS5 firmware 11.60 AES-256 decrypt schedule of the key 00 01 02 ...");
 
     const auto key = Bytes("2b7e151628aed2a6abf7158809cf4f3c");
     const auto message = Bytes("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710");

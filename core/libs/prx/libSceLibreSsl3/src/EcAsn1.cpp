@@ -1,5 +1,6 @@
 /* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/ec/ec_asn1.c (ec_asn1.c,v 1.53),
- * asn1/tasn_dec.c (tasn_dec.c,v 1.88), asn1/asn1_lib.c (asn1_lib.c,v 1.54) and asn1/a_object.c (a_object.c,v 1.55) */
+ * asn1/tasn_dec.c (tasn_dec.c,v 1.88), asn1/asn1_lib.c (asn1_lib.c,v 1.54) and asn1/a_object.c (a_object.c,v 1.55)
+ * https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a */
 /* $OpenBSD: ec_asn1.c,v 1.53 2024/04/17 23:24:18 tb Exp $ */
 /*
  * Written by Nils Larsch for the OpenSSL project.
@@ -197,6 +198,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestPtr.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -212,9 +214,9 @@ namespace {
 
 constexpr int Asn1Library = 13;
 constexpr int EcLibrary = 16;
+constexpr int MallocFailure = 65;
 constexpr int AnyFunction = 0xfff;
 constexpr int NestedAsn1Error = 58;
-constexpr int MallocFailure = 65;
 constexpr int PassedNullParameter = 67;
 constexpr int BadObjectHeader = 102;
 constexpr int D2iEcpkParametersFailure = 117;
@@ -255,6 +257,18 @@ struct Parameters {
     bool namedCurve = false;
     std::span<const unsigned char> object;
     std::size_t consumed = 0;
+};
+
+struct PointDeleter {
+    void operator()(EcPoint* point) const {
+        EC_POINT_free_nid_postfix(point);
+    }
+};
+
+struct GroupDeleter {
+    void operator()(EcGroup* group) const {
+        EC_GROUP_free_nid_postfix(group);
+    }
 };
 
 struct KeyDeleter {
@@ -346,10 +360,6 @@ std::optional<Parameters> DecodeParameters(std::span<const unsigned char> input)
     }
     const std::span<const unsigned char> content = cursor.first(header.length);
     const std::size_t consumed = input.size() - cursor.size() + header.length;
-    if (content.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
-        PutAsn1Error(NestedAsn1Error, 1);
-        return std::nullopt;
-    }
     if (header.tag == NullTag) {
         if (!content.empty()) {
             PutAsn1Error(NullIsWrongLength, 2);
@@ -374,24 +384,62 @@ EcGroup* NamedCurveGroup(std::span<const unsigned char> object) {
     return nullptr;
 }
 
-EcGroup* DecodeGroup(const unsigned char*& in, std::int64_t length) {
+constexpr std::int64_t MaxEncodedBytes = 4096;
+
+bool RangeFits(const unsigned char* start, std::int64_t length) {
+    return length >= 0 && reinterpret_cast<std::uintptr_t>(start) <= std::numeric_limits<std::uintptr_t>::max() - static_cast<std::uintptr_t>(length);
+}
+
+std::int64_t EncodedBytes(const unsigned char* in, std::int64_t available) {
+    std::int64_t offset = 0;
+    unsigned char byte = 0;
+    const auto next = [&] {
+        if (offset == available) return false;
+        if (!GuestBytes(in + offset).CopyIn(&byte, 1)) APS5_INVALID_ARG_EX;
+        ++offset;
+        return true;
+    };
+    if (!next()) return offset;
+    if ((byte & 0x1f) == 0x1f) {
+        do {
+            if (!next()) return offset;
+        } while (byte & 0x80);
+    }
+    if (!next()) return offset;
+    if (byte < 0x80) return std::min(available, offset + byte);
+    if (byte == 0x80 || (byte & 0x7f) == 0x7f) return offset;
+    std::int64_t content = 0;
+    for (int count = byte & 0x7f; count > 0; --count) {
+        if (!next()) return offset;
+        if (content > (MaxEncodedBytes - byte) / 256) return available;
+        content = content * 256 + byte;
+    }
+    return std::min(available, offset + content);
+}
+
+std::unique_ptr<EcGroup, GroupDeleter> DecodeGroup(const unsigned char*& in, std::int64_t length) {
     std::vector<unsigned char> bytes;
-    if (length > 0) {
-        bytes.resize(static_cast<std::size_t>(length));
+    const bool sized = length >= 0 && length <= std::numeric_limits<std::int32_t>::max();
+    if (sized && length > 0) {
+        const std::int64_t available = std::min(length, MaxEncodedBytes);
+        if (!RangeFits(in, available)) APS5_INVALID_ARG_EX;
+        const std::int64_t copied = EncodedBytes(in, available);
+        bytes.resize(static_cast<std::size_t>(copied));
         if (!GuestBytes(in).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
-    const std::optional<Parameters> parameters = length < 0 ? std::nullopt : DecodeParameters({bytes.data(), bytes.size()});
+    const std::optional<Parameters> parameters = sized ? DecodeParameters({bytes.data(), bytes.size()}) : std::nullopt;
     if (!parameters) {
         PutError(D2iEcpkParametersFailure);
         return nullptr;
     }
     in += parameters->consumed;
-    EcGroup* group = nullptr;
+    std::unique_ptr<EcGroup, GroupDeleter> group;
     if (parameters->namedCurve) {
-        if ((group = NamedCurveGroup(parameters->object)) == nullptr) PutError(GroupNewByNameFailure);
+        group.reset(NamedCurveGroup(parameters->object));
+        if (!group) PutError(GroupNewByNameFailure);
         else group->asn1Flag = NamedCurveFlag;
     }
-    if (group == nullptr) PutError(PkParametersToGroupFailure);
+    if (!group) PutError(PkParametersToGroupFailure);
     return group;
 }
 
@@ -406,18 +454,34 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
         return nullptr;
     }
     EcKey* current = nullptr;
-    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyIn(current)) APS5_INVALID_ARG_EX;
+    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
+    if (key != nullptr && (!GuestPtr<EcKey*>(key).CopyIn(current) || !GuestPtr<EcKey*>(key).CopyOut(current))) APS5_INVALID_ARG_EX;
+    const unsigned char* const start = cursor;
+    std::unique_ptr<EcGroup, GroupDeleter> group = DecodeGroup(cursor, length);
     std::unique_ptr<EcKey, KeyDeleter> created;
-    if (current == nullptr) created.reset(EC_KEY_new_nid_postfix());
-    EcKey* result = created ? created.get() : current;
-    EcGroup* group = DecodeGroup(cursor, length);
-    if (group == nullptr) {
+    if (group && current == nullptr) {
+        created.reset(EC_KEY_new_nid_postfix());
+        if (!created) {
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    if (!group) {
+        if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
         PutError(EcLibrary);
         return nullptr;
     }
+    EcKey* result = created ? created.get() : current;
+    if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) APS5_INVALID_ARG_EX;
+    if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) {
+        if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(current)) {
+            created.release();
+            throw std::runtime_error("d2i_ECParameters: the key slot could not be restored");
+        }
+        APS5_INVALID_ARG_EX;
+    }
     EC_GROUP_free_nid_postfix(result->group);
-    result->group = group;
-    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor) || (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result))) APS5_INVALID_ARG_EX;
+    result->group = group.release();
     created.release();
     return result;
 }
@@ -430,23 +494,35 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
     }
     if (in == nullptr) APS5_INVALID_ARG_EX;
     const unsigned char* cursor = nullptr;
-    if (!GuestPtr<const unsigned char*>(in).CopyIn(cursor)) APS5_INVALID_ARG_EX;
-    if (result->publicKey == nullptr && (result->publicKey = EC_POINT_new_nid_postfix(result->group)) == nullptr) {
-        PutError(MallocFailure);
-        return nullptr;
-    }
+    if (!GuestPtr<const unsigned char*>(in).CopyIn(cursor) || !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     std::vector<unsigned char> bytes;
-    if (length > 0) {
+    if (length > 0 && length <= MaxEncodedBytes) {
+        if (!RangeFits(cursor, length)) APS5_INVALID_ARG_EX;
         bytes.resize(static_cast<std::size_t>(length));
         if (!GuestBytes(cursor).CopyIn(bytes.data(), bytes.size())) APS5_INVALID_ARG_EX;
     }
-    if (!EC_POINT_oct2point_nid_postfix(result->group, result->publicKey, length > 0 ? bytes.data() : cursor, static_cast<std::size_t>(length), nullptr)) {
+    if (bytes.empty()) {
         PutError(EcLibrary);
         return nullptr;
     }
+    std::unique_ptr<EcPoint, PointDeleter> decoded(EC_POINT_new_nid_postfix(result->group));
+    if (!decoded) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    if (!EC_POINT_oct2point_nid_postfix(result->group, decoded.get(), bytes.data(), bytes.size(), nullptr)) {
+        PutError(EcLibrary);
+        return nullptr;
+    }
+    const unsigned char* const next = cursor + bytes.size();
+    if (!GuestPtr<const unsigned char*>(in).CopyOut(next)) APS5_INVALID_ARG_EX;
+    if (result->publicKey != nullptr && result->publicKey->curve.nid == result->group->curve.nid) {
+        std::swap(result->publicKey->point, decoded->point);
+    } else {
+        EC_POINT_free_nid_postfix(result->publicKey);
+        result->publicKey = decoded.release();
+    }
     result->conversionForm = bytes[0] & ~1;
-    cursor += length;
-    if (!GuestPtr<const unsigned char*>(in).CopyOut(cursor)) APS5_INVALID_ARG_EX;
     return result;
 }
 

@@ -82,6 +82,14 @@ int main() {
     Require(mapSystemFlexible(&longest, PS5_PAGE_SIZE, 3, 0, "abcdefghijklmnopqrstuvwxyz01234") == 0 && longest != nullptr);
     Require(sceKernelVirtualQuery(longest, 0, &info, sizeof(info)) == 0 && std::strcmp(info.name, "abcdefghijklmnopqrstuvwxyz01234") == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(longest), PS5_PAGE_SIZE) == 0);
+    const char* const tooLong = "ZYXWVUTSRQPONMLKJIHGFEDCBA012345";
+    void* named = nullptr;
+    Require(mapSystemFlexible(&named, PS5_PAGE_SIZE, 3, 0, tooLong) == SCE_KERNEL_ERROR_ENAMETOOLONG && named != nullptr);
+    Require(sceKernelVirtualQuery(named, 0, &info, sizeof(info)) == 0 && std::strncmp(info.name, tooLong, 31) != 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(named), PS5_PAGE_SIZE) == 0);
+    void* unnamed = nullptr;
+    Require(mapSystemFlexible(&unnamed, PS5_PAGE_SIZE, 3, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT && unnamed != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(unnamed), PS5_PAGE_SIZE) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), length) == 0);
     Require(Available() == before);
     return 0;

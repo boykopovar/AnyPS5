@@ -118,6 +118,7 @@ class MainErrorTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(stdout, "")
         self.assertIn("error:", stderr)
+        self.assertIn("head.json:", stderr)
         self.assertNotIn("Traceback", stderr)
 
     def test_invalid_snapshot_is_a_parser_error_with_exit_code_2(self):
@@ -126,6 +127,18 @@ class MainErrorTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertIn("error:", stderr)
         self.assertIn("percent", stderr)
+        self.assertIn("head.json:", stderr)
+
+    def test_invalid_baseline_is_reported_before_loading_the_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / "baseline.json"
+            candidate = Path(directory) / "missing.json"
+            baseline.write_text("[]", encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                progress_diff.main([str(baseline), str(candidate)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(f"{baseline}: snapshot must be an object", stderr.getvalue())
 
     def test_missing_file_is_a_parser_error_with_exit_code_2(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -137,6 +150,15 @@ class MainErrorTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("error:", stderr.getvalue())
+
+
+class UniqueKeyTests(unittest.TestCase):
+    def test_unique_json_keys_keeps_distinct_names(self):
+        self.assertEqual(progress_diff.unique_json_keys([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+    def test_unique_json_keys_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'duplicate JSON key'):
+            progress_diff.unique_json_keys([('a', 1), ('a', 2)])
 
 
 if __name__ == "__main__":

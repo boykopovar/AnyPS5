@@ -4,6 +4,7 @@
 #include "tests/FontFixture.hpp"
 #include <array>
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -149,6 +150,10 @@ int main() {
     Require(sceFontGetFontStyleInformation(reinterpret_cast<FontHandle>(notAFont), &cleared) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && Cleared(cleared));
     Require(sceFontGetFontStyleInformation(named, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontGetFontStyleInformation(nullptr, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    errno = 71;
+    Require(sceFontGetFontStyleInformation(named, reinterpret_cast<FontStyleInformation*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetFontStyleInformation(nullptr, reinterpret_cast<FontStyleInformation*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(errno == 71);
 
     float w = 0.0f;
     float h = 0.0f;

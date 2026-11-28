@@ -108,6 +108,42 @@ bool ExpectReverseOrderR() {
     return true;
 }
 
+int APS5_VABI CountThunkCalls(void* thunk, const void*, const void*) {
+    ++*static_cast<int*>(thunk);
+    return 1;
+}
+
+bool ExpectQsortRShortInputs() {
+    Element elements[7] = {{2, 0}, {1, 1}, {3, 2}, {0, 3}, {6, 4}, {5, 5}, {4, 6}};
+    int calls = 0;
+    qsort_r_nid_postfix(nullptr, 0, sizeof(Element), &calls, CountThunkCalls);
+    qsort_r_nid_postfix(nullptr, 1, sizeof(Element), &calls, nullptr);
+    qsort_r_nid_postfix(elements, 1, sizeof(Element), &calls, CountThunkCalls);
+    qsort_r_nid_postfix(elements, 0, 0, &calls, nullptr);
+    qsort_r_nid_postfix(nullptr, 1, 0, &calls, nullptr);
+    for (std::size_t count = 2; count < 7; ++count) {
+        qsort_r_nid_postfix(elements, count, 0, &calls, CountThunkCalls);
+        qsort_r_nid_postfix(nullptr, count, 0, &calls, nullptr);
+    }
+    bool correct = calls == 0;
+    for (int index = 0; index < 7; ++index) correct &= elements[index].tag == index;
+    if (!correct) {
+        std::fprintf(stderr, "qsort_r of fewer than two elements or zero-size elements below 7: %d comparisons\n", calls);
+        return false;
+    }
+    bool threw = false;
+    try {
+        qsort_r_nid_postfix(elements, 7, 0, &calls, CountThunkCalls);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw || calls != 0) {
+        std::fprintf(stderr, "qsort_r of 7 zero-size elements did not throw before comparing\n");
+        return false;
+    }
+    return true;
+}
+
 bool ExpectQsortRValidation() {
     Element pair[2] = {{2, 0}, {1, 1}};
     int direction = 1;
@@ -116,13 +152,6 @@ bool ExpectQsortRValidation() {
     bool threw = false;
     try {
         qsort_r_nid_postfix(pair, 2, sizeof(Element), &direction, nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    if (!threw) return false;
-    threw = false;
-    try {
-        qsort_r_nid_postfix(pair, 2, 0, &direction, CompareKeysWithThunk);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -757,6 +786,7 @@ int main() {
     correct &= ExpectOrderR("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
     correct &= ExpectReverseOrderR();
     correct &= ExpectQsortRValidation();
+    correct &= ExpectQsortRShortInputs();
     correct &= ExpectQsortS();
     correct &= ExpectQsortSConstraints();
     std::vector<int> keys;

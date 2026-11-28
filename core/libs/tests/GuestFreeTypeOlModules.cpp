@@ -6,6 +6,7 @@
 #include FT_FREETYPE_H
 #include FT_MODULE_H
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +38,63 @@ static void* APS5_VABI Allocate(GuestMemoryRec*, std::int64_t size) {
 
 static void APS5_VABI Release(GuestMemoryRec*, void* block) {
     std::free(block);
+}
+
+static int gCountingFreeCalls = 0;
+
+static void APS5_VABI CountingRelease(GuestMemoryRec*, void*) {
+    ++gCountingFreeCalls;
+}
+
+static void TestModuleWrapperGuestPointers() {
+    auto* unmappedLibrary = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    REQUIRE(sceFreeTypeOlFtaSupportModules_nid_postfix(unmappedLibrary) == 0x21);
+    REQUIRE(errno == 71);
+
+    auto* unmappedSlot = reinterpret_cast<FreeType::GuestGlyphSlotRec*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    sceFreeTypeOlDoneGlyphSlot_nid_postfix(unmappedSlot);
+    REQUIRE(errno == 71);
+
+    FreeType::GuestGlyphSlotRec forgedSlot{};
+    forgedSlot.internal = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    sceFreeTypeOlDoneGlyphSlot_nid_postfix(&forgedSlot);
+    REQUIRE(errno == 71);
+
+    static int dummyAlloc = 1;
+    void* writableBlock = &dummyAlloc;
+    gCountingFreeCalls = 0;
+    const GuestMemoryRec memoryWithFree{nullptr, Allocate, CountingRelease, nullptr};
+
+    auto* unmappedMemory = reinterpret_cast<GuestMemoryRec*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    sceFreeTypeOlFree_nid_postfix(unmappedMemory, &writableBlock);
+    REQUIRE(errno == 71);
+    REQUIRE(writableBlock == &dummyAlloc);
+    REQUIRE(gCountingFreeCalls == 0);
+
+    auto* unmappedBlockPtr = reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    sceFreeTypeOlFree_nid_postfix(const_cast<GuestMemoryRec*>(&memoryWithFree), unmappedBlockPtr);
+    REQUIRE(errno == 71);
+    REQUIRE(gCountingFreeCalls == 0);
+
+    static void* const readOnlyBlock = &dummyAlloc;
+    errno = 71;
+    sceFreeTypeOlFree_nid_postfix(
+        const_cast<GuestMemoryRec*>(&memoryWithFree),
+        const_cast<void**>(&readOnlyBlock));
+    REQUIRE(errno == 71);
+    REQUIRE(readOnlyBlock == &dummyAlloc);
+    REQUIRE(gCountingFreeCalls == 0);
+
+    errno = 71;
+    sceFreeTypeOlFree_nid_postfix(const_cast<GuestMemoryRec*>(&memoryWithFree), &writableBlock);
+    REQUIRE(errno == 71);
+    REQUIRE(writableBlock == nullptr);
+    REQUIRE(gCountingFreeCalls == 1);
 }
 
 int main() {
@@ -277,4 +335,5 @@ int main() {
     REQUIRE(throws([&] { getInterface(); }));
 
     REQUIRE(FT_Done_FreeType_nid_postfix(library) == 0);
+    TestModuleWrapperGuestPointers();
 }

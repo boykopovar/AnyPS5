@@ -330,6 +330,7 @@ bool CarriesRelativeBits(IrOpcode opcode) {
     case IrOpcode::Identity:
     case IrOpcode::Phi:
     case IrOpcode::IAdd32:
+    case IrOpcode::IAddCarry32:
     case IrOpcode::ISub32:
     case IrOpcode::IMul32:
     case IrOpcode::ShiftLeftLogical32:
@@ -477,6 +478,46 @@ private:
         return bounded({high.vertex + low.vertex, high.relative + low.relative, high.constant + low.constant});
     }
 
+    [[nodiscard]] std::optional<Affine> combine(const Affine& lhs, const Affine& rhs, std::int64_t sign) const {
+        Affine sum{lhs.vertex + sign * rhs.vertex, lhs.relative + sign * rhs.relative, lhs.constant + sign * rhs.constant, lhs.dynamic || rhs.dynamic, lhs.dynamicScale, lhs.dynamicRoot};
+        if (rhs.dynamic && !lhs.dynamic) {
+            sum.dynamicScale = sign * rhs.dynamicScale;
+            sum.dynamicRoot = rhs.dynamicRoot;
+        } else if (rhs.dynamic && lhs.dynamicRoot != nullptr && lhs.dynamicRoot == rhs.dynamicRoot) {
+            sum.dynamicScale = lhs.dynamicScale + sign * rhs.dynamicScale;
+            if (sum.dynamicScale == 0) {
+                sum.dynamic = false;
+                sum.dynamicRoot = nullptr;
+            }
+        } else if (rhs.dynamic) {
+            sum.dynamicScale = std::gcd(lhs.dynamicScale, rhs.dynamicScale);
+            sum.dynamicRoot = nullptr;
+        }
+        return bounded(sum);
+    }
+
+    bool neverTrue(IrValue* raw) {
+        IrValue* condition = raw->Resolve();
+        if (condition->HasImmediate()) return condition->Type() == IrType::Bool && !condition->ImmediateBool();
+        const auto strict = [&](std::size_t index) { return evaluate(condition->Argument(index), false); };
+        switch (condition->Opcode()) {
+        case IrOpcode::LogicalOr:
+            return neverTrue(condition->Argument(0)) && neverTrue(condition->Argument(1));
+        case IrOpcode::INotEqual32: {
+            const auto lhs = strict(0);
+            const auto rhs = strict(1);
+            return lhs && rhs && lhs->Scalar() && rhs->Scalar() && lhs->constant == rhs->constant;
+        }
+        case IrOpcode::ULessThan32: {
+            const auto lhs = strict(0);
+            const auto rhs = strict(1);
+            return lhs && rhs && !lhs->dynamic && !rhs->dynamic && Lowest(*rhs) >= 0 && Lowest(*lhs) >= Highest(*rhs);
+        }
+        default:
+            return false;
+        }
+    }
+
     bool independentOfRelative(IrValue* raw) {
         IrValue* start = raw->Resolve();
         if (const auto found = independence.find(start); found != independence.end()) return found->second;
@@ -536,7 +577,8 @@ private:
         case IrOpcode::TessellationBase:
             return IsBase(value, TessellationBaseKind::RelativeIndex) ? std::optional(Affine{0, 1, 0}) : std::nullopt;
         case IrOpcode::GetBuiltin:
-            return vertexCount != 0 && !laneVertex && IsImmediate(value->Argument(0), static_cast<std::uint32_t>(StageInputKind::InvocationId)) ? std::optional(Affine{1, 0, 0}) : std::nullopt;
+            if (vertexCount == 0 || laneVertex || !IsImmediate(value->Argument(0), static_cast<std::uint32_t>(StageInputKind::InvocationId))) return std::nullopt;
+            return vertexCount == 1 ? Affine{} : Affine{1, 0, 0};
         case IrOpcode::LaneId:
             return laneVertex ? std::optional(Affine{1, 0, 0}) : std::nullopt;
         case IrOpcode::BitCount32: {
@@ -550,22 +592,17 @@ private:
             const auto lhs = argument(0);
             const auto rhs = argument(1);
             if (!lhs || !rhs) return std::nullopt;
-            const std::int64_t sign = value->Opcode() == IrOpcode::IAdd32 ? 1 : -1;
-            Affine sum{lhs->vertex + sign * rhs->vertex, lhs->relative + sign * rhs->relative, lhs->constant + sign * rhs->constant, lhs->dynamic || rhs->dynamic, lhs->dynamicScale, lhs->dynamicRoot};
-            if (rhs->dynamic && !lhs->dynamic) {
-                sum.dynamicScale = sign * rhs->dynamicScale;
-                sum.dynamicRoot = rhs->dynamicRoot;
-            } else if (rhs->dynamic && lhs->dynamicRoot != nullptr && lhs->dynamicRoot == rhs->dynamicRoot) {
-                sum.dynamicScale = lhs->dynamicScale + sign * rhs->dynamicScale;
-                if (sum.dynamicScale == 0) {
-                    sum.dynamic = false;
-                    sum.dynamicRoot = nullptr;
-                }
-            } else if (rhs->dynamic) {
-                sum.dynamicScale = std::gcd(lhs->dynamicScale, rhs->dynamicScale);
-                sum.dynamicRoot = nullptr;
-            }
-            return bounded(sum);
+            return combine(*lhs, *rhs, value->Opcode() == IrOpcode::IAdd32 ? 1 : -1);
+        }
+        case IrOpcode::CompositeExtractU32x2: {
+            IrValue* pair = value->Argument(0)->Resolve();
+            if (pair->Opcode() != IrOpcode::IAddCarry32) return std::nullopt;
+            const auto lhs = evaluate(pair->Argument(0), dynamic);
+            const auto rhs = evaluate(pair->Argument(1), dynamic);
+            if (!lhs || !rhs) return std::nullopt;
+            if (IsImmediate(value->Argument(1), 0u)) return combine(*lhs, *rhs, 1);
+            if (IsImmediate(value->Argument(1), 1u) && !lhs->dynamic && !rhs->dynamic && Lowest(*lhs) >= 0 && Lowest(*rhs) >= 0 && Highest(*lhs) + Highest(*rhs) <= AddressLimit) return Affine{};
+            return std::nullopt;
         }
         case IrOpcode::IMul32: {
             const auto lhs = argument(0);
@@ -585,6 +622,14 @@ private:
             const auto lhs = argument(0);
             const auto shift = scalar(1);
             if (!lhs || !shift) return std::nullopt;
+            return shiftRight(*lhs, *shift);
+        }
+        case IrOpcode::ShiftRightArithmetic32: {
+            const auto lhs = argument(0);
+            const auto shift = scalar(1);
+            if (!lhs || !shift || *shift < 0 || *shift >= 32) return std::nullopt;
+            if (lhs->Scalar()) return Affine{0, 0, static_cast<std::int64_t>(static_cast<std::int32_t>(static_cast<std::uint32_t>(lhs->constant)) >> *shift) & AddressLimit};
+            if (lhs->dynamic || Lowest(*lhs) < 0 || Highest(*lhs) >= (1ll << 31)) return std::nullopt;
             return shiftRight(*lhs, *shift);
         }
         case IrOpcode::BitwiseAnd32: {
@@ -612,9 +657,24 @@ private:
             if (!shifted || *count >= 32) return shifted;
             return mask(*shifted, (1ll << *count) - 1);
         }
+        case IrOpcode::BitFieldSExtract: {
+            const auto source = argument(0);
+            const auto offset = scalar(1);
+            const auto count = scalar(2);
+            if (!source || !offset || !count || *count <= 0) return std::nullopt;
+            if (*count >= 32) return *offset == 0 ? source : std::nullopt;
+            const auto shifted = shiftRight(*source, *offset);
+            if (!shifted) return std::nullopt;
+            const auto field = mask(*shifted, (1ll << *count) - 1);
+            if (!field || field->dynamic) return std::nullopt;
+            const auto sign = 1ll << (*count - 1);
+            if (field->Scalar()) return Affine{0, 0, field->constant < sign ? field->constant : (field->constant - 2 * sign) & AddressLimit};
+            return Highest(*field) < sign ? field : std::nullopt;
+        }
         case IrOpcode::SelectU32: {
             if (active != nullptr && Implies(active, value->Argument(0))) return argument(1);
             if (active != nullptr && ImpliesNot(active, value->Argument(0))) return argument(2);
+            if (neverTrue(value->Argument(0))) return argument(2);
             const auto lhs = argument(1);
             const auto rhs = argument(2);
             if (!lhs || !rhs) return std::nullopt;
@@ -1137,7 +1197,7 @@ private:
                 break;
             case TessellationAttribute::ControlShared:
                 if (access.write) {
-                    if (address.vertex != sharedStride || address.constant < 0 || end > sharedStride) Fail("the merged hull program writes LDS outside its own control point's record", access.pc);
+                    if ((address.vertex != sharedStride && (outputs != 1 || address.vertex != 0)) || address.constant < 0 || end > sharedStride) Fail("the merged hull program writes LDS outside its own control point's record", access.pc);
                 } else if ((address.vertex != 0 && address.vertex != sharedStride) || address.constant < 0 || end + address.vertex * (outputs - 1) > inputs * sharedStride) {
                     Fail("the merged hull program reads LDS outside its patch's control point records", access.pc);
                 }

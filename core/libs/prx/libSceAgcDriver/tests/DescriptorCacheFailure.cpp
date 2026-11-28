@@ -25,6 +25,10 @@ void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete[](void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); }
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept { return std::malloc(size == 0 ? 1 : size); }
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept { return std::malloc(size == 0 ? 1 : size); }
+void operator delete(void* memory, const std::nothrow_t&) noexcept { std::free(memory); }
+void operator delete[](void* memory, const std::nothrow_t&) noexcept { std::free(memory); }
 
 namespace {
 using namespace AgcDriver::Graphics;
@@ -100,7 +104,10 @@ Context TestContext() {
     Context context{};
     context.deviceProc = Resolve;
     context.limits.maxPerStageResources = 128;
+    context.limits.maxPerStageDescriptorStorageBuffers = 128;
     context.limits.maxDescriptorSetStorageBuffers = 4096;
+    context.storageBufferUpdateAfterBind = true;
+    context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 128;
     context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
     context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 4096;
     return context;

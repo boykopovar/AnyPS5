@@ -140,6 +140,31 @@ struct Hull {
         static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&loaded}));
     }
 
+    IrValue& addWithCarry(IrValue& lhs, IrValue& rhs) {
+        return builder.Emit(IrOpcode::IAddCarry32, IrType::U32x2, {&lhs, &rhs});
+    }
+
+    IrValue& sum(IrValue& pair) {
+        return builder.Emit(IrOpcode::CompositeExtractU32x2, IrType::U32, {&pair, &builder.Constant(0u)});
+    }
+
+    IrValue& carry(IrValue& pair) {
+        return builder.Emit(IrOpcode::INotEqual32, IrType::Bool, {&builder.Emit(IrOpcode::CompositeExtractU32x2, IrType::U32, {&pair, &builder.Constant(1u)}), &builder.Constant(0u)});
+    }
+
+    IrValue& carryIn(IrValue& set) {
+        return builder.Emit(IrOpcode::SelectU32, IrType::U32, {&set, &builder.Constant(1u), &builder.Constant(0u)});
+    }
+
+    void writeFactor(IrValue& offset) {
+        auto& base = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::Factor))});
+        static_cast<void>(builder.Emit(IrOpcode::StoreBufferU32, IrType::Void, {&ringResource(), &builder.Constant(0u), &offset, &base, &builder.Constant(1u), &builder.ConstantBool(true)}, MemoryFlags{RingMemory, RingWritePc}));
+    }
+
+    IrValue& field(IrValue& source, std::uint32_t offset, std::uint32_t count, bool sign = false) {
+        return builder.Emit(sign ? IrOpcode::BitFieldSExtract : IrOpcode::BitFieldUExtract, IrType::U32, {&source, &builder.Constant(offset), &builder.Constant(count)});
+    }
+
     IrValue& packed() {
         return builder.BitwiseOr(builder.ShiftLeftLogical(invocation(), builder.Constant(8u)), relativePatch());
     }
@@ -251,6 +276,24 @@ std::size_t Barriers(const IrProgram& program) {
     std::size_t count = 0;
     for (const IrBlock* block : program.BlockOrder()) count += static_cast<std::size_t>(std::count_if(block->Instructions().begin(), block->Instructions().end(), IsBarrier));
     return count;
+}
+
+std::vector<std::uint32_t> WrittenAddresses(const IrBlock& block) {
+    std::vector<std::uint32_t> addresses;
+    for (const IrValue* inst : block.Instructions()) {
+        if (!IsControlOutputWrite(inst)) continue;
+        const IrValue* address = inst->Argument(1)->Resolve();
+        addresses.push_back(address->HasImmediate() ? address->ImmediateU32() : ~0u);
+    }
+    return addresses;
+}
+
+bool WritesOwnFields(Hull& hull, std::uint32_t second) {
+    if (!LowersRing(hull.program)) return false;
+    const auto written = WrittenAddresses(*hull.block);
+    if (written.size() == 2u && written[0] != ~0u && written[1] == written[0] + second) return true;
+    for (const auto address : written) std::fprintf(stderr, "written at 0x%x\n", address);
+    return false;
 }
 
 std::uint32_t ReadAddress(const IrBlock& block) {
@@ -766,7 +809,8 @@ ModelResult CompareWithConsole(const QuadWalk& console, const IrProgram& lowered
     constexpr std::uint32_t Patches = 85u;
     constexpr std::uint32_t ControlPoints = 3u;
     constexpr std::uint32_t Threads = Patches * ControlPoints;
-    std::mt19937 random(0x5eedu);
+    std::mt19937 engine(0x5eedu);
+    const auto random = [&engine] { return static_cast<std::uint32_t>(engine()); };
     ModelResult result;
     for (std::uint32_t list = 0; list < lists; ++list) {
         std::vector<std::uint32_t> points(2u * Threads);
@@ -1057,6 +1101,135 @@ int main() {
         Hull hull;
         hull.readRing(hull.controlPoint(1u, 0u), hull.builder.ConstantBool(true));
         return RingRefusedBecause(hull.program, "writes no control point there");
+    });
+
+    passed &= run("a ring address summed by an add with carry-out lowers like a plain add", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& pair = hull.addWithCarry(hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(ControlPatchStride)), hull.builder.IAdd(hull.builder.IMul(hull.invocation(), hull.builder.Constant(ControlStride)), hull.builder.Constant(16u)));
+        hull.writeRing(hull.sum(pair));
+        return WritesOwnFields(hull, 16u);
+    });
+
+    passed &= run("the carry of an address add that cannot wrap is zero when it feeds a high-word add of zero", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& pair = hull.addWithCarry(hull.ring(hull.builder.IMul(hull.invocation(), hull.builder.Constant(ControlStride))), hull.builder.Constant(16u));
+        hull.writeRing(hull.sum(pair));
+        auto& high = hull.sum(hull.addWithCarry(hull.builder.Constant(0u), hull.carryIn(hull.carry(pair))));
+        static_cast<void>(hull.builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&high}));
+        return WritesOwnFields(hull, 16u);
+    });
+
+    passed &= run("an add with carry-in from an address add that cannot wrap lowers like a plain add", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& first = hull.addWithCarry(hull.ring(hull.builder.IMul(hull.invocation(), hull.builder.Constant(ControlStride))), hull.builder.Constant(8u));
+        auto& second = hull.addWithCarry(hull.sum(first), hull.carryIn(hull.carry(first)));
+        hull.writeRing(hull.builder.IAdd(hull.sum(second), hull.builder.Constant(4u)));
+        return WritesOwnFields(hull, 12u);
+    });
+
+    passed &= run("a subtract whose borrow-in cannot be set lowers like a plain subtract", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& field = hull.ownControlPoint(24u);
+        auto& partial = hull.builder.ISub(field, hull.builder.Constant(4u));
+        auto& borrow = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&field, &hull.builder.Constant(4u)});
+        hull.writeRing(hull.builder.ISub(partial, hull.carryIn(borrow)));
+        return WritesOwnFields(hull, 20u);
+    });
+
+    passed &= run("an add with carry-in that can be set stays refused", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& wraps = hull.addWithCarry(hull.ownControlPoint(32u), hull.builder.Constant(0xfffffff0u));
+        auto& pair = hull.addWithCarry(hull.ownControlPoint(16u), hull.carryIn(hull.carry(wraps)));
+        hull.writeRing(hull.sum(pair));
+        return RingRefusedBecause(hull.program, "not affine in the control point and relative patch");
+    });
+
+    passed &= run("a ring address whose add with carry-out can wrap is refused", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        hull.writeRing(hull.sum(hull.addWithCarry(hull.ownControlPoint(16u), hull.builder.Constant(0xfffffff0u))));
+        return RingRefusedBecause(hull.program, "not affine in the control point and relative patch");
+    });
+
+    passed &= run("a hull program with one output control point writes quad factors at an address that adds its invocation", [] {
+        Hull hull;
+        auto& packed = hull.packed();
+        auto& point = hull.field(packed, 8u, 5u);
+        auto& patch = hull.field(packed, 0u, 8u);
+        for (std::uint32_t factor = 0; factor < 6u; ++factor) {
+            auto& scaled = hull.builder.ShiftRightLogical(hull.builder.IAdd(hull.builder.ShiftLeftLogical(point, hull.builder.Constant(4u)), hull.builder.Constant(16u * factor)), hull.builder.Constant(2u));
+            hull.writeFactor(hull.builder.IAdd(hull.builder.IMul(hull.field(patch, 0u, 24u), hull.field(hull.builder.Constant(24u), 0u, 24u)), scaled));
+        }
+        auto tessellation = Tessellation;
+        tessellation.domain = 2u;
+        tessellation.outputControlPoints = 1u;
+        const auto outcome = Lower(hull.program, tessellation);
+        if (!outcome.lowered) std::fprintf(stderr, "refused: %s\n", outcome.reason.c_str());
+        return outcome.lowered;
+    });
+
+    passed &= run("a merged hull program with one control point writes its LDS record at an address that adds its invocation", [] {
+        Hull hull;
+        auto& record = hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u));
+        auto& own = hull.builder.IAdd(record, hull.builder.IMul(hull.invocation(), hull.builder.Constant(16u)));
+        static_cast<void>(hull.builder.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&own, &hull.builder.Constant(7u), &hull.builder.ConstantBool(true)}, MemoryFlags{0u, RingWritePc}));
+        static_cast<void>(hull.read(hull.builder.IAdd(hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u)), hull.builder.Constant(4u))));
+        const ShaderTessellationInputInfo merged{.inputControlPoints = 1u, .outputControlPoints = 1u, .patchesPerGroup = 1u, .mergedHull = true};
+        const TessellationTargetLimits limits{32u, 128u, 128u, 120u, 4096u, 128u, 128u};
+        try {
+            TessellationLowering{}.Lower(hull.program, merged, &limits);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "refused: %s\n", error.what());
+            return false;
+        }
+        return true;
+    });
+
+    passed &= run("quad factors at an address that adds the invocation are refused when the hull program has several control points", [] {
+        Hull hull;
+        hull.writeFactor(hull.builder.IAdd(hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(24u)), hull.builder.IMul(hull.invocation(), hull.builder.Constant(4u))));
+        auto tessellation = Tessellation;
+        tessellation.domain = 2u;
+        const auto outcome = Lower(hull.program, tessellation);
+        return !outcome.lowered && outcome.reason.find("outside its patch's quad factors") != std::string::npos;
+    });
+
+    passed &= run("a ring address from a signed 24-bit multiply-add of non-negative operands lowers like an unsigned one", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& product = hull.builder.IMul(hull.field(hull.invocation(), 0u, 24u, true), hull.field(hull.builder.Constant(ControlStride), 0u, 24u, true));
+        hull.writeRing(hull.builder.IAdd(product, hull.ring(hull.builder.Constant(8u))));
+        return WritesOwnFields(hull, 8u);
+    });
+
+    passed &= run("a ring address from an arithmetic shift of a value below the sign bit lowers like a logical shift", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& shifted = hull.builder.Emit(IrOpcode::ShiftRightArithmetic32, IrType::U32, {&hull.builder.ShiftLeftLogical(hull.ownControlPoint(8u), hull.builder.Constant(4u)), &hull.builder.Constant(4u)});
+        auto& field = hull.builder.Emit(IrOpcode::ShiftRightArithmetic32, IrType::U32, {&hull.builder.Constant(0x40u), &hull.builder.Constant(4u)});
+        hull.writeRing(hull.builder.IAdd(shifted, field));
+        return WritesOwnFields(hull, 12u);
+    });
+
+    passed &= run("an arithmetic shift of a value that can reach the sign bit is refused", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& wide = hull.builder.Emit(IrOpcode::ShiftRightArithmetic32, IrType::U32, {&hull.builder.IMul(hull.invocation(), hull.builder.Constant(0x30000000u)), &hull.builder.Constant(4u)});
+        hull.writeRing(hull.builder.IAdd(wide, hull.ring(hull.builder.Constant(8u))));
+        return RingRefusedBecause(hull.program, "not affine in the control point and relative patch");
+    });
+
+    passed &= run("a signed 24-bit field that can reach its sign bit is refused", [] {
+        Hull hull;
+        hull.writeRing(hull.ownControlPoint(0u));
+        auto& wide = hull.field(hull.builder.IMul(hull.invocation(), hull.builder.Constant(0x300000u)), 0u, 24u, true);
+        hull.writeRing(hull.builder.IAdd(wide, hull.ring(hull.builder.Constant(8u))));
+        return RingRefusedBecause(hull.program, "not affine in the control point and relative patch");
     });
 
     passed &= run("a hull read past its patch's off-chip control points is refused", [] {

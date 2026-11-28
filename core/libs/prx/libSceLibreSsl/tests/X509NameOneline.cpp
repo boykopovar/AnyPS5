@@ -3,16 +3,56 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+#ifndef _WIN32
+std::size_t hostAllocationLimit = SIZE_MAX;
+void* operator new(std::size_t bytes) {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+#endif
 
 namespace {
+
+template<typename TCall>
+void Capped(TCall call) {
+#ifndef _WIN32
+    hostAllocationLimit = 1 << 20;
+#endif
+    call();
+#ifndef _WIN32
+    hostAllocationLimit = SIZE_MAX;
+#endif
+}
 
 constexpr std::uint64_t UnknownNid = (8ull << 24) | (0xfffull << 12) | 101;
 constexpr std::uint64_t BufferMalloc = (7ull << 24) | (0xfffull << 12) | 65;
@@ -172,6 +212,74 @@ void UndefinedInputs() {
     RequireThrows([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "a value with a length and no data");
 }
 
+template<typename TCall>
+void RejectsPreservingErrno(TCall call, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, message);
+}
+
+void GuestPointers() {
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    char buffer[64];
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(unmapped, buffer, sizeof(buffer)); }, "an unreadable name");
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(nullptr, static_cast<char*>(unmapped), 5); }, "an unwritable buffer for a null name");
+    Builder pair;
+    pair.Add(Object(14), "US").Add(Object(13), "example.com");
+    LibreSslX509Name* name = pair.Build();
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(name, static_cast<char*>(unmapped), 64); }, "an unwritable caller buffer");
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(name, static_cast<char*>(unmapped), 0); }, "an unwritable buffer that only gets a terminator");
+    Builder entries;
+    entries.Add(Object(13), "a");
+    LibreSslX509Name* built = entries.Build();
+    built->entries = static_cast<LibreSslStack*>(unmapped);
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an unreadable entry stack");
+    Builder slots;
+    slots.Add(Object(13), "a");
+    built = slots.Build();
+    built->entries->data = static_cast<char**>(unmapped);
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an unreadable entry array");
+    Builder entry;
+    entry.Add(Object(13), "a");
+    built = entry.Build();
+    built->entries->data[0] = static_cast<char*>(unmapped);
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an unreadable entry");
+    Builder value;
+    value.Add(Object(13), "a");
+    built = value.Build();
+    reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[0])->value = unmapped;
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an unreadable value");
+    Builder data;
+    data.Add(Object(13), "a").Add(Object(17), "b");
+    built = data.Build();
+    static_cast<Asn1String*>(reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[1])->value)->data = static_cast<unsigned char*>(unmapped);
+    std::memset(buffer, 'Z', sizeof(buffer));
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "unreadable value bytes");
+    Require(buffer[0] == 'Z', "a rejected call leaves the caller buffer unchanged");
+    Builder object;
+    object.Add(Object(13), "a").Add(static_cast<const LibreSslAsn1Object*>(unmapped), "b");
+    built = object.Build();
+    std::memset(buffer, 'Z', sizeof(buffer));
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "an unreadable object");
+    Require(buffer[0] == 'Z', "a rejected object leaves the caller buffer unchanged");
+    LibreSslAsn1Object unreadableData{nullptr, nullptr, 0, 3, static_cast<const unsigned char*>(unmapped), 0};
+    Builder objectData;
+    objectData.Add(Object(13), "a").Add(&unreadableData, "b");
+    built = objectData.Build();
+    std::memset(buffer, 'Z', sizeof(buffer));
+    RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "unreadable object data");
+    Require(buffer[0] == 'Z', "rejected object data leaves the caller buffer unchanged");
+    LibreSslAsn1Object knownNid{nullptr, nullptr, 13, 3, static_cast<const unsigned char*>(unmapped), 0};
+    Builder known;
+    known.Add(&knownNid, "c");
+    Require(Allocated(known.Build()) == "/CN=c", "an object with a known NID does not read its data");
+}
+
 std::vector<std::size_t> allocated;
 int frees = 0;
 int failAt = 0;
@@ -228,6 +336,42 @@ void Allocator() {
     failAt = 0;
 }
 
+void OversizedValues() {
+    Builder builder;
+    builder.Add(Object(13), "first");
+    LibreSslX509Name* name = builder.Build();
+    auto* value = static_cast<Asn1String*>(reinterpret_cast<LibreSslX509NameEntry*>(name->entries->data[0])->value);
+    char buffer[64];
+    std::memset(buffer, 'Z', sizeof(buffer));
+    value->length = INT_MAX;
+    value->data = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    Capped([&] {
+        RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(name, buffer, sizeof(buffer)); }, "an oversized unmapped value");
+        RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(name, nullptr, 0); }, "an oversized unmapped value into a grown buffer");
+    });
+#ifndef _WIN32
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED && mprotect(static_cast<unsigned char*>(mapping) + page, page, PROT_NONE) == 0, "a guard page");
+    auto* tail = static_cast<unsigned char*>(mapping) + page - 5;
+    std::memcpy(tail, "first", 5);
+    value->data = tail;
+    Capped([&] {
+        RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(name, buffer, sizeof(buffer)); }, "an oversized value before a guard page");
+        RejectsPreservingErrno([&] { X509_NAME_oneline_nid_postfix(name, nullptr, 0); }, "an oversized value before a guard page into a grown buffer");
+    });
+    value->length = 5;
+    Capped([&] { Require(Oneline(name, 64) == "/CN=first", "a value ending at a guard page"); });
+    munmap(mapping, page * 2);
+#endif
+    Require(buffer[0] == 'Z', "rejected oversized values leave the caller buffer unchanged");
+    Builder wide;
+    std::string text(0x2345, 'x');
+    for (std::size_t index = 0; index < text.size(); ++index) text[index] = static_cast<char>('a' + index % 26);
+    wide.Add(Object(13), text);
+    Require(Allocated(wide.Build()) == "/CN=" + text, "a value longer than one read chunk");
+}
+
 } // namespace
 
 int main(int argc, char**) {
@@ -242,4 +386,6 @@ int main(int argc, char**) {
     Objects();
     Growth();
     UndefinedInputs();
+    GuestPointers();
+    OversizedValues();
 }

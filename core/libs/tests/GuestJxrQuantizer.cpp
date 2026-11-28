@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -231,6 +232,25 @@ void TestFree() {
         Require(table[channel] == block + channel * 4 * 20, "freeQuantizer changed the channel pointers");
 }
 
+void TestGuestPointers() {
+    auto* const unmapped = reinterpret_cast<void**>(0x10);
+    errno = 71;
+    const int live = liveBlocks;
+    RequireInvalidArgument([&] { allocateQuantizer_nid_postfix(unmapped, 3, 4); }, "allocateQuantizer accepted an unmapped table");
+    Require(liveBlocks == live, "rejected allocateQuantizer kept its block");
+    RequireInvalidArgument([&] { formatQuantizer_nid_postfix(unmapped, 0, 3, 0, 0, 0); }, "formatQuantizer accepted an unmapped table");
+    RequireInvalidArgument([&] { freeQuantizer_nid_postfix(unmapped); }, "freeQuantizer accepted an unmapped table");
+    Require(errno == 71, "unmapped tables changed errno");
+
+    void* table[16] = {};
+    Require(allocateQuantizer_nid_postfix(table, 3, 4) == 0, "allocateQuantizer failed");
+    auto* const base = static_cast<std::uint8_t*>(table[0]);
+    Require(table[1] == base + 4 * QuantizerSize && table[2] == base + 8 * QuantizerSize && table[3] == nullptr,
+            "allocateQuantizer table differs");
+    freeQuantizer_nid_postfix(table);
+    Require(liveBlocks == live, "freeQuantizer did not release the block");
+}
+
 int main() {
     InitializeHeap();
     TestRemap();
@@ -238,5 +258,6 @@ int main() {
     TestAcPredMode();
     TestZigzag();
     TestFree();
+    TestGuestPointers();
     return 0;
 }

@@ -376,6 +376,11 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(buffer, 3, u"abc") < 0, "swprintf terminator does not fit");
     buffer[0] = u'x';
     Require(swprintf_nid_postfix(buffer, 0, u"a") < 0 && buffer[0] == u'x', "swprintf zero size");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 0, u"a") == -1 && errno == 0 && buffer[0] == u'x', "swprintf zero size keeps errno");
+    Require(swprintf_nid_postfix(buffer, 0, u"%s", "") == 0 && errno == 0 && buffer[0] == u'x', "swprintf zero size with an empty result");
+    Require(swprintf_nid_postfix(nullptr, 0, u"") == 0 && swprintf_nid_postfix(nullptr, 0, u"a") == -1 && errno == 0, "swprintf null buffer of size zero");
+    Require(swprintf_nid_postfix(buffer, 0, u"%c", 0x80) == -1 && errno == 86 && buffer[0] == u'x', "swprintf zero size still reports EILSEQ");
     Require(swprintf_nid_postfix(nullptr, 8, u"a") < 0, "swprintf null buffer");
     Require(swprintf_nid_postfix(buffer, 5, u"%ls", u"abcd") == 4 && buffer == std::u16string(u"abcd"), "swprintf exact fit");
     char16_t wide[16];
@@ -417,6 +422,16 @@ static void CheckMeasuredWideConversions() {
         buffer == std::u16string(u"  %😀|"), "swprintf right-aligned surrogate pair");
     Require(swprintf_nid_postfix(buffer, 48, u"%3\xd83d|") == 4 &&
         buffer == std::u16string(u" %\xd83d|"), "swprintf lone surrogate prints as itself");
+    Require(swprintf_nid_postfix(buffer, 48, u"100%\u5b8c|") == 6 &&
+        buffer == std::u16string(u"100%\u5b8c|"), "swprintf ideograph as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%4\u00e9|") == 5 &&
+        buffer == std::u16string(u"  %\u00e9|"), "swprintf right-aligned Latin-1 unit as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%-4\u3067|") == 5 &&
+        buffer == std::u16string(u"%\u3067  |"), "swprintf left-aligned kana as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%\x80" u"%d|%d%\uffe5", 7, 8) == 7 &&
+        buffer == std::u16string(u"%\x80" u"7|8%\uffe5"), "swprintf keeps its arguments around non-ASCII unknown conversions");
+    Require(swprintf_nid_postfix(buffer, 48, u"%3\xdc00|") == 4 &&
+        buffer == std::u16string(u" %\xdc00|"), "swprintf lone low surrogate prints as itself");
 }
 
 

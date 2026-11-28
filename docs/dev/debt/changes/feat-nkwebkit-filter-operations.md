@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## change [Filter operations]
+
+- [Filter operations](../../../core/libs/prx/libSceNKWebKit/src/FilterOperation.cpp) (libSceNKWebKit) - not compared with a console module. `DefaultFilterOperation::create`, its constructors and the `InvertLightnessFilterOperation` exports follow pinned [FilterOperation.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/filters/FilterOperation.cpp#L46-L400); objects are `fastMalloc`ed 16/24-byte records with 12-slot library vtables, `clone`/`operator==` slots at the still-throwing exports. `create` returns a non-trivially-destructible 8-byte `WTF::Ref`, `blend` a `WTF::RefPtr` and `clone` a `Ref` through hidden result pointers; console sret is unmeasured. Console `OperationType` is 32-bit (pinned `Type` is `uint8_t`); `blend` takes `(const FilterOperation*, double, bool)`, not the pinned `BlendingContext&`. Blur, DropShadow, BasicColorMatrix, BasicComponentTransfer and remaining members stay stubs.

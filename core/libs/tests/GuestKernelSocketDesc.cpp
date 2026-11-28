@@ -205,7 +205,7 @@ int ReuseNumberDuringWait(int previous) {
     Require(sender >= 0 && sender != replacement && sender != previous);
     Require(connect_nid_postfix(sender, address.data(), addressSize) == 0);
     Require(close_nid_postfix(previous) == 0);
-    Require(dup_nid_postfix(replacement) == previous);
+    Require(dup2_nid_postfix(replacement, previous) == previous);
     const char byte = 'r';
     Require(send_nid_postfix(sender, &byte, 1, 0) == 1);
     Require(close_nid_postfix(sender) == 0);

@@ -240,6 +240,39 @@ void VerifyResizeReadPosition(const std::string& name) {
     RequireNoUnlinkedFiles(name);
 }
 
+void VerifyLargeObject(const std::string& name) {
+    const int descriptor = shm_open_nid_postfix(name.c_str(), ReadWrite | Create | Exclusive, 0600);
+    Require(descriptor >= 0, "creating the large object failed");
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    DWORD returned = 0;
+    if (::DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr)) {
+        for (const std::int64_t size : {std::int64_t{0x80000040}, std::int64_t{0x100000040}, std::int64_t{0x17fffffff}}) {
+            LARGE_INTEGER end{};
+            end.QuadPart = size;
+            Require(::SetFilePointerEx(handle, end, nullptr, FILE_BEGIN) && ::SetEndOfFile(handle), "sizing the large object failed");
+            Require(lseek_nid_postfix(descriptor, 0, 2) == size, "seek to the end of a large object returned the wrong position");
+            Require(lseek_nid_postfix(descriptor, size - 48, 0) == size - 48, "seek near the end of a large object failed");
+            const char bytes[100]{};
+            Require(write_nid_postfix(descriptor, bytes, sizeof(bytes)) == 48, "write near the end of a large object was not bounded by its size");
+            Require(lseek_nid_postfix(descriptor, 0, 1) == size, "bounded write left the wrong position in a large object");
+            Require(lseek_nid_postfix(descriptor, -16, 2) == size - 16, "seek back from the end of a large object failed");
+            Require(pwrite_nid_disambig1_nid_postfix(descriptor, "x", 1, size - 1) == 1, "positioned write at the last byte of a large object failed");
+            Require(pwrite_nid_disambig1_nid_postfix(descriptor, "x", 1, size) == 0, "positioned write at the end of a large object extended it");
+            Require(lseek_nid_postfix(descriptor, 0, 0) == 0 && write_nid_postfix(descriptor, bytes, 16) == 16,
+                    "write at the start of a large object failed");
+            *__error_nid_postfix() = 0;
+            Require(lseek_nid_postfix(descriptor, size + 1, 0) == -1 && *__error_nid_postfix() == 22,
+                    "seek past the end of a large object did not fail with EINVAL");
+            struct _stat64 status{};
+            Require(::_fstat64(descriptor, &status) == 0 && status.st_size == size, "writes changed the size of a large object");
+        }
+    } else {
+        std::fprintf(stderr, "named shared memory: no sparse files on the temporary volume, large-object checks skipped\n");
+    }
+    Require(shm_unlink_nid_postfix(name.c_str()) == 0 && close_nid_postfix(descriptor) == 0, "large-object cleanup failed");
+    RequireNoUnlinkedFiles(name);
+}
+
 void Run(std::string_view selection) {
     if (selection == "all") {
         for (const auto part : {"basic", "reuse", "resize_read", "resize_write"}) Run(part);
@@ -271,6 +304,7 @@ void Run(std::string_view selection) {
     }
     Require(selection == "basic", "unknown named shared-memory test selection");
     VerifyAnonymousDescriptorClassification();
+    VerifyLargeObject(base + "-large");
     const std::string name = base + "-lifecycle";
     Require(shm_unlink_nid_postfix(name.c_str()) == -1 && *__error_nid_postfix() == 2,
             "new test name unexpectedly existed");

@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <future>
@@ -89,7 +90,7 @@ static void CheckGuardSize() {
 
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrGetguardsize(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 4096);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 16384);
 
     for (const std::size_t size : std::array<std::size_t, 5>{0, 4096, 8192, 16384, 65536}) {
         Require(scePthreadAttrSetguardsize(&attr, size) == SCE_OK);
@@ -441,9 +442,21 @@ static void CheckGetprioOfTheCallingThread() {
     Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
     Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(self, reinterpret_cast<int*>(std::uintptr_t{0x10})) == SCE_KERNEL_ERROR_EFAULT);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadSetprio(self, original) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
+static void CheckGetprioOfEndedThreads() {
+    constexpr int UNTOUCHED = -77;
+    int priority = UNTOUCHED;
+    Pthread finished = nullptr;
+    Require(scePthreadCreate(&finished, nullptr, Finish, nullptr, nullptr) == SCE_OK);
+    Require(ReportedEnded(finished));
+    Require(scePthreadGetprio(finished, &priority) == SCE_KERNEL_ERROR_ESRCH && priority == UNTOUCHED);
+    Require(scePthreadJoin(finished, nullptr) == SCE_OK);
+    Require(scePthreadGetprio(finished, &priority) == SCE_KERNEL_ERROR_ESRCH && priority == UNTOUCHED);
 }
 
 static void CheckSetStackSizeOnUnsetAttributes() {
@@ -583,6 +596,7 @@ int main() {
     CheckBadPointers();
     CheckGetNpPointers();
     CheckGetprioOfTheCallingThread();
+    CheckGetprioOfEndedThreads();
     CheckStackSizeLimit();
     CheckGuardSize();
     CheckSoloSched();

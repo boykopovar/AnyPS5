@@ -31,10 +31,25 @@ extern char** environ;
 
 namespace AgcDriver {
 
+std::atomic<bool> PerformanceTrace::buffering{false};
+std::mutex PerformanceTrace::gpuMutex;
+std::vector<TraceGpuRange> PerformanceTrace::gpuRanges;
+std::size_t PerformanceTrace::gpuCapacity = TraceThread::DefaultCapacity;
+std::uint64_t PerformanceTrace::gpuLost = 0;
+
+void PerformanceTrace::GpuRange(const char* name, double beginNs, double endNs, std::uint64_t batch) {
+    if (!buffering.load(std::memory_order_relaxed)) return;
+    std::lock_guard lock(gpuMutex);
+    if (gpuRanges.size() >= gpuCapacity) {
+        ++gpuLost;
+        return;
+    }
+    gpuRanges.push_back({name, beginNs, endNs, batch});
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr std::size_t GpuRangeCapacity = TraceThread::DefaultCapacity;
 
 struct Session {
     std::mutex mutex;
@@ -359,7 +374,8 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
             std::lock_guard gpu(gpuMutex);
             gpuRanges.clear();
             gpuLost = 0;
-            gpuRanges.reserve(GpuRangeCapacity);
+            gpuCapacity = TraceThread::ParseCapacity(std::getenv("APS5_TRACE_EVENTS"));
+            gpuRanges.reserve(gpuCapacity);
         }
         state.presents.push_back(now);
         presentCount.fetch_add(1, std::memory_order_relaxed);

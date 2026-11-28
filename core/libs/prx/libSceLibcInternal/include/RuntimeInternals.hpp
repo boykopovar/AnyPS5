@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstddef>
 #include <cstdint>
 
 struct LibcCollationState {
@@ -11,16 +12,16 @@ static_assert(sizeof(LibcCollationState) == 128);
 
 extern "C" {
 
-int APS5_VABI _Atqexit_nid_postfix();
-int APS5_VABI _Atthreadexit_nid_postfix();
+int APS5_VABI _Atqexit_nid_postfix(void (APS5_VABI *func)());
+int APS5_VABI _Atthreadexit_nid_postfix(void (APS5_VABI *func)());
 int APS5_VABI _CStrftime_nid_postfix();
-int APS5_VABI _CStrxfrm_nid_postfix();
-int APS5_VABI _CWcsxfrm_nid_postfix();
+size_t APS5_VABI _CStrxfrm_nid_postfix(char* destination, const char* source, size_t count);
+size_t APS5_VABI _CWcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count);
 void APS5_VABI _Call_onceEx_nid_postfix(std::int32_t* flag,
                                       void (APS5_VABI *callback)(void*), void* argument);
 int APS5_VABI _Closreg_nid_postfix();
 int APS5_VABI _Daysto_nid_postfix(int year, int month);
-int APS5_VABI _Deletegloballocale_nid_postfix();
+void APS5_VABI _Deletegloballocale_nid_postfix(void* pointer);
 void APS5_VABI _Do_call_nid_postfix(void* target);
 int APS5_VABI _Fac_tidy_nid_postfix();
 int APS5_VABI _Fail_s_nid_postfix();
@@ -33,32 +34,35 @@ int APS5_VABI _Frprep_nid_postfix();
 int APS5_VABI _Fspos_nid_postfix();
 int APS5_VABI _Fwprep_nid_postfix();
 int APS5_VABI _Genld_nid_postfix();
-int APS5_VABI _Gentime_nid_postfix();
+const char* APS5_VABI _Gentime_nid_postfix(const void* time, const void* info, char qualifier, char code, int* length, char* buffer);
 int APS5_VABI _Getcloc_nid_postfix();
-int APS5_VABI _Getctyptab_nid_postfix();
-int APS5_VABI _Getdst_nid_postfix();
+const short* APS5_VABI _Getctyptab_nid_postfix();
+const char* APS5_VABI _Getdst_nid_postfix(const char* s);
 int APS5_VABI _Getfld_nid_postfix();
 int APS5_VABI _Getfloat_nid_postfix();
-int APS5_VABI _Getgloballocale_nid_postfix();
+void* APS5_VABI _Getgloballocale_nid_postfix();
 int APS5_VABI _Getint_nid_postfix();
 LibcCollationState* APS5_VABI _Getpcostate_nid_postfix();
 LibcCollationState* APS5_VABI _Getpwcostate_nid_postfix();
+size_t APS5_VABI _Strxfrmx_nid_postfix(char* destination, const char* source, size_t count, LibcCollationState* state);
+int APS5_VABI _Wcscollx_nid_postfix(const char16_t* first, const char16_t* second, LibcCollationState* state);
+size_t APS5_VABI _Wcsxfrmx_nid_postfix(char16_t* destination, const char16_t* source, size_t count, LibcCollationState* state);
 const void* APS5_VABI _Getpwctrtab_nid_postfix();
 const void* APS5_VABI _Getpwctytab_nid_postfix();
 int APS5_VABI _Getstr_nid_postfix();
-int APS5_VABI _Gettime_nid_postfix();
-int APS5_VABI _Getzone_nid_postfix();
+const char* APS5_VABI _Gettime_nid_postfix(const char* s, int n, int* len);
+const char* APS5_VABI _Getzone_nid_postfix();
 int APS5_VABI _Isdst_nid_postfix();
 int APS5_VABI _Ldtob_nid_postfix();
 int APS5_VABI _Litob_nid_postfix();
-int APS5_VABI _Lock_spin_lock_nid_postfix();
+void APS5_VABI _Lock_spin_lock_nid_postfix(volatile char* lock, int mode = 0);
 int APS5_VABI _Locsum_nid_postfix();
 int APS5_VABI _Locterm_nid_postfix();
 int APS5_VABI _Locvar_nid_postfix();
 int APS5_VABI _Makeloc_nid_postfix();
 int APS5_VABI _Makestab_nid_postfix();
 int APS5_VABI _Makewct_nid_postfix();
-int APS5_VABI _Mbtowc_nid_postfix();
+int APS5_VABI _Mbtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
 int APS5_VABI _Printf_nid_postfix();
 int APS5_VABI _Putfld_nid_postfix();
 int APS5_VABI _Putstr_nid_postfix();

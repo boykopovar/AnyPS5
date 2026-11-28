@@ -3,6 +3,7 @@
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
@@ -164,6 +165,125 @@ void TestRejectedArguments() {
     Require(sceAmprCommandBufferGetType(nullptr) == 0);
 }
 
+void TestReadFileRecording() {
+    struct Case {
+        std::uint32_t fileId;
+        std::uint64_t destination;
+        std::uint64_t size;
+        std::uint64_t offset;
+        std::uint32_t bytes;
+        std::array<std::uint32_t, 6> words;
+    };
+    const std::array<Case, 6> cases{{
+        {0, 0, 1, 0, 20, {0x428, 0, 0, 0, 0, 0}},
+        {0xffffffff, 0x123456789abc, 0x100000000, 0xffffffff, 20, {0x3ffff428, 0xffffffff, 0x7fffffff, 0x56789abc, 0xfffc1234, 0}},
+        {0x80000001, 0xefffffffffff, 1, 0x100000000, 24, {0x528, 0, 1, 0xffffffff, 0xefff, 1}},
+        {0x12345678, 0xefff00000000, 0x100000000, 0xffffffffff, 24, {0x3ffff528, 0xffffffff, 0x12345678, 0, 0xfffcefff, 0xff}},
+        {0x7fffffff, 3, 2, 0x40000, 20, {0x428, 1, 0x7fffffff, 3, 0x40000, 0}},
+        {0x80000000, 0xffffffff, 2, 0x3ffff, 20, {0x3ffff428, 1, 0, 0xffffffff, 0, 0}},
+    }};
+    for (const auto& entry : cases) {
+        std::array<std::uint8_t, 64> memory;
+        memory.fill(0xa5);
+        auto expected = memory;
+        std::memcpy(expected.data() + 4, entry.words.data(), entry.bytes);
+        Apr::CommandBufferObject buffer{static_cast<Apr::BufferType>(0x5a5a), 0xfefa, 3, 0x7ffffffe, entry.bytes + 3, memory.data() + 1};
+        std::uint64_t gatherState = 0x1122334455667788;
+        std::uint64_t scatterState = 0x8877665544332211;
+        auto* destination = reinterpret_cast<void*>(static_cast<std::uintptr_t>(entry.destination));
+        Require(sceAmprAprCommandBufferReadFile(&buffer, &gatherState, &scatterState, entry.fileId, destination, entry.size, entry.offset) == 0);
+        Require(memory == expected);
+        Require(buffer.offset == entry.bytes + 3 && buffer.numCommands == 0x7fffffff);
+        Require(buffer.base == memory.data() + 1 && buffer.size == entry.bytes + 3);
+        Require(buffer.type == static_cast<Apr::BufferType>(0x5a5a) && buffer.recording == 0xfefb);
+        Require(gatherState == 0x1122334455667788 && scatterState == 0x8877665544332211);
+        Require(sceAmprMeasureCommandSizeReadFile(entry.fileId, destination, entry.size, entry.offset) == entry.bytes);
+    }
+    std::array<std::uint8_t, 40> memory{};
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, 0, 0, memory.size(), memory.data()};
+    Require(sceAmprAprCommandBufferReadFile(&buffer, reinterpret_cast<std::uint64_t*>(1), nullptr, 1, nullptr, 1, 0) == 0);
+    Require(sceAmprAprCommandBufferReadFile(&buffer, nullptr, reinterpret_cast<std::uint64_t*>(1), 1, nullptr, 1, 0) == 0);
+    Require(buffer.offset == 40 && buffer.numCommands == 2 && buffer.base == memory.data());
+}
+
+void TestReadFileRejections() {
+    struct Arguments {
+        std::uint64_t destination;
+        std::uint64_t size;
+        std::uint64_t offset;
+    };
+    constexpr std::array<Arguments, 7> invalid{{
+        {0, 0, 0}, {0, 0x100000001, 0}, {0, 1, 0x10000000000},
+        {0xf00000000000, 1, 0}, {0xf00000000001, 1, 0}, {0xefffffffffff, 2, 0}, {0xffffffffffffffff, 1, 0},
+    }};
+    std::array<std::uint8_t, 32> memory;
+    memory.fill(0xa5);
+    const auto memoryBefore = memory;
+    Apr::CommandBufferObject buffer{Apr::BufferType::Apr, 0xa55a, 0, 0, memory.size(), memory.data()};
+    const auto before = buffer;
+    for (const auto& entry : invalid) {
+        auto* destination = reinterpret_cast<void*>(static_cast<std::uintptr_t>(entry.destination));
+        Require(sceAmprAprCommandBufferReadFile(&buffer, nullptr, nullptr, 0xffffffff, destination, entry.size, entry.offset) == invalidArgument);
+        Require(sceAmprMeasureCommandSizeReadFile(0xffffffff, destination, entry.size, entry.offset) == static_cast<std::uint32_t>(invalidArgument));
+        Require(sceAmprAprCommandBufferReadFile(reinterpret_cast<Apr::CommandBufferObject*>(1), nullptr, nullptr, 0, destination, entry.size, entry.offset) == invalidArgument);
+        Require(std::memcmp(&buffer, &before, sizeof(buffer)) == 0 && memory == memoryBefore);
+    }
+    struct Capacity {
+        std::uint32_t size;
+        std::uint32_t offset;
+        std::uint32_t count;
+        int result;
+    };
+    constexpr std::array<Capacity, 7> capacities{{
+        {19, 0, 0, busy}, {20, 1, 0, busy}, {0xffffffff, 0xffffffff, 0, busy},
+        {20, 0, 0x7fffffff, invalidArgument}, {20, 0, 0x80000000, invalidArgument},
+        {19, 0, 0xffffffff, busy}, {0, 0, 0xffffffff, busy},
+    }};
+    for (const auto& entry : capacities) {
+        buffer = {Apr::BufferType::Apr, 0xa55a, entry.offset, entry.count, entry.size, memory.data()};
+        const auto snapshot = buffer;
+        Require(sceAmprAprCommandBufferReadFile(&buffer, nullptr, nullptr, 0, nullptr, 1, 0) == entry.result);
+        Require(std::memcmp(&buffer, &snapshot, sizeof(buffer)) == 0 && memory == memoryBefore);
+    }
+    buffer = {Apr::BufferType::Generic, 0xffff, 0xffffffff, 0xffffffff, 0, nullptr};
+    Require(sceAmprAprCommandBufferReadFile(&buffer, nullptr, nullptr, 0, nullptr, 1, 0) == permissionDenied);
+    Require(sceAmprAprCommandBufferReadFile(nullptr, nullptr, nullptr, 0, nullptr, 1, 0) == invalidArgument);
+    const auto requireThrow = [](Apr::CommandBufferObject* object) {
+        bool threw = false;
+        try {
+            sceAmprAprCommandBufferReadFile(object, nullptr, nullptr, 0, nullptr, 1, 0);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Require(threw);
+    };
+    requireThrow(reinterpret_cast<Apr::CommandBufferObject*>(1));
+    buffer = {Apr::BufferType::Generic, 0, 0, 0, 20, reinterpret_cast<std::uint8_t*>(1)};
+    const auto inaccessible = buffer;
+    requireThrow(&buffer);
+    Require(std::memcmp(&buffer, &inaccessible, sizeof(buffer)) == 0);
+}
+
+void TestReadFileDescriptorOverlap() {
+    for (const std::uint32_t displacement : {0u, 8u}) {
+        alignas(8) std::array<std::uint8_t, 96> memory;
+        memory.fill(0xa5);
+        const Apr::CommandBufferObject initial{static_cast<Apr::BufferType>(0x1234), 0xa5a4, 0, 7, 20, memory.data() + 32 + displacement};
+        std::memcpy(memory.data() + 32, &initial, sizeof(initial));
+        auto expected = memory;
+        if (displacement == 0) {
+            constexpr std::array<std::uint32_t, 5> words{0x10428, 20, 2, 0x20, 0};
+            std::memcpy(expected.data() + 32, words.data(), sizeof(words));
+        } else {
+            constexpr std::array<std::uint32_t, 7> words{0xa5a51234, 20, 0x429, 0, 1, 0x20, 0};
+            std::memcpy(expected.data() + 32, words.data(), sizeof(words));
+        }
+        auto* buffer = reinterpret_cast<Apr::CommandBufferObject*>(memory.data() + 32);
+        Require(sceAmprAprCommandBufferReadFile(buffer, reinterpret_cast<std::uint64_t*>(memory.data() + 36), nullptr, 1, reinterpret_cast<void*>(0x20), 1, 0) == 0);
+        Require(memory == expected);
+    }
+}
+
 void TestFullBuffer() {
     const char* marker = "streaming";
     const auto measured = static_cast<std::uint32_t>(sceAmprMeasureCommandSizePushMarker(marker));
@@ -183,14 +303,14 @@ void TestFullBuffer() {
 
     std::array<std::uint8_t, 16> destination{};
     volatile std::uint64_t done = 0;
-    const auto read = sceAmprMeasureCommandSizeReadFile();
-    Recorder reads(read);
+    const auto read = sceAmprMeasureCommandSizeReadFile(1, destination.data(), destination.size(), 0);
+    Recorder reads(2 * read);
     Require(sceAmprAprCommandBufferReadFile(&reads.buffer, &reads.gatherState, &reads.scatterState, 1, destination.data(), destination.size(), 0) == 0);
     Require(sceAmprAprCommandBufferReadFile(&reads.buffer, &reads.gatherState, &reads.scatterState, 1, destination.data(), destination.size(), 0) == 0);
     Require(sceAmprCommandBufferNop(&reads.buffer, 1) == 0);
     Require(sceAmprCommandBufferWriteAddressOnCompletion(&reads.buffer, &done, 1) == 0);
-    Require(reads.Offset() > read && reads.Commands() == 4);
-    Require(reads.buffer.base != reads.memory.data() && reads.buffer.size > read);
+    Require(reads.Offset() > 2 * read && reads.Commands() == 4);
+    Require(reads.buffer.base != reads.memory.data() && reads.buffer.size > 2 * read);
 
     Apr::CommandBufferObject unbound{};
     std::uint64_t gatherState = 0;
@@ -690,10 +810,10 @@ void TestZeroFilledBuffer() {
     Apr::CommandBufferObject buffer{};
     std::uint64_t gatherState = 0;
     std::uint64_t scatterState = 0;
-    Require(sceAmprCommandBufferSetBuffer(&buffer, memory.data(), sizeof(Apr::ReadFileCommand)) == 0);
-    Require(sceAmprCommandBufferReset(&buffer) == 0);
     std::array<std::uint8_t, 32> data{};
     std::uint64_t done = 0;
+    Require(sceAmprCommandBufferSetBuffer(&buffer, memory.data(), sceAmprMeasureCommandSizeReadFile(fileId, data.data(), data.size(), 64)) == 0);
+    Require(sceAmprCommandBufferReset(&buffer) == 0);
     Require(sceAmprAprCommandBufferReadFile(&buffer, &gatherState, &scatterState, fileId, data.data(), data.size(), 64) == 0);
     Require(sceAmprCommandBufferWriteAddressOnCompletion(&buffer, &done, 0x1234567) == 0);
     Require(sceAmprCommandBufferWriteKernelEventQueue_04_00(&buffer, static_cast<std::uint64_t>(eq), 0, 0, 0) == 0);
@@ -806,6 +926,49 @@ void TestResolveFailures() {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
+    const char** const unreadableTable = reinterpret_cast<const char**>(0x10);
+    const char* unreadableEntry[]{reinterpret_cast<const char*>(0x10)};
+    const auto* const unreadablePrefix = reinterpret_cast<const char*>(0x10);
+    const auto faulted = [](int result) {
+        const bool fault = result == -1 && *__error_nid_postfix() == 14;
+        *__error_nid_postfix() = 0;
+        return fault;
+    };
+    Require(faulted(sceKernelAprResolveFilepathsToIds(unreadableTable, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(unreadableEntry, 1, ids, results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizes(unreadableEntry, 1, ids, sizes, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 1, ids, results)));
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 0, ids, &failed) == 0 && *__error_nid_postfix() == 0);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 0, ids, results) == 0 && *__error_nid_postfix() == 0);
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 1, ids, reinterpret_cast<std::uint64_t*>(0x10), results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(paths, 1, ids, reinterpret_cast<int*>(0x10))));
+    ids[1] = 123;
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 2, ids, reinterpret_cast<std::uint32_t*>(0x10))) && ids[1] == 0xffffffffu);
+    const std::string longPath(1025, 'a');
+    const char* longPaths[]{longPath.c_str()};
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(longPaths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(longPath.c_str(), paths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    sizes[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(longPaths, 1, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu && sizes[0] == 0);
+    ids[0] = 123;
+    results[0] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(longPaths, 1, ids, results) == 0);
+    Require(ids[0] == 0xffffffffu && results[0] == static_cast<int>(0x80020002));
     std::remove(paths[0]);
 }
 
@@ -978,7 +1141,7 @@ void TestGatherScatter() {
     Require(sceAmprAprCommandBufferReadFile(&compact.buffer, &compact.gatherState, &compact.scatterState, fileId, compactData.data(), 8, 100) == 0);
     Require(sceAmprAprCommandBufferReadFileGather(&compact.buffer, &compact.gatherState, &compact.scatterState, 8, 108) == 0);
     Require(sceAmprAprCommandBufferReadFileGather(&compact.buffer, &compact.gatherState, &compact.scatterState, 8, 116) == 0);
-    Require(compact.Offset() == 64);
+    Require(compact.Offset() == 44);
     Require(sceKernelAprSubmitCommandBuffer(&compact.buffer, 0) == 0);
     Require(MatchesFile(compactData.data(), 100, compactData.size()));
 
@@ -1596,6 +1759,18 @@ void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
 #endif
 }
 
+void RequireZeroPagesOffGpu(std::uint64_t address, std::uint64_t size) {
+    for (std::uint64_t offset = 0; offset < size; offset += page) {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address + offset), false);
+        Require(range != nullptr && !range->gpu && !range->gpuWritable && !range->HostReadable());
+    }
+}
+
+bool GpuRegistered(std::uint64_t address) {
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false);
+    return range != nullptr && range->gpu;
+}
+
 void TestAmmPrt() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1618,6 +1793,7 @@ void TestAmmPrt() {
     Require(Protection(prt) == 0x10 && Protection(prt + 3 * page) == 0x10);
     Require(At(prt) == 0 && At(prt + 4 * page - 8) == 0);
     RequireReadOnlyZeroPages(prt, 4 * page);
+    RequireZeroPagesOffGpu(prt, 4 * page);
     At(source) = 0x88;
 
     Recorder back;
@@ -1629,6 +1805,7 @@ void TestAmmPrt() {
     Require(sceAmprAmmCommandBufferRemapIntoPrt(&back.buffer, prt + 3 * page, source, page, cpuReadWrite, 0) == 0);
     SubmitAmm(back);
     Require(Protection(prt) == 0x10 && Protection(prt + page) == 0x03 && Protection(prt + 2 * page) == 0x33 && Protection(prt + 3 * page) == 0x03);
+    RequireZeroPagesOffGpu(prt, page);
     At(prt + page) = 0x71;
     At(prt + 2 * page) = 0x72;
     Require(At(prt + page) == 0x71 && At(prt + 2 * page) == 0x72 && At(prt + 3 * page) == 0x88 && At(prt) == 0);
@@ -1652,6 +1829,7 @@ void TestAmmPrt() {
     RequireZeroMappingObserved(prt + page, 2 * page, beforeRelease);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
     RequireReadOnlyZeroPages(prt + page, 2 * page);
+    RequireZeroPagesOffGpu(prt + page, 2 * page);
 
     Recorder rebuild;
     Require(sceAmprAmmCommandBufferAllocatePaForPrt(&rebuild.buffer, prt, 3 * page, 0, cpuReadWrite) == 0);
@@ -1661,6 +1839,12 @@ void TestAmmPrt() {
         At(prt + index * page) = 0x90 + index;
     }
     Require(At(prt) == 0x90 && At(prt + page) == 0x91 && At(prt + 2 * page) == 0x92 && At(prt + 3 * page) == 0x88);
+
+    Recorder gpuPage;
+    Require(sceAmprAmmCommandBufferUnmapToPrt(&gpuPage.buffer, prt, page) == 0);
+    Require(sceAmprAmmCommandBufferAllocatePaForPrt(&gpuPage.buffer, prt, page, 0, cpuGpuReadWrite) == 0);
+    SubmitAmm(gpuPage);
+    Require(Protection(prt) == 0x33 && GpuRegistered(prt));
 
     const std::int64_t ammRejected = invalidArgument;
     Recorder empty;
@@ -2013,6 +2197,9 @@ int main() {
     TestRecording("12345678");
     TestRecording(std::string(300, 'a'));
     TestRejectedArguments();
+    TestReadFileRecording();
+    TestReadFileRejections();
+    TestReadFileDescriptorOverlap();
     TestFullBuffer();
     TestOffsetPastBuffer();
     TestSubmission();

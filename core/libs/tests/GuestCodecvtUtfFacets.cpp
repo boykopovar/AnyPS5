@@ -3,6 +3,7 @@
 #include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,12 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace {
 
@@ -45,6 +52,7 @@ template<typename TElement>
 using In = int (APS5_VABI*)(const Facet*, void*, const char*, const char*, const char**, TElement*, TElement*, TElement**);
 template<typename TElement>
 using Out = int (APS5_VABI*)(const Facet*, void*, const TElement*, const TElement*, const TElement**, char*, char*, char**);
+using Length = int (APS5_VABI*)(const Facet*, void*, const char*, const char*, std::size_t);
 
 std::array<void*, 8> released{};
 std::size_t releasedCount = 0;
@@ -131,6 +139,14 @@ void CheckVtable(const std::uintptr_t* vtable, std::uint64_t maxcode, const std:
     char* next = nullptr;
     Require(Slot<Unshift>(vtable, 11)(facet, shift, narrow.data(), narrow.data() + narrow.size(), &next) == unshiftWithLowSurrogate && next == narrow.data());
 
+    facet->mode = ConsumeHeader;
+    const char lenBytes[] = "\xef\xbb\xbf" "A\xf0\x9f\x98\x80Z";
+    std::uint64_t lenState[2] = {};
+    const int expectedSupp = sizeof(TElement) == 2 ? 7 : 8;
+    Require(Slot<Length>(vtable, 12)(facet, lenState, lenBytes, lenBytes + 9, 2) == expectedSupp);
+    if (sizeof(TElement) == 2) Require((lenState[0] & 0xffff) == 0xde00);
+    else Require((lenState[0] & 0xff) == 1);
+
     releasedCount = 0;
     Slot<Destructor>(vtable, 2)(facet);
     Require(releasedCount == 0);
@@ -198,6 +214,25 @@ void CheckForwarders(const std::uintptr_t* vtable, TIn in, TOut out) {
 void CheckLibcInternalForwarders() {
     CheckForwarders<char16_t>(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, sceLibcInternalPending3_024_nid_no_patch, sceLibcInternalPending3_025_nid_no_patch);
     CheckForwarders<char32_t>(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, sceLibcInternalPending3_017_nid_no_patch, sceLibcInternalPending3_018_nid_no_patch);
+
+    const Facet utf16Facet{_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix + 2, 1, 0, 0x10ffffu, ConsumeHeader, 0};
+    const Facet utf32Facet{_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix + 2, 1, 0, 0xffffffffu, ConsumeHeader, 0};
+    const char input[] = "\xef\xbb\xbf\xf0\x9f\x98\x80" "A";
+    std::uint64_t state16[2] = {};
+    Require(reinterpret_cast<Length>(&_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix)(&utf16Facet, state16, input, input + 8, 1) == 6);
+    Require((state16[0] & 0xffff) == 0xde00);
+    Require(reinterpret_cast<Length>(&_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix)(&utf16Facet, state16, input + 6, input + 8, 2) == 2);
+    Require((state16[0] & 0xffff) == 1);
+
+    std::uint64_t state32[2] = {};
+    Require(reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(&utf32Facet, state32, input, input + 8, 1) == 7);
+    Require((state32[0] & 0xff) == 1);
+    Require(reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(&utf32Facet, state32, input + 7, input + 8, 1) == 1);
+    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix)(nullptr, state16, input, input + 8, 1); });
+    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix)(&utf16Facet, nullptr, input, input + 8, 1); });
+    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(nullptr, state32, input, input + 8, 1); });
+    RequireThrows<std::invalid_argument>([&] { reinterpret_cast<Length>(&sceLibcInternalPending3_019_nid_no_patch)(&utf32Facet, nullptr, input, input + 8, 1); });
+
     Facet* utf16 = NewFacet(_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix, 0x10ffff, 0);
     Facet* utf32 = NewFacet(_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix, 0xffffffff, 0);
     releasedCount = 0;
@@ -210,9 +245,75 @@ void CheckLibcInternalForwarders() {
     Require(releasedCount == 0);
 }
 
+void* LoadShared(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return LoadLibraryW(path.c_str());
+#else
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+#endif
 }
 
-int main() {
+void* FindExport(void* library, const char* name) {
+#ifdef _WIN32
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(library), name));
+#else
+    return dlsym(library, name);
+#endif
+}
+
+void CloseShared(void* library) {
+    if (library == nullptr) return;
+#ifdef _WIN32
+    FreeLibrary(static_cast<HMODULE>(library));
+#else
+    dlclose(library);
+#endif
+}
+
+struct SharedLibraryGuard {
+    void* handle = nullptr;
+    ~SharedLibraryGuard() { CloseShared(handle); }
+};
+
+void CheckLibraryNids(const std::filesystem::path& libcPath, const std::filesystem::path& internalPath, bool patched) {
+    SharedLibraryGuard libcLib{LoadShared(libcPath)};
+    SharedLibraryGuard internalLib{LoadShared(internalPath)};
+    Require(libcLib.handle != nullptr && internalLib.handle != nullptr);
+
+    auto resolve = [&](void* library, const char* nid, const char* mangled) -> Length {
+        void* symbol = nullptr;
+        if (patched) {
+            symbol = FindExport(library, nid);
+        } else {
+            symbol = FindExport(library, mangled);
+            if (symbol == nullptr) symbol = FindExport(library, (std::string(nid) + "_nid_no_patch_cut").c_str());
+        }
+        Require(symbol != nullptr);
+        return reinterpret_cast<Length>(symbol);
+    };
+
+    const Length libcLen16 = resolve(libcLib.handle, "lynApfiP6Lw", "CodecvtUtf16Length_nid_no_patch");
+    const Length libcLen32 = resolve(libcLib.handle, "m6rjfL4aMcA", "_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix");
+    const Length internalLen16 = resolve(internalLib.handle, "lynApfiP6Lw", "_ZNKSt7codecvtIDsc9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix");
+    const Length internalLen32 = resolve(internalLib.handle, "m6rjfL4aMcA", "sceLibcInternalPending3_019_nid_no_patch");
+
+    const Facet f16{_ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix + 2, 1, 0, 0x10ffffu, ConsumeHeader, 0};
+    const Facet f32{_ZTVSt7codecvtIDic9_MbstatetE_nid_postfix + 2, 1, 0, 0xffffffffu, ConsumeHeader, 0};
+    const char text[] = "\xef\xbb\xbf" "A\xf0\x9f\x98\x80";
+    for (Length fn : {libcLen16, internalLen16}) {
+        std::uint64_t s[2] = {};
+        Require(fn(&f16, s, text, text + 8, 2) == 7 && (s[0] & 0xffff) == 0xde00);
+        Require(fn(&f16, s, text + 7, text + 8, 1) == 1 && (s[0] & 0xffff) == 1);
+    }
+    for (Length fn : {libcLen32, internalLen32}) {
+        std::uint64_t s[2] = {};
+        Require(fn(&f32, s, text, text + 8, 2) == 8 && (s[0] & 0xff) == 1);
+    }
+}
+
+}
+
+int main(int argc, char** argv) {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&HeapAllocate);
     heapApi[1] = reinterpret_cast<void*>(&HeapRelease);
@@ -227,5 +328,6 @@ int main() {
     CheckDestructorExports();
     CheckQueryExports();
     CheckLibcInternalForwarders();
+    if (argc >= 3) CheckLibraryNids(ArgumentPath(argv, 1), ArgumentPath(argv, 2), argc >= 4 && std::strcmp(argv[3], "patched") == 0);
     std::puts("UTF codecvt facet checks passed");
 }

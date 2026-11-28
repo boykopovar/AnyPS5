@@ -49,18 +49,12 @@ std::uint64_t Address(const void* pointer) {
 
 template <typename T>
 bool loadGuest(T& value, const void* address) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(const_cast<void*>(static_cast<const void*>(&value)), address, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(const_cast<void*>(static_cast<const void*>(&value)), address, sizeof(T));
 }
 
 template <typename T>
 bool storeGuest(void* address, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(address, &value, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(address, &value, sizeof(T));
 }
 
 int AppendReverbJob(AcmBatchInfo& batch, std::uint32_t blockSize, const ReverbEntry& input, const ReverbEntry* entries, std::uint32_t count) {
@@ -100,9 +94,8 @@ int AppendReverbJob(AcmBatchInfo& batch, std::uint32_t blockSize, const ReverbEn
     put(0x17C, count + 1);
     auto* buffer = static_cast<std::byte*>(batch.buffer);
     const auto descriptorOffset = capacity - ReverbDescriptorSize;
-    std::memcpy(buffer + descriptorOffset, descriptor.data(), descriptor.size());
     const std::array<std::uint64_t, 5> words{0x028000000000000D, Address(buffer + descriptorOffset), blockSize == 1024 || hasMetadata ? 0x1000Au : 0x1030Au, 0x10A, 0x20A};
-    std::memcpy(buffer + offset, words.data(), sizeof(words));
+    if (!storeGuest(buffer + descriptorOffset, descriptor) || !storeGuest(buffer + offset, words)) return SCE_ACM_ERROR_BAD_POINTER;
     batch.offset = offset + sizeof(words);
     batch.buffer_size = descriptorOffset;
     return 0;
@@ -142,47 +135,57 @@ int EncodeTransforms(AcmBatchInfo* batch, bool inverse, std::int32_t transformSi
         header = (inverse ? 0 : std::uint64_t{1} << 16) | (static_cast<std::uint64_t>(flags & 6) << 20) | (real ? std::uint64_t{1} << (inverse ? 23 : 24) : 0) | (std::uint64_t{1} << (inputFormat == 1 ? 25 : 27)) | (std::uint64_t{1} << (outputFormat == 1 ? 26 : 28)) | (std::uint64_t{1} << (17 + sizeIndex)) | (static_cast<std::uint64_t>(encodedCount) << 29);
     }
     header |= static_cast<std::uint64_t>(7 + sizeIndex) << 8;
-    auto* buffer = static_cast<std::byte*>(batch->buffer);
-    auto offset = batch->offset;
-    const auto capacity = batch->buffer_size;
+    AcmBatchInfo localBatch{};
+    if (!loadGuest(localBatch, batch)) return SCE_ACM_ERROR_BAD_POINTER;
+    auto* buffer = static_cast<std::byte*>(localBatch.buffer);
+    auto offset = localBatch.offset;
+    const auto capacity = localBatch.buffer_size;
     const auto hasRoom = [&](std::uint64_t bytes) { return offset <= capacity && capacity - offset >= bytes; };
     const auto appendWord = [&](std::uint64_t value) {
-        std::memcpy(buffer + offset, &value, sizeof(value));
+        if (!storeGuest(buffer + offset, value)) return false;
         offset += sizeof(value);
+        return true;
+    };
+    const auto loadEntry = [&](const void* const* slot, std::uintptr_t& value) {
+        const void* pointer = nullptr;
+        if (!loadGuest(pointer, slot)) return false;
+        value = reinterpret_cast<std::uintptr_t>(pointer);
+        return true;
     };
     constexpr int noSpace = static_cast<int>(0x81940009);
     constexpr int badAlignment = static_cast<int>(0x8194000A);
     if (!hasRoom(16)) return noSpace;
-    appendWord(header);
-    appendWord(10 | ((wide ? 8u : 0xDu) << 8));
+    if (!appendWord(header) || !appendWord(10 | ((wide ? 8u : 0xDu) << 8))) return SCE_ACM_ERROR_BAD_POINTER;
     const bool pairedInputs = (flags & 2) != 0;
     const bool pairedOutputs = (flags & 4) != 0;
     const bool realOutput = inverse && real;
     for (std::uint32_t index = 0; index < transformCount; ++index) {
         const auto inputIndex = static_cast<std::size_t>(index) * (pairedInputs ? 2 : 1);
-        const auto input = reinterpret_cast<std::uintptr_t>(inputs[inputIndex]);
-        const auto secondInput = pairedInputs ? reinterpret_cast<std::uintptr_t>(inputs[inputIndex + 1]) : 0;
+        std::uintptr_t input = 0;
+        std::uintptr_t secondInput = 0;
+        if (!loadEntry(inputs + inputIndex, input) || (pairedInputs && !loadEntry(inputs + inputIndex + 1, secondInput))) return SCE_ACM_ERROR_BAD_POINTER;
         if (!pairedInputs && !input) return SCE_ACM_ERROR_BAD_POINTER;
         if ((input | secondInput) & 127) return badAlignment;
         if (!hasRoom((pairedInputs ? 24 : 16) + 24)) return noSpace;
-        appendWord((pairedInputs ? 7 : 6) | (inputBlocks << 32) | (pairedInputs ? static_cast<std::uint64_t>(inputBytes / 2) << 48 : 0));
-        appendWord(input);
-        if (pairedInputs) appendWord(secondInput);
-        appendWord(10 | (inputCommand << 8));
-        appendWord(10 | (transformCommand << 8));
-        appendWord(10 | (outputCommand << 8));
+        if (!appendWord((pairedInputs ? 7 : 6) | (inputBlocks << 32) | (pairedInputs ? static_cast<std::uint64_t>(inputBytes / 2) << 48 : 0)) ||
+            !appendWord(input) ||
+            (pairedInputs && !appendWord(secondInput)) ||
+            !appendWord(10 | (inputCommand << 8)) ||
+            !appendWord(10 | (transformCommand << 8)) ||
+            !appendWord(10 | (outputCommand << 8))) return SCE_ACM_ERROR_BAD_POINTER;
         const auto outputIndex = static_cast<std::size_t>(index) * (pairedOutputs ? 2 : 1);
-        const auto output = reinterpret_cast<std::uintptr_t>(outputs[outputIndex]);
-        const auto secondOutput = pairedOutputs ? reinterpret_cast<std::uintptr_t>(outputs[outputIndex + 1]) : 0;
+        std::uintptr_t output = 0;
+        std::uintptr_t secondOutput = 0;
+        if (!loadEntry(outputs + outputIndex, output) || (pairedOutputs && !loadEntry(outputs + outputIndex + 1, secondOutput))) return SCE_ACM_ERROR_BAD_POINTER;
         if ((output | secondOutput) & 127) return badAlignment;
         const bool longRecord = pairedOutputs || realOutput;
         if (!hasRoom(longRecord ? 24 : 16)) return noSpace;
-        appendWord((longRecord ? 9 : 8) | (outputBlocks << 32) | (longRecord ? static_cast<std::uint64_t>(outputBytes / 2) << 48 : 0));
-        if (realOutput) appendWord(0);
-        appendWord(output);
-        if (pairedOutputs) appendWord(secondOutput);
+        if (!appendWord((longRecord ? 9 : 8) | (outputBlocks << 32) | (longRecord ? static_cast<std::uint64_t>(outputBytes / 2) << 48 : 0)) ||
+            (realOutput && !appendWord(0)) ||
+            !appendWord(output) ||
+            (pairedOutputs && !appendWord(secondOutput))) return SCE_ACM_ERROR_BAD_POINTER;
     }
-    batch->offset = offset;
+    if (!storeGuest(&batch->offset, offset)) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
@@ -243,25 +246,20 @@ int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_com
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
 int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, const AcmBatchInfo* const batch_info[], AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_info_count;
-    (void)batch_info;
-    if (!batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
+    if (!batch_info || !batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
     if (context == 0) return SCE_ACM_ERROR_BAD_CONTEXT;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
@@ -283,9 +281,7 @@ int APS5_VABI sceAcmContextCreate(AcmContextId* context) {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_contexts.insert(id);
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_contexts.erase(id);
@@ -341,9 +337,7 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
         destinations[position] = static_cast<std::byte*>(history.samples) + current * slotBytes;
     }
     AcmBatchInfo work{};
-    const int readErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&work, batch, sizeof(work));
-    errno = readErrno;
     if (!read) return SCE_ACM_ERROR_BAD_POINTER;
     if (const auto result = sceAcm_FFT(&work, static_cast<std::int32_t>(2 * blockSize), channelCount, 0, sources.data(), wideSamples ? 0 : 1, destinations.data(), 9)) return result;
     if (outputCount == 0 || !outputs) return SCE_ACM_ERROR_BAD_POINTER;
@@ -403,10 +397,8 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
     }
     flags |= (std::uint64_t{std::min(outputCount - 1, 15u)} << 29) | (std::uint64_t{1} << ((64 - std::countl_zero(channelCount)) & 63)) | (std::uint64_t{std::min(smallestBlockCount, 7u)} << 45);
     const std::uint64_t header = ((flags & 0xFFFF) ? std::uint64_t{1} << 63 : flags) | ((0x0B + static_cast<std::uint64_t>(std::countr_zero(blockSize >> 7))) << 8);
-    std::memcpy(static_cast<std::byte*>(work.buffer) + headerOffset, &header, sizeof(header));
-    const int savedErrno = errno;
+    if (!storeGuest(static_cast<std::byte*>(work.buffer) + headerOffset, header)) return SCE_ACM_ERROR_BAD_POINTER;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &work, sizeof(work));
-    errno = savedErrno;
     return copied ? 0 : SCE_ACM_ERROR_BAD_POINTER;
 }
 
@@ -468,25 +460,17 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
 int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority) {
     if (!batch || priority >= 4) return SCE_ACM_ERROR_BAD_POINTER;
     AcmBatchInfo localBatch{};
-    const int savedErrno = errno;
     const bool copiedIn = GuestCopyIn_nid_no_patch(&localBatch, batch, sizeof(localBatch));
-    errno = savedErrno;
     if (!copiedIn) return SCE_ACM_ERROR_BAD_POINTER;
     const auto offset = localBatch.offset;
     if (offset > localBatch.buffer_size || localBatch.buffer_size - offset < 8) return static_cast<int>(0x81940009);
-    const int savedErrnoProbe = errno;
     const bool batchWritable = GuestCopyOut_nid_no_patch(&batch->offset, &localBatch.offset, sizeof(localBatch.offset));
-    errno = savedErrnoProbe;
     if (!batchWritable) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t job = 0x10 | (static_cast<std::uint64_t>(priority) << 8);
-    const int savedErrno2 = errno;
     const bool copiedBuf = GuestCopyOut_nid_no_patch(static_cast<std::byte*>(localBatch.buffer) + offset, &job, sizeof(job));
-    errno = savedErrno2;
     if (!copiedBuf) return SCE_ACM_ERROR_BAD_POINTER;
     const auto newOffset = offset + sizeof(job);
-    const int savedErrno3 = errno;
     const bool copiedBack = GuestCopyOut_nid_no_patch(&batch->offset, &newOffset, sizeof(newOffset));
-    errno = savedErrno3;
     if (!copiedBack) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
@@ -503,36 +487,24 @@ int APS5_VABI sceAcmBatchJobNotification(AcmBatchInfo* batch, std::uint32_t valu
     if (value == 0 || !batch || !notification) return SCE_ACM_ERROR_BAD_POINTER;
     if (reinterpret_cast<std::uintptr_t>(notification) & 0x7f) return SCE_ACM_ERROR_ALIGNMENT;
     AcmBatchInfo localBatch{};
-    const int savedErrno = errno;
     const bool copiedIn = GuestCopyIn_nid_no_patch(&localBatch, batch, sizeof(localBatch));
-    errno = savedErrno;
     if (!copiedIn) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t offset = localBatch.offset;
     if (offset > localBatch.buffer_size || localBatch.buffer_size - offset < 0x10) return SCE_ACM_ERROR_BATCH_FULL;
-    const int savedErrnoProbe = errno;
     const bool batchWritable = GuestCopyOut_nid_no_patch(&batch->offset, &localBatch.offset, sizeof(localBatch.offset));
-    errno = savedErrnoProbe;
     if (!batchWritable) return SCE_ACM_ERROR_BAD_POINTER;
     std::byte existingWords[0x10]{};
-    const int savedErrnoBufProbe = errno;
     const bool bufWritable = GuestCopyIn_nid_no_patch(existingWords, static_cast<const std::byte*>(localBatch.buffer) + offset, sizeof(existingWords)) &&
         GuestCopyOut_nid_no_patch(static_cast<std::byte*>(localBatch.buffer) + offset, existingWords, sizeof(existingWords));
-    errno = savedErrnoBufProbe;
     if (!bufWritable) return SCE_ACM_ERROR_BAD_POINTER;
     const std::byte zeroNotification[0x80]{};
-    const int savedErrnoNotif = errno;
     const bool copiedNotif = GuestCopyOut_nid_no_patch(notification, zeroNotification, sizeof(zeroNotification));
-    errno = savedErrnoNotif;
     if (!copiedNotif) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t words[2] = {0xeu | (static_cast<std::uint64_t>(static_cast<std::uint8_t>(value)) << 24), reinterpret_cast<std::uintptr_t>(notification)};
-    const int savedErrnoBuf = errno;
     const bool copiedBuf = GuestCopyOut_nid_no_patch(static_cast<std::byte*>(localBatch.buffer) + offset, words, sizeof(words));
-    errno = savedErrnoBuf;
     if (!copiedBuf) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t end = offset + sizeof(words);
-    const int savedErrnoBack = errno;
     const bool copiedBack = GuestCopyOut_nid_no_patch(&batch->offset, &end, sizeof(end));
-    errno = savedErrnoBack;
     if (!copiedBack) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }

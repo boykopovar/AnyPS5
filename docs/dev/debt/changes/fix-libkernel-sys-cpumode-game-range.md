@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change other modes were not tried and throw
+
+- [sceKernelGetCpumodeGame and sceKernelSetCpumodeGame](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - the mode changes nothing else here: on the console 0 gave system CPU mode 1 and 1 mode 5, while `sceKernelGetCpumode` still returns 0. Signatures follow [ProsperoEden (PPSA99008)](https://github.com/mihawk-99/PS5_ProsperoEden/blob/a0b65fe50dd48d4064e2f58fa9c8d44665478878/headless/performance.cpp#L1030-L1062); its getter faulted without an output, which throws here. The mode starts at 1; 0 and 1 are accepted and any other mode returns `EINVAL` (0x80020016), as it [measured](https://github.com/mihawk-99/PS5_ProsperoEden/blob/a0b65fe50dd48d4064e2f58fa9c8d44665478878/docs/PERFORMANCE_FINDINGS.md#L113-L114) for 2 to 7 and as the 13.60 `kern.cpumode_game` sysctl that `libkernel.sprx` (@ 0x15cb0) writes refuses any value above 1 compared unsigned (kernel-13.60 @ 0xffffffff9eaeb198). That the getter reports the last accepted mode is inferred from the probe

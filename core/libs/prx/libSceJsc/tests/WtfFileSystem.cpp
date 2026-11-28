@@ -25,6 +25,11 @@ void Check(bool value, int line) {
     }
 }
 
+void CheckBuffer(const char* buffer, const char* expected, int count, int line) {
+    Check(std::memcmp(buffer, expected, count) == 0, line);
+    for (int i = count; i < 16; ++i) Check(buffer[i] == 'x', line);
+}
+
 int ReadFromFile(int handle, char* data, int length) {
     return _ZN3WTF14FileSystemImpl12readFromFileEiPci(handle, data, length);
 }
@@ -69,6 +74,41 @@ void TestFailures(const std::string& path) {
     Check(*__error_nid_postfix() == GuestEbadf, __LINE__);
     Check(std::memcmp(buffer, "xxxx", 4) == 0, __LINE__);
     Check(close_nid_postfix(writer) == 0, __LINE__);
+}
+
+void TestDuplicateOffset(const std::string& path) {
+    const int handle = open_nid_postfix(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Check(handle >= 0, __LINE__);
+    const int duplicate = dup_nid_postfix(handle);
+    Check(duplicate >= 0, __LINE__);
+    Check(duplicate != handle, __LINE__);
+    char buffer[16];
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(handle, buffer, 2) == 2, __LINE__);
+    CheckBuffer(buffer, "01", 2, __LINE__);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(duplicate, buffer, 3) == 3, __LINE__);
+    CheckBuffer(buffer, "234", 3, __LINE__);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(handle, buffer, 1) == 1, __LINE__);
+    CheckBuffer(buffer, "5", 1, __LINE__);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(duplicate, buffer, 2) == 2, __LINE__);
+    CheckBuffer(buffer, "67", 2, __LINE__);
+    Check(close_nid_postfix(handle) == 0, __LINE__);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(duplicate, buffer, 2) == 2, __LINE__);
+    CheckBuffer(buffer, "89", 2, __LINE__);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(duplicate, buffer, sizeof(buffer)) == 0, __LINE__);
+    CheckBuffer(buffer, "", 0, __LINE__);
+    const int independent = open_nid_postfix(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Check(independent >= 0, __LINE__);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Check(ReadFromFile(independent, buffer, 2) == 2, __LINE__);
+    CheckBuffer(buffer, "01", 2, __LINE__);
+    Check(close_nid_postfix(independent) == 0, __LINE__);
+    Check(close_nid_postfix(duplicate) == 0, __LINE__);
 }
 
 struct TestCString {
@@ -133,6 +173,7 @@ int main() {
     const std::string path = "/jsc-read-from-file/digits.bin";
     TestReadsInOrder(path);
     TestFailures(path);
+    TestDuplicateOffset(path);
     TestDeviceId("/jsc-read-from-file");
     std::filesystem::remove_all(root);
     return 0;

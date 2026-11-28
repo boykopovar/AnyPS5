@@ -161,7 +161,7 @@ static void RequireWithinBoundsInOneOfAttempts(bool (*test)(), int attempts) {
 }
 
 static bool TestKsemTimedwait500us() {
-    std::array<std::uint64_t, 64> samples{};
+    std::array<std::uint64_t, WAIT_ITERATIONS> samples{};
     std::intptr_t id = -1;
     Require(ksem_init_nid_postfix(&id, 0) == 0);
     for (auto& sample : samples) {

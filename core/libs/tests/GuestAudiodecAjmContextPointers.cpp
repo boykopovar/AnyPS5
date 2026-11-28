@@ -244,6 +244,18 @@ int main() {
     Require(getAjmContext(context, &ajmi, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && ajmi == ids[0] && ajm == Untouched, "a dangling Ajm output was not rejected");
     Require(errno == 71, "errno was modified on dangling Ajm output");
 
+    errno = 71;
+    Require(sceAudiodecGetContext(context) == 0 && errno == 71, "module context preserves errno on first access");
+    ReadOnlyPage readOnly(before, sizeof(before));
+    errno = 71;
+    Require(sceAudiodecGetContext(readOnly.Data()) == InvalidArgument && errno == 71 &&
+            std::memcmp(readOnly.Bytes(), before, sizeof(before)) == 0, "read-only module snapshot output");
+    for (std::uint32_t handle : {1u, 6u << 14}) {
+        errno = 71;
+        Require(sceAudiodecDeleteDecoderEx(reinterpret_cast<void*>(0x10), handle) == InvalidArgument && errno == 71,
+                "unreadable decoder context");
+    }
+
     TestDecodePointers();
     TestRegisterAndUnregisterCodecPointers(unregisterCodec);
 
