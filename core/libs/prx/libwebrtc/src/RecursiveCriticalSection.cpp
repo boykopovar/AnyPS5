@@ -42,12 +42,15 @@
 
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -60,17 +63,33 @@ struct ErrnoGuard {
     ~ErrnoGuard() { errno = savedErrno; }
 };
 
-void RequireWritable(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    if (!section)
-        throw std::invalid_argument(std::string(caller) + " requires a critical section");
-    ErrnoGuard guard;
-    if (!GuestWritable_nid_no_patch(const_cast<WebRtcRecursiveCriticalSection*>(section), sizeof(*section)))
-        throw std::invalid_argument(std::string(caller) + " requires a critical section");
+struct GuestWriteScope {
+    ErrnoGuard savedErrno;
+    GuestArena::HostWrite write;
+    bool ok = false;
+
+    GuestWriteScope(void* address, std::size_t size) : write(address, size) {
+        ok = address != nullptr && write.Open() && GuestWritable_nid_no_patch(address, size);
+    }
+};
+
+template<typename T>
+bool CopyIn(const void* source, T& out) {
+    if (!source) return false;
+    const ErrnoGuard guard;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, sizeof(T));
+    return GuestReadable_nid_no_patch(source, sizeof(T)) &&
+        GuestCopyIn_nid_no_patch(&out, source, sizeof(T));
 }
 
 PthreadMutex* MutexField(const WebRtcRecursiveCriticalSection* section) {
-    return reinterpret_cast<PthreadMutex*>(
-        reinterpret_cast<std::uintptr_t>(section) + offsetof(WebRtcRecursiveCriticalSection, mutex));
+    if (!section) return nullptr;
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(section);
+    constexpr std::size_t offset = offsetof(WebRtcRecursiveCriticalSection, mutex);
+    if (offset > std::numeric_limits<std::uintptr_t>::max() - address) return nullptr;
+    const std::uintptr_t field = address + offset;
+    if (sizeof(PthreadMutex) - 1 > std::numeric_limits<std::uintptr_t>::max() - field) return nullptr;
+    return reinterpret_cast<PthreadMutex*>(field);
 }
 
 void Check(int result, const char* call) {
@@ -79,15 +98,33 @@ void Check(int result, const char* call) {
 }
 
 void Enter(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    if (!section)
+    PthreadMutex* mutex = MutexField(section);
+    PthreadMutex handle = nullptr;
+    if (!mutex || !CopyIn(mutex, handle))
         throw std::invalid_argument(std::string(caller) + " requires a critical section");
-    Check(pthread_mutex_lock_nid_postfix(const_cast<PthreadMutex*>(&section->mutex)), "pthread_mutex_lock");
+    if (handle == nullptr) {
+        const GuestWriteScope write(mutex, sizeof(*mutex));
+        if (!write.ok)
+            throw std::invalid_argument(std::string(caller) + " requires a critical section");
+        Check(pthread_mutex_lock_nid_postfix(mutex), "pthread_mutex_lock");
+        return;
+    }
+    Check(pthread_mutex_lock_nid_postfix(mutex), "pthread_mutex_lock");
 }
 
 void Leave(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    if (!section)
+    PthreadMutex* mutex = MutexField(section);
+    PthreadMutex handle = nullptr;
+    if (!mutex || !CopyIn(mutex, handle))
         throw std::invalid_argument(std::string(caller) + " requires a critical section");
-    Check(pthread_mutex_unlock_nid_postfix(const_cast<PthreadMutex*>(&section->mutex)), "pthread_mutex_unlock");
+    if (handle == nullptr) {
+        const GuestWriteScope write(mutex, sizeof(*mutex));
+        if (!write.ok)
+            throw std::invalid_argument(std::string(caller) + " requires a critical section");
+        Check(pthread_mutex_unlock_nid_postfix(mutex), "pthread_mutex_unlock");
+        return;
+    }
+    Check(pthread_mutex_unlock_nid_postfix(mutex), "pthread_mutex_unlock");
 }
 
 }
@@ -95,20 +132,26 @@ void Leave(const WebRtcRecursiveCriticalSection* section, const char* caller) {
 extern "C" {
 
 void APS5_VABI _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section) {
-    RequireWritable(section, "RecursiveCriticalSection::RecursiveCriticalSection");
+    const GuestWriteScope sectionWrite(section, sizeof(*section));
+    PthreadMutex* mutex = MutexField(section);
+    if (!sectionWrite.ok || !mutex)
+        throw std::invalid_argument("RecursiveCriticalSection::RecursiveCriticalSection requires a critical section");
     PthreadMutexattr attribute = nullptr;
     Check(pthread_mutexattr_init_nid_postfix(&attribute), "pthread_mutexattr_init");
     int result = pthread_mutexattr_settype_nid_postfix(&attribute, PosixMutexRecursive);
     if (result == 0)
-        result = pthread_mutex_init_nid_postfix(MutexField(section), &attribute);
+        result = pthread_mutex_init_nid_postfix(mutex, &attribute);
     const int destroyed = pthread_mutexattr_destroy_nid_postfix(&attribute);
     Check(result, "pthread_mutexattr_settype or pthread_mutex_init");
     Check(destroyed, "pthread_mutexattr_destroy");
 }
 
 void APS5_VABI _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section) {
-    RequireWritable(section, "RecursiveCriticalSection::~RecursiveCriticalSection");
-    Check(pthread_mutex_destroy_nid_postfix(MutexField(section)), "pthread_mutex_destroy");
+    const GuestWriteScope sectionWrite(section, sizeof(*section));
+    PthreadMutex* mutex = MutexField(section);
+    if (!sectionWrite.ok || !mutex)
+        throw std::invalid_argument("RecursiveCriticalSection::~RecursiveCriticalSection requires a critical section");
+    Check(pthread_mutex_destroy_nid_postfix(mutex), "pthread_mutex_destroy");
 }
 
 void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(const WebRtcRecursiveCriticalSection* section) {
@@ -120,16 +163,25 @@ void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(const WebR
 }
 
 void APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(WebRtcCritScope* scope, const WebRtcRecursiveCriticalSection* section) {
-    if (!scope)
+    const GuestWriteScope scopeWrite(scope, sizeof(*scope));
+    if (!scopeWrite.ok)
         throw std::invalid_argument("CritScope::CritScope requires a scope");
     Enter(section, "CritScope::CritScope");
-    scope->section = section;
+    const WebRtcCritScope value{section};
+    if (!GuestCopyOut_nid_no_patch(scope, &value, sizeof(value))) {
+        try {
+            Leave(section, "CritScope::CritScope");
+        } catch (...) {
+        }
+        throw std::invalid_argument("CritScope::CritScope requires a scope");
+    }
 }
 
 void APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(WebRtcCritScope* scope) {
-    if (!scope)
+    WebRtcCritScope scopeCopy{};
+    if (!CopyIn(scope, scopeCopy))
         throw std::invalid_argument("CritScope::~CritScope requires a scope");
-    Leave(scope->section, "CritScope::~CritScope");
+    Leave(scopeCopy.section, "CritScope::~CritScope");
 }
 
 }

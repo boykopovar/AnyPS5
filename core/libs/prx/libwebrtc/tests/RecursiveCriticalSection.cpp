@@ -1,6 +1,8 @@
 #include "prx/libwebrtc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -8,9 +10,14 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -112,40 +119,71 @@ void CheckNull() {
     Require(ThrowsInvalidArgument([] { _ZN3rtc9CritScopeD1Ev_nid_postfix(nullptr); }), "a null CritScope destructor did not throw");
 }
 
-class GuardedPage {
+class GuardedPages {
 public:
-    GuardedPage() {
+    GuardedPages() {
 #ifdef _WIN32
-        address_ = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
-        Require(address_ != nullptr, "VirtualAlloc failed");
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize_ = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+        base_ = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize_ * 3, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        Require(base_ != nullptr, "VirtualAlloc failed");
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(base_ + pageSize_, pageSize_, PAGE_READONLY, &oldProtect) != 0, "VirtualProtect read-only failed");
+        Require(VirtualProtect(base_ + pageSize_ * 2, pageSize_, PAGE_NOACCESS, &oldProtect) != 0, "VirtualProtect guard failed");
 #else
-        void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        const long size = sysconf(_SC_PAGESIZE);
+        pageSize_ = size > 0 ? static_cast<std::size_t>(size) : 4096;
+        void* mapped = mmap(nullptr, pageSize_ * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapped != MAP_FAILED, "mmap failed");
-        address_ = mapped;
+        base_ = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base_ + pageSize_, pageSize_, PROT_READ) == 0, "mprotect read-only failed");
+        Require(mprotect(base_ + pageSize_ * 2, pageSize_, PROT_NONE) == 0, "mprotect guard failed");
 #endif
     }
-    ~GuardedPage() {
-        if (!address_)
+    ~GuardedPages() {
+        if (!base_)
             return;
 #ifdef _WIN32
-        VirtualFree(address_, 0, MEM_RELEASE);
+        VirtualFree(base_, 0, MEM_RELEASE);
 #else
-        munmap(address_, 4096);
+        munmap(base_, pageSize_ * 3);
 #endif
     }
     template<typename T>
-    T* As() const {
-        return static_cast<T*>(address_);
+    T* ReadOnly() const {
+        return reinterpret_cast<T*>(base_ + pageSize_);
+    }
+    template<typename T>
+    T* Guard() const {
+        return reinterpret_cast<T*>(base_ + pageSize_ * 2);
     }
 
 private:
-    void* address_ = nullptr;
+    unsigned char* base_ = nullptr;
+    std::size_t pageSize_ = 4096;
 };
 
 void CheckGuarded() {
-    GuardedPage guard;
-    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded constructor target did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded destructor target did not throw");
+    GuardedPages pages;
+    WebRtcRecursiveCriticalSection section{};
+    _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(&section);
+
+    errno = 67;
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(pages.Guard<WebRtcRecursiveCriticalSection>()); }), "guarded constructor target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(pages.ReadOnly<WebRtcRecursiveCriticalSection>()); }), "read-only constructor target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(pages.Guard<WebRtcRecursiveCriticalSection>()); }), "guarded destructor target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(pages.ReadOnly<WebRtcRecursiveCriticalSection>()); }), "read-only destructor target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(pages.Guard<WebRtcRecursiveCriticalSection>()); }), "guarded Enter target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(pages.Guard<WebRtcRecursiveCriticalSection>()); }), "guarded Leave target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(pages.Guard<WebRtcCritScope>(), &section); }), "guarded CritScope did not throw");
+    Require(!HeldByAnotherThread(section), "failed guarded CritScope left section locked");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(pages.ReadOnly<WebRtcCritScope>(), &section); }), "read-only CritScope did not throw");
+    Require(!HeldByAnotherThread(section), "failed read-only CritScope left section locked");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeD1Ev_nid_postfix(pages.Guard<WebRtcCritScope>()); }), "guarded CritScope destructor did not throw");
+    Require(errno == 67, "guarded pointer checks clobbered errno");
+
+    _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(&section);
 }
 
 }
