@@ -2,9 +2,24 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Apr/include/AmmExportCommands.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+
+namespace {
+
+bool ProbeWritable(void* pointer, std::size_t size) {
+    if (!pointer) return true;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guard(pointer, size);
+    const bool writable = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    errno = savedErrno;
+    return writable;
+}
+
+}
 
 extern "C" {
 
@@ -14,15 +29,20 @@ int APS5_VABI sceKernelCallIndirectBuffer(std::uint32_t priority, void* base, st
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer2(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id) {
+    if (!ProbeWritable(result, sizeof(*result)) || !ProbeWritable(id, sizeof(*id))) return SCE_KERNEL_ERROR_EFAULT;
     const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
-    if (result) *result = {0, 0};
-    if (id) *id = submitted;
+    if (result) {
+        const KernelMapperSubmitResult zero{0, 0};
+        if (!GuestCopyOut_nid_no_patch(result, &zero, sizeof(zero))) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer3(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id) {
+    if (!ProbeWritable(id, sizeof(*id))) return SCE_KERNEL_ERROR_EFAULT;
     const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
-    if (id) *id = submitted;
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

@@ -57,6 +57,35 @@ static constexpr std::uint64_t KERNEL_MNT_RDONLY = 0x1;
 static constexpr std::uint64_t KERNEL_MNT_NOEXEC = 0x4;
 static constexpr std::uint64_t KERNEL_MNT_NOSUID = 0x8;
 
+#if defined(_WIN32) || defined(__APPLE__)
+struct PositionedLock {
+    std::mutex mutex;
+};
+std::mutex g_positionedTableLock;
+std::unordered_map<int, std::shared_ptr<PositionedLock>> g_positionedLocks;
+File::PositionedTransferLock File::LockPositionedTransfer(int descriptor) {
+    std::shared_ptr<PositionedLock> entry;
+    {
+        std::lock_guard table(g_positionedTableLock);
+        auto& slot = g_positionedLocks[descriptor];
+        if (!slot) slot = std::make_shared<PositionedLock>();
+        entry = slot;
+    }
+    return PositionedTransferLock(std::shared_ptr<std::mutex>(entry, &entry->mutex));
+}
+void File::SharePositionedTransfer(int from, int to) {
+    std::lock_guard table(g_positionedTableLock);
+    auto& source = g_positionedLocks[from];
+    if (!source) source = std::make_shared<PositionedLock>();
+    g_positionedLocks[to] = source;
+}
+#endif
+#ifdef __APPLE__
+std::optional<File::PositionedTransferLock> File::LockAppendingTransfer(int descriptor) {
+    if (!File::Appends(descriptor)) return std::nullopt;
+    return LockPositionedTransfer(descriptor);
+}
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
@@ -293,27 +322,6 @@ static int NativeSync(int descriptor) {
 static int NativeFlock(int descriptor, int operation) {
     return File::Flock(descriptor, operation);
 }
-struct PositionedLock {
-    std::mutex mutex;
-};
-std::mutex g_positionedTableLock;
-std::unordered_map<int, std::shared_ptr<PositionedLock>> g_positionedLocks;
-File::PositionedTransferLock File::LockPositionedTransfer(int descriptor) {
-    std::shared_ptr<PositionedLock> entry;
-    {
-        std::lock_guard table(g_positionedTableLock);
-        auto& slot = g_positionedLocks[descriptor];
-        if (!slot) slot = std::make_shared<PositionedLock>();
-        entry = slot;
-    }
-    return PositionedTransferLock(std::shared_ptr<std::mutex>(entry, &entry->mutex));
-}
-void File::SharePositionedTransfer(int from, int to) {
-    std::lock_guard table(g_positionedTableLock);
-    auto& source = g_positionedLocks[from];
-    if (!source) source = std::make_shared<PositionedLock>();
-    g_positionedLocks[to] = source;
-}
 bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size, std::int64_t offset) {
     if (offset < 0) { errno = EINVAL; return false; }
     const auto length = WithoutParameterHandler([descriptor] { return ::_filelengthi64(descriptor); });
@@ -323,9 +331,6 @@ bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size
 }
 
 static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
-    if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error("NativePositioned: nbytes exceeds platform limit");
-    }
     if (write) {
         if (File::HasFixedSizeWrites(descriptor)) {
             if (!File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, offset)) return -1;
@@ -348,48 +353,63 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         errno = ESPIPE;
         return -1;
     }
-    const auto at = write && File::Appends(descriptor) ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset);
-    OVERLAPPED overlapped{};
-    overlapped.Offset = static_cast<DWORD>(at);
-    overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
-    DWORD done = 0;
-    const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped)
-                          : ::ReadFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped);
-    const DWORD error = ok ? ERROR_SUCCESS : ::GetLastError();
+    const bool appends = write && File::Appends(descriptor);
+    std::size_t done = 0;
+    DWORD error = ERROR_SUCCESS;
+    do {
+        const auto part = File::TransferPartBytes(nbytes, done);
+        const auto at = appends ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset) + done;
+        OVERLAPPED overlapped{};
+        overlapped.Offset = static_cast<DWORD>(at);
+        overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
+        DWORD moved = 0;
+        auto* const data = static_cast<char*>(buf) + done;
+        if (!(write ? ::WriteFile(handle, data, static_cast<DWORD>(part), &moved, &overlapped)
+                    : ::ReadFile(handle, data, static_cast<DWORD>(part), &moved, &overlapped))) {
+            error = ::GetLastError();
+            break;
+        }
+        done += moved;
+        if (moved < part) break;
+    } while (done < nbytes);
     if (!::SetFilePointerEx(handle, position, nullptr, FILE_BEGIN)) {
         throw std::runtime_error("NativePositioned: cannot restore the file offset");
     }
-    if (!ok) {
+    if (error != ERROR_SUCCESS && done == 0) {
         if (!write && error == ERROR_HANDLE_EOF) return 0;
         errno = error == ERROR_ACCESS_DENIED ? EBADF : EIO;
         return -1;
     }
-    return done;
+    return static_cast<std::int64_t>(done);
 }
 std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
     const auto positioned = File::LockPositionedTransfer(descriptor);
     return NativePositionedTransfer(descriptor, buf, nbytes, offset, write);
 }
 std::int64_t File::WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes) {
-    if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error("WriteAtEnd: nbytes exceeds platform limit");
-    }
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
     if (handle == INVALID_HANDLE_VALUE) {
         errno = EBADF;
         return -1;
     }
     if (::GetFileType(handle) != FILE_TYPE_DISK) return -2;
-    OVERLAPPED end{};
-    end.Offset = 0xFFFFFFFF;
-    end.OffsetHigh = 0xFFFFFFFF;
-    DWORD done = 0;
-    if (!::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &end)) {
-        const DWORD error = ::GetLastError();
-        errno = error == ERROR_ACCESS_DENIED ? EBADF : error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL ? ENOSPC : EIO;
-        return -1;
-    }
-    return done;
+    std::size_t done = 0;
+    do {
+        const auto part = File::TransferPartBytes(nbytes, done);
+        OVERLAPPED end{};
+        end.Offset = 0xFFFFFFFF;
+        end.OffsetHigh = 0xFFFFFFFF;
+        DWORD moved = 0;
+        if (!::WriteFile(handle, static_cast<const char*>(buf) + done, static_cast<DWORD>(part), &moved, &end)) {
+            if (done != 0) break;
+            const DWORD error = ::GetLastError();
+            errno = error == ERROR_ACCESS_DENIED ? EBADF : error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL ? ENOSPC : EIO;
+            return -1;
+        }
+        done += moved;
+        if (moved < part) break;
+    } while (done < nbytes);
+    return static_cast<std::int64_t>(done);
 }
 static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t nbytes, bool write) {
     if (nbytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -532,6 +552,7 @@ static std::int64_t NativePread(int descriptor, void* buf, std::size_t nbytes, s
 std::int64_t File::WritevAtEnd(int descriptor, const iovec* iov, int iovcnt) {
     struct stat status{};
     if (!File::Appends(descriptor) || ::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) return -2;
+    const auto positioned = LockPositionedTransfer(descriptor);
     const off_t position = ::lseek(descriptor, 0, SEEK_CUR);
     if (position < 0) return -1;
     const auto result = static_cast<std::int64_t>(::writev(descriptor, iov, iovcnt));
@@ -1013,7 +1034,7 @@ int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
 
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchflags");
     if (!File::IsVnode(d)) {
         if (!DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
@@ -1192,7 +1213,7 @@ static bool HoldsSharedFlock(int descriptor) {
 
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EOPNOTSUPP);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return PosixFailure(GUEST_EOPNOTSUPP);
     File::RefuseArchivedFile(d, "flock");
 #ifdef _WIN32
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([d] { return ::_get_osfhandle(d); }));
@@ -1232,7 +1253,7 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 
 int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EOPNOTSUPP);
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return PosixFailure(GUEST_EINVAL);
     if (d < 0) return PosixFailure(GUEST_EBADF);
     File::RefuseArchivedFile(d, "fstatfs");
     KernelStatfs result{};
@@ -1535,7 +1556,7 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
 
 static int KernelFsync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "fsync");
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
@@ -1551,7 +1572,7 @@ int APS5_VABI sceKernelFsync(int fd) {
 
 static int KernelFdatasync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "fdatasync");
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
@@ -2043,6 +2064,7 @@ static int64_t KernelReadv(int d, const KernelIovec* guestIov, int iovcnt) {
     if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, nullptr)) return *archived < 0 ? SceErrorFromErrno(static_cast<int>(-*archived)) : *archived;
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, false, false);
+    const auto appending = File::LockAppendingTransfer(d);
 #endif
     const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, nullptr, false);
     const auto result = parts == -2 ? static_cast<std::int64_t>(::readv(d, NativeIovecs(iov), iovcnt)) : parts;
@@ -2065,6 +2087,7 @@ static int64_t KernelWritev(int d, const KernelIovec* guestIov, int iovcnt) {
     if (sharedResult != -2) return sharedResult < 0 ? SceErrorFromErrno(errno) : sharedResult;
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, true, false);
+    const auto appending = File::LockAppendingTransfer(d);
 #endif
     const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, nullptr, true);
     const auto result = parts == -2 ? static_cast<std::int64_t>(::writev(d, NativeIovecs(iov), iovcnt)) : parts;
@@ -2364,7 +2387,7 @@ static int KernelFutimes(int d, const KernelTimeval* times) {
     KernelTimeval local[2];
     if (!CopyInTimes(times, local)) return SCE_KERNEL_ERROR_EFAULT;
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKsemDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "futimes");
     if (times != nullptr) {
         for (int i = 0; i < 2; ++i) {

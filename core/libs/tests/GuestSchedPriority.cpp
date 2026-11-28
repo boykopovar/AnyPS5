@@ -43,12 +43,14 @@ int main() {
     const int self = getpid_nid_postfix();
     KernelTimespec interval{};
     *__error_nid_postfix() = 13;
-    Require(sched_rr_get_interval_nid_postfix(0, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 94000000 && *__error_nid_postfix() == 13);
+    Require(sched_rr_get_interval_nid_postfix(0, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 4000000 && *__error_nid_postfix() == 13);
     interval.tv_sec = -1;
     interval.tv_nsec = -1;
-    Require(sched_rr_get_interval_nid_postfix(0, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 94000000);
+    Require(sched_rr_get_interval_nid_postfix(0, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 4000000);
     interval = {};
-    Require(sched_rr_get_interval_nid_postfix(self, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 94000000);
+    Require(sched_rr_get_interval_nid_postfix(self, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 4000000);
+    interval = {};
+    Require(sched_rr_get_interval_nid_postfix(1, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 4000000);
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(-1, &interval) == -1 && *__error_nid_postfix() == 3);
     for (int pid : {-999, 999999, std::numeric_limits<int>::max()}) {
@@ -112,6 +114,15 @@ int main() {
         Require(getpriority_nid_postfix(PrioProcess, 0) == 0);
         Require(getpriority_nid_postfix(PrioProcess, self) == 0 && getpriority_nid_postfix(PrioGroup, 0) == 0 && getpriority_nid_postfix(PrioUser, 0) == 0);
     }
+    for (const int nice : {0, 5, 20, 25, 99}) {
+        RequireSet(PrioGroup, 0, nice);
+        RequireSet(PrioGroup, self, nice);
+        RequireNice(PrioProcess, 0);
+        RequireNice(PrioGroup, self);
+        RequireNice(PrioUser, 0);
+    }
+    RequireSetError(PrioGroup, self + 1, 5, 3);
+    RequireSetError(PrioUser, 1000, 5, 3);
     GuestRtPrio rtprio{7, 7};
     Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
     *__error_nid_postfix() = 0;

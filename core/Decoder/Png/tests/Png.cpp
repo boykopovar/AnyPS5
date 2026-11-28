@@ -244,6 +244,22 @@ static std::vector<std::uint8_t> ImageData(const std::vector<std::uint8_t>& png)
     return stream;
 }
 
+static void RequireBackgroundChunk(const std::vector<std::uint8_t>& png, std::span<const std::uint8_t> expected) {
+    for (std::size_t offset = 8; offset + 12 <= png.size();) {
+        const std::size_t length = static_cast<std::size_t>(png[offset]) << 24 | static_cast<std::size_t>(png[offset + 1]) << 16
+            | static_cast<std::size_t>(png[offset + 2]) << 8 | png[offset + 3];
+        Require(length <= png.size() - offset - 12);
+        const std::uint8_t* type = png.data() + offset + 4;
+        if (std::equal(type, type + 4, "bKGD")) {
+            Require(length == expected.size());
+            Require(std::equal(expected.begin(), expected.end(), png.data() + offset + 8));
+            return;
+        }
+        offset += length + 12;
+    }
+    Require(false);
+}
+
 static std::vector<std::uint8_t> RowFilters(const std::vector<std::uint8_t>& png, std::uint32_t height, std::uint32_t rowSize) {
     const std::vector<std::uint8_t> stream = ImageData(png);
     int size = 0;
@@ -450,6 +466,11 @@ int main() {
     Require(ThrowsInvalidArgument([&] { Decoder::Png::Encode(pixels, 4, 4, 4, {10, Decoder::Png::FILTER_ALL}); }));
     Require(ThrowsInvalidArgument([&] { Decoder::Png::Encode(pixels, 4, 4, 4, {8, 0}); }));
     Require(ThrowsInvalidArgument([&] { Decoder::Png::Encode(pixels, 4, 4, 4, {8, Decoder::Png::FILTER_ALL + 1}); }));
+
+    const std::uint8_t grayBackground[] = {0, 255};
+    RequireBackgroundChunk(Decoder::Png::Encode(pixels, 4, 4, 1, {8, Decoder::Png::FILTER_ALL, 8, true}), grayBackground);
+    const std::uint8_t colorBackground[] = {0, 255, 0, 255, 0, 255};
+    RequireBackgroundChunk(Decoder::Png::Encode(pixels, 4, 4, 4, {8, Decoder::Png::FILTER_ALL, 8, true}), colorBackground);
 
     std::vector<std::uint8_t> gradient(64 * 64 * 3);
     for (std::size_t i = 0; i < gradient.size(); ++i) gradient[i] = static_cast<std::uint8_t>(i / 3 % 64 * 4);
