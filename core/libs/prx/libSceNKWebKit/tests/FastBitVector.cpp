@@ -118,13 +118,12 @@ void TestResize() {
             const auto oldWords = value.owner.words;
             resize(&value.owner, newBits);
             value.CheckGuards();
-            Require(value.owner.numBits == bits && value.owner.words != nullptr);
+            Require(value.owner.numBits == newBits && value.owner.words != nullptr);
             Require(value.owner.words != oldWords);
             Require(_ZN3WTF14fastMallocSizeEPKv(value.owner.words) == newCount * sizeof(std::uint32_t));
             for (std::size_t i = 0; i < oldCount; ++i)
                 Require(value.owner.words[i] == 0xA5A50000u + static_cast<std::uint32_t>(i));
             for (std::size_t i = oldCount; i < newCount; ++i) Require(value.owner.words[i] == 0);
-            value.owner.numBits = newBits;
             ++cases;
         }
     }
