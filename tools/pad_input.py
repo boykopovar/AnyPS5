@@ -159,8 +159,16 @@ def main(argv=None):
         mask = button_mask(args.button)
     except argparse.ArgumentTypeError as error:
         parser.error(str(error))
+    requested_path = args.path
+    if requested_path.is_symlink():
+        try:
+            args.path = requested_path.resolve()
+        except (OSError, RuntimeError) as error:
+            parser.error(str(error))
+        if args.path.is_symlink():
+            parser.error(f"symbolic link loop: {requested_path}")
     if args.path.is_dir():
-        parser.error(f"{args.path} is a directory")
+        parser.error(f"{requested_path} is a directory")
     if not args.path.parent.is_dir():
         parser.error(f"directory does not exist: {args.path.parent}")
     if not 1 <= args.hold_ms <= 5000:
