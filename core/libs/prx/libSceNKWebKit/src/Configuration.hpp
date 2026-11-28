@@ -93,6 +93,10 @@ public:
     Retained<Object> websitePolicies;
     std::uint32_t layoutMilestones = 0;
     std::uint32_t mockCameraOrientation = 0;
+    std::optional<std::u16string> loadedAlternateHTML;
+    Retained<URL> loadedBaseURL;
+    Retained<URL> unreachableURL;
+    const void* loadUserData = nullptr;
     float mediaVolume = 1.0f;
     std::uint32_t mutedState = 0;
     bool mayStartMediaWhenInWindow = true;
