@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -19,7 +20,7 @@ void Require(bool value) {
     if (!value) std::abort();
 }
 
-int CheckNoIcon(const char* root) {
+int CheckNoIcon(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     Require(!HasAppIcon_nid_postfix());
     bool threw = false;
@@ -32,7 +33,7 @@ int CheckNoIcon(const char* root) {
     return 0;
 }
 
-int CheckValidIcon(const char* root) {
+int CheckValidIcon(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     Require(HasAppIcon_nid_postfix());
     const auto icon = GetAppIconData_nid_postfix();
@@ -46,7 +47,7 @@ int CheckValidIcon(const char* root) {
     return 0;
 }
 
-int CheckEmptyIcon(const char* root) {
+int CheckEmptyIcon(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     bool threw = false;
     try {
@@ -58,7 +59,7 @@ int CheckEmptyIcon(const char* root) {
     return 0;
 }
 
-int CheckCorruptPng(const char* root) {
+int CheckCorruptPng(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     bool threw = false;
     try {
@@ -70,7 +71,7 @@ int CheckCorruptPng(const char* root) {
     return 0;
 }
 
-int CheckConcurrentAccess(const char* root) {
+int CheckConcurrentAccess(const std::filesystem::path& root) {
     std::filesystem::current_path(root);
     std::vector<std::thread> threads;
     for (int i = 0; i < 8; ++i) {
@@ -84,21 +85,21 @@ int CheckConcurrentAccess(const char* root) {
     return 0;
 }
 
-void RunCase(const char* self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
-    const auto root = std::filesystem::temp_directory_path() / ("guest_app_icon_" + std::to_string(std::random_device{}()));
+void RunCase(const std::filesystem::path& self, const char* mode, std::initializer_list<std::pair<const char*, std::string>> files) {
+    auto root = std::filesystem::temp_directory_path() / ("guest_app_icon_" + std::to_string(std::random_device{}()));
+    root += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "app0" / "sce_sys");
     for (const auto& [name, content] : files) {
         std::ofstream stream(root / "app0" / "sce_sys" / name, std::ios::binary);
         stream.write(content.data(), static_cast<std::streamsize>(content.size()));
     }
-    const std::string arguments = "\"" + std::string(self) + "\" " + mode + " \"" + root.string() + "\"";
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + self.native() + L"\" " + std::filesystem::path(mode).native() + L" \"" + root.native() + L"\"";
+    const int status = _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    const int status = std::system(("\"" + self.string() + "\" " + mode + " \"" + root.string() + "\"").c_str());
 #endif
-    const int status = std::system(command.c_str());
     std::filesystem::remove_all(root);
     Require(status == 0);
 }
@@ -108,11 +109,11 @@ void RunCase(const char* self, const char* mode, std::initializer_list<std::pair
 int main(int argc, char** argv) {
     if (argc == 3) {
         const std::string_view mode = argv[1];
-        if (mode == "--no-icon") return CheckNoIcon(argv[2]);
-        if (mode == "--valid-icon") return CheckValidIcon(argv[2]);
-        if (mode == "--empty-icon") return CheckEmptyIcon(argv[2]);
-        if (mode == "--corrupt-png") return CheckCorruptPng(argv[2]);
-        if (mode == "--concurrent") return CheckConcurrentAccess(argv[2]);
+        if (mode == "--no-icon") return CheckNoIcon(ArgumentPath(argv, 2));
+        if (mode == "--valid-icon") return CheckValidIcon(ArgumentPath(argv, 2));
+        if (mode == "--empty-icon") return CheckEmptyIcon(ArgumentPath(argv, 2));
+        if (mode == "--corrupt-png") return CheckCorruptPng(ArgumentPath(argv, 2));
+        if (mode == "--concurrent") return CheckConcurrentAccess(ArgumentPath(argv, 2));
         return 1;
     }
 
@@ -121,12 +122,12 @@ int main(int argc, char** argv) {
     const std::string shortPng("\x89PNG\r\n\x1a", 7);
     const std::string emptyPng("");
 
-    RunCase(argv[0], "--no-icon", {});
-    RunCase(argv[0], "--valid-icon", {{"icon0.png", validPng}});
-    RunCase(argv[0], "--empty-icon", {{"icon0.png", emptyPng}});
-    RunCase(argv[0], "--corrupt-png", {{"icon0.png", corruptPng}});
-    RunCase(argv[0], "--corrupt-png", {{"icon0.png", shortPng}});
-    RunCase(argv[0], "--concurrent", {{"icon0.png", validPng}});
+    RunCase(ArgumentPath(argv, 0), "--no-icon", {});
+    RunCase(ArgumentPath(argv, 0), "--valid-icon", {{"icon0.png", validPng}});
+    RunCase(ArgumentPath(argv, 0), "--empty-icon", {{"icon0.png", emptyPng}});
+    RunCase(ArgumentPath(argv, 0), "--corrupt-png", {{"icon0.png", corruptPng}});
+    RunCase(ArgumentPath(argv, 0), "--corrupt-png", {{"icon0.png", shortPng}});
+    RunCase(ArgumentPath(argv, 0), "--concurrent", {{"icon0.png", validPng}});
 
     return 0;
 }

@@ -1,6 +1,7 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <array>
 #include <cerrno>
@@ -206,14 +207,13 @@ void WriteTitle(const std::filesystem::path& directory, std::int32_t attribute) 
     Require(static_cast<bool>(file), "cannot write the param.sfo fixture");
 }
 
-int RunSelf(const char* program, std::string_view mode, const std::filesystem::path& directory) {
-    const std::string arguments = "\"" + std::string(program) + "\" " + std::string(mode) + " \"" + directory.string() + "\"";
+int RunSelf(const std::filesystem::path& program, std::string_view mode, const std::filesystem::path& directory) {
 #ifdef _WIN32
-    const std::string command = "\"" + arguments + "\"";
+    const std::wstring arguments = L"\"" + program.native() + L"\" " + std::filesystem::path(std::string(mode)).native() + L" \"" + directory.native() + L"\"";
+    return _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    const std::string command = arguments;
+    return std::system(("\"" + program.string() + "\" " + std::string(mode) + " \"" + directory.string() + "\"").c_str());
 #endif
-    return std::system(command.c_str());
 }
 
 }
@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "cannot install the process parameters");
     if (argc == 3) {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         const std::string_view mode = argv[1];
         if (mode != "--neo" && mode != "--base") return 1;
         CheckSize2(process, mode == "--neo");
@@ -317,12 +317,13 @@ int main(int argc, char** argv) {
     Require(sceVideoRecordingClose(1) == NotOpen, "a failed open left a recorder to close");
 
     CheckSize2Arguments();
-    const auto titles = std::filesystem::temp_directory_path() / "guest_video_recording_size2";
+    auto titles = std::filesystem::temp_directory_path() / "guest_video_recording_size2";
+    titles += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(titles);
     WriteTitle(titles / "base", 0);
     WriteTitle(titles / "neo", SupportNeoMode);
-    Require(RunSelf(argv[0], "--base", titles / "base") == 0, "the size queries failed for a title without Neo mode");
-    Require(RunSelf(argv[0], "--neo", titles / "neo") == 0, "the size queries failed for a Neo-mode title");
+    Require(RunSelf(ArgumentPath(argv, 0), "--base", titles / "base") == 0, "the size queries failed for a title without Neo mode");
+    Require(RunSelf(ArgumentPath(argv, 0), "--neo", titles / "neo") == 0, "the size queries failed for a Neo-mode title");
     std::filesystem::remove_all(titles);
 
     Require(sceVideoRecordingGetInfo(0xa001, nullptr, 0) == NotOpen, "info 0xa001 validation");

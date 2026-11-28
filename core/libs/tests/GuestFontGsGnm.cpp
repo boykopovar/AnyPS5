@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs/libSceFontGs.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -708,17 +709,18 @@ void WriteParamSfo(const std::filesystem::path& directory, std::uint32_t attribu
     Require(static_cast<bool>(file));
 }
 
-int RunSelf(const char* program, const char* mode, const std::filesystem::path& directory) {
-    const std::string arguments = "\"" + std::string(program) + "\" " + mode + " \"" + directory.string() + "\"";
+int RunSelf(const std::filesystem::path& program, const char* mode, const std::filesystem::path& directory) {
 #ifdef _WIN32
-    return std::system(("\"" + arguments + "\"").c_str());
+    const std::wstring arguments = L"\"" + program.native() + L"\" " + std::filesystem::path(mode).native() + L" \"" + directory.native() + L"\"";
+    return _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    return std::system(arguments.c_str());
+    return std::system(("\"" + program.string() + "\" " + mode + " \"" + directory.string() + "\"").c_str());
 #endif
 }
 
-void GnmSurfaceModes(const char* program) {
-    const auto root = std::filesystem::temp_directory_path() / ("guest_font_gs_gnm_" + std::to_string(getpid_nid_postfix()));
+void GnmSurfaceModes(const std::filesystem::path& program) {
+    auto root = std::filesystem::temp_directory_path() / ("guest_font_gs_gnm_" + std::to_string(getpid_nid_postfix()));
+    root += u8"_\u00e9\u6e2c";
     std::filesystem::remove_all(root);
     WriteParamSfo(root / "base", 0);
     WriteParamSfo(root / "neo", 0x00800000);
@@ -741,7 +743,7 @@ void ReportError() {
 
 int main(int argc, char** argv) {
     if (argc == 3) {
-        std::filesystem::current_path(argv[2]);
+        std::filesystem::current_path(ArgumentPath(argv, 2));
         GnmSurfaceInitCases(std::string(argv[1]) == "--surface-neo");
         return 0;
     }
@@ -752,7 +754,7 @@ int main(int argc, char** argv) {
     GnmSequences();
     GnmSurfaceValidation();
     GnmStructureTextureCases();
-    GnmSurfaceModes(argv[0]);
+    GnmSurfaceModes(ArgumentPath(argv, 0));
     GnmService();
     sceFontSetGraphicsErrorCallback(nullptr);
 }
