@@ -14994,6 +14994,53 @@ void graphicsStateTests(const Device& device) {
         recorder.Submit();
         recorder.Sync();
     }
+    {
+        Recorder recorder(context);
+        const auto secondary = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0x5b000));
+        drawn(recorder, first);
+        expectStateLog(full, "the draw before executing a secondary command buffer");
+        recorder.GraphicsState().ExecuteCommands(context, 1, &secondary);
+        expectStateLog({stateLine("execute", 1u)}, "executing a secondary command buffer");
+        drawn(recorder, first);
+        expectStateLog(full, "the same draw after executing a secondary command buffer");
+        recorder.Submit();
+        recorder.Sync();
+    }
+    std::weak_ptr<void> released;
+    {
+        Recorder recorder(context);
+        const auto secondary = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0x5b000));
+        drawn(recorder, first);
+        expectStateLog(full, "the draw before a secondary command buffer that cannot be retained");
+        auto release = std::make_shared<int>(0);
+        released = release;
+        Recorder::FailNextSecondaryRetentionsForTest(1);
+        bool refused = false;
+        try {
+            recorder.ExecuteSecondary(secondary, std::move(release));
+        } catch (const std::bad_alloc&) {
+            refused = true;
+        }
+        Recorder::FailNextSecondaryRetentionsForTest(0);
+        Require(refused, "the injected retention failure did not surface");
+        Require(released.expired(), "a secondary command buffer that could not be retained was not released");
+        expectStateLog({}, "a secondary command buffer that could not be retained was executed");
+        release = std::make_shared<int>(0);
+        released = release;
+        stateExecuteRelease = release;
+        stateExecuteReleaseHeld = false;
+        recorder.ExecuteSecondary(secondary, std::move(release));
+        stateExecuteRelease.reset();
+        expectStateLog({stateLine("execute", 1u)}, "executing a retained secondary command buffer");
+        Require(stateExecuteReleaseHeld, "a secondary command buffer was executed without being held");
+        Require(!released.expired(), "the batch did not retain the secondary command buffer it executed");
+        drawn(recorder, first);
+        expectStateLog(full, "the same draw after executing a retained secondary command buffer");
+        recorder.Submit();
+        Require(!released.expired(), "a secondary command buffer was released before its batch completed");
+        recorder.Sync();
+    }
+    Require(released.expired(), "a finished recorder kept the secondary command buffer it executed");
     statePipelines.clear();
     stateLog.clear();
     std::cout << "graphics state through the recorder passed (" << (suppressing ? "suppressing" : "unsuppressed") << ")\n";

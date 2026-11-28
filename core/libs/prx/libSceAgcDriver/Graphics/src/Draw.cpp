@@ -2584,7 +2584,6 @@ void CompactIndirectListRestart(const Context& context, const Pm4::DrawParameter
 // GPU-side indirect draw from `argumentBuffer` or the CPU-read records with the driver's rules.
 bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset, const DrawTraceContext* trace, std::uint32_t& subdraw, std::optional<std::uint32_t> pieceFirstIndex = std::nullopt) {
     bool emitted = false;
-    if (context.recorder != nullptr) context.recorder->NoteSampledDraw(commands);
     const auto recorded = [&](std::uint32_t index) {
         if (trace != nullptr && context.recorder != nullptr) {
             context.recorder->NoteDrawTraceToken(trace->token);
@@ -2680,8 +2679,17 @@ void NoteGuestWorkIn(const Context& context, VkCommandBuffer commands) {
     NoteGuestWorkOnCommandBuffer(commands);
 }
 
-void recordDrawCommands(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset, const DrawTraceContext* trace, std::uint32_t& subdraw, std::optional<std::uint32_t> pieceFirstIndex = std::nullopt) {
-    if (recordDrawCommandsImpl(context, commands, state, draw, inputs, indirect, argumentBuffer, argumentOffset, trace, subdraw, pieceFirstIndex)) NoteGuestWorkIn(context, commands);
+struct DrawNotes {
+    bool sampled = false;
+    bool guestWork = false;
+};
+
+void recordDrawCommands(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset, const DrawTraceContext* trace, std::uint32_t& subdraw, std::optional<std::uint32_t> pieceFirstIndex = std::nullopt, DrawNotes* notes = nullptr) {
+    if (notes != nullptr) notes->sampled = true;
+    else if (context.recorder != nullptr) context.recorder->NoteSampledDraw(commands);
+    if (!recordDrawCommandsImpl(context, commands, state, draw, inputs, indirect, argumentBuffer, argumentOffset, trace, subdraw, pieceFirstIndex)) return;
+    if (notes != nullptr) notes->guestWork = true;
+    else NoteGuestWorkIn(context, commands);
 }
 
 // The GPU-side records of an indirect draw, recorded outside the render pass: the stores that
@@ -2968,7 +2976,7 @@ std::vector<StencilReplayPass> StencilReplayPasses(const State& state, const Pip
     return passes;
 }
 
-void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const State* masked, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
+void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const State* masked, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0, DrawNotes* notes = nullptr) {
     const auto commands = recording.Commands();
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
@@ -2997,7 +3005,7 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
             recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, pass.reference);
             std::memcpy(block.data() + referenceOffset, &pass.word, sizeof(pass.word));
             pipeline.PushConstants(commands, stages, block);
-            recordDrawCommands(context, commands, selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex);
+            recordDrawCommands(context, commands, selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex, notes);
         }
     };
     if (passes.size() == 1u) {
@@ -3256,7 +3264,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
-    const bool parallelThis = ParallelAtlasEnabled() && !DrawFaultTokens() && state.depth.has_value() && !state.hasColorTarget && state.samples == 1u && !state.rasterizerDiscard && record.pipeline->DynamicRendering() && !record.pipeline->BindsColor() && !recorder->CountingSamples() && !gpuIndirect && !meshIndirect && !captured;
+    const bool parallelThis = ParallelAtlasEnabled() && !DrawFaultTokens() && trace == nullptr && state.depth.has_value() && !state.hasColorTarget && state.samples == 1u && !state.rasterizerDiscard && record.pipeline->DynamicRendering() && !record.pipeline->BindsColor() && !recorder->CountingSamples() && !gpuIndirect && !meshIndirect && !captured;
     const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess, parallelThis);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
@@ -3307,11 +3315,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             pushBytes = &movedPush;
         }
     }
-    const auto recordPassOpen = [&](CommandState& rec, bool secondaryContents) {
+    const auto recordPassSetup = [&](CommandState& rec) {
     const auto cb = rec.Commands();
-    if (continued) {
-        record.pipeline->Continue(rec, state, record.masked);
-    } else {
+    if (!continued) {
         for (const auto& proxy : record.proxies) {
             proxy->RecordAttachmentProxyLoad(cb, VK_IMAGE_LAYOUT_GENERAL);
             countBarrier(2);
@@ -3347,11 +3353,17 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             for (auto& object : kept) recorder->Keep(std::move(object));
         }
         for (const auto& write : record.staged) RecordStagedClear(context, cb, *write.temporary);
-        APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
-        record.pipeline->Begin(rec, *record.framebuffer, state.renderExtent, state, record.masked, secondaryContents);
     }
     };
-    const auto recordBody = [&](CommandState& rec) {
+    const auto recordPassOpen = [&](CommandState& rec, bool secondaryContents) {
+    if (continued) {
+        record.pipeline->Continue(rec, state, record.masked);
+        return;
+    }
+    APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
+    record.pipeline->Begin(rec, *record.framebuffer, state.renderExtent, state, record.masked, secondaryContents);
+    };
+    const auto recordBody = [&](CommandState& rec, DrawNotes* notes) {
     const auto cb = rec.Commands();
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     if (drawBindings != nullptr) {
@@ -3360,7 +3372,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
         if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
     } else {
-        resources.BindDrawUse(cb, record.pipeline->Layout(), drawUse.get());
+        resources.RecordDrawUse(cb, record.pipeline->Layout(), drawUse.get());
     }
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, cb, record.pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, cb, record.pipeline->Layout());
@@ -3383,40 +3395,50 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
     }
     noteDrawFaultToken(context, *recorder, cb, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
-    if (record.stencilReplay.empty()) recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+    if (record.stencilReplay.empty()) recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw, std::nullopt, notes);
     else {
-        recordStencilReplay(context, rec, state, record.masked, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
-        for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
+        recordStencilReplay(context, rec, state, record.masked, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages, notes);
     }
     if (record.pipeline->SplitsFaces()) {
         record.pipeline->ContinueBackFaces(rec, state, record.masked);
-        recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+        recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw, std::nullopt, notes);
     }
     if (record.pipeline->SplitsSecondChannel()) {
         record.pipeline->ContinueSecondChannel(rec, state, record.masked);
-        recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
+        recordDrawCommands(context, cb, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw, std::nullopt, notes);
     }
     };
+    if (drawBindings == nullptr) resources.PrepareDrawUse(drawUse.get());
+    for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     if (parallelThis) {
-        if (!continued) recordPassOpen(recording, true);
         auto& pool = DeviceRecordingPool(context);
         const auto depthFormat = record.pipeline->DepthFormat();
         const RecordingPool::Inheritance inheritance{depthFormat, HasStencil(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, record.pipeline->ColorSlotCount()};
         OrderedAssembly<RecordingPool::Result> assembly;
         const auto sequence = assembly.Reserve();
+        DrawNotes notes;
+        recordPassSetup(recording);
         pool.Record(assembly, sequence, inheritance, [&](VkCommandBuffer cb) {
             CommandState pooled;
             pooled.Begin(cb);
             record.pipeline->Continue(pooled, state, record.masked);
-            recordBody(pooled);
+            recordBody(pooled, &notes);
         });
         auto result = assembly.Take(sequence);
         if (result.error != nullptr) std::rethrow_exception(result.error);
-        recording.ExecuteCommands(context, 1, &result.commands);
-        recorder->Keep(std::move(result.release));
+        if (!continued) recordPassOpen(recording, true);
+        try {
+            if (notes.sampled) recorder->NoteSampledDraw(recording.Commands());
+            recorder->ExecuteSecondary(result.commands, std::move(result.release));
+        } catch (...) {
+            if (!continued) EndRenderPass(context, recording.Commands());
+            throw;
+        }
+        if (notes.guestWork) NoteGuestWorkIn(context, recording.Commands());
     } else {
+        recordPassSetup(recording);
         recordPassOpen(recording, false);
-        recordBody(recording);
+        recordBody(recording, nullptr);
     }
 
     recorder->EndGpuTiming(eachDrawTiming);

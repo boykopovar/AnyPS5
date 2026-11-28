@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 
 #include <atomic>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace AgcDriver::Graphics {
@@ -27,9 +28,20 @@ std::uint64_t RecordingPool::RecordedBuffers() {
     return recordedBuffers.load(std::memory_order_relaxed);
 }
 
+void RecordingPool::FailNextRecordingsForTest(unsigned count) {
+    injectedFailures.store(count, std::memory_order_relaxed);
+}
+
+bool RecordingPool::takeInjectedFailure() {
+    auto remaining = injectedFailures.load(std::memory_order_relaxed);
+    while (remaining != 0 && !injectedFailures.compare_exchange_weak(remaining, remaining - 1, std::memory_order_relaxed)) {}
+    return remaining != 0;
+}
+
 struct RecordingPool::Returned {
     std::mutex mutex;
     std::vector<VkCommandBuffer> buffers;
+    std::size_t allocated = 0;
 };
 
 struct RecordingPool::Release {
@@ -100,6 +112,7 @@ VkCommandBuffer RecordingPool::acquire(VkCommandPool pool, Returned& returned) c
             returned.buffers.pop_back();
             return commands;
         }
+        returned.buffers.reserve(returned.allocated + 1);
     }
     VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocation.commandPool = pool;
@@ -107,6 +120,8 @@ VkCommandBuffer RecordingPool::acquire(VkCommandPool pool, Returned& returned) c
     allocation.commandBufferCount = 1;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     Check(allocateBuffers(device, &allocation, &commands), "vkAllocateCommandBuffers recording worker");
+    std::lock_guard lock(returned.mutex);
+    ++returned.allocated;
     return commands;
 }
 
@@ -137,6 +152,7 @@ void RecordingPool::run(VkCommandPool pool, const std::shared_ptr<Returned>& ret
             begin.pInheritanceInfo = &inheritance;
             Check(beginBuffer(result.commands, &begin), "vkBeginCommandBuffer recording worker");
             recording = true;
+            if (takeInjectedFailure()) throw std::runtime_error("AGC graphics: injected recording failure");
             task.record(result.commands);
             recording = false;
             Check(endBuffer(result.commands), "vkEndCommandBuffer recording worker");

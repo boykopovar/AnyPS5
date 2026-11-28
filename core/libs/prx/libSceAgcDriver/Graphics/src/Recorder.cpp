@@ -581,6 +581,7 @@ bool ProcTable() {
 AgcDriver::Mutex labelTableMutex;
 std::atomic<unsigned> injectedSubmitFailures{0};
 std::atomic<unsigned> injectedDiscardRegistrationFailures{0};
+std::atomic<unsigned> injectedSecondaryRetentionFailures{0};
 Recorder* labelTableOwner = nullptr;
 // The ranges of the calling worker's queued labels (NoteQueuedLabel, cleared by
 // ForgetQueuedLabels): the flush hook, on the same thread, has them recorded before an access that
@@ -1547,9 +1548,14 @@ std::uint64_t Recorder::RecordedWorkSinceSubmit() {
 }
 
 bool Recorder::NoteGuestWork(VkCommandBuffer commands) {
+    GuestMemory::AssertGpuLockHeld("Recorder::NoteGuestWork");
     if (open == nullptr || open->commands != commands) return false;
     open->guestWork = true;
     return true;
+}
+
+bool Recorder::OpenGuestWorkForTest() const {
+    return open != nullptr && open->guestWork;
 }
 
 void Recorder::CountRecordedWork() {
@@ -1675,6 +1681,7 @@ void CommandState::SetViewports(const Context& context, std::span<const VkViewpo
 }
 
 void CommandState::ExecuteCommands(const Context& context, std::uint32_t count, const VkCommandBuffer* buffers) {
+    Invalidate();
     context.tracked(&DeviceFunctions::cmdExecuteCommands, "vkCmdExecuteCommands")(commands, count, buffers);
 }
 
@@ -2959,6 +2966,7 @@ std::uint64_t Recorder::SamplesTotal() {
 }
 
 void Recorder::NoteSampledDraw(VkCommandBuffer commands) {
+    GuestMemory::AssertGpuLockHeld("Recorder::NoteSampledDraw");
     if (open == nullptr) return;
     if (segmentMode()) {
         if (countingSamples && commands == open->commands && !open->segmentActive) beginSegment(*open);
@@ -3756,6 +3764,20 @@ void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     ensureOpen();
     open->kept.push_back(std::move(object));
     open->keptBytes += bytes;
+}
+
+void Recorder::ExecuteSecondary(VkCommandBuffer commands, std::shared_ptr<void> release) {
+    retainSecondary(std::move(release));
+    GraphicsState().ExecuteCommands(context, 1, &commands);
+}
+
+void Recorder::retainSecondary(std::shared_ptr<void> release) {
+    if (injectedSecondaryRetentionFailures.load(std::memory_order_relaxed) != 0 && injectedSecondaryRetentionFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::bad_alloc();
+    Keep(std::move(release));
+}
+
+void Recorder::FailNextSecondaryRetentionsForTest(unsigned count) {
+    injectedSecondaryRetentionFailures.store(count, std::memory_order_relaxed);
 }
 
 bool Recorder::KeepWithOutstanding(const std::shared_ptr<void>& object) noexcept {

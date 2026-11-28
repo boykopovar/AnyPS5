@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -10,6 +12,14 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -23,6 +33,7 @@ constexpr std::uint32_t Last = 0x22220000u;
 constexpr std::uint32_t Past = 0x33330000u;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, Width * Height * 4> Results{};
+alignas(256) std::array<std::byte, 128 * 128 * 4> DepthMemory{};
 constexpr std::uint32_t Overflow = 256u;
 alignas(256) std::array<std::byte, Overflow * Overflow * 4> OverflowPixels{};
 alignas(256) std::array<std::uint32_t, Overflow * Overflow * 4> OverflowResults{};
@@ -81,7 +92,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangles{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-void Draw(AgcDriver::VulkanDevice& device, std::uint32_t width, std::uint32_t height, std::span<std::byte> pixels, std::span<std::uint32_t> results, std::uint32_t draws = 1u) {
+void Draw(AgcDriver::VulkanDevice& device, std::uint32_t width, std::uint32_t height, std::span<std::byte> pixels, std::span<std::uint32_t> results, std::uint32_t draws = 1u, bool depthOnly = false) {
     const auto pixelCode = PixelCode(width);
     std::fill(pixels.begin(), pixels.end(), std::byte{0});
     std::fill(results.begin(), results.end(), 0u);
@@ -138,6 +149,15 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t width, std::uint32_t he
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
+    if (depthOnly) {
+        state.hasColorTarget = false;
+        state.color = {};
+        state.colors.clear();
+        state.blends.clear();
+        Require(sizeof(DepthMemory) >= AgcDriver::Graphics::DepthSliceBytes({width, height}, 4u), "pixel LDS limit: the depth memory is smaller than its tile");
+        state.depth = AgcDriver::Graphics::DepthTarget{reinterpret_cast<std::uintptr_t>(DepthMemory.data()), 0u, {width, height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        state.depthCompare = VK_COMPARE_OP_ALWAYS;
+    }
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangles.size()), 0, 1, 0, false};
     for (std::uint32_t n = 0; n < draws; ++n) device.Draw(state, draw, shaders);
     device.WaitIdle();
@@ -145,13 +165,32 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t width, std::uint32_t he
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const std::string_view mode = argc > 1 ? argv[1] : "";
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (device->Target().subgroupSize < 32u) {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
             return VulkanTestSkipped;
+        }
+        if (mode == "--depth-only") {
+            if (!device->Target().largePixelFunctionLdsBuffer) {
+                std::puts("skipped, the driver keeps pixel function LDS in the shader, so no LDS buffer is prepared");
+                return VulkanTestSkipped;
+            }
+            if (!AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).graphicsPipelineLibrary) {
+                std::puts("skipped, the device has no graphics pipeline library, so depth-only draws are not pooled");
+                return VulkanTestSkipped;
+            }
+            const auto recorded = AgcDriver::Graphics::RecordingPool::RecordedBuffers();
+            Draw(*device, Width, Height, Pixels, Results, 1u, true);
+            Require(AgcDriver::Graphics::RecordingPool::RecordedBuffers() != recorded, "pixel LDS limit: a depth-only draw was not recorded on the recording pool");
+            for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) {
+                Require(Results[pixel * 4u] == High && Results[pixel * 4u + 1u] == Last, "pixel LDS limit: a depth-only draw lost its function LDS at pixel " + std::to_string(pixel));
+            }
+            std::puts("pixel LDS limit passed: first-use pixel function LDS in a pooled depth-only draw");
+            return 0;
         }
         Draw(*device, Width, Height, Pixels, Results, 2u);
         for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) {
