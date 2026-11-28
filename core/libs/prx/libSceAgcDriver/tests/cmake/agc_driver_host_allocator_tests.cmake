@@ -1,5 +1,6 @@
 if(BUILD_TESTING AND WIN32)
     add_test_executable(agc_driver_host_allocator_tests tests/HostAllocator.cpp Execution/src/HostAllocator.cpp)
+    target_include_directories(agc_driver_host_allocator_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_driver_host_allocator_tests PRIVATE libc)
     configure_windows_unwind(agc_driver_host_allocator_tests)
     add_test(NAME agc_driver_host_allocator COMMAND agc_driver_host_allocator_tests)

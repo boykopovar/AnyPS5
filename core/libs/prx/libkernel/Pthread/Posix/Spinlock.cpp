@@ -2,7 +2,6 @@
 #include "SceTypes.hpp"
 #include "Common.hpp"
 #include <atomic>
-#include <cerrno>
 #include <new>
 #include <stdexcept>
 #include <thread>
@@ -14,20 +13,6 @@ constexpr int GUEST_ENOMEM = 12;
 constexpr int GUEST_EBUSY = 16;
 constexpr int PROCESS_PRIVATE = 0;
 constexpr int SPIN_COUNT = 100000;
-
-bool CopyGuestInPreservingErrno(PthreadSpinlockPrivate*& destination, PthreadSpinlockPrivate* const* source) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
-    errno = savedErrno;
-    return ok;
-}
-
-bool CopyGuestOutPreservingErrno(PthreadSpinlockPrivate** destination, PthreadSpinlockPrivate* value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
-    return ok;
-}
 
 bool tryAcquire(PthreadSpinlockPrivate* spinlock) {
     std::thread::id unowned{};
@@ -43,7 +28,7 @@ int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int p
     if (pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
     auto* spinlock = new (std::nothrow) PthreadSpinlockPrivate;
     if (!spinlock) return GUEST_ENOMEM;
-    if (!CopyGuestOutPreservingErrno(lock, spinlock)) {
+    if (!GuestCopyOut_nid_no_patch(lock, &spinlock, sizeof(spinlock))) {
         delete spinlock;
         return PosixThread::GUEST_EFAULT;
     }
@@ -53,22 +38,28 @@ int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int p
 int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
     if (!lock) return PosixThread::GUEST_EINVAL;
     PthreadSpinlockPrivate* spinlock = nullptr;
-    if (!CopyGuestInPreservingErrno(spinlock, lock)) return PosixThread::GUEST_EFAULT;
+    if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
     if (!spinlock) return PosixThread::GUEST_EINVAL;
     if (spinlock->owner.load(std::memory_order_acquire) != std::thread::id{}) return GUEST_EBUSY;
-    if (!CopyGuestOutPreservingErrno(lock, nullptr)) return PosixThread::GUEST_EFAULT;
+    PthreadSpinlockPrivate* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(lock, &cleared, sizeof(cleared))) return PosixThread::GUEST_EFAULT;
     delete spinlock;
     return 0;
 }
 
 int APS5_VABI pthread_spin_trylock_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
-    return tryAcquire(*lock) ? 0 : GUEST_EBUSY;
+    if (!lock) return PosixThread::GUEST_EINVAL;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
+    if (!spinlock) return PosixThread::GUEST_EINVAL;
+    return tryAcquire(spinlock) ? 0 : GUEST_EBUSY;
 }
 
 int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
-    auto* spinlock = *lock;
+    if (!lock) return PosixThread::GUEST_EINVAL;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
+    if (!spinlock) return PosixThread::GUEST_EINVAL;
     if (spinlock->owner.load(std::memory_order_relaxed) == std::this_thread::get_id())
         throw std::runtime_error("pthread_spin_lock: the calling thread already holds the lock and would spin forever");
     int count = SPIN_COUNT;
@@ -84,9 +75,12 @@ int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
 }
 
 int APS5_VABI pthread_spin_unlock_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
+    if (!lock) return PosixThread::GUEST_EINVAL;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock))) return PosixThread::GUEST_EFAULT;
+    if (!spinlock) return PosixThread::GUEST_EINVAL;
     auto owner = std::this_thread::get_id();
-    if (!(*lock)->owner.compare_exchange_strong(owner, std::thread::id{}, std::memory_order_release, std::memory_order_relaxed))
+    if (!spinlock->owner.compare_exchange_strong(owner, std::thread::id{}, std::memory_order_release, std::memory_order_relaxed))
         return GUEST_EPERM;
     return 0;
 }

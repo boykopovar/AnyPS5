@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::SdpVideoFormat copy constructor, move constructor and destructor](../../../core/libs/prx/libwebrtc/src/SdpVideoFormat.cpp) (libwebrtc) - unchecked on the console. The three are defaulted in [sdp_video_format.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/video_codecs/sdp_video_format.cc), so each member follows its own rule on an assumed 112-byte layout: the guest string `name` at 0, the `parameters` map at 40, `scalability_modes` at 64. That `absl::InlinedVector` of 34 one-byte modes is modelled on Abseil 20250127: a size word whose low bit marks a heap buffer, then 40 bytes holding the modes or a pointer and capacity. A copy leaves the storage untouched when the source is empty, copies it whole when inline and otherwise allocates `max(68, size)` bytes; a move copies it whole and empties the source. The WebRTC notice and BSD licence are at the top of the file. Closes when: compared with the console.

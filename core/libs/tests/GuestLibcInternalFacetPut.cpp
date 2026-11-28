@@ -3,6 +3,9 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -623,6 +627,67 @@ void CheckWideTimePutGetcat() {
     Require(false, "_Getcat with a null locale must throw");
 }
 
+void CheckWideNumPutConstruction() {
+    static_assert(std::is_same_v<
+        decltype(&_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix),
+        void (APS5_VABI*)(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*, std::size_t)>);
+    static_assert(std::is_same_v<
+        decltype(&_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix),
+        std::size_t (APS5_VABI*)(GuestLocale::Facet**, const GuestLocale::Implementation* const*)>);
+
+    GuestLocale::LocinfoStorage info{};
+    GuestLocale::Facet facet{&g_testFacet, 9, 7};
+    _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&facet, &info, 4);
+    Require(facet.vtable != nullptr && facet.references == 4 && facet.reserved == 0, "num_put<wchar_t> constructor installs vtable and reference count");
+    facet.vtable->retain(&facet);
+    Require(facet.references == 5, "num_put<wchar_t> retain increments reference count");
+    Require(facet.vtable->release(&facet) == nullptr && facet.references == 4, "num_put<wchar_t> release decrements without returning facet");
+    facet.vtable->destroy(&facet);
+
+    Require(_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(nullptr, nullptr) == 4, "num_put<wchar_t>::_Getcat returns numeric category without a facet slot");
+    GuestLocale::Facet existing{&g_testFacet, 7, 0};
+    GuestLocale::Facet* slot = &existing;
+    Require(_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&slot, nullptr) == 4 && slot == &existing, "num_put<wchar_t>::_Getcat keeps an existing facet");
+    slot = nullptr;
+    Require(_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&slot, nullptr) == 4 && slot != nullptr, "num_put<wchar_t>::_Getcat constructs a facet into an empty slot");
+    Require(slot->vtable == facet.vtable && slot->references == 0, "num_put<wchar_t>::_Getcat initializes zero references");
+    slot->vtable->retain(slot);
+    Require(slot->vtable->release(slot) == slot && slot->references == 0, "num_put<wchar_t>::_Getcat facet returns itself when the last reference is released");
+    slot->vtable->deleteObject(slot);
+
+    bool threwObject = false;
+    try {
+        _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(nullptr, &info, 0);
+    } catch (const std::invalid_argument&) {
+        threwObject = true;
+    }
+    bool threwInfo = false;
+    try {
+        _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&facet, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threwInfo = true;
+    }
+    Require(threwObject && threwInfo, "num_put<wchar_t> constructor rejects null object or _Locinfo");
+
+    GuestLocale::Facet complete{&g_testFacet, 9, 7};
+    libSceLibcInternalInventory_133_nid_no_patch(&complete, &info, 0x500000003);
+    Require(complete.vtable == facet.vtable && complete.references == 3 && complete.reserved == 5,
+        "num_put<wchar_t> C1 installs the C2 vtable and the whole reference count");
+    bool completeThrewObject = false;
+    try {
+        libSceLibcInternalInventory_133_nid_no_patch(nullptr, &info, 0);
+    } catch (const std::invalid_argument&) {
+        completeThrewObject = true;
+    }
+    bool completeThrewInfo = false;
+    try {
+        libSceLibcInternalInventory_133_nid_no_patch(&complete, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        completeThrewInfo = true;
+    }
+    Require(completeThrewObject && completeThrewInfo, "num_put<wchar_t> C1 rejects null object or _Locinfo as C2 does");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -631,7 +696,7 @@ int main(int argc, char** argv) {
 #endif
     Require(argc == 2, "expected the libSceLibcInternal path");
 #ifdef _WIN32
-    g_library = LoadLibraryA(argv[1]);
+    g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
     g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -656,6 +721,7 @@ int main(int argc, char** argv) {
     CheckWideStreamWrite();
     CheckWideTimePutDoPut();
     CheckWideTimePutGetcat();
+    CheckWideNumPutConstruction();
 
     std::puts("libc internal num_put and time_put put checks passed");
     return 0;

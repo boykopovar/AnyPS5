@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <optional>
 #include <utility>
 #include <type_traits>
@@ -132,11 +133,32 @@ struct ProcessPrivileges {
     unsigned storage;
 };
 
+struct ExpectedCString {
+    union {
+        CString value;
+        std::uint32_t error;
+    };
+    bool has;
+    explicit ExpectedCString(CString&& string) : value(std::move(string)), has(true) {}
+    explicit ExpectedCString(std::uint32_t code) : error(code), has(false) {}
+    ExpectedCString(const ExpectedCString&) = delete;
+    ExpectedCString(ExpectedCString&& other) noexcept : has(other.has) {
+        if (has) new (&value) CString(std::move(other.value));
+        else error = other.error;
+    }
+    ~ExpectedCString() {
+        if (has) value.~CString();
+    }
+};
+
 static_assert(alignof(StringImpl) == 8);
 static_assert(alignof(StringView) == 8);
 static_assert(alignof(CStringBuffer) == 8);
 static_assert(!std::is_trivially_destructible_v<String>);
 static_assert(!std::is_trivially_destructible_v<CString>);
+static_assert(!std::is_trivially_destructible_v<ExpectedCString>);
+static_assert(sizeof(ExpectedCString) == 16);
+static_assert(offsetof(ExpectedCString, has) == 8);
 static_assert(sizeof(StringImpl) == 24);
 static_assert(offsetof(StringImpl, refCount) == 0);
 static_assert(offsetof(StringImpl, length) == 4);

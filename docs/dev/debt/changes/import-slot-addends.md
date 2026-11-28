@@ -1,0 +1,5 @@
+# relinker
+
+## change An `R_X86_64_GLOB_DAT` or `R_X86_64_JUMP_SLOT` relocation with a nonzero addend fails the conversion
+
+- An `R_X86_64_GLOB_DAT` relocation with a nonzero addend binds to S ([pipeline](../../../core/relinker/relinker/src/pipeline/RelinkerPipeline.cpp), [guest image reader](../../../core/relinker/relinker/src/guest/GuestImageReader.cpp)): the pipeline drops the addend from the emitted reference and notes the count, the guest image reader zeroes the addend of the copied entry, and the [module builder](../../../core/relinker/relinker/src/guest/GuestModuleBuilder.cpp) repeats the note per module, so every output format computes S. The x86-64 psABI computes GLOB_DAT as S, as glibc applies it since [f8587a61892c](https://github.com/bminor/glibc/commit/f8587a61892cbafd98ce599131bf4f103466f084) (2.36). An `R_X86_64_JUMP_SLOT` relocation with a nonzero addend fails the conversion in both paths: the console loader computes S+A for eager JUMP_SLOT, so a silent S binding can disagree with it, and no console or title evidence for the S binding has been measured.

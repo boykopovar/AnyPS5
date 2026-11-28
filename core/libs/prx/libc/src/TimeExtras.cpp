@@ -81,7 +81,7 @@ int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base) {
 }
 
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time) {
-    return *time;
+    return LoadXtime(time, "_Xtime_to_ts");
 }
 
 Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target) {

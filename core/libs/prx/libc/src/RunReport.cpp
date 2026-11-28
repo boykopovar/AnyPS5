@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -1826,6 +1827,10 @@ bool GameProcess() {
 }
 
 bool StartRunReport() noexcept {
+    const struct ErrnoGuard {
+        int saved = errno;
+        ~ErrnoGuard() { errno = saved; }
+    } restoreErrno{};
     try {
         const char* environment = std::getenv("APS5_REPORT");
         const auto arguments = RunReport::CommandLineArguments();

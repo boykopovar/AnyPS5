@@ -27,6 +27,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/FilterOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/Api.hpp"
+#include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -181,71 +182,6 @@ void ConstructInvertLightnessFilterOperation(WebCore::InvertLightnessFilterOpera
     self->m_type = WebCore::FilterOperationType::AppleInvertLightness;
 }
 
-ColorComponents ResolvedComponents(const WebCore::SRGBA<float>& color) {
-    return {std::isnan(color.red) ? 0.0f : color.red, std::isnan(color.green) ? 0.0f : color.green,
-            std::isnan(color.blue) ? 0.0f : color.blue, std::isnan(color.alpha) ? 0.0f : color.alpha};
-}
-
-ColorComponents HueRotate(const ColorComponents& color, float amount) {
-    float r = color[0];
-    float g = color[1];
-    float b = color[2];
-    float alpha = color[3];
-
-    auto [min, max] = std::minmax({r, g, b});
-    float chroma = max - min;
-
-    float lightness = 0.5f * (max + min);
-    float saturation;
-    if (!chroma)
-        saturation = 0;
-    else if (lightness <= 0.5f)
-        saturation = (chroma / (max + min));
-    else
-        saturation = (chroma / (2.0f - (max + min)));
-
-    if (!saturation)
-        return {lightness, lightness, lightness, alpha};
-
-    float hue;
-    if (!chroma)
-        hue = 0;
-    else if (max == r)
-        hue = (60.0f * ((g - b) / chroma)) + 360.0f;
-    else if (max == g)
-        hue = (60.0f * ((b - r) / chroma)) + 120.0f;
-    else
-        hue = (60.0f * ((r - g) / chroma)) + 240.0f;
-
-    if (hue >= 360.0f)
-        hue -= 360.0f;
-
-    hue /= 360.0f;
-
-    hue = std::fmod(hue + amount, 1.0f);
-
-    float temp2 = lightness <= 0.5f ? lightness * (1.0f + saturation) : lightness + saturation - lightness * saturation;
-    float temp1 = 2.0f * lightness - temp2;
-
-    hue *= 6.0f;
-
-    auto calcHue = [](float temp1, float temp2, float hueVal) {
-        if (hueVal < 0.0f)
-            hueVal += 6.0f;
-        else if (hueVal >= 6.0f)
-            hueVal -= 6.0f;
-        if (hueVal < 1.0f)
-            return temp1 + (temp2 - temp1) * hueVal;
-        if (hueVal < 3.0f)
-            return temp2;
-        if (hueVal < 4.0f)
-            return temp1 + (temp2 - temp1) * (4.0f - hueVal);
-        return temp1;
-    };
-
-    return {calcHue(temp1, temp2, hue + 2.0f), calcHue(temp1, temp2, hue), calcHue(temp1, temp2, hue - 2.0f), alpha};
-}
-
 ColorComponents TransformColorComponents(const float (&matrix)[15], const ColorComponents& input) {
     ColorComponents result{0.0f, 0.0f, 0.0f, 0.0f};
     for (std::size_t row = 0; row < 3; ++row) {
@@ -257,13 +193,15 @@ ColorComponents TransformColorComponents(const float (&matrix)[15], const ColorC
     return result;
 }
 
-float ClampedComponent(float component) {
-    return std::clamp(component, 0.0f, 1.0f);
+WebCore::SRGBA<float> TransformColor(const float (&matrix)[15], const WebCore::SRGBA<float>& color) {
+    const ColorComponents result = TransformColorComponents(matrix, ColorComponents{{color.red, color.green, color.blue, color.alpha}});
+    return {result[0], result[1], result[2], result[3]};
 }
 
-WebCore::SRGBA<float> ClampedColor(const ColorComponents& components) {
-    return {ClampedComponent(components[0]), ClampedComponent(components[1]), ClampedComponent(components[2]),
-            ClampedComponent(components[3])};
+WebCore::SRGBA<float> RotateHueHalfTurn(const WebCore::SRGBA<float>& color) {
+    WebCore::HSLA<float> hsla = _ZN7WebCore6toHSLAERKNS_5SRGBAIfEE(color);
+    hsla.hue = std::fmod(hsla.hue + 0.5f, 1.0f);
+    return _ZN7WebCore7toSRGBAERKNS_4HSLAIfEE(hsla);
 }
 
 constexpr float ToDarkModeMatrix[15] = {
@@ -308,15 +246,13 @@ WTF::RefPtr<WebCore::FilterOperation> APS5_VABI _ZN7WebCore30InvertLightnessFilt
 
 bool APS5_VABI _ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(const WebCore::InvertLightnessFilterOperation* self, WebCore::SRGBA<float>& color) {
     Checked(self);
-    auto hueRotated = HueRotate(ResolvedComponents(color), 0.5f);
-    color = ClampedColor(TransformColorComponents(ToDarkModeMatrix, hueRotated));
+    color = TransformColor(ToDarkModeMatrix, RotateHueHalfTurn(color));
     return true;
 }
 
 bool APS5_VABI _ZNK7WebCore30InvertLightnessFilterOperation21inverseTransformColorERNS_5SRGBAIfEE(const WebCore::InvertLightnessFilterOperation* self, WebCore::SRGBA<float>& color) {
     Checked(self);
-    auto converted = TransformColorComponents(ToLightModeMatrix, ResolvedComponents(color));
-    color = ClampedColor(HueRotate(converted, 0.5f));
+    color = RotateHueHalfTurn(TransformColor(ToLightModeMatrix, color));
     return true;
 }
 

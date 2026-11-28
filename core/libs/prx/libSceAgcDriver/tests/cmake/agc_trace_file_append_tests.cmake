@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_trace_file_append_tests tests/TraceFileAppend.cpp Execution/src/TraceFile.cpp)
+    target_include_directories(agc_trace_file_append_tests PRIVATE ${LIBS_INCLUDE_DIR} ${agcZlibIncludeDir})
+    target_link_libraries(agc_trace_file_append_tests PRIVATE libc jpeg_turbo)
+    configure_windows_unwind(agc_trace_file_append_tests)
+    add_test(NAME agc_trace_file_append COMMAND agc_trace_file_append_tests)
+    set_tests_properties(agc_trace_file_append PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_trace_file_append PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

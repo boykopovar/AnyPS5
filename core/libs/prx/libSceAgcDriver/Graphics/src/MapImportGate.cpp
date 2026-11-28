@@ -101,7 +101,7 @@ Stripes StripesOf(std::uint64_t begin, std::uint64_t end) {
 
 bool LockOrderChecked() {
 #ifdef NDEBUG
-    static const bool checked = std::getenv("APS5_ASSERT_GPU_LOCK") != nullptr;
+    static const bool checked = std::getenv("APS5_ASSERT_GPU_LOCK") != nullptr || std::getenv("APS5_ASSERT_LOCK_ORDER") != nullptr;
     return checked;
 #else
     return true;
@@ -114,6 +114,10 @@ void NoteLeafLock() noexcept {
 
 void NoteLeafUnlock() noexcept {
     if (LockOrderChecked()) --leafLocksHeld;
+}
+
+bool LeafLockHeld() noexcept {
+    return leafLocksHeld != 0;
 }
 
 void RequireNoLeafLockHeld(const char* where) {

@@ -18,6 +18,8 @@
 #endif
 #include <atomic>
 #include <stdexcept>
+#include <system_error>
+#include "prx/libc/include/ChildProcesses.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/RunReport.hpp"
 
@@ -197,6 +199,10 @@ void LibcStartExit_nid_postfix() {
     StartExit();
 }
 
+bool LibcExitStarted_nid_no_patch() {
+    return exitStarted.load();
+}
+
 [[noreturn]] void LibcExit_nid_no_patch(int code) {
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
@@ -296,6 +302,7 @@ struct ChildProcess {
 
 std::mutex childProcessMutex;
 std::vector<ChildProcess> childProcesses;
+ChildProcessTimes reapedChildProcessTimes{};
 
 int ChildProcessWaitStatus(DWORD code) {
     switch (code) {
@@ -318,7 +325,12 @@ extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::i
     childProcesses.push_back({processId, processHandle});
 }
 
-extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, bool requireUsage) {
+extern "C" ChildProcessTimes GetReapedChildProcessTimes_nid_no_patch() {
+    std::lock_guard lock(childProcessMutex);
+    return reapedChildProcessTimes;
+}
+
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, ChildProcessTimes* times) {
     const bool noWait = (options & 1u) != 0;
     const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
     {
@@ -340,7 +352,21 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
                     *__error_nid_postfix() = 14;
                     return -1;
                 }
-                if (requireUsage) NotImplemented_nid_no_patch("wait4: child resource accounting on Windows");
+                FILETIME creation{};
+                FILETIME exitTime{};
+                FILETIME kernel{};
+                FILETIME user{};
+                if (GetProcessTimes(handle, &creation, &exitTime, &kernel, &user)) {
+                    const ChildProcessTimes childTimes{
+                        (static_cast<std::uint64_t>(user.dwHighDateTime) << 32) | user.dwLowDateTime,
+                        (static_cast<std::uint64_t>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime,
+                    };
+                    reapedChildProcessTimes.user += childTimes.user;
+                    reapedChildProcessTimes.kernel += childTimes.kernel;
+                    if (times != nullptr) *times = childTimes;
+                } else if (times != nullptr) {
+                    throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "wait4: GetProcessTimes failed");
+                }
                 encoded = ChildProcessWaitStatus(code);
                 CloseHandle(handle);
                 reaped = child.processId;

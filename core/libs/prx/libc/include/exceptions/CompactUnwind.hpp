@@ -83,7 +83,9 @@ inline bool CompactUnwindRules(std::uint32_t encoding, std::span<const unsigned 
         if (stackEncoded > function.size() || function.size() - stackEncoded < 4) return false;
         std::uint32_t immediate = 0;
         std::memcpy(&immediate, function.data() + stackEncoded, 4);
-        stackSize = immediate + 8u * stackAdjust;
+        const auto totalStack = static_cast<std::uint64_t>(immediate) + 8ull * stackAdjust;
+        if (totalStack > 0x10000000ull) return false;
+        stackSize = static_cast<std::uint32_t>(totalStack);
     }
     if (stackSize > 0x10000000u) return false;
     rules.cfaRegister = 7;
@@ -171,7 +173,7 @@ inline CompactParse ParseCompactUnwind(std::span<const unsigned char> info, std:
     const auto pageOffset = read(indexOffset + static_cast<std::size_t>(low) * 12u + 4u);
     const auto lsdaOffset = read(indexOffset + static_cast<std::size_t>(low) * 12u + 8u);
     const auto lsdaEnd = read(indexOffset + static_cast<std::size_t>(low + 1) * 12u + 8u);
-    if (!ok || pageOffset == 0) return CompactParse::Miss;
+    if (!ok || pageOffset == 0 || target < pageFunction) return CompactParse::Miss;
     const auto pageKind = read(pageOffset);
     const auto pagePacked = read(pageOffset + 4u);
     if (!ok) return CompactParse::Miss;
@@ -205,6 +207,7 @@ inline CompactParse ParseCompactUnwind(std::span<const unsigned char> info, std:
         const auto encodingPacked = read(pageOffset + 8u);
         if (!ok) return CompactParse::Miss;
         const auto encodingsOffset = encodingPacked & 0xffffu;
+        const auto encodingsCount = encodingPacked >> 16;
         const auto pageTarget = target - pageFunction;
         const auto pageLast = entryCount - 1;
         low = 0;
@@ -230,7 +233,11 @@ inline CompactParse ParseCompactUnwind(std::span<const unsigned char> info, std:
         else functionEndOffset = nextFunction;
         const auto encodingIndex = packed >> 24;
         if (encodingIndex < commonCount) encoding = read(commonOffset + static_cast<std::size_t>(encodingIndex) * 4u);
-        else encoding = read(pageOffset + encodingsOffset + static_cast<std::size_t>(encodingIndex - commonCount) * 4u);
+        else {
+            const auto localIndex = encodingIndex - commonCount;
+            if (localIndex >= encodingsCount) return CompactParse::Miss;
+            encoding = read(pageOffset + encodingsOffset + static_cast<std::size_t>(localIndex) * 4u);
+        }
     } else return CompactParse::Miss;
     if (!ok || target < functionOffset || target > functionEndOffset || functionEndOffset < functionOffset) return CompactParse::Miss;
     const auto mode = encoding & 0x0f000000u;

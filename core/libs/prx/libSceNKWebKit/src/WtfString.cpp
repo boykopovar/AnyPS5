@@ -67,6 +67,7 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
@@ -225,10 +226,7 @@ double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
     }
     buffer[length] = '\0';
 
-    char* endPtr = nullptr;
-    double val = std::strtod(buffer.data(), &endPtr);
-    parsedLength = static_cast<std::size_t>(endPtr - buffer.data());
-    return val;
+    return _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(buffer.data(), length, &parsedLength);
 }
 
 }
@@ -272,8 +270,13 @@ using NKWebKit::WtfAbi::StringView;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::CString;
 using NKWebKit::WtfAbi::CStringBuffer;
+using NKWebKit::WtfAbi::ExpectedCString;
 
 constexpr unsigned MaxStringLength = 0x7FFFFFFF;
+constexpr std::uint32_t Utf8ConversionNone = 0;
+constexpr std::uint32_t Utf8ConversionOutOfMemory = 1;
+constexpr std::uint32_t Utf8ConversionIllegalSource = 2;
+constexpr std::uint32_t Utf8ConversionSourceExhausted = 3;
 constexpr std::size_t NotFound = std::numeric_limits<std::size_t>::max();
 
 template<typename T> T& Checked(T* value) {
@@ -512,6 +515,23 @@ CString ToUTF8(StringView view, unsigned mode) {
         }
     }
     return CopyCString(bytes.data(), bytes.size());
+}
+
+std::uint32_t StrictConversionError(const char16_t* characters, unsigned length) {
+    for (unsigned i = 0; i < length; ++i) {
+        const unsigned unit = characters[i];
+        if (unit < 0xD800 || unit > 0xDFFF) continue;
+        if (unit <= 0xDBFF) {
+            if (i + 1 == length) return Utf8ConversionSourceExhausted;
+            const unsigned next = characters[i + 1];
+            if (next >= 0xDC00 && next <= 0xDFFF) {
+                ++i;
+                continue;
+            }
+        }
+        return Utf8ConversionIllegalSource;
+    }
+    return Utf8ConversionNone;
 }
 
 String Substring(const StringImpl* original, unsigned start, unsigned length) {
@@ -785,14 +805,20 @@ CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const StringImp
     return ToUTF8(View(&Checked(self)), mode);
 }
 
-CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode) {
+ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode) {
     if (!characters && length) throw std::invalid_argument("null WTF UTF-16 character buffer");
-    return ToUTF8({characters, length, false}, mode);
+    if (length > MaxStringLength / 3) return ExpectedCString(Utf8ConversionOutOfMemory);
+    if (mode == 1) {
+        const std::uint32_t error = StrictConversionError(characters, length);
+        if (error != Utf8ConversionNone) return ExpectedCString(error);
+    }
+    return ExpectedCString(ToUTF8({characters, length, false}, mode));
 }
 
-CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length) {
+ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length) {
     if (!characters && length) throw std::invalid_argument("null WTF Latin-1 character buffer");
-    return ToUTF8({characters, length, true}, 0);
+    if (length > MaxStringLength / 3) return ExpectedCString(Utf8ConversionOutOfMemory);
+    return ExpectedCString(ToUTF8({characters, length, true}, 0));
 }
 
 String APS5_VABI _ZNK3WTF6String23convertToASCIILowercaseEv(const String* self) {

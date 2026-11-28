@@ -30,7 +30,10 @@ constexpr std::uint32_t kChannelRrs = 7;
 
 inline float ReadSample(const Source& source, std::uint32_t frame, std::uint32_t channel) {
     const std::size_t index = static_cast<std::size_t>(frame) * source.channels + channel;
-    if (source.is_float) return static_cast<const float*>(source.samples)[index];
+    if (source.is_float) {
+        const float value = static_cast<const float*>(source.samples)[index];
+        return std::isnan(value) ? 0.0f : value;
+    }
     return static_cast<float>(static_cast<const std::int16_t*>(source.samples)[index]) / 32768.0f;
 }
 
@@ -38,8 +41,8 @@ inline void MixFrame(const Source* sources, std::size_t count, std::uint32_t gra
     std::vector<float> mix(static_cast<std::size_t>(granularity) * 2, 0.0f);
     for (std::size_t source_index = 0; source_index < count; ++source_index) {
         const Source& src = sources[source_index];
-        if (src.samples == nullptr || src.num_samples == 0) continue;
-        const float pan = std::clamp(src.pan, -1.0f, 1.0f);
+        if (src.samples == nullptr || src.num_samples == 0 || std::isnan(src.gain)) continue;
+        const float pan = std::isnan(src.pan) ? 0.0f : std::clamp(src.pan, -1.0f, 1.0f);
         const float gl = (pan <= 0.0f ? 1.0f : 1.0f - pan) * src.gain;
         const float gr = (pan >= 0.0f ? 1.0f : 1.0f + pan) * src.gain;
         for (std::uint32_t frame = 0; frame < granularity && frame < src.num_samples; ++frame) {
@@ -61,7 +64,8 @@ inline void MixFrame(const Source* sources, std::size_t count, std::uint32_t gra
     }
     out.resize(static_cast<std::size_t>(granularity) * 2);
     for (std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::int16_t>(std::lround(std::clamp(mix[i], -1.0f, 1.0f) * 32767.0f));
+        const float clamped = std::isnan(mix[i]) ? 0.0f : std::clamp(mix[i], -1.0f, 1.0f);
+        out[i] = static_cast<std::int16_t>(std::lround(clamped * 32767.0f));
     }
 }
 

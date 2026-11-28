@@ -162,17 +162,27 @@ std::uint64_t LeadNanos(std::uint64_t remainingNanos) {
     return LEAD_NANOS + std::min(TimerLateAverage().load(std::memory_order_relaxed), remainingNanos / LATE_LEAD_SHARE);
 }
 
-bool TimerWait(HANDLE timer, std::uint64_t nanos) {
-    struct Nesting {
-        int& depth;
-        HANDLE own;
-        explicit Nesting(int& depth) : depth(depth), own(depth != 0 ? CreateHighResolutionTimer() : nullptr) { ++depth; }
-        ~Nesting() {
-            --depth;
-            if (own) CloseHandle(own);
-        }
-    } nesting(WaitState().timerDepth);
-    if (nesting.depth > 1) timer = nesting.own;
+class SleepTimer {
+public:
+    explicit SleepTimer(unsigned kind) : depth(WaitState().timerDepth), nested(depth != 0),
+        handle(nested ? CreateHighResolutionTimer() : ThreadTimer(kind)) { ++depth; }
+    ~SleepTimer() {
+        --depth;
+        if (nested && handle) CloseHandle(handle);
+    }
+    SleepTimer(const SleepTimer&) = delete;
+    SleepTimer& operator=(const SleepTimer&) = delete;
+    HANDLE Get() const { return handle; }
+
+private:
+    int& depth;
+    bool nested;
+    HANDLE handle;
+};
+
+bool TimerWait(unsigned kind, std::uint64_t nanos) {
+    SleepTimer lease(kind);
+    const HANDLE timer = lease.Get();
     if (!timer) return false;
     LARGE_INTEGER due{};
     due.QuadPart = -static_cast<LONGLONG>(nanos / 100ULL);
@@ -187,8 +197,7 @@ DWORD WholeMilliseconds(std::uint64_t nanos) {
 }
 
 void SleepNanosCoarse(std::uint64_t nanos) {
-    const HANDLE timer = ThreadTimer(0);
-    if (TimerWait(timer, nanos)) return;
+    if (TimerWait(0, nanos)) return;
     AlertableSleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
 }
 
@@ -281,7 +290,7 @@ void SleepShort(std::uint64_t nanos) {
     const std::uint64_t deadlineNanos = now + nanos;
     if (now - waiter->shortSleepEndNanos >= nanos) waiter->shortSleepRunStartNanos = now;
     if (now - waiter->shortSleepRunStartNanos >= SHORT_SLEEP_SPIN_RUN_NANOS) {
-        if (!TimerWait(ThreadTimer(0), nanos)) AlertableSleep(1);
+        if (!TimerWait(0, nanos)) AlertableSleep(1);
         now = NowNanos();
     }
     {
@@ -668,8 +677,7 @@ void SleepUntil(std::uint64_t deadlineNanos) {
     std::uint64_t now = NowNanos();
     const std::uint64_t lead = LeadNanos(deadlineNanos > now ? deadlineNanos - now : 0);
     if (deadlineNanos > now + lead) {
-        const HANDLE timer = ThreadTimer(1);
-        if (TimerWait(timer, deadlineNanos - now - lead)) RecordTimerLate(deadlineNanos - lead);
+        if (TimerWait(1, deadlineNanos - now - lead)) RecordTimerLate(deadlineNanos - lead);
         else AlertableSleep(WholeMilliseconds(deadlineNanos - now - lead));
         now = NowNanos();
     }
@@ -716,7 +724,8 @@ bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_
     if (counter.load(std::memory_order_seq_cst) != observed) return true;
     const std::uint64_t lead = LeadNanos(deadlineNanos > now ? deadlineNanos - now : 0);
     if (deadlineNanos > now + lead) {
-        const HANDLE handles[2] = {ThreadTimer(1), waiter->wake};
+        SleepTimer timer(1);
+        const HANDLE handles[2] = {timer.Get(), waiter->wake};
         LARGE_INTEGER due{};
         due.QuadPart = -static_cast<LONGLONG>((deadlineNanos - now - lead) / 100ULL);
         if (due.QuadPart == 0) due.QuadPart = -1;

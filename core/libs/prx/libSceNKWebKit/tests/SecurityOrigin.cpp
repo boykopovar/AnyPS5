@@ -135,6 +135,10 @@ static bool SameOrigin(const OriginRef& a, const OriginRef& b) {
     return _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(a.get(), b.get());
 }
 
+static bool SameSchemeHostPort(const OriginRef& a, const OriginRef& b) {
+    return _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(a.get(), b.get());
+}
+
 static bool Equal(const OriginRef& a, const OriginRef& b) {
     return _ZNK7WebCore14SecurityOrigin5equalEPKS0_(a.get(), b.get());
 }
@@ -151,8 +155,8 @@ static bool IsOpaque(const OriginRef& origin) {
 struct Data {
     SecurityOriginData data{};
 
-    Data(std::string_view protocol, std::string_view host, std::optional<std::uint16_t> port) {
-        new (&data.storage.tuple) SecurityOriginTuple{Make(protocol), Make(host), {port.value_or(0), port.has_value()}};
+    Data(std::string_view protocol, std::string_view host, std::optional<std::uint16_t> port, bool wide = false) {
+        new (&data.storage.tuple) SecurityOriginTuple{Make(protocol, wide), Make(host, wide), {port.value_or(0), port.has_value()}};
         data.index = NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex;
     }
     explicit Data(OpaqueOriginIdentifier identifier) {
@@ -257,23 +261,60 @@ static void TestOpaqueOrigins() {
         Require((*origin)->data.storage.opaque.object != 0);
         Require((*origin)->data.storage.opaque.processIdentifier == _ZN7WebCore7Process10identifierEv());
         Require(SameOrigin(*origin, *origin));
+        Require(SameSchemeHostPort(*origin, *origin));
         Require(Equal(*origin, *origin));
         Require(Is(_ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(origin->get()), ""));
         Require(!Suffix(*origin, "example.com"));
     }
     Require(data->data.storage.opaque.object != data2->data.storage.opaque.object);
     Require(!SameOrigin(data, data2));
+    Require(!SameSchemeHostPort(data, data2));
     Require(!Equal(data, data2));
     auto http = Create("http", "example.com");
     Require(!SameOrigin(data, http));
     Require(!SameOrigin(http, data));
+    Require(!SameSchemeHostPort(data, http));
+    Require(!SameSchemeHostPort(http, data));
     Require(!Equal(http, data));
 
     auto copy = _ZNK7WebCore14SecurityOrigin12isolatedCopyEv(data.get());
     Require(copy.get() != data.get());
     Require(IsOpaque(copy));
     Require(SameOrigin(data, copy));
+    Require(SameSchemeHostPort(data, copy));
     Require(Equal(copy, data));
+}
+
+static void TestCreateUnique() {
+    auto unique = _ZN7WebCore14SecurityOrigin12createUniqueEv();
+    Require(unique->refCount.load() == 1);
+    Require(IsOpaque(unique));
+    Require(unique->data.storage.opaque.object != 0);
+    Require(unique->data.storage.opaque.processIdentifier == _ZN7WebCore7Process10identifierEv());
+    Require(Is(unique->domain, ""));
+    Require(!unique->filePath.impl);
+    Require(!unique->universalAccess && !unique->domainWasSetInDOM && !unique->canLoadLocalResources);
+    Require(!unique->enforcesFilePathSeparation && !unique->needsStorageAccessFromFileURLsQuirk && !unique->isLocal);
+    Require(unique->isPotentiallyTrustworthy.hasValue && !unique->isPotentiallyTrustworthy.value);
+    Require(Is(ToString(unique), "null"));
+    Require(!ToRawString(unique).impl);
+    Require(Is(_ZNK7WebCore14SecurityOrigin23domainForCachePartitionEv(unique.get()), ""));
+    Require(SameOrigin(unique, unique));
+    Require(Equal(unique, unique));
+
+    auto other = _ZN7WebCore14SecurityOrigin12createUniqueEv();
+    Require(other.get() != unique.get());
+    Require(other->data.storage.opaque.object != unique->data.storage.opaque.object);
+    Require(!SameOrigin(unique, other));
+    Require(!Equal(unique, other));
+    Require(!SameOrigin(unique, Create(MakeURL("data", "", "", "text/plain,x", false))));
+    Require(!SameOrigin(unique, Create("https", "example.com")));
+
+    auto copy = _ZNK7WebCore14SecurityOrigin12isolatedCopyEv(unique.get());
+    Require(copy.get() != unique.get());
+    Require(IsOpaque(copy));
+    Require(SameOrigin(unique, copy));
+    Require(Equal(copy, unique));
 }
 
 static void TestFileOrigins() {
@@ -287,6 +328,7 @@ static void TestFileOrigins() {
 
     auto other = Create("file", "", "", "/other");
     Require(SameOrigin(file, other));
+    Require(SameSchemeHostPort(file, other));
     Require(Equal(file, other));
     other->enforcesFilePathSeparation = true;
     Require(Is(ToString(other), "null"));
@@ -295,10 +337,14 @@ static void TestFileOrigins() {
     Require(!SameOrigin(other, file));
     Require(!Equal(file, other));
     Require(SameOrigin(other, other));
+    Require(!SameSchemeHostPort(file, other));
+    Require(!SameSchemeHostPort(other, file));
+    Require(!SameSchemeHostPort(other, other));
 
     auto server = Create("file", "server", "", "/share");
     Require(Is(ToString(server), "file://"));
     Require(!SameOrigin(file, server));
+    Require(!SameSchemeHostPort(file, server));
 
     auto blob = MakeURL("blob", "", "", "https://example.com/uuid", false);
     Require(ThrowsNotImplemented([&] { _ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE(&blob.url); }));
@@ -308,8 +354,14 @@ static void TestComparisons() {
     auto a = Create("https", "example.com");
     auto b = Create("https", "example.com", "443", "/other");
     Require(SameOrigin(a, b));
+    Require(SameSchemeHostPort(a, b));
+    Require(SameSchemeHostPort(b, a));
     Require(Equal(a, b));
     Require(!SameOrigin(a, Create("http", "example.com")));
+    Require(!SameSchemeHostPort(a, Create("http", "example.com")));
+    Require(!SameSchemeHostPort(a, Create("https", "www.example.com")));
+    Require(!SameSchemeHostPort(a, Create("https", "example.com", "8443")));
+    Require(SameSchemeHostPort(Create("http", "example.com", "8080"), Create("http", "example.com", "8080", "/x")));
     Require(!SameOrigin(a, Create("https", "www.example.com")));
     Require(!SameOrigin(a, Create("https", "example.com", "8443")));
     Require(!Equal(a, Create("https", "example.com", "8443")));
@@ -317,6 +369,7 @@ static void TestComparisons() {
     b->domainWasSetInDOM = true;
     b->domain = Make("example.com");
     Require(SameOrigin(a, b));
+    Require(SameSchemeHostPort(a, b));
     Require(!Equal(a, b));
     Require(!Equal(b, a));
     a->domainWasSetInDOM = true;
@@ -325,11 +378,14 @@ static void TestComparisons() {
     a->domain = Make("other.com");
     Require(!Equal(a, b));
     Require(SameOrigin(a, b));
+    Require(SameSchemeHostPort(a, b));
 
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin5equalEPKS0_(a.get(), nullptr); }));
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin5equalEPKS0_(nullptr, a.get()); }));
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(a.get(), nullptr); }));
     Require(Throws([&] { _ZNK7WebCore14SecurityOrigin14isSameOriginAsERKS0_(nullptr, a.get()); }));
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(a.get(), nullptr); }));
+    Require(Throws([&] { _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_(nullptr, a.get()); }));
 }
 
 static void TestIsolatedCopy() {
@@ -490,15 +546,80 @@ static void TestOriginData() {
     Require(Throws([] { _ZNK7WebCore14SecurityOrigin11toRawStringEv(nullptr); }));
 }
 
+static void TestOriginDataFromFrame() {
+    auto result = _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(nullptr);
+    Require(result.index == NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex);
+    Require(!result.storage.tuple.protocol.impl);
+    Require(!result.storage.tuple.host.impl);
+    Require(!result.storage.tuple.port.hasValue);
+    result.storage.tuple.~SecurityOriginTuple();
+    Require(ThrowsNotImplemented([] { _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234))); }));
+}
+
+static void TestOriginDataIsolatedCopy() {
+    Data https("https", "example.com", std::uint16_t{8443});
+    auto copy = _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&https.data);
+    Require(copy.index == NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex);
+    Require(copy.storage.tuple.protocol.impl && copy.storage.tuple.protocol.impl != https.data.storage.tuple.protocol.impl);
+    Require(copy.storage.tuple.host.impl && copy.storage.tuple.host.impl != https.data.storage.tuple.host.impl);
+    Require(Is(copy.storage.tuple.protocol, "https"));
+    Require(Is(copy.storage.tuple.host, "example.com"));
+    Require(copy.storage.tuple.protocol.impl->refCount == 2);
+    Require(copy.storage.tuple.host.impl->refCount == 2);
+    Require(https.data.storage.tuple.protocol.impl->refCount == 2);
+    Require(https.data.storage.tuple.host.impl->refCount == 2);
+    Require(copy.storage.tuple.port.hasValue && copy.storage.tuple.port.value == 8443);
+    copy.storage.tuple.~SecurityOriginTuple();
+
+    Data wide("http", "wide.example", std::nullopt, true);
+    auto wideCopy = _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&wide.data);
+    Require(wideCopy.index == NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex);
+    Require(wideCopy.storage.tuple.protocol.impl && !(wideCopy.storage.tuple.protocol.impl->hashAndFlags & 4));
+    Require(wideCopy.storage.tuple.host.impl && !(wideCopy.storage.tuple.host.impl->hashAndFlags & 4));
+    Require(Is(wideCopy.storage.tuple.protocol, "http"));
+    Require(Is(wideCopy.storage.tuple.host, "wide.example"));
+    Require(!wideCopy.storage.tuple.port.hasValue);
+    wideCopy.storage.tuple.~SecurityOriginTuple();
+
+    Data opaque(OpaqueOriginIdentifier{0xAABBCCDDEEFF0011ULL, 0x1234567890ABCDEFULL});
+    auto opaqueCopy = _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&opaque.data);
+    Require(opaqueCopy.index == NKWebKit::WebCoreAbi::kSecurityOriginOpaqueIndex);
+    Require(opaqueCopy.storage.opaque.object == 0xAABBCCDDEEFF0011ULL);
+    Require(opaqueCopy.storage.opaque.processIdentifier == 0x1234567890ABCDEFULL);
+
+    Data invalid("https", "example.com", std::nullopt);
+    invalid.data.index = 2;
+    bool threw = false;
+    try {
+        _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&invalid.data);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw);
+    invalid.data.index = std::numeric_limits<std::uint32_t>::max();
+    threw = false;
+    try {
+        _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&invalid.data);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw);
+
+    Require(Throws([] { _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(nullptr); }));
+}
+
 int main() {
     TestLoopback();
     TestTupleOrigins();
     TestOpaqueOrigins();
+    TestCreateUnique();
     TestFileOrigins();
     TestComparisons();
     TestIsolatedCopy();
     TestCachePartition();
     TestRegistrableDomainSuffix();
     TestOriginData();
+    TestOriginDataFromFrame();
+    TestOriginDataIsolatedCopy();
     return 0;
 }

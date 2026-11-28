@@ -206,6 +206,17 @@ class StubGeneratorTests(unittest.TestCase):
             self.assertEqual(stubgen.parse_db(path),
                              {"AAAAAAAAAAA": "sceGood", "BBBBBBBBBBB": "sceOther", "+CCCCCCCCCC": "scePlus"})
 
+    def test_duplicate_database_rows_prefer_the_hash_verified_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "names.txt"
+            for rows in (("AqXeRqGAdKE badAlias", "AqXeRqGAdKE sceExample"),
+                         ("AqXeRqGAdKE sceExample", "AqXeRqGAdKE badAlias")):
+                with self.subTest(rows=rows):
+                    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+                    self.assertEqual(stubgen.parse_db(path), {"AqXeRqGAdKE": "sceExample"})
+            path.write_text("AAAAAAAAAAA sceFirst\nAAAAAAAAAAA sceSecond\n", encoding="utf-8")
+            self.assertEqual(stubgen.parse_db(path), {"AAAAAAAAAAA": "sceFirst"})
+
     def test_malformed_database_reaches_the_cli_as_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

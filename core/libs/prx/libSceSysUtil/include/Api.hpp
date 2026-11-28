@@ -2,6 +2,12 @@
 
 #include "SceTypes.hpp"
 
+struct SysUtilNotificationWithParams {
+    char first[0xb4];
+    char second[0xb4];
+    char third[0xb4];
+};
+
 extern "C" {
 
 int APS5_VABI sceSysUtilSendSystemNotificationWithText(int32_t type, const char* message);
@@ -25,7 +31,7 @@ int APS5_VABI sceSysUtilSendAddressingSystemNotificationWithDeviceId(int32_t typ
 int APS5_VABI sceSysUtilSendAddressingSystemNotificationWithUserName(int32_t type, int32_t addressingType, const char* userName);
 int APS5_VABI sceSysUtilSendAddressingSystemNotificationWithUserId(int32_t type, int32_t addressingType, int32_t userId);
 int APS5_VABI sceSysUtilSendNotificationRequest(const char* message, int32_t flags);
-int APS5_VABI sceSysUtilSendSystemNotificationWithParams();
+int APS5_VABI sceSysUtilSendSystemNotificationWithParams(int32_t type, SysUtilNotificationWithParams params);
 int APS5_VABI sceSysUtilSendTrcCheckNotificationRequest(const char* message, int32_t flags);
 int APS5_VABI sceSysUtilSendWebDebugNotificationRequest(const char* message, int32_t flags);
 

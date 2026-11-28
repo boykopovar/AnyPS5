@@ -17,6 +17,6 @@ int APS5_VABI sceImeDialogForceClose(void);
 int APS5_VABI sceImeDialogGetCurrentStarState(int64_t state);
 int APS5_VABI sceImeDialogInitInternal(const Param* param, const ExtendedParam* extended);
 int APS5_VABI sceImeDialogSetPanelPosition(int32_t, int32_t);
-int APS5_VABI sceImeDialogInitInternalWithSubInfo();
+int APS5_VABI sceImeDialogInitInternalWithSubInfo(const Param* param, const ExtendedParam* extended, const void* subInfo);
 
 }

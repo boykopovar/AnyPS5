@@ -4,8 +4,11 @@
 #include <cstdint>
 #include <cerrno>
 #include <cstddef>
+#include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -22,6 +25,9 @@ namespace {
 constexpr std::int32_t ERROR_INVALID_PARAM = static_cast<std::int32_t>(0x81960002);
 constexpr std::int32_t ERROR_NOT_SUPPORTED = static_cast<std::int32_t>(0x81960007);
 constexpr std::int32_t REQUEST_ID_INVALID = -1;
+
+std::mutex uploadCallbacksMutex;
+std::vector<void*> uploadCallbacks;
 
 bool WriteRequestIdInvalid(std::int32_t* requestId) {
     const std::int32_t invalid = REQUEST_ID_INVALID;
@@ -170,20 +176,30 @@ int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application
 
 extern "C" {
 
-int APS5_VABI sceShareFeatureExPermit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareFeatureExPermit(uint32_t feature_flags) {
+    return sceShareFeaturePermit(feature_flags);
 }
 
-int APS5_VABI sceShareFeatureExProhibit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareFeatureExProhibit(uint32_t feature_flags) {
+    return sceShareFeatureProhibit(feature_flags);
 }
 
-int APS5_VABI sceShareRegisterUploadCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareRegisterUploadCallback(void* callback, void* user_data) {
+    (void)user_data;
+    if (callback == nullptr) return ERROR_INVALID_PARAM;
+    std::lock_guard lock(uploadCallbacksMutex);
+    if (std::find(uploadCallbacks.begin(), uploadCallbacks.end(), callback) != uploadCallbacks.end()) return ERROR_INVALID_PARAM;
+    uploadCallbacks.push_back(callback);
+    return 0;
 }
 
-int APS5_VABI sceShareUnregisterUploadCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareUnregisterUploadCallback(void* callback) {
+    if (callback == nullptr) return ERROR_INVALID_PARAM;
+    std::lock_guard lock(uploadCallbacksMutex);
+    const auto found = std::find(uploadCallbacks.begin(), uploadCallbacks.end(), callback);
+    if (found == uploadCallbacks.end()) return ERROR_INVALID_PARAM;
+    uploadCallbacks.erase(found);
+    return 0;
 }
 
 int APS5_VABI libSceShareUnknown_YPIiGz4uKOU_nid_no_patch() {

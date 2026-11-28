@@ -140,7 +140,7 @@ void DestroyItem(Item& item) {
 }
 
 void DeleteItem(void* item) {
-    _ZdlPv_nid_postfix(item);
+    _ZN3WTF8fastFreeEPv(item);
 }
 
 OptionalFloatRect NoBounds() {

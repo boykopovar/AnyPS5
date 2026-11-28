@@ -29,9 +29,7 @@ cairo_scaled_font_t* Backend(CairoScaledFont* font) {
 }
 
 void CopyResult(void* destination, const void* source, std::size_t size, const char* name) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(name, __FILE__, __LINE__);
 }
 

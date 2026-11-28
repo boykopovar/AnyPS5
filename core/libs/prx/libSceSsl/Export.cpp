@@ -825,10 +825,7 @@ int APS5_VABI sceSslUnloadCert(int sslCtxId) {
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
     if (found == state.contexts.end()) {
-        const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        std::uint32_t sdkVersion;
-        std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
-        return sdkVersion < 0x07500000 ? 0 : ErrorInvalidId;
+        return ApplicationCompiledSdkVersion() < 0x07500000 ? 0 : ErrorInvalidId;
     }
     auto& context = *found->second;
     context.authorities.clear();
