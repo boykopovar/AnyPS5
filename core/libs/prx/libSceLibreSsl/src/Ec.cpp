@@ -815,6 +815,15 @@ int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point
     return 1;
 }
 
+EcPoint* EcPointDuplicate_nid_no_patch(const EcPoint* point, const EcGroup* group) {
+    if (point == nullptr) return nullptr;
+    if (group == nullptr) APS5_INVALID_ARG_EX;
+    RequireSameCurve(*group, point->curve, __func__);
+    auto copy = std::make_unique<EcPoint>(group->curve);
+    Check(mbedtls_ecp_copy(&copy->point, &point->point), __func__);
+    return copy.release();
+}
+
 int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
     if (key == nullptr || !key->group) {
         LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, ReasonPassedNullParameter, __FILE__, __LINE__);

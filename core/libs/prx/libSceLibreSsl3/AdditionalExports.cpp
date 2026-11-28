@@ -114,10 +114,6 @@ int APS5_VABI X509_add1_ext_i2d_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EC_POINT_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix(void* ctx, int value) {
     (void)ctx;
     (void)value;
