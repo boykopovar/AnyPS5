@@ -5,7 +5,7 @@ set(ANYPS5_GLSLANG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/glslang")
 set(ANYPS5_SPIRV_HEADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers")
 set(ANYPS5_GLSLANG_SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/glslang")
 
-if(NOT ANYPS5_USE_SYSTEM_DEPS)
+if(ANYPS5_RELINKER_ONLY OR NOT ANYPS5_USE_SYSTEM_DEPS)
     return()
 endif()
 
@@ -49,10 +49,19 @@ if(NOT ANYPS5_VULKAN_HEADERS_INCLUDE_DIR)
     message(FATAL_ERROR "ANYPS5_USE_SYSTEM_DEPS: Vulkan::Headers exposes no INTERFACE_INCLUDE_DIRECTORIES")
 endif()
 set(CMAKE_REQUIRED_INCLUDES ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
-check_cxx_source_compiles("#include <vulkan/vulkan.h>\nint main() { VkPhysicalDeviceMaintenance8FeaturesKHR features{}; (void)features; return 0; }" ANYPS5_VULKAN_HAS_MAINTENANCE8)
+check_cxx_source_compiles([=[
+    #include <vulkan/vulkan.h>
+    int main() {
+        (void)sizeof(VkPhysicalDeviceMaintenance8FeaturesKHR);
+        (void)sizeof(VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR);
+        (void)sizeof(VkPhysicalDeviceShaderFmaFeaturesKHR);
+        (void)VK_DRIVER_ID_MESA_KOSMICKRISP;
+        return 0;
+    }
+]=] ANYPS5_VULKAN_HAS_AGC_DECLARATIONS)
 unset(CMAKE_REQUIRED_INCLUDES)
-if(NOT ANYPS5_VULKAN_HAS_MAINTENANCE8)
-    message(FATAL_ERROR "ANYPS5_USE_SYSTEM_DEPS: the system Vulkan-Headers do not provide VkPhysicalDeviceMaintenance8FeaturesKHR (VK_KHR_maintenance8), which the agc driver uses; install Vulkan-Headers 1.4.310 or newer")
+if(NOT ANYPS5_VULKAN_HAS_AGC_DECLARATIONS)
+    message(FATAL_ERROR "ANYPS5_USE_SYSTEM_DEPS: the system Vulkan-Headers lack the maintenance8, FIFO latest-ready, shader FMA or KosmicKrisp driver ID declarations used by the AGC driver; install Vulkan-Headers 1.4.330 or newer")
 endif()
 
 find_package(SPIRV-Headers CONFIG REQUIRED)

@@ -92,6 +92,7 @@ const GuestLocale::FacetVtable g_localeVtable{DestroyClassicLocale, DestroyClass
 const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, DestroyCopiedLocale, RetainCopiedLocale, ReleaseCopiedLocale};
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
+std::atomic<GuestLocale::Implementation*> g_globalLocale{&g_classicLocale};
 
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
@@ -114,6 +115,23 @@ GuestLocale::Facet* APS5_VABI ReleaseFacet(GuestLocale::Facet* self) {
     if (self == nullptr) throw std::invalid_argument("facet release: null facet");
     return std::atomic_ref<std::uint32_t>(self->references).fetch_sub(1) == 1 ? self : nullptr;
 }
+
+void APS5_VABI DestroyLocimp(GuestLocale::Facet* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locimp destroy: null object");
+    auto* implementation = reinterpret_cast<GuestLocale::Implementation*>(self);
+    if (implementation->facets != nullptr && implementation->facets != g_classicFacets) {
+        ApplicationHeapFree_nid_no_patch(implementation->facets);
+    }
+    implementation->facets = nullptr;
+    implementation->facetCount = 0;
+}
+
+void APS5_VABI DeleteLocimp(GuestLocale::Facet* self) {
+    DestroyLocimp(self);
+    _ZdlPv_nid_postfix(self);
+}
+
+const GuestLocale::FacetVtable g_locimpVtable{DestroyLocimp, DeleteLocimp, RetainFacet, ReleaseFacet};
 
 int APS5_VABI CollateCompare(const GuestLocale::CollateFacet*, const char* first1, const char* last1, const char* first2, const char* last2) {
     ValidateCharacterRange(first1, last1, "collate::do_compare");
@@ -401,7 +419,7 @@ constexpr std::int32_t IosFixed = 0x1000;
 constexpr std::int32_t IosHexFloat = 0x1800;
 constexpr std::int32_t IosBoolAlpha = 0x8000;
 
-const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id, GuestLocale::GlobalLocaleHold& hold) {
     std::atomic_ref<std::uint64_t> slot(id);
     if (slot.load() == 0) {
         _Locksyslock_nid_postfix();
@@ -412,12 +430,11 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    return index < global->facetCount ? global->facets[index] : nullptr;
+    return hold.Find(index);
 }
 
-const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream) {
-    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix)) return facet;
+const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream, GuestLocale::GlobalLocaleHold& hold) {
+    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold)) return facet;
     static GuestLocale::Facet* const fallback = [] {
         GuestLocale::Facet* created = nullptr;
         _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr);
@@ -450,7 +467,8 @@ std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::Str
 
 std::string Widen(const GuestLocale::IosBase* stream, const char* text, std::size_t count) {
     std::string result(text, count);
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
     return result;
 }
 
@@ -492,7 +510,8 @@ GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLoc
     std::size_t prefix = SignPrefix(digits, count);
     if ((stream->flags & IosBaseField) == IosHex && HexPrefix(digits, prefix, count)) prefix += 2;
     std::string text = Widen(stream, digits, count);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, Punctuation(punct).thousandsSep(AsNumpunct(punct)), count, prefix);
     return PutField(out, stream, fill, text, prefix);
@@ -506,7 +525,8 @@ GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLo
     const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
     const std::size_t pointOffset = std::strcspn(digits, point);
     std::string text = Widen(stream, digits, count);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     const char separator = Punctuation(punct).thousandsSep(AsNumpunct(punct));
     std::size_t offset = exponent;
@@ -552,7 +572,8 @@ template<typename Value> GuestLocale::OutputIterator PutFormattedFloating(GuestL
 
 GuestLocale::OutputIterator APS5_VABI NumPutBool(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
     if ((stream->flags & IosBoolAlpha) == 0) return reinterpret_cast<const GuestLocale::NumPutVtable*>(self->vtable)->putLong(self, out, stream, fill, value ? 1 : 0);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     return PutField(out, stream, fill, TakeString(value ? Punctuation(punct).truename : Punctuation(punct).falsename, punct), 0);
 }
 
@@ -904,7 +925,8 @@ extern "C" GuestLocale::String* LibcCopyWideString_nid_no_patch(GuestLocale::Str
 }
 
 extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
-    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix, hold);
     const auto put = reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put;
     for (; first != last; ++first) {
         if (NarrowWideElement(ctype, *first) != '%') {
@@ -952,8 +974,23 @@ extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const G
     return out;
 }
 
+extern "C" GuestLocale::OutputIterator LibcPutWideElements_nid_no_patch(GuestLocale::OutputIterator out, const std::uint16_t* elements, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) PutWideElement(out, elements[index]);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcRepeatWideElement_nid_no_patch(GuestLocale::OutputIterator out, std::uint16_t element, std::size_t count) {
+    for (; count != 0; --count) PutWideElement(out, element);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    return PutInteger(out, stream, fill, digits, count);
+}
+
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
-    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold);
     const auto narrow = [ctype](char character) { return ctype != nullptr ? reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0') : character; };
     const auto put = reinterpret_cast<const GuestLocale::TimePutVtable*>(self->vtable)->put;
     for (; first != last; ++first) {
@@ -1050,7 +1087,19 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
     reinterpret_cast<std::uintptr_t>(&CollateTransform),
     reinterpret_cast<std::uintptr_t>(&CollateHash),
 };
-std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {};
+std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&NumpunctDestroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&NumpunctDelete_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE11do_groupingEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE11do_truenameEv_nid_postfix),
+};
 std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {
     0,
     0,
@@ -1203,7 +1252,7 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix() {
     if (!g_localeInitialized) {
         g_localeInitialized = true;
     }
-    return &g_classicLocale;
+    return g_globalLocale.load();
 }
 
 void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* self) {
@@ -1216,7 +1265,7 @@ void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* se
 }
 
 GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
-    return &g_classicLocale;
+    return g_globalLocale.load();
 }
 
 namespace {
@@ -2041,6 +2090,57 @@ const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
     return &g_wideCollateVtable;
 }
 
+const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch() {
+    return &g_locimpVtable;
+}
+
+GuestLocale::Implementation* LibcAcquireGlobalLocale_nid_no_patch() {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    GuestLocale::Implementation* global = g_globalLocale.load();
+    if (global != nullptr) global->base.vtable->retain(&global->base);
+    return global;
+}
+
+void LibcReleaseLocale_nid_no_patch(GuestLocale::Implementation* locale) {
+    if (locale == nullptr) return;
+    auto* base = &locale->base;
+    if (auto* released = base->vtable->release(base)) released->vtable->deleteObject(released);
+}
+
+GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next) {
+    if (next == nullptr || next->base.vtable == nullptr || next->base.vtable->retain == nullptr || next->base.vtable->release == nullptr || next->base.vtable->deleteObject == nullptr) {
+        throw std::invalid_argument("locale::global: null locale");
+    }
+    if (next->facetCount != 0 && next->facets == nullptr) {
+        throw std::invalid_argument("locale::global: null facet vector");
+    }
+    if (next->name == nullptr) {
+        throw std::invalid_argument("locale::global: null locale name");
+    }
+    std::string localeName;
+    if (CopyGuestString_nid_no_patch(next->name, 2, localeName) != 0) {
+        throw std::runtime_error("locale::global: unsupported locale name");
+    }
+    if (localeName != "*" && setlocale_nid_postfix(0, next->name) == nullptr) {
+        throw std::runtime_error("locale::global: unsupported locale name");
+    }
+    GuestLocale::Implementation* previous = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_localeInitMutex);
+        previous = g_globalLocale.load();
+        if (previous == nullptr || previous->base.vtable == nullptr || previous->base.vtable->retain == nullptr || previous->base.vtable->release == nullptr || previous->base.vtable->deleteObject == nullptr) {
+            throw std::runtime_error("locale::global: invalid global locale");
+        }
+        if (previous == next) {
+            previous->base.vtable->retain(&previous->base);
+            return previous;
+        }
+        next->base.vtable->retain(&next->base);
+        g_globalLocale.store(next);
+    }
+    return previous;
+}
+
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
     if (facet != nullptr && *facet == nullptr) {
         if (locale == nullptr || *locale == nullptr || (*locale)->name == nullptr || std::strcmp((*locale)->name, "C") != 0) throw std::invalid_argument("collate::_Getcat: only the C locale is supported");
@@ -2278,6 +2378,124 @@ GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestL
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctTruename_nid_no_patch(result, self);
+}
+
+namespace {
+
+struct NumpunctLocinfo {
+    explicit NumpunctLocinfo(const char* name) { _ZNSt8_LocinfoC1EPKc_nid_postfix(&storage, name); }
+    ~NumpunctLocinfo() { _ZNSt8_LocinfoD1Ev_nid_postfix(&storage); }
+    NumpunctLocinfo(const NumpunctLocinfo&) = delete;
+    NumpunctLocinfo& operator=(const NumpunctLocinfo&) = delete;
+
+    GuestLocale::LocinfoStorage storage;
+};
+
+char* MakeNumpunctString(const char* text) {
+    const std::size_t count = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(_Znam_nid_postfix(count));
+    if (copy == nullptr) throw std::bad_alloc();
+    std::memcpy(copy, text, count);
+    return copy;
+}
+
+void ConstructNumpunctBase(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    self->base.vtable = reinterpret_cast<const GuestLocale::FacetVtable*>(&_ZTVSt8numpunctIcE_nid_postfix[2]);
+    self->base.references = static_cast<std::uint32_t>(references);
+}
+
+}
+
+void APS5_VABI NumpunctTidy_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    _ZdaPv_nid_postfix(const_cast<char*>(self->grouping));
+    _ZdaPv_nid_postfix(const_cast<char*>(self->falsename));
+    _ZdaPv_nid_postfix(const_cast<char*>(self->truename));
+}
+
+void APS5_VABI NumpunctInit_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage*, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    self->grouping = nullptr;
+    self->falsename = nullptr;
+    self->truename = nullptr;
+    try {
+        self->grouping = MakeNumpunctString(isDefault ? "" : conventions->grouping);
+        self->falsename = MakeNumpunctString("false");
+        self->truename = MakeNumpunctString("true");
+    } catch (...) {
+        NumpunctTidy_nid_no_patch(self);
+        throw;
+    }
+    if (isDefault) {
+        self->decimalPoint = '.';
+        self->thousandsSep = ',';
+    } else {
+        self->decimalPoint = conventions->decimal_point[0];
+        self->thousandsSep = conventions->thousands_sep[0];
+    }
+}
+
+void APS5_VABI NumpunctConstruct_nid_no_patch(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    const NumpunctLocinfo locinfo("C");
+    NumpunctInit_nid_no_patch(self, &locinfo.storage, false);
+    if (self->thousandsSep == 0) self->thousandsSep = ',';
+}
+
+void APS5_VABI NumpunctConstructFromLocinfo_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    NumpunctInit_nid_no_patch(self, locinfo, isDefault);
+}
+APS5_EXPORT("Cb1hI+w9nyU", NumpunctConstructFromLocinfo_nid_no_patch);
+
+void APS5_VABI NumpunctConstructNamed_nid_no_patch(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    const NumpunctLocinfo locinfo(name);
+    NumpunctInit_nid_no_patch(self, &locinfo.storage, isDefault);
+}
+APS5_EXPORT("WK24j1F3rCU", NumpunctConstructNamed_nid_no_patch);
+
+void APS5_VABI NumpunctDestroy_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctTidy_nid_no_patch(self);
+}
+APS5_EXPORT("xFva4yxsVW8", NumpunctDestroy_nid_no_patch);
+
+void APS5_VABI NumpunctDelete_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
+    _ZdlPv_nid_postfix(self);
+}
+APS5_EXPORT("Lf6h5krl2fA", NumpunctDelete_nid_no_patch);
+
+void APS5_VABI _ZNSt8numpunctIcE5_InitERKSt8_Locinfob_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, bool isDefault) {
+    NumpunctInit_nid_no_patch(self, locinfo, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcE5_TidyEv_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctTidy_nid_no_patch(self);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC1Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    NumpunctConstruct_nid_no_patch(self, references);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC2Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    NumpunctConstruct_nid_no_patch(self, references);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC1ERKSt8_Locinfomb_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault) {
+    NumpunctConstructFromLocinfo_nid_no_patch(self, locinfo, references, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC2EPKcmb_nid_postfix(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault) {
+    NumpunctConstructNamed_nid_no_patch(self, name, references, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcED1Ev_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {

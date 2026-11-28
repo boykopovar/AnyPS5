@@ -45,14 +45,34 @@ int main() {
     WKBundleScriptWorldDisableOverrideBuiltinsBehavior(worldRef);
     Require(world->overrideBuiltinsDisabled);
 
-    const void* emptyName = WKBundleScriptWorldCopyName(worldRef);
-    Require(WKStringIsEqualToUTF8CString(emptyName, ""));
+    const void* uniqueName = WKBundleScriptWorldCopyName(worldRef);
+    Require(WKStringIsEqualToUTF8CString(uniqueName, "UniqueWorld_0"));
+
+    const void* secondRef = WKBundleScriptWorldCreateWorld();
+    const void* secondName = WKBundleScriptWorldCopyName(secondRef);
+    Require(WKStringIsEqualToUTF8CString(secondName, "UniqueWorld_1"));
+    WKRelease(secondName);
+    WKRelease(secondRef);
+
+    const void* thirdRef = WKBundleScriptWorldCreateWorld();
+    const void* thirdName = WKBundleScriptWorldCopyName(thirdRef);
+    Require(WKStringIsEqualToUTF8CString(thirdName, "UniqueWorld_2"));
+    WKRelease(thirdName);
+    WKRelease(thirdRef);
+
+    const void* sameName = WKBundleScriptWorldCopyName(worldRef);
+    Require(WKStringIsEqualToUTF8CString(sameName, "UniqueWorld_0"));
+    WKRelease(sameName);
+
+    const void* normalName = WKBundleScriptWorldCopyName(WKBundleScriptWorldNormalWorld());
+    Require(WKStringIsEqualToUTF8CString(normalName, ""));
+    WKRelease(normalName);
 
     RequireThrows([&] { WKBundleScriptWorldClearWrappers(nullptr); });
-    RequireThrows([&] { WKBundleScriptWorldMakeAllShadowRootsOpen(emptyName); });
+    RequireThrows([&] { WKBundleScriptWorldMakeAllShadowRootsOpen(uniqueName); });
     RequireThrows([&] { WKBundleScriptWorldDisableOverrideBuiltinsBehavior(nullptr); });
 
-    WKRelease(emptyName);
+    WKRelease(uniqueName);
     WKRelease(worldRef);
     std::printf("All libSceNKWebKit BundleScriptWorld tests passed!\n");
     return 0;

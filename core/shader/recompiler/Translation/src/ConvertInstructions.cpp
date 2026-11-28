@@ -119,7 +119,14 @@ void TranslationContext::vCvtF16F32(const RdnaInstruction& inst) {
 
 void TranslationContext::vCvtF32F16(const RdnaInstruction& inst) {
     const IrF32 value = flushF16InputValue(readF16AsF32(sourceAt(inst, 0u)));
-    writeOperand(inst.destination, &value.Value());
+    if (!ieeeMode) {
+        writeOperand(inst.destination, &value.Value());
+        return;
+    }
+    const IrU32 bits(ir.BitCastU32(value.Value()));
+    const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)));
+    const IrF32 quieted(ir.BitCastF32(ir.Select(nan.Value(), quietNan32(bits).Value(), bits.Value())));
+    writeOperand(inst.destination, &quieted.Value());
 }
 
 void TranslationContext::vCvtF1616(const RdnaInstruction& inst, bool signedValue) {
@@ -191,8 +198,8 @@ void TranslationContext::vCvtOffF32I4(const RdnaInstruction& inst) {
 }
 
 void TranslationContext::vCvtPkrtzF16F32(const RdnaInstruction& inst) {
-    const IrF32 lhs(*readOperand(sourceAt(inst, 0u), IrType::F32));
-    const IrF32 rhs(*readOperand(sourceAt(inst, 1u), IrType::F32));
+    const IrF32 lhs(ir.BitCastF32(readU32(sourceAt(inst, 0u)).Value()));
+    const IrF32 rhs(ir.BitCastF32(readU32(sourceAt(inst, 1u)).Value()));
     IrU32 result(ir.Emit(IrOpcode::PackFloat2x16Rtz, IrType::U32, {&lhs.Value(), &rhs.Value()}));
     if (floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
         const IrU32 low = flushF16Result(IrU32(ir.BitwiseAnd(result.Value(), ir.Constant(0xffffu))));

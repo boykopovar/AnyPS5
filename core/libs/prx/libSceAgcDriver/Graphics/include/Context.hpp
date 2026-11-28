@@ -147,6 +147,7 @@ struct DeviceFunctions {
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
     PFN_vkCmdFillBuffer cmdFillBuffer = nullptr;
     TrackedFunction<PFN_vkCmdBindPipeline> cmdBindPipeline;
+    TrackedFunction<PFN_vkCmdExecuteCommands> cmdExecuteCommands;
     PFN_vkCmdBindDescriptorSets cmdBindDescriptorSets = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
@@ -233,6 +234,7 @@ struct Context {
     bool integratedGpu = false;
     bool hostPointerImport = true;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -270,11 +272,14 @@ struct Context {
     bool samplerFilterMinmax = false;
     bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
+    bool borderColorSwizzle = false;
+    bool borderColorSwizzleFromImage = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
+    bool pixelWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
     VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
@@ -293,11 +298,13 @@ struct Context {
     bool partiallyBound = false;
     bool variableDescriptorCount = false;
     bool sampledImageUpdateAfterBind = false;
+    bool storageBufferUpdateAfterBind = false;
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
     bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
+    bool orderedInterlockEpilogs = false;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
@@ -319,6 +326,7 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool staticSampleMaskStopsShading = true;
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
@@ -335,6 +343,7 @@ struct Context {
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     std::uint32_t scaledSampledFormats = 0;
+    std::uint32_t optionalSampledFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;
@@ -519,6 +528,8 @@ std::uint32_t StorageTableCapacity(const Context& context);
 std::uint32_t SamplerTableCapacity(const Context& context);
 bool ImageTableUpdateAfterBind(const Context& context);
 bool SamplerTableUpdateAfterBind(const Context& context);
+
+void DestroyRecordingPools(const Context& context);
 
 }
 

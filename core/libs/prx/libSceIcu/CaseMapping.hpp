@@ -11,4 +11,7 @@ std::int32_t APS5_VABI u_strcasecmp_nid_postfix(const char16_t*, const char16_t*
 std::int32_t APS5_VABI u_strncasecmp_nid_postfix(const char16_t*, const char16_t*, std::int32_t, std::uint32_t);
 std::int32_t APS5_VABI u_memcasecmp_nid_postfix(const char16_t*, const char16_t*, std::int32_t, std::uint32_t);
 void APS5_VABI u_caseInsensitivePrefixMatch_nid_postfix(const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::uint32_t, std::int32_t*, std::int32_t*, std::int32_t*);
+std::int32_t APS5_VABI _ZN6icu_687CaseMap7toLowerEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(const char*, std::uint32_t, const char16_t*, std::int32_t, char16_t*, std::int32_t, void*, std::int32_t*);
+std::int32_t APS5_VABI _ZN6icu_687CaseMap7toUpperEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(const char*, std::uint32_t, const char16_t*, std::int32_t, char16_t*, std::int32_t, void*, std::int32_t*);
+std::int32_t APS5_VABI _ZN6icu_687CaseMap4foldEjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(std::uint32_t, const char16_t*, std::int32_t, char16_t*, std::int32_t, void*, std::int32_t*);
 }

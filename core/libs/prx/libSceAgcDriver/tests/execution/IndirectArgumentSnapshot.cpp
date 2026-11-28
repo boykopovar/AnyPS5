@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "BatchHold.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -22,24 +23,14 @@
 #include <exception>
 #include <initializer_list>
 #include <iostream>
-#include <memory>
 #include <new>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace AgcDriver {
-
-struct VulkanDeviceTestAccess {
-    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
-};
-
-}
-
 namespace AgcDriver::DriverDetail {
 
 struct DriverTestAccess {
-    static std::shared_ptr<VulkanDevice> GetDevice() { return Driver::Get().device.Load(); }
     static void WaitQueue() {
         auto& driver = Driver::Get();
         std::unique_lock lock(driver.mutex);
@@ -193,27 +184,18 @@ void ProducedRecordKeepsTheDraw() {
 
 void ReusedRecordKeepsTheDraw() {
     Memory->target.fill(Kept);
-    const auto device = AgcDriver::DriverDetail::DriverTestAccess::GetDevice();
-    Require(device != nullptr, "the driver has no device after the reference draw");
-    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-    VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-    type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-    VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-    VkSemaphore hold = VK_NULL_HANDLE;
-    Require(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &info, nullptr, &hold) == VK_SUCCESS, "vkCreateSemaphore failed");
-    auto* recorder = AgcDriver::Graphics::Recorder::Active();
-    Require(recorder != nullptr, "the driver has no active recorder");
-    recorder->HoldNextSubmit(hold, 1);
-    auto commands = Draw(Memory->target, Memory->reused);
-    Submit(commands);
-    AgcDriver::DriverDetail::DriverTestAccess::WaitQueue();
-    Memory->reused.fill(0);
-    VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, nullptr, hold, 1};
-    PFN_vkSignalSemaphore signalSemaphore = nullptr;
-    try { signalSemaphore = context.Function<PFN_vkSignalSemaphore>("vkSignalSemaphoreKHR"); } catch (const std::exception&) { signalSemaphore = context.Function<PFN_vkSignalSemaphore>("vkSignalSemaphore"); }
-    Require(signalSemaphore(context.device, &signal) == VK_SUCCESS, "vkSignalSemaphore failed");
-    AgcDriverWaitIdle_nid_postfix();
-    context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, hold, nullptr);
+    {
+        auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        Require(recorder != nullptr, "the driver has no active recorder");
+        BatchHold hold(recorder->Device());
+        hold.Arm(*recorder);
+        auto commands = Draw(Memory->target, Memory->reused);
+        Submit(commands);
+        AgcDriver::DriverDetail::DriverTestAccess::WaitQueue();
+        Memory->reused.fill(0);
+        Require(hold.Release() == VK_SUCCESS, "vkSignalSemaphore failed");
+        AgcDriverWaitIdle_nid_postfix();
+    }
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Memory->target.data()), Memory->target.size());
     for (std::size_t index = 0; index < Memory->target.size(); ++index) {
         Require(Memory->target[index] == ReferenceBytes[index], "byte " + std::to_string(index) + " of the indirect draw whose record the guest reused after the command processor passed it is " + std::to_string(static_cast<unsigned>(Memory->target[index])) + ", the record it was given draws " + std::to_string(static_cast<unsigned>(ReferenceBytes[index])));

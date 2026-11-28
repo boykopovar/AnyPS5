@@ -303,12 +303,95 @@ void Run() {
 
 }
 
+namespace UcolQueries {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&ucol_getContractionsAndExpansions_nid_postfix), void (APS5_VABI*)(const UCollator*, USet*, USet*, std::int8_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucol_getKeywordValues_nid_postfix), UEnumeration* (APS5_VABI*)(const char*, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucol_getKeywordValuesForLocale_nid_postfix), UEnumeration* (APS5_VABI*)(const char*, const char*, std::int8_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucol_getRules_nid_postfix), const char16_t* (APS5_VABI*)(const UCollator*, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucol_strcollIter_nid_postfix), std::int32_t (APS5_VABI*)(const UCollator*, UCharIterator*, UCharIterator*, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+constexpr std::array<std::int32_t, 7> Failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+constexpr std::array<std::int32_t, 4> Passing{0, -128, -124, -1};
+
+} // namespace
+
+void Run() {
+    auto storage = Filler();
+    const auto coll = reinterpret_cast<const UCollator*>(storage.data());
+    const auto set = reinterpret_cast<USet*>(storage.data());
+    const auto iterator = reinterpret_cast<UCharIterator*>(storage.data());
+    std::int32_t length = 77;
+    for (const auto incoming : Failing) {
+        std::int32_t status = incoming;
+        ucol_getContractionsAndExpansions_nid_postfix(coll, set, set, 1, &status);
+        ucol_getContractionsAndExpansions_nid_postfix(nullptr, nullptr, nullptr, 0, &status);
+        Require(ucol_getKeywordValues_nid_postfix("collation", &status) == nullptr);
+        Require(ucol_getKeywordValues_nid_postfix(nullptr, &status) == nullptr);
+        Require(ucol_getKeywordValuesForLocale_nid_postfix("collation", "de", 1, &status) == nullptr);
+        Require(ucol_getKeywordValuesForLocale_nid_postfix(nullptr, nullptr, 0, &status) == nullptr);
+        Require(ucol_strcollIter_nid_postfix(coll, iterator, iterator, &status) == 0);
+        Require(ucol_strcollIter_nid_postfix(nullptr, nullptr, nullptr, &status) == 0);
+        Require(status == incoming);
+    }
+    for (const auto incoming : Passing) {
+        std::int32_t status = incoming;
+        ucol_getContractionsAndExpansions_nid_postfix(nullptr, set, set, 1, &status);
+        Require(status == IllegalArgument);
+        for (const char* keyword : {static_cast<const char*>(nullptr), "", "c", "collatio", "collations", "Collation", "calendar"}) {
+            status = incoming;
+            Require(ucol_getKeywordValues_nid_postfix(keyword, &status) == nullptr);
+            Require(status == IllegalArgument);
+        }
+        const auto illegalIter = [&](const UCollator* target, UCharIterator* source, UCharIterator* other) {
+            status = incoming;
+            Require(ucol_strcollIter_nid_postfix(target, source, other, &status) == 0);
+            Require(status == IllegalArgument);
+        };
+        illegalIter(nullptr, iterator, iterator);
+        illegalIter(coll, nullptr, iterator);
+        illegalIter(coll, iterator, nullptr);
+        status = incoming;
+        RequireThrows([&] { ucol_getContractionsAndExpansions_nid_postfix(coll, set, set, 1, &status); });
+        RequireThrows([&] { ucol_getContractionsAndExpansions_nid_postfix(coll, nullptr, nullptr, 0, &status); });
+        RequireThrows([&] { ucol_getKeywordValues_nid_postfix("collation", &status); });
+        RequireThrows([&] { ucol_getKeywordValuesForLocale_nid_postfix("collation", "de", 1, &status); });
+        RequireThrows([&] { ucol_getKeywordValuesForLocale_nid_postfix(nullptr, nullptr, 0, &status); });
+        RequireThrows([&] { ucol_strcollIter_nid_postfix(coll, iterator, iterator, &status); });
+        Require(status == incoming);
+    }
+    RequireThrows([&] { ucol_getContractionsAndExpansions_nid_postfix(coll, set, set, 1, nullptr); });
+    RequireThrows([] { ucol_getKeywordValues_nid_postfix("collation", nullptr); });
+    RequireThrows([] { ucol_getKeywordValuesForLocale_nid_postfix("collation", "de", 1, nullptr); });
+    Require(ucol_strcollIter_nid_postfix(coll, iterator, iterator, nullptr) == 0);
+    Require(ucol_strcollIter_nid_postfix(nullptr, nullptr, nullptr, nullptr) == 0);
+    RequireThrows([&] { ucol_getRules_nid_postfix(coll, &length); });
+    RequireThrows([&] { ucol_getRules_nid_postfix(nullptr, &length); });
+    RequireThrows([&] { ucol_getRules_nid_postfix(coll, nullptr); });
+    Require(length == 77);
+    std::int32_t status = 0;
+    RequireThrows([&] { ucol_getKeywordValues_nid_postfix(reinterpret_cast<const char*>(0x10), &status); });
+    Require(status == 0);
+    Require(Unchanged(storage));
+}
+
+} // namespace UcolQueries
+
 void CheckIcuCollator() {
     UcolClose::Run();
     UcolGetAttribute::Run();
     UcolGetReorderCodes::Run();
     UcolGetTailoredSet::Run();
     UcolOpen::Run();
+    UcolQueries::Run();
     UcolSetAttribute::Run();
     CollatorGuestPointers::Run();
 }

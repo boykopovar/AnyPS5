@@ -195,13 +195,7 @@ FcChar8* FormatDowncase(const FcChar8* text) {
     return CopyText(FontconfigDowncase_nid_no_patch(reinterpret_cast<const char*>(text)));
 }
 const char* LastSlash(const FcChar8* text) {
-    const auto* value = reinterpret_cast<const char*>(text);
-    const auto* slash = std::strrchr(value, '/');
-#ifdef _WIN32
-    const auto* backslash = std::strrchr(value, '\\');
-    if (backslash && (!slash || backslash > slash)) slash = backslash;
-#endif
-    return slash;
+    return std::strrchr(reinterpret_cast<const char*>(text), '/');
 }
 FcChar8* FormatBasename(const FcChar8* text) {
     const auto* slash = LastSlash(text);
@@ -779,7 +773,7 @@ interpret_enumerate(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
         c->format = saved;
         if (!interpret_subexpr(c, subpat.get(), buf)) return FcFalse;
     }
-    if (c->format == saved) return skip_subexpr(c);
+    if (c->format == saved) skip_subexpr(c);
     return FcTrue;
 }
 
@@ -791,7 +785,7 @@ interpret_simple(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     int index = -1;
     if (consume_char(c, '[')) {
         char* end;
-        index = strtol(reinterpret_cast<const char*>(c->format), &end, 10);
+        index = static_cast<int>(strtoll(reinterpret_cast<const char*>(c->format), &end, 10));
         c->format = reinterpret_cast<const FcChar8*>(end);
         if (index < 0 || !expect_char(c, ']')) return FcFalse;
     }
@@ -1151,7 +1145,7 @@ interpret_percent (FcFormatContext *c,
     }
 
 
-    width = strtol ((const char *) c->format, (char **) &c->format, 10);
+    width = static_cast<int>(strtoll ((const char *) c->format, (char **) &c->format, 10));
 
     if (!expect_char (c, '{'))
 	return FcFalse;
@@ -1224,11 +1218,12 @@ FcPatternFormatToBuf (FcPattern     *pat,
 extern "C" FcChar8* APS5_VABI FcPatternFormat(FcPattern* pat, const FcChar8* format) {
     if (!format) NotImplemented_nid_no_patch(__func__);
     try {
+        const std::string copiedFormat = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(format), __func__);
         PatternOwner empty(pat ? nullptr : FcPatternCreate());
         if (!pat) pat = empty.get();
         if (!pat) return nullptr;
         FcStrBuf buf;
-        if (!FcPatternFormatToBuf(pat, format, &buf)) return nullptr;
+        if (!FcPatternFormatToBuf(pat, reinterpret_cast<const FcChar8*>(copiedFormat.c_str()), &buf)) return nullptr;
         return FcStrBufDone(&buf);
     } catch (const std::bad_alloc&) {
         return nullptr;

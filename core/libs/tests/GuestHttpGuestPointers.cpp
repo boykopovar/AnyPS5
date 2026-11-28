@@ -119,6 +119,17 @@ int main() {
     RequireErrno(sceHttpGetCookieStats(context, static_cast<HttpCookieStats*>(unmapped)), invalidValue);
     RequireErrno(sceHttpGetLastErrno(1, static_cast<int*>(unmapped)), invalidValue);
 
+    int sslError = 0x5a5a5a5a;
+    std::uint32_t sslDetail = 0xa5a5a5a5u;
+    RequireErrno(sceHttpsGetSslError(tmpl, nullptr, &sslDetail), invalidValue);
+    Require(sslDetail == 0xa5a5a5a5u);
+    RequireErrno(sceHttpsGetSslError(tmpl, &sslError, nullptr), invalidValue);
+    Require(sslError == 0x5a5a5a5a);
+    RequireErrno(sceHttpsGetSslError(tmpl, static_cast<int*>(unmapped), &sslDetail), invalidValue);
+    RequireErrno(sceHttpsGetSslError(tmpl, &sslError, static_cast<std::uint32_t*>(unmapped)), invalidValue);
+    RequireErrno(sceHttpsGetSslError(tmpl, &sslError, &sslDetail), 0);
+    Require(sslError == 0 && sslDetail == 0);
+
     Require(sceHttpGetAutoRedirect(tmpl, &value) == 0);
     Require(sceHttpGetAuthEnabled(tmpl, &value) == 0);
     HttpConnectionStat stat{};

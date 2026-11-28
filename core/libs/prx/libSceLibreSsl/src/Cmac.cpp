@@ -22,6 +22,11 @@ static_assert(sizeof(LibreSslCmac) == 304);
 
 namespace {
 
+void CopyGuestIn(void* destination, const void* source, std::size_t length) {
+    if (!GuestCopyIn_nid_no_patch(destination, source, length))
+        throw std::invalid_argument("CMAC: unreadable guest buffer");
+}
+
 void Cleanse(void* data, std::size_t length) {
     auto* bytes = static_cast<volatile unsigned char*>(data);
     while (length-- != 0) *bytes++ = 0;
@@ -228,7 +233,7 @@ int APS5_VABI CMAC_Update_nid_postfix(LibreSslCmac* context, const void* data, s
     const auto blockSize = context->cipherContext.cipher->blockSize;
     if (context->lastLength != 0) {
         const auto take = std::min(length, static_cast<std::size_t>(blockSize - context->lastLength));
-        std::memcpy(context->lastBlock + context->lastLength, bytes, take);
+        CopyGuestIn(context->lastBlock + context->lastLength, bytes, take);
         context->lastLength += static_cast<std::int32_t>(take);
         bytes += take;
         length -= take;
@@ -236,11 +241,15 @@ int APS5_VABI CMAC_Update_nid_postfix(LibreSslCmac* context, const void* data, s
         if (!EncryptBlock(*context, context->previousBlock, context->lastBlock)) return 0;
     }
     while (length > static_cast<std::size_t>(blockSize)) {
-        if (!EncryptBlock(*context, context->previousBlock, bytes)) return 0;
+        unsigned char block[16];
+        CopyGuestIn(block, bytes, static_cast<std::size_t>(blockSize));
+        const bool encrypted = EncryptBlock(*context, context->previousBlock, block);
+        Cleanse(block, sizeof(block));
+        if (!encrypted) return 0;
         bytes += blockSize;
         length -= blockSize;
     }
-    std::memcpy(context->lastBlock, bytes, length);
+    CopyGuestIn(context->lastBlock, bytes, length);
     context->lastLength = static_cast<std::int32_t>(length);
     return 1;
 }
@@ -250,7 +259,9 @@ int APS5_VABI CMAC_Final_nid_postfix(LibreSslCmac* context, unsigned char* outpu
     if (context->lastLength == -1) return 0;
     if (length == nullptr) throw std::invalid_argument("CMAC_Final: null output length");
     const auto blockSize = context->cipherContext.cipher->blockSize;
-    *length = blockSize;
+    const std::size_t reported = static_cast<std::size_t>(blockSize);
+    if (!GuestCopyOut_nid_no_patch(length, &reported, sizeof(reported)))
+        throw std::invalid_argument("CMAC_Final: unreadable output length");
     if (output == nullptr) return 1;
     const bool full = context->lastLength == blockSize;
     if (!full) {
@@ -258,9 +269,19 @@ int APS5_VABI CMAC_Final_nid_postfix(LibreSslCmac* context, unsigned char* outpu
         context->lastBlock[context->lastLength] = 0x80;
     }
     const auto* subkey = full ? context->firstSubkey : context->secondSubkey;
-    for (int index = 0; index < blockSize; ++index) output[index] = context->lastBlock[index] ^ subkey[index];
-    if (EncryptBlock(*context, output, output)) return 1;
-    Cleanse(output, blockSize);
+    unsigned char tag[16]{};
+    for (int index = 0; index < blockSize; ++index) tag[index] = context->lastBlock[index] ^ subkey[index];
+    const bool encrypted = EncryptBlock(*context, tag, tag);
+    if (encrypted) {
+        const bool published = GuestCopyOut_nid_no_patch(output, tag, static_cast<std::size_t>(blockSize));
+        Cleanse(tag, sizeof(tag));
+        if (!published) throw std::invalid_argument("CMAC_Final: unreadable output buffer");
+        return 1;
+    }
+    Cleanse(tag, sizeof(tag));
+    const unsigned char cleared[16]{};
+    if (!GuestCopyOut_nid_no_patch(output, cleared, static_cast<std::size_t>(blockSize)))
+        throw std::invalid_argument("CMAC_Final: unreadable output buffer");
     return 0;
 }
 

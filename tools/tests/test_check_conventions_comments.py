@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_conventions
 from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, is_debt, links, output, python_comments, cmake_comments, silent_stub_debt
 
 CONVENTIONS_TEST_SHARDS = 12
@@ -1108,6 +1109,13 @@ class SilentStubDebtTests(unittest.TestCase):
 
     def test_text_without_the_section_has_no_entries(self):
         self.assertEqual(silent_stub_debt("# Debt\n## Known gaps\n- a\n"), [])
+
+
+class FlowMappingTests(unittest.TestCase):
+    def test_flow_mapping_reads_a_flow_map_and_refuses_other_values(self):
+        self.assertEqual(check_conventions.flow_mapping('{a: 1, "b": 2}'), {"a": "1", "b": "2"})
+        self.assertEqual(check_conventions.flow_mapping("{}"), {})
+        self.assertEqual(check_conventions.flow_mapping("x"), {})
 
 
 if __name__ == "__main__":

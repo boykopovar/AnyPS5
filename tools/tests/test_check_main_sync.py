@@ -1,6 +1,7 @@
 from pathlib import Path
 import contextlib
 import io
+import json
 import os
 import re
 import subprocess
@@ -229,6 +230,20 @@ class CheckMainSyncHistoryTests(CheckMainSyncFixture):
 
 
 class CheckMainSyncPathTests(CheckMainSyncFixture):
+    def test_worktree_root_keeps_trailing_space_reported_by_git(self):
+        root = str(self.repo.path) + " "
+        original_git = check_main_sync.git
+
+        def git(repo, *args, **kwargs):
+            if args == ("rev-parse", "--show-toplevel"):
+                return types.SimpleNamespace(stdout=root + "\n")
+            self.assertEqual(repo, root)
+            return original_git(self.repo.path, *args, **kwargs)
+
+        with unittest.mock.patch.object(check_main_sync, "git", side_effect=git):
+            result = check_main_sync.report(self.repo.path, "main", "HEAD")
+        self.assertEqual((result["ahead"], result["behind"]), (0, 0))
+
     def test_a_subdirectory_reports_the_same_conflicts_and_pull_requests(self):
         (self.repo.path / "docs").mkdir()
         self.repo.write("docs/notes.txt", "x\n")
@@ -268,6 +283,24 @@ class CheckMainSyncPathTests(CheckMainSyncFixture):
         self.assertIn(f"  {name}\n", result.stdout.replace("\r", ""))
         self.assertIn("#9", result.stdout)
 
+    @unittest.skipIf(sys.platform == "win32", "Windows filenames cannot contain carriage returns")
+    def test_carriage_return_in_path_is_preserved_in_json(self):
+        name = "line\rbreak.txt"
+        self.repo.write(name, "original\n")
+        self.repo.commit("add file")
+        self.branch("feature")
+        self.repo.write(name, "feature\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(name, "upstream\n")
+        self.repo.commit("upstream edit (#77)")
+
+        result = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["conflicts"], [name])
+        self.assertEqual(report["shared"], [name])
+        self.assertEqual(set(report["pulls"]), {"77"})
 
     def test_merged_pull_history_treats_shared_names_as_literal_paths(self):
         import importlib.util
@@ -370,6 +403,28 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
                     base = options[-1] if options else "refs/remotes/upstream/main"
                     self.assertIn(f"0 ahead and 1 behind {base}", result.stdout)
 
+    def test_fetch_reports_main_when_a_submodule_remote_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "dependency"
+            dependency.mkdir()
+            Repo(dependency)
+            self.repo.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(dependency), "dep")
+            self.repo.commit("add dependency")
+            upstream = root / "upstream"
+            self.repo.git("clone", "-q", ".", str(upstream))
+            (upstream / "upstream.txt").write_text("new upstream commit\n", encoding="utf-8")
+            self.repo.git("-C", str(upstream), "add", "upstream.txt")
+            self.repo.git("-C", str(upstream), "commit", "-qm", "upstream change")
+            self.repo.git("remote", "add", "upstream", str(upstream))
+            self.repo.git("-C", "dep", "remote", "set-url", "origin", str(root / "missing"))
+            self.repo.git("config", "fetch.recurseSubmodules", "true")
+
+            result = run_tool(self.repo.path, "--base", "upstream/main", "--fetch", "--strict")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
+
 
     def test_missing_git_executable_reports_usage_error_without_traceback(self):
         def missing_run(*args, **kwargs):
@@ -406,6 +461,37 @@ class CheckMainSyncJsonTests(CheckMainSyncFixture):
         self.assertEqual(strict.returncode, 1, strict.stderr)
         self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
+
+class RenderTests(unittest.TestCase):
+    def data(self, conflicts):
+        return {'head': 'h' * 9, 'ahead': 1, 'behind': 2, 'base': 'main', 'mergebase': 'a' * 40, 'conflicts': conflicts, 'shared': []}
+
+    def test_render_reports_a_clean_merge(self):
+        self.assertIn('merge: clean', check_main_sync.render(self.data([])))
+
+    def test_render_lists_each_conflicting_file(self):
+        text = check_main_sync.render(self.data(['f.txt']))
+        self.assertIn('merge: CONFLICT in 1 file(s)', text)
+        self.assertIn('  f.txt', text)
+
+
+class GitListTests(unittest.TestCase):
+    def make_repo(self, directory):
+        import subprocess as sp
+        sp.run(['git', '-C', directory, 'init', '-q'], check=True)
+        (Path(directory) / 'a.txt').write_text('x', encoding='utf-8')
+        sp.run(['git', '-C', directory, 'add', 'a.txt'], check=True)
+        sp.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'base'], check=True)
+
+    def test_lines_returns_each_non_empty_output_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(len(check_main_sync.lines(Path(directory), 'rev-list', 'HEAD')), 1)
+
+    def test_names_returns_the_tracked_file_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(check_main_sync.names(Path(directory), 'ls-files', '-z'), ['a.txt'])
 
 
 class ResolveBaseTests(unittest.TestCase):

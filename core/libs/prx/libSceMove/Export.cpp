@@ -44,13 +44,6 @@ int checkHandle(int32_t handle, bool validArguments = true) {
     return MOVE_OK;
 }
 
-uint32_t compiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
-}
-
 }
 
 extern "C" {
@@ -73,12 +66,13 @@ int APS5_VABI sceMoveTerm(void) {
 int APS5_VABI sceMoveOpen(int32_t userId, int32_t type, int32_t index) {
     std::lock_guard lock(stateMutex);
     if (!initialized) return MOVE_ERROR_NOT_INIT;
+    if (type != 0 && ApplicationCompiledSdkVersion() > MOVE_LAST_SDK_ALLOWING_NULL_DATA) return MOVE_ERROR_INVALID_PORT;
     if (userId == USER_SERVICE_USER_ID_INVALID) return MOVE_ERROR_INVALID_PORT;
-    if (openHandles.size() >= 8) return MOVE_ERROR_MAX_COMBINED;
-    if (userId != USER_SERVICE_INITIAL_USER_ID) NotImplemented_nid_no_patch(__func__);
+    if (userId != USER_SERVICE_INITIAL_USER_ID) return MOVE_ERROR_INVALID_PORT;
     for (const auto& [openHandle, slot] : openHandles) {
         if (slot.type == type && slot.index == index) return MOVE_ERROR_ALREADY_OPENED;
     }
+    if (openHandles.size() >= 8) return MOVE_ERROR_MAX_COMBINED;
     const int32_t handle = nextHandle;
     nextHandle += MOVE_HANDLE_STEP;
     openHandles.emplace(handle, Slot{type, index});
@@ -107,7 +101,7 @@ int APS5_VABI sceMoveReadStateLatest(int32_t handle, void* data) {
 }
 
 int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
-    const bool dataAccepted = data != nullptr || compiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
+    const bool dataAccepted = data != nullptr || ApplicationCompiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
     const bool countValid = outCount != nullptr && GuestWritable_nid_no_patch(outCount, sizeof(*outCount));
     const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && countValid);
     if (result == MOVE_ERROR_INVALID_HANDLE) {

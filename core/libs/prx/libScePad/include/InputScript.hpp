@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -83,12 +84,16 @@ public:
         for (auto& entry : entries) {
             const std::uint64_t startUs = entry.startMs * 1000;
             const std::uint64_t endUs = (entry.startMs + entry.holdMs) * 1000;
+            if (endUs > std::numeric_limits<std::uint64_t>::max() - loopUs) throw std::runtime_error("APS5_PAD_SCRIPT_LOOP_MS: loop period is too large");
             scriptEnd = std::max(scriptEnd, endUs);
             script.push_back({std::move(entry), startUs, endUs, -1});
         }
     }
 
-    void SetLoopMs(std::uint64_t value) { loopUs = value * 1000; }
+    void SetLoopMs(std::uint64_t value) {
+        if (value > (std::numeric_limits<std::uint64_t>::max() - scriptEnd) / 1000) throw std::runtime_error("APS5_PAD_SCRIPT_LOOP_MS: loop period is too large");
+        loopUs = value * 1000;
+    }
 
     void SetLive(const std::filesystem::path& path) {
         livePath = path;
@@ -199,6 +204,7 @@ private:
     }
 
     static void ParseLine(std::string_view raw, std::size_t line, std::vector<Entry>& out) {
+        if (line == 1 && raw.starts_with("\xef\xbb\xbf")) raw.remove_prefix(3);
         const auto hash = raw.find('#');
         const std::string_view text = hash == std::string_view::npos ? raw : raw.substr(0, hash);
         std::vector<std::string> tokens;
@@ -268,12 +274,11 @@ private:
     }
 
     void apply(Scheduled& event, std::uint64_t position, std::uint64_t cycle, std::uint64_t elapsed, Frame& frame, Report* report) {
-        if (position < event.startUs) return;
+        if (position < event.startUs || position >= event.endUs) return;
         if (event.firedCycle != static_cast<std::int64_t>(cycle)) {
             event.firedCycle = static_cast<std::int64_t>(cycle);
             if (report != nullptr) report->fired.push_back({elapsed / 1000, event.entry.holdMs, event.entry.label});
         }
-        if (position >= event.endUs) return;
         frame.buttons |= event.entry.buttons;
         if (event.entry.stick >= 0) {
             frame.hasSticks = true;

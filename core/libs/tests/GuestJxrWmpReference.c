@@ -54,6 +54,17 @@ void JxrWmpReferenceMetadata(void* value, const char* software, uint16_t rating,
     }
 }
 
+void JxrWmpReferenceSetCaption(void* value, uint16_t* caption) {
+    DESCRIPTIVEMETADATA* metadata = (DESCRIPTIVEMETADATA*)value;
+    metadata->pvarCaption.vt = DPKVT_LPWSTR;
+    metadata->pvarCaption.VT.pwszVal = caption;
+}
+
+const uint16_t* JxrWmpReferenceCaption(const void* value) {
+    const DESCRIPTIVEMETADATA* metadata = (const DESCRIPTIVEMETADATA*)value;
+    return metadata->pvarCaption.vt == DPKVT_LPWSTR ? metadata->pvarCaption.VT.pwszVal : NULL;
+}
+
 const char* JxrWmpReferenceSoftware(const void* value) {
     const DESCRIPTIVEMETADATA* metadata = (const DESCRIPTIVEMETADATA*)value;
     return metadata->pvarSoftware.vt == DPKVT_LPSTR ? metadata->pvarSoftware.VT.pszVal : NULL;
@@ -128,6 +139,14 @@ void JxrWmpReferenceConfigureDecoder(void* value) {
     decoder->WMP.wmiI.cROIHeight = decoder->WMP.wmiI.cThumbnailHeight;
     decoder->WMP.wmiI.oOrientation = O_NONE;
     decoder->WMP.wmiI.cPostProcStrength = 0;
+}
+
+void JxrWmpReferenceRegion(void* value, uint32_t left, uint32_t top, uint32_t width, uint32_t height) {
+    PKImageDecode* decoder = (PKImageDecode*)value;
+    decoder->WMP.wmiI.cROILeftX = left;
+    decoder->WMP.wmiI.cROITopY = top;
+    decoder->WMP.wmiI.cROIWidth = width;
+    decoder->WMP.wmiI.cROIHeight = height;
 }
 
 int64_t JxrWmpReferenceDecode(const uint8_t* data, size_t size, uint8_t* pixels, uint32_t stride, int32_t* width,

@@ -1,0 +1,5 @@
+# libkernel
+
+## add Functional
+
+- [EV_DISPATCH on an EVFILT_USER note](../../../core/libs/prx/libkernel/Equeue/Equeue.cpp) (libkernel) - delivering a `kevent` user note registered with `EV_DISPATCH` clears its activation and its saved `fflags`; FreeBSD 11.4's [`filt_usertouch`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/sys/kern/kern_event.c#L888-L896) clears the activation only under `EV_CLEAR` and never the saved `fflags`, and [`kqueue_register`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/sys/kern/kern_event.c#L1468-L1478) asks the filter again on `EV_ENABLE`. A re-enabled note without `EV_CLEAR` stays silent here until a new `NOTE_TRIGGER`, and the saved `fflags` restart from 0: the next report carries 0 after a `NOTE_FFNOP` or `NOTE_FFAND` trigger and only the new bits after `NOTE_FFOR`. Not measured on a console; no title is known to register a user note with `EV_DISPATCH`, and the `sceKernel*UserEvent*` calls cannot set it

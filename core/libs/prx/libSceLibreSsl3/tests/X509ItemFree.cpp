@@ -142,7 +142,8 @@ void TestNonNull() {
     errno = EDOM;
     RequireInvalidArgument([&] { AUTHORITY_KEYID_free_nid_postfix(unreadable); });
     Require(errno == EDOM);
-    RequireNotImplemented([&] { PKCS7_free_nid_postfix(unreadable); });
+    RequireInvalidArgument([&] { PKCS7_free_nid_postfix(static_cast<LibreSsl3Pkcs7*>(unreadable)); });
+    Require(errno == EDOM);
 }
 
 void TestAuthorityKeyId() {

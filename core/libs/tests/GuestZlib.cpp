@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <latch>
+#include <semaphore>
 #include <source_location>
 #include <cstring>
 #include <stdexcept>
@@ -69,6 +71,36 @@ static std::vector<std::uint8_t> MakeStoredZlib(const std::uint8_t* payload, std
     return out;
 }
 
+static void TestConcurrentWaiters(const void* source, std::uint32_t sourceLength) {
+    constexpr std::size_t capacity = 8192;
+    alignas(2048) std::array<std::uint8_t, 2 * capacity> output{};
+    std::array<std::uint64_t, 2> submitted{}, observed{};
+    std::array<std::int32_t, 2> statuses{};
+    std::latch started{2};
+    std::counting_semaphore<2> finished{0};
+    auto wait = [&](std::size_t index) {
+        std::uint32_t timeout = 10000000;
+        started.count_down();
+        statuses[index] = sceZlibWaitForDone(&observed[index], &timeout);
+        finished.release();
+    };
+    std::jthread first(wait, 0), second(wait, 1);
+    started.wait();
+    for (std::size_t index = 0; index < submitted.size(); ++index) {
+        Require(sceZlibInflate(source, sourceLength, output.data() + index * capacity, capacity, &submitted[index]) == 0);
+        Require(finished.try_acquire_for(std::chrono::seconds(3)));
+    }
+    first.join();
+    second.join();
+    Require(statuses[0] == 0 && statuses[1] == 0);
+    Require(submitted[0] < submitted[1]);
+    std::ranges::sort(observed);
+    Require(observed == submitted);
+    std::uint64_t remaining = 0;
+    std::uint32_t poll = 0;
+    Require(sceZlibWaitForDone(&remaining, &poll) == static_cast<std::int32_t>(0x81120027));
+}
+
 int main() {
     constexpr std::array<std::uint8_t, 77> compressed{0x78, 0x9c, 0xed, 0xca, 0xb1, 0xd, 0x80, 0x20, 0x10, 0x40, 0xd1, 0x9e, 0x29, 0x6e, 0x2, 0x3a, 0x6, 0x60, 0x3, 0x12, 0x26, 0x10, 0x30, 0x91, 0x88, 0x47, 0x71, 0xa1, 0xd0, 0xe9, 0x1d, 0x82, 0xf6, 0xbf, 0xfa, 0x45, 0x7d, 0x53, 0xe, 0xf2, 0x8d, 0x5e, 0xa4, 0x5e, 0x67, 0xbd, 0x6d, 0x3d, 0x72, 0x68, 0x93, 0x32, 0x97, 0x36, 0xf3, 0x2e, 0x12, 0x8, 0x4, 0x2, 0x81, 0x40, 0x20, 0x10, 0x8, 0x4, 0x2, 0x81, 0x40, 0x20, 0xec, 0x85, 0x1f, 0xf5, 0xf3, 0xbd, 0x4c};
     constexpr char text[] = "AnyPS5 zlib checksum and bounds.\n";
@@ -87,7 +119,11 @@ int main() {
     Require(sceZlibInitialize(output, 0) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(nullptr, 0) == 0);
     Require(sceZlibInitialize(nullptr, 0) == static_cast<std::int32_t>(0x81120033));
-    RequireThrows([&] { sceZlibInflate(compressed.data(), compressed.size(), output + 1, 8192, &id); });
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output + 1, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    Require(id == 0);
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output + 1024, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    Require(id == 0);
+    Require(std::all_of(storage.begin(), storage.end(), [](auto byte) { return byte == 0; }));
     for (const auto capacity : {0u, 1u, 2047u, 2049u, 65535u, 65537u}) {
         Require(sceZlibInflate(compressed.data(), compressed.size(), output, capacity, &id) == static_cast<std::int32_t>(0x81120016));
         Require(id == 0);
@@ -183,6 +219,22 @@ int main() {
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
     waiter.join();
     Require(completed == id);
+    TestConcurrentWaiters(compressed.data(), compressed.size());
+    {
+        constexpr auto invalid = static_cast<std::int32_t>(0x81120016);
+        Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
+        std::uint32_t poll = 0;
+        Require(sceZlibWaitForDone(reinterpret_cast<std::uint64_t*>(0x10), &poll) == invalid);
+        std::int32_t retryStatus{};
+        std::uint64_t retried{};
+        std::thread retry([&] {
+            std::uint32_t retryPoll = 1000000;
+            retryStatus = sceZlibWaitForDone(&retried, &retryPoll);
+        });
+        retry.join();
+        Require(retryStatus == 0 && retried == id);
+        Require(sceZlibWaitForDone(&retried, &poll) == static_cast<std::int32_t>(0x81120027));
+    }
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
     Require(sceZlibFinalize() == 0);
     Require(sceZlibInitialize(nullptr, 0) == 0);

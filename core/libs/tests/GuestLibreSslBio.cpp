@@ -934,7 +934,19 @@ void TestFileAndSocket() {
     Require(::close(descriptors[0]) == 0, "close pipe reader");
 #endif
 
-    Require(BIO_new_socket_nid_postfix(-1, 0) == nullptr, "reject negative guest socket");
+    for (const int closeFlag : {0, 1}) {
+        Bio* negative = BIO_new_socket_nid_postfix(-1, closeFlag);
+        Require(negative && negative->initialized && negative->number == -1, "socket BIO around a negative descriptor");
+        Require(negative->method && negative->method->type == 0x405, "negative descriptor BIO uses the socket method");
+        Require(BIO_ctrl_nid_postfix(negative, 8, 0, nullptr) == closeFlag, "negative descriptor BIO keeps its close flag");
+        char byte = 0;
+        Require(negative->method->read(negative, &byte, 1) == -1, "read on a negative descriptor fails");
+        Require(negative->method->write(negative, "x", 1) == -1, "write on a negative descriptor fails");
+        Require(BIO_free_nid_postfix(negative) == 1, "free socket BIO around a negative descriptor");
+    }
+    Bio* lowest = BIO_new_socket_nid_postfix(std::numeric_limits<int>::min(), 0);
+    Require(lowest && lowest->number == std::numeric_limits<int>::min(), "socket BIO keeps any descriptor value");
+    Require(BIO_free_nid_postfix(lowest) == 1, "free socket BIO around the lowest descriptor");
     Bio* socket = BIO_new_socket_nid_postfix(42, 0);
     Require(socket && socket->initialized && socket->number == 42, "guest socket BIO descriptor");
     Require(socket->method && socket->method->type == 0x405, "socket BIO method descriptor");

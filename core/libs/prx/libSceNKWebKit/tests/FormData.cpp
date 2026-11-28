@@ -75,7 +75,7 @@ static FormData* Create(const void* data, std::size_t size) {
 
 static void Free(FormData* formData) {
     _ZN7WebCore8FormDataD1Ev(formData);
-    _ZdlPv_nid_postfix(formData);
+    _ZN3WTF8fastFreeEPv(formData);
 }
 
 static std::string Bytes(const FormDataElement& element) {
@@ -161,11 +161,21 @@ static void PushValueless(FormData* formData, StringImpl* garbage) {
 
 static void TestLayout() {
     FormData* formData = Create();
-    Require(guestAllocations.size() == 1);
-    Require(guestAllocations.begin()->first == formData);
-    Require(guestAllocations.begin()->second == 72);
+    Require(guestAllocations.empty());
+    Require(_ZN3WTF14fastMallocSizeEPKv(formData) == 72);
     Require(sizeof(FormDataElement) == 48);
     Require(offsetof(FormDataElement, index) == 40);
+    Free(formData);
+
+    formData = Create("abc", 3);
+    Require(guestAllocations.empty());
+    Require(_ZN3WTF14fastMallocSizeEPKv(formData) == 72);
+    auto copy = _ZNK7WebCore8FormData12isolatedCopyEv(formData);
+    Require(guestAllocations.empty());
+    Require(copy.m_ptr != formData);
+    Require(_ZN3WTF14fastMallocSizeEPKv(copy.m_ptr) == 72);
+    copy.m_ptr->deref();
+    copy.m_ptr = nullptr;
     Free(formData);
     Require(guestAllocations.empty());
 }
@@ -208,23 +218,30 @@ static void TestCreate() {
 }
 
 static void TestRefCounting() {
+    String witness = MakeString("/tmp/witness");
     auto ref = _ZN7WebCore8FormData6createEv();
     ref.m_ptr->ref();
     Require(ref.m_ptr->refCount == 2);
     ref.m_ptr->deref();
     Require(ref.m_ptr->refCount == 1);
-    Require(guestAllocations.size() == 1);
+    PushFile(ref.m_ptr, witness, 0, 1);
+    Require(witness.impl->refCount == 4);
     {
         auto copy = ref;
         Require(ref.m_ptr->refCount == 2);
     }
     Require(ref.m_ptr->refCount == 1);
+    Require(witness.impl->refCount == 4);
     ref = WebCore::Ref<FormData>(*Create());
-    Require(guestAllocations.size() == 1);
+    Require(witness.impl->refCount == 2);
+    PushFile(ref.m_ptr, witness, 0, 1);
     ref = WebCore::Ref<FormData>(*Create());
-    Require(guestAllocations.size() == 1);
+    Require(witness.impl->refCount == 2);
+    PushFile(ref.m_ptr, witness, 0, 1);
+    Require(witness.impl->refCount == 4);
     ref.m_ptr->deref();
     ref.m_ptr = nullptr;
+    Require(witness.impl->refCount == 2);
     Require(guestAllocations.empty());
 }
 
@@ -597,7 +614,7 @@ static void TestIsolatedCopyFailure() {
     PushFile(source, file, 0, 1);
     PushValueless(source, nullptr);
     Require(Throws<std::logic_error>([&] { _ZNK7WebCore8FormData12isolatedCopyEv(source); }));
-    Require(guestAllocations.size() == 1);
+    Require(guestAllocations.empty());
     Free(source);
     Require(file.impl->refCount == 2);
     Require(guestAllocations.empty());
@@ -619,19 +636,19 @@ static void TestDestructor() {
     Require(formData->elements.buffer == nullptr);
     Require(formData->elements.size == 0);
     Require(formData->boundary.buffer == nullptr);
-    _ZdlPv_nid_postfix(formData);
+    _ZN3WTF8fastFreeEPv(formData);
     Require(guestAllocations.empty());
 
     formData = Create("abc", 3);
     PushFile(formData, file, 0, 1);
     _ZN7WebCore8FormDataD2Ev(formData);
     Require(file.impl->refCount == 2);
-    _ZdlPv_nid_postfix(formData);
+    _ZN3WTF8fastFreeEPv(formData);
     Require(guestAllocations.empty());
 
     formData = Create();
     _ZN7WebCore8FormDataD1Ev(formData);
-    _ZdlPv_nid_postfix(formData);
+    _ZN3WTF8fastFreeEPv(formData);
     Require(guestAllocations.empty());
 }
 

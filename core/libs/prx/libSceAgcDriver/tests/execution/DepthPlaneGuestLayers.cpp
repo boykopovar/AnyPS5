@@ -526,6 +526,37 @@ void SharedLayerRanges(const Context& context, const WatchedBlock& block) {
     ClearDepthSurfaces(context.device);
 }
 
+void ViewedSliceWindow(const Context& context, const WatchedBlock& block) {
+    ClearDepthSurfaces(context.device);
+    const auto address = block.Address();
+    for (std::uint32_t layer = 1; layer < 4; ++layer) FillLayer(block.Data() + layer * LayerBytes, 0.25f * static_cast<float>(layer));
+    DepthSurfaceView(context, DepthTarget{address, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    auto resource = ArrayOver(address);
+    resource.tileMode = TextureTileMode::kStandard64KB;
+    resource.depthOrLastArray = 3;
+    resource.baseArray = 3;
+    Require(ViewedArrayWindow(resource, true).baseAddress == address + 3u * LayerBytes, "the fixture's last slice does not start its own array window");
+    watchedBegin = address + LayerBytes;
+    watchedEnd = address + 3u * LayerBytes;
+    watchedReads = 0;
+    imageToBufferCopies = 0;
+    bufferToImageCopies = 0;
+    AgcDriver::GuestMemory::SetFlushHook(&CountReads);
+    std::shared_ptr<Texture> texture;
+    try {
+        texture = DepthSurfaceTexture(context, words, resource, components);
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    Require(texture != nullptr, "the last slice of a 2D array over a depth surface was not sampled through its depth planes");
+    Require(watchedReads.load() == 0, "sampling only the last slice of the array read " + std::to_string(watchedReads.load()) + " times from the guest layers before it");
+    Require(imageToBufferCopies.load() == 0 && bufferToImageCopies.load() == 1, "sampling only the last slice of the array recorded " + std::to_string(imageToBufferCopies.load()) + " depth surface copies and " + std::to_string(bufferToImageCopies.load()) + " plane copy fills, expected 0 and 1");
+    Require(texture->SampledViewRange(false).layers == 1u, "the view of the array's last slice covers more than that slice");
+    ClearDepthSurfaces(context.device);
+}
+
 void RunCubeGather(const Context& base, const WatchedBlock& block) {
     TextureDetiler detiler(base);
     auto context = base;
@@ -675,6 +706,7 @@ int main() {
                 PooledPlaneCopies(context, block, second);
             }
             SharedLayerRanges(context, block);
+            ViewedSliceWindow(context, block);
             RunCubeGather(context, block);
             RunCubeTiledSlice(context, block);
             RunCubeArrayGather(context, block);

@@ -359,6 +359,43 @@ void TestFindByName() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+void TestRemoveFirstDuplicate() {
+    Fixture f;
+    Require(f.Parse("<r a=\"1\"><b/><c>t</c></r>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    const XmlNodeId root = Root(&document);
+    XmlNodeId first{};
+    _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE(&first, &document, root);
+    XmlNodeId last{};
+    _ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE(&last, &document, root);
+
+    XmlHandle list{nullptr};
+    Require(Start(&list, &f.initializer) == 0, "the list starts");
+    Require(_ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&list, root) == 0, "insert A");
+    Require(_ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&list, first) == 0, "insert B");
+    Require(_ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&list, root) == 0, "insert A again");
+    Require(_ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&list, last) == 0, "insert C");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 4, "four items");
+
+    Require(_ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE(&list, root) == 0, "remove first A");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 3, "three items remain");
+    Require(Name(&document, _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 0)) == "b", "first item is B");
+    Require(Name(&document, _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)) == "r", "second item is A");
+    Require(Name(&document, _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 2)) == "c", "third item is C");
+
+    Require(_ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE(&list, root) == 0, "remove second A");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 2, "two items remain");
+    Require(Name(&document, _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 0)) == "b", "first item is B");
+    Require(Name(&document, _ZNK3sce3Xml3Dom8NodeList4itemEj(&list, 1)) == "c", "second item is C");
+
+    Require(_ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE(&list, root) == static_cast<int>(0x80850201), "third removal reports not found");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 2, "list unchanged after not found");
+
+    _ZN3sce3Xml3Dom8NodeListD1Ev(&list);
+    _ZN3sce3Xml3Dom8Document9terminateEv(&document);
+}
+
 }
 
 int main() {
@@ -366,5 +403,6 @@ int main() {
     TestItems();
     TestDocumentLists();
     TestFindByName();
+    TestRemoveFirstDuplicate();
     return 0;
 }

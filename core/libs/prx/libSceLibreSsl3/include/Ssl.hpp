@@ -84,6 +84,7 @@ struct LibreSsl3SslSession {
     std::int64_t timeout;
     std::int64_t time;
     std::int32_t references;
+    std::uint16_t cipherValue;
 };
 
 static_assert(sizeof(LibreSsl3SslMethod) == 16);
@@ -103,3 +104,4 @@ static_assert(offsetof(LibreSsl3SslSession, masterKeyLength) == 8);
 static_assert(offsetof(LibreSsl3SslSession, masterKey) == 16);
 static_assert(sizeof(LibreSsl3SslSession) == 192);
 static_assert(offsetof(LibreSsl3SslSession, references) == 184);
+static_assert(offsetof(LibreSsl3SslSession, cipherValue) == 188);

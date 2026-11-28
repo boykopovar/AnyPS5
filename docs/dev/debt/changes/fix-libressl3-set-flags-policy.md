@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## change [X509_VERIFY_PARAM_set_flags]
+
+- [X509_VERIFY_PARAM_set_flags](../../../core/libs/prx/libSceLibreSsl3/src/X509VerifyParam.cpp) (libSceLibreSsl3) - measured on a PS5 (firmware 11.60, payload process; a title process may differ) in two runs: it ORs the flags into `flags` and returns 1, and when `EXPLICIT_POLICY`, `INHIBIT_ANY` or `INHIBIT_MAP` is set it also sets `POLICY_CHECK`, as [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/x509/x509_vpm.c) `x509_vpm.c` does and [4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_vpm.c) does not. The probe called it on a zeroed static 128-byte object (`X509_VERIFY_PARAM_new` did not resolve in that module), with the prototype and `flags` at offset 24 assumed; `X509_VERIFY_PARAM_get_flags`, objects created by the module and later calls on them are not measured. It writes libSceLibreSsl's 2.5.4 `LibreSslX509VerifyParam`. Null parameters throw.

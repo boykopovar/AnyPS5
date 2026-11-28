@@ -211,7 +211,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool alphaToCoverage, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, bool dithered = false, bool sampleMaskExport = false, std::uint8_t ditheredSamples = 8) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool alphaToCoverage, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, bool dithered = false, bool sampleMaskExport = false, std::uint8_t ditheredSamples = 8, ShaderRecompiler::SingleSampleDither singleSample = ShaderRecompiler::SingleSampleDither::None) {
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
     const auto target = device.Target();
@@ -249,6 +249,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.alphaToCoverage = alphaToCoverage;
     state.ditheredAlphaToCoverage = dithered;
     state.ditheredAlphaSamples = ditheredSamples;
+    state.singleSampleDither = singleSample;
     state.samples = color.samples;
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
@@ -258,6 +259,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     prepared.alphaToCoverage = alphaToCoverage;
     prepared.ditheredAlphaToCoverage = dithered;
     prepared.ditheredAlphaSamples = ditheredSamples;
+    prepared.singleSampleDither = singleSample;
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
         {waveSize, 0, {}, std::nullopt, prepared, std::nullopt, pixelMemory},
@@ -272,6 +274,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     fragment.context.pixel->alphaToCoverage = state.alphaToCoverage;
     fragment.context.pixel->ditheredAlphaToCoverage = state.ditheredAlphaToCoverage;
     fragment.context.pixel->ditheredAlphaSamples = state.ditheredAlphaSamples;
+    fragment.context.pixel->singleSampleDither = state.singleSampleDither;
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto materialize = [&](const ShaderRecompiler::RecompileRequest& request) {
         const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request);
@@ -384,6 +387,134 @@ struct DitherCase {
     std::uint32_t format;
     std::array<std::uint32_t, 4> masks;
 };
+
+constexpr std::array<DitherCase, 44> SingleE701Cases{{
+    {0x00000000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003400u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003600u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003800u, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x00003900u, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x00003a00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00003b00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00003c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x000033ffu, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003401u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x000037ffu, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003801u, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x000039ffu, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x00003a01u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00008000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x0000bc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00004000u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x0000fc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00007c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e800000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3ec00000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f000000u, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f200000u, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f400000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3f600000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3e7fffffu, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e800001u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3effffffu, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f000001u, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f3fffffu, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f400001u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x80000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xbf800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x40000000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0xff800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x7fc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xffc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f812345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xff812345u, Float32Export, {0u, 0u, 0u, 0u}},
+}};
+
+constexpr std::array<DitherCase, 48> SingleRoundedCases{{
+    {0x00000000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003000u, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x00003400u, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x00003600u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003800u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003900u, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003a00u, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003b00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00003c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00002fffu, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003001u, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x000035ffu, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x00003601u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x000038ffu, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003901u, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003affu, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003b01u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00008000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x0000bc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00004000u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x0000fc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00007c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e000000u, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3e800000u, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3ec00000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f000000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f200000u, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f400000u, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f600000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3dffffffu, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e000001u, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3ebfffffu, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3ec00001u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f1fffffu, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f200001u, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f5fffffu, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f600001u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x80000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xbf800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x40000000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0xff800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x7fc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xffc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f812345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xff812345u, Float32Export, {0u, 0u, 0u, 0u}},
+}};
+
+void SingleSampleDitheredCoverage(AgcDriver::VulkanDevice& device, ShaderRecompiler::SingleSampleDither mode, std::uint32_t format) {
+    const auto cases = mode == ShaderRecompiler::SingleSampleDither::E701 ? std::span<const DitherCase>(SingleE701Cases) : std::span<const DitherCase>(SingleRoundedCases);
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    for (const auto& test : cases) {
+        if (test.format != format) continue;
+        blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+        auto& block = *blocks.back();
+        std::memset(block.data, 0, block.bytes);
+        const auto target = DecodeTarget(block);
+        Draw(device, target, false, Float32Export, Program(Color{1, 0, 0, 1}, Float32Export));
+        const auto alpha = format == Float32Export ? std::bit_cast<float>(test.bits) : 0.0f;
+        const auto half = format == Float16Export ? std::optional<std::uint16_t>(static_cast<std::uint16_t>(test.bits)) : std::nullopt;
+        Draw(device, target, true, format, Program(Color{0, 0, 0, alpha}, format, std::nullopt, half), true, false, 1u, mode);
+        const auto stored = ReadBack(device, block);
+        for (std::uint32_t y = 0; y < Height; ++y) {
+            for (std::uint32_t x = 0; x < Width; ++x) {
+                const auto covered = test.masks[(x & 1u) + 2u * (y & 1u)];
+                const auto expected = x < ScissorWidth ? 1.0f - static_cast<float>(covered) : 0.0f;
+                const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u]);
+                if (actual == expected) continue;
+                char detail[192];
+                std::snprintf(detail, sizeof(detail), "single-sample dither %u export %u alpha0x%08x pixel(%u,%u): %.9g expected %.9g", static_cast<unsigned>(mode), format, test.bits, x, y, actual, expected);
+                throw std::runtime_error(detail);
+            }
+        }
+        programCount = 0;
+    }
+}
 
 void DitheredCoverage(AgcDriver::VulkanDevice& device, std::uint32_t samples, std::span<const DitherCase> cases) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
@@ -1056,6 +1187,92 @@ void DccRefillTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSampl
     }
 }
 
+void DccReplacementTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
+#ifdef _WIN32
+    static_cast<void>(device);
+    static_cast<void>(selectedSamples);
+    return;
+#else
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+    const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+    const auto fill = [](const Block& block, std::size_t bytes, std::uint32_t pattern) {
+        for (std::size_t offset = 0; offset + sizeof(pattern) <= bytes; offset += sizeof(pattern)) std::memcpy(block.data + offset, &pattern, sizeof(pattern));
+        AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), bytes, pattern);
+    };
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (selectedSamples != 0 && samples != selectedSamples) continue;
+        for (const auto mode : {0u, 1u, 2u}) {
+            blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+            auto& source = *blocks.back();
+            std::memset(source.data, 0, source.bytes);
+            blocks.push_back(std::make_unique<Block>(BlockBytes));
+            auto& metadata = *blocks.back();
+            std::memset(metadata.data, 0, BlockBytes);
+            auto target = DecodeTarget(source, samples);
+            target.dccAddress = metadata.Address();
+            target.dccPipeAligned = true;
+            target.dccAlphaOnMsb = true;
+            const auto dccBytes = AgcDriver::Graphics::MultisampledDccBytes(target);
+            Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+            fill(metadata, dccBytes, 0xc0c0c0c0u);
+            Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+            programCount = 0;
+            AgcDriver::Graphics::GuestTextureResource cleared{};
+            cleared.baseAddress = target.surfaceAddress;
+            cleared.width = target.extent.width;
+            cleared.height = target.extent.height;
+            cleared.samples = target.samples;
+            cleared.pipeBankXor = target.pipeBankXor;
+            AgcDriver::Graphics::NoteMultisampledSingleClear(cleared, {0x3c003c00u, 0x3c003c00u, 0u, 0u});
+            const std::vector<std::byte> keys(dccBytes, std::byte{0x10});
+            const auto recorded = [&] {
+                try {
+                    AgcDriver::Graphics::MultisampledDccClear(target, keys, {});
+                    return true;
+                } catch (const std::runtime_error& error) {
+                    if (std::string_view(error.what()).find("without a recorded clear color") == std::string_view::npos) throw;
+                    return false;
+                }
+            };
+            Require(recorded(), "a recorded comp-to-single clear is not found before the replacement");
+            if (mode == 2u) {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Unmap(metadata.data, 4096u, [](const void*, std::size_t, const void*, bool) {});
+                }
+                bool refused = false;
+                try {
+                    Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                } catch (const std::runtime_error& error) {
+                    refused = std::string_view(error.what()).find("metadata was released") != std::string_view::npos;
+                }
+                Require(refused, "a resident multisampled DCC target was drawn after part of its metadata was unmapped");
+                programCount = 0;
+                continue;
+            }
+            const auto replaced = mode == 0u ? metadata.Address() : source.Address() + source.bytes / 2u;
+            AgcDriver::Graphics::RetireResidentImagesOver_nid_no_patch(replaced, 4096u);
+            AgcDriver::Graphics::RequireNoMultisampleTarget(source.Address(), source.bytes, mode == 0u ? "a replaced metadata page" : "a replaced interior color page");
+            Require(!recorded(), "a recorded comp-to-single clear survived the replacement of a page of its surface");
+            fill(metadata, dccBytes, 0xc0c0c0c0u);
+            Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+            programCount = 0;
+        }
+    }
+#endif
+}
+
 void DccImportWindowTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
     if (!AgcDriver::GuestMemory::WriteWatched()) return;
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
@@ -1140,8 +1357,13 @@ void MutateDccDuringCopy() {
 void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
     Require(AgcDriver::GuestMemory::WriteWatched(), "color unwatch test requires the guest write watch");
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
-    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
-        const auto samples = mode == 7u ? 8u : 4u;
+#ifdef _WIN32
+    constexpr auto modeCount = 11u;
+#else
+    constexpr auto modeCount = 10u;
+#endif
+    for (auto mode = 0u; mode < modeCount; ++mode) {
+        const auto samples = mode >= 7u ? 8u : 4u;
         Block source(layout.Bytes() * samples);
         Block metadata(BlockBytes);
         Block resolved(layout.Bytes());
@@ -1160,7 +1382,7 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             target.cmaskAddress = cmask->Address();
             target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
             target.cmaskFastClear = true;
-            if (mode == 7u) {
+            if (mode >= 7u) {
                 fmask = std::make_unique<Block>(2u * BlockBytes);
                 std::memset(fmask->data, 0x11, fmask->bytes);
                 target.fmaskAddress = fmask->Address();
@@ -1181,7 +1403,17 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             dccCopyMutation = source.data;
             AgcDriver::Graphics::SetMultisampleDccCopyHookForTest(&MutateDccDuringCopy);
         }
-        if (mode == 7u) {
+        if (mode == 10u) {
+            constexpr std::uint64_t pageBytes = 4096u;
+            const auto address = metadata.Address();
+            AgcDriver::GuestMemory::Unwatch(address, pageBytes);
+            Require(!AgcDriver::GuestMemory::Watched(address, pageBytes), "the DCC metadata page was not unwatched");
+            const std::array<std::byte, 1> same{static_cast<std::byte>(metadata.data[0])};
+            AgcDriver::GuestMemory::StoreOwnBytes(address, same);
+            const std::array ranges{std::pair{address, address + pageBytes}};
+            AgcDriver::GuestMemory::Rewatch(ranges);
+            Require(AgcDriver::GuestMemory::Watched(address, pageBytes), "the DCC metadata page was not rewatched");
+        } else if (mode >= 7u) {
             AgcDriver::GuestMemory::Unwatch(fmask->Address(), 4096u);
         } else if (mode == 6u) {
             AgcDriver::GuestMemory::Unwatch(cmask->Address(), 4096u);
@@ -1200,19 +1432,23 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             refused = reason.find("writes to a resident multisampled DCC") != std::string_view::npos || reason.find("requires watched guest memory") != std::string_view::npos;
             if (!refused) throw;
         }
-        Require(refused == (mode == 1u || mode == 2u || mode == 3u || mode == 5u), "DCC unwatch did not preserve unchanged data or refused a real write incorrectly");
+        if (mode == 10u) Require(refused, "a same-value DCC metadata store before rewatch was accepted");
+        else Require(refused == (mode == 1u || mode == 2u || mode == 3u || mode == 5u), "DCC unwatch did not preserve unchanged data or refused a real write incorrectly");
         if (!refused) Require(ReadBack(device, resolved) == before, "color unwatch changed a rendered sample");
-        if (mode == 4u || mode >= 6u) {
+        if (!refused && (mode == 4u || mode >= 6u)) {
             if (mode == 7u) fmask->data[0] = 0x55u;
             else if (mode == 6u) cmask->data[0] = 0xffu;
-            else metadata.data[0] = 0xffu;
+            else if (mode == 9u) {
+                const std::array<std::byte, 1> same{static_cast<std::byte>(metadata.data[0])};
+                AgcDriver::GuestMemory::StoreOwnBytes(metadata.Address(), same);
+            } else metadata.data[0] = 0xffu;
             bool changedRefused = false;
             try {
                 device.ColorMetadataPass(pass);
             } catch (const std::runtime_error& error) {
                 changedRefused = std::string_view(error.what()).find("writes to a resident") != std::string_view::npos;
             }
-            Require(changedRefused, "a DCC metadata write after unwatch was accepted");
+            Require(changedRefused, mode == 9u ? "a same-value DCC metadata store after unwatch was accepted" : "a DCC metadata write after unwatch was accepted");
         }
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -1520,6 +1756,7 @@ int main(int argc, char** argv) {
             try {
                 DccFastClearTests(*device, samples);
                 DccRefillTests(*device, samples);
+                DccReplacementTests(*device, samples);
                 DccImportWindowTests(*device, samples);
             } catch (const std::runtime_error& error) {
                 if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
@@ -1551,6 +1788,18 @@ int main(int argc, char** argv) {
             std::cout << "Multisampled DCC compared host import tests passed\n";
             return 0;
 #endif
+        }
+        if (argc == 2) {
+            const std::string_view arg(argv[1]);
+            const bool first = arg == "--single-e701-f16" || arg == "--single-e701-f32";
+            const bool rounded = arg == "--single-rounded-f16" || arg == "--single-rounded-f32";
+            if (first || rounded) {
+                const auto format = arg.ends_with("f16") ? Float16Export : Float32Export;
+                const auto mode = first ? ShaderRecompiler::SingleSampleDither::E701 : ShaderRecompiler::SingleSampleDither::Rounded18701;
+                SingleSampleDitheredCoverage(*device, mode, format);
+                std::puts("single-sample dithered alpha-to-coverage tests passed");
+                return 0;
+            }
         }
         if (argc == 2 && std::string_view(argv[1]) == "--dithered8") {
             try {
