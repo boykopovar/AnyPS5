@@ -864,7 +864,7 @@ void TestReadOnlyStalePlaneFlush(const Context& context) {
     try {
         static_cast<void>(FlushDepthPlanes(address, planeBytes));
     } catch (const std::runtime_error& error) {
-        rejected = std::string_view(error.what()).find("storage texture has no committed guest pages") != std::string_view::npos;
+        rejected = std::string_view(error.what()).find("storage texture has no writable guest pages") != std::string_view::npos;
     }
     Require(rejected, "a mapped read-only depth plane must retain the unsupported-store rejection");
     Require(DepthPlanesStale(), "a mapped read-only depth plane must retain its pending results");
