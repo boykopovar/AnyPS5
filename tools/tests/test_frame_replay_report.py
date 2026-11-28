@@ -81,6 +81,24 @@ class FrameReplayReportTests(unittest.TestCase):
                 self.assertIsNone(result["pairs"][0]["metrics"][metric]["candidate"])
                 self.assertIsNone(result["paired_observations"][metric]["median_change_pct"])
 
+    def test_zero_millisecond_frames_count_in_observations_but_not_percentages(self):
+        runs = []
+        for iteration, p50 in ((1, 0), (2, 0), (3, 1)):
+            native = copy.deepcopy(NATIVE)
+            native["frame_ms"] = {"p50": p50, "p90": p50, "max": p50, "each": [p50, p50]}
+            assessment = report.parse_replay_result(json.dumps(native), HOST)
+            self.assertEqual(assessment["issues"], [])
+            runs += [{"phase": "trial", "iteration": iteration, "returncode": 0, "timed_out": False,
+                      "log_limit": False, "arm": arm, "assessment": copy.deepcopy(assessment)}
+                     for arm in ("baseline", "candidate")]
+        result = report.replay_comparison_report(
+            {"format": "aps5-frame-replay-comparison/1", "complete": True, "runs": runs})
+        for arm in ("baseline", "candidate"):
+            self.assertEqual(result["observations"][arm]["metrics"]["p50_ms"], {"n": 3, "median": 0, "min": 0, "max": 1})
+        self.assertEqual(result["pairs"][0]["metrics"]["p50_ms"], {"baseline": 0, "candidate": 0, "change": 0, "change_pct": None})
+        self.assertEqual(result["pairs"][2]["metrics"]["p50_ms"]["change_pct"], 0)
+        self.assertEqual(result["paired_observations"]["p50_ms"]["n"], 1)
+
     def test_saved_comparison_refuses_a_non_object_inputs_section(self):
         with self.assertRaisesRegex(ValueError, "comparison inputs must be an object"):
             report.replay_comparison_report({"format": "aps5-frame-replay-comparison/1", "runs": [], "inputs": []})

@@ -422,7 +422,7 @@ def comparison_metric(native, key):
         value = frame_ms.get("p50") if isinstance(frame_ms, dict) else None
     else:
         value = native.get(key)
-    return value if type(value) in (int, float) and 0 < value <= MAX_REPLAY_MEASUREMENT else None
+    return value if type(value) in (int, float) and 0 <= value <= MAX_REPLAY_MEASUREMENT else None
 
 
 def replay_comparison_report(report, markdown=False):
@@ -503,7 +503,7 @@ def replay_comparison_report(report, markdown=False):
                 values = [comparison_metric(members[arm]["assessment"]["native"], key)
                           for arm in ("baseline", "candidate")]
                 before, after = values
-                percentage = (after / before - 1) * 100 if not pair["issues"] and None not in values else None
+                percentage = (after / before - 1) * 100 if not pair["issues"] and None not in values and before > 0 and after > 0 else None
                 if percentage is not None and not math.isfinite(percentage):
                     percentage = None
                 pair["metrics"][key] = {"baseline": before, "candidate": after,
