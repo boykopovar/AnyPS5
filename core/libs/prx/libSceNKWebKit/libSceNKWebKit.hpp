@@ -26,6 +26,7 @@
 #include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libSceNKWebKit/include/FormDataExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/LoggedInStatusExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemURLExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorTargetExports.hpp"
 #include "prx/libSceNKWebKit/include/IsoBoxExports.hpp"
