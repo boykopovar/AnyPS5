@@ -26,7 +26,8 @@
 namespace {
 
 using CodecDestructor = void(APS5_VABI*)(WebRtcCodec*);
-using CodecToParameters = void*(APS5_VABI*)(void*, const WebRtcCodec*);
+using CodecToParameters = WebRtcRtpCodecParameters*(APS5_VABI*)(WebRtcRtpCodecParameters*, const WebRtcCodec*);
+using ParametersDestructor = void(APS5_VABI*)(WebRtcRtpCodecParameters*);
 
 std::set<void*> live;
 std::size_t failAfterAllocations = static_cast<std::size_t>(-1);
@@ -192,6 +193,11 @@ void TestCreateFromFormat() {
     WebRtcSdpVideoFormat format;
     InitFormat(format, "VP9-with-a-name-longer-than-fifteen");
     AttachParameters(format);
+    auto* left = MakeNode("level-id", "1", false);
+    left->links.parent = format.parameters.root;
+    format.parameters.root->links.left = left;
+    format.parameters.beginNode = left;
+    ++format.parameters.size;
     SetInlineModes(format, 3);
     const WebRtcSdpVideoFormat formatBefore = format;
     const auto liveBefore = live;
@@ -219,27 +225,52 @@ void TestCreateFromFormat() {
     Require(codec.scalabilityModes.inlined[3] == 0xcd && codec.scalabilityModes.inlined[33] == 0xcd);
     const auto* const txModeBytes = reinterpret_cast<const unsigned char*>(&codec.txMode.value);
     Require(!codec.txMode.engaged && txModeBytes[0] == 0 && txModeBytes[1] == 0xcd);
-    Require(codec.params.size == 2 && codec.params.root != format.parameters.root);
+    Require(codec.params.size == 3 && codec.params.root != format.parameters.root);
     Require(codec.params.root->links.parent == EndNode(codec.params));
-    Require(codec.params.beginNode == codec.params.root);
+    Require(codec.params.beginNode == codec.params.root->links.left);
     Require(ReadGuestString(codec.params.root->key) == "profile-id" && ReadGuestString(codec.params.root->value) == "0");
     Require(ReadGuestString(codec.params.root->links.right->key) == "x-long-parameter");
     Require(ReadGuestString(codec.params.root->links.right->value) == std::string(60, 'p'));
     Require(codec.params.root->links.right->links.parent == codec.params.root);
     Require(!codec.feedbackParams.begin && !codec.feedbackParams.end && !codec.feedbackParams.capacityEnd);
-    Require(live.size() == liveBefore.size() + 5);
+    Require(live.size() == liveBefore.size() + 6);
 
-    bool threw = false;
-    try {
-        reinterpret_cast<CodecToParameters>(vtable[2])(nullptr, &codec);
-    } catch (const std::runtime_error&) {
-        threw = true;
+    const auto convert = reinterpret_cast<CodecToParameters>(vtable[2]);
+    Require(ThrowsInvalid([&] { convert(nullptr, &codec); }));
+    WebRtcRtpCodecParameters parameters{};
+    const auto codecAllocations = live;
+    for (std::size_t allowed = 0; allowed < 6; ++allowed) {
+        failAfterAllocations = allocationCounter + allowed;
+        try {
+            convert(&parameters, &codec);
+            Require(false);
+        } catch (const std::bad_alloc&) {
+            Require(live == codecAllocations && !parameters.codec.vtable);
+        }
     }
-    Require(threw);
-
+    failAfterAllocations = static_cast<std::size_t>(-1);
+    Require(convert(&parameters, &codec) == &parameters);
+    Require(parameters.codec.kind == 1 && parameters.payloadType == -1);
+    Require(parameters.codec.hasClockRate && parameters.codec.clockRate == 90000 && !parameters.codec.hasNumChannels);
+    Require(!parameters.codec.rtcpFeedback.begin && !parameters.codec.rtcpFeedback.end && !parameters.codec.rtcpFeedback.capacityEnd);
+    Require(parameters.codec.name.pointer != codec.name.pointer);
+    Require(parameters.codec.parameters.size == 3 && parameters.codec.parameters.root != codec.params.root);
+    Require(parameters.codec.parameters.root->links.parent == EndNode(parameters.codec.parameters));
+    const auto* copiedRoot = parameters.codec.parameters.root;
+    Require(parameters.codec.parameters.beginNode == copiedRoot->links.left);
+    Require(copiedRoot->links.left->links.parent == copiedRoot && copiedRoot->links.right->links.parent == copiedRoot);
+    auto* originalRight = codec.params.root->links.right;
+    const auto* copiedRight = copiedRoot->links.right;
+    Require(copiedRight->key.pointer != originalRight->key.pointer && copiedRight->value.pointer != originalRight->value.pointer);
+    originalRight->key.pointer[0] = 'y';
+    originalRight->value.pointer[0] = 'q';
+    Require(ReadGuestString(copiedRight->key) == "x-long-parameter" && ReadGuestString(copiedRight->value) == std::string(60, 'p'));
     errno = 62;
     DestroyCodec(codec);
     Require(errno == 62);
+    Require(ReadGuestString(parameters.codec.name) == "VP9-with-a-name-longer-than-fifteen");
+    Require(ReadGuestString(parameters.codec.parameters.root->links.right->value) == std::string(60, 'p'));
+    reinterpret_cast<ParametersDestructor>(parameters.codec.vtable[0])(&parameters);
     Require(live == liveBefore);
     Require(codec.params.size == 0 && codec.params.root == nullptr && codec.params.beginNode == EndNode(codec.params));
     Require(std::memcmp(&format, &formatBefore, sizeof(format)) == 0);
@@ -260,6 +291,18 @@ void TestEmptyFormat() {
     Require(codec.scalabilityModes.sizeAndIsAllocated == 0 && codec.scalabilityModes.inlined[0] == 0xcd);
     Require(codec.params.size == 0 && codec.params.root == nullptr && codec.params.beginNode == EndNode(codec.params));
     Require(codec.type == 1 && codec.id == -1 && codec.clockrate == 90000);
+    const auto* vtable = static_cast<void* const*>(codec.vtable);
+    auto* parameters = static_cast<WebRtcRtpCodecParameters*>(_Znwm_nid_postfix(sizeof(WebRtcRtpCodecParameters)));
+    codec.type = 0;
+    codec.channels = 2;
+    codec.id = 111;
+    codec.clockrate = 48000;
+    Require(reinterpret_cast<CodecToParameters>(vtable[2])(parameters, &codec) == parameters);
+    Require(parameters->codec.kind == 0 && parameters->payloadType == 111);
+    Require(parameters->codec.hasClockRate && parameters->codec.clockRate == 48000);
+    Require(parameters->codec.hasNumChannels && parameters->codec.numChannels == 2);
+    Require(parameters->codec.parameters.beginNode == EndNode(parameters->codec.parameters));
+    reinterpret_cast<ParametersDestructor>(parameters->codec.vtable[1])(parameters);
     DestroyCodec(codec);
     _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(&format);
     Require(live.empty());
