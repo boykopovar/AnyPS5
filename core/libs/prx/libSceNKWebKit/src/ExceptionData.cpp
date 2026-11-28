@@ -29,11 +29,74 @@
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include <stdexcept>
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <type_traits>
+#include <vector>
+
+namespace {
+
+using NKWebKit::WebCoreAbi::ExceptionData;
+using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
+
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+String IsolatedCopyGuestString(const StringImpl* impl, const char* function) {
+    if (!impl) return String();
+    const StringImpl header = ReadGuestValue(impl, function);
+    if (!header.length) return String(NKWebKit::WtfAbi::EmptyStringImpl());
+    if (!header.data) throw std::invalid_argument("null WTF character buffer");
+    const bool is8Bit = (header.hashAndFlags & 4u) != 0;
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (is8Bit ? 1u : sizeof(char16_t));
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    if (is8Bit) {
+        std::vector<unsigned char> narrow(header.length);
+        if (!GuestCopyIn_nid_no_patch(narrow.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        return _ZN3WTF10StringImpl6createEPKhj(narrow.data(), header.length);
+    }
+    std::vector<char16_t> wide(header.length);
+    if (!GuestCopyIn_nid_no_patch(wide.data(), header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return _ZN3WTF10StringImpl6createEPKDsj(wide.data(), header.length);
+}
+
+}  // namespace
+
 extern "C" {
 
 NKWebKit::WebCoreAbi::ExceptionData APS5_VABI _ZNK7WebCore13ExceptionData12isolatedCopyEv(const NKWebKit::WebCoreAbi::ExceptionData* self) {
     if (!self) throw std::invalid_argument("null ExceptionData");
-    return { self->code, _ZNKR3WTF6String12isolatedCopyEv(&self->message) };
+    unsigned char raw[sizeof(ExceptionData)]{};
+    if (!GuestCopyIn_nid_no_patch(raw, self, sizeof(raw)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    std::uint32_t code = 0;
+    const StringImpl* impl = nullptr;
+    std::memcpy(&code, raw + offsetof(ExceptionData, code), sizeof(code));
+    std::memcpy(&impl, raw + offsetof(ExceptionData, message), sizeof(impl));
+    return { code, IsolatedCopyGuestString(impl, __func__) };
 }
 
 }
