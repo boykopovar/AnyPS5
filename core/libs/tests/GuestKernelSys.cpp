@@ -13,6 +13,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
@@ -1470,6 +1471,18 @@ void CheckRawGetcwdPathLimit() {
         length += component.size() + 1;
         ++depth;
     }
+
+    Require(getcwd_nid_postfix(current.data(), current.size()) == current.data());
+    std::string climb;
+    for (std::size_t level = 0; level < depth + 4; ++level) climb += "../";
+    const std::string inside = std::string(current.data() + 1) + "/" + std::string(1023 - climb.size() - length, 'e');
+    std::error_code hostError;
+    const auto host = NativeVerbatimPath_nid_no_patch(inside, hostError);
+    Require(!hostError);
+    Require(mkdirat_nid_postfix(-100, (climb + inside).c_str(), 0755) == 0);
+    Require(std::filesystem::is_directory(host));
+    Require(unlinkat_nid_postfix(-100, ("/../../" + inside).c_str(), 0x800) == 0);
+    Require(!std::filesystem::exists(host));
 
     std::array<char, 4096> buffer;
     for (const std::size_t target : {std::size_t{1023}, std::size_t{1024}}) {
