@@ -95,21 +95,82 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreLayoutExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreTransformExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 namespace {
 
 using NKWebKit::WtfAbi::TextStream;
 
+static_assert(std::is_trivially_copyable_v<WebCore::Length>);
+static_assert(std::is_trivially_copyable_v<WebCore::FloatSize>);
+static_assert(std::is_trivially_copyable_v<WebCore::TransformOperation>);
+static_assert(std::is_trivially_copyable_v<WebCore::TranslateTransformOperation>);
+static_assert(std::is_trivially_copyable_v<WebCore::TransformationMatrix>);
+
 constexpr unsigned NumberRespectingIntegers = 1u << 1;
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename T>
+void RequireWritableGuestValue(T* pointer, const char* function) {
+    RequireWritableGuestBytes(pointer, sizeof(T), function);
+}
+
+template<typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T))) return true;
+    static_cast<void>(GuestCopyOut_nid_no_patch(pointer, &previous, sizeof(T)));
+    return false;
+}
+
+void IncrementGuestRefCount(WebCore::TranslateTransformOperation* self, const char* function) {
+    auto* const refCountPtr = reinterpret_cast<std::uint32_t*>(
+        reinterpret_cast<unsigned char*>(self) + offsetof(WebCore::TransformOperation, m_refCount));
+    const std::uint32_t previous = ReadGuestValue(refCountPtr, function);
+    RequireWritableGuestValue(refCountPtr, function);
+    if (!TryPublishGuestValue(refCountPtr, previous + 1, previous))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+struct FastMallocGuard {
+    void* ptr = nullptr;
+
+    ~FastMallocGuard() {
+        if (ptr) {
+            try {
+                _ZN3WTF8fastFreeEPv(ptr);
+            } catch (...) {
+            }
+        }
+    }
+};
 
 WebCore::TranslateTransformOperation* Checked(WebCore::TranslateTransformOperation* self, const char* operation) {
     if (!self) throw std::invalid_argument(std::string("WebCore::TranslateTransformOperation::") + operation + ": null this");
@@ -168,9 +229,17 @@ WebCore::TransformOperationRef Create(const WebCore::Length& tx, const WebCore::
     if (!IsTranslateType(type)) throw std::invalid_argument("WebCore::TranslateTransformOperation: non-translate operation type");
     if (AnyCalculated(tx, ty, tz)) NotImplemented_nid_no_patch(__func__);
     void* mem = _ZN3WTF10fastMallocEm(sizeof(WebCore::TranslateTransformOperation));
+    FastMallocGuard alloc{mem};
     auto* object = static_cast<WebCore::TranslateTransformOperation*>(mem);
     _ZN7WebCore27TranslateTransformOperationC1ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE(object, tx, ty, tz, type);
+    alloc.ptr = nullptr;
     return WebCore::TransformOperationRef{object};
+}
+
+WebCore::TransformOperation::Type PrimitiveTypeOf(const WebCore::TranslateTransformOperation& self) {
+    return IsZero(self.m_z)
+        ? WebCore::TransformOperation::Type::Translate
+        : WebCore::TransformOperation::Type::Translate3D;
 }
 
 WebCore::TransformOperation::Type APS5_VABI TranslatePrimitiveType(const WebCore::TranslateTransformOperation* self) {
@@ -194,12 +263,13 @@ std::optional<WebCore::TransformOperation::Type> SharedPrimitiveTypeOfTypes(
 }
 
 std::optional<WebCore::TransformOperation::Type> SharedPrimitiveType(
-    const WebCore::TranslateTransformOperation& self, const WebCore::TransformOperation* other) {
-    if (!other) return self.m_type;
-    if (other->m_type == self.m_type) return self.m_type;
-    if (!IsTranslateType(other->m_type)) return std::nullopt;
-    const auto& otherTranslate = static_cast<const WebCore::TranslateTransformOperation&>(*other);
-    return SharedPrimitiveTypeOfTypes(TranslatePrimitiveType(&self), TranslatePrimitiveType(&otherTranslate));
+    const WebCore::TranslateTransformOperation& self,
+    const WebCore::TransformOperation* otherBase,
+    const WebCore::TranslateTransformOperation* otherTranslate) {
+    if (!otherBase) return self.m_type;
+    if (otherBase->m_type == self.m_type) return self.m_type;
+    if (!otherTranslate) return std::nullopt;
+    return SharedPrimitiveTypeOfTypes(PrimitiveTypeOf(self), PrimitiveTypeOf(*otherTranslate));
 }
 
 WebCore::Length BlendLength(const WebCore::Length& from, const WebCore::Length& to, double progress);
@@ -249,13 +319,24 @@ TextStream& Text(TextStream& stream, const char* text) {
     return _ZN3WTF10TextStreamlsEPKc(&stream, text);
 }
 
-TextStream& RespectingIntegers(TextStream& stream, double value) {
+TextStream& RespectingIntegers(TextStream& stream, double value, const char* function) {
+    auto* const flagsPtr = reinterpret_cast<unsigned*>(
+        reinterpret_cast<unsigned char*>(&stream) + offsetof(TextStream, formattingFlags));
+    const unsigned previousFlags = ReadGuestValue(flagsPtr, function);
+    RequireWritableGuestValue(flagsPtr, function);
+    const unsigned updatedFlags = previousFlags | NumberRespectingIntegers;
+    if (!TryPublishGuestValue(flagsPtr, updatedFlags, previousFlags))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     struct Restore {
-        TextStream& stream;
+        unsigned* target;
         unsigned flags;
-        ~Restore() { stream.formattingFlags = flags; }
-    } restore{stream, stream.formattingFlags};
-    stream.formattingFlags |= NumberRespectingIntegers;
+        ~Restore() {
+            try {
+                static_cast<void>(GuestCopyOut_nid_no_patch(target, &flags, sizeof(flags)));
+            } catch (...) {
+            }
+        }
+    } restore{flagsPtr, previousFlags};
     return _ZN3WTF10TextStreamlsEd(&stream, value);
 }
 
@@ -290,7 +371,7 @@ void DumpType(TextStream& stream, WebCore::TransformOperation::Type type) {
     Text(stream, name);
 }
 
-void DumpLength(TextStream& stream, const WebCore::Length& length) {
+void DumpLength(TextStream& stream, const WebCore::Length& length, const char* function) {
     switch (length.type()) {
     case WebCore::LengthType::Auto:
         Text(stream, "auto");
@@ -302,46 +383,46 @@ void DumpLength(TextStream& stream, const WebCore::Length& length) {
         Text(stream, "undefined");
         break;
     case WebCore::LengthType::Fixed:
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         Text(stream, "px");
         break;
     case WebCore::LengthType::Relative:
         Text(stream, "relative");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::Intrinsic:
         Text(stream, "intrinsic");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::MinIntrinsic:
         Text(stream, "min-intrinsic");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::MinContent:
         Text(stream, "min-content");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::MaxContent:
         Text(stream, "max-content");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::FillAvailable:
         Text(stream, "fill-available");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::FitContent:
         Text(stream, "fit-content");
         Text(stream, " ");
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         break;
     case WebCore::LengthType::Percent:
-        RespectingIntegers(stream, LengthValue(length));
+        RespectingIntegers(stream, LengthValue(length), function);
         Text(stream, "%");
         break;
     case WebCore::LengthType::Calculated:
@@ -373,13 +454,15 @@ struct TranslateVtableStorage {
 
 WebCore::TransformOperationRef APS5_VABI SelfOrCopyWithResolvedCalculatedValues(WebCore::TranslateTransformOperation* self, const WebCore::FloatSize& borderBoxSize) {
     Checked(self, "selfOrCopyWithResolvedCalculatedValues");
-    if (!self->m_x.isCalculated() && !self->m_y.isCalculated() && !self->m_z.isCalculated()) {
-        ++self->m_refCount;
+    const auto local = ReadGuestValue(self, __func__);
+    const auto box = ReadGuestValue(&borderBoxSize, __func__);
+    if (!local.m_x.isCalculated() && !local.m_y.isCalculated() && !local.m_z.isCalculated()) {
+        IncrementGuestRefCount(self, __func__);
         return WebCore::TransformOperationRef{self};
     }
-    WebCore::Length x{_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_x, borderBoxSize.m_width), WebCore::LengthType::Fixed};
-    WebCore::Length y{_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_y, borderBoxSize.m_height), WebCore::LengthType::Fixed};
-    return Create(x, y, self->m_z, self->m_type);
+    WebCore::Length x{_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_x, box.m_width), WebCore::LengthType::Fixed};
+    WebCore::Length y{_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_y, box.m_height), WebCore::LengthType::Fixed};
+    return Create(x, y, local.m_z, local.m_type);
 }
 
 bool APS5_VABI IsAffectedByTransformOrigin(const WebCore::TranslateTransformOperation*) {
@@ -418,24 +501,37 @@ void WebCore::TransformOperation::deref() const {
 extern "C" {
 
 WebCore::TransformOperationRef APS5_VABI _ZN7WebCore27TranslateTransformOperation6createERKNS_6LengthES3_NS_18TransformOperation13OperationTypeE(const WebCore::Length& tx, const WebCore::Length& ty, WebCore::TransformOperation::Type type) {
+    const WebCore::Length localX = ReadGuestValue(&tx, __func__);
+    const WebCore::Length localY = ReadGuestValue(&ty, __func__);
     WebCore::Length zero{0, WebCore::LengthType::Fixed};
-    return _ZN7WebCore27TranslateTransformOperation6createERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE(tx, ty, zero, type);
+    return Create(localX, localY, zero, type);
 }
 
 WebCore::TransformOperationRef APS5_VABI _ZN7WebCore27TranslateTransformOperation6createERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE(const WebCore::Length& tx, const WebCore::Length& ty, const WebCore::Length& tz, WebCore::TransformOperation::Type type) {
-    return Create(tx, ty, tz, type);
+    const WebCore::Length localX = ReadGuestValue(&tx, __func__);
+    const WebCore::Length localY = ReadGuestValue(&ty, __func__);
+    const WebCore::Length localZ = ReadGuestValue(&tz, __func__);
+    return Create(localX, localY, localZ, type);
 }
 
 void APS5_VABI _ZN7WebCore27TranslateTransformOperationC1ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE(WebCore::TranslateTransformOperation* self, const WebCore::Length& tx, const WebCore::Length& ty, const WebCore::Length& tz, WebCore::TransformOperation::Type type) {
     Checked(self, "TranslateTransformOperation");
+    const WebCore::Length localX = ReadGuestValue(&tx, __func__);
+    const WebCore::Length localY = ReadGuestValue(&ty, __func__);
+    const WebCore::Length localZ = ReadGuestValue(&tz, __func__);
     if (!IsTranslateType(type)) throw std::invalid_argument("WebCore::TranslateTransformOperation: non-translate operation type");
-    if (AnyCalculated(tx, ty, tz)) NotImplemented_nid_no_patch(__func__);
-    self->m_vptr = &TranslateVtableInstance.dispatch;
-    self->m_refCount = 1;
-    self->m_type = type;
-    self->m_x = tx;
-    self->m_y = ty;
-    self->m_z = tz;
+    if (AnyCalculated(localX, localY, localZ)) NotImplemented_nid_no_patch(__func__);
+    const auto previous = ReadGuestValue(self, __func__);
+    RequireWritableGuestValue(self, __func__);
+    WebCore::TranslateTransformOperation constructed{};
+    constructed.m_vptr = &TranslateVtableInstance.dispatch;
+    constructed.m_refCount = 1;
+    constructed.m_type = type;
+    constructed.m_x = localX;
+    constructed.m_y = localY;
+    constructed.m_z = localZ;
+    if (!TryPublishGuestValue(self, constructed, previous))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore27TranslateTransformOperationC2ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE(WebCore::TranslateTransformOperation* self, const WebCore::Length& tx, const WebCore::Length& ty, const WebCore::Length& tz, WebCore::TransformOperation::Type type) {
@@ -444,7 +540,8 @@ void APS5_VABI _ZN7WebCore27TranslateTransformOperationC2ERKNS_6LengthES3_S3_NS_
 
 void APS5_VABI _ZN7WebCore27TranslateTransformOperationD2Ev(WebCore::TranslateTransformOperation* self) {
     Checked(self, "~TranslateTransformOperation");
-    if (AnyCalculated(self->m_x, self->m_y, self->m_z)) NotImplemented_nid_no_patch(__func__);
+    const auto local = ReadGuestValue(self, __func__);
+    if (AnyCalculated(local.m_x, local.m_y, local.m_z)) NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI _ZN7WebCore27TranslateTransformOperationD1Ev(WebCore::TranslateTransformOperation* self) {
@@ -458,105 +555,132 @@ void APS5_VABI _ZN7WebCore27TranslateTransformOperationD0Ev(WebCore::TranslateTr
 
 bool APS5_VABI _ZNK7WebCore27TranslateTransformOperation10isIdentityEv(const WebCore::TranslateTransformOperation* self) {
     CheckedConst(self, "isIdentity");
-    return !_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_x, 1.0f)
-        && !_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_y, 1.0f)
-        && !_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_z, 1.0f);
+    const auto local = ReadGuestValue(self, __func__);
+    return !_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_x, 1.0f)
+        && !_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_y, 1.0f)
+        && !_ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_z, 1.0f);
 }
 
 bool APS5_VABI _ZNK7WebCore27TranslateTransformOperation19isRepresentableIn2DEv(const WebCore::TranslateTransformOperation* self) {
     CheckedConst(self, "isRepresentableIn2D");
-    return IsZero(self->m_z);
+    const auto local = ReadGuestValue(self, __func__);
+    return IsZero(local.m_z);
 }
 
 float APS5_VABI _ZNK7WebCore27TranslateTransformOperation1xERKNS_9FloatSizeE(const WebCore::TranslateTransformOperation* self, const WebCore::FloatSize& borderBoxSize) {
     CheckedConst(self, "x");
-    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_x, borderBoxSize.m_width);
+    const auto local = ReadGuestValue(self, __func__);
+    const auto box = ReadGuestValue(&borderBoxSize, __func__);
+    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_x, box.m_width);
 }
 
 WebCore::Length APS5_VABI _ZNK7WebCore27TranslateTransformOperation1xEv(const WebCore::TranslateTransformOperation* self) {
     CheckedConst(self, "x");
-    if (self->m_x.isCalculated()) NotImplemented_nid_no_patch(__func__);
-    return self->m_x;
+    const auto local = ReadGuestValue(self, __func__);
+    if (local.m_x.isCalculated()) NotImplemented_nid_no_patch(__func__);
+    return local.m_x;
 }
 
 float APS5_VABI _ZNK7WebCore27TranslateTransformOperation1yERKNS_9FloatSizeE(const WebCore::TranslateTransformOperation* self, const WebCore::FloatSize& borderBoxSize) {
     CheckedConst(self, "y");
-    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_y, borderBoxSize.m_height);
+    const auto local = ReadGuestValue(self, __func__);
+    const auto box = ReadGuestValue(&borderBoxSize, __func__);
+    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_y, box.m_height);
 }
 
 WebCore::Length APS5_VABI _ZNK7WebCore27TranslateTransformOperation1yEv(const WebCore::TranslateTransformOperation* self) {
     CheckedConst(self, "y");
-    if (self->m_y.isCalculated()) NotImplemented_nid_no_patch(__func__);
-    return self->m_y;
+    const auto local = ReadGuestValue(self, __func__);
+    if (local.m_y.isCalculated()) NotImplemented_nid_no_patch(__func__);
+    return local.m_y;
 }
 
 float APS5_VABI _ZNK7WebCore27TranslateTransformOperation1zERKNS_9FloatSizeE(const WebCore::TranslateTransformOperation* self, const WebCore::FloatSize& borderBoxSize) {
     CheckedConst(self, "z");
     (void)borderBoxSize;
-    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_z, 1.0f);
+    const auto local = ReadGuestValue(self, __func__);
+    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_z, 1.0f);
 }
 
 WebCore::Length APS5_VABI _ZNK7WebCore27TranslateTransformOperation1zEv(const WebCore::TranslateTransformOperation* self) {
     CheckedConst(self, "z");
-    if (self->m_z.isCalculated()) NotImplemented_nid_no_patch(__func__);
-    return self->m_z;
+    const auto local = ReadGuestValue(self, __func__);
+    if (local.m_z.isCalculated()) NotImplemented_nid_no_patch(__func__);
+    return local.m_z;
 }
 
 void APS5_VABI _ZNK7WebCore27TranslateTransformOperation4dumpERN3WTF10TextStreamE(const WebCore::TranslateTransformOperation* self, TextStream& stream) {
     CheckedConst(self, "dump");
-    DumpType(stream, self->m_type);
+    const auto local = ReadGuestValue(self, __func__);
+    RequireWritableGuestBytes(&stream, sizeof(TextStream), __func__);
+    DumpType(stream, local.m_type);
     Text(stream, "(");
-    DumpLength(stream, self->m_x);
+    DumpLength(stream, local.m_x, __func__);
     Text(stream, ", ");
-    DumpLength(stream, self->m_y);
+    DumpLength(stream, local.m_y, __func__);
     Text(stream, ", ");
-    DumpLength(stream, self->m_z);
+    DumpLength(stream, local.m_z, __func__);
     Text(stream, ")");
 }
 
 bool APS5_VABI _ZNK7WebCore27TranslateTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(const WebCore::TranslateTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize& borderBoxSize) {
     CheckedConst(self, "apply");
-    _ZN7WebCore20TransformationMatrix11translate3dEddd(&transform,
-        _ZNK7WebCore27TranslateTransformOperation1xERKNS_9FloatSizeE(self, borderBoxSize),
-        _ZNK7WebCore27TranslateTransformOperation1yERKNS_9FloatSizeE(self, borderBoxSize),
-        _ZNK7WebCore27TranslateTransformOperation1zERKNS_9FloatSizeE(self, borderBoxSize));
-    return self->m_x.isPercent() || self->m_y.isPercent();
+    const auto local = ReadGuestValue(self, __func__);
+    const auto box = ReadGuestValue(&borderBoxSize, __func__);
+    WebCore::TransformationMatrix localTransform = ReadGuestValue(&transform, __func__);
+    const WebCore::TransformationMatrix previousTransform = localTransform;
+    RequireWritableGuestValue(&transform, __func__);
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&localTransform,
+        _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_x, box.m_width),
+        _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_y, box.m_height),
+        _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(local.m_z, 1.0f));
+    if (!TryPublishGuestValue(&transform, localTransform, previousTransform))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return local.m_x.isPercent() || local.m_y.isPercent();
 }
 
 WebCore::TransformOperationRef APS5_VABI _ZNK7WebCore27TranslateTransformOperation5cloneEv(const WebCore::TranslateTransformOperation* self) {
     CheckedConst(self, "clone");
-    if (AnyCalculated(self->m_x, self->m_y, self->m_z)) NotImplemented_nid_no_patch(__func__);
-    return Create(self->m_x, self->m_y, self->m_z, self->m_type);
+    const auto local = ReadGuestValue(self, __func__);
+    if (AnyCalculated(local.m_x, local.m_y, local.m_z)) NotImplemented_nid_no_patch(__func__);
+    return Create(local.m_x, local.m_y, local.m_z, local.m_type);
 }
 
 bool APS5_VABI _ZNK7WebCore27TranslateTransformOperationeqERKNS_18TransformOperationE(const WebCore::TranslateTransformOperation* self, const WebCore::TransformOperation& other) {
     CheckedConst(self, "operator==");
-    if (!self->isSameType(other)) return false;
-    const auto& otherTranslate = static_cast<const WebCore::TranslateTransformOperation&>(other);
-    return LengthEqual(self->m_x, otherTranslate.m_x)
-        && LengthEqual(self->m_y, otherTranslate.m_y)
-        && LengthEqual(self->m_z, otherTranslate.m_z);
+    const auto local = ReadGuestValue(self, __func__);
+    const auto otherBase = ReadGuestValue(&other, __func__);
+    if (local.m_type != otherBase.m_type) return false;
+    const auto otherTranslate = ReadGuestValue(static_cast<const WebCore::TranslateTransformOperation*>(&other), __func__);
+    return LengthEqual(local.m_x, otherTranslate.m_x)
+        && LengthEqual(local.m_y, otherTranslate.m_y)
+        && LengthEqual(local.m_z, otherTranslate.m_z);
 }
 
 WebCore::TransformOperationRef APS5_VABI _ZN7WebCore27TranslateTransformOperation5blendEPKNS_18TransformOperationEdb(WebCore::TranslateTransformOperation* self, const WebCore::TransformOperation* from, double progress, bool blendToIdentity) {
     Checked(self, "blend");
+    const auto local = ReadGuestValue(self, __func__);
     WebCore::Length zeroLength{0, WebCore::LengthType::Fixed};
     if (blendToIdentity) {
-        return Create(BlendLength(self->m_x, zeroLength, progress), BlendLength(self->m_y, zeroLength, progress), BlendLength(self->m_z, zeroLength, progress), self->m_type);
+        return Create(BlendLength(local.m_x, zeroLength, progress), BlendLength(local.m_y, zeroLength, progress), BlendLength(local.m_z, zeroLength, progress), local.m_type);
     }
-    auto outputType = SharedPrimitiveType(*self, from);
+    std::optional<WebCore::TransformOperation> fromBase;
+    std::optional<WebCore::TranslateTransformOperation> fromTranslate;
+    if (from) {
+        fromBase = ReadGuestValue(from, __func__);
+        if (IsTranslateType(fromBase->m_type)) {
+            fromTranslate = ReadGuestValue(static_cast<const WebCore::TranslateTransformOperation*>(from), __func__);
+        }
+    }
+    auto outputType = SharedPrimitiveType(local, fromBase ? &*fromBase : nullptr, fromTranslate ? &*fromTranslate : nullptr);
     if (!outputType) {
-        ++self->m_refCount;
+        IncrementGuestRefCount(self, __func__);
         return WebCore::TransformOperationRef{self};
     }
-    const WebCore::TranslateTransformOperation* fromOp = nullptr;
-    if (from && IsTranslateType(from->m_type)) {
-        fromOp = static_cast<const WebCore::TranslateTransformOperation*>(from);
-    }
-    WebCore::Length fromX = fromOp ? fromOp->m_x : zeroLength;
-    WebCore::Length fromY = fromOp ? fromOp->m_y : zeroLength;
-    WebCore::Length fromZ = fromOp ? fromOp->m_z : zeroLength;
-    return Create(BlendLength(fromX, self->m_x, progress), BlendLength(fromY, self->m_y, progress), BlendLength(fromZ, self->m_z, progress), *outputType);
+    WebCore::Length fromX = fromTranslate ? fromTranslate->m_x : zeroLength;
+    WebCore::Length fromY = fromTranslate ? fromTranslate->m_y : zeroLength;
+    WebCore::Length fromZ = fromTranslate ? fromTranslate->m_z : zeroLength;
+    return Create(BlendLength(fromX, local.m_x, progress), BlendLength(fromY, local.m_y, progress), BlendLength(fromZ, local.m_z, progress), *outputType);
 }
 
 }
