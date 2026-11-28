@@ -943,11 +943,20 @@ struct Replay {
 
     void releaseStaged(const std::vector<StagedWord>& words) {
         for (const auto& word : words) {
+            if (word.address % 4 != 0 || word.value.empty() || word.value.size() % 4 != 0) {
+                throw std::runtime_error("frame replay: a held wait at " + std::to_string(word.address) + " of " + std::to_string(word.value.size()) + " bytes is not whole aligned dwords");
+            }
+        }
+        for (const auto& word : words) {
             const bool settled = AgcDriverHoldSettled_nid_postfix(options.busyTimeout.count());
             const SettledHold hold{true};
             if (!settled) return;
             AgcDriverPrepareCommandWrite_nid_no_patch(word.address, word.value.size());
-            std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(word.address)), word.value.data(), word.value.size());
+            for (std::size_t at = 0; at < word.value.size(); at += 4) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, word.value.data() + at, sizeof(value));
+                std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(word.address + at))).store(value, std::memory_order_release);
+            }
             std::atomic_thread_fence(std::memory_order_seq_cst);
         }
     }
@@ -986,10 +995,15 @@ struct Replay {
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
         std::vector<std::uint64_t> parked;
+        std::vector<std::uint64_t> polled;
         for (std::size_t slot = 0; slot < count; ++slot) {
             if (rewindWait(awaited[slot])) parked.push_back(awaited[slot].address);
+            else if (awaited[slot].address % 4 == 0) {
+                for (std::uint64_t word = 0; word < awaited[slot].bytes; word += 4) polled.push_back(awaited[slot].address + word);
+            }
         }
         std::ranges::sort(parked);
+        std::ranges::sort(polled);
         std::vector<std::pair<std::uint32_t*, std::uint32_t>> controls;
         std::vector<std::pair<std::uint32_t*, std::uint32_t>> releases;
         std::vector<std::size_t> candidates;
@@ -1007,9 +1021,11 @@ struct Replay {
                 candidates.push_back(first);
                 findRewindControls(bytes, first, candidates);
                 const auto scanned = candidates.size();
-                const auto pastChunk = std::ranges::lower_bound(parked, chunk->address + size - sizeof(std::uint32_t) + 1);
-                for (auto address = std::ranges::lower_bound(parked, chunk->address + first); address != pastChunk; ++address) {
-                    if ((*address - chunk->address - first) % sizeof(std::uint32_t) == 0) candidates.push_back(static_cast<std::size_t>(*address - chunk->address));
+                for (const auto* awaitedWords : {&parked, &polled}) {
+                    const auto pastChunk = std::ranges::lower_bound(*awaitedWords, chunk->address + size - sizeof(std::uint32_t) + 1);
+                    for (auto address = std::ranges::lower_bound(*awaitedWords, chunk->address + first); address != pastChunk; ++address) {
+                        if ((*address - chunk->address - first) % sizeof(std::uint32_t) == 0) candidates.push_back(static_cast<std::size_t>(*address - chunk->address));
+                    }
                 }
                 if (candidates.size() != scanned) {
                     std::ranges::sort(candidates);
@@ -1020,18 +1036,18 @@ struct Replay {
                 if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + size) continue;
                 const auto offset = static_cast<std::size_t>(wait.address - chunk->address);
                 staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
-                std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
             }
             std::size_t from = 0;
             for (const auto at : candidates) {
                 const auto address = chunk->address + at;
-                if (std::ranges::any_of(held, [&](const auto& wait) { return address < wait.address + wait.bytes && wait.address < address + sizeof(std::uint32_t); })) continue;
-                std::uint32_t value = 0;
-                std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if (!again || (value & AgcDriver::Pm4::RewindValid) == 0) (std::ranges::binary_search(parked, address) ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                if (!std::ranges::any_of(held, [&](const auto& wait) { return address < wait.address + wait.bytes && wait.address < address + sizeof(std::uint32_t); })) {
+                    std::uint32_t value = 0;
+                    std::memcpy(&value, bytes.data() + at, sizeof(value));
+                    if (!again || (value & AgcDriver::Pm4::RewindValid) == 0 || std::ranges::binary_search(polled, address)) (std::ranges::binary_search(parked, address) ? releases : controls).emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                    ++keptWords;
+                }
                 std::memcpy(target + from, bytes.data() + from, at - from);
                 from = at + sizeof(std::uint32_t);
-                ++keptWords;
             }
             std::memcpy(target + from, bytes.data() + from, size - from);
             deltaBytes += chunk->bytes;

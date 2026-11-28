@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <cstddef>
 #include <vector>
 #include <optional>
@@ -11,6 +12,7 @@
 #include <atomic>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <string>
 
 namespace AgcDriver::Pm4 {
@@ -118,8 +120,7 @@ bool WaitSatisfied(std::span<const std::uint32_t> packet);
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
 
 inline std::uint64_t LoadLabel(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 8) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
-    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+    return GuestMemory::LoadAlignedLabel(address & ~std::uint64_t{bytes == sizeof(std::uint64_t) ? 7u : 3u}, bytes);
 }
 
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still

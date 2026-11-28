@@ -3305,11 +3305,29 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
     });
 }
 
+static void storeGuestBytes(std::uint64_t address, std::span<const std::byte> source) {
+    if (source.size() == sizeof(std::uint64_t) && address % sizeof(std::uint64_t) == 0) {
+        std::uint64_t word = 0;
+        std::memcpy(&word, source.data(), sizeof(word));
+        std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(word, std::memory_order_release);
+        return;
+    }
+    if ((source.size() == sizeof(std::uint32_t) || source.size() == sizeof(std::uint64_t)) && address % sizeof(std::uint32_t) == 0) {
+        for (std::size_t at = 0; at < source.size(); at += sizeof(std::uint32_t)) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, source.data() + at, sizeof(word));
+            std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address + at)).store(word, std::memory_order_release);
+        }
+        return;
+    }
+    std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
+}
+
 static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
 #ifndef _WIN32
     if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size())) return;
 #endif
-    std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
+    storeGuestBytes(address, source);
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
@@ -4122,6 +4140,16 @@ bool StopHostWrites(std::uint32_t boundMs) {
     return true;
 }
 
+static void checkReadable(const void* source, std::size_t bytes, std::size_t alignment, const void* caller) {
+    try {
+        CheckRange(source, bytes, alignment);
+    } catch (const std::runtime_error&) {
+        static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
+        if (trace) std::fprintf(stderr, "[unreadable]   read from +0x%llx\n", ModuleOffset(caller));
+        throw;
+    }
+}
+
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment) {
     if (destination.empty()) return;
     GuardRead(address, destination.size());
@@ -4129,25 +4157,18 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
     const TimedAccess timed(CounterRead, destination.size());
     CountReadCaller(__builtin_return_address(0));
     const auto* source = reinterpret_cast<const void*>(address);
-    try {
-        CheckRange(source, destination.size(), alignment);
-    } catch (const std::runtime_error&) {
-        static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
-        if (trace) std::fprintf(stderr, "[unreadable]   read from +0x%llx\n", ModuleOffset(__builtin_return_address(0)));
-        throw;
-    }
+    checkReadable(source, destination.size(), alignment, __builtin_return_address(0));
     CopyGuestBytes(destination.data(), source, destination.size());
 }
 
 std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes) {
-    if (bytes != sizeof(std::uint32_t) && bytes != sizeof(std::uint64_t)) throw std::invalid_argument("a guest label is 4 or 8 bytes");
+    RequireLabel(address, bytes);
     GuardRead(address, bytes);
     FlushGpuWrites(address, bytes);
     const TimedAccess timed(CounterRead, bytes);
     CountReadCaller(__builtin_return_address(0));
-    CheckRange(reinterpret_cast<const void*>(address), bytes, bytes);
-    if (bytes == sizeof(std::uint64_t)) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
-    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+    checkReadable(reinterpret_cast<const void*>(address), bytes, bytes, __builtin_return_address(0));
+    return LoadAlignedLabel(address, bytes);
 }
 
 #ifdef ANYPS5_ENABLE_ASAN
@@ -4549,7 +4570,7 @@ void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t
     StoreOwnBytes(address, source.size(), [&](std::span<std::byte> image) {
         CheckRange(destination, source.size(), alignment, true);
         if (source.size() >= PageBytes) copyOwnBytes(address, source);
-        else std::memcpy(destination, source.data(), source.size());
+        else storeGuestBytes(address, source);
         if (!image.empty()) std::memcpy(image.data(), source.data(), source.size());
     });
 }

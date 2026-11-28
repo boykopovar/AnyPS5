@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,6 +33,15 @@ struct Commitment {
 Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writable = false);
 void CopyGuestBytes(void* destination, const void* source, std::size_t bytes);
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment = 1);
+inline void RequireLabel(std::uint64_t address, std::size_t bytes) {
+    if (bytes != sizeof(std::uint32_t) && bytes != sizeof(std::uint64_t)) throw std::invalid_argument("a guest label is 4 or 8 bytes");
+    if (address % bytes != 0) throw std::invalid_argument("a guest label is aligned to its width");
+}
+inline std::uint64_t LoadAlignedLabel(std::uint64_t address, std::size_t bytes) {
+    RequireLabel(address, bytes);
+    if (bytes == sizeof(std::uint64_t)) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
+    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+}
 std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes);
 // Variants for resources in heaps the guest commits on demand (partially resident textures, GPU
 // scratch heaps): uncommitted pages read as zeros, are not compared, and are never stored.
