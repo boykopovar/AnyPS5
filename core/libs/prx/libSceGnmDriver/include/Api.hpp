@@ -93,5 +93,22 @@ int APS5_VABI sceGnmUpdateHsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uin
 int APS5_VABI sceGnmUpdatePsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs);
 int APS5_VABI sceGnmUpdatePsShader350_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs);
 int APS5_VABI sceGnmUpdateVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier);
+int APS5_VABI sceGnmRegisterOwner_nid_disambig1(void* handle, const char* name);
+int APS5_VABI sceGnmSetResourceRegistrationUserMemory_nid_disambig1(void);
+int APS5_VABI sceGnmGetResourceShaderGuid_nid_disambig1(void);
+int APS5_VABI sceGnmGetResourceName_nid_disambig1(void);
+int APS5_VABI sceGnmGetResourceType_nid_disambig1(void);
+int APS5_VABI sceGnmRegisterGdsResource_nid_disambig1(void);
+int APS5_VABI sceGnmGetOwnerName_nid_disambig1(void);
+int APS5_VABI sceGnmRegisterResource_nid_disambig1(void);
+int APS5_VABI sceGnmUnregisterAllResourcesForOwner_nid_disambig1(void);
+int APS5_VABI sceGnmUnregisterResource_nid_disambig1(void);
+int APS5_VABI sceGnmSetResourceUserData_nid_disambig1(void);
+int APS5_VABI sceGnmQueryResourceRegistrationUserMemoryRequirements_nid_disambig1(void);
+int APS5_VABI sceGnmGetResourceBaseAddressAndSizeInBytes_nid_disambig1(void);
+int APS5_VABI sceGnmFindResourcesPublic_nid_disambig1(void);
+int APS5_VABI sceGnmGetResourceUserData_nid_disambig1(void);
+int APS5_VABI sceGnmUnregisterOwnerAndResources_nid_disambig1(void);
+int APS5_VABI sceGnmRegisterOwnerForSystem_nid_disambig1(void);
 
 }
