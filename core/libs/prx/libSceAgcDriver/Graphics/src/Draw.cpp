@@ -1834,6 +1834,13 @@ ResourceCache::Key& threadPlanContentKey() {
     return ShaderRecompiler::ThreadOwned(slot);
 }
 
+const ResourceCache::Key& committerContentKey(const Context& context, const State& state, std::span<const CompiledShader> shaders, std::uint64_t indexAddress, std::uint64_t indexBytes) {
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    auto& key = threadPlanContentKey();
+    FillDrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), indexAddress, indexBytes, !trimKey, key);
+    return key;
+}
+
 bool EarlyDrawKeys() {
     static const bool enabled = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
     return enabled;
@@ -1844,7 +1851,7 @@ bool KeyForDevice(const std::vector<std::uint32_t>& key, VkDevice device) {
     return key.size() >= 3 && key[0] == 0xffffffffu && key[1] == static_cast<std::uint32_t>(handle) && key[2] == static_cast<std::uint32_t>(handle >> 32u);
 }
 
-DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer, const std::vector<std::uint32_t>* earlyKey = nullptr, ResourceCache::Key* scratchKey = nullptr) {
+DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer, const std::vector<std::uint32_t>* earlyKey = nullptr, ResourceCache::Key* scratchKey = nullptr, bool deferKey = false) {
     DrawPlan plan;
     APS5_LOG_OUT_DEBUG("Draw indices=%u instances=%u indexSize=%u flags=%u indexAddress=0x%llx", draw.indexCount, draw.instanceCount, draw.indexSize, draw.flags, static_cast<unsigned long long>(draw.indexAddress));
     APS5_LOG_OUT_DEBUG("State colorTarget=%u render=%ux%u colorAddress=0x%llx colorBytes=%llu colorExtent=%ux%u", state.hasColorTarget ? 1u : 0u, state.renderExtent.width, state.renderExtent.height, static_cast<unsigned long long>(state.color.address), static_cast<unsigned long long>(state.color.bytes), state.color.extent.width, state.color.extent.height);
@@ -1929,7 +1936,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     plan.candidate = recipe == nullptr && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
     plan.keyed = plan.candidate && !ShaderResources::NeverReusable(shaders);
-    if (plan.keyed) {
+    if (plan.keyed && !deferKey) {
         const auto keyStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         if (earlyKey != nullptr && KeyForDevice(*earlyKey, context.device)) {
             plan.contentKey = earlyKey;
@@ -1945,12 +1952,175 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     return plan;
 }
 
+}
+
+struct PreparedDraw {
+    VkDevice device = VK_NULL_HANDLE;
+    std::vector<std::uint32_t> contentKey;
+    std::optional<DrawPlan> plan;
+    bool validateMemoized = false;
+    bool validateHit = false;
+    PreparedDraw() = default;
+    PreparedDraw(const PreparedDraw&) = delete;
+    PreparedDraw(PreparedDraw&&) = delete;
+    PreparedDraw& operator=(const PreparedDraw&) = delete;
+    PreparedDraw& operator=(PreparedDraw&&) = delete;
+};
+
+void PreparedDrawRelease::operator()(PreparedDraw* prepared) const noexcept {
+    delete prepared;
+}
+
+namespace {
+
+struct PreparedDrawCounters {
+    AgcDriver::ProfileCounter prepared;
+    AgcDriver::ProfileCounter planned;
+    AgcDriver::ProfileCounter failed;
+    AgcDriver::ProfileCounter planNs;
+    AgcDriver::ProfileCounter used;
+    AgcDriver::ProfileCounter otherDevice;
+    AgcDriver::ProfileCounter inlinePlans;
+    AgcDriver::ProfileCounter inlinePlanNs;
+};
+
+PreparedDrawCounters& preparedDrawCounters() {
+    static PreparedDrawCounters counters;
+    return counters;
+}
+
+bool timePlans() {
+    static const bool timed = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    return timed;
+}
+
+std::uint64_t planNsSince(std::chrono::steady_clock::time_point start) {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+}
+
+std::vector<std::uint32_t> drawContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
+    if (!EarlyDrawKeys() || shaders.empty() || std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program == nullptr; })) return {};
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    const auto indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
+    return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+}
+
+const PreparedDraw* preparedFor(const Context& context, const PreparedDraw* prepared) {
+    if (prepared == nullptr || prepared->device == context.device) return prepared;
+    if (prepared->plan.has_value()) preparedDrawCounters().otherDevice.Add();
+    return nullptr;
+}
+
+const DrawPlan& takePlan(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const PreparedDraw* prepared, std::optional<DrawPlan>& inlinePlan, DrawOutcome& outcome, DrawTimer& timer) {
+    auto& counters = preparedDrawCounters();
+    if (prepared != nullptr && prepared->plan.has_value()) {
+        counters.used.Add();
+        outcome.validateMemoized = prepared->validateMemoized;
+        outcome.validateHit = prepared->validateHit;
+        return *prepared->plan;
+    }
+    const auto* earlyKey = prepared != nullptr && !prepared->contentKey.empty() ? &prepared->contentKey : nullptr;
+    counters.inlinePlans.Add();
+    if (!timePlans()) return inlinePlan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer, earlyKey));
+    const auto start = std::chrono::steady_clock::now();
+    inlinePlan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer, earlyKey));
+    counters.inlinePlanNs.Add(planNsSince(start));
+    return *inlinePlan;
+}
+
+}
+
+PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, bool plan) {
+    PreparedDrawPtr prepared(new PreparedDraw);
+    prepared->device = context.device;
+    preparedDrawCounters().prepared.Add();
+    if (plan) {
+        auto& counters = preparedDrawCounters();
+        const bool timed = timePlans();
+        const auto start = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        DrawOutcome outcome;
+        DrawTimer timer(false);
+        try {
+            prepared->plan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer, nullptr, &prepared->contentKey, !EarlyDrawKeys()));
+            prepared->validateMemoized = outcome.validateMemoized;
+            prepared->validateHit = outcome.validateHit;
+            counters.planned.Add();
+            if (timed) counters.planNs.Add(planNsSince(start));
+        } catch (const std::exception&) {
+            prepared->plan.reset();
+            counters.failed.Add();
+        }
+    }
+    if (!prepared->plan.has_value()) prepared->contentKey = drawContentKey(context, state, draw, shaders);
+    return prepared;
+}
+
+void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device) {
+    prepared.device = device;
+}
+
+const std::vector<std::uint32_t>* PreparedDrawContentKeyForTest(const PreparedDraw& prepared) {
+    return prepared.plan.has_value() ? prepared.plan->contentKey : nullptr;
+}
+
+std::vector<std::uint32_t> CommitterContentKeyForTest(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
+    return committerContentKey(context, state, shaders, draw.indexAddress, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize);
+}
+
+PreparedDrawCounts TakePreparedDrawCounts() {
+    auto& counters = preparedDrawCounters();
+    PreparedDrawCounts counts;
+    counts.prepared = counters.prepared.Take();
+    counts.planned = counters.planned.Take();
+    counts.failed = counters.failed.Take();
+    counts.planNs = counters.planNs.Take();
+    counts.used = counters.used.Take();
+    counts.otherDevice = counters.otherDevice.Take();
+    counts.inlinePlans = counters.inlinePlans.Take();
+    counts.inlinePlanNs = counters.inlinePlanNs.Take();
+    return counts;
+}
+
+namespace {
+
 bool VerifyDrawPlan() {
     static const bool verify = std::getenv("APS5_VERIFY_DRAW_PLAN") != nullptr;
     return verify;
 }
 
-void requireDrawPlanRepeats(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan) {
+enum class PlanSource : std::size_t { Prepared, Inline, Count };
+enum class PlanCheck : std::size_t { Selected, Taken, AfterRecordWork, Count };
+
+struct DrawPlanVerifyCounters {
+    std::array<std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(PlanSource::Count)>, static_cast<std::size_t>(PlanCheck::Count)> counts{};
+    std::atomic<std::int64_t> lastReportNs{0};
+};
+
+DrawPlanVerifyCounters& drawPlanVerifyCounters() {
+    static DrawPlanVerifyCounters counters;
+    return counters;
+}
+
+std::uint64_t drawPlanVerifyCount(PlanCheck check, PlanSource source) {
+    return drawPlanVerifyCounters().counts[static_cast<std::size_t>(check)][static_cast<std::size_t>(source)].load(std::memory_order_relaxed);
+}
+
+void reportDrawPlanVerify() {
+    auto& counters = drawPlanVerifyCounters();
+    const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto last = counters.lastReportNs.load(std::memory_order_relaxed);
+    if (last != 0 && now - last < 10'000'000'000) return;
+    if (!counters.lastReportNs.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    const auto count = [](PlanCheck check, PlanSource source) { return static_cast<unsigned long long>(drawPlanVerifyCount(check, source)); };
+    AgcDriver::ProfilePrint_nid_no_patch("[verify-draw-plan] since start: plans selected %llu prepared, %llu inline; equal to a plan built when the draw took it %llu prepared, %llu inline; equal to a plan built after the draw's record-time work %llu prepared, %llu inline (draws that return before their record-time work ends get only the first check)\n", count(PlanCheck::Selected, PlanSource::Prepared), count(PlanCheck::Selected, PlanSource::Inline), count(PlanCheck::Taken, PlanSource::Prepared), count(PlanCheck::Taken, PlanSource::Inline), count(PlanCheck::AfterRecordWork, PlanSource::Prepared), count(PlanCheck::AfterRecordWork, PlanSource::Inline));
+}
+
+void notePlanCheck(PlanCheck check, PlanSource source) {
+    drawPlanVerifyCounters().counts[static_cast<std::size_t>(check)][static_cast<std::size_t>(source)].fetch_add(1, std::memory_order_relaxed);
+    if (check != PlanCheck::Selected) reportDrawPlanVerify();
+}
+
+void requireDrawPlanRepeats(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan, const char* differs) {
     DrawOutcome scratch;
     DrawTimer scratchTimer(false);
     ResourceCache::Key againKey;
@@ -1959,9 +2129,35 @@ void requireDrawPlanRepeats(const Context& context, const State& state, const Pm
     const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
     const auto& layout = plan.VertexLayout();
     const auto& repeated = again.VertexLayout();
-    const bool sameContentKey = (again.contentKey == nullptr && plan.contentKey == nullptr) || (again.contentKey != nullptr && plan.contentKey != nullptr && *again.contentKey == *plan.contentKey);
-    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && sameContentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
+    const bool sameContentKey = (plan.keyed && plan.contentKey == nullptr) || (again.contentKey == nullptr && plan.contentKey == nullptr) || (again.contentKey != nullptr && plan.contentKey != nullptr && *again.contentKey == *plan.contentKey);
+    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && sameContentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), std::string("APS5_VERIFY_DRAW_PLAN: ") + differs);
 }
+
+void requireDrawPlanTaken(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan, PlanSource source) {
+    notePlanCheck(PlanCheck::Selected, source);
+    requireDrawPlanRepeats(context, state, draw, shaders, plan, "the plan the draw took differs from a plan built for the draw when it took it");
+    notePlanCheck(PlanCheck::Taken, source);
+}
+
+void requireDrawPlanAfterRecordWork(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& plan, PlanSource source) {
+    requireDrawPlanRepeats(context, state, draw, shaders, plan, "a plan built after the draw's record-time work differs from the plan the draw took, so that work changed what the plan depends on");
+    notePlanCheck(PlanCheck::AfterRecordWork, source);
+}
+
+}
+
+DrawPlanVerifyCounts ReadDrawPlanVerifyCounts() {
+    DrawPlanVerifyCounts counts;
+    counts.selectedPrepared = drawPlanVerifyCount(PlanCheck::Selected, PlanSource::Prepared);
+    counts.selectedInline = drawPlanVerifyCount(PlanCheck::Selected, PlanSource::Inline);
+    counts.takenPrepared = drawPlanVerifyCount(PlanCheck::Taken, PlanSource::Prepared);
+    counts.takenInline = drawPlanVerifyCount(PlanCheck::Taken, PlanSource::Inline);
+    counts.afterRecordWorkPrepared = drawPlanVerifyCount(PlanCheck::AfterRecordWork, PlanSource::Prepared);
+    counts.afterRecordWorkInline = drawPlanVerifyCount(PlanCheck::AfterRecordWork, PlanSource::Inline);
+    return counts;
+}
+
+namespace {
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
     DrawInputs inputs;
@@ -2464,6 +2660,14 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     else if (address == AddressStages::ReadOnly && !resolved.cacheable) reuse = AddressDrawReuse::NotSpaceOnly;
     if (resolved.cacheable) {
         resolved.contentKey = plan.contentKey;
+        if (resolved.contentKey == nullptr) {
+            const auto keyStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            const auto& committerKey = committerContentKey(context, state, shaders, draw.indexAddress, indexBytes);
+            resolved.contentKey = &committerKey;
+            static const bool verify = std::getenv("APS5_VERIFY_EARLY_DRAW_KEY") != nullptr;
+            if (verify) Require(committerKey == DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey), "the draw resource key the committer made late differs from a key made again for the draw");
+            timer.charge(PhaseLookup, keyStart);
+        }
         if (auto cached = SharedResourceCache().Find(*resolved.contentKey)) {
             const auto releaseSpace = [](ShaderResources* resources) { static_cast<void>(resources->ReleaseSpace()); };
             std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(nullptr, releaseSpace);
@@ -3547,14 +3751,14 @@ struct TargetBinding {
     std::unique_ptr<Buffer> dump;
 };
 
-struct PreparedDraw {
-    explicit PreparedDraw(bool profile) : timer(profile) {}
-    PreparedDraw(const PreparedDraw&) = delete;
-    PreparedDraw& operator=(const PreparedDraw&) = delete;
+struct DrawWork {
+    explicit DrawWork(bool profile) : timer(profile) {}
+    DrawWork(const DrawWork&) = delete;
+    DrawWork& operator=(const DrawWork&) = delete;
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
     std::uint64_t shape = 0;
-    const std::vector<std::uint32_t>* contentKey = nullptr;
+    const PreparedDraw* preparedDraw = nullptr;
     bool passAttachments = false;
     bool attachmentsFromMemo = false;
     std::vector<std::uint32_t> stencilReferences;
@@ -3590,7 +3794,7 @@ struct PreparedDraw {
     std::shared_ptr<std::shared_ptr<const void>> spaceKeep;
 };
 
-void keepHeldSpace(PreparedDraw& prepared) {
+void keepHeldSpace(DrawWork& prepared) {
     const auto& resources = prepared.resolved.resources;
     if (prepared.spaceKeep != nullptr || prepared.recorder == nullptr || resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
     prepared.spaceKeep = reserveSpaceKeep(*prepared.recorder, *resources);
@@ -3819,7 +4023,7 @@ bool matchAttachmentMemo(const Context& context, const State& state, InlineList<
     return true;
 }
 
-bool memoAttachments(const Context& context, const State& state, PreparedDraw& prepared, bool fill) {
+bool memoAttachments(const Context& context, const State& state, DrawWork& prepared, bool fill) {
     InlineList<std::shared_ptr<StorageTexture>, 8> residents;
     if (!matchAttachmentMemo(context, state, residents, {})) return false;
     if (!fill) return true;
@@ -3852,7 +4056,7 @@ void checkAttachmentViews(const State& state, std::span<const VkImageView> views
     }
 }
 
-void checkAttachments(const State& state, const PreparedDraw& prepared) {
+void checkAttachments(const State& state, const DrawWork& prepared) {
     checkAttachmentViews(state, prepared.targetViews, [&](std::size_t index) { return prepared.targets[index].resident; });
 }
 
@@ -3879,7 +4083,7 @@ void storeAttachmentMemoHeader(AttachmentMemo& memo, const Context& context, con
     memo.depthView = state.depth ? views.back() : VK_NULL_HANDLE;
 }
 
-void rememberAttachments(const Context& context, const State& state, const PreparedDraw& prepared) {
+void rememberAttachments(const Context& context, const State& state, const DrawWork& prepared) {
     auto& memo = attachmentMemo();
     const auto* recorder = prepared.recorder;
     const auto epoch = GuestMemory::CollectEpoch();
@@ -4204,7 +4408,7 @@ const char* targetObligation(const Context& context, const State& state, std::sp
     return repeatedDepth ? DepthTargetObligation(context, *state.depth, state.depthWrite) : nullptr;
 }
 
-bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
+bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, DrawWork& prepared) {
     auto*& recipeOut = prepared.recipeOut;
     auto& stencilReferences = prepared.stencilReferences;
     for (const auto& shader : shaders) {
@@ -4250,14 +4454,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& ownWaitedMs = prepared.ownWaitedMs;
     const auto report = [&](const char* suffix) { reportDrawEnd(state, timer, built, outcome, waitedBefore, ownWaitedMs, suffix); };
     auto& inputs = prepared.inputs;
-    const auto plan = planDraw(context, state, draw, shaders, nullptr, outcome, timer, prepared.contentKey);
+    std::optional<DrawPlan> inlinePlan;
+    const DrawPlan& plan = takePlan(context, state, draw, shaders, prepared.preparedDraw, inlinePlan, outcome, timer);
+    const auto planSource = inlinePlan.has_value() ? PlanSource::Inline : PlanSource::Prepared;
+    if (VerifyDrawPlan()) requireDrawPlanTaken(context, state, draw, shaders, plan, planSource);
     if (plan.nothing) return false;
     inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
     if (inputs.result == DrawResult::NeedsIndividualRecords) return false;
-    if (inputs.nothing) {
-        if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
-        return false;
-    }
+    if (inputs.nothing) return false;
     const auto* args = prepared.args = draw.indirect ? &*draw.indirect : nullptr;
     const auto indexBytes = inputs.indexBytes;
     const int dumpLimit = prepared.dumpLimit = DumpTargetLimit();
@@ -4763,11 +4967,11 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
     timer.phase(PhasePipeline);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
-    if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
+    if (VerifyDrawPlan()) requireDrawPlanAfterRecordWork(context, state, draw, shaders, plan, planSource);
     return true;
 }
 
-void recordPreparedDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, PreparedDraw& prepared) {
+void recordDrawWork(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawWork& prepared) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     static AgcDriver::Mutex dumpMutex;
@@ -5231,14 +5435,7 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Draw(context, meshed, captured, second, snapshots, nullptr, trace);
 }
 
-std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
-    if (!EarlyDrawKeys() || shaders.empty() || std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program == nullptr; })) return {};
-    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
-    const auto indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
-    return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-}
-
-DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const PreparedDraw* preparedDraw) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (draw.indirect && draw.indirect->capturedRecords) {
         const auto& args = *draw.indirect;
@@ -5273,12 +5470,12 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
         };
         auto firstWindow = makeWindow(0u);
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-        PreparedDraw prepared(profile);
+        DrawWork prepared(profile);
         prepared.trace = trace;
-        prepared.contentKey = contentKey;
+        prepared.preparedDraw = preparedFor(context, preparedDraw);
         prepared.passAttachments = PassAttachmentMemoEnabled();
         const struct HeldSpace {
-            PreparedDraw& prepared;
+            DrawWork& prepared;
             ~HeldSpace() {
                 const auto& resources = prepared.resolved.resources;
                 if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
@@ -5300,7 +5497,7 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
                 prepared.completion = false;
                 prepared.outcome.waited = false;
             }
-            recordPreparedDraw(context, firstWindow, draw, shaders, prepared);
+            recordDrawWork(context, firstWindow, draw, shaders, prepared);
             if (sharePrepared) {
                 for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
                     auto window = makeWindow(base);
@@ -5323,7 +5520,7 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
                     const auto& pipelineState = prepared.masked.has_value() ? *prepared.masked : window;
                     prepared.pipeline = CachedPipeline(context, pipelineState, prepared.inputs.VertexLayout(), prepared.resolved.resources->SetLayouts(), shaders, VK_IMAGE_LAYOUT_GENERAL);
                     prepared.framebuffer = prepared.pipeline->AcquireFramebuffer(prepared.targetViews, prepared.framebufferOwners, window.renderExtent, window.renderLayers);
-                    recordPreparedDraw(context, window, draw, shaders, prepared);
+                    recordDrawWork(context, window, draw, shaders, prepared);
                     base += window.renderLayers;
                 }
             }
@@ -5343,14 +5540,14 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
         return DrawResult::Handled;
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    PreparedDraw prepared(profile);
+    DrawWork prepared(profile);
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
     prepared.shape = shape;
-    prepared.contentKey = contentKey;
+    prepared.preparedDraw = preparedFor(context, preparedDraw);
     prepared.passAttachments = PassAttachmentMemoEnabled();
     const struct HeldSpace {
-        PreparedDraw& prepared;
+        DrawWork& prepared;
         ~HeldSpace() {
             const auto& resources = prepared.resolved.resources;
             if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
@@ -5360,7 +5557,7 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
         }
     } heldSpace{prepared};
     try {
-        if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
+        if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordDrawWork(context, state, draw, shaders, prepared);
     } catch (...) {
         ThreadTargetMemo().Invalidate();
         keepHeldSpace(prepared);
