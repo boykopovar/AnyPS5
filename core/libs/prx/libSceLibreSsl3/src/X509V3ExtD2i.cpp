@@ -165,12 +165,16 @@ bool ReadLength(std::span<const unsigned char>& input, Header& header) {
     const unsigned char byte = input.front();
     input = input.subspan(1);
     header.indefinite = byte == 0x80;
-    if (byte <= 0x80) {
+    if (byte < 0x80) {
         header.length = byte;
         return true;
     }
+    if (header.indefinite) {
+        header.length = 0;
+        return true;
+    }
     const unsigned int count = byte & 0x7f;
-    if (count == 0 || count > sizeof(std::size_t)) return false;
+    if (count == 0x7f) return false;
     header.length = 0;
     for (unsigned int index = 0; index < count; ++index) {
         if (input.empty()) return false;
@@ -558,6 +562,9 @@ bool EndsDefiniteContent(std::span<const unsigned char> body) {
 
 constexpr int NoMatchingChoiceType = 143;
 constexpr int ExplicitTagNotConstructed = 120;
+constexpr int MissingEoc = 137;
+constexpr int NestedAsn1String = 197;
+constexpr int MaxStringNest = 5;
 constexpr std::uint32_t OtherNameTag = 0;
 constexpr std::uint32_t EmailTag = 1;
 constexpr std::uint32_t DnsNameTag = 2;
@@ -570,6 +577,52 @@ constexpr std::uint32_t RegisteredIdTag = 8;
 
 void PutNestedErrors(int count) {
     for (int index = 0; index < count; ++index) PutError(NestedAsn1Error);
+}
+
+bool CollectConstructedString(std::span<const unsigned char>& input, bool indefinite, int depth,
+    std::vector<unsigned char>& collected) {
+    if (depth > MaxStringNest) {
+        PutError(NestedAsn1String);
+        return false;
+    }
+    while (!input.empty()) {
+        if (input.size() >= 2 && input[0] == 0 && input[1] == 0) {
+            if (!indefinite) {
+                PutError(EndOfContentsInDefiniteForm);
+                return false;
+            }
+            input = input.subspan(2);
+            return true;
+        }
+        Header header;
+        if (!ReadIdentifier(input, header) || !ReadLength(input, header) || (header.indefinite && !header.constructed)) {
+            PutHeaderError(BadObjectHeader);
+            return false;
+        }
+        if ((!header.indefinite && header.length > input.size()) ||
+            header.tag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+            PutHeaderError(TooLong);
+            return false;
+        }
+        if (header.constructed) {
+            if (header.indefinite) {
+                if (!CollectConstructedString(input, true, depth + 1, collected)) return false;
+            } else {
+                std::span<const unsigned char> child = input.first(header.length);
+                input = input.subspan(header.length);
+                if (!CollectConstructedString(child, false, depth + 1, collected)) return false;
+            }
+            continue;
+        }
+        const std::span<const unsigned char> chunk = input.first(header.length);
+        collected.insert(collected.end(), chunk.begin(), chunk.end());
+        input = input.subspan(header.length);
+    }
+    if (indefinite) {
+        PutError(MissingEoc);
+        return false;
+    }
+    return true;
 }
 
 bool DecodeDirectoryName(std::span<const unsigned char> content, LibreSslGeneralName& name) {
@@ -640,6 +693,7 @@ LibreSslGeneralName* NewGeneralName(std::span<const unsigned char>& input) {
             PutNestedErrors(2);
             return nullptr;
         }
+        if (header.indefinite) NotImplemented_nid_no_patch("GENERAL_NAME indefinite length");
         break;
     case DirectoryNameTag:
         if (!header.constructed) {
@@ -647,6 +701,7 @@ LibreSslGeneralName* NewGeneralName(std::span<const unsigned char>& input) {
             PutNestedErrors(1);
             return nullptr;
         }
+        if (header.indefinite) NotImplemented_nid_no_patch("GENERAL_NAME indefinite length");
         break;
     case RegisteredIdTag:
         if (header.constructed) {
@@ -656,30 +711,39 @@ LibreSslGeneralName* NewGeneralName(std::span<const unsigned char>& input) {
         }
         break;
     default:
-        if (header.constructed) NotImplemented_nid_no_patch("GENERAL_NAME constructed string");
         break;
     }
-    if (header.indefinite) NotImplemented_nid_no_patch("GENERAL_NAME indefinite length");
-    const std::span<const unsigned char> content = input.first(header.length);
-    input = input.subspan(header.length);
-    switch (header.tag) {
-    case EmailTag:
-    case DnsNameTag:
-    case UriTag:
-        name->value = NewString(Ia5StringType, content);
-        break;
-    case IpAddressTag:
-        name->value = NewString(OctetStringType, content);
-        break;
-    case X400Tag:
-        name->value = NewString(static_cast<std::int32_t>(SequenceTag), element.first(headerSize + header.length));
-        break;
-    case DirectoryNameTag:
-        if (!DecodeDirectoryName(content, *name)) return nullptr;
-        return name.release();
-    case RegisteredIdTag:
-        name->value = NewObject(content);
-        break;
+    if (header.tag == EmailTag || header.tag == DnsNameTag || header.tag == UriTag || header.tag == IpAddressTag) {
+        const std::int32_t stringType = header.tag == IpAddressTag ? OctetStringType : Ia5StringType;
+        if (header.constructed) {
+            std::vector<unsigned char> collected;
+            bool collectedOk = false;
+            if (header.indefinite) {
+                collectedOk = CollectConstructedString(input, true, 0, collected);
+            } else {
+                std::span<const unsigned char> content = input.first(header.length);
+                input = input.subspan(header.length);
+                collectedOk = CollectConstructedString(content, false, 0, collected);
+            }
+            if (collectedOk) name->value = NewString(stringType, collected);
+        } else {
+            name->value = NewString(stringType, input.first(header.length));
+            input = input.subspan(header.length);
+        }
+    } else {
+        const std::span<const unsigned char> content = input.first(header.length);
+        input = input.subspan(header.length);
+        switch (header.tag) {
+        case X400Tag:
+            name->value = NewString(static_cast<std::int32_t>(SequenceTag), element.first(headerSize + header.length));
+            break;
+        case DirectoryNameTag:
+            if (!DecodeDirectoryName(content, *name)) return nullptr;
+            return name.release();
+        case RegisteredIdTag:
+            name->value = NewObject(content);
+            break;
+        }
     }
     if (!name->value) {
         PutNestedErrors(2);
