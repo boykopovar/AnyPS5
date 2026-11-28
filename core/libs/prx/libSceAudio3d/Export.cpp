@@ -189,7 +189,7 @@ int OpenPs5Port(int user_id, const Audio3dOpenParameters* parameters, std::uint3
 int OpenPs4Port(const char* function, int user_id, const Audio3dOpenParameters* parameters, std::uint32_t* id) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return AUDIO3D_ERROR_NOT_READY;
-    if (user_id != AUDIO3D_USER_ID_SYSTEM || parameters == nullptr || id == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    if (parameters == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
     std::uint64_t sizeThis = 0;
     const bool copiedSize = GuestCopyIn_nid_no_patch(&sizeThis, parameters, sizeof(sizeThis));
     if (!copiedSize) return AUDIO3D_ERROR_INVALID_PARAMETER;
@@ -220,6 +220,9 @@ int OpenPs4Port(const char* function, int user_id, const Audio3dOpenParameters* 
     default:
         return AUDIO3D_ERROR_INVALID_PARAMETER;
     }
+    g_port.granularity = localParameters.granularity;
+    g_port.buffer_mode = buffer_mode;
+    if (user_id != AUDIO3D_USER_ID_SYSTEM || id == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (localParameters.rate != AUDIO3D_RATE_48000) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (localParameters.granularity < 0x100 || (localParameters.granularity & 0xFF) != 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (max_objects == 0 || queue_depth == 0) return AUDIO3D_ERROR_INVALID_PARAMETER;

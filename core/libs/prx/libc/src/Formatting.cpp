@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cctype>
+#include <initializer_list>
 #include <cstring>
 #include <string>
 #include <cerrno>
@@ -117,7 +118,7 @@ bool HasGuestWideScan(const char* format) {
 }
 
 
-bool HasNarrowCharacterScan(const char* format) {
+bool HasNarrowScan(const char* format, const char* conversions) {
     if (format == nullptr) return false;
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
@@ -130,7 +131,8 @@ bool HasNarrowCharacterScan(const char* format) {
         while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
         const char* length = format;
         while (*format && std::strchr("hljztL", *format)) ++format;
-        if (*format == 'c' && !(format - length == 1 && *length == 'l')) return true;
+        if (*format != '\0' && std::strchr(conversions, *format) != nullptr &&
+                (*format != 'c' || !(format - length == 1 && *length == 'l'))) return true;
         if (*format == '[') {
             ++format;
             if (*format == '^') ++format;
@@ -142,9 +144,13 @@ bool HasNarrowCharacterScan(const char* format) {
     return false;
 }
 
-#ifdef _WIN32
+#ifndef _WIN32
+bool HasNarrowCharacterScan(const char* format) {
+    return HasNarrowScan(format, "c");
+}
+#else
 bool ScansInProcess(const char* format) {
-    return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
+    return HasGuestWideScan(format) || HasNarrowScan(format, "cxXipaAeEfFgG");
 }
 #endif
 
@@ -288,6 +294,12 @@ void StoreDefaultNaN(void* target, std::size_t bytes) {
     }
 }
 
+std::string ScanLength(const std::string& length, char conversion) {
+    if (length == "L" && std::strchr("diouxXn", conversion) != nullptr) return {};
+    if (std::strchr("aAeEfFgG", conversion) != nullptr && length != "l" && length != "L") return {};
+    return length;
+}
+
 class StringSource {
     const char* const start;
     const char* position;
@@ -338,6 +350,39 @@ public:
     void Advance(std::ptrdiff_t count) { consumed += count; }
     std::ptrdiff_t Consumed() const { return consumed; }
 
+    bool MalformedFloatAhead(unsigned long width) const {
+        const unsigned long limit = width == 0 ? ULONG_MAX : width;
+        char ahead[9]{};
+        unsigned long read = 0;
+        const auto next = [&]() -> int {
+            if (read >= sizeof(ahead) || read >= limit) return EOF;
+            const int byte = std::fgetc(file);
+            if (byte != EOF) ahead[read++] = static_cast<char>(byte);
+            return byte;
+        };
+        const auto lower = [](int byte) { return byte == EOF ? EOF : std::tolower(byte); };
+        bool malformed = false;
+        int byte = next();
+        if (byte == '+' || byte == '-') byte = next();
+        if (byte == '0') {
+            byte = next();
+            if (byte == 'x' || byte == 'X') {
+                byte = next();
+                malformed = byte == EOF || (std::isxdigit(byte) == 0 && byte != '.');
+            }
+        } else if (lower(byte) == 'i' && lower(next()) == 'n' && lower(next()) == 'f' && lower(next()) == 'i') {
+            malformed = true;
+            for (const char expected : {'n', 'i', 't', 'y'}) {
+                if (lower(next()) != expected) break;
+                if (expected == 'y') malformed = false;
+            }
+        }
+        for (unsigned long index = read; index > 0; --index) {
+            if (std::ungetc(static_cast<unsigned char>(ahead[index - 1]), file) == EOF) throw std::runtime_error("float scan prefix pushback failed");
+        }
+        return malformed;
+    }
+
     int Scan(const char* directive, bool suppress, void* target, int* count) const {
         return suppress ? HostFscanf(file, directive, count) : HostFscanf(file, directive, target, count);
     }
@@ -381,9 +426,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const char first = *cursor++;
             if ((first == 'h' || first == 'l') && *cursor == first) ++cursor;
         }
-        const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
         if (conversion == '\0') return finish(assigned);
+        const std::string length = ScanLength(std::string(lengthStart, cursor), conversion);
         if (!secure && std::strchr("diouxXaAeEfFgGcspn[SC", conversion) == nullptr) return finish(assigned);
         std::string specifier(1, conversion);
         if (conversion == '[') {
@@ -564,6 +609,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             if (prefix == HexPrefix::InputFailure) return finish(converted ? assigned : EOF);
             if (prefix == HexPrefix::MatchingFailure) return finish(assigned);
         }
+        if constexpr (!TSource::Contiguous) if (floating && source.MalformedFloatAhead(width)) return finish(assigned);
         const int savedError = errno;
         int consumed = -1;
         int matched = 0;
@@ -624,7 +670,8 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
 template <typename NextPointer, typename NextCapacity>
 int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPointer, NextCapacity nextCapacity, bool secure = true) {
     if (stream == nullptr || format == nullptr) return EOF;
-    if (!stream->IsOpen()) { errno = 9; return EOF; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return EOF; }
     flockfile_nid_postfix(stream);
     struct Unlock {
         FileStream* stream;
@@ -687,7 +734,8 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
 }
 
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
@@ -742,7 +790,8 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
         return result;
     }
 #endif
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
@@ -767,7 +816,8 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32
 
 int APS5_VABI printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -777,7 +827,8 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -805,7 +856,8 @@ int APS5_VABI sprintf_nid_postfix(char* buffer, const char* format, ...) {
 #else
 
 int APS5_VABI printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -815,7 +867,8 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -895,7 +948,8 @@ int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) 
 #endif
 
 int APS5_VABI vprintf_nid_postfix(const char* str, VaList* c) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
 #ifdef _WIN32
     _Stdout_nid_postfix.Orientation(-1);
     return LibcDetail::PrintWindows(str, c);
@@ -982,7 +1036,8 @@ int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* for
 
 static int WriteSecure(FileStream* stream, const char* format, const void* args) {
     if (stream == nullptr || format == nullptr || args == nullptr) return -1;
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
@@ -1096,7 +1151,8 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 #endif
 
 int APS5_VABI puts_nid_postfix(const char* s) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(&_Stdout_nid_postfix);
     _Stdout_nid_postfix.Orientation(-1);
     if (!_Stdout_nid_postfix.SwitchToWriting()) return EOF;
@@ -1115,7 +1171,8 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
         return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
     }
 #endif
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;

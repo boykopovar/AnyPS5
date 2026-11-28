@@ -8,6 +8,7 @@ int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser17pngParserFinalizeEv();
 int APS5_VABI libScePngParserUnknown_vJpgNFIBlCk_nid_no_patch(const void* config);
 int APS5_VABI libScePngParserUnknown_0Imz9zU_minus_Wgk_nid_no_patch();
 int APS5_VABI libScePngParserUnknown_5XfcHLzGE6E_nid_no_patch();
+int APS5_VABI libScePngParserUnknown_MBQfjtzRyh0_nid_no_patch(const void* path, void* request, void* output);
 
 int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser19pngParserInitializeEv();
 int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser21pngParserReadMetadataERKSsRKNS_8MetadataERS3_();

@@ -160,12 +160,12 @@ class Trace:
         starts = [ts for ts, _ in self.presents]
         if end is None:
             end = starts[-1] if starts else 0.0
-        bounds = starts + ([end] if not starts or end > starts[-1] else [])
+        bounds = [start for start in starts if start < end] + [end]
         return [(index, bounds[index], bounds[index + 1], self.presents[index][1]) for index in range(len(bounds) - 1)]
 
 
 def load_trace(path):
-    opener = gzip.open if str(path).endswith(".gz") else open
+    opener = gzip.open if str(path).lower().endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
         try:
             document = json.load(handle, object_pairs_hook=unique_json_object)
@@ -224,7 +224,7 @@ def load_summary(path, trace_path):
     label = Path(path) if path else hint
     lines = load_summary_lines(candidate, label=label)
     name = Path(trace_path).name
-    alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
+    alternate = name[:-3] if name.lower().endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
         for line in reversed(lines):
             if line.get("trace") == filename:
@@ -675,6 +675,9 @@ def main(arguments=None):
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
+    interval_input = options.trace.endswith(".jsonl")
+    if options.summary and interval_input:
+        parser.error("--summary requires an event trace, not interval summaries")
     if options.summary:
         try:
             summary_path = resolve_summary_path(options.summary)
@@ -682,11 +685,11 @@ def main(arguments=None):
             parser.error(str(error))
         if not summary_path.is_file():
             parser.error(f"summary file not found: {options.summary}")
-    if options.thread and options.trace.endswith(".jsonl"):
+    if options.thread and interval_input:
         parser.error("--thread requires an event trace, not interval summaries")
-    if options.stacks and options.trace.endswith(".jsonl"):
+    if options.stacks and interval_input:
         parser.error("--stacks requires an event trace, not interval summaries")
-    if options.trace.endswith(".jsonl"):
+    if interval_input:
         try:
             intervals_path = resolve_summary_path(options.trace)
         except ValueError as error:
@@ -694,8 +697,6 @@ def main(arguments=None):
         if not intervals_path.is_file():
             parser.error(f"summary file not found: {options.trace}")
         result = digest_intervals(load_intervals(options.trace))
-        if options.summary:
-            parser.error("--summary requires an event trace, not interval summaries")
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
     try:

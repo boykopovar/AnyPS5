@@ -27,7 +27,8 @@ extern "C" int APS5_VABI getw_nid_postfix(FileStream* stream) {
 }
 
 extern "C" int APS5_VABI putw_nid_postfix(int value, FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     const LockedStream lock(stream);
     const auto bits = static_cast<std::uint32_t>(value);
     for (unsigned shift = 0; shift < 32; shift += 8)

@@ -12,6 +12,8 @@
 
 namespace {
 constexpr std::uint32_t ParamSfoAttributeSupportNeoMode = 0x00800000;
+
+
 }
 
 extern "C" {
@@ -98,9 +100,8 @@ int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len) {
     return sceKernelReleaseDirectMemory(start, len);
 }
 
-int APS5_VABI sceKernelSetProcessProperty(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelSetProcessProperty(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4) {
+    return KernelSetProcessProperty_nid_no_patch(name, value1, value2, value3, value4);
 }
 
 }

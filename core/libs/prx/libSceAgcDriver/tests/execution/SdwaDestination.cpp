@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -162,6 +163,86 @@ std::uint32_t InsertResult(std::uint32_t bits, std::uint32_t destination, std::u
     return (field << offset) | (unused == 2u ? Garbage & ~(mask << offset) : 0u);
 }
 
+constexpr std::uint32_t InexactResults = 6u * 3u;
+constexpr std::array<std::uint32_t, 16> InexactWords{
+    0x01000001u, 0x01000003u, 0x01000005u, 0x7fffffffu, 0x7fffff80u, 0x7fffffbfu, 0x7fffffc0u, 0x80000001u,
+    0x80000081u, 0xff7f8081u, 0x12345678u, 0x9abcdef1u, 0xfedcba99u, 0xdeadbeefu, 0x89abcdefu, 0x00ffffffu,
+};
+alignas(256) std::array<std::uint32_t, Threads> InexactInput{};
+alignas(256) std::array<std::uint32_t, Threads * InexactResults> InexactOutput{};
+
+std::uint32_t RoundedFloatBits(std::uint32_t value, bool signedInteger, std::uint32_t roundMode) {
+    const bool negative = signedInteger && (value & 0x80000000u);
+    const auto magnitude = negative ? 0u - value : value;
+    if (magnitude == 0u) return 0u;
+    auto exponent = static_cast<std::uint32_t>(std::bit_width(magnitude) - 1u);
+    auto kept = exponent <= 23u ? magnitude << (23u - exponent) : magnitude >> (exponent - 23u);
+    if (exponent > 23u) {
+        const auto shift = exponent - 23u;
+        const auto rest = magnitude & ((1u << shift) - 1u);
+        const auto half = 1u << (shift - 1u);
+        const bool up = rest != 0u && (roundMode == 0u ? rest > half || (rest == half && (kept & 1u) != 0u) : roundMode == 1u ? !negative : roundMode == 2u && negative);
+        if (up && ++kept == (1u << 24u)) {
+            kept >>= 1u;
+            ++exponent;
+        }
+    }
+    return (negative ? 0x80000000u : 0u) | ((exponent + 127u) << 23u) | (kept & 0x7fffffu);
+}
+
+void RunInexactConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::uint32_t waveSize, std::uint32_t roundMode) {
+    Require(RoundedFloatBits(0x01000001u, false, 0u) == 0x4b800000u && RoundedFloatBits(0x01000003u, false, 0u) == 0x4b800002u &&
+        RoundedFloatBits(0x01000001u, false, 1u) == 0x4b800001u && RoundedFloatBits(0x80000001u, true, 2u) == 0xcf000000u &&
+        RoundedFloatBits(0x80000001u, true, 3u) == 0xceffffffu && RoundedFloatBits(0x7fffffffu, true, 3u) == 0x4effffffu,
+        "inexact integer-to-f32 model anchors");
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) InexactInput[lane] = InexactWords[lane % InexactWords.size()];
+    InexactOutput.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{0x160200ffu, 1u, 0x160400ffu, InexactResults, 0xe0302000u, 0x80000401u, 0xbf8c3f70u};
+    std::uint32_t index = 0u;
+    for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+        for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+            words.insert(words.end(), {
+                0x7e0a02ffu, Garbage,
+                0x7e0a00f9u | ((signedInteger ? 5u : 6u) << 9u), 4u | (destination << 8u) | (unused << 11u) | (6u << 16u),
+                0xe0702000u | (index * 4u), 0x80010502u,
+            });
+        }
+    }
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    const auto input = BufferDescriptor(InexactInput.data(), static_cast<std::uint32_t>(InexactInput.size()));
+    const auto output = BufferDescriptor(InexactOutput.data(), static_cast<std::uint32_t>(InexactOutput.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u | roundMode, true, false, false};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    index = 0u;
+    for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+        for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+            for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+                const auto expected = InsertResult(RoundedFloatBits(InexactInput[lane], signedInteger, roundMode), destination, unused);
+                const auto actual = InexactOutput[lane * InexactResults + index];
+                Require(actual == expected, "sdwa inexact integer-to-f32: lane " + std::to_string(lane) + (signedInteger ? " i32" : " u32") +
+                    " wave" + std::to_string(waveSize) + " round mode " + std::to_string(roundMode) + " source " + Hex(InexactInput[lane]) +
+                    " destination " + std::to_string(destination) + " unused " + std::to_string(unused) + " is " + Hex(actual) +
+                    ", expected " + Hex(expected));
+            }
+        }
+    }
+    std::printf("sdwa inexact integer-to-f32 %s wave%u round mode %u: %u combinations passed\n", signedInteger ? "i32" : "u32", waveSize, roundMode, InexactResults);
+}
+
 void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::uint32_t waveSize) {
     Require(ExactFloatBits(74565u, false) == 0x4791a280u && ExactFloatBits(1193046u, false) == 0x4991a2b0u,
         "integer-to-f32 model anchors");
@@ -173,7 +254,7 @@ void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::ui
                 if (!signedInteger) {
                     if (source == 6u) word = static_cast<std::uint32_t>(integer < 0 ? -integer : integer);
                     else if (sign != 0u && source < 4u) word &= ~(0x80u << FieldOffset(source));
-                    else if (sign != 0u) word &= ~(0x8000u << FieldOffset(source));
+                    else if (sign != 0u && (word & (0x8000u << FieldOffset(source))) != 0u) word &= ~(0xffu << FieldOffset(source));
                 }
                 ExactFloatBits(SelectInteger(word, source, sign != 0u), signedInteger);
                 ConversionInput[lane * ConversionInputs + source * 2u + sign] = word;
@@ -240,6 +321,92 @@ void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::ui
         }
     }
     std::printf("sdwa integer-to-f32 %s wave%u: %u combinations passed\n", signedInteger ? "i32" : "u32", waveSize, ConversionResults);
+}
+
+constexpr std::uint32_t SextResults = 14u;
+constexpr std::array<std::uint32_t, 16> SextWords{
+    0xff81fe80u, 0x80fffe00u, 0x7f80fe81u, 0x00fffe82u,
+    0x8000ff00u, 0x8001ff80u, 0xffff7fffu, 0xc0008100u,
+    0x01020304u, 0xfefdfcfbu, 0xdeadbeefu, 0x80808080u,
+    0x7f7f7f7fu, 0xfffffeffu, 0x80ff8000u, 0xff00ff80u,
+};
+alignas(256) std::array<std::uint32_t, Threads> SextInput{};
+alignas(256) std::array<std::uint32_t, Threads * SextResults> SextOutput{};
+
+void RunSignExtendedUnsignedConversions(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+        SextInput[lane] = SextWords[lane % SextWords.size()];
+    }
+    SextOutput.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{
+        0x160400ffu, SextResults,
+        0xe0302000u, 0x80000400u, 0xbf8c3f70u,
+    };
+    std::uint32_t index = 0u;
+    for (std::uint32_t source = 0u; source < 6u; ++source) {
+        for (std::uint32_t sign = 0u; sign < 2u; ++sign, ++index) {
+            words.insert(words.end(), {
+                0x7e0a0cf9u,
+                4u | (6u << 8u) | (source << 16u) | (sign << 19u),
+                0xe0702000u | (index * 4u), 0x80010502u,
+            });
+        }
+    }
+    words.insert(words.end(), {
+        0x7e0c0280u,
+        0xe0302000u, 0x80000706u, 0xbf8c3f70u,
+        0x7e100507u,
+        0xbe891908u,
+        0x7e0a0c09u,
+        0xe0702000u | (index * 4u), 0x80010502u,
+    });
+    ++index;
+    words.insert(words.end(), {
+        0xbe891a08u,
+        0x7e0a0c09u,
+        0xe0702000u | (index * 4u), 0x80010502u,
+    });
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    const auto input = BufferDescriptor(SextInput.data(), static_cast<std::uint32_t>(SextInput.size()));
+    const auto output = BufferDescriptor(SextOutput.data(), static_cast<std::uint32_t>(SextOutput.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+        const auto word = SextInput[lane];
+        index = 0u;
+        for (std::uint32_t source = 0u; source < 6u; ++source) {
+            for (std::uint32_t sign = 0u; sign < 2u; ++sign, ++index) {
+                const auto expected = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(word, source, sign != 0u)));
+                const auto actual = SextOutput[lane * SextResults + index];
+                Require(actual == expected, "sdwa sign-extended u32-to-f32: lane " + std::to_string(lane) +
+                    " wave" + std::to_string(waveSize) + " source " + std::to_string(source) +
+                    " sext " + std::to_string(sign) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            }
+        }
+        const auto firstLaneWord = SextInput[0];
+        const auto expectedI8 = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(firstLaneWord, 0u, true)));
+        const auto actualI8 = SextOutput[lane * SextResults + 12u];
+        Require(actualI8 == expectedI8, "scalar s_sext_i32_i8 u32-to-f32: lane " + std::to_string(lane) +
+            " wave" + std::to_string(waveSize) + " is " + Hex(actualI8) + ", expected " + Hex(expectedI8));
+        const auto expectedI16 = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(firstLaneWord, 4u, true)));
+        const auto actualI16 = SextOutput[lane * SextResults + 13u];
+        Require(actualI16 == expectedI16, "scalar s_sext_i32_i16 u32-to-f32: lane " + std::to_string(lane) +
+            " wave" + std::to_string(waveSize) + " is " + Hex(actualI16) + ", expected " + Hex(expectedI16));
+    }
+    std::printf("sdwa sign-extended u32-to-f32 wave%u: %u results passed\n", waveSize, Threads * SextResults);
 }
 
 constexpr std::uint32_t F16ConversionInputs = 2u;
@@ -353,6 +520,104 @@ constexpr std::array<std::uint32_t, 16> FrexpInputs{
     0x40200000u, 0xc0600000u, 0x478000c0u, 0xc78000c0u,
     0x3f923456u, 0xbf923456u, 0x409abcdeu, 0xc09abcdeu,
 };
+constexpr std::array<std::uint32_t, 32> SpecialInputs{
+    0x00000000u, 0x80000000u, 0x00000001u, 0x80000001u, 0x007fffffu, 0x807fffffu, 0x00400000u, 0x80400000u,
+    0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+    0x4b000001u, 0xcb7fffffu, 0x3effffffu, 0xbeffffffu, 0x3f000000u, 0xbf000000u, 0x3fc00000u, 0xc0200000u,
+    0x00800000u, 0x80800000u, 0x33800000u, 0xb3800001u, 0x4effffffu, 0xceffffffu, 0x3f7fffffu, 0xbf7fffffu,
+};
+constexpr std::array<ShaderRecompiler::ShaderFloatMode, 2> SpecialModes{{{0xf0u, false, false, false}, {0x00u, false, false, false}}};
+constexpr std::uint32_t SpecialResults[2][7][32] = {
+    {
+        {
+            0x00000000u, 0x00000000u, 0x00000001u, 0x3f7fffffu, 0x007fffffu, 0x3f7fffffu, 0x00400000u, 0x3f7fffffu,
+            0xffc00000u, 0xffc00000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x3effffffu, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u,
+            0x00800000u, 0x3f7fffffu, 0x33800000u, 0x3f7fffffu, 0x00000000u, 0x00000000u, 0x3f7fffffu, 0x33800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x3f800000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x3f800000u, 0xc0400000u,
+            0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x00000000u, 0xffffff6cu, 0xffffff6cu, 0xffffff82u, 0xffffff82u, 0xffffff82u, 0xffffff82u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000080u, 0x00000080u,
+            0x00000018u, 0x00000018u, 0xffffffffu, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u,
+            0xffffff83u, 0xffffff83u, 0xffffffe9u, 0xffffffe9u, 0x0000001fu, 0x0000001fu, 0x00000000u, 0x00000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x3f000000u, 0xbf000000u, 0x3f7ffffeu, 0xbf7ffffeu, 0x3f000000u, 0xbf000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x3f7fffffu, 0xbf7fffffu,
+            0x3f000001u, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu, 0x3f000000u, 0xbf000000u, 0x3f400000u, 0xbf200000u,
+            0x3f000000u, 0xbf000000u, 0x3f000000u, 0xbf000001u, 0x3f7fffffu, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu,
+        },
+    },
+    {
+        {
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0xffc00000u, 0xffc00000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x3effffffu, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u, 0x3f000000u,
+            0x00800000u, 0x3f7fffffu, 0x33800000u, 0x3f7fffffu, 0x00000000u, 0x00000000u, 0x3f7fffffu, 0x33800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x3f800000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x3f800000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0x80000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x40000000u, 0xc0000000u,
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x4effffffu, 0xceffffffu, 0x3f800000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x7f7fffffu, 0xff7fffffu,
+            0x4b000001u, 0xcb7fffffu, 0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x3f800000u, 0xc0400000u,
+            0x00000000u, 0xbf800000u, 0x00000000u, 0xbf800000u, 0x4effffffu, 0xceffffffu, 0x00000000u, 0xbf800000u,
+        },
+        {
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+            0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000080u, 0x00000080u,
+            0x00000018u, 0x00000018u, 0xffffffffu, 0xffffffffu, 0x00000000u, 0x00000000u, 0x00000001u, 0x00000002u,
+            0xffffff83u, 0xffffff83u, 0xffffffe9u, 0xffffffe9u, 0x0000001fu, 0x0000001fu, 0x00000000u, 0x00000000u,
+        },
+        {
+            0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u,
+            0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7fa00000u, 0xffa12345u, 0x3f7fffffu, 0xbf7fffffu,
+            0x3f000001u, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu, 0x3f000000u, 0xbf000000u, 0x3f400000u, 0xbf200000u,
+            0x3f000000u, 0xbf000000u, 0x3f000000u, 0xbf000001u, 0x3f7fffffu, 0xbf7fffffu, 0x3f7fffffu, 0xbf7fffffu,
+        },
+    },
+};
+
 alignas(256) std::array<std::uint32_t, Threads> F32Input{};
 alignas(256) std::array<std::uint32_t, Threads * F32Results> F32Output{};
 
@@ -378,9 +643,9 @@ std::uint32_t F32ResultBits(std::uint32_t bits, std::uint32_t opcode) {
     return ExactFloatBits(integer, false) | sign;
 }
 
-void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t waveSize) {
+void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t waveSize, const std::uint32_t* measured = nullptr, std::optional<ShaderRecompiler::ShaderFloatMode> floatMode = std::nullopt) {
     for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
-        F32Input[lane] = opcode >= 0x3fu ? FrexpInputs[lane % FrexpInputs.size()] : RoundingInputs[lane % RoundingInputs.size()];
+        F32Input[lane] = measured != nullptr ? SpecialInputs[lane % SpecialInputs.size()] : opcode >= 0x3fu ? FrexpInputs[lane % FrexpInputs.size()] : RoundingInputs[lane % RoundingInputs.size()];
     }
     F32Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> words{
@@ -413,6 +678,7 @@ void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, s
         device.Target(), {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -420,7 +686,7 @@ void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, s
     for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
         for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
             for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
-                const auto bits = F32ResultBits(F32Input[lane], opcode);
+                const auto bits = measured != nullptr ? measured[lane % SpecialInputs.size()] : F32ResultBits(F32Input[lane], opcode);
                 const auto expected = InsertResult(bits, destination, unused);
                 const auto actual = F32Output[lane * F32Results + index];
                 Require(actual == expected, "sdwa f32 opcode " + Hex(opcode) + " wave" + std::to_string(waveSize) +
@@ -443,15 +709,27 @@ int main(int argc, char** argv) {
             for (const auto opcode : {0x20u, 0x21u, 0x22u, 0x23u, 0x24u, 0x3fu, 0x40u}) {
                 RunF32Destinations(*device, opcode, std::string(argv[2]) == "wave64" ? 64u : 32u);
             }
+            constexpr std::array<std::uint32_t, 7> opcodes{0x20u, 0x21u, 0x22u, 0x23u, 0x24u, 0x3fu, 0x40u};
+            for (std::uint32_t mode = 0u; mode < SpecialModes.size(); ++mode) {
+                if (SpecialModes[mode].floatMode == 0xf0u && !device->Target().float32DenormPreserve) {
+                    std::puts("sdwa f32 special inputs with f32 denormals kept not checked; they need DenormPreserve 32");
+                    continue;
+                }
+                for (std::uint32_t op = 0u; op < opcodes.size(); ++op) RunF32Destinations(*device, opcodes[op], std::string(argv[2]) == "wave64" ? 64u : 32u, SpecialResults[mode][op], SpecialModes[mode]);
+            }
             return 0;
         }
         Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "wave64"), "expected no argument or wave64");
         const auto waveSize = argc == 2 ? 64u : 32u;
         for (const bool signedInteger : {false, true}) RunConversions(*device, signedInteger, waveSize);
+        RunSignExtendedUnsignedConversions(*device, waveSize);
         RunF16Conversions(*device, waveSize);
         FillInput();
         Run(*device);
         Check();
+        for (const bool signedInteger : {false, true}) {
+            for (std::uint32_t roundMode = 0u; roundMode < 4u; ++roundMode) RunInexactConversions(*device, signedInteger, waveSize, roundMode);
+        }
         std::puts("sdwa destination tests passed");
         return 0;
     } catch (const std::exception& error) {

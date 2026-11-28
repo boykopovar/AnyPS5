@@ -49,8 +49,10 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_font_output_pointers_tests)
     add_test(NAME guest_font_output_pointers COMMAND guest_font_output_pointers_tests)
     set_tests_properties(guest_font_output_pointers PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_font_output_pointers_watched COMMAND guest_font_output_pointers_tests --watched)
+    set_tests_properties(guest_font_output_pointers_watched PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(guest_font_output_pointers PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_font_output_pointers guest_font_output_pointers_watched PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
     endif()
     add_test_executable(guest_font_renderer_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontRendererLifecycle.cpp)

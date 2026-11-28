@@ -282,8 +282,17 @@ void TestHeaps() {
     Require(globalAllocator.context == global->allocator.context && globalAllocator.allocate == global->allocator.allocate
             && globalAllocatorEx.allocator.context == global->allocator.context && globalAllocatorEx.outOfMemoryError == NpOutOfMemory,
         "the global allocator getters write the global heap allocator");
+    NpAllocator* globalPointer = sceNpGlobalHeapGetAllocatorPtr();
+    Require(globalPointer != nullptr && globalPointer->context == global->allocator.context && globalPointer->allocate == global->allocator.allocate,
+        "sceNpGlobalHeapGetAllocatorPtr returns the global heap allocator");
+    UseAllocator(*globalPointer);
     UseAllocator(global->allocator);
     sceNpArchTerm();
+
+    std::array<std::uint32_t, 16> randoms {};
+    for (auto& value : randoms) value = sceNpGetRandom();
+    Require(std::any_of(randoms.begin() + 1, randoms.end(), [&](std::uint32_t value) { return value != randoms[0]; }),
+        "sceNpGetRandom returns varying values");
 
     UseAllocator(sceNpGlobalHeapGetAllocatorExPtr()->allocator);
     sceNpArchTerm();

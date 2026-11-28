@@ -311,6 +311,50 @@ static std::int32_t ParseWith(const std::vector<std::uint8_t>& png, PngDecImageI
     return scePngDecParseHeader(&parse, &info);
 }
 
+static void CheckShortIdat(void* handle) {
+    constexpr auto decodeError = static_cast<std::int32_t>(0x80690012);
+    constexpr std::uint32_t width = 2;
+    constexpr std::uint32_t height = 3;
+    constexpr std::uint32_t pitch = 12;
+    const std::vector<std::uint8_t> rgb = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    const auto png = Decoder::Png::Encode(rgb, width, height, 3, {0, Decoder::Png::FILTER_NONE});
+    const auto chunks = SplitChunks(png);
+    Require(chunks.size() == 3 && std::strcmp(chunks[1].type, "IDAT") == 0);
+    constexpr std::size_t idatStart = 8 + 12 + 13 + 8;
+    constexpr std::size_t storedBlockHeader = 2 + 5;
+    constexpr std::size_t filteredRowSize = 1 + width * 3;
+
+    for (const auto format : {0, 1}) {
+        for (const auto rows : {0, 1, 2}) {
+            const std::size_t remaining = storedBlockHeader + rows * filteredRowSize + filteredRowSize - 1;
+            const std::vector<std::uint8_t> cut(png.begin(), png.begin() + idatStart + remaining);
+            auto shortChunks = chunks;
+            shortChunks[1].data.resize(remaining);
+            for (const auto& input : {cut, JoinChunks(shortChunks)}) {
+                std::vector<std::uint8_t> output(pitch * height, 0xCC);
+                auto expected = output;
+                for (int y = 0; y < rows; ++y) {
+                    for (std::size_t x = 0; x < width; ++x) {
+                        const auto source = (y * width + x) * 3;
+                        const auto destination = y * pitch + x * 4;
+                        expected[destination] = rgb[source + (format == 0 ? 0 : 2)];
+                        expected[destination + 1] = rgb[source + 1];
+                        expected[destination + 2] = rgb[source + (format == 0 ? 2 : 0)];
+                        expected[destination + 3] = 0x77;
+                    }
+                }
+                auto decode = DecodeParam(input, output);
+                decode.pixel_format = format;
+                decode.image_pitch = pitch;
+                PngDecImageInfo info{};
+                Require(scePngDecDecode(handle, &decode, &info) == decodeError);
+                Require(info.image_width == width && info.image_height == height);
+                Require(output == expected);
+            }
+        }
+    }
+}
+
 static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPng) {
     constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
     constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
@@ -797,6 +841,7 @@ int main() {
     Require(errno == 71);
 
     CheckChunkRules(handle, rgbPng);
+    CheckShortIdat(handle);
 
     Require(scePngDecDelete(nullptr) == invalidHandle);
     Require(scePngDecDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);

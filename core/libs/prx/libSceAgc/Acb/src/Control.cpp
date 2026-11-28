@@ -6,6 +6,7 @@
 #include "prx/libSceAgc/DcbState/include/Marker.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -93,9 +94,11 @@ std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t vide
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount) {
     if (buf == nullptr || workloadIds == nullptr || workloadCount == 0 || workloadCount > MaxActiveCount || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
+    std::array<std::uint32_t, MaxActiveCount> ids{};
+    if (!GuestCopyIn_nid_no_patch(ids.data(), workloadIds, workloadCount * sizeof(ids[0]))) return nullptr;
     std::uint64_t mask = 0;
     for (std::uint32_t index = 0; index < workloadCount; ++index) {
-        const auto id = workloadIds[index];
+        const auto id = ids[index];
         if (id > MaxWorkloadId) return nullptr;
         const std::uint64_t bit = std::uint64_t{1} << id;
         if ((mask & bit) != 0) return nullptr;
@@ -144,7 +147,7 @@ uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, 
 }
 
 uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
-    return Agc::Marker::Pop(buf, __func__);
+    return Agc::Marker::PopTag(buf, 0u, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {

@@ -147,7 +147,7 @@ struct Layout {
     std::uint32_t* label = nullptr;
 };
 
-Layout allocate(std::size_t bytes = BlockBytes, std::size_t registrationBytes = 0) {
+Layout allocate(std::size_t bytes = BlockBytes, std::size_t registrationBytes = 0, bool cpu = true) {
     auto* const block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
     check(block != nullptr, "cannot allocate guest memory");
     GuestArena::GuestArenaCommit_nid_postfix(block, bytes, 0x04, bytes);
@@ -158,7 +158,7 @@ Layout allocate(std::size_t bytes = BlockBytes, std::size_t registrationBytes = 
         GuestAllocations::Mutation mutation;
         const auto piece = registrationBytes == 0 ? bytes : registrationBytes;
         check(piece != 0 && bytes % piece == 0, "invalid guest registration size");
-        for (std::size_t offset = 0; offset < bytes; offset += piece) mutation.Add(block + offset, piece, true, true, true);
+        for (std::size_t offset = 0; offset < bytes; offset += piece) mutation.Add(block + offset, piece, cpu, cpu, true);
     }
     Layout layout;
     layout.base = block;
@@ -296,6 +296,69 @@ void testCaptureAndReplay(const std::filesystem::path& tool, bool pipelines) {
     std::size_t passes = 0;
     for (auto found = repeated.find("\"frames\":2,\"p50\""); found != std::string::npos; found = repeated.find("\"frames\":2,\"p50\"", found + 1)) ++passes;
     check(passes == 3, "the repeated replay did not replay both frames in each of three passes: " + repeated);
+}
+
+void testSubpageRanges(const std::filesystem::path& tool) {
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    const auto layout = allocate();
+    constexpr std::size_t LooseBytes = 65536;
+    constexpr std::size_t First = 0x20;
+    constexpr std::size_t Shared = 0x40;
+    constexpr std::size_t Second = 0x1010;
+    auto* const loose = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(LooseBytes, 65536));
+    check(loose != nullptr, "cannot allocate the guest block of the sub-page ranges");
+    GuestArena::GuestArenaCommit_nid_postfix(loose, LooseBytes, 0x04, LooseBytes);
+#ifdef __linux__
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(loose, LooseBytes);
+#endif
+    loose[First] = std::byte{0x5a};
+    std::memset(loose + Shared, 0x6e, 0x10);
+    std::memset(loose + Second, 0x3c, 0x30);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(loose + First, 1, true, true, false);
+        mutation.Add(loose + Shared, 0x10, true, true, false);
+        mutation.Add(loose + Second, 0x30, true, true, false);
+    }
+    const auto bytes = pattern(29);
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    flip();
+    std::memcpy(layout.source, bytes.data(), bytes.size());
+    copyFrame(layout.firstCommands, layout, layout.firstTarget);
+    flip();
+    copyFrame(layout.secondCommands, layout, layout.secondTarget);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, bytes) && equal(layout.secondTarget, bytes), "the driver did not run the copies while capturing");
+
+    const FrameCaptureReader reader(capture);
+    check(!reader.Truncated(), "the capture is truncated");
+    const auto recorded = [&](const std::byte* pointer, std::uint64_t size) {
+        return std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const auto& chunk) {
+            return chunk.kind == FrameMemoryKind::Range && chunk.address == at(pointer) && chunk.bytes == size;
+        });
+    };
+    check(recorded(loose + First, 1) && recorded(loose + Shared, 0x10) && recorded(loose + Second, 0x30), "the sub-page registrations are not ranges of the capture");
+    const auto targetDump = capture / "subpage target.bin";
+    const auto firstDump = capture / "subpage first.bin";
+    const auto secondDump = capture / "subpage second.bin";
+    const auto sharedDump = capture / "subpage shared.bin";
+    const auto result = capture / "subpage output.json";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.secondTarget)) + ":" + std::to_string(DataBytes) + ":\"" + targetDump.string() +
+                   "\" --dump " + std::to_string(at(loose + First)) + ":1:\"" + firstDump.string() + "\" --dump " + std::to_string(at(loose + Shared)) + ":16:\"" + sharedDump.string() + "\" --dump " + std::to_string(at(loose + Second)) + ":48:\"" + secondDump.string() + "\" > \"" + result.string() +
+                   "\" 2> \"" + result.string() + ".log\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    const auto code = std::system(command.c_str());
+    check(code == 0, "agc_frame_replay of a capture with sub-page ranges exited with " + std::to_string(code));
+    check(readFile(targetDump) == bytes, "the replay did not reproduce the copy");
+    check(readFile(firstDump) == std::vector<std::byte>{std::byte{0x5a}}, "the replay did not restore the one-byte range");
+    check(readFile(sharedDump) == std::vector<std::byte>(0x10, std::byte{0x6e}), "the replay did not restore the 16-byte range in the page of the one-byte range");
+    check(readFile(secondDump) == std::vector<std::byte>(0x30, std::byte{0x3c}), "the replay did not restore the 48-byte range");
 }
 
 void testConcurrentCopies(const std::filesystem::path& tool) {
@@ -1467,6 +1530,34 @@ void testRegisteredRangeBoundaries(const std::filesystem::path& tool) {
           "the replay did not preserve copies across the registered boundary in both directions");
 }
 
+void testGpuOnlyRange(const std::filesystem::path& tool) {
+    const auto layout = allocate();
+    const auto gpuOnly = allocate(BlockBytes, 0, false);
+    const auto expected = pattern(61);
+    std::memcpy(gpuOnly.source, expected.data(), expected.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    copy(layout.firstCommands, CommandBytes, gpuOnly.source, layout.firstTarget, layout.label);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, expected), "the driver did not copy out of the GPU-only range");
+
+    const auto capture = checkCapture(0);
+    const FrameCaptureReader reader(capture);
+    const bool recorded = std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const auto& chunk) {
+        return chunk.kind == FrameMemoryKind::Range && chunk.address <= at(gpuOnly.base) && at(gpuOnly.base) + BlockBytes <= chunk.address + chunk.bytes &&
+               (chunk.access & AgcDriver::FrameRangeAccess::Gpu) != 0 && (chunk.access & AgcDriver::FrameRangeAccess::Readable) == 0;
+    });
+    check(recorded, "the capture left out the GPU-only range or recorded it as readable by the CPU");
+    std::memset(layout.firstTarget, 0, DataBytes);
+    const auto dumped = replayed(tool, capture, layout.firstTarget, DataBytes);
+    check(dumped == expected, "the replay did not copy the GPU-only range's bytes");
+}
+
 void testQueueBusyPastPacing(const std::filesystem::path& tool) {
     constexpr std::uint32_t ComputeQueue = 0x20;
     constexpr std::size_t CopyBytes = 64u << 20;
@@ -1586,11 +1677,11 @@ void testSettledBesideReleasedTail() {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}, {"gpu_only", testGpuOnlyRange}};
     const std::map<std::string, void (*)(const std::filesystem::path&)> restored{
         {"rewind_chained", testChainedRewindGates}, {"rewind_page_start", testRewindControlAtPageStart}, {"rewind_zero_control", testZeroRewindControlRewritten}, {"rewind_zero_control_parked", testZeroRewindControlRestoredAtPark}, {"rewind_in_order", testEarlyReleaseRestoredInOrder}, {"rewind_kept_words", testRewindControlsKeptAnywhere}, {"multisample_depth", testMultisampleDepthPasses}, {"single_sample_depth", testSingleSampleDepthPasses}};
-    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || mode == "rewind_settled_tail" || rewound.contains(mode) || restored.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|rewind_chained|rewind_page_start|rewind_zero_control|rewind_zero_control_parked|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|allocation_ranges]\n");
+    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "subpage" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || mode == "rewind_settled_tail" || rewound.contains(mode) || restored.contains(mode)))) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|subpage|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|rewind_chained|rewind_page_start|rewind_zero_control|rewind_zero_control_parked|rewind_in_order|rewind_kept_words|multisample_depth|single_sample_depth|allocation_ranges|gpu_only]\n");
         return 2;
     }
     int status = 0;
@@ -1605,6 +1696,7 @@ int main(int argc, char** argv) {
             }
             test->second(argv[1]);
         } else if (mode == "concurrent") testConcurrentCopies(argv[1]);
+        else if (mode == "subpage") testSubpageRanges(argv[1]);
         else if (mode == "reservation_error") testReservationError(argv[1]);
         else if (mode == "rewind") testParkedRewindReplays(argv[1]);
         else if (mode == "rewind_reuse") testRewindTargetReuse(argv[1]);

@@ -413,8 +413,8 @@ void TestAGuestBufferIsConverted() {
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, 4); });
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, 4, INT_MAX); });
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 8, 8, INT_MAX, INT_MAX); });
-    for (const int width : {0, -4, INT_MIN, 32769, INT_MAX}) RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, width, 4, 4, 4); });
-    for (const int height : {0, INT_MIN, 32769, -32769, INT_MAX}) RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 4, height, 4, 4); });
+    for (const int width : {0, -4, INT_MIN, 32768, INT_MAX}) RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, width, 4, 4, 4); });
+    for (const int height : {0, INT_MIN, 32768, -32768, INT_MAX}) RequireThrows<std::invalid_argument>([&] { cropAndScale(&untouched, &native, 0, 0, 4, height, 4, 4); });
     Require(native.conversions == 2 && untouched == &native);
     native.converted = nullptr;
     const std::size_t before = allocations.size();
@@ -468,16 +468,16 @@ void TestTheScalerLimits() {
     const auto cropAndScale = reinterpret_cast<Function>(const_cast<void*>(Entry(wide, 9)));
     void* result = wide;
     const std::size_t calls = allocationCalls;
-    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, wide, 0, 0, 32769, 2, 4, 2); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, wide, 0, 0, 32768, 2, 4, 2); });
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, wide, 0, 0, 40000, 2, 4, 2); });
-    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, 32769, 2, 4); });
-    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, -32769, 2, 4); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, 32768, 2, 4); });
+    RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, -32768, 2, 4); });
     RequireThrows<std::invalid_argument>([&] { cropAndScale(&result, tall, 0, 0, 2, 40000, 2, 4); });
     Require(result == wide && allocationCalls == calls && wide->refCount.load() == 1 && tall->refCount.load() == 1);
-    Release(CropAndScale(wide, 0, 0, 32768, 2, 4, 2));
-    Release(CropAndScale(wide, 7232, 0, 32768, 2, 4, 2));
-    Release(CropAndScale(tall, 0, 0, 2, 32768, 2, 4));
-    Release(CropAndScale(tall, 0, 7232, 2, -32768, 2, 4));
+    Release(CropAndScale(wide, 0, 0, 32767, 2, 4, 2));
+    Release(CropAndScale(wide, 7232, 0, 32767, 2, 4, 2));
+    Release(CropAndScale(tall, 0, 0, 2, 32767, 2, 4));
+    Release(CropAndScale(tall, 0, 7232, 2, -32767, 2, 4));
     Release(wide);
     Release(tall);
 }

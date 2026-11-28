@@ -119,6 +119,7 @@ void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight
     hostWindow = std::make_unique<SdlHostWindow>(window);
     fullscreen = std::make_unique<HostFullscreenState>(*hostWindow);
     fullscreen->Adopt(fullscreenMode, HostWindowSize{static_cast<int>(initialSize.width), static_cast<int>(initialSize.height)});
+    if (fullscreenMode == HostFullscreenMode::Windowed && WindowModeStartsBorderless(std::getenv("ANYPS5_WINDOW_MODE"))) enterBorderless();
 }
 
 void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t sourceHeight) {
@@ -134,6 +135,7 @@ void DisplayWindow::Destroy() noexcept {
     removeSubclass();
     SDL_DestroyWindow(window);
     window = nullptr;
+    borderless = false;
 }
 
 SDL_Window* DisplayWindow::Handle() const {
@@ -142,8 +144,49 @@ SDL_Window* DisplayWindow::Handle() const {
 
 void DisplayWindow::ToggleFullscreen() {
     require(window != nullptr && fullscreen != nullptr, "window must exist before toggling fullscreen");
+    if (borderless) leaveBorderless();
     fullscreen->Toggle();
     fullscreen->Refresh(MouseIsOpen_nid_no_patch());
+}
+
+void DisplayWindow::ToggleBorderless() {
+    require(window != nullptr && fullscreen != nullptr, "window must exist before toggling borderless");
+    if (borderless) {
+        leaveBorderless();
+    } else {
+        if (hostWindow->IsFullscreen()) fullscreen->Toggle();
+        enterBorderless();
+    }
+    fullscreen->Refresh(MouseIsOpen_nid_no_patch());
+}
+
+void DisplayWindow::enterBorderless() {
+    const auto displayIndex = SDL_GetWindowDisplayIndex(window);
+    require(displayIndex >= 0, SDL_GetError());
+    SDL_Rect bounds{};
+    require(SDL_GetDisplayBounds(displayIndex, &bounds) == 0, SDL_GetError());
+    const auto cover = BorderlessCoverRect(HostWindowRect{bounds.x, bounds.y, bounds.w, bounds.h});
+    require(cover.has_value(), "display extent must be positive");
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowPosition(window, &x, &y);
+    SDL_GetWindowSize(window, &width, &height);
+    windowedRect = HostWindowRect{x, y, width, height};
+    SDL_SetWindowBordered(window, SDL_FALSE);
+    SDL_SetWindowPosition(window, cover->x, cover->y);
+    SDL_SetWindowSize(window, cover->width, cover->height);
+    borderless = true;
+}
+
+void DisplayWindow::leaveBorderless() {
+    SDL_SetWindowBordered(window, SDL_TRUE);
+    if (windowedRect.width > 0 && windowedRect.height > 0) {
+        SDL_SetWindowSize(window, windowedRect.width, windowedRect.height);
+        SDL_SetWindowPosition(window, windowedRect.x, windowedRect.y);
+    }
+    borderless = false;
 }
 
 void DisplayWindow::DrawableSize(std::uint32_t& width, std::uint32_t& height) const {
@@ -209,6 +252,7 @@ void DisplayWindow::removeSubclass() noexcept {
 
 void DisplayWindow::applyAspectRatio(void* hwnd, std::uintptr_t edge, void* rect) const {
 #ifdef _WIN32
+    if (AgcDriver::PresentationStretches_nid_postfix()) return;
     require(aspectWidth != 0 && aspectHeight != 0, "source extent must be non-zero during resize");
     RECT windowBounds{};
     RECT clientBounds{};
