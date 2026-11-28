@@ -106,11 +106,22 @@ Word ResolveStub(Word personality) {
     std::memcpy(&target, reinterpret_cast<const void*>(slot), sizeof(target));
     return target ? target : personality;
 }
+
+static _Unwind_Reason_Code CallHostCxxPersonality(_Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context) {
+    const auto result = __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+    if (result == _URC_INSTALL_CONTEXT && (actions & _UA_HANDLER_FRAME) && LibcException::Native(exception->exception_class))
+        LibcException::RecordHostCatch(LibcException::FromUnwind(exception));
+    return result;
+}
 #endif
 
 _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context) {
 #ifdef _WIN32
     personality = ResolveImport(personality);
+#endif
+#ifdef __APPLE__
+    if (personality == reinterpret_cast<Word>(__gxx_personality_v0))
+        return CallHostCxxPersonality(actions, exception, context);
 #endif
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gxx_personality_v0))
         return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
@@ -124,7 +135,9 @@ _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _U
     }
     personality = ResolveStub(personality);
     if (personality == 0) return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
-    if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gxx_personality_v0))
+    if (personality == reinterpret_cast<Word>(__gxx_personality_v0))
+        return CallHostCxxPersonality(actions, exception, context);
+    if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix))
         return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
     if (personality == reinterpret_cast<Word>(__gcc_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gcc_personality_v0))
         return __gcc_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
@@ -133,7 +146,7 @@ _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _U
     if (dladdr(reinterpret_cast<void*>(personality), &info)) name = info.dli_sname;
     const auto kind = MatchCompactPersonality(name);
     if (kind == CompactPersonality::Gxx)
-        return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
+        return CallHostCxxPersonality(actions, exception, context);
     if (kind == CompactPersonality::Gcc)
         return __gcc_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
     return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
