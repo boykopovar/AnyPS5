@@ -41,6 +41,46 @@ bool monitorReportsHdr(SDL_Window* window) {
     factory->Release();
     return hdr;
 }
+
+bool testWindowQueryFailure(SDL_Window*& window) {
+    HostHdrProbe probe;
+    probe.Poll(window);
+    AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::UndescribedHdrDisplay);
+    SDL_DestroyWindow(window);
+    window = nullptr;
+    SDL_VideoQuit();
+    if (SDL_VideoInit("dummy") != 0) {
+        std::fprintf(stderr, "FAIL: could not initialize the dummy video driver: %s\n", SDL_GetError());
+        return false;
+    }
+    window = SDL_CreateWindow("HDR probe failure test", 0, 0, 64, 64, SDL_WINDOW_HIDDEN);
+    if (window == nullptr) {
+        std::fprintf(stderr, "FAIL: could not create a dummy window: %s\n", SDL_GetError());
+        return false;
+    }
+    probe.Poll(window);
+    bool passed = !AgcDriver::CurrentHostHdr().display.hdr;
+    AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::UndescribedHdrDisplay);
+    probe.Poll(window);
+    passed = passed && !AgcDriver::CurrentHostHdr().display.hdr;
+    SDL_DestroyWindow(window);
+    window = nullptr;
+    SDL_VideoQuit();
+    if (SDL_VideoInit("windows") != 0) {
+        std::fprintf(stderr, "FAIL: could not restore the Windows video driver: %s\n", SDL_GetError());
+        return false;
+    }
+    window = SDL_CreateWindow("HDR probe recovery test", 0, 0, 64, 64, SDL_WINDOW_HIDDEN);
+    if (window == nullptr) {
+        std::fprintf(stderr, "FAIL: could not create a Windows window: %s\n", SDL_GetError());
+        return false;
+    }
+    AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::UndescribedHdrDisplay);
+    probe.Poll(window);
+    passed = passed && AgcDriver::CurrentHostHdr().display.hdr == monitorReportsHdr(window);
+    if (!passed) std::fprintf(stderr, "FAIL: HDR probe did not clear or recover its Windows monitor report\n");
+    return passed;
+}
 #endif
 
 }
@@ -77,7 +117,10 @@ int main() {
             result = 1;
         }
     }
-    SDL_DestroyWindow(window);
+#ifdef _WIN32
+    if (driver == "windows" && !testWindowQueryFailure(window)) result = 1;
+#endif
+    if (window != nullptr) SDL_DestroyWindow(window);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     if (result == 0) std::printf("HDR probe tests passed (driver %s)\n", driver.c_str());
     return result;
