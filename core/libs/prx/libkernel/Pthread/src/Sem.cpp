@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -24,17 +23,24 @@ PthreadSem destroyedSem() {
     return reinterpret_cast<PthreadSem>(std::uintptr_t{2});
 }
 
-std::shared_ptr<PthreadSemPrivate> resolveSem(PthreadSem* sem) {
+struct ResolvedSem {
+    std::shared_ptr<PthreadSemPrivate> owner;
+    int error = 0;
+};
+
+ResolvedSem resolveSem(PthreadSem* sem) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
     std::shared_lock lock(semRegistryMutex);
-    const auto current = std::atomic_ref<PthreadSem>(*sem).load(std::memory_order_acquire);
+    PthreadSem current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, sem, sizeof(current)))
+        return {nullptr, SCE_KERNEL_ERROR_EFAULT};
     if (!current || current == destroyedSem())
         throw std::runtime_error("Semaphore is not initialized or has been destroyed");
     const auto it = semRegistry.find(current);
     if (it == semRegistry.end())
         throw std::runtime_error("Semaphore is not initialized or has been destroyed");
-    return it->second;
+    return {it->second, 0};
 }
 
 struct SemaphoreWaitCleanupContext {
@@ -117,7 +123,10 @@ int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
 }
 
 int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
-    const auto owner = resolveSem(sem);
+    const auto resolved = resolveSem(sem);
+    if (resolved.error != 0)
+        return resolved.error;
+    const auto& owner = resolved.owner;
     std::lock_guard lock(owner->_mutex);
     if (owner->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -130,7 +139,10 @@ int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemWait(PthreadSem* sem) {
     ThreadCancel::Check();
-    SemaphoreWaitCleanupContext cleanupContext{resolveSem(sem), false};
+    auto resolved = resolveSem(sem);
+    if (resolved.error != 0)
+        return resolved.error;
+    SemaphoreWaitCleanupContext cleanupContext{std::move(resolved.owner), false};
     auto* current = cleanupContext.owner.get();
     std::unique_lock lock(current->_mutex);
     if (current->_destroyed)
@@ -162,7 +174,10 @@ int APS5_VABI scePthreadSemWait(PthreadSem* sem) {
 }
 
 int APS5_VABI scePthreadSemTrywait(PthreadSem* sem) {
-    const auto owner = resolveSem(sem);
+    const auto resolved = resolveSem(sem);
+    if (resolved.error != 0)
+        return resolved.error;
+    const auto& owner = resolved.owner;
     std::lock_guard lock(owner->_mutex);
     if (owner->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -174,7 +189,10 @@ int APS5_VABI scePthreadSemTrywait(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
     ThreadCancel::Check();
-    SemaphoreWaitCleanupContext cleanupContext{resolveSem(sem), false};
+    auto resolved = resolveSem(sem);
+    if (resolved.error != 0)
+        return resolved.error;
+    SemaphoreWaitCleanupContext cleanupContext{std::move(resolved.owner), false};
     auto* current = cleanupContext.owner.get();
     std::unique_lock lock(current->_mutex);
     if (current->_destroyed)
@@ -210,12 +228,10 @@ int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
 }
 
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
-    if (sem) {
-        PthreadSem probe = nullptr;
-        if (!GuestCopyIn_nid_no_patch(&probe, sem, sizeof(probe)))
-            return SCE_KERNEL_ERROR_EFAULT;
-    }
-    const auto owner = resolveSem(sem);
+    const auto resolved = resolveSem(sem);
+    if (resolved.error != 0)
+        return resolved.error;
+    const auto& owner = resolved.owner;
     std::lock_guard lock(owner->_mutex);
     if (owner->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
