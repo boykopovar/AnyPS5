@@ -191,6 +191,21 @@ void includeInstructionVectorRegisters(const RdnaInstruction& instruction, std::
         case RdnaOpcode::DsWriteB128:
             includeVector(instruction.source1, instruction.dataDwordCount);
             break;
+        case RdnaOpcode::DsAddSrc2U64:
+        case RdnaOpcode::DsSubSrc2U64:
+        case RdnaOpcode::DsRsubSrc2U64:
+        case RdnaOpcode::DsIncSrc2U64:
+        case RdnaOpcode::DsDecSrc2U64:
+        case RdnaOpcode::DsMinSrc2I64:
+        case RdnaOpcode::DsMaxSrc2I64:
+        case RdnaOpcode::DsMinSrc2U64:
+        case RdnaOpcode::DsMaxSrc2U64:
+        case RdnaOpcode::DsAndSrc2B64:
+        case RdnaOpcode::DsOrSrc2B64:
+        case RdnaOpcode::DsXorSrc2B64:
+        case RdnaOpcode::DsWriteSrc2B64:
+        case RdnaOpcode::DsMinSrc2F64:
+        case RdnaOpcode::DsMaxSrc2F64:
         case RdnaOpcode::DsWrite2B32:
         case RdnaOpcode::DsWrite2st64B32:
         case RdnaOpcode::DsWrite2B64:
