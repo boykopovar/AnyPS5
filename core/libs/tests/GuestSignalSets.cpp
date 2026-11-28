@@ -218,7 +218,7 @@ static void CheckLongjmp() {
     if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
         GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pages, pageSize);
         const auto noop = [](void*, std::uintptr_t, std::uintptr_t) {};
-        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), pageSize, noop, nullptr));
+        Require(GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), pageSize, noop, nullptr));
         Require(JumpBuffer::JumpBufferSaveMask_nid_no_patch(pages));
         Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), pageSize, noop, nullptr));
         Require(JumpBuffer::JumpBufferPrepareNoMask_nid_no_patch(pages));
