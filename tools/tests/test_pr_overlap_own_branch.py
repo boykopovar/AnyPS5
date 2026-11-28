@@ -72,6 +72,7 @@ class OwnBranchTests(unittest.TestCase):
                     8: {"branch": "published/topic", "head_repo": "other/project"},
                 }), \
                 patch.object(pr_overlap, "push_head", return_value=("published/topic", "mine/project")), \
+                patch.object(pr_overlap, "BASE_REF", "refs/pr/fixture"), \
                 patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"), \
                 patch.object(pr_overlap, "fetch_heads"), \
                 patch.object(pr_overlap, "own", side_effect=lambda prs, sha: prs), \
@@ -94,6 +95,7 @@ class OwnBranchTests(unittest.TestCase):
         with patch.object(pr_overlap, "open_prs", return_value=prs), \
                 patch.object(pr_overlap, "resolve_branch", return_value="a" * 40), \
                 patch.object(pr_overlap, "push_head", side_effect=AssertionError("explicit identity must not be inferred")), \
+                patch.object(pr_overlap, "BASE_REF", "refs/pr/fixture"), \
                 patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"), \
                 patch.object(pr_overlap, "fetch_heads"), \
                 patch.object(pr_overlap, "own", side_effect=lambda rows, sha: rows), \
@@ -151,13 +153,17 @@ class BranchResolutionTests(unittest.TestCase):
         def unreachable(*args, **kwargs):
             raise AssertionError("a mistyped --branch must not fetch pull request heads")
 
+        base_ref_before = pr_overlap.BASE_REF
         with patch.object(pr_overlap, "open_prs", return_value={}), \
+                patch.object(pr_overlap, "BASE_REF", "refs/pr/fixture"), \
                 patch.object(pr_overlap, "base_commit", return_value="a" * 40), \
                 patch.object(pr_overlap, "fetch_heads", side_effect=unreachable), \
                 patch.object(pr_overlap, "upstream", return_value="boykopovar/AnyPS5"):
             with self.assertRaises(SystemExit) as raised:
                 pr_overlap.main(["--branch", "no-such-branch-in-this-repository"])
+            self.assertEqual(pr_overlap.BASE_REF, "a" * 40)
 
+        self.assertEqual(pr_overlap.BASE_REF, base_ref_before)
         self.assertIn("no-such-branch-in-this-repository", str(raised.exception))
 
     def test_resolves_the_head_commit_of_a_local_branch(self):
