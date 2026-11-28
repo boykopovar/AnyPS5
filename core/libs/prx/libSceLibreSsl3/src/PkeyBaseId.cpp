@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 
 namespace {
@@ -19,6 +21,14 @@ constexpr int NidCmac = 894;
 constexpr int NidRsaPss = 912;
 constexpr int NidX25519 = 950;
 constexpr int NidEd25519 = 952;
+
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
 
 int BaseType(int type) {
     switch (type) {
@@ -48,5 +58,8 @@ int BaseType(int type) {
 
 extern "C" int APS5_VABI EVP_PKEY_base_id_nid_postfix(const LibreSsl3EvpPkey* key) {
     if (!key) throw std::invalid_argument("EVP_PKEY_base_id requires a key");
-    return BaseType(key->type);
+    LibreSsl3EvpPkey guestKey{};
+    if (!CopyGuestInPreservingErrno(guestKey, key))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return BaseType(guestKey.type);
 }
