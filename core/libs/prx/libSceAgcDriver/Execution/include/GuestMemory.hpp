@@ -37,6 +37,7 @@ std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes);
 // scratch heaps): uncommitted pages read as zeros, are not compared, and are never stored.
 void ReadCommitted(std::uint64_t address, std::span<std::byte> destination);
 void ReadCommittedUnsynced(std::uint64_t address, std::span<std::byte> destination);
+void ReadCommittedCheckedUnsynced(std::uint64_t address, std::span<std::byte> destination);
 bool EqualsCommitted(std::uint64_t address, std::span<const std::byte> bytes);
 // EqualsCommitted without the flush hook: the caller has decided that the recorded GPU work
 // writing the range need not be waited for (the dispatch-cache validation in Driver.cpp).
@@ -301,7 +302,9 @@ unsigned long long CodeOffset(const void* address);
 // calls FlushGpuWrites itself.
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
-void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
+using ReadGuard = void (*)(std::uint64_t address, std::size_t bytes);
+void SetReadGuard(ReadGuard guard);
+void SetReadGuards(ReadGuard access, ReadGuard observation);
 void GuardRead(std::uint64_t address, std::size_t bytes);
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
 void PrepareHostWrite(std::uintptr_t address, std::size_t bytes);
