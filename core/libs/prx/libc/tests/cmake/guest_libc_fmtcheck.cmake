@@ -1,3 +1,4 @@
+if(BUILD_TESTING)
 add_test_executable(guest_libc_fmtcheck_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcFmtcheck.cpp)
 target_include_directories(guest_libc_fmtcheck_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(guest_libc_fmtcheck_tests PRIVATE libc)
@@ -7,4 +8,5 @@ set_tests_properties(guest_libc_fmtcheck PROPERTIES TIMEOUT 20)
 if(WIN32)
     set_tests_properties(guest_libc_fmtcheck PROPERTIES ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
 endif()
