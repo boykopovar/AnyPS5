@@ -239,7 +239,7 @@ void Run(const std::string& mode, std::string_view watch) {
             if (mode == "data-hit-verify-stale-data") Data = 19u;
             else First[0] = 0x4a020281u;
             AgcDriver::GuestMemory::BumpCollectEpoch();
-            std::signal(SIGABRT, [](int) { std::_Exit(0); });
+            std::signal(SIGABRT, [](int) { LibcTerminate_nid_no_patch(0); });
             DriverTestAccess::Verify(*shader, request, *original, liveWords, *patched);
             throw std::runtime_error("the data-hit verifier accepted a stale hit");
         }
