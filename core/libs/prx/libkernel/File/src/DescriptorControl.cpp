@@ -606,13 +606,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         SetCloseOnExec(fd, command == CloseOnExecRequest);
         return 0;
     }
-    if (IsKsemDescriptor(fd)) {
-        if ((command & RequestIn) && copied != 0) {
-            std::vector<unsigned char> payload(copied);
-            if (!GuestCopyIn_nid_no_patch(payload.data(), argument, copied)) return Fail(GuestEfault);
-        }
-        return Fail(GuestEnotty);
-    }
+    if (IsKsemDescriptor(fd)) return Fail(GuestEnotty);
     if (IsKqueueDescriptor_nid_no_patch(fd)) return Fail(GuestEnotty);
     if (command == NonblockingRequest || command == AsynchronousRequest) {
         int enable = 0;
