@@ -13,6 +13,13 @@ struct WpePasteboardString {
 
 static_assert(sizeof(WpePasteboardString) == 16);
 
+struct WpePasteboardStringVector {
+    WpePasteboardString* strings;
+    std::uint64_t length;
+};
+
+static_assert(sizeof(WpePasteboardStringVector) == 16);
+
 } // namespace NKWebKit
 
 extern "C" {
@@ -57,6 +64,6 @@ int APS5_VABI wpe_pasteboard_get_string();
 int APS5_VABI wpe_pasteboard_get_types();
 void APS5_VABI wpe_pasteboard_string_free(NKWebKit::WpePasteboardString* string);
 void APS5_VABI wpe_pasteboard_string_initialize(NKWebKit::WpePasteboardString* string, const char* contents, std::uint64_t length);
-int APS5_VABI wpe_pasteboard_string_vector_free();
+void APS5_VABI wpe_pasteboard_string_vector_free(NKWebKit::WpePasteboardStringVector* vector);
 int APS5_VABI wpe_pasteboard_write();
 }
