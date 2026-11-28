@@ -32,7 +32,7 @@ LATER_FUNCTION = 0x300
 def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False, data_pointer=False, gap_entry=False,
             plt_at=None, eager_slots=(), eager_padding=0xCC, early_function=False, function_tls=False, pointer_target=None, gap_bytes=None, functions=None,
             tls=False, gap_embedded_data=False, gap_data_then_syscall=False, gap_callback_syscall_undecodable=False,
-            gap_decoded_padding_syscall=False, gap_stub_then_data=False, code_flags=7):
+            gap_decoded_padding_syscall=False, gap_stub_then_data=False, split_got=False):
     has_gap_embedded = gap_embedded_data or gap_data_then_syscall or gap_callback_syscall_undecodable or gap_decoded_padding_syscall or gap_stub_then_data
     plt = (LATER_FUNCTION + FUNCTION_SIZE + gap if has_gap_embedded else FUNCTION + FUNCTION_SIZE + gap) if plt_at is None else plt_at
     entry = FUNCTION + FUNCTION_SIZE if gap_entry else FUNCTION
@@ -46,7 +46,7 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
     interpreter = FUNCTION - len(INTERPRETER)
     image = bytearray(0x1000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
-    header_count = 4 + interpreter_pointer + tls
+    header_count = 4 + interpreter_pointer + split_got + tls
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, entry, 64, 0, 0, 64, 56, header_count, 64, 0, 0)
     tags = [
         (1, 1),
@@ -56,7 +56,11 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
         (0x61000027 if sce_block else 3, GOT), (0x61000029 if sce_block else 23, 0x720), (0x6100002B, 7), (0x6100002D if sce_block else 2, 24 * stubs),
         (0, 0),
     ]
-    struct.pack_into("<IIQQQQQQ", image, 64, PT_LOAD, code_flags, 0, 0, 0, len(image), len(image), 0x1000)
+    code_size = GOT if split_got else len(image)
+    struct.pack_into("<IIQQQQQQ", image, 64, PT_LOAD, 5 if split_got else 7, 0, 0, 0, code_size, code_size, 0x1000)
+    if split_got:
+        struct.pack_into("<IIQQQQQQ", image, 64 + (4 + interpreter_pointer) * 56, PT_LOAD, 6, GOT, GOT, GOT,
+                         len(image) - GOT, len(image) - GOT, 0x1000)
     struct.pack_into("<IIQQQQQQ", image, 120, PT_DYNAMIC, 6, 0x400, 0x400, 0x400, len(tags) * 16, len(tags) * 16, 8)
     struct.pack_into("<IIQQQQQQ", image, 176,
                      *((PT_SCE_DYNLIBDATA, 0, 0, 0, 0, len(image), len(image), 1) if sce_block
@@ -233,9 +237,9 @@ def main():
             "PLT overlaps an unwind function")
         run(relinker, work, "sysv-data-after-plt", fixture(sce_block=False),
             "Cannot decode instruction")
-        run(relinker, work, "sce-data-after-plt-filter-1", fixture(code_flags=5), target=None, options=["unused-filter=1"])
-        run(relinker, work, "sce-data-after-plt-filter-2", fixture(code_flags=5), target=None, options=["unused-filter=2"])
-        run(relinker, work, "sysv-data-after-plt-filter-2", fixture(sce_block=False, code_flags=5),
+        run(relinker, work, "sce-data-after-plt-filter-1", fixture(split_got=True), target=None, options=["unused-filter=1"])
+        run(relinker, work, "sce-data-after-plt-filter-2", fixture(split_got=True), target=None, options=["unused-filter=2"])
+        run(relinker, work, "sysv-data-after-plt-filter-2", fixture(sce_block=False, split_got=True),
             "Cannot decode instruction", target=None, options=["unused-filter=2"])
         for target in ("windows", "macos"):
             run(relinker, work, "sce-interpreter-pointer-" + target, fixture(gap=0x60, interpreter_pointer=True),
