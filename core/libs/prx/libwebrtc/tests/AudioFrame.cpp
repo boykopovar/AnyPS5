@@ -1,4 +1,11 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #include <cstdint>
 #include <cstdio>
@@ -149,6 +156,92 @@ void TestUnmappedFrame() {
     Require(AllSamples(frame->data, 0x5A5A));
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 4096;
+    std::size_t totalBytes = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+        const std::size_t framePages = (sizeof(WebRtcAudioFrame) + pageSize - 1) / pageSize;
+        totalBytes = pageSize * framePages * 3;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, totalBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(base + pageSize * framePages, pageSize * framePages, PAGE_READONLY, &oldProtect) != 0);
+        Require(VirtualProtect(base + pageSize * framePages * 2, pageSize * framePages, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+        const std::size_t framePages = (sizeof(WebRtcAudioFrame) + pageSize - 1) / pageSize;
+        totalBytes = pageSize * framePages * 3;
+        void* mapped = mmap(nullptr, totalBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize * framePages, pageSize * framePages, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * framePages * 2, pageSize * framePages, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, totalBytes);
+#endif
+    }
+
+    std::size_t FrameBytes() const {
+        return ((sizeof(WebRtcAudioFrame) + pageSize - 1) / pageSize) * pageSize;
+    }
+
+    unsigned char* ReadOnly() const { return base + FrameBytes(); }
+    unsigned char* Guard() const { return base + FrameBytes() * 2; }
+};
+
+void TestGuardedFrames() {
+    GuardedPages pages;
+    auto* guardFrame = reinterpret_cast<WebRtcAudioFrame*>(pages.Guard());
+    auto* readOnlyFrame = reinterpret_cast<WebRtcAudioFrame*>(pages.ReadOnly());
+    auto validFrame = Filled();
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(validFrame.get());
+    auto validSource = Filled();
+    _ZN6webrtc10AudioFrameC1Ev_nid_postfix(validSource.get());
+    validSource->muted = false;
+    validSource->numChannels = 2;
+    validSource->samplesPerChannel = 4;
+
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrameC1Ev_nid_postfix(guardFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrameC1Ev_nid_postfix(readOnlyFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(guardFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(readOnlyFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(guardFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(guardFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(guardFrame); });
+    RequireThrows<std::invalid_argument>([&] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(guardFrame); });
+
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(guardFrame, validSource.get()); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(readOnlyFrame, validSource.get()); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(validFrame.get(), guardFrame); });
+
+    validSource->packetInfos = pages.ReadOnly();
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(validFrame.get(), validSource.get()); });
+    validSource->packetInfos = nullptr;
+
+    validFrame->packetInfos = pages.ReadOnly();
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(validFrame.get(), validSource.get()); });
+    validFrame->packetInfos = nullptr;
+
+    const std::int16_t samples[2] = {1, 2};
+    RequireThrows<std::invalid_argument>([&] {
+        _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(readOnlyFrame, 0, samples, 1, 48000, 0, 0, 2);
+    });
+}
+
 }
 
 void UpdateFrame(WebRtcAudioFrame* frame, std::uint32_t timestamp, const std::int16_t* data, std::size_t samplesPerChannel, std::int32_t sampleRateHz, std::int32_t speechType,
@@ -283,6 +376,7 @@ void TestCopyFrom() {
 }
 
 int main() {
+    TestGuardedFrames();
     TestConstructor();
     TestMutedData();
     TestUnmappedFrame();
