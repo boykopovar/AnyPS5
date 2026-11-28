@@ -138,10 +138,6 @@ int APS5_VABI WKBundlePageGetBackForwardList() {
     return 0;
 }
 
-int APS5_VABI WKBundlePageIsUsingDarkAppearance() {
-    return 0;
-}
-
 int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes() {
     return 0;
 }

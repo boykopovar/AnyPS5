@@ -311,6 +311,7 @@ public:
     Retained<Object> bottomOverhangImage;
     std::uint64_t paintedObjectsCounterThreshold = 0;
     bool hasLocalDataForURL = false;
+    bool isUsingDarkAppearance = false;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
