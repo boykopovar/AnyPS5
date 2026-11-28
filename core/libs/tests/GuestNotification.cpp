@@ -2,12 +2,23 @@
 #include "prx/libc/include/general/LogMacros.hpp"
 #endif
 #include "prx/libSceNotification/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "tests/TemporaryFile.hpp"
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
+#include <vector>
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -107,6 +118,125 @@ void TestHide() {
     sceNotificationHidePsButtonPersistentBanner();
 }
 
+void TestKernelNotificationErrorPaths() {
+    constexpr auto invalidArgument = static_cast<int>(0x80020016u);
+    constexpr auto badAddress = static_cast<int>(0x8002000eu);
+    constexpr auto notSupported = static_cast<int>(0x8002002du);
+
+    std::vector<std::uint8_t> request(3120, 0);
+    Require(sceKernelSendNotificationRequest(0, request.data(), 0, 0) == invalidArgument,
+            "zero-size kernel notification must fail with EINVAL");
+    Require(sceKernelSendNotificationRequest(0, request.data(), 3119, 0) == invalidArgument,
+            "undersized kernel notification must fail with EINVAL");
+    Require(sceKernelSendNotificationRequest(0, request.data(), 3121, 0) == invalidArgument,
+            "oversized kernel notification must fail with EINVAL");
+    Require(sceKernelSendNotificationRequest(-1, request.data(), request.size(), 0) == invalidArgument,
+            "negative device must fail with EINVAL");
+    Require(sceKernelSendNotificationRequest(0, nullptr, request.size(), 0) == badAddress,
+            "null request must fail with EFAULT");
+    errno = 71;
+    Require(sceKernelSendNotificationRequest(0, reinterpret_cast<const void*>(0x10), request.size(), 0) == badAddress,
+            "unreadable request must fail with EFAULT");
+    Require(errno == 71, "unreadable kernel notification changed host errno");
+    Require(sceKernelSendNotificationRequest(1, request.data(), request.size(), 0) == notSupported,
+            "nonzero device must fail with ENOTSUP");
+    Require(sceKernelSendNotificationRequest(0, request.data(), request.size(), 1) == notSupported,
+            "nonzero flags must fail with ENOTSUP");
+
+    std::vector<std::uint8_t> badType = request;
+    const std::int32_t unsupportedType = 1;
+    std::memcpy(badType.data(), &unsupportedType, sizeof(unsupportedType));
+    Require(sceKernelSendNotificationRequest(0, badType.data(), badType.size(), 0) == notSupported,
+            "unsupported request type must fail with ENOTSUP");
+
+    std::vector<std::uint8_t> dirtySentinel = request;
+    dirtySentinel[44] = 1;
+    Require(sceKernelSendNotificationRequest(0, dirtySentinel.data(), dirtySentinel.size(), 0) == notSupported,
+            "nonzero byte before message must fail with ENOTSUP");
+
+    std::vector<std::uint8_t> unterminated = request;
+    std::memset(unterminated.data() + 45, 'a', 1024);
+    Require(sceKernelSendNotificationRequest(0, unterminated.data(), unterminated.size(), 0) == invalidArgument,
+            "unterminated message must fail with EINVAL");
+
+    Require(sceKernelDebugOutText(-1, "text") == invalidArgument,
+            "negative debug channel must fail with EINVAL");
+    Require(sceKernelDebugOutText(0, nullptr) == badAddress,
+            "null debug text must fail with EFAULT");
+    errno = 71;
+    Require(sceKernelDebugOutText(0, reinterpret_cast<const char*>(0x10)) == badAddress,
+            "unreadable debug text must fail with EFAULT");
+    Require(errno == 71, "unreadable debug text changed host errno");
+}
+
+void TestKernelNotificationHostStderr() {
+    std::FILE* const hostCapture = TemporaryFile::Open();
+    Require(hostCapture != nullptr, "open host capture file");
+#ifdef _WIN32
+    const int savedHostStderr = ::_dup(2);
+    Require(savedHostStderr >= 0 && ::_dup2(::_fileno(hostCapture), 2) == 0,
+            "redirect host stderr to capture file");
+#else
+    const int savedHostStderr = ::dup(2);
+    Require(savedHostStderr >= 0 && ::dup2(::fileno(hostCapture), 2) == 2,
+            "redirect host stderr to capture file");
+#endif
+
+    int guestPipe[2] = {-1, -1};
+    Require(pipe_nid_postfix(guestPipe) == 0, "create guest pipe");
+    Require(dup2_nid_postfix(guestPipe[1], 2) == 2, "redirect guest fd 2 onto pipe");
+
+#ifdef _WIN32
+    const HANDLE savedStdErrorHandle = GetStdHandle(STD_ERROR_HANDLE);
+    Require(SetStdHandle(STD_ERROR_HANDLE, INVALID_HANDLE_VALUE) != 0,
+            "invalidate STD_ERROR_HANDLE after preserving host stderr");
+#endif
+
+    std::vector<std::uint8_t> request(3120, 0);
+    const std::int32_t systemTextType = 5;
+    std::memcpy(request.data(), &systemTextType, sizeof(systemTextType));
+    constexpr const char* message = "host-stderr-check";
+    std::memcpy(request.data() + 45, message, std::strlen(message) + 1);
+
+    errno = 71;
+    Require(sceKernelSendNotificationRequest(0, request.data(), request.size(), 0) == 0,
+            "sceKernelSendNotificationRequest succeeds when guest fd 2 is redirected");
+    Require(errno == 71, "sceKernelSendNotificationRequest changed host errno on success");
+
+    const std::string longPayload(0x10000, 'x');
+    errno = 71;
+    Require(sceKernelDebugOutText(0, longPayload.c_str()) == 0,
+            "sceKernelDebugOutText succeeds with 0x10000-byte payload");
+    Require(errno == 71, "sceKernelDebugOutText changed host errno on success");
+
+    Require(write_nid_postfix(2, "Z", 1) == 1, "write sentinel byte to redirected guest fd 2");
+
+#ifdef _WIN32
+    Require(SetStdHandle(STD_ERROR_HANDLE, savedStdErrorHandle) != 0, "restore STD_ERROR_HANDLE");
+    Require(::_dup2(savedHostStderr, 2) == 0 && ::_close(savedHostStderr) == 0, "restore host stderr");
+#else
+    Require(::dup2(savedHostStderr, 2) == 2 && ::close(savedHostStderr) == 0, "restore host stderr");
+#endif
+
+    char guestBuf[64]{};
+    const auto guestRead = read_nid_postfix(guestPipe[0], guestBuf, sizeof(guestBuf));
+    Require(guestRead == 1 && guestBuf[0] == 'Z',
+            "notification or debug output leaked into redirected guest fd 2");
+    Require(close_nid_postfix(guestPipe[1]) == 0 && close_nid_postfix(guestPipe[0]) == 0,
+            "close guest pipe descriptors");
+
+    std::rewind(hostCapture);
+    std::string captured;
+    char chunk[4096];
+    while (const auto count = std::fread(chunk, 1, sizeof(chunk), hostCapture)) {
+        captured.append(chunk, count);
+    }
+    Require(std::fclose(hostCapture) == 0, "close host capture file");
+
+    const std::string expected = std::string("[notification] host-stderr-check\n[debug:0] ") + longPayload;
+    Require(captured == expected, "host stderr capture did not match expected notification and debug text");
+}
+
 }
 
 int main() {
@@ -114,5 +244,7 @@ int main() {
     TestSendById();
     TestBanner();
     TestHide();
+    TestKernelNotificationErrorPaths();
+    TestKernelNotificationHostStderr();
     return 0;
 }

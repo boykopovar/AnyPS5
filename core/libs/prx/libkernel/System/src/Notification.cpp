@@ -17,6 +17,35 @@
 #include <unistd.h>
 #endif
 
+namespace {
+
+std::mutex g_outputMutex;
+
+bool WriteAllToDescriptor(int descriptor, const char* data, std::size_t length) {
+    const int savedErrno = errno;
+    std::size_t written = 0;
+    while (written < length) {
+#ifdef _WIN32
+        const std::size_t remaining = length - written;
+        const auto chunk = static_cast<unsigned>(remaining > 0x40000000u ? 0x40000000u : remaining);
+        const int count = _write(descriptor, data + written, chunk);
+#else
+        const auto count = ::write(descriptor, data + written, length - written);
+#endif
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0) {
+            errno = savedErrno;
+            return false;
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    errno = savedErrno;
+    return true;
+}
+
+}
+
 extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
     if (channel < 0) return static_cast<int>(0x80020016u);
     if (!text) return static_cast<int>(0x8002000eu);
@@ -29,16 +58,10 @@ extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
     } else if (copyError != 0) {
         return static_cast<int>(0x8002000eu);
     }
-    static std::mutex outputMutex;
-    const std::lock_guard lock(outputMutex);
+    const std::lock_guard lock(g_outputMutex);
     if (const int host = File::HostStandardError(); host >= 0) {
         const auto line = "[debug:" + std::to_string(channel) + "] " + copied;
-#ifdef _WIN32
-        const auto written = _write(host, line.data(), static_cast<unsigned>(line.size()));
-#else
-        const auto written = ::write(host, line.data(), line.size());
-#endif
-        return written == static_cast<decltype(written)>(line.size()) ? 0 : static_cast<int>(0x80020005u);
+        return WriteAllToDescriptor(host, line.data(), line.size()) ? 0 : static_cast<int>(0x80020005u);
     }
     if (std::fprintf(stderr, "[debug:%d] %s", channel, copied.c_str()) < 0 || std::fflush(stderr) != 0)
         return static_cast<int>(0x80020005u);
@@ -76,26 +99,24 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
     if (end == nullptr)
         return invalidArgument;
 
-    static std::mutex outputMutex;
-    const std::lock_guard lock(outputMutex);
+    const std::lock_guard lock(g_outputMutex);
     std::array<char, messageCapacity + 32> output{};
     const auto length = std::snprintf(output.data(), output.size(), "[notification] %.*s\n", static_cast<int>(end - message), message);
     if (length < 0 || static_cast<std::size_t>(length) >= output.size())
         return ioError;
-    std::size_t written = 0;
-    while (written < static_cast<std::size_t>(length)) {
+    const auto totalLength = static_cast<std::size_t>(length);
+    if (const int host = File::HostStandardError(); host >= 0)
+        return WriteAllToDescriptor(host, output.data(), totalLength) ? 0 : ioError;
 #ifdef _WIN32
+    std::size_t written = 0;
+    while (written < totalLength) {
         DWORD count = 0;
-        if (!WriteFile(GetStdHandle(STD_ERROR_HANDLE), output.data() + written, static_cast<DWORD>(length - written), &count, nullptr) || count == 0)
+        if (!WriteFile(GetStdHandle(STD_ERROR_HANDLE), output.data() + written, static_cast<DWORD>(totalLength - written), &count, nullptr) || count == 0)
             return ioError;
-#else
-        const auto count = ::write(STDERR_FILENO, output.data() + written, length - written);
-        if (count < 0 && errno == EINTR)
-            continue;
-        if (count <= 0)
-            return ioError;
-#endif
         written += static_cast<std::size_t>(count);
     }
     return 0;
+#else
+    return WriteAllToDescriptor(STDERR_FILENO, output.data(), totalLength) ? 0 : ioError;
+#endif
 }
