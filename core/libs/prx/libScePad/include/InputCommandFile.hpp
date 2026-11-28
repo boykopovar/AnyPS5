@@ -80,12 +80,22 @@ public:
             }
         }
         if (events.empty() || now < started) return {};
-        const auto elapsed = now - started;
-        const auto next = std::upper_bound(events.begin(), events.end(), elapsed,
-            [](std::uint64_t time, const Event& event) { return time < event.start; });
-        if (next == events.begin()) return {};
-        const auto& event = *std::prev(next);
-        return elapsed < event.end ? event.input : Input{};
+        return InputAt(now - started);
+    }
+
+    std::vector<std::pair<std::uint64_t, Input>> Transitions(std::uint64_t since, std::uint64_t now) const {
+        std::vector<std::pair<std::uint64_t, Input>> changes;
+        if (events.empty() || now <= since) return changes;
+        for (const auto& event : events) {
+            for (const std::uint64_t edge : {event.start, event.end}) {
+                const std::uint64_t at = started + edge;
+                if (at <= since || at >= now) continue;
+                const Input input = InputAt(edge);
+                if (!changes.empty() && changes.back().first == at) changes.back().second = input;
+                else changes.emplace_back(at, input);
+            }
+        }
+        return changes;
     }
 
     std::uint32_t Buttons(std::uint64_t now) { return Poll(now).buttons; }
@@ -119,6 +129,14 @@ private:
         std::uint64_t sequence = 0;
         std::vector<Event> events;
     };
+
+    Input InputAt(std::uint64_t elapsed) const {
+        const auto next = std::upper_bound(events.begin(), events.end(), elapsed,
+            [](std::uint64_t time, const Event& event) { return time < event.start; });
+        if (next == events.begin()) return {};
+        const auto& event = *std::prev(next);
+        return elapsed < event.end ? event.input : Input{};
+    }
 
     Command read() const {
         std::FILE* file = Detail::OpenInputCommandFile(path);

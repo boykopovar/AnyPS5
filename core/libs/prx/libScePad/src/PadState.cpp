@@ -30,6 +30,7 @@ namespace {
     std::uint64_t injectedTimestamp = 0;
     std::uint32_t injectedHeldThroughCapture = 0;
     std::uint64_t injectedHeldAt = 0;
+    std::uint64_t injectedReadAt = 0;
     std::mutex hapticMutex;
     std::condition_variable hapticReady;
     PadHapticBuffer haptics;
@@ -480,6 +481,11 @@ int Pad::Read(PadData* data, int num, int port) {
     auto& slot = slots[port];
     slot.pressedSinceRead = 0;
     const std::uint64_t now = sceKernelGetProcessTime();
+    std::vector<std::pair<std::uint64_t, Pad::InputCommandFile::Input>> changes;
+    if (port == 0) {
+        changes = InjectedCommands().Transitions(injectedReadAt, now);
+        injectedReadAt = now;
+    }
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     if (WithdrawnPort(port, slot)) {
         slot.queue.clear();
@@ -487,9 +493,18 @@ int Pad::Read(PadData* data, int num, int port) {
         return 1;
     }
     if (slot.queue.empty()) {
-        data[0] = BuildData(slot, slot.state, now, now, injected, port);
-        if (port == 0) ApplyRecording(data[0], now);
-        return 1;
+        const std::size_t limit = static_cast<std::size_t>(num) - 1;
+        const std::size_t first = changes.size() > limit ? changes.size() - limit : 0;
+        int count = 0;
+        for (std::size_t index = first; index < changes.size(); ++index) {
+            auto change = changes[index].second;
+            change.buttons &= ~injectedHeldThroughCapture;
+            data[count] = BuildData(slot, slot.state, changes[index].first, changes[index].first, change, port);
+            ApplyRecording(data[count++], now);
+        }
+        data[count] = BuildData(slot, slot.state, now, now, injected, port);
+        if (port == 0) ApplyRecording(data[count], now);
+        return count + 1;
     }
     int count = 0;
     while (count < num && !slot.queue.empty()) {
