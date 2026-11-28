@@ -387,9 +387,9 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  if (port < 0) {
   return PAD_ERROR_INVALID_ARG;
  }
- g_opened[port] = true;
+ const bool alreadyOpened = g_opened[port].exchange(true);
  g_everOpened[port] = true;
- return PAD_HANDLE_BASE + port;
+ return alreadyOpened ? PAD_ERROR_ALREADY_OPENED : PAD_HANDLE_BASE + port;
 }
 
 int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param) {

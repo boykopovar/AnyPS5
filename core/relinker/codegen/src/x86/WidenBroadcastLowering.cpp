@@ -45,7 +45,7 @@ void _widen(StubBodyBuilder& body, const WidenBroadcastOperands& operands, const
 
 std::optional<WidenBroadcastOperands> DecodeWidenBroadcast(const std::uint8_t* data, const std::size_t length) {
     const auto instruction = Decode(data, length);
-    if (!instruction || instruction->Map != Map0F38 || instruction->Prefix != Prefix66 || instruction->Wide) return std::nullopt;
+    if (!instruction || instruction->Map != Map0F38 || instruction->Prefix != Prefix66) return std::nullopt;
     const auto opcode = instruction->Opcode;
     const bool memory = instruction->Memory.has_value();
     WidenBroadcastOperands operands{nullptr, WidenBroadcastKind::Widen, opcode, instruction->Vector256, instruction->Reg, instruction->Rm, 0, instruction->Memory};
@@ -53,6 +53,8 @@ std::optional<WidenBroadcastOperands> DecodeWidenBroadcast(const std::uint8_t* d
         if (!instruction->Vector256) return std::nullopt;
         operands.Name = (opcode & 0x10) != 0 ? kZeroNames[opcode & 7] : kSignNames[opcode & 7];
         operands.SourceBytes = kWidenSourceBytes[opcode & 7];
+    } else if (instruction->Wide) {
+        return std::nullopt;
     } else if ((opcode == 0x18 || opcode == 0x58) && !memory) {
         operands.Name = opcode == 0x18 ? "VBROADCASTSS" : "VPBROADCASTD";
         operands.Kind = WidenBroadcastKind::BroadcastDword;

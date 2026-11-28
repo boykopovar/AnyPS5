@@ -708,6 +708,12 @@ if(BUILD_TESTING)
     target_link_libraries(guest_aio_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_aio_tests)
     add_test(NAME guest_aio COMMAND guest_aio_tests)
+    add_test(NAME guest_aio_completion_writes COMMAND guest_aio_tests completion-writes)
+    set_tests_properties(guest_aio_completion_writes PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_aio_completion_writes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_aio_registry_tests
             ${LIBS_INCLUDE_DIR}/tests/GuestAioRegistry.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp)
@@ -1327,6 +1333,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sleep_wake_coarse PROPERTIES TIMEOUT 20 ENVIRONMENT "APS5_COARSE_TIMED_WAITS=1")
         set_tests_properties(guest_sleep_wake guest_sleep_wake_coarse PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test_executable(windows_nested_wakeable_sleep_tests
+            ${LIBS_INCLUDE_DIR}/tests/WindowsNestedWakeableSleep.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Time/SleepWake.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp)
+        target_include_directories(windows_nested_wakeable_sleep_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        if(MINGW)
+            target_compile_options(windows_nested_wakeable_sleep_tests PRIVATE -fasynchronous-unwind-tables)
+        endif()
+        add_test(NAME windows_nested_wakeable_sleep COMMAND windows_nested_wakeable_sleep_tests)
+        set_tests_properties(windows_nested_wakeable_sleep PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
+            "APS5_COARSE_TIMED_WAITS=unset:;APS5_NO_SLEEP_WAKE=unset:")
     endif()
     add_test_executable(guest_clock_pause_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockPause.cpp)
     target_include_directories(guest_clock_pause_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -2977,6 +2994,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_directory_removed_entries PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_append_positioned_write_tests ${LIBS_INCLUDE_DIR}/tests/GuestAppendPositionedWrite.cpp)
+    target_include_directories(guest_append_positioned_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_append_positioned_write_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_append_positioned_write_tests)
+    add_test(NAME guest_append_positioned_write COMMAND guest_append_positioned_write_tests)
+    set_tests_properties(guest_append_positioned_write PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_append_positioned_write PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_directory_entry_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryEntries.cpp)
     target_include_directories(guest_directory_entry_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_directory_entry_tests PRIVATE libkernel libc)
@@ -3594,13 +3621,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_mutexattr_protocol_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-endif()
-
-file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
-list(SORT libkernelTestFragments)
-foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
-    include(${libkernelTestFragment})
-endforeach()
 
     add_test_executable(guest_kernel_socket_type_error_readonly_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketTypeErrorReadonlyBounds.cpp)
     target_include_directories(guest_kernel_socket_type_error_readonly_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -3636,3 +3656,10 @@ endif()
         set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+endif()
+
+file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
+list(SORT libkernelTestFragments)
+foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
+    include(${libkernelTestFragment})
+endforeach()

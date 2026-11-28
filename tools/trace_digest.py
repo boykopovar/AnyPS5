@@ -160,7 +160,7 @@ class Trace:
         starts = [ts for ts, _ in self.presents]
         if end is None:
             end = starts[-1] if starts else 0.0
-        bounds = starts + ([end] if not starts or end > starts[-1] else [])
+        bounds = [start for start in starts if start < end] + [end]
         return [(index, bounds[index], bounds[index + 1], self.presents[index][1]) for index in range(len(bounds) - 1)]
 
 

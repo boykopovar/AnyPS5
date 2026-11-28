@@ -226,6 +226,19 @@ class AuditDumpTests(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertEqual(list(convert.call_args.args[5]), expected)
 
+    def test_to_intel_reaches_the_relinker_only_when_given(self):
+        for extra, expected in (((), []), (("--to-intel",), ["--to-intel"])):
+            with self.subTest(extra=extra):
+                with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")) as run, \
+                        mock.patch.object(audit_dump.import_audit, "main") as audit:
+                    code, _ = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--windows", *extra,
+                                            "--work", self.root / "work")
+                self.assertEqual(code, 2)
+                audit.assert_not_called()
+                command = run.call_args.args[0]
+                self.assertEqual(command[1:3 + len(expected)], ["--registry", "--windows", *expected])
+                self.assertEqual(command.count("--to-intel"), len(expected))
+
     def run_main(self, *arguments):
         errors = io.StringIO()
         printed = io.StringIO()

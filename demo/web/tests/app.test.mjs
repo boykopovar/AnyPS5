@@ -228,6 +228,7 @@ for (const kind of ["zip", "batch", "folder"]) {
     assert.equal(get("warnings").hidden, false);
     assert.equal(get("app-list").children.length, first.messages[0].inputs.length);
     assert.equal(get("app-list").hidden, kind !== "batch");
+    assert.equal(get("patch-options").hidden, kind === "batch");
     get("acknowledge").checked = true;
     get("acknowledge").listeners.get("change")();
     assert.equal(get("convert").disabled, false);
@@ -236,6 +237,8 @@ for (const kind of ["zip", "batch", "folder"]) {
     assert.equal(first.terminated, true);
     assert.equal(get("file").value, "");
     assert.equal(get("folder").value, "");
+    assert.equal(get("patch").value, "");
+    assert.equal(get("patch-options").hidden, true);
     assert.equal(get("selection").hidden, true);
     assert.equal(get("warnings").hidden, true);
     assert.equal(get("app-list").hidden, true);
@@ -262,8 +265,11 @@ for (const kind of ["zip", "batch", "folder"]) {
     get("acknowledge").checked = true;
     get("acknowledge").listeners.get("change")();
     assert.equal(get("convert").disabled, false);
+    const patch = new File(["format = 1"], "patch.toml");
+    get("patch").files = [patch];
     await get("convert").onclick();
     assert.equal(replacement.messages.at(-1).type, "convert");
+    assert.equal(replacement.messages.at(-1).patchFile, patch);
     assert.equal(replacement.terminated, false);
   });
 }
