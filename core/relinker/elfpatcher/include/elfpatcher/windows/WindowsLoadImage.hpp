@@ -10,6 +10,7 @@ class WindowsLoadImage {
 public:
     WindowsLoadImage(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, bool requireEntry = true, std::uint64_t imageBase = ImageBase);
     std::uint32_t GetRva(std::uint64_t address, std::uint64_t size = 1) const;
+    bool IsExecutableRange(std::uint64_t address, std::uint64_t size) const;
     std::uint32_t GetEndRva() const;
     std::uint32_t GetEntryRva() const;
     std::uint64_t GetRelocatedAddress(std::uint64_t address) const;

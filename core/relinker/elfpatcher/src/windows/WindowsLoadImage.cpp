@@ -102,6 +102,16 @@ std::uint32_t WindowsLoadImage::GetRva(const std::uint64_t address, const std::u
     throw Domain::RelinkerException("ELF address is not contained in PT_LOAD memory", address);
 }
 
+bool WindowsLoadImage::IsExecutableRange(const std::uint64_t address, const std::uint64_t size) const {
+    const auto offset = GetRva(address, size) - LoadRva;
+    const auto lastOffset = offset + size - 1;
+    for (auto page = offset / SectionAlignment; page <= lastOffset / SectionAlignment; ++page) {
+        if ((pageFlags[page] & SectionExecute) == 0)
+            return false;
+    }
+    return true;
+}
+
 std::uint32_t WindowsLoadImage::GetEndRva() const {
     return CheckedRva(LoadRva + size);
 }

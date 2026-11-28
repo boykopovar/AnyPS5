@@ -193,13 +193,13 @@ def main():
                     if run(relinker, Path(directory), name, exported_fixture(binding, defined, sections), level) != expected:
                         failures.append(name)
         for kind, binding in (("global", 1), ("weak", 2)):
-            if run(relinker, Path(directory), f"exported-abs-{kind}-no-sections",
-                   exported_fixture(binding, True, False, section=0xfff1), 1):
+            if not run(relinker, Path(directory), f"exported-abs-{kind}-no-sections",
+                       exported_fixture(binding, True, False, section=0xfff1), 1):
                 failures.append(f"exported-abs-{kind}-no-sections")
             for section_name, section_type in (("dynsym", 11), ("symtab", 2)):
                 name = f"exported-abs-{kind}-{section_name}"
-                if run(relinker, Path(directory), name,
-                       exported_fixture(binding, True, True, section=0xfff1, section_type=section_type), 1):
+                if not run(relinker, Path(directory), name,
+                           exported_fixture(binding, True, True, section=0xfff1, section_type=section_type), 1):
                     failures.append(name)
         landing_pad = at_offset([(0, b"\xe8" + rel(CODE + 5, FUNCTION) + b"\xc3"), (0x10, load_slot(CODE + 0x10)),
                                  (0x40, b"\xc3"), (0x60, b"\xc3")])

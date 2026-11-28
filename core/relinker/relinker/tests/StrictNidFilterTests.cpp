@@ -84,6 +84,56 @@ void deadTailAndExplicitEntry() {
     require(live.ImportSlots == std::set<std::uint64_t>{0x2000}, "Explicit entry after UD2 lost its import");
 }
 
+void explicitEntryInsideLinearSweepPadding() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    std::fill(input.Text.begin() + 1, input.Text.begin() + 16, 0);
+    ripOperand(input, 16, {0xFF, 0x15}, 0x2000);
+    input.Entries.push_back(0x1010);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.Instructions.contains(0x1010), "Explicit export root was not decoded from its own address");
+    require(result.ImportSlots == std::set<std::uint64_t>{0x2000}, "Padding consumed an absolute export root and dropped its import");
+    require(result.IndirectTransfers == 1, "Decoding an interior root double-counted or skipped its indirect call");
+
+    auto aligned = fixture();
+    emit(aligned, 0, {0xC3});
+    importThunk(aligned, 16, 0x2000);
+    aligned.Entries.push_back(0x1010);
+    const auto alignedResult = AnalyzeStrictReachability(aligned);
+    require(alignedResult.ImportSlots == std::set<std::uint64_t>{0x2000}, "An already aligned explicit root changed behavior");
+    require(alignedResult.IndirectTransfers == 1, "An already decoded root was counted twice");
+}
+
+void trustedRootUsesTextLimitBeyondInferredRegion() {
+    auto input = fixture();
+    emit(input, 0, {0x48, 0xB8, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xBB, 0x00, 0x00, 0xC3, 0x00, 0xC3});
+    input.Entries.push_back(0x1002);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.Instructions.contains(0x1002), "Trusted root was not decoded from its own address");
+    require(result.Instructions.contains(0x1007), "Trusted root was still bounded by another stream's inferred region");
+    require(result.Instructions.contains(0x100C), "Trusted root instruction extending past the inferred region was not decoded");
+
+    auto untrusted = fixture();
+    emit(untrusted, 0, {0x48, 0xB8, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xBB, 0x00, 0x00, 0xC3, 0x00, 0xC3});
+    untrusted.Pointers.emplace(0x2000, 0x1002);
+    const auto untrustedResult = AnalyzeStrictReachability(untrusted);
+    require(untrustedResult.Instructions.contains(0x100C), "Untrusted root instruction extending past the inferred region was not decoded");
+}
+
+void untrustedRootWithOutOfCodeBranchFallsBackConservatively() {
+    auto input = fixture();
+    emit(input, 0, {0xB8, 0xEB, 0x7F, 0x90, 0x90, 0xC3});
+    input.Pointers.emplace(0x2000, 0x1001);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.ImportSlots == input.ImportSlots, "An out-of-code branch from an untrusted root did not preserve all imports");
+
+    auto trusted = fixture();
+    emit(trusted, 0, {0xB8, 0xEB, 0x7F, 0x90, 0x90, 0xC3});
+    trusted.Entries.push_back(0x1001);
+    requireFailureMessage([&] { AnalyzeStrictReachability(trusted); }, "direct branch leaves code",
+                          "Trusted root with an out-of-code branch was accepted");
+}
+
 void ud1DeadTail() {
     auto input = fixture();
     emit(input, 0, {0x0F, 0xB9, 0xC0});
@@ -100,6 +150,30 @@ void conditionalTailCall() {
     emit(input, 0, {0x75, 0x0E, 0xC3});
     importThunk(input, 16, 0x2000);
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Conditional tail call was removed");
+}
+
+void independentRootStopsAtTerminalInstruction() {
+    auto input = fixture();
+    emit(input, 0, {0x48, 0xB8, 0xC3, 0xE9, 0xFF, 0xFF, 0xFF, 0x7F, 0x00, 0x00, 0xC3});
+    input.Entries.push_back(0x1002);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.Instructions.contains(0x1002), "Independent root terminal instruction was not decoded");
+    require(!result.Instructions.contains(0x1003), "Independent root decoded bytes after a terminal instruction");
+}
+
+void untrustedBranchDescendantsRemainUntrusted() {
+    auto input = fixture();
+    emit(input, 0, {0xB8, 0xEB, 0x0D, 0x90, 0x90, 0xC3});
+    emit(input, 15, {0xB8, 0xEB, 0x7F, 0x90, 0x90, 0xC3});
+    input.Pointers.emplace(0x2000, 0x1001);
+    const auto result = AnalyzeStrictReachability(input);
+    require(result.ImportSlots == input.ImportSlots, "An out-of-code branch reached from an untrusted descendant did not preserve all imports");
+
+    auto trusted = input;
+    trusted.Entries.push_back(0x1001);
+    trusted.Entries.push_back(0x1010);
+    requireFailureMessage([&] { AnalyzeStrictReachability(trusted); }, "direct branch leaves code",
+                          "An independently trusted branch descendant was treated as speculative");
 }
 
 void fallthroughAfterZeroPadding() {
@@ -519,6 +593,19 @@ std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input) {
     write<std::uint64_t>(bytes, 160, 0x100);
     std::copy(input.Text.begin(), input.Text.end(), bytes.begin() + 0x200);
     return bytes;
+}
+
+void filterExtraExportRootInsideLinearSweepPadding() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    std::fill(input.Text.begin() + 1, input.Text.begin() + 16, 0);
+    ripOperand(input, 16, {0xFF, 0x15}, 0x2000);
+    const auto bytes = elfFixture(input);
+    const std::vector<Relinker::NidReference> references = {{"absoluteExport", {}, 6, 0x300, 0x2000, 0}};
+    const auto filtered = Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(
+        references, bytes, input.Text, input.TextVaddr, {0x1010});
+    require(filtered.size() == 1 && filtered[0].RelocationAddress == 0x2000,
+            "Strict ELF filter dropped an import reachable only from an extra export root inside padding");
 }
 
 void filterSegmentRelativeImports() {
@@ -1459,6 +1546,12 @@ void absoluteFunctionSymbols() {
             write<std::uint64_t>(bytes, 0x620, constant);
             require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
                     "Strict filter treated an SHN_ABS function symbol as a code entry point");
+            if (constant == 0x1010) {
+                const std::vector<Relinker::VirtualAddress> extraEntries{0x1010};
+                require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(
+                            references, bytes, input.Text, input.TextVaddr, extraEntries).size() == 1,
+                        "Strict filter dropped an import used by an extra absolute exported-function root");
+            }
         }
     }
 
@@ -1730,9 +1823,15 @@ int main() {
     try {
         defaultFilterExtraLandingPadRoots();
         deadTailAndExplicitEntry();
+        explicitEntryInsideLinearSweepPadding();
+        filterExtraExportRootInsideLinearSweepPadding();
+        trustedRootUsesTextLimitBeyondInferredRegion();
+        untrustedRootWithOutOfCodeBranchFallsBackConservatively();
         ud1DeadTail();
         conditionalTailCall();
         fallthroughAfterZeroPadding();
+        independentRootStopsAtTerminalInstruction();
+        untrustedBranchDescendantsRemainUntrusted();
         addressSizeOverrideImport();
         ripDisplacementOverflowUnderflowBounds();
         callbackAndRelocationRoots();
