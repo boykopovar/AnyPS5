@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -124,6 +125,7 @@ int main() {
             const auto msaa = Descriptor(Type2DMsaa, 1u, log2Fragments);
             CheckMsaa(*device, Query2DMsaa, msaa, fragments);
             CheckMsaa(*device, Query2D, msaa, fragments + " under DIM 2D");
+            AgcDriver::Graphics::RetireResidentImagesOver_nid_no_patch(reinterpret_cast<std::uintptr_t>(Texels.data()), Texels.size());
         }
         std::puts("image resinfo dimension tests passed");
         return 0;
