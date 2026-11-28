@@ -8688,10 +8688,6 @@ int APS5_VABI WKPageComputePagesForPrinting() {
 
 
 
-int APS5_VABI WKPageCopySessionState() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageCopyStandardUserAgentWithApplicationName() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8887,14 +8883,6 @@ int APS5_VABI WKPageReloadWithoutContentBlockers() {
 }
 
 int APS5_VABI WKPageRequestStorageAccessConfirmResultListenerCall() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRestoreFromSessionState() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageRestoreFromSessionStateWithoutNavigation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
