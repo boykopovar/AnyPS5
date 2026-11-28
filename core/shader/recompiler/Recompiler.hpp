@@ -4,6 +4,7 @@
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
 #include "ImageOverwrite.hpp"
+#include "StoreWindow.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -976,6 +977,7 @@ struct ShaderInvocation {
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
+    StoreTablesSnapshot storeTables;
 };
 
 // What a Vulkan pipeline built from a result depends on besides the fixed-function state and the
