@@ -227,6 +227,8 @@ Cross = KEY:F
 
 `ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the analog stick selected by `MouseStickTarget` (`Right` by default) from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
 
+An on-screen notice shows the mouse-as-stick state and an available `ToggleMouse` binding for four seconds after a toggle. If losing focus released the mouse, the notice returns when the game window regains focus. Press the displayed binding to capture the mouse again.
+
 The stick tilts in the direction the mouse moves, and further the faster it moves. Speed is measured in counts per second over the time between updates, so the same hand speed gives the same tilt at any frame rate. Any movement tilts the stick at least `MouseDeadzoneOffset`, so slow movement isn't lost inside the game's own deadzone. When the mouse stops, the stick eases back and is centered `MouseDecayMs` after the last movement.
 
 To control the left analog stick with mouse movement:

@@ -897,6 +897,10 @@ void testPadStatus() {
     };
     flipAndPresent("without the panel");
     check(!AgcDriver::PadStatusOverlayLines().has_value(), "the panel is shown before anything asked for it");
+    AgcDriverPadStatusMouseMode_nid_postfix("F4", false);
+    check(AgcDriver::PadStatusOverlayLines() == std::vector<std::string>{"MOUSE AS STICK OFF", "TOGGLE: F4"}, "the mouse mode notice did not reach the overlay");
+    flipAndPresent("with a mouse mode notice");
+    AgcDriverPadStatusMouseMode_nid_postfix(nullptr, false);
     AgcDriverPadStatusShow_nid_postfix();
     check(AgcDriver::PadStatusOverlayLines().has_value(), "a request does not show the panel");
     flipAndPresent("with the panel");

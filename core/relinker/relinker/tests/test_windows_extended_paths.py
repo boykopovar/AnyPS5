@@ -50,6 +50,9 @@ def main():
         assert result.returncode == 42 and "Exit code: 42" in result.stdout, (
             result.returncode, result.stdout, result.stderr
         )
+        for leftover in Path("\\\\?\\" + str(root)).iterdir():
+            if leftover.name.startswith("long output "):
+                leftover.unlink()
 
     print("Windows extended path tests passed")
 
