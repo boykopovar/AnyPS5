@@ -9018,16 +9018,6 @@ int APS5_VABI WKPageValidateCommand() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI WKRegistrableDomainCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-
-
-
-
 int APS5_VABI WKViewAccessibilityFocusedObject() {
     NotImplemented_nid_no_patch(__func__);
 }
