@@ -54,8 +54,16 @@ public:
             data.push_back({segment.MappedAddress, reader.ReadSegment(segment)});
         }
 
+        std::vector<UnusedNidFilter::TlsImageRange> tlsImages;
+        for (const auto& segment : headers) {
+            if (segment.Type != Elfpatcher::PT_TLS) continue;
+            if (segment.MemorySize > std::numeric_limits<VirtualAddress>::max() - segment.MappedAddress)
+                throw RelinkerException("Cannot filter NIDs: PT_TLS segment address overflow", segment.MappedAddress);
+            tlsImages.push_back({segment.MappedAddress, segment.MappedAddress + segment.MemorySize});
+        }
+
         auto cfg = UnusedNidFilter::BuildAddressTakenControlFlowGraph(textSection, textVAddr, primary, extra, *relativeRelocations, data);
-        auto index = UnusedNidFilter::BuildGotAccessIndex(*cfg, textSection, textVAddr);
+        auto index = UnusedNidFilter::BuildGotAccessIndex(*cfg, textSection, textVAddr, tlsImages, true);
 
         std::vector<NidReference> result;
         for (const auto& ref : nidRefs)
