@@ -1,8 +1,6 @@
 # libSceLibcInternal
 
-## change u6UfGT9+HEA
-
-- [Additional 3.20 imports](../../../core/libs/prx/libSceLibcInternal/InventoryExports2.cpp) (libSceLibcInternal) - `_ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2_` (NID `u6UfGT9+HEA`), `_ZNKSt19istreambuf_iteratorIwSt11char_traitsIwEE5equalERKS2_` (NID `jZmLD-ASDto`); signatures and behavior are unverified and calls throw through `NotImplemented_nid_no_patch`.
+## remove u6UfGT9+HEA
 
 ## add Additional PS5 3.20 import declarations
 
