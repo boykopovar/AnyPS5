@@ -148,4 +148,47 @@ std::int32_t APS5_VABI uset_getItem_nid_postfix(const USet* set, std::int32_t it
     return length;
 }
 
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet4spanEPKDsi17USetSpanCondition_nid_postfix(const USet* set, const char16_t* text,
+                                                                                    std::int32_t length, std::int32_t condition) {
+    const auto* native = icu::UnicodeSet::fromUSet(Icu::NativeSet(set));
+    if (!text && length != 0) APS5_INVALID_ARG_EX;
+    return text ? native->span(text, length, static_cast<USetSpanCondition>(condition)) : 0;
+}
+
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet8spanBackEPKDsi17USetSpanCondition_nid_postfix(const USet* set, const char16_t* text,
+                                                                                        std::int32_t length, std::int32_t condition) {
+    const auto* native = icu::UnicodeSet::fromUSet(Icu::NativeSet(set));
+    if (!text && length != 0) APS5_INVALID_ARG_EX;
+    return text ? native->spanBack(text, length, static_cast<USetSpanCondition>(condition)) : 0;
+}
+
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet8spanUTF8EPKci17USetSpanCondition_nid_postfix(const USet* set, const char* text,
+                                                                                       std::int32_t length, std::int32_t condition) {
+    const auto* native = icu::UnicodeSet::fromUSet(Icu::NativeSet(set));
+    if (!text && length != 0) APS5_INVALID_ARG_EX;
+    return text ? native->spanUTF8(text, length, static_cast<USetSpanCondition>(condition)) : 0;
+}
+
+std::int32_t APS5_VABI _ZNK6icu_6810UnicodeSet12spanBackUTF8EPKci17USetSpanCondition_nid_postfix(const USet* set, const char* text,
+                                                                                            std::int32_t length,
+                                                                                            std::int32_t condition) {
+    const auto* native = icu::UnicodeSet::fromUSet(Icu::NativeSet(set));
+    if (!text && length != 0) APS5_INVALID_ARG_EX;
+    return text ? native->spanBackUTF8(text, length, static_cast<USetSpanCondition>(condition)) : 0;
+}
+
+USet* APS5_VABI _ZN6icu_6810UnicodeSet21applyIntPropertyValueE9UPropertyiR10UErrorCode_nid_postfix(USet* set, std::int32_t property,
+                                                                                                  std::int32_t value,
+                                                                                                  std::int32_t* error) {
+    auto& target = Check(set);
+    if (!error) APS5_INVALID_ARG_EX;
+    std::int32_t incoming = 0;
+    if (!GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming))) APS5_INVALID_ARG_EX;
+    if (incoming > 0 || target.borrowed) return set;
+    auto status = static_cast<UErrorCode>(incoming);
+    target.owned.applyIntPropertyValue(static_cast<UProperty>(property), value, status);
+    if (status != incoming) WriteError(error, status, __func__);
+    return set;
+}
+
 }
