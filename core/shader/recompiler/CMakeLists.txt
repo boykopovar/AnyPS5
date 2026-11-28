@@ -38,6 +38,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StencilReplay.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderDiskCache.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderCachePack.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/HostMemory.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/RectListShaders.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/BarycentricGeometryShader.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/TessellationCaptureShader.cpp
