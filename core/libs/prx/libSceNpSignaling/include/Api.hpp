@@ -28,9 +28,9 @@ struct NpSignalingConnectionStatistics {
 static_assert(sizeof(NpSignalingConnectionStatistics) == 0x10);
 
 struct NpSignalingMemoryInfo {
+    std::uint64_t maxSystemSize;
     std::uint64_t currentInUse;
     std::uint64_t peakInUse;
-    std::uint64_t maxSystemSize;
 };
 static_assert(sizeof(NpSignalingMemoryInfo) == 0x18);
 
