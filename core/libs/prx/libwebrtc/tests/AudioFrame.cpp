@@ -1,5 +1,8 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
@@ -153,6 +156,8 @@ void TestUnmappedFrame() {
     RequireThrows<std::invalid_argument>([&] {
         _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(frame.get(), 0, unreadable, 1, 48000, 0, 0, 2);
     });
+    Require(frame->timestamp == 0x5A5A5A5Au);
+    Require(frame->sampleRateHz == 0x5A5A5A5A);
     Require(AllSamples(frame->data, 0x5A5A));
 }
 

@@ -77,7 +77,6 @@ public:
     GuestWriteScope(void* pointer, std::size_t bytes, const char* message)
         : guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
         if (!bytes) return;
-        ErrnoGuard saved;
         if (!pointer || !guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
             throw std::invalid_argument(message);
     }
@@ -85,6 +84,7 @@ public:
     GuestWriteScope& operator=(const GuestWriteScope&) = delete;
 
 private:
+    ErrnoGuard saved;
     GuestArena::HostWrite guard;
 };
 
@@ -218,6 +218,14 @@ void APS5_VABI _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11
         offsetof(WebRtcAudioFrame, profileTimestampMs) - offsetof(WebRtcAudioFrame, samplesPerChannel), unwritable);
     RequireWritable(FieldAddress(frame, offsetof(WebRtcAudioFrame, muted)),
         offsetof(WebRtcAudioFrame, absoluteCaptureTimestampMs) - offsetof(WebRtcAudioFrame, muted), unwritable);
+    const bool validSampleCount = numChannels == 0 || samplesPerChannel <= WebRtcAudioFrameMaxDataSizeSamples / numChannels;
+    const std::size_t length = validSampleCount ? samplesPerChannel * numChannels : 0;
+    std::vector<std::int16_t> samples;
+    if (validSampleCount && data) {
+        samples.resize(length);
+        CopyIn(samples.data(), data, sizeof(std::int16_t) * length, "AudioFrame::UpdateFrame requires readable samples");
+        RequireWritable(DataAddress(frame), sizeof(std::int16_t) * length, unwritable);
+    }
     StoreField(frame, offsetof(WebRtcAudioFrame, timestamp), timestamp, unwritable);
     StoreField(frame, offsetof(WebRtcAudioFrame, samplesPerChannel), samplesPerChannel, unwritable);
     StoreField(frame, offsetof(WebRtcAudioFrame, sampleRateHz), sampleRateHz, unwritable);
@@ -225,13 +233,9 @@ void APS5_VABI _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11
     StoreField(frame, offsetof(WebRtcAudioFrame, vadActivity), vadActivity, unwritable);
     StoreField(frame, offsetof(WebRtcAudioFrame, numChannels), numChannels, unwritable);
     StoreField(frame, offsetof(WebRtcAudioFrame, channelLayout), GuessChannelLayout(static_cast<int>(numChannels)), unwritable);
-    if (numChannels != 0 && samplesPerChannel > WebRtcAudioFrameMaxDataSizeSamples / numChannels)
+    if (!validSampleCount)
         throw std::invalid_argument("AudioFrame::UpdateFrame: more samples than the frame holds");
-    const std::size_t length = samplesPerChannel * numChannels;
     if (data) {
-        std::vector<std::int16_t> samples(length);
-        CopyIn(samples.data(), data, sizeof(std::int16_t) * length, "AudioFrame::UpdateFrame requires readable samples");
-        RequireWritable(DataAddress(frame), sizeof(std::int16_t) * length, unwritable);
         CopyOut(DataAddress(frame), samples.data(), sizeof(std::int16_t) * length, unwritable);
         StoreField<bool>(frame, offsetof(WebRtcAudioFrame, muted), false, unwritable);
     } else {
