@@ -11,10 +11,6 @@
 #include <system_error>
 
 #ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
 #endif
 
@@ -40,20 +36,6 @@ bool IsNotFound(int code) {
            code == GuestFilesystem::Invalid || code == GuestFilesystem::NameTooLong;
 }
 
-#ifdef _WIN32
-std::filesystem::path StatusPath(const std::filesystem::path& path) {
-    const auto native = path.native();
-    if (native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return path;
-    std::error_code error;
-    const auto absolute = WindowsAbsolutePath_nid_no_patch(path, error);
-    if (error) return path;
-    const auto& normalized = absolute.native();
-    if (normalized.size() < MAX_PATH) return absolute;
-    return normalized.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + normalized.substr(2))
-                                          : std::filesystem::path(L"\\\\?\\" + normalized);
-}
-#endif
-
 int StatType(const char* path, int* perms, int* error) {
     errno = 0;
     std::string copy;
@@ -76,7 +58,9 @@ int StatType(const char* path, int* perms, int* error) {
     } else {
         std::error_code failure;
 #ifdef _WIN32
-        const auto status = std::filesystem::status(StatusPath(native), failure);
+        std::error_code pathError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(native, pathError);
+        const auto status = std::filesystem::status(pathError ? native : verbatim, failure);
 #else
         const auto status = std::filesystem::status(native, failure);
 #endif

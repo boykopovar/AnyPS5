@@ -113,6 +113,28 @@ void TestUnsupported() {
     Require(std::filesystem::current_path() == workingDirectory, "_Current_set preserves the host working directory");
 }
 
+#ifdef _WIN32
+void TestVersionedStatVerbatim() {
+    Write("trail", 4, 5);
+    int perms = 0x1234;
+    int error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix("trail.", &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 0x1234, "absent trailing-dot name is not aliased by _Stat");
+    error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix("NUL", &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 0x1234, "absent DOS device name is not resolved as device by _Stat");
+    const int fd = open_nid_postfix("trail.", 0x202, 0644);
+    Require(fd >= 0, "create verbatim trailing-dot file");
+    Require(close_nid_postfix(fd) == 0, "close verbatim trailing-dot file");
+    FileStat status{};
+    Require(stat_nid_postfix("trail.", &status) == 0, "stat verbatim trailing-dot file");
+    perms = -1;
+    error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix("trail.", &perms, &error) == TypeRegular && error == 0 && perms == (status.st_mode & 07777), "_Stat of verbatim trailing-dot file matches stat");
+    Require(unlink_nid_postfix("trail.") == 0, "unlink verbatim trailing-dot file");
+    std::error_code ignored;
+    std::filesystem::remove("trail", ignored);
+}
+#endif
+
 } // namespace
 
 int main() {
@@ -124,6 +146,9 @@ int main() {
     TestSizeAndTime();
     TestEntries();
     TestUnsupported();
+#ifdef _WIN32
+    TestVersionedStatVerbatim();
+#endif
     std::filesystem::current_path(std::filesystem::temp_directory_path(), ignored);
     std::filesystem::remove_all(directory, ignored);
     return 0;
