@@ -53,26 +53,55 @@
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstring>
 #include <stdexcept>
-
-#include <stdexcept>
+#include <type_traits>
 
 namespace {
 
 using WebCore::LegacyLength;
 using WebCore::LegacyLengthType;
 
+static_assert(std::is_trivially_copyable_v<LegacyLength>);
+static_assert(std::is_trivially_copyable_v<WebCore::LegacyTransformOperation>);
+static_assert(std::is_trivially_copyable_v<WebCore::PerspectiveTransformOperation>);
+static_assert(std::is_trivially_copyable_v<WebCore::TransformationMatrix>);
+
+template <typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename T>
+void RequireWritableGuestValue(T* pointer, const char* function) {
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, sizeof(T));
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, sizeof(T));
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template <typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T))) return true;
+    static_cast<void>(GuestCopyOut_nid_no_patch(pointer, &previous, sizeof(T)));
+    return false;
+}
+
 float LengthValue(const LegacyLength& length) {
     return length.m_isFloat ? length.m_floatValue : static_cast<float>(length.m_intValue);
 }
 
-float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self) {
-    const LegacyLength& length = self->m_p;
+float PerspectiveValue(const LegacyLength& length) {
     switch (length.m_type) {
     case LegacyLengthType::Fixed:
         return LengthValue(length);
@@ -126,29 +155,38 @@ const OperationVtableStorage PerspectiveVtable = {
     },
 };
 
-void Construct(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
-    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
-    if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
-    if (p->m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
-    const LegacyLength length = *p;
-    std::memset(self, 0, sizeof(*self));
-    self->m_base.m_vptr = const_cast<OperationVtable*>(&PerspectiveVtable.dispatch);
-    self->m_base.m_refCount = 1;
-    self->m_base.m_type = PerspectiveOperationType;
-    self->m_p = length;
+WebCore::PerspectiveTransformOperation MakeOperation(const LegacyLength& length) {
+    WebCore::PerspectiveTransformOperation constructed{};
+    std::memset(&constructed, 0, sizeof(constructed));
+    constructed.m_base.m_vptr = const_cast<OperationVtable*>(&PerspectiveVtable.dispatch);
+    constructed.m_base.m_refCount = 1;
+    constructed.m_base.m_type = PerspectiveOperationType;
+    constructed.m_p = length;
+    return constructed;
 }
 
-WebCore::PerspectiveTransformOperation* Allocate(const LegacyLength* p) {
+void Construct(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p, const char* function) {
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
     if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
-    if (p->m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
+    const LegacyLength length = ReadGuestValue(p, function);
+    if (length.m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
+    const auto previous = ReadGuestValue(self, function);
+    RequireWritableGuestValue(self, function);
+    const auto constructed = MakeOperation(length);
+    if (!TryPublishGuestValue(self, constructed, previous))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+WebCore::PerspectiveTransformOperation* AllocateLength(const LegacyLength& length) {
     auto* operation = static_cast<WebCore::PerspectiveTransformOperation*>(_ZN3WTF10fastMallocEm(sizeof(WebCore::PerspectiveTransformOperation)));
-    Construct(operation, p);
+    *operation = MakeOperation(length);
     return operation;
 }
 
-void Destroy(WebCore::PerspectiveTransformOperation* self) {
+void Destroy(WebCore::PerspectiveTransformOperation* self, const char* function) {
     if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
-    if (self->m_p.m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
+    const auto local = ReadGuestValue(self, function);
+    if (local.m_p.m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
 }
 
 }
@@ -157,44 +195,65 @@ extern "C" {
 
 WebCore::PerspectiveTransformOperation** APS5_VABI _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(WebCore::PerspectiveTransformOperation** result, const LegacyLength* p) {
     if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::create: null result");
-    *result = Allocate(p);
+    if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
+    const LegacyLength length = ReadGuestValue(p, __func__);
+    if (length.m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
+    const auto previous = ReadGuestValue(result, __func__);
+    RequireWritableGuestValue(result, __func__);
+    auto* operation = AllocateLength(length);
+    if (!TryPublishGuestValue(result, operation, previous)) {
+        _ZN3WTF8fastFreeEPv(operation);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return result;
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
-    Construct(self, p);
+    Construct(self, p, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
-    Construct(self, p);
+    Construct(self, p, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD1Ev(WebCore::PerspectiveTransformOperation* self) {
-    Destroy(self);
+    Destroy(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD2Ev(WebCore::PerspectiveTransformOperation* self) {
-    Destroy(self);
+    Destroy(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD0Ev(WebCore::PerspectiveTransformOperation* self) {
-    Destroy(self);
+    Destroy(self, __func__);
+    RequireWritableGuestValue(self, __func__);
     _ZN3WTF8fastFreeEPv(self);
 }
 
 WebCore::LegacyTransformOperation** APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(WebCore::LegacyTransformOperation** result, const WebCore::PerspectiveTransformOperation* self) {
     if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null result");
     if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null this");
-    *result = &Allocate(&self->m_p)->m_base;
+    const auto local = ReadGuestValue(self, __func__);
+    if (local.m_p.m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
+    const auto previous = ReadGuestValue(result, __func__);
+    RequireWritableGuestValue(result, __func__);
+    auto* copy = AllocateLength(local.m_p);
+    auto* base = &copy->m_base;
+    if (!TryPublishGuestValue(result, base, previous)) {
+        _ZN3WTF8fastFreeEPv(copy);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     return result;
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(const WebCore::PerspectiveTransformOperation* self) {
-    return !PerspectiveValue(self);
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::isIdentity: null this");
+    return !PerspectiveValue(ReadGuestValue(self, __func__).m_p);
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv(const WebCore::PerspectiveTransformOperation* self) {
-    return !_ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(self);
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::isAffectedByTransformOrigin: null this");
+    return PerspectiveValue(ReadGuestValue(self, __func__).m_p) != 0.0f;
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation19isRepresentableIn2DEv(const WebCore::PerspectiveTransformOperation*) {
@@ -202,20 +261,39 @@ bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation19isRepresentableIn2DE
 }
 
 LegacyLength* APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(LegacyLength* result, const WebCore::PerspectiveTransformOperation* self) {
-    if (self->m_p.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(__func__);
-    *result = self->m_p;
+    if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::perspective: null result");
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::perspective: null this");
+    const auto local = ReadGuestValue(self, __func__);
+    if (local.m_p.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(__func__);
+    const auto previous = ReadGuestValue(result, __func__);
+    RequireWritableGuestValue(result, __func__);
+    if (!TryPublishGuestValue(result, local.m_p, previous))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return result;
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(const WebCore::PerspectiveTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
-    _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(&transform, PerspectiveValue(self));
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::apply: null this");
+    const auto local = ReadGuestValue(self, __func__);
+    const float perspective = PerspectiveValue(local.m_p);
+    auto* target = &transform;
+    const auto previous = ReadGuestValue(target, __func__);
+    RequireWritableGuestValue(target, __func__);
+    auto updated = previous;
+    _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(&updated, perspective);
+    if (!TryPublishGuestValue(target, updated, previous))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return false;
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(const WebCore::PerspectiveTransformOperation* self, const WebCore::LegacyTransformOperation& other) {
-    if (other.m_type != self->m_base.m_type) return false;
-    const LegacyLength& left = self->m_p;
-    const LegacyLength& right = reinterpret_cast<const WebCore::PerspectiveTransformOperation&>(other).m_p;
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::operator==: null this");
+    const auto leftOp = ReadGuestValue(self, __func__);
+    const auto otherBase = ReadGuestValue(&other, __func__);
+    if (otherBase.m_type != leftOp.m_base.m_type) return false;
+    const auto rightOp = ReadGuestValue(reinterpret_cast<const WebCore::PerspectiveTransformOperation*>(&other), __func__);
+    const LegacyLength& left = leftOp.m_p;
+    const LegacyLength& right = rightOp.m_p;
     if (left.m_type != right.m_type || left.m_hasQuirk != right.m_hasQuirk) return false;
     if (left.m_type == LegacyLengthType::Undefined) return true;
     if (left.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(__func__);

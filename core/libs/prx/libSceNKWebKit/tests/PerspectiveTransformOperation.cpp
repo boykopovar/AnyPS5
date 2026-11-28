@@ -1,11 +1,19 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -361,6 +369,166 @@ static void TestLifecycle() {
     Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&none, nullptr); }));
 }
 
+static void SetPageProtection(void* address, std::size_t size, bool readable, bool writable) {
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    const DWORD protect = !readable ? PAGE_NOACCESS : (writable ? PAGE_READWRITE : PAGE_READONLY);
+    Require(VirtualProtect(address, size, protect, &oldProtect) != 0);
+#else
+    const int prot = !readable ? PROT_NONE : (writable ? (PROT_READ | PROT_WRITE) : PROT_READ);
+    Require(mprotect(address, size, prot) == 0);
+#endif
+}
+
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    void* unmapped = nullptr;
+    void* readOnly = nullptr;
+    void* boundary = nullptr;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        unmapped = VirtualAlloc(nullptr, pageSize, MEM_RESERVE, PAGE_NOACCESS);
+        Require(unmapped != nullptr);
+        readOnly = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(readOnly != nullptr);
+        std::memset(readOnly, 0, pageSize);
+        SetPageProtection(readOnly, pageSize, true, false);
+        boundary = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(boundary != nullptr);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        unmapped = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(unmapped != MAP_FAILED);
+        readOnly = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(readOnly != MAP_FAILED);
+        std::memset(readOnly, 0, pageSize);
+        SetPageProtection(readOnly, pageSize, true, false);
+        boundary = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(boundary != MAP_FAILED);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(unmapped, 0, MEM_RELEASE);
+        VirtualFree(readOnly, 0, MEM_RELEASE);
+        VirtualFree(boundary, 0, MEM_RELEASE);
+#else
+        munmap(unmapped, pageSize);
+        munmap(readOnly, pageSize);
+        munmap(boundary, pageSize * 2);
+#endif
+    }
+};
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    const WebCore::LegacyLength fixed = Legacy(500, WebCore::LegacyLengthType::Fixed, true);
+    const WebCore::PerspectiveTransformOperation validOp = Make(fixed);
+    WebCore::PerspectiveTransformOperation* outOp = nullptr;
+    WebCore::LegacyTransformOperation* outBase = nullptr;
+    WebCore::LegacyLength outLen = Legacy(0, WebCore::LegacyLengthType::Fixed);
+    WebCore::TransformationMatrix matrix;
+    const WebCore::FloatSize box{100.0f, 50.0f};
+
+    auto* badOp = static_cast<WebCore::PerspectiveTransformOperation*>(pages.unmapped);
+    auto* badLen = static_cast<const WebCore::LegacyLength*>(pages.unmapped);
+    auto* badOutOp = static_cast<WebCore::PerspectiveTransformOperation**>(pages.unmapped);
+    auto* badOutBase = static_cast<WebCore::LegacyTransformOperation**>(pages.unmapped);
+    auto* badOutLen = static_cast<WebCore::LegacyLength*>(pages.unmapped);
+    auto* badMatrix = static_cast<WebCore::TransformationMatrix*>(pages.unmapped);
+    auto* badOther = static_cast<const WebCore::LegacyTransformOperation*>(pages.unmapped);
+
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv(nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(nullptr, &validOp); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(&outLen, nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(nullptr, matrix, box); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(nullptr, validOp.m_base); }));
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(badOutOp, &fixed); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(&outOp, badLen); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(badOp, &fixed); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(badOp, &fixed); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(const_cast<WebCore::PerspectiveTransformOperation*>(&validOp), badLen); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD1Ev(badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD2Ev(badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD0Ev(badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(badOutBase, &validOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&outBase, badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv(badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(badOutLen, &validOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(&outLen, badOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(badOp, matrix, box); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(&validOp, *badMatrix, box); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(badOp, validOp.m_base); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(&validOp, *badOther); }));
+    Require(outOp == nullptr && outBase == nullptr);
+
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
+    auto* roOutOp = static_cast<WebCore::PerspectiveTransformOperation**>(pages.readOnly);
+    *roOutOp = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234});
+    auto* roOutBase = reinterpret_cast<WebCore::LegacyTransformOperation**>(static_cast<std::byte*>(pages.readOnly) + 16);
+    *roOutBase = nullptr;
+    auto* roOutLen = reinterpret_cast<WebCore::LegacyLength*>(static_cast<std::byte*>(pages.readOnly) + 32);
+    *roOutLen = Legacy(77, WebCore::LegacyLengthType::Percent);
+    auto* roOp = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(static_cast<std::byte*>(pages.readOnly) + 64);
+    *roOp = validOp;
+    auto* roMatrix = reinterpret_cast<WebCore::TransformationMatrix*>(static_cast<std::byte*>(pages.readOnly) + 128);
+    *roMatrix = WebCore::TransformationMatrix{};
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(roOutOp, &fixed); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(roOp, &fixed); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(roOp, &fixed); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD0Ev(roOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(roOutBase, &validOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(roOutLen, &validOp); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(&validOp, *roMatrix, box); }));
+    Require(!_ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(roOp));
+    Require(_ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv(roOp));
+    Require(_ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(roOp, validOp.m_base));
+    _ZN7WebCore29PerspectiveTransformOperationD1Ev(roOp);
+    _ZN7WebCore29PerspectiveTransformOperationD2Ev(roOp);
+
+    auto* splitOpBytes = static_cast<std::uint8_t*>(pages.boundary) + pages.pageSize - 8;
+    const std::uint8_t sentinel[8]{0x5AU, 0xA5U, 0x3CU, 0xC3U, 0x12U, 0x34U, 0x56U, 0x78U};
+    std::memcpy(splitOpBytes, sentinel, sizeof(sentinel));
+    auto* splitOp = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(splitOpBytes);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(splitOp, &fixed); }));
+    Require(std::memcmp(splitOpBytes, sentinel, sizeof(sentinel)) == 0);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(reinterpret_cast<WebCore::PerspectiveTransformOperation**>(splitOpBytes + 4), &fixed); }));
+    Require(std::memcmp(splitOpBytes, sentinel, sizeof(sentinel)) == 0);
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(reinterpret_cast<WebCore::LegacyLength*>(splitOpBytes + 4), &validOp); }));
+    Require(std::memcmp(splitOpBytes, sentinel, sizeof(sentinel)) == 0);
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(&validOp, *reinterpret_cast<WebCore::TransformationMatrix*>(splitOpBytes), box); }));
+    Require(std::memcmp(splitOpBytes, sentinel, sizeof(sentinel)) == 0);
+
+    auto* baseOnlyBytes = static_cast<std::byte*>(pages.boundary) + pages.pageSize - sizeof(WebCore::LegacyTransformOperation);
+    auto* baseOnly = reinterpret_cast<WebCore::LegacyTransformOperation*>(baseOnlyBytes);
+    baseOnly->m_vptr = nullptr;
+    baseOnly->m_refCount = 1;
+    baseOnly->m_type = 10;
+    Require(!_ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(&validOp, *baseOnly));
+    baseOnly->m_type = PerspectiveType;
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(&validOp, *baseOnly); }));
+
+    WebCore::PerspectiveTransformOperation aliased = Make(Legacy(250, WebCore::LegacyLengthType::Fixed, true));
+    _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(&aliased, &aliased.m_p);
+    Require(aliased.m_base.m_type == PerspectiveType && aliased.m_p.m_intValue == 250 && aliased.m_p.m_hasQuirk);
+    _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(&aliased.m_p, &aliased);
+    Require(aliased.m_p.m_intValue == 250 && aliased.m_p.m_hasQuirk);
+}
+
 int main() {
     TestIdentityQueries();
     TestPerspective();
@@ -368,5 +536,6 @@ int main() {
     TestEquality();
     TestLegacyByteLayout();
     TestLifecycle();
+    TestGuestPointers();
     return 0;
 }
