@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
@@ -26,6 +27,7 @@
 #include <vector>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 namespace AgcDriver {
 namespace {
@@ -349,6 +351,7 @@ void ShaderMemory::preparePage(Page& page, std::uint64_t base) {
     // A page is either mapped whole or read word by word where the guest mapped less than a page,
     // or where recorded GPU work writes into it (a whole-page read would wait for that work).
     if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) {
+        if (WordwisePages() && pendingSpan != nullptr && !Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::NoCaptureKnownLabels) && GuestMemory::RecordQueuedWrites(base, PageBytes)) queuedWritesRecorded = true;
         if (WordwisePages() && pendingSpan != nullptr && pendingSpan(base, PageBytes, {}) != PendingWrite::None) {
             page.wordwise = true;
             ++CaptureTotals().pagesWordwise;
@@ -541,6 +544,7 @@ bool ShaderMemory::KeepTable(std::uint64_t address) {
     GuestMemory::CopyGuestBytes(copy.data(), reinterpret_cast<const void*>(address), KeepBytes);
     if (!quiet()) return false;
     for (auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1); base < end; base += PageBytes) static_cast<void>(page(base));
+    if (std::exchange(queuedWritesRecorded, false)) GuestMemory::SubmitQueuedWrites();
     if (!place(address, copy.data(), Words, true, true)) return false;
     for (auto cursor = address; cursor < end;) {
         const auto base = cursor & ~static_cast<std::uint64_t>(PageBytes - 1);
@@ -962,6 +966,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.imageViewGeneration = &imageViewGeneration;
     runtime.snapshotCurrent = &snapshotCurrent;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
+    if (std::exchange(queuedWritesRecorded, false)) GuestMemory::SubmitQueuedWrites();
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
         totals.resolveNanoseconds += capture->sourceNanoseconds;

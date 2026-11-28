@@ -300,6 +300,10 @@ unsigned long long CodeOffset(const void* address);
 // every read and store through this interface calls first. Code that reads guest memory directly
 // calls FlushGpuWrites itself.
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
+void SetQueuedWriteRecorder(bool (*recorder)(std::uint64_t address, std::size_t bytes));
+bool RecordQueuedWrites(std::uint64_t address, std::size_t bytes);
+void SetQueuedWriteSubmitter(void (*submitter)());
+void SubmitQueuedWrites();
 auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void GuardRead(std::uint64_t address, std::size_t bytes);

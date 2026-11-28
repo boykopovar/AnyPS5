@@ -555,6 +555,11 @@ public:
     static OwnLabel UnlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
     static bool LookupStoredBytes(std::uint64_t address, std::span<std::byte> bytes);
+    enum class OwnLabelLookup : std::uint8_t { NotLabels, Served, Refused };
+    static OwnLabelLookup LookupOwnLabelBytes(std::uint64_t address, std::span<std::byte> bytes, std::uint32_t queue);
+    static bool RecordQueuedLabelsOver(std::uint64_t address, std::size_t bytes);
+    static void SubmitActiveBatch();
+    static std::uint64_t HookSyncCount();
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
     // of the same queue) takes its value, since that queue's later work follows the label in queue
@@ -960,6 +965,7 @@ private:
         bool overwritten = false;
         // The value lands in memory only when the batch's completion actions run (LabelRefusal::BehindCompletion).
         bool behindCompletion = false;
+        bool overPending = false;
     };
     void readGpuTiming(Batch& batch);
     void beginSamples(Batch& batch);
