@@ -1,18 +1,21 @@
 #ifndef PRX_LIBC_INCLUDE_SPECIFICS_LINUX_HOSTMAPPING_HPP
 #define PRX_LIBC_INCLUDE_SPECIFICS_LINUX_HOSTMAPPING_HPP
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <fstream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <vector>
 #if __has_include(<linux/fs.h>)
 #include <linux/fs.h>
 #endif
@@ -58,52 +61,115 @@ struct Mapping {
     std::uint64_t inode = 0;
 };
 
+inline int MapsFd() {
+    static std::atomic<int> cached{-1};
+    int fd = cached.load(std::memory_order_acquire);
+    if (fd >= 0) return fd;
+    const int opened = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (opened < 0) return -1;
+    if (cached.compare_exchange_strong(fd, opened, std::memory_order_acq_rel, std::memory_order_acquire)) return opened;
+    close(opened);
+    return fd;
+}
+
 inline int QueryFd() {
     static const int fd = [] {
         if (std::getenv("APS5_NO_PROCMAP_QUERY") != nullptr) return -1;
-        const int opened = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+        const int opened = MapsFd();
         if (opened < 0) return -1;
         procmap_query probe{};
         probe.size = sizeof(probe);
         probe.query_flags = PROCMAP_QUERY_COVERING_OR_NEXT_VMA;
         if (ioctl(opened, PROCMAP_QUERY, &probe) == 0 || errno == ENOENT) return opened;
-        close(opened);
         return -1;
     }();
     return fd;
 }
 
-inline std::optional<Mapping> ParseMapsLine(const std::string& line) {
+inline std::mutex& ScanLock() {
+    static std::mutex lock;
+    return lock;
+}
+
+inline constexpr std::size_t ScanBufferBytes = 16384;
+
+inline char* ScanBuffer() {
+    static char buffer[ScanBufferBytes];
+    return buffer;
+}
+
+template <typename Line>
+void ScanLines(const char* caller, Line&& line) {
+    const std::lock_guard guard(ScanLock());
+    const int fd = MapsFd();
+    if (fd < 0) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
+    char* const buffer = ScanBuffer();
+    std::size_t held = 0;
+    for (off_t offset = 0;;) {
+        if (held == ScanBufferBytes - 1) throw std::runtime_error(std::string(caller) + ": /proc/self/maps line longer than the scan buffer");
+        const ssize_t got = pread(fd, buffer + held, ScanBufferBytes - 1 - held, offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) throw std::runtime_error(std::string(caller) + ": failed to read /proc/self/maps");
+        if (got == 0) break;
+        offset += got;
+        held += static_cast<std::size_t>(got);
+        std::size_t begin = 0;
+        while (auto* newline = static_cast<char*>(std::memchr(buffer + begin, '\n', held - begin))) {
+            const auto bytes = static_cast<std::size_t>(newline - (buffer + begin));
+            *newline = '\0';
+            if (!line(buffer + begin, bytes)) return;
+            begin += bytes + 1;
+        }
+        std::memmove(buffer, buffer + begin, held - begin);
+        held -= begin;
+    }
+    if (held != 0) {
+        buffer[held] = '\0';
+        line(buffer, held);
+    }
+}
+
+struct MapsLine {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
     char perms[8] = {};
+    std::uint64_t inode = 0;
+    const char* path = nullptr;
+    std::size_t pathBytes = 0;
+};
+
+inline bool ParseMapsLine(const char* text, std::size_t bytes, MapsLine& line) {
     std::uint64_t offset = 0;
     unsigned int devMajor = 0;
     unsigned int devMinor = 0;
-    std::uint64_t inode = 0;
     int prefix = 0;
-    const int parsed = std::sscanf(line.c_str(), "%llx-%llx %7s %llx %x:%x %llu%n",
-        (unsigned long long*)&start, (unsigned long long*)&end, perms,
-        (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&inode, &prefix);
-    if (parsed < 7 || std::strlen(perms) < 4) return std::nullopt;
-    std::string path;
-    if (prefix > 0 && static_cast<std::size_t>(prefix) < line.size()) {
-        const std::size_t begin = line.find_first_not_of(" \t", static_cast<std::size_t>(prefix));
-        if (begin != std::string::npos) path = line.substr(begin, 4095);
+    const int parsed = std::sscanf(text, "%llx-%llx %7s %llx %x:%x %llu%n",
+        (unsigned long long*)&line.start, (unsigned long long*)&line.end, line.perms,
+        (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&line.inode, &prefix);
+    if (parsed < 7 || std::strlen(line.perms) < 4) return false;
+    auto begin = static_cast<std::size_t>(prefix > 0 ? prefix : 0);
+    while (begin < bytes && (text[begin] == ' ' || text[begin] == '\t')) ++begin;
+    if (prefix > 0 && begin < bytes) {
+        line.path = text + begin;
+        line.pathBytes = std::min<std::size_t>(bytes - begin, 4095);
     }
-    return Mapping{start, end, path, perms[0] == 'r', perms[1] == 'w', perms[2] == 'x', perms[3] == 's', inode};
+    return true;
+}
+
+inline Mapping FromLine(const MapsLine& line) {
+    return Mapping{line.start, line.end, line.path != nullptr ? std::string(line.path, line.pathBytes) : std::string(), line.perms[0] == 'r',
+        line.perms[1] == 'w', line.perms[2] == 'x', line.perms[3] == 's', line.inode};
 }
 
 inline std::optional<Mapping> ScanMaps(std::uint64_t address, const char* caller) {
-    std::ifstream maps("/proc/self/maps");
-    if (!maps) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
-    std::string line;
-    while (std::getline(maps, line)) {
-        auto mapping = ParseMapsLine(line);
-        if (!mapping || address < mapping->start || address >= mapping->end) continue;
-        return mapping;
-    }
-    return std::nullopt;
+    std::optional<Mapping> found;
+    ScanLines(caller, [&](const char* text, std::size_t bytes) {
+        MapsLine line;
+        if (!ParseMapsLine(text, bytes, line) || address < line.start || address >= line.end) return true;
+        found = FromLine(line);
+        return false;
+    });
+    return found;
 }
 
 inline Mapping FromQuery(const procmap_query& query, const char* name) {
@@ -148,16 +214,16 @@ void Walk(std::uint64_t begin, std::uint64_t end, const char* caller, Visit&& vi
         }
         return;
     }
-    std::ifstream maps("/proc/self/maps");
-    if (!maps) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
-    std::string line;
-    while (std::getline(maps, line)) {
-        const auto mapping = ParseMapsLine(line);
-        if (!mapping) throw std::runtime_error(std::string(caller) + ": unexpected /proc/self/maps line: " + line);
-        if (mapping->end <= begin) continue;
-        if (mapping->start >= end) return;
-        visit(*mapping);
-    }
+    std::vector<Mapping> mappings;
+    ScanLines(caller, [&](const char* text, std::size_t bytes) {
+        MapsLine line;
+        if (!ParseMapsLine(text, bytes, line)) throw std::runtime_error(std::string(caller) + ": unexpected /proc/self/maps line: " + text);
+        if (line.end <= begin) return true;
+        if (line.start >= end) return false;
+        mappings.push_back(FromLine(line));
+        return true;
+    });
+    for (const auto& mapping : mappings) visit(mapping);
 }
 
 }
