@@ -785,7 +785,7 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
             if (pressed & 0x200u) slot.pressedAnalogR2 = input.analogButtonsR2;
         }
     }
-    if (slot.queue.empty()) slot.queueBase = slot.state;
+    if (slot.queue.empty()) slot.queueBase = input.intercepted ? input : slot.state;
     slot.state = input;
     if (slot.queue.size() == kQueueCapacity) {
         slot.queueBase = slot.queue.front().input;

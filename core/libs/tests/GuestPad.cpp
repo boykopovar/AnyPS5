@@ -1758,6 +1758,27 @@ static void CheckInjectedTimelineWithQueuedPhysicalInput(const std::filesystem::
     Pad::Read(samples, 64);
 }
 
+static void CheckCaptureHidesEarlierInjectedInput(const std::filesystem::path& path) {
+    constexpr std::uint32_t intercepted = 0x80000000u;
+    PadData samples[64]{};
+    PadInputState pressed;
+    pressed.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    PadInputState captured;
+    captured.intercepted = true;
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::Read(samples, 64);
+    PadPublishInput_nid_postfix(pressed);
+    std::ofstream(path) << "17 8192 40\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    PadPublishInput_nid_postfix(captured);
+    const int count = Pad::Read(samples, 64);
+    Require(count >= 1);
+    for (int index = 0; index < count; ++index) Require(samples[index].buttons == intercepted);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::Read(samples, 64);
+}
+
 static std::vector<std::pair<std::uint64_t, std::uint32_t>> RecordedButtons(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     std::vector<std::pair<std::uint64_t, std::uint32_t>> samples;
@@ -2061,6 +2082,7 @@ int main() {
     CheckInjectedTimelineSkipsUnchangedBoundaries(commandPath);
     CheckInjectedRecordingKeepsChangeTimes(commandPath, recordingPath);
     CheckInjectedTimelineWithQueuedPhysicalInput(commandPath);
+    CheckCaptureHidesEarlierInjectedInput(commandPath);
     PadLightBarParam lightBar{255, 128, 64};
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK);
     Require(scePadSetLightBar(handle, nullptr) == PAD_ERROR_INVALID_ARG);
