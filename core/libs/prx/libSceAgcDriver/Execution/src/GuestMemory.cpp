@@ -4190,19 +4190,27 @@ template <typename OnByte, typename OnWord>
     return true;
 }
 
+[[gnu::no_sanitize_address]] unsigned char LoadGuestByte(const unsigned char* address) {
+    return __atomic_load_n(address, __ATOMIC_RELAXED);
 }
 
-[[gnu::no_sanitize_address]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+[[gnu::no_sanitize_address]] std::uint64_t LoadGuestWord(const unsigned char* address) {
+    return __atomic_load_n(reinterpret_cast<const std::uint64_t*>(address), __ATOMIC_RELAXED);
+}
+
+}
+
+void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
     WalkGuestBytes(
         source, bytes,
-        [&](std::size_t index) __attribute__((no_sanitize_address)) {
-            to[index] = __atomic_load_n(from + index, __ATOMIC_RELAXED);
+        [&](std::size_t index) {
+            to[index] = LoadGuestByte(from + index);
             return true;
         },
-        [&](std::size_t index) __attribute__((no_sanitize_address)) {
-            const std::uint64_t word = __atomic_load_n(reinterpret_cast<const std::uint64_t*>(from + index), __ATOMIC_RELAXED);
+        [&](std::size_t index) {
+            const std::uint64_t word = LoadGuestWord(from + index);
             std::memcpy(to + index, &word, sizeof(word));
             return true;
         });
