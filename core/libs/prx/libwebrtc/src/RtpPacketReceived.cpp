@@ -51,9 +51,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 namespace {
 
@@ -89,9 +101,8 @@ void CopyIn(void* destination, const void* source, std::size_t bytes, const char
 class GuestWriteScope {
 public:
     GuestWriteScope(void* pointer, std::size_t bytes, const char* message)
-        : guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        : savedErrno(), guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
         if (!bytes) return;
-        ErrnoGuard guardErrno;
         if (!pointer || !guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
             throw std::invalid_argument(message);
     }
@@ -99,8 +110,53 @@ public:
     GuestWriteScope& operator=(const GuestWriteScope&) = delete;
 
 private:
+    ErrnoGuard savedErrno;
     GuestArena::HostWrite guard;
 };
+
+bool IsExecutableAddress(const void* address) {
+    if (!address) return false;
+    ErrnoGuard savedErrno;
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(address, &info, sizeof(info)) != sizeof(info)) return false;
+    if (info.State != MEM_COMMIT) return false;
+    if ((info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) return false;
+    return (info.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+#elif defined(__APPLE__)
+    mach_vm_address_t region = reinterpret_cast<mach_vm_address_t>(address);
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t objectName = MACH_PORT_NULL;
+    if (mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+            reinterpret_cast<vm_region_info_t>(&info), &count, &objectName) != KERN_SUCCESS)
+        return false;
+    if (objectName != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), objectName);
+    const auto target = reinterpret_cast<mach_vm_address_t>(address);
+    return target >= region && target < region + size && (info.protection & VM_PROT_EXECUTE) != 0;
+#else
+    const auto target = reinterpret_cast<std::uintptr_t>(address);
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        const auto dash = line.find('-');
+        const auto space = line.find(' ', dash == std::string::npos ? 0 : dash + 1);
+        if (dash == std::string::npos || space == std::string::npos || space + 3 >= line.size()) continue;
+        const auto start = std::strtoull(line.c_str(), nullptr, 16);
+        const auto end = std::strtoull(line.c_str() + dash + 1, nullptr, 16);
+        if (target >= start && target < end)
+            return line[space + 3] == 'x';
+    }
+    return false;
+#endif
+}
+
+void ValidateRefCountAlignment(void* object, const char* message) {
+    const auto refCountAddr = reinterpret_cast<std::uintptr_t>(object) + RefCountOffset;
+    if (refCountAddr % alignof(std::int32_t) != 0)
+        throw std::invalid_argument(message);
+}
 
 void RequireWritable(void* pointer, std::size_t bytes, const char* message) {
     GuestWriteScope scope(pointer, bytes, message);
@@ -189,8 +245,10 @@ void APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(WebRtcRtpPacket
     if (otherCopy.buffer.buffer)
         bufferWrite.emplace(otherCopy.buffer.buffer, sizeof(*otherCopy.buffer.buffer), unwritable);
     std::optional<GuestWriteScope> additionalDataWrite;
-    if (otherCopy.additionalData)
+    if (otherCopy.additionalData) {
+        ValidateRefCountAlignment(otherCopy.additionalData, unwritable);
         additionalDataWrite.emplace(static_cast<std::uint8_t*>(otherCopy.additionalData) + RefCountOffset, sizeof(std::int32_t), unwritable);
+    }
 
     WebRtcRtpPacketReceived staged = otherCopy;
     staged.extensionEntriesBegin = nullptr;
@@ -228,17 +286,31 @@ void APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(WebRtcRtpPacketRece
     CopyIn(&packetCopy, packet, sizeof(packetCopy), badPacket);
     RequireWritable(packet, sizeof(*packet), badPacket);
     if (void* data = packetCopy.additionalData) {
+        ValidateRefCountAlignment(data, badPacket);
         GuestWriteScope refWrite(static_cast<std::uint8_t*>(data) + RefCountOffset, sizeof(std::int32_t), badPacket);
-        const void* const* vtable = nullptr;
-        CopyIn(&vtable, data, sizeof(vtable), badPacket);
         const void* destructorEntry = nullptr;
-        if (vtable)
+        const std::int32_t currentRefCount = RefCount(data).load(std::memory_order_acquire);
+        if (currentRefCount == 1) {
+            const void* const* vtable = nullptr;
+            CopyIn(&vtable, data, sizeof(vtable), badPacket);
+            if (!vtable)
+                throw std::invalid_argument(badPacket);
             CopyIn(&destructorEntry, vtable + DeletingDestructorSlot, sizeof(destructorEntry), badPacket);
+            if (!IsExecutableAddress(destructorEntry))
+                throw std::invalid_argument(badPacket);
+        }
         void* cleared = nullptr;
         CopyOut(reinterpret_cast<unsigned char*>(packet) + offsetof(WebRtcRtpPacketReceived, additionalData), &cleared, sizeof(cleared), badPacket);
         if (RefCount(data).fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            if (!destructorEntry)
-                throw std::invalid_argument(badPacket);
+            if (!destructorEntry) {
+                const void* const* vtable = nullptr;
+                CopyIn(&vtable, data, sizeof(vtable), badPacket);
+                if (!vtable)
+                    throw std::invalid_argument(badPacket);
+                CopyIn(&destructorEntry, vtable + DeletingDestructorSlot, sizeof(destructorEntry), badPacket);
+                if (!IsExecutableAddress(destructorEntry))
+                    throw std::invalid_argument(badPacket);
+            }
             reinterpret_cast<DeletingDestructor>(const_cast<void*>(destructorEntry))(data);
         }
     }

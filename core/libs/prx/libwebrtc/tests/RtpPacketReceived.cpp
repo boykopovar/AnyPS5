@@ -1,5 +1,8 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
@@ -242,6 +245,14 @@ void TestGuardedPointers() {
 
     Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(guardPacket); }));
     Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(readOnlyPacket); }));
+
+    const void* const badDtorVTable[] = {nullptr, pages.ReadOnly()};
+    RefCounted nonExecObj{badDtorVTable, 1};
+    valid.additionalData = &nonExecObj;
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&valid); }));
+    Require(valid.additionalData == &nonExecObj && nonExecObj.refCount == 1);
+    valid.additionalData = nullptr;
+
     Require(allocations.size() == allocsBefore);
 
     _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&valid);
