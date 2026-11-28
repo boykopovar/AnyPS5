@@ -12889,7 +12889,7 @@ bool repeatedNeighbourStoreTests(const Device& device, Recorder& recorder) {
 bool storageImportTouchTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0 || !AgcDriver::GuestMemory::WriteWatched()) {
-        std::cout << "watched host imports unavailable: storage import touch not tested\n";
+        std::cout << "storage import touch skipped, watched host imports are unavailable\n";
         return false;
     }
     constexpr std::uint64_t offset = 0x2000;
@@ -12942,7 +12942,7 @@ bool storageImportTouchTests(const Device& device, Recorder& recorder) {
             recorder.Submit();
             device.WaitQueue();
             recorder.Sync();
-            std::cout << "host imports are compared, not watched: storage import touch not tested\n";
+            std::cout << "storage import touch skipped, host imports are compared, not watched\n";
             return false;
         }
         const auto clear = [&](const VkClearColorValue& value) {

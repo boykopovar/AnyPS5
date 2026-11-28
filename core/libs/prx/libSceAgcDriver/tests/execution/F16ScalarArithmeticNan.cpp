@@ -125,7 +125,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const auto target = device->Target();
         if (!TargetHasCapability(target, spv::CapabilityFloat16) || !TargetHasCapability(target, spv::CapabilityRoundingModeRTE) || !TargetHasCapability(target, spv::CapabilityDenormPreserve)) {
-            std::puts("f16 scalar arithmetic NaN tests skipped: native f16 arithmetic is unavailable");
+            std::puts("f16 scalar arithmetic NaN tests skipped, the device lacks native f16 arithmetic");
             return VulkanTestSkipped;
         }
         Run(*device, false);
