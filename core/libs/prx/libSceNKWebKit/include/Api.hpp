@@ -15,7 +15,6 @@ int APS5_VABI _ZN9Inspector17ScriptDebugServer23removeBreakpointActionsEm();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERKN3WTF6StringE();
 int APS5_VABI _ZN9Inspector21InjectedScriptManagerdaEPv();
 int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME();
-int APS5_VABI _ZN3WTF15BinarySemaphore6signalEv();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal11isUnderTestEv();
 int APS5_VABI _ZN7WebCore15JSDOMWindowBaseD1Ev();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent24continueUntilNextRunLoopERN3WTF6StringE();
