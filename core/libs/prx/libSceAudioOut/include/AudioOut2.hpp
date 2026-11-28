@@ -63,7 +63,7 @@ int APS5_VABI sceAudioOut2MbusSetMorpheusParam(void);
 int APS5_VABI sceAudioOut2MbusSetCaesarParam(void);
 int APS5_VABI sceAudioOut2MbusSetSparkParam(void);
 int APS5_VABI sceAudioOut2AllAudioMainToHeadphoneForDiag(void);
-int APS5_VABI sceAudioOut2LoPortGetStateEx(void);
+int APS5_VABI sceAudioOut2LoPortGetStateEx(AudioOut2PortHandle port, AudioOut2PortState* state, uint8_t* extra);
 int APS5_VABI sceAudioOut2ReportRegisterHandler(void);
 int APS5_VABI sceAudioOut2ReportUnregisterHandler(void);
 int APS5_VABI sceAudioOut2GetTvCorrectionInfo(void);
