@@ -1796,6 +1796,7 @@ struct WriteTracker {
     std::vector<std::uint64_t> unstampedStores;
 
     void noteUnstampedStore(std::uint64_t address, std::uint64_t end) {
+        ForgetComparedPages(address, static_cast<std::size_t>(end - address));
         if (unstampedStores.empty()) unstampedStores.assign(UnstampedSlots, 0);
         const auto first = address / WriteBlockBytes;
         const auto last = (end - 1) / WriteBlockBytes;
@@ -2865,17 +2866,39 @@ void SetLeftWatchCompare(bool compare) {
     comparedPages.clear();
 }
 
+static std::optional<std::uint64_t> hashComparedPage(std::uint64_t page, std::uint64_t address, std::span<const std::byte> bytes) {
+    if (page >= address && page + WritePageBytes <= address + bytes.size()) return HashPage(bytes.data() + (page - address));
+    const auto* guest = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(page));
+    if (!Accessible(guest, WritePageBytes)) return std::nullopt;
+    std::array<std::byte, WritePageBytes> merged;
+    std::memcpy(merged.data(), guest, WritePageBytes);
+    const auto from = std::max(page, address);
+    const auto to = std::min(page + WritePageBytes, address + bytes.size());
+    std::memcpy(merged.data() + (from - page), bytes.data() + (from - address), static_cast<std::size_t>(to - from));
+    return HashPage(merged.data());
+}
+
 void SeedComparedPages(std::uint64_t address, std::span<const std::byte> bytes) {
-    if (!leftWatchCompare.load(std::memory_order_acquire)) return;
-    const auto first = (address + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1};
+    if (!leftWatchCompare.load(std::memory_order_acquire) || bytes.empty()) return;
     const std::lock_guard lock(comparedMutex);
-    for (auto page = first; page + WritePageBytes <= address + bytes.size(); page += WritePageBytes) comparedPages[page] = {HashPage(bytes.data() + (page - address)), true};
+    eachPage(address, bytes.size(), [&](std::uint64_t page) {
+        if (const auto hash = hashComparedPage(page, address, bytes)) comparedPages[page] = {*hash, true};
+    });
 }
 
 void UpdateComparedPages(std::uint64_t address, std::span<const std::byte> bytes) {
-    const auto first = (address + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1};
+    if (bytes.empty()) return;
     const std::lock_guard lock(comparedMutex);
-    for (auto found = comparedPages.lower_bound(first); found != comparedPages.end() && found->first + WritePageBytes <= address + bytes.size(); ++found) found->second = {HashPage(bytes.data() + (found->first - address)), true};
+    for (auto found = comparedPages.lower_bound(address & ~std::uint64_t{WritePageBytes - 1}); found != comparedPages.end() && found->first < address + bytes.size(); ++found) {
+        const auto hash = hashComparedPage(found->first, address, bytes);
+        found->second = {hash.value_or(0), hash.has_value()};
+    }
+}
+
+void ForgetComparedPages(std::uint64_t address, std::size_t bytes) {
+    if (!leftWatchCompare.load(std::memory_order_acquire) || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    const std::lock_guard lock(comparedMutex);
+    for (auto found = comparedPages.lower_bound(address & ~std::uint64_t{WritePageBytes - 1}); found != comparedPages.end() && found->first < address + bytes; ++found) found->second.known = false;
 }
 
 void ChangedComparedPages(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed) {

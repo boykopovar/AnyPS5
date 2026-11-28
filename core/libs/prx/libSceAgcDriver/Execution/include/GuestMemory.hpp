@@ -138,6 +138,7 @@ void SetOwnStoreCompare(bool compare);
 void SetLeftWatchCompare(bool compare);
 void SeedComparedPages(std::uint64_t address, std::span<const std::byte> bytes);
 void UpdateComparedPages(std::uint64_t address, std::span<const std::byte> bytes);
+void ForgetComparedPages(std::uint64_t address, std::size_t bytes);
 void ChangedComparedPages(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed);
 void SetComparedDecisionHookForTest(void (*hook)());
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);

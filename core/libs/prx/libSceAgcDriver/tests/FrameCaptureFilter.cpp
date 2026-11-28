@@ -305,6 +305,25 @@ void testNormalizedSourceAlias(const std::filesystem::path& root) {
 }
 
 
+void testFormatTwoWaits(const std::filesystem::path& root) {
+    const auto source = root / "format-two";
+    const auto output = root / "format-two-filtered";
+    {
+        AgcDriver::FrameCaptureWriter writer(source, 1, AgcDriver::FrameCaptureWriter::CachedDeltaBytes, 2);
+        AgcDriver::FrameCall memory;
+        memory.kind = AgcDriver::FrameCallKind::Memory;
+        memory.ordinal = 1;
+        memory.values = {7, 1, 0x11000};
+        writer.WriteCall(memory);
+        writer.WriteDelta(7, 3, 0x11000, std::vector<std::byte>(64, std::byte{0x52}));
+        writer.Finish("{}");
+    }
+    AgcDriverTools::FilterFrameCapture(source, output, {});
+    const AgcDriver::FrameCaptureReader filtered(output);
+    check(filtered.Version() == 2, "filtering a calls format 2 capture wrote calls format " + std::to_string(filtered.Version()) + ", whose parked waits carry four values each");
+    check(filtered.Calls().size() == 1 && filtered.Calls()[0].values == std::vector<std::uint64_t>{7, 1, 0x11000}, "filtering changed the parked wait of a calls format 2 memory call");
+}
+
 void testRangeMetadata(const std::filesystem::path& root) {
     const auto source = root / "source";
     const auto output = root / "range-copy";
@@ -339,6 +358,7 @@ int main() {
     testTruncatedCapture(root);
     testNormalizedSourceAlias(root);
     testRangeMetadata(root);
+    testFormatTwoWaits(root);
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     testCallFilter(root);
