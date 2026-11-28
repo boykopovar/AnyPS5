@@ -818,6 +818,12 @@ private:
 
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
+    if (bytes != 0 && Arena::Get().OverlapsHostRegion(reinterpret_cast<std::uintptr_t>(pointer), bytes)) {
+        char message[160];
+        std::snprintf(message, sizeof(message), "guest arena commit 0x%llx+0x%zx overlaps a host region",
+            static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer)), bytes);
+        throw std::runtime_error(message);
+    }
     const TrapFence fence(pointer, bytes);
     const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
