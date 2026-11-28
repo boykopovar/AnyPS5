@@ -602,6 +602,10 @@ public:
 
     void SyncStatus() {
         pushbackLive = false;
+        RefreshStatus();
+    }
+
+    void RefreshStatus() {
         auto* h = LoadHandleAtomic_nid_no_patch();
         if (!h) return;
         PublishStatus(std::feof(h) != 0, std::ferror(h) != 0 || guestError);
@@ -609,6 +613,10 @@ public:
 
     void SyncUnlockedStatus() {
         pushbackLive = false;
+        RefreshUnlockedStatus();
+    }
+
+    void RefreshUnlockedStatus() {
         auto* h = LoadHandleAtomic_nid_no_patch();
         if (!h) return;
 #ifdef _WIN32
@@ -753,7 +761,7 @@ public:
         if (!h) return;
         std::clearerr(h);
         guestError = false;
-        SyncStatus();
+        RefreshStatus();
     }
 
     char16_t TakeLowSurrogate() {
