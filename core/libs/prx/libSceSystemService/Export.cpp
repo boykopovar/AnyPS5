@@ -49,6 +49,10 @@ std::atomic<IUrlConfirmation*> g_urlConfirmation{&g_defaultUrlConfirmation};
 SteadyUrlClock g_steadyUrlClock;
 OpenUrlGate g_urlGate(g_steadyUrlClock);
 
+std::atomic<bool> LncUtilInitialized{false};
+
+bool LncUtilReady() { return LncUtilInitialized.load(std::memory_order_relaxed); }
+
 int OpenWebBrowserUrl(const char* uri) {
     const OpenUrlMode mode = OpenUrlModeFromEnvironment("sceSystemServiceLaunchWebBrowser");
     if (mode == OpenUrlMode::Never) return SCE_KERNEL_ERROR_EOPNOTSUPP;
@@ -288,6 +292,7 @@ int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint
     static_cast<void>(caller);
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (capacity >= BigAppListCapacityLimit) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    if (!LncUtilReady()) return LNC_UTIL_ERROR_NOT_INITIALIZED;
     std::int32_t currentId = 0;
     std::uint32_t currentCount = 0;
     const int savedErrno = errno;
@@ -753,6 +758,7 @@ int APS5_VABI sceSystemServiceShowControllerSettings(void) {
 }
 
 int APS5_VABI sceLncUtilInitialize() {
+ LncUtilInitialized.store(true, std::memory_order_relaxed);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -780,12 +786,16 @@ int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
 }
 
 int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
+ std::string localTitle;
+ if (!ReadTitleId(titleId, &localTitle)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
+ if (!LncUtilReady()) return LNC_UTIL_ERROR_NOT_INITIALIZED;
  return sceSystemServiceGetAppId(titleId);
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
     std::string localTitle;
     if (!ReadTitleId(titleId, &localTitle) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (!LncUtilReady()) return LNC_UTIL_ERROR_NOT_INITIALIZED;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
  const bool localLaunched = true;
  const bool copied = GuestCopyOut_nid_no_patch(launched, &localLaunched, sizeof(localLaunched));

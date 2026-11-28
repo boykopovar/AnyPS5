@@ -180,6 +180,7 @@ int main(int argc, char** argv) {
     Require(argc == 2);
     const std::string_view mode = argv[1];
     const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
     if (mode == "known") CheckKnownTitle(runningAppId);
     else if (mode == "long") CheckLongTitle(runningAppId);
     else if (mode == "missing") CheckMissingMetadata(runningAppId);
