@@ -3,6 +3,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceHttp/src/Cookies.hpp"
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -16,6 +17,14 @@ struct HttpOptions {
     int epollId = -1;
     HttpEpollHandle epoll = nullptr;
     void* epollArgument = nullptr;
+    bool request = false;
+    std::uint32_t sendTimeoutUs = 0;
+    std::uint32_t recvTimeoutUs = 0;
+    std::uint32_t resolveTimeoutUs = 0;
+    std::uint32_t recvBlockSize = 0;
+    std::uint64_t responseHeaderMaxSize = 0;
+    std::uint64_t requestContentLength = 0;
+    int resolveRetry = 0;
     int proxyHttpConf = 0;
     int proxyWlanConf = 0;
     std::uint16_t proxyPort = 0;
@@ -27,10 +36,13 @@ void RemoveHttpContext(int contextId);
 bool HttpInitialised();
 bool IsHttpContext(int contextId);
 void AddHttpTemplate(int templateId, int contextId);
-void AddHttpChild(int id, int parentId);
+void AddHttpChild(int id, int parentId, bool request = false);
 void RemoveHttpObject(int id);
 std::optional<HttpOptions> FindHttpOptions(int id);
 bool SetHttpOption(int id, bool HttpOptions::*option, bool enable);
+template <class T>
+bool SetHttpValue(int id, T HttpOptions::*option, T value);
+bool SetHttpRequestContentLength(int id, std::uint64_t length);
 bool SetHttpCookieEnabled(int id, int enable);
 bool SetHttpProxy(int id, int httpConf, int wlanConf, std::string host, std::uint16_t port);
 bool SetHttpEpollId(int id, int epollId);

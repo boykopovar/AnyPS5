@@ -861,8 +861,8 @@ int main(int argc, char** argv) {
     Require(sceHttpsEnableOption(1, 0) == 0);
     Require(sceHttpsLoadCert(1, 0, nullptr, nullptr, nullptr) == 0);
     Require(sceHttpsUnloadCert(1) == 0);
-    Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == 0);
-    Require(sceHttpSetRecvBlockSize(1, 0x4000) == 0);
+    Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == beforeInit);
+    Require(sceHttpSetRecvBlockSize(1, 0x4000) == beforeInit);
     Require(sceHttpRedirectCacheFlush(1) == 0);
     int authUserArg = 0;
     Require(sceHttpSetAuthInfoCallback(1, AuthInfo, &authUserArg) == 0);
