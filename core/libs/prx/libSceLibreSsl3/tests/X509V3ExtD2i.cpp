@@ -1225,6 +1225,37 @@ void TestAuthorityInfoAccess() {
     FreeAuthorityInfoAccess(info);
     Require(allocations.empty());
 
+    for (const int nid : {177, 398}) {
+        info = DecodeAuthorityInfoAccess(nid, FromHex("300a300806022a03a1028000"));
+        Require(sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, privateMethod, 0, 1)->location->value, 22, {});
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    info = DecodeAuthorityInfoAccess(177, FromHex("301a300e06082b0601050507300186026162300806022a03a1028000"));
+    Require(sk_num_nid_postfix(info) == 2);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    RequireString(AccessDescriptionAt(info, 1, privateMethod, 0, 1)->location->value, 22, {});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    for (const std::string_view hex : {
+             "3017301506082b06010505073001a609240404026162040163",
+             "3017301506082b06010505073001a680040261620401630000"}) {
+        info = DecodeAuthorityInfoAccess(177, FromHex(hex));
+        Require(sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b', 'c'});
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    info = DecodeAuthorityInfoAccess(177, FromHex("3089000000000000000010300e06082b0601050507300186026162"));
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
     static unsigned char aiaOid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01};
     Fixture resolvedAia(0, aiaOid, sizeof(aiaOid), {0x30, 0x10, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07,
         0x30, 0x01, 0x86, 0x02, 'a', 'b'});
@@ -1318,9 +1349,7 @@ void TestAuthorityInfoAccess() {
         FromHex("300430800000"),
         FromHex("3012301006022a03a00a06032a0304a003160178"),
         FromHex("300e300c06022a03a506a1040c026162"),
-        FromHex("300a300806022a03a1028000"),
         FromHex("300a300806022a03a3800000"),
-        FromHex("301a300e06082b0601050507300186026162300806022a03a1028000"),
     };
     RequireUnmodelled(177, unmodelled);
     RequireUnmodelled(398, unmodelled);
