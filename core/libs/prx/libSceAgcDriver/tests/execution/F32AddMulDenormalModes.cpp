@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -149,17 +150,6 @@ constexpr std::array<Vector<2>, 32> ConstantFactorVectors{{
 constexpr std::uint32_t FirstTinyProductLane = static_cast<std::uint32_t>(ArithmeticVectors.size());
 constexpr std::uint32_t FirstConstantFactorLane = FirstTinyProductLane + static_cast<std::uint32_t>(TinyProductVectors.size());
 static_assert(FirstConstantFactorLane + ConstantFactorVectors.size() <= Threads);
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 template <std::uint32_t Count, std::size_t Size>
 void Fill(const std::array<Vector<Count>, Size>& vectors, std::uint32_t firstLane) {

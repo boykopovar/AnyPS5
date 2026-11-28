@@ -180,6 +180,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxToStringFloat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MathGamma.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
@@ -190,6 +191,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ComplexTanh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPrefix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
@@ -201,6 +203,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxThreadState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ControllingTerminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strptime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
@@ -285,6 +288,8 @@ function(run_report_stamp_components root)
 endfunction()
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
 
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathGamma.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp

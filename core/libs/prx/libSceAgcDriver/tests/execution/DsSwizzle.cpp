@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -350,17 +351,6 @@ constexpr std::uint32_t FftExpected64[64][16] = {
 
 constexpr const char* Names[Checked] = {"bitmask_identity", "bitmask_swap8", "bitmask_broadcast", "bitmask_reverse", "bitmask_mixed", "quad_perm", "quad_perm_high_bits", "rotate_left_1", "rotate_right_3", "rotate_left_31", "rotate_masked", "rotate_high_bits", "inactive_swap8", "inactive_quad_perm", "inactive_rotate", "inactive_broadcast"};
 constexpr const char* FftNames[Checked] = {"fft_00", "fft_10", "fft_1f", "fft_18", "fft_1c", "fft_1e", "fft_01", "fft_0f", "fft_15", "fft_08", "fft_00_high_bits", "fft_10_high_bits", "inactive_fft_00", "inactive_fft_10", "inactive_fft_18", "inactive_fft_01"};
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
     for (std::uint32_t tid = 0; tid < MaxThreads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);

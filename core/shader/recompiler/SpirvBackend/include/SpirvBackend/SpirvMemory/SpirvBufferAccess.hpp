@@ -25,6 +25,7 @@ void VerifyScratchPoolReturns(const SpirvEmitterState& state, const std::vector<
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
 std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t EmitGdsAtomicLockPointer(SpirvEmitterState& state);
+std::uint32_t EmitQwordAtomicLockPointer(SpirvEmitterState& state, std::uint32_t guest);
 std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index);
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem);
 std::uint32_t EmitMemoryElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t rawIndex);

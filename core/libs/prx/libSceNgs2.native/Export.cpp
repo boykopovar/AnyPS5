@@ -14,6 +14,9 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
+#endif
 
 namespace {
 
@@ -519,7 +522,11 @@ int APS5_VABI sceNgs2ModuleQueueEnumItems(const void* queue, void* out, std::uin
         if (retries >= 17) {
             constexpr std::array<std::uint32_t, 4> Backoff{100, 200, 500, 1000};
             const std::size_t index = std::min<std::size_t>(retries - 17, Backoff.size() - 1);
+#ifdef _WIN32
+            PreciseSleepUs(Backoff[index]);
+#else
             std::this_thread::sleep_for(std::chrono::microseconds(Backoff[index]));
+#endif
         }
     }
     struct QueueUnlock {

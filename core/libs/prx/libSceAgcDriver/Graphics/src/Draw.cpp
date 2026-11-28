@@ -1408,6 +1408,10 @@ void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten) {
     stats.indirectReadUs += readMs * 1000.0;
 }
 
+static void CountIndirectDraw(std::optional<IndirectDrawPath> path, double readMs, bool rewritten = false) {
+    if (path) AgcDriver::Graphics::CountIndirectDraw(*path, readMs, rewritten);
+}
+
 std::array<std::uint64_t, IndirectPathCount> IndirectDrawCounts() {
     auto& stats = Profile();
     std::lock_guard lock(stats.mutex);
@@ -1757,6 +1761,7 @@ namespace {
 // buffer copy with its highest index, the vertex buffer copies and their layout, the fragment
 // outputs and the pipeline stages.
 struct DrawInputs {
+    DrawResult result = DrawResult::Handled;
     // An empty auto draw: nothing to record.
     bool nothing = false;
     std::uint64_t indexBytes = 0;
@@ -1798,6 +1803,16 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t byt
 // Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
 // stages and the vertex input layout are the recipe's (derived from the same compiled stages)
 // instead of computed.
+bool autoRangeFits(std::uint32_t first, std::uint32_t count) {
+    return count == 0 || first <= std::numeric_limits<std::uint32_t>::max() - (count - 1u);
+}
+
+bool indexAliasesColor(const State& state, const Pm4::DrawParameters& draw, std::uint64_t indexBytes) {
+    if (!draw.indexed || !state.hasColorTarget || !indexBytes || !state.color.bytes) return false;
+    const auto target = state.color.MemoryAddress();
+    return draw.indexAddress <= target ? target - draw.indexAddress < indexBytes : draw.indexAddress - target < state.color.bytes;
+}
+
 struct DrawPlan {
     bool nothing = false;
     std::uint64_t indexBytes = 0;
@@ -1846,8 +1861,8 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
                 plan.nothing = true;
                 return plan;
             }
-            Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - (draw.indexCount - 1u), "auto draw vertex range overflow");
-            Require(draw.firstInstance <= std::numeric_limits<std::uint32_t>::max() - (draw.instanceCount - 1u), "auto draw instance range overflow");
+            Require(autoRangeFits(draw.firstVertex, draw.indexCount), "auto draw vertex range overflow");
+            Require(autoRangeFits(draw.firstInstance, draw.instanceCount), "auto draw instance range overflow");
         }
     }
     if (args == nullptr) {
@@ -1860,7 +1875,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     const auto indexBytes = plan.indexBytes;
     APS5_LOG_OUT_DEBUG("Index buffer bytes=%llu", static_cast<unsigned long long>(indexBytes));
     Require(indexBytes <= std::numeric_limits<std::size_t>::max(), "index buffer size overflow");
-    Require(!draw.indexed || !state.hasColorTarget || draw.indexAddress + indexBytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= draw.indexAddress, "index buffer aliases the render target");
+    Require(!indexAliasesColor(state, draw, indexBytes), "index buffer aliases the render target");
     APS5_LOG_CHARS_OUT_DEBUG("ValidateShaders");
     if (recipe != nullptr) {
         plan.fragmentOutputs = recipe->fragmentOutputs;
@@ -2144,6 +2159,11 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                 lowest = clampedBounds->lowest;
             }
         }
+        if (args != nullptr && args->capturedRecords &&
+            (*highest > context.limits.maxDrawIndexedIndexValue || args->vertexConstant > std::numeric_limits<std::uint32_t>::max() - *highest)) {
+            inputs.result = DrawResult::NeedsIndividualRecords;
+            return inputs;
+        }
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.maxIndex = *highest;
         inputs.minIndex = lowest;
@@ -2203,7 +2223,12 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         const auto firstByte = !wholeRange ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
-        Require(!state.hasColorTarget || address + bytes <= state.color.MemoryAddress() || state.color.MemoryAddress() + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
+        const bool aliasesTarget = state.hasColorTarget && address + bytes > state.color.MemoryAddress() && state.color.MemoryAddress() + state.color.bytes > address + firstByte;
+        if (aliasesTarget && args != nullptr && args->capturedRecords) {
+            inputs.result = DrawResult::NeedsIndividualRecords;
+            return inputs;
+        }
+        Require(!aliasesTarget, "vertex buffer aliases the render target");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
@@ -2238,7 +2263,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     for (std::size_t range = 0; range < plan.copies.size(); ++range) {
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
-        GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
+        const auto* source = reinterpret_cast<const void*>(begin);
+        if (args != nullptr && args->capturedRecords) {
+            if (!GuestMemory::Accessible(source, bytes)) {
+                inputs.result = DrawResult::NeedsIndividualRecords;
+                return inputs;
+            }
+        } else GuestMemory::CheckRange(source, bytes, 1);
         RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read", DepthReadCause::Reuse);
         if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads)) {
             rangeHandles.push_back(import->buffer);
@@ -2513,7 +2544,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
 // records read.
 struct IndirectRecord {
     const Pm4::DrawParameters::IndirectDraw* args = nullptr;
-    IndirectDrawPath path = IndirectDrawPath::Gpu;
+    std::optional<IndirectDrawPath> path = IndirectDrawPath::Gpu;
     const HostImport* argumentImport = nullptr;
     const HostImport* countImport = nullptr;
     std::span<const Pm4::DrawArguments> records;
@@ -4222,6 +4253,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     const auto plan = planDraw(context, state, draw, shaders, nullptr, outcome, timer, prepared.contentKey);
     if (plan.nothing) return false;
     inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
+    if (inputs.result == DrawResult::NeedsIndividualRecords) return false;
     if (inputs.nothing) {
         if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
         return false;
@@ -4471,6 +4503,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] { return color.arrayLastSlice != 0 ? CachedStorageLayers(context, ArraySurfaceForTarget(color), color.arraySlice, color.layers) : CachedStorageSurface(context, SurfaceForTarget(color)); });
         if (binding.resident != nullptr) targetViews[index] = binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
     }
+    if (args != nullptr && args->capturedRecords && std::ranges::any_of(targets, [&](const TargetBinding& binding) {
+            if (resources->ReadsImage(binding.resident.get()) || resources->ReadsImageRange(binding.color.MemoryAddress(), binding.color.bytes)) return true;
+            return (binding.proxied || binding.multisampled) &&
+                   (!resources->SampledTextures().empty() || !resources->StorageImages().empty());
+        })) {
+        inputs.result = DrawResult::NeedsIndividualRecords;
+        return false;
+    }
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
         const auto readImages = resources->StorageImages();
@@ -4524,7 +4564,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& indirect = prepared.indirect;
     indirect.args = args;
     auto& records = prepared.records;
-    if (args != nullptr) {
+    if (args != nullptr && args->capturedRecords) {
+        indirect.path.reset();
+        indirect.records = *args->capturedRecords;
+    } else if (args != nullptr) {
         static const bool gpuIndirectDraws = std::getenv("APS5_NO_GPU_INDIRECT_DRAW") == nullptr;
         const auto decide = [&](std::uint64_t address, std::size_t bytes, const HostImport*& import) {
             if (StorageTexture::FlushPending(address, bytes, nullptr, "indirect draw arguments")) {
@@ -5195,11 +5238,19 @@ std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const 
     return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
+    if (draw.indirect && draw.indirect->capturedRecords) {
+        const auto& args = *draw.indirect;
+        if (indexAliasesColor(state, draw, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize)) return DrawResult::NeedsIndividualRecords;
+        if (!draw.indexed && std::ranges::any_of(*args.capturedRecords, [&](const Pm4::DrawArguments& record) {
+                return record.count != 0 && record.instances != 0 &&
+                       (!autoRangeFits(args.vertexConstant, record.count) || !autoRangeFits(args.instanceConstant, record.instances));
+            })) return DrawResult::NeedsIndividualRecords;
+    }
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
-        return;
+        return DrawResult::Handled;
     }
     if (state.stages.mesh && state.layerExports != 0u && state.renderLayers > context.meshLimits.maxMeshOutputLayers && (draw.indirect || (draw.indexCount != 0u && draw.instanceCount != 0u))) {
         const auto limit = context.meshLimits.maxMeshOutputLayers;
@@ -5240,7 +5291,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         try {
             if (!prepareDraw(context, firstWindow, draw, shaders, snapshots, prepared)) {
                 keepHeldSpace(prepared);
-                return;
+                return DrawResult::Handled;
             }
             sharePrepared = !draw.indirect && prepared.lean && !prepared.multisampled && prepared.stencilReplay.empty() && prepared.resolved.resources != nullptr && !prepared.resolved.resources->SpaceReuse() && !prepared.targets.empty() && std::none_of(prepared.targets.begin(), prepared.targets.end(), [](const TargetBinding& binding) { return binding.resident == nullptr || binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; });
             const bool finalCompletion = prepared.completion;
@@ -5289,7 +5340,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                 base += window.renderLayers;
             }
         }
-        return;
+        return DrawResult::Handled;
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PreparedDraw prepared(profile);
@@ -5316,6 +5367,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         throw;
     }
     keepHeldSpace(prepared);
+    return prepared.inputs.result;
 }
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace) {

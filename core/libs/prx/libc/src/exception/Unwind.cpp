@@ -761,7 +761,10 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
             } else if (context.cfa == exception->private_2) actions = _Unwind_Action(actions | _UA_HANDLER_FRAME);
             if (frame.personality) {
                 auto result = CallPersonality(frame.personality, actions, exception, &context);
-                if (result == _URC_INSTALL_CONTEXT) LibcRestoreRegisters(context.registers);
+                if (result == _URC_INSTALL_CONTEXT) {
+                    context.registers[7] += context.argumentsSize;
+                    LibcRestoreRegisters(context.registers);
+                }
                 if (result != _URC_CONTINUE_UNWIND) return _URC_FATAL_PHASE2_ERROR;
             }
         }
