@@ -204,16 +204,28 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
         throw std::runtime_error("GDS src2 operations are not supported");
     }
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    const std::uint32_t width = memory.dataDwords;
+    const std::uint32_t alignment = width * 4u - 1u;
     const IrU32 address = readU32(inst.source0);
+    IrValue& active = ir.LogicalAnd(ir.GetExec(), ir.IEqual(ir.BitwiseAnd(address.Value(), ir.Constant(alignment)), ir.Constant(0u)));
     MemoryInfo source = memory;
     source.offset = memory.secondaryOffset;
     source.secondaryOffset = 0u;
-    IrValue* value = loadSharedU32(1u, address, source, inst.programCounter);
+    const bool sourceAligned = (source.offset & alignment) == 0u;
     MemoryInfo target = memory;
     target.secondaryOffset = 0u;
+    IrValue* value = sourceAligned ? loadSharedU32(width, address, source, inst.programCounter) : &ir.Constant(0u);
+    if (width == 2u) {
+        IrValue* low = sourceAligned ? extractSharedU32(value, width, 0u) : value;
+        IrValue* high = sourceAligned ? extractSharedU32(value, width, 1u) : value;
+        if (opcode == IrOpcode::WriteSharedU32) {
+            (void)ir.Emit(IrOpcode::WriteSharedU32x2, IrType::Void, {&address.Value(), low, high, &active}, addMemoryInfo(target, inst.programCounter));
+            return true;
+        }
+        value = &ir.ConstructU64(*low, *high);
+    }
     target.flushDenormals = floatAtomicFlush(opcode);
     target.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
-    IrValue& active = ir.GetExec();
     (void)ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), value, &active}, addMemoryInfo(target, inst.programCounter));
     return true;
 }
