@@ -24,6 +24,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -81,6 +82,29 @@ std::atomic<std::uint64_t> itemNotPlain{0};
 
 bool DispatchMissItemsEnabled() {
     return Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::PipelineDispatchMisses);
+}
+
+void StartStagedBuild(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& staged, std::uint64_t address) {
+    static std::mutex mutex;
+    static std::set<ShaderRecompiler::PipelineIdentity> started;
+    const auto identity = staged->Identity();
+    if (identity.Empty()) return;
+    {
+        std::lock_guard lock(mutex);
+        if (!started.insert(identity).second) return;
+    }
+    std::fprintf(stderr, "[staged-form] 0x%llx: building the window-select form in the background; its dispatches run the array form until it is built\n", static_cast<unsigned long long>(address));
+    SubmitComputePrebuild([device, staged, address] {
+        const auto started = std::chrono::steady_clock::now();
+        try {
+            device->PrebuildComputePipeline(*staged, address);
+            const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            if (device->ComputePipelineReady(*staged)) std::fprintf(stderr, "[staged-form] 0x%llx: the window-select form was built in %.0f ms; its dispatches switch to it\n", static_cast<unsigned long long>(address), ms);
+            else std::fprintf(stderr, "[staged-form] 0x%llx: the window-select form was not built after %.0f ms; its dispatches keep the array form\n", static_cast<unsigned long long>(address), ms);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[staged-form] 0x%llx: the window-select form could not be built (%s); its dispatches keep the array form\n", static_cast<unsigned long long>(address), error.what());
+        }
+    });
 }
 
 void NoteItemFallback(ItemFallback reason) {
@@ -479,6 +503,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
+    if (Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::WindowSelects)) request.target.windowSelects = true;
     if (const auto rsrc1 = queue.shader.find(0x212); !fromAhead && rsrc1 != queue.shader.end()) {
         const auto vectorGranule = request.context.waveSize == 32u ? 8u : 4u;
         if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule)) {
@@ -531,6 +556,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     mix(packet[4] & 0x8000u);
     for (const auto threads : compute.partialThreads) mix(threads);
     for (const auto word : userData) mix(word);
+    if (request.target.windowSelects) mix(0x57534c43u);
 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
     if (keyHygiene) {
@@ -685,6 +711,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         if (!pipelined && !recipeLess && !lateItem && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15, drainSite);
     }
     std::uint64_t forgetAtCapture = 0;
+    bool stagedPlain = false;
     if (cached) {
         require(keepVariant != nullptr && keepVariant->shader == registeredShader, "dispatch cache belongs to another registered shader");
         if (profile) captureMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
@@ -714,6 +741,21 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
             timing.Mark("capture_resources");
             compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address);
+            if (compiledResult->windowSelects && !localDevice->ComputePipelineReady(*compiledResult)) {
+                StartStagedBuild(localDevice, compiledResult, address);
+                request.target.windowSelects = false;
+                request.context.memory = memory;
+                invocation = InvocationFor(snapshot, codeOffset, request, AsyncDrawCompile(), &linking);
+                shaderMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
+                capture = [&] {
+                    const SampledReadScope sampling(evidenceReads);
+                    return CaptureInvocation(*shaderMemory, snapshot, codeOffset, request, invocation, &linking);
+                }();
+                captured = shaderMemory->Regions();
+                request.context.memory = captured;
+                compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address);
+                stagedPlain = true;
+            }
             timing.Mark("materialize");
             if (AsyncDrawCompile()) NoteDispatchRecorded(address);
             if (profile && compiledResult->cacheHit) cacheHits.fetch_add(1, std::memory_order_relaxed);
@@ -750,7 +792,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         if (profile) recompileMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
         phaseTiming.Phase(PhaseRecompile);
-        if (!resolving) insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming, linking);
+        if (!resolving) insertDispatch(address, key, noDispatchCache || stagedPlain || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming, linking);
         if (linking != nullptr) linking->AppendRegions(captured);
     }
     const auto* registeredViews = capture != nullptr ? &capture->snapshot.registeredImages : keepVariant != nullptr && keepVariant->registeredViews != nullptr ? keepVariant->registeredViews.get() : nullptr;
@@ -777,7 +819,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         parked.cached = cached;
         parked.validated = validated;
         parked.missedDiffering = missedDiffering;
-        parked.noDispatchCache = noDispatchCache || (compiledResult != nullptr && !CacheableResult(*compiledResult));
+        parked.noDispatchCache = noDispatchCache || stagedPlain || (compiledResult != nullptr && !CacheableResult(*compiledResult));
         parked.resolvedAt = std::chrono::steady_clock::now();
         ++groupStats.resolved;
         if (cached) ++groupStats.resolvedHits;

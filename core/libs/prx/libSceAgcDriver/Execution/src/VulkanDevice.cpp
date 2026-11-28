@@ -3049,6 +3049,13 @@ bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& s
     return !key.identity.Empty() && (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key));
 }
 
+bool VulkanDevice::ComputePipelineReady(const ShaderRecompiler::RecompileResult& shader) const {
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto key = ComputePipelineKey::Of(shader, Graphics::PushConstantStages(shaders) != 0);
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    return !key.identity.Empty() && state->computePipelines.contains(key);
+}
+
 namespace {
 thread_local bool buildingAhead = false;
 
@@ -3717,6 +3724,11 @@ namespace {
 std::atomic<std::uint64_t> computePipelinesCreated{0};
 std::atomic<std::uint64_t> computePipelinesCreatedLocked{0};
 std::atomic<std::uint64_t> computePipelinesCreatedAhead{0};
+std::atomic<std::uint64_t> windowSelectDispatches{0};
+}
+
+std::uint64_t VulkanDevice::WindowSelectDispatches() {
+    return windowSelectDispatches.load(std::memory_order_relaxed);
 }
 
 VulkanDevice::ComputePipelineCreation VulkanDevice::ComputePipelineCounts() {
@@ -6465,6 +6477,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     if (state->checkpointMarker != nullptr) state->checkpointMarker(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(faultToken)));
     if (faultToken != 0 && state->bufferMarker != nullptr) state->bufferMarker(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state->markerBuffer, 0, faultToken);
+    if (record.shader != nullptr && record.shader->program != nullptr && record.shader->program->windowSelects) windowSelectDispatches.fetch_add(1, std::memory_order_relaxed);
     if (split) {
         if (splitSlice->listed >= 0) {
             context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, state->splitSelectMemory->buffer->Handle(), (SplitSelectArgumentWords + 4ull * static_cast<std::uint64_t>(splitSlice->listed)) * sizeof(std::uint32_t));

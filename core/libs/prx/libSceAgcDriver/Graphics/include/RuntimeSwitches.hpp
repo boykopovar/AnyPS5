@@ -34,6 +34,7 @@ enum class RuntimeSwitch : std::size_t {
     NoDccMipFastClear,
     NoTableEntryMemo,
     PassStaging,
+    WindowSelects,
     Count,
 };
 
