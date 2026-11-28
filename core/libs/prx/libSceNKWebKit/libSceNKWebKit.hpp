@@ -59,6 +59,7 @@
 #include "prx/libSceNKWebKit/include/ParsedContentRangeExports.hpp"
 #include "prx/libSceNKWebKit/include/ParsedContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/QualifiedNameExports.hpp"
+#include "prx/libSceNKWebKit/include/JscObjectDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
