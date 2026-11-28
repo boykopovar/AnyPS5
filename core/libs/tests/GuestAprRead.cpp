@@ -666,6 +666,24 @@ void TestNativeReads() {
     reject(malformed, 20);
 }
 
+void TestCompactWriteAddress() {
+    const DirectBuffer storage;
+    auto* target = reinterpret_cast<std::uint64_t*>(storage.Data() + 0x100);
+    const auto address = reinterpret_cast<std::uint64_t>(target);
+    Require((address >> 40u) == 0u, "APR compact write-address test needs a target below 2^40");
+    for (const std::uint32_t value : {std::uint32_t{0}, std::uint32_t{4}, std::uint32_t{15}}) {
+        std::atomic_ref<std::uint64_t>(*target).store(0xCCCCCCCCCCCCCCCCull, std::memory_order_release);
+        const std::array<std::uint32_t, 3> record{
+            0x205u | (value << 12u) | (static_cast<std::uint32_t>((address >> 32u) & 0xffu) << 16u),
+            static_cast<std::uint32_t>(address), 0u};
+        alignas(8) std::array<std::uint8_t, sizeof(record)> memory{};
+        std::memcpy(memory.data(), record.data(), sizeof(record));
+        const Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
+        Require(sceKernelAprSubmitCommandBuffer(&buffer, 0) == 0, "APR rejected a compact write-address command buffer");
+        Require(LoadValue(target) == value, "APR compact write-address wrote the wrong value or none at all");
+    }
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -771,6 +789,7 @@ int main(int argc, char** argv) {
         } else if (mode == "native") {
             TestNativeReadFailures(fixture);
             TestNativeReads();
+            TestCompactWriteAddress();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;
