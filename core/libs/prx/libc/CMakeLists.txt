@@ -202,6 +202,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxThreadState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ControllingTerminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strptime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
