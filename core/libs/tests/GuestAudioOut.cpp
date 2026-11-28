@@ -21,6 +21,7 @@ constexpr int invalidFormat = static_cast<int>(0x80260007);
 constexpr int invalidFreq = static_cast<int>(0x80260008);
 constexpr int invalidPortType = static_cast<int>(0x8026000A);
 constexpr int invalidMixLevel = static_cast<int>(0x80260014);
+constexpr int invalidVolume = -2144993271;
 constexpr int alreadyInitialized = static_cast<int>(0x8026000E);
 
 constexpr int user = 0x10000000;
@@ -137,11 +138,11 @@ void TestVolumeBoundaries() {
 
     vol[0] = -unity;
     vol[1] = -1;
-    Require(sceAudioOutSetVolume(handle, 0x3, vol) == 0);
+    Require(sceAudioOutSetVolume(handle, 0x3, vol) == invalidVolume);
 
     vol[0] = std::numeric_limits<int>::max();
     vol[1] = std::numeric_limits<int>::min();
-    Require(sceAudioOutSetVolume(handle, 0x3, vol) == 0);
+    Require(sceAudioOutSetVolume(handle, 0x3, vol) == invalidVolume);
 
     Require(sceAudioOutSetVolume(handle, 0x1, nullptr) == invalidPointer);
     Require(sceAudioOutClose(handle) == 0);
@@ -186,16 +187,16 @@ void TestMillibelVolumeBitmaskClamping() {
         0xFFFFFFFFu
     };
 
-    int nominalVol[8] = {-10000, -5000, -3000, -1200, -600, -300, -100, 0};
+    int nominalVol[8] = {0, 4096, 8192, 12288, 16384, 20480, 24576, unity};
     for (const auto mask : bitmasks) {
         Require(sceAudioOutSetVolume(handle, mask, nominalVol) == 0);
     }
 
-    int boundaryVol[8] = {-10000, -10000, -5000, -5000, 0, 0, -10000, 0};
+    int boundaryVol[8] = {0, 0, unity, unity, 0, 0, unity, 0};
     Require(sceAudioOutSetVolume(handle, 0xFF, boundaryVol) == 0);
 
-    int clampedVol[8] = {-50000, -20000, -10001, -10000, 0, 1, 1000, 10000};
-    Require(sceAudioOutSetVolume(handle, 0xFF, clampedVol) == 0);
+    int outOfRangeVol[8] = {-50000, -20000, -10001, -10000, 0, 1, 1000, 10000};
+    Require(sceAudioOutSetVolume(handle, 0xFF, outOfRangeVol) == invalidVolume);
 
     Require(sceAudioOutSetVolume(handle, 0xFF, nullptr) == invalidPointer);
     Require(sceAudioOutSetVolume(0, 0xFF, nominalVol) == AUDIO_OUT_ERROR_INVALID_PORT);
@@ -452,7 +453,7 @@ void TestPortStateAudit() {
         Require(state.reserved[0] == 0);
 
         constexpr std::uint32_t bitmasks[] = {0x00u, 0x01u, 0x02u, 0x03u, 0x0Fu, 0xFFu, 0xFFFFFFFFu};
-        int vol[8] = {-1000, -2000, -3000, -4000, 0, 0, 0, 0};
+        int vol[8] = {1000, 2000, 3000, 4000, 0, 0, 0, 0};
         for (const auto mask : bitmasks) {
             Require(sceAudioOutSetVolume(monoHandle, mask, vol) == 0);
             Require(sceAudioOutGetPortState(monoHandle, &state) == 0);
