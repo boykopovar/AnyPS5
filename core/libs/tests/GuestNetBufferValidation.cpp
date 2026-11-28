@@ -7,13 +7,25 @@
 #else
 #include <sys/socket.h>
 #endif
+#include <array>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+
+struct GuestTimeval {
+    std::int64_t seconds;
+    std::int64_t microseconds;
+};
+
+struct GuestLinger {
+    int onoff;
+    int linger;
+};
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -22,8 +34,32 @@ static void Require(bool condition, std::source_location location = std::source_
     }
 }
 
+static void CheckNetFault(int result) {
+    Require(result == static_cast<int>(0x8041010eu));
+    Require(*sceNetErrnoLoc() == 14);
+    Require(*__error_nid_postfix() == 14);
+}
+
+static void CheckKernelFault(int result) {
+    Require(result == -1);
+    Require(*__error_nid_postfix() == 14);
+    Require(*sceNetErrnoLoc() == 14);
+}
+
 int main() {
     Require(sceNetInit_nid_postfix() == 0);
+    constexpr std::size_t page = 16384;
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page * 2, 3, 0, physical, 0) == 0);
+    auto* boundary = static_cast<std::uint8_t*>(mapping) + page;
+    Require(sceKernelMprotect(boundary, page, 0) == 0);
+    const std::array<void*, 3> badPointers{
+        reinterpret_cast<void*>(std::uintptr_t{0x10}),
+        boundary,
+        boundary - 2,
+    };
     for (const int family : {2, 28}) {
         for (const int type : {1, 2}) {
             const int socket = sceNetSocket("buffer-validation", family, type, type == 1 ? 6 : 17);
@@ -64,9 +100,48 @@ int main() {
                 std::uint32_t size = sizeof(value);
                 Require(sceNetGetsockopt(socket, 0xffff, option, &value, &size) == 0 && value == valid);
             }
+            for (void* bad : badPointers) {
+                for (const int option : {0x1001, 0x1002}) {
+                    CheckNetFault(sceNetSetsockopt(socket, 0xffff, option, bad, sizeof(int)));
+                }
+                for (const int timeoutOption : {0x1005, 0x1006}) {
+                    CheckNetFault(sceNetSetsockopt(socket, 0xffff, timeoutOption, bad, sizeof(GuestTimeval)));
+                    CheckKernelFault(setsockopt_nid_postfix(socket, 0xffff, timeoutOption, bad, sizeof(GuestTimeval)));
+                }
+                if (type == 1) {
+                    CheckNetFault(sceNetSetsockopt(socket, 6, 1, bad, sizeof(int)));
+                    CheckNetFault(sceNetSetsockopt(socket, 6, 0x100, bad, sizeof(int)));
+                }
+                if (family == 28) {
+                    CheckNetFault(sceNetSetsockopt(socket, 41, 27, bad, sizeof(int)));
+                    int v6only = 0;
+                    std::uint32_t v6size = sizeof(v6only);
+                    CheckNetFault(sceNetGetsockopt(socket, 41, 27, &v6only, static_cast<std::uint32_t*>(bad)));
+                    CheckNetFault(sceNetGetsockopt(socket, 41, 27, bad, &v6size));
+                    Require(v6size == sizeof(v6only));
+                }
+                CheckNetFault(sceNetSetsockopt(socket, 0xffff, 0x80, bad, sizeof(GuestLinger)));
+                {
+                    GuestLinger linger{};
+                    std::uint32_t lingerSize = sizeof(linger);
+                    CheckNetFault(sceNetGetsockopt(socket, 0xffff, 0x80, &linger, static_cast<std::uint32_t*>(bad)));
+                    CheckNetFault(sceNetGetsockopt(socket, 0xffff, 0x80, bad, &lingerSize));
+                    Require(lingerSize == sizeof(linger));
+                }
+                for (const int option : {0x1008, 0x1001}) {
+                    int value = 0;
+                    std::uint32_t size = sizeof(value);
+                    CheckNetFault(sceNetGetsockopt(socket, 0xffff, option, &value, static_cast<std::uint32_t*>(bad)));
+                    CheckNetFault(sceNetGetsockopt(socket, 0xffff, option, bad, &size));
+                    Require(size == sizeof(value));
+                }
+            }
             Require(sceNetSocketClose(socket) == 0);
         }
     }
+    Require(sceKernelMprotect(boundary, page, 3) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0);
     const int zero = 0;
     Require(sceNetSetsockopt(-1, 0xffff, 0x1001, &zero, sizeof(zero)) == static_cast<int>(0x80410109u));
     Require(*sceNetErrnoLoc() == 9);
