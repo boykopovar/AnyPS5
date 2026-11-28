@@ -21,6 +21,36 @@ struct GuestOption {
     int value;
 };
 
+struct GuestCmsghdr {
+    std::uint32_t cmsg_len;
+    std::int32_t cmsg_level;
+    std::int32_t cmsg_type;
+};
+
+struct GuestIp6Ext {
+    std::uint8_t ip6e_nxt;
+    std::uint8_t ip6e_len;
+};
+
+struct GuestRthdr {
+    std::uint8_t ip6r_nxt;
+    std::uint8_t ip6r_len;
+    std::uint8_t ip6r_type;
+    std::uint8_t ip6r_segleft;
+};
+
+struct GuestRthdr0 {
+    std::uint8_t ip6r0_nxt;
+    std::uint8_t ip6r0_len;
+    std::uint8_t ip6r0_type;
+    std::uint8_t ip6r0_segleft;
+    std::uint32_t ip6r0_reserved;
+};
+
+struct GuestInAddr6 {
+    std::uint8_t s6_addr[16];
+};
+
 struct GuestDirectoryEntry;
 struct GuestLocaleFacade;
 
@@ -90,6 +120,32 @@ std::uint32_t APS5_VABI __inet_lnaof_nid_postfix(std::uint32_t address);
 std::uint32_t APS5_VABI inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
+int APS5_VABI inet6_option_space_nid_postfix(int nbytes);
+int APS5_VABI inet6_option_init_nid_postfix(void* bp, GuestCmsghdr** cmsgp, int type);
+int APS5_VABI inet6_option_append_nid_postfix(GuestCmsghdr* cmsg, const std::uint8_t* typep, int multx, int plusy);
+std::uint8_t* APS5_VABI inet6_option_alloc_nid_postfix(GuestCmsghdr* cmsg, int datalen, int multx, int plusy);
+int APS5_VABI inet6_option_next_nid_postfix(const GuestCmsghdr* cmsg, std::uint8_t** tptrp);
+int APS5_VABI inet6_option_find_nid_postfix(const GuestCmsghdr* cmsg, std::uint8_t** tptrp, int type);
+int APS5_VABI inet6_opt_init_nid_postfix(void* extbuf, std::uint32_t extlen);
+int APS5_VABI inet6_opt_append_nid_postfix(void* extbuf, std::uint32_t extlen, int offset, std::uint8_t type, std::uint32_t len, std::uint8_t align, void** databufp);
+int APS5_VABI inet6_opt_finish_nid_postfix(void* extbuf, std::uint32_t extlen, int offset);
+int APS5_VABI inet6_opt_set_val_nid_postfix(void* databuf, int offset, void* val, std::uint32_t vallen);
+int APS5_VABI inet6_opt_next_nid_postfix(void* extbuf, std::uint32_t extlen, int offset, std::uint8_t* typep, std::uint32_t* lenp, void** databufp);
+int APS5_VABI inet6_opt_find_nid_postfix(void* extbuf, std::uint32_t extlen, int offset, std::uint8_t type, std::uint32_t* lenp, void** databufp);
+int APS5_VABI inet6_opt_get_val_nid_postfix(void* databuf, int offset, void* val, std::uint32_t vallen);
+std::size_t APS5_VABI inet6_rthdr_space_nid_postfix(int type, int seg);
+GuestCmsghdr* APS5_VABI inet6_rthdr_init_nid_postfix(void* bp, int type);
+int APS5_VABI inet6_rthdr_add_nid_postfix(GuestCmsghdr* cmsg, const GuestInAddr6* addr, unsigned int flags);
+int APS5_VABI inet6_rthdr_lasthop_nid_postfix(GuestCmsghdr* cmsg, unsigned int flags);
+int APS5_VABI inet6_rthdr_segments_nid_postfix(const GuestCmsghdr* cmsg);
+GuestInAddr6* APS5_VABI inet6_rthdr_getaddr_nid_postfix(GuestCmsghdr* cmsg, int idx);
+int APS5_VABI inet6_rthdr_getflags_nid_postfix(const GuestCmsghdr* cmsg, int idx);
+std::uint32_t APS5_VABI inet6_rth_space_nid_postfix(int type, int segments);
+void* APS5_VABI inet6_rth_init_nid_postfix(void* bp, std::uint32_t bp_len, int type, int segments);
+int APS5_VABI inet6_rth_add_nid_postfix(void* bp, const GuestInAddr6* addr);
+int APS5_VABI inet6_rth_reverse_nid_postfix(const void* in, void* out);
+int APS5_VABI inet6_rth_segments_nid_postfix(const void* bp);
+GuestInAddr6* APS5_VABI inet6_rth_getaddr_nid_postfix(const void* bp, int idx);
 std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
