@@ -653,66 +653,98 @@ public:
         if (reportEnd > reportStart) zero(context, reportStart, reportEnd);
     }
 
-    bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
+    bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All, bool skipRefused = false) {
         std::lock_guard lock(mutex);
-        const auto capacity = *count;
-        if (!collect(address, bytes, pages, count, clear, collection)) return false;
-        addHostWrites(address, address + bytes, pages, count, capacity);
-        return true;
+        const auto end = address + bytes;
+        if (clear) disown(address, end);
+        const auto admission = admit(address, end, clear, collection, skipRefused);
+        if (!ownedHostStores.empty() && overlapsOwnedRange(ownedHostStores, address, end)) return collectBesideHostStores(address, end, pages, count, clear, collection, skipRefused, admission);
+        if (admission == Admission::Walk) return collect(address, end, pages, count, clear, collection, skipRefused);
+        *count = 0;
+        return admission == Admission::Empty;
     }
 
 private:
-    void addHostWrites(std::uintptr_t address, std::uintptr_t end, void** pages, std::size_t* count, std::size_t capacity) const {
-        if (ownedHostStores.empty() || !overlapsOwnedRange(ownedHostStores, address, end)) return;
-        std::vector<std::uintptr_t> merged;
-        merged.reserve(*count);
-        for (std::size_t index = 0; index < *count; ++index) merged.push_back(reinterpret_cast<std::uintptr_t>(pages[index]));
-        const auto collected = merged.size();
-        for (const auto& [first, last] : ownedHostStores) {
-            const auto from = std::max(first, address) & ~std::uintptr_t{4095};
-            const auto to = std::min(last, end);
-            for (auto page = from; page < to; page += 4096) merged.push_back(std::max(page, address));
-        }
-        if (merged.size() == collected) return;
-        std::sort(merged.begin(), merged.end());
-        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
-        *count = std::min(merged.size(), capacity);
-        for (std::size_t index = 0; index < *count; ++index) pages[index] = reinterpret_cast<void*>(merged[index]);
-    }
+    enum class Admission { Refused, Empty, Walk };
 
-    bool collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection) {
+    bool collectBesideHostStores(std::uintptr_t address, std::uintptr_t end, void** pages, std::size_t* count, bool clear, Collection collection, bool skipRefused, Admission admission) {
         const auto capacity = *count;
         *count = 0;
-        const auto end = address + bytes;
-        if (clear) disown(address, end);
-        auto resIt = residentRuns.upper_bound(address);
-        if (resIt != residentRuns.begin() && std::prev(resIt)->second.end > address) --resIt;
-        if (collection == Collection::Fresh) {
-            const auto fresh = freshRanges.upper_bound(address);
-            if ((fresh == freshRanges.begin() || std::prev(fresh)->second <= address) && (fresh == freshRanges.end() || fresh->first >= end)) return true;
-            auto checkRun = resIt;
-            for (auto checkAt = address & ~(pageBytes - 1); checkAt < end;) {
-                while (checkRun != residentRuns.end() && checkRun->second.end <= checkAt) ++checkRun;
-                if (checkRun != residentRuns.end() && checkRun->first <= checkAt) {
-                    if (!watchResident) return false;
-                    checkAt = checkRun->second.end;
+        if (admission == Admission::Refused) return false;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> spans;
+        for (const auto& [first, last] : ownedHostStores) {
+            const auto from = std::max(first, address) & ~std::uintptr_t{4095};
+            const auto stop = std::min(last, end);
+            if (from >= stop) continue;
+            const auto to = (stop + 4095) & ~std::uintptr_t{4095};
+            if (!spans.empty() && spans.back().second >= from) spans.back().second = std::max(spans.back().second, to);
+            else spans.emplace_back(from, to);
+        }
+        std::size_t delivered = 0;
+        std::size_t found = 0;
+        const auto walk = [&](std::uintptr_t from, std::uintptr_t to) {
+            found = 0;
+            if (admission != Admission::Walk || from >= to) return true;
+            found = capacity - delivered;
+            if (collect(from, to, pages + delivered, &found, clear, collection, skipRefused)) return true;
+            *count = delivered + found;
+            return false;
+        };
+        auto cursor = address;
+        for (const auto& [first, last] : spans) {
+            const auto from = std::max(first, cursor);
+            if (!walk(cursor, from)) return false;
+            delivered += found;
+            if (delivered == capacity) break;
+            const auto window = std::min(last, (from & ~std::uintptr_t{4095}) + (capacity - delivered) * 4096);
+            if (!walk(from, window)) return false;
+            for (auto page = from & ~std::uintptr_t{4095}; page < window; page += 4096) pages[delivered++] = reinterpret_cast<void*>(std::max(page, address));
+            cursor = window;
+            if (delivered == capacity) break;
+        }
+        if (delivered < capacity) {
+            if (!walk(cursor, end)) return false;
+            delivered += found;
+        }
+        *count = delivered;
+        return true;
+    }
+
+    Admission admit(std::uintptr_t address, std::uintptr_t end, bool clear, Collection collection, bool skipRefused) {
+        if (collection != Collection::Fresh) return clear && !skipRefused && !collectable(address, end) ? Admission::Refused : Admission::Walk;
+        const auto fresh = freshRanges.upper_bound(address);
+        if ((fresh == freshRanges.begin() || std::prev(fresh)->second <= address) && (fresh == freshRanges.end() || fresh->first >= end)) return Admission::Empty;
+        auto checkRun = residentRuns.upper_bound(address);
+        if (checkRun != residentRuns.begin() && std::prev(checkRun)->second.end > address) --checkRun;
+        for (auto checkAt = address & ~(pageBytes - 1); checkAt < end;) {
+            while (checkRun != residentRuns.end() && checkRun->second.end <= checkAt) ++checkRun;
+            if (checkRun != residentRuns.end() && checkRun->first <= checkAt) {
+                if (!watchResident) return Admission::Refused;
+                checkAt = checkRun->second.end;
+                continue;
+            }
+            const auto stopAt = checkRun == residentRuns.end() ? end : std::min(end, checkRun->first);
+            for (auto it = views.lower_bound(checkAt); it != views.end() && it->first < stopAt; ++it) {
+                if (it->second.resident) {
+                    if (!watchResident) return Admission::Refused;
                     continue;
                 }
-                const auto stopAt = checkRun == residentRuns.end() ? end : std::min(end, checkRun->first);
-                for (auto it = views.lower_bound(checkAt); it != views.end() && it->first < stopAt; ++it) {
-                    if (it->second.resident) {
-                        if (!watchResident) return false;
-                        continue;
-                    }
-                    if (it->second.page->comparedWhenShared) return false;
-                    if (it->second.protection != PAGE_NOACCESS) continue;
-                    for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
-                        if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
-                    }
+                if (it->second.page->comparedWhenShared) return Admission::Refused;
+                if (it->second.protection != PAGE_NOACCESS) continue;
+                for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
+                    if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return Admission::Refused;
                 }
-                checkAt = stopAt;
             }
-        } else if (clear && !collectable(address, end)) return false;
+            checkAt = stopAt;
+        }
+        return Admission::Walk;
+    }
+
+    bool collect(std::uintptr_t address, std::uintptr_t end, void** pages, std::size_t* count, bool clear, Collection collection, bool skipRefused) {
+        const auto capacity = *count;
+        *count = 0;
+        auto resIt = residentRuns.upper_bound(address);
+        if (resIt != residentRuns.begin() && std::prev(resIt)->second.end > address) --resIt;
         bool viewsReady = false;
         Views::iterator position = views.end();
         std::uintptr_t cleanStart = 0;
@@ -737,7 +769,11 @@ private:
             while (resIt != residentRuns.end() && resIt->second.end <= cursor) ++resIt;
             if (resIt != residentRuns.end() && resIt->first <= cursor) {
                 flushClean();
-                if (!watchResident) return false;
+                if (!watchResident) {
+                    if (!skipRefused) return false;
+                    cursor = std::min(end, resIt->second.end);
+                    continue;
+                }
                 const auto available = capacity - *count;
                 if (available == 0) return true;
                 const auto stop = std::min({cleanLimit, resIt->second.end, (cursor & ~std::uintptr_t{4095}) + available * 4096});
@@ -769,7 +805,12 @@ private:
                         }
                     }
                 }
-                if (view.protection == PAGE_NOACCESS) {
+                if (skipRefused && view.page->comparedWhenShared) {
+                    flushClean();
+                    cursor = stop;
+                    continue;
+                }
+                if (view.protection == PAGE_NOACCESS && !skipRefused) {
                     flushClean();
                     return false;
                 }
@@ -840,7 +881,13 @@ private:
                     continue;
                 }
                 const auto allocationEnd = privateAllocationEnd(cursor);
-                if (allocationEnd == 0) return false;
+                if (allocationEnd == 0) {
+                    if (!skipRefused) return false;
+                    const auto nextView = views.lower_bound(cursor);
+                    const auto nextPrivate = privateAllocations.upper_bound(cursor);
+                    cursor = std::min({end, nextView == views.end() ? end : nextView->first, nextPrivate == privateAllocations.end() ? end : nextPrivate->first});
+                    continue;
+                }
                 if (capacity == *count) return true;
                 const auto stop = ownedPending.empty() ? std::min(end, allocationEnd) : std::min({end, allocationEnd, (cursor & ~std::uintptr_t{4095}) + (capacity - *count) * 4096});
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
@@ -853,7 +900,11 @@ private:
                 const bool committed = !verifyDirect() || committedPrivate(cursor, stop);
                 if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
                     const auto memory = query(cursor);
-                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) {
+                        if (!skipRefused) return false;
+                        cursor = std::min(stop, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                        continue;
+                    }
                     fail("collect private guest writes");
                 }
                 if (!committed) staleProof(cursor, stop);

@@ -60,6 +60,11 @@ if(BUILD_TESTING)
             endif()
         endforeach()
     endforeach()
+    if(WIN32)
+        add_test(NAME agc_linked_code_dependencies_known_value_refused COMMAND agc_linked_code_dependencies_tests known-value-refused)
+        set_tests_properties(agc_linked_code_dependencies_known_value_refused PROPERTIES TIMEOUT 30
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     foreach(watched first table descriptor)
         add_test(NAME agc_linked_code_dependencies_mixed_${watched} COMMAND agc_linked_code_dependencies_tests row --watch-${watched})
         set_tests_properties(agc_linked_code_dependencies_mixed_${watched} PROPERTIES

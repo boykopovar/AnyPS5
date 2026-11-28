@@ -6,6 +6,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 using Mappings = GuestArena::WindowsMappings;
@@ -171,6 +172,196 @@ void CheckPrivate() {
     Require(mappings.Collect(address, Bytes, pages.data(), &count, true, Collection::Armed) && count == 1 && pages[0] == memory + Small, "private write watch changed");
     mappings.Reset(memory, Bytes);
     VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+std::vector<std::size_t> PageList(std::size_t begin, std::size_t end) {
+    std::vector<std::size_t> result;
+    for (auto page = begin; page < end; ++page) result.push_back(page);
+    return result;
+}
+
+struct PageWalk {
+    std::size_t capacity = 4;
+    Collection mode = Collection::All;
+    bool clear = true;
+    bool skipRefused = false;
+    std::size_t calls = SIZE_MAX;
+    std::size_t firstPage = 0;
+    std::size_t head = 0;
+    std::size_t tail = 0;
+};
+
+std::vector<std::size_t> CollectPages(std::uintptr_t address, std::size_t pageCount, PageWalk walk) {
+    std::vector<std::size_t> result;
+    const auto end = address + pageCount * Small - walk.tail;
+    for (auto cursor = address + walk.firstPage * Small + walk.head; cursor < end && walk.calls-- != 0;) {
+        std::array<void*, 32> pages{};
+        auto count = walk.capacity;
+        Require(Mappings::Get().Collect(cursor, end - cursor, pages.data(), &count, walk.clear, walk.mode, walk.skipRefused), "page collection failed");
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto page = (reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small;
+            Require(result.empty() || page > result.back(), "a collect reported pages out of order or twice");
+            result.push_back(page);
+        }
+        if (count < walk.capacity) break;
+        cursor = reinterpret_cast<std::uintptr_t>(pages[count - 1]) + Small;
+    }
+    return result;
+}
+
+void CheckHostStoresKeepCollectedPages() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto pages = Bytes / Small;
+    const auto write = [&] {
+        for (std::size_t page = 2; page < 10; ++page) static_cast<volatile unsigned char*>(memory)[page * Small] = static_cast<unsigned char>(page);
+    };
+    const auto openStore = [&] { Require(mappings.BeginHostWrite(address, 2 * Small), "host write refused"); };
+    const auto closeStore = [&] { mappings.EndHostWrite(address, 2 * Small); };
+    CollectPages(address, pages, {.capacity = 32});
+    write();
+    Require(CollectPages(address, pages, {}) == PageList(2, 10), "a small page buffer lost private writes");
+    openStore();
+    Require(CollectPages(address, pages, {.capacity = 32}) == PageList(0, 2), "open host store pages were not reported");
+    write();
+    Require(CollectPages(address, pages, {}) == PageList(0, 10), "open host store pages pushed collected writes out of a small page buffer");
+    write();
+    Require(CollectPages(address, pages, {.skipRefused = true}) == PageList(0, 10), "open host store pages pushed writes out of a small buffer in a collect that skips refused pieces");
+    write();
+    Require(CollectPages(address, pages, {.clear = false}) == PageList(0, 10), "a peek beside an open host store missed writes");
+    Require(CollectPages(address, pages, {}) == PageList(0, 10), "a peek beside an open host store consumed writes");
+    Require(CollectPages(address, pages, {}) == PageList(0, 2), "collected writes were reported twice");
+    write();
+    Require(CollectPages(address, pages, {.calls = 1}) == PageList(0, 4), "the first page buffer beside an open host store changed");
+    closeStore();
+    Require(CollectPages(address, pages, {.firstPage = 4}) == PageList(4, 10), "a host store closed between page buffers lost writes");
+    write();
+    openStore();
+    Require(CollectPages(address, pages, {.calls = 1}) == PageList(0, 4), "the first page buffer beside an open host store changed");
+    closeStore();
+    Require(CollectPages(address, pages, {.capacity = 32, .mode = Collection::Fresh}).empty(), "a fresh collect took private writes another collect left behind");
+    Require(CollectPages(address, pages, {.capacity = 32, .mode = Collection::Armed}) == PageList(4, 10), "a fresh collect consumed private writes another collect left behind");
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+void CheckHostStoreSpanBoundaries() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t pages = 16;
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, pages * Small));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, pages * Small, PAGE_READWRITE, pages * Small, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    struct Store {
+        std::size_t offset;
+        std::size_t bytes;
+    };
+    const auto check = [&](std::vector<std::size_t> written, std::vector<Store> stores, PageWalk walk, std::vector<std::size_t> expected, const char* message) {
+        CollectPages(address, pages, {.capacity = 32});
+        for (const auto page : written) static_cast<volatile unsigned char*>(memory)[page * Small + 8] = static_cast<unsigned char>(page + 1);
+        for (const auto& store : stores) Require(mappings.BeginHostWrite(address + store.offset, store.bytes), "host write refused");
+        Require(CollectPages(address, pages, walk) == expected, message);
+        for (const auto& store : stores) mappings.EndHostWrite(address + store.offset, store.bytes);
+    };
+    check({0, 5, 9}, {{2 * Small, Small}}, {.capacity = 1}, {0, 2, 5, 9}, "a one-page buffer beside an open host store lost pages");
+    check({0, 4, 12}, {{Small, 8 * Small}}, {.capacity = 3}, {0, 1, 2, 3, 4, 5, 6, 7, 8, 12}, "an open host store larger than the page buffer lost pages");
+    check({0, 4, 10}, {{Small, 2 * Small}, {6 * Small, 2 * Small}}, {.capacity = 2}, {0, 1, 2, 4, 6, 7, 10}, "two separate open host stores lost pages");
+    check({1, 5, 11}, {{2 * Small, 2 * Small}, {4 * Small, 2 * Small}}, {}, {1, 2, 3, 4, 5, 11}, "adjacent open host stores lost or repeated pages");
+    check({1, 5, 11}, {{3 * Small, 4 * Small}, {5 * Small, 4 * Small}}, {}, {1, 3, 4, 5, 6, 7, 8, 11}, "overlapping open host stores lost or repeated pages");
+    check({1, 2, 6, 11, 12}, {{4 * Small + 10, 20}, {8 * Small - 5, 10}}, {.head = 2 * Small + 100, .tail = 4 * Small + 50}, {2, 4, 6, 7, 8, 11}, "an unaligned collect beside unaligned open host stores lost or invented pages");
+    check({3, 9}, {{5 * Small, 2 * Small}}, {.capacity = 2, .mode = Collection::Fresh}, {5, 6}, "a fresh collect beside an open host store changed");
+    check({3, 9}, {{5 * Small, 2 * Small}}, {.capacity = 2, .mode = Collection::Armed}, {3, 5, 6, 9}, "an armed collect beside an open host store lost pages");
+    mappings.Reset(memory, pages * Small);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+void CheckFailedCollectReportsResetPages() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, 2 * Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    CollectPages(address, 2 * Bytes / Small, {.capacity = 32});
+    static_cast<volatile unsigned char*>(memory)[3 * Small] = 3;
+    Require(mappings.BeginHostWrite(address, Small), "host write refused");
+    Require(VirtualFree(memory + Bytes, Bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) != 0, "cannot release the second private allocation behind the mappings");
+    std::array<void*, 32> found{};
+    std::size_t count = found.size();
+    Require(!mappings.Collect(address, 2 * Bytes, found.data(), &count, true), "a collect over a private allocation released behind the mappings succeeded");
+    Require(count == 2 && found[0] == memory && found[1] == memory + 3 * Small, "a failed collect beside an open host store hid the pages it reset");
+    mappings.EndHostWrite(address, Small);
+    mappings.Reset(memory, 2 * Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+void CheckRefusedCollectPassesReleasedAllocations() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, 2 * Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    CollectPages(address, 2 * Bytes / Small, {.capacity = 32});
+    static_cast<volatile unsigned char*>(memory)[Bytes + 4 * Small] = 4;
+    static_cast<volatile unsigned char*>(memory)[Bytes + 5 * Small] = 5;
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "cannot release the first private allocation behind the mappings");
+    std::array<void*, 32> found{};
+    std::size_t count = found.size();
+    Require(!mappings.Collect(address, 2 * Bytes, found.data(), &count, true), "a collect over a private allocation released behind the mappings succeeded");
+    count = found.size();
+    Require(mappings.Collect(address, 2 * Bytes, found.data(), &count, true, Collection::All, true), "a collect that skips refused pieces failed at a private allocation released behind the mappings");
+    Require(count == 2 && found[0] == memory + Bytes + 4 * Small && found[1] == memory + Bytes + 5 * Small, "a collect that skips refused pieces stopped at a private allocation released behind the mappings");
+    mappings.Reset(memory + Bytes, Bytes);
+    VirtualFree(memory + Bytes, 0, MEM_RELEASE);
+}
+
+void CheckRefusedCollectPassesUnwatchedResidentRuns() {
+    auto& mappings = Mappings::Get();
+    const auto pages = Bytes / Small;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    HANDLE shared = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(section && shared && memory, "cannot allocate unwatched resident test memory");
+    mappings.ForgetSection(section);
+    mappings.ForgetSection(shared);
+    mappings.Map(memory, Bytes, section, 0, PAGE_READWRITE, false, true);
+    mappings.Map(memory + Bytes, Bytes, shared, 0, PAGE_READWRITE);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 32> buffer{};
+    std::size_t count = buffer.size();
+    Require(!mappings.Collect(address, 2 * Bytes, buffer.data(), &count, true), "a collect over an unwatched resident run was not refused");
+    count = buffer.size();
+    Require(mappings.Collect(address, 2 * Bytes, buffer.data(), &count, true, Collection::All, true), "a collect that skips refused pieces failed at an unwatched resident run");
+    Require(count == pages && buffer[0] == memory + Bytes && buffer[pages - 1] == memory + 2 * Bytes - Small, "a collect that skips refused pieces stopped at an unwatched resident run");
+    Require(CollectPages(address, 2 * pages, {.capacity = 32, .skipRefused = true}).empty(), "a collect that skips refused pieces reported a view twice");
+    mappings.Reset(memory + Bytes, Bytes);
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 2 * Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    mappings.ForgetSection(shared);
+    CloseHandle(section);
+    CloseHandle(shared);
+}
+
+void CheckHostStoreBesideComparedView() {
+    HANDLE section = nullptr;
+    {
+        Region region;
+        section = region.section;
+        const auto address = reinterpret_cast<std::uintptr_t>(region.first);
+        const auto pages = Bytes / Small;
+        CollectPages(address, pages, {.capacity = 32});
+        Require(Mappings::Get().BeginHostWrite(address, 2 * Small), "host write refused");
+        for (std::size_t page = 2; page < 10; ++page) region.Write(page, static_cast<unsigned char>(page));
+        Require(CollectPages(address, pages, {.calls = 1}) == PageList(0, 4), "the first shared page buffer beside an open host store changed");
+        Mappings::Get().CompareWhenShared(address, Bytes);
+        Require(CollectPages(address, pages, {.capacity = 32, .skipRefused = true}) == PageList(0, 2), "a collect that skips refused pieces reported a compared view's writes");
+        Mappings::Get().EndHostWrite(address, 2 * Small);
+    }
+    Mappings::Get().ForgetSection(section);
 }
 
 MEMORY_BASIC_INFORMATION RegionAt(const void* address) {
@@ -1151,6 +1342,8 @@ int main(int argc, char** argv) {
         CheckPinsAndHostWrites();
         CheckFailureAndHoles();
         CheckPrivate();
+        CheckHostStoresKeepCollectedPages();
+        CheckHostStoreBesideComparedView();
         CheckConcurrentWrites();
         CheckSplitRunReportsRacingStores();
         CheckForgottenSectionKeepsNoPages();
@@ -1176,6 +1369,10 @@ int main(int argc, char** argv) {
         CheckKnownZeroFirstReads();
         CheckKnownZeroMarks();
         CheckResidentRunNoAccessTransitions();
+        CheckHostStoreSpanBoundaries();
+        CheckFailedCollectReportsResetPages();
+        CheckRefusedCollectPassesReleasedAllocations();
+        CheckRefusedCollectPassesUnwatchedResidentRuns();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

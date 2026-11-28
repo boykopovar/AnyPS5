@@ -2183,11 +2183,12 @@ bool collectWindowsWrites(StampRuns& runs, std::uint64_t first, std::uint64_t st
         auto cursor = first;
         while (cursor < stop) {
             std::size_t count = tracker.pages.size();
-            if (!collect(cursor, static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, clear)) return false;
+            const bool collected = collect(cursor, static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, clear);
             for (std::size_t i = 0; i < count; ++i) {
                 const auto page = reinterpret_cast<std::uintptr_t>(tracker.pages[i]);
                 stampWrittenRun(&runs, page, page + WritePageBytes);
             }
+            if (!collected) return false;
             if (count < tracker.pages.size()) break;
             cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
         }
@@ -2198,7 +2199,7 @@ bool collectWindowsWrites(StampRuns& runs, std::uint64_t first, std::uint64_t st
     return fresh || singlePass || runs.stamped == 0 || walk(true);
 }
 
-void noteRefusedWalk(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop) {
+void noteRefusedWalk(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, bool everyWrite) {
     const auto pagesOf = [&](auto list, auto&& each) {
         auto cursor = first;
         while (cursor < stop) {
@@ -2210,6 +2211,7 @@ void noteRefusedWalk(WriteTracker& tracker, std::uint64_t first, std::uint64_t s
         }
     };
     StampRuns runs{tracker, StampKind::Cpu};
+    if (everyWrite) pagesOf(&GuestArena::GuestArenaCollectWritesSkippingRefused_nid_no_patch, [&](std::uintptr_t page) { stampWrittenRun(&runs, page, page + WritePageBytes); });
     pagesOf(&GuestArena::GuestArenaTakeUnreportedPages_nid_no_patch, [&](std::uintptr_t page) { stampWrittenRun(&runs, page, page + WritePageBytes); });
     const auto generation = tracker.generation.load(std::memory_order_relaxed);
     pagesOf(&GuestArena::GuestArenaComparedPages_nid_no_patch, [&](std::uintptr_t page) { tracker.refused[tracker.blockOf(page)] = generation; });
@@ -2230,7 +2232,7 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
 #endif
     if (window != nullptr) stampWindowRuns(runs);
 #ifdef _WIN32
-    if (!complete) noteRefusedWalk(tracker, first, stop);
+    if (!complete) noteRefusedWalk(tracker, first, stop, kind == StampKind::Cpu && !armedOnly);
 #endif
     return complete;
 }
@@ -2519,7 +2521,7 @@ std::uint64_t ChangedSince(std::uint64_t address, std::size_t bytes, std::uint64
         const auto cut = first + (((stop - first) / 2) & ~std::uint64_t{WritePageBytes - 1});
         if (cut > first) walkWrites(tracker, first, cut, StampKind::Cpu);
 #ifdef _WIN32
-        noteRefusedWalk(tracker, cut, stop);
+        noteRefusedWalk(tracker, cut, stop, true);
 #endif
         walked[index] = false;
     }
