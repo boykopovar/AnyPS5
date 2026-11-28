@@ -15,7 +15,7 @@ static constexpr bool Ps4Library = true;
 static constexpr bool Ps4Library = false;
 #endif
 
-enum class Update { Play, Start, Pause, Kill, Volume, Matrix, Combined, Pitch, Gain, PlayStop, StopPlay, PauseResume, KillPlay, PlayKill, PlayPause, StopResume, LongPause, Mute, SelectMatrix, Over, Odd, OddPatch, Shift, ExternalShift, UnchangedShift };
+enum class Update { Play, Start, Pause, Kill, Volume, Matrix, Combined, Pitch, Gain, GainRamp, PlayStop, StopPlay, PauseResume, KillPlay, PlayKill, PlayPause, StopResume, LongPause, Mute, SelectMatrix, Over, Odd, OddPatch, Shift, ExternalShift, UnchangedShift };
 struct BufferedState {
     std::uintptr_t voice;
     std::uintptr_t master;
@@ -159,6 +159,7 @@ static int APS5_VABI UpdatePeer(Ngs2UserFxProcessContext* context) {
                 WorkerEvent(state, second);
                 break;
             }
+            case Update::GainRamp:
             case Update::Gain:
                 Control(state.master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 0.25f, 0.5f});
                 break;
@@ -232,6 +233,8 @@ static void TestBuffer(Update update, bool custom, bool commands, unsigned order
         Control(voice, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 1, &level});
         if (update != Update::SelectMatrix) Control(voice, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
     }
+    if (update == Update::GainRamp)
+        Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 0.5f, 1.0f});
     BufferedState state{voice, master, update, commands, custom};
     Control(sender, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX,
             Ngs2SubmixerVoiceUserFxParam{{}, UpdatePeer, reinterpret_cast<std::uintptr_t>(&state), 0, 0});
@@ -291,6 +294,10 @@ static void TestBuffer(Update update, bool custom, bool commands, unsigned order
             const float target = update == Update::Mute ? 0.0f : update == Update::Volume ? 0.25f : update == Update::Matrix || update == Update::SelectMatrix ? 0.5f : update == Update::Combined ? 0.125f : 1.0f;
             expected *= grain == 0 ? 1.0f : grain == 1 ? 1.0f + (target - 1.0f) * static_cast<float>(i) / grainFrames : target;
             if (update == Update::Gain && grain > 0) expected *= 0.25f;
+            if (update == Update::GainRamp) {
+                const float level = grain == 1 ? 0.5f - 0.25f * static_cast<float>(i) / grainFrames : grain == 0 ? 0.5f : 0.25f;
+                expected *= level;
+            }
             if (std::fabs(samples[i] - expected) > 1.0e-7f) std::fprintf(stderr,
                 "update=%u custom=%d commands=%d order=%u frames=%u grain=%u sample=%u actual=%g expected=%g\n",
                 static_cast<unsigned>(update), custom, commands, order, grainFrames, grain, i, samples[i], expected);
@@ -863,6 +870,10 @@ int main(int argc, char** argv) {
             TestBuffer(update, true, false, order, 64);
             cases += 2;
         }
+    }
+    if (!Ps4Library) {
+        for (unsigned order = 0; order < 3; ++order) TestBuffer(Update::GainRamp, false, false, order, 64);
+        cases += 3;
     }
     TestBuffer(Update::Combined, true, true, 2, 256);
     TestPortVolumeOver();
