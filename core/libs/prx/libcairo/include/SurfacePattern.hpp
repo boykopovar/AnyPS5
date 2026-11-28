@@ -8,6 +8,7 @@
 extern "C" {
 
 CairoPattern* APS5_VABI cairo_pattern_create_for_surface(CairoSurface* surface);
+CairoPattern* APS5_VABI cairo_pattern_reference(CairoPattern* pattern);
 void APS5_VABI cairo_set_source(CairoContext* context, CairoPattern* source);
 void APS5_VABI cairo_mask(CairoContext* context, CairoPattern* pattern);
 

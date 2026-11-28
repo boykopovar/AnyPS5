@@ -44,7 +44,6 @@ enum cairo_hint_metrics_t : int {
 extern "C" {
 
 int APS5_VABI cairo_arc_negative();
-int APS5_VABI cairo_pattern_reference();
 int APS5_VABI cairo_pattern_set_extend();
 int APS5_VABI cairo_pattern_create_linear();
 int APS5_VABI cairo_arc();
