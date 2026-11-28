@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <csignal>
 #include "prx/libc/include/HostThread.hpp"
+#include "prx/libc/include/SyncTrace.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -109,6 +110,7 @@ std::atomic<void (*)()> exitDrain{nullptr};
 void (*previousAbortHandler)(int) = SIG_DFL;
 
 void FlushOnAbort(int number) {
+    SyncTraceReportRing_nid_no_patch();
     LibcRunEndFlush_nid_no_patch();
     if (previousAbortHandler == SIG_IGN) return;
     if (previousAbortHandler != SIG_DFL && previousAbortHandler != SIG_ERR) {

@@ -1467,9 +1467,18 @@ if(BUILD_TESTING)
         add_test(NAME guest_semaphore_trace COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/tests/test_semaphore_trace.py $<TARGET_FILE:semaphore_trace_tests>)
         set_tests_properties(guest_semaphore_trace PROPERTIES TIMEOUT 20)
+        add_test_executable(semaphore_trace_ring_tests
+            ${LIBS_INCLUDE_DIR}/tests/SemaphoreTraceRing.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp)
+        target_include_directories(semaphore_trace_ring_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(semaphore_trace_ring_tests PRIVATE Threads::Threads libc)
+        add_test(NAME guest_semaphore_trace_ring COMMAND ${Python3_EXECUTABLE}
+            ${LIBS_INCLUDE_DIR}/tests/test_semaphore_trace_ring.py $<TARGET_FILE:semaphore_trace_ring_tests>)
+        set_tests_properties(guest_semaphore_trace_ring PROPERTIES TIMEOUT 20)
     endif()
     if(WIN32)
-        set_tests_properties(guest_semaphore guest_semaphore_trace PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_semaphore guest_semaphore_trace guest_semaphore_trace_ring PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_pthread_timed_locks_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadTimedLocks.cpp)

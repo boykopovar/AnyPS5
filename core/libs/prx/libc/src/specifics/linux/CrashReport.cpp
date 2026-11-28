@@ -1,6 +1,7 @@
 #if defined(__linux__) && defined(__x86_64__)
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/CrashText.hpp"
+#include "prx/libc/include/SyncTrace.hpp"
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 
@@ -287,6 +288,7 @@ void OnFatalSignal(int signal, siginfo_t* info, void* context) {
     if (!g_reporting.exchange(true, std::memory_order_acq_rel)) {
         Report(signal, info, static_cast<const ucontext_t*>(context));
         ReportCallTrace();
+        SyncTraceReportRing_nid_no_patch();
         g_reporting.store(false, std::memory_order_release);
     } else {
         const timespec pause{0, 1000000};
