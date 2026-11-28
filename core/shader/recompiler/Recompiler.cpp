@@ -918,6 +918,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
     targetOptions.meshInlineFunctions = request.target.meshInlineFunctions;
     targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
+    targetOptions.spannedUnreachableStays = request.target.spannedUnreachableStays || request.target.spannedUnreachableVerify;
+    targetOptions.spannedUnreachableVerify = request.target.spannedUnreachableVerify;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -937,6 +939,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         targetOptions.registrationModules = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     }
+    if (!emitted.keptPastUnreachable.empty()) std::fprintf(stderr, "[spanned-wave] 0x%llx keeps spanned waves past an OpUnreachable (APS5_SPANNED_UNREACHABLE_STAYS%s); counting it as an exit would refuse: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), targetOptions.spannedUnreachableVerify ? ", verified as specialization-switch defaults" : "", emitted.keptPastUnreachable.c_str());
     result.registrationModule = registration;
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
     result.layerReplaySafe = LayerReplaySafe(program);

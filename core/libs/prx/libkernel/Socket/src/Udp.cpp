@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
+#include <iphlpapi.h>
 #include <fcntl.h>
 #include <io.h>
 #else
@@ -16,6 +17,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -392,7 +394,28 @@ bool ConnectedDatagramDestination(const Socket& socket, const sockaddr_storage& 
     return PeerConnected(socket);
 }
 constexpr std::int64_t NotAnswered = -2;
+bool UnknownScope(const sockaddr_in6& address) {
+    const auto& host = address.sin6_addr;
+    if (address.sin6_scope_id == 0 || (!IN6_IS_ADDR_LINKLOCAL(&host) && !IN6_IS_ADDR_MC_LINKLOCAL(&host) && !IN6_IS_ADDR_MC_NODELOCAL(&host))) return false;
+#ifdef _WIN32
+    NET_LUID luid{};
+    return ConvertInterfaceIndexToLuid(address.sin6_scope_id, &luid) != NO_ERROR;
+#else
+    char name[IF_NAMESIZE];
+    return if_indextoname(address.sin6_scope_id, name) == nullptr;
+#endif
+}
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
+    if (socket.type == 2 && socket.family == 28 && destination.ss_family == AF_INET6) {
+        const auto& remote = reinterpret_cast<const sockaddr_in6&>(destination);
+        if (remote.sin6_port != 0) return NotAnswered;
+        if (UnknownScope(remote)) return Fail(6);
+        int ipv6Only = 0;
+        socklen_t size = sizeof(ipv6Only);
+        if (IN6_IS_ADDR_V4MAPPED(&remote.sin6_addr)
+            && (::getsockopt(socket.value, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&ipv6Only), &size) || !ipv6Only)) return NotAnswered;
+        return Fail(49);
+    }
     if (socket.type != 2 || socket.family != 2 || destination.ss_family != AF_INET) return NotAnswered;
     const auto& remote = reinterpret_cast<const sockaddr_in&>(destination);
     if (remote.sin_port != 0) return NotAnswered;

@@ -802,15 +802,11 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
             info.usage = usage;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            auto owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
             VkImage image = VK_NULL_HANDLE;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage stencil shadow probe");
-            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-            try {
-                owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
-            } catch (...) {
-                context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-                throw;
-            }
+            owned->image = image;
+            owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory stencil shadow probe");
             return owned;
         };
@@ -5076,6 +5072,17 @@ void settleImportsUnderFill(std::uint64_t address, std::size_t bytes) {
 
 }
 
+static bool planeMappedUnder(const std::shared_ptr<std::atomic<bool>>& owner, const GuestMemory::UnchangedQuery& plane, std::uint64_t address, std::size_t bytes) {
+    const auto first = std::max<std::uint64_t>(address, plane.address);
+    const auto last = std::min<std::uint64_t>(address + bytes, plane.address + plane.bytes);
+    std::shared_lock lock(depthGuardMutex());
+    for (const auto& range : depthGuards()) {
+        if (range.active != owner || range.address != plane.address) continue;
+        return std::ranges::any_of(range.live, [&](const auto& part) { return part.address < last && first < part.address + part.bytes; });
+    }
+    return true;
+}
+
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
     forgetCopiesInside(address, bytes);
     std::vector<GuestMemory::UnchangedQuery> clearedPlanes;
@@ -5096,11 +5103,12 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire)) continue;
         const auto& target = surface->target;
-        const bool touched = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
-        if (touched || surface->Overlaps(address, bytes) || (target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes)) surface->expanded = false;
+        const bool touched = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes && planeMappedUnder(surface->active, range, address, bytes); });
+        const bool htileUnmapped = surface->samplingActive && surface->sampling.initial.size() > 1u && !planeMappedUnder(surface->active, surface->sampling.initial[1], address, bytes);
+        if (touched || surface->Overlaps(address, bytes) || (target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes && !htileUnmapped)) surface->expanded = false;
         if (surface->samplingActive && target.stencilAddress != 0u && !target.htileStencil && target.htileDepthOnly && surface->sampling.initial.size() > 2u) {
             const auto& plane = surface->sampling.initial[2];
-            if (address < plane.address + plane.bytes && plane.address < address + bytes) {
+            if (address < plane.address + plane.bytes && plane.address < address + bytes && planeMappedUnder(surface->active, plane, address, bytes)) {
                 const auto value = StencilFillValue(pattern);
                 if (!PlaneFillCovers(plane.address, plane.bytes, address, bytes)) surface->sampling.Refuse("native multisample stencil plane partial fill transition is not implemented");
                 else if (!value.has_value()) surface->sampling.Refuse("native multisample stencil plane fill of more than one byte value is not implemented");
@@ -5121,6 +5129,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             }
         }
         const bool overlaps = target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes;
+        if (overlaps && htileUnmapped) continue;
         if (overlaps && surface->samplingActive && HtileFillCovers(target.htileAddress, target.extent, address, bytes)) {
             const auto& metadata = surface->sampling.initial[1];
             if (!GuestMemory::Accessible(reinterpret_cast<const void*>(metadata.address), metadata.bytes) || !GuestMemory::Watched(metadata.address, metadata.bytes)) surface->sampling.Refuse("native multisample depth metadata fill over unwatched memory is not implemented");
@@ -5437,7 +5446,12 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         {
             std::lock_guard lock(surfacesMutex());
             const auto owner = depthOwners().find({context.device, source.address});
+            bool ownerOfOtherExtent = false;
             if (owner != depthOwners().end()) {
+                const auto& other = owner->second.surface->target;
+                if (sixteenBitDepth(other.format) == d16 && owner->second.surface->hostFormat == other.format && other.samples == 1 && (other.extent.width != source.extent.width || other.extent.height != source.extent.height)) ownerOfOtherExtent = true;
+            }
+            if (owner != depthOwners().end() && !ownerOfOtherExtent) {
                 auto* surface = owner->second.surface;
                 const auto& target = surface->target;
                 if (sixteenBitDepth(target.format) != d16 || surface->hostFormat != target.format || target.samples != 1 || target.extent.width != source.extent.width || target.extent.height != source.extent.height) throw failure(address, "from a depth surface of another extent, format or sample count");
