@@ -867,6 +867,43 @@ void driverSourceTests() {
     require(AgcDriver::DriverDetail::RegistrationPreparationsPending() == std::optional<std::size_t>{0}, "a process that prepared no shaders has a compile backlog");
 }
 
+void configuredTraceCountTests() {
+    using AgcDriver::PerformanceTrace;
+    constexpr const char* NativeScope = "Graphics.TraceCount.native";
+    constexpr const char* AmountScope = "Graphics.TraceCount.amount";
+    require(PerformanceTrace::Configured() && !PerformanceTrace::OverlayTotals(), "the configured count test needs normal trace configuration without overlay totals");
+    PerformanceTrace::BindThread("configured trace count");
+    auto* thread = PerformanceTrace::Thread();
+    require(thread != nullptr, "a configured trace thread was not bound");
+    PerformanceTrace::Present(0, 0, nullptr);
+    require(PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "normal trace recording enabled the overlay binder");
+    AgcDriverTraceCount_nid_postfix(NativeScope);
+    PerformanceTrace::Count(NativeScope);
+    PerformanceTrace::Amount(AmountScope, 7);
+    std::string failure;
+    std::thread([&] {
+        if (PerformanceTrace::Thread() != nullptr) {
+            failure = "an unnamed thread was already bound";
+            return;
+        }
+        AgcDriverTraceCount_nid_postfix(NativeScope);
+        PerformanceTrace::Count(NativeScope);
+        PerformanceTrace::Amount(AmountScope, 3);
+        if (PerformanceTrace::Thread() != nullptr) failure = "counting bound an unnamed thread";
+    }).join();
+    require(failure.empty(), failure);
+    const auto snapshot = thread->Collect();
+    std::uint64_t native = 0, amount = 0;
+    for (const auto& total : snapshot.totals) {
+        if (total.stage != nullptr) continue;
+        if (std::string_view(total.scope) == NativeScope) native += total.count;
+        if (std::string_view(total.scope) == AmountScope) amount += total.count;
+    }
+    require(native == 2 && amount == 7, "configured trace counts are " + std::to_string(native) + " native and " + std::to_string(amount) + " amount, expected 2 and 7");
+    require(!snapshot.dropped && snapshot.slices.empty(), "summary counts buffered or dropped trace events");
+    PerformanceTrace::StopOutput();
+}
+
 void traceSwitchTests() {
     using AgcDriver::PerformanceOverlay;
     using AgcDriver::PerformanceTrace;
@@ -972,8 +1009,13 @@ void constrainedCommitTests() {
 }
 #endif
 
-int main() {
+int main(int argc, char* argv[]) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "configured-trace-count") {
+            configuredTraceCountTests();
+            std::cout << "configured trace count tests passed\n";
+            return 0;
+        }
         fpsWindowTests();
         frameRingTests();
         counterTests();

@@ -7,7 +7,8 @@ import tempfile
 
 from test_gnu_hash_analysis import name_hash
 from test_guest_intel_trampolines import main_fixture
-from test_guest_symbol_names import dynamic_tags, file_offset
+from test_guest_module_directories import module_with_symbol, needed_libraries
+from test_guest_symbol_names import dynamic_tags, file_offset, imported_symbols
 from test_windows_import_modules import dynamic, executable, provider
 
 
@@ -50,6 +51,50 @@ def module(names=("alpha", "bravo", "charlie"), bucket_count=3):
             (0x6FFFFEF5, HASH + 0x1A00), (7, 0x2300), (8, 0), (9, 24)]
     dynamic(image, 0x600, 176, tags)
     return image, names
+
+
+def check_import_only(relinker):
+    image, _ = module((), bucket_count=1)
+    strings = b"\0shared#A#B\0"
+    image[STRINGS:STRINGS + len(strings)] = strings
+    struct.pack_into("<I", image, HASH + 12, 0)
+    struct.pack_into("<IBBHQQ", image, SYMBOLS + 24, 1, 0x12, 0, 0, 0, 0)
+    struct.pack_into("<QQq", image, 0x900, 0x2320, (1 << 32) | 6, 0)
+    dynamic(image, 0x600, 176, [(5, STRINGS + 0x1A00), (10, len(strings)),
+                               (6, SYMBOLS + 0x1A00), (11, 24), (0x6FFFFEF5, HASH + 0x1A00),
+                               (7, 0x2300), (8, 24), (9, 24)])
+    struct.pack_into("<Q", image, 40, len(image))
+    struct.pack_into("<HHH", image, 58, 64, 3, 0)
+    image.extend(bytes(64))
+    image.extend(struct.pack("<IIQQQQIIQQ", 0, 11, 2, SYMBOLS + 0x1A00, SYMBOLS, 48, 2, 1, 8, 24))
+    image.extend(struct.pack("<IIQQQQIIQQ", 0, 3, 2, STRINGS + 0x1A00, STRINGS, len(strings), 0, 0, 1, 0))
+
+    with tempfile.TemporaryDirectory(prefix="anyps5-gnu-hash-import-only-") as directory:
+        for windows in (False, True):
+            case = Path(directory) / str(windows)
+            (case / "sce_module").mkdir(parents=True)
+            (case / "Media/Plugins").mkdir(parents=True)
+            (case / "sce_module/provider.prx").write_bytes(module_with_symbol(True))
+            (case / "Media/Plugins/consumer.prx").write_bytes(image)
+            source = case / "input.elf"
+            source.write_bytes(main_fixture())
+            output = case / ("output.exe" if windows else "output.elf")
+            options = ["--windows"] if windows else []
+            result = subprocess.run([str(relinker), *options, "--module-dir", "Media/Plugins", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=10)
+            assert result.returncode == 0, (windows, result.stdout, result.stderr)
+            artifact = case / "app0/Media/Plugins/consumer.prx.guest.prx"
+            if not windows:
+                data = artifact.read_bytes()
+                needed = needed_libraries(data)
+                assert needed == ["$ORIGIN/../../sce_module/provider.prx.guest.prx"], needed
+                imports = imported_symbols(data)
+                assert imports == {"shared#guest"}, imports
+            else:
+                assert artifact.read_bytes().startswith(b"MZ")
+                if os.name == "nt":
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=10)
+                    assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
 
 
 def main():
@@ -108,4 +153,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[2:] == ["import-only"]:
+        check_import_only(Path(sys.argv[1]).resolve())
+    else:
+        main()

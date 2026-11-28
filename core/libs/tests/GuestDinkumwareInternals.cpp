@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <bit>
 #include <cerrno>
 #include <cfenv>
 #include <cmath>
@@ -9,8 +10,19 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <xmmintrin.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -30,6 +42,44 @@ void Require(bool condition, const char* message) {
         std::exit(1);
     }
 }
+
+template<typename TValue>
+struct ReadOnlyScalar {
+    void* page = nullptr;
+    std::size_t bytes = 0;
+
+    explicit ReadOnlyScalar(TValue initial) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        page = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(page != nullptr, "VirtualAlloc failed");
+        std::memcpy(page, &initial, sizeof(initial));
+        DWORD previous = 0;
+        Require(VirtualProtect(page, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect failed");
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0, "sysconf(_SC_PAGESIZE) failed");
+        bytes = static_cast<std::size_t>(pageSize);
+        page = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED, "mmap failed");
+        std::memcpy(page, &initial, sizeof(initial));
+        Require(mprotect(page, bytes, PROT_READ) == 0, "mprotect failed");
+#endif
+    }
+
+    ~ReadOnlyScalar() {
+        if (!page) return;
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, bytes);
+#endif
+    }
+
+    TValue* Data() const { return static_cast<TValue*>(page); }
+};
 
 void CheckStod(const char* text, std::int64_t pten, double expected, long consumed, int error, const char* message) {
     *__error_nid_postfix() = 0;
@@ -56,6 +106,74 @@ void CheckHexRange(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, 
         const auto plain = simple(text.c_str(), &end, 0);
         Require(matches(plain) && end == text.c_str() + text.size() - 4 && *__error_nid_postfix() == saved, "unscaled hexadecimal range wrapper preserves errno");
     }
+}
+
+void TestDecimalFloat() {
+    const auto saved = _mm_getcsr();
+    struct Example {
+        const char* text;
+        int consumed;
+        std::uint32_t bits[4];
+        unsigned flags;
+    };
+    const Example examples[] = {
+        {"1e-40", 5, {0x116c3, 0x116c1, 0x116ca, 0x116c1}, 0x32},
+        {"  -1.5tail", 6, {0xbfc00000, 0xbfbfffff, 0xbfc00000, 0xbfbfffff}, 0x20},
+        {"0.999999999999999", 17, {0x3f800000, 0x3f7fffff, 0x3f800000, 0x3f7fffff}, 0x20},
+        {"-1.000049948", 12, {0xbf8001a3, 0xbf8001a3, 0xbf8001a4, 0xbf8001a3}, 0x20},
+        {"1e-46", 5, {0, 0, 9, 0}, 0x32},
+        {"1e39", 4, {0x7f800000, 0x7f7fffff, 0x7f800000, 0x7f7fffff}, 0x28},
+    };
+    for (const auto& example : examples) {
+        for (unsigned mode = 0; mode < 4; ++mode) {
+            _mm_setcsr(0x1f80 | (mode << 13));
+            char* end = nullptr;
+            int error = -1;
+            *__error_nid_postfix() = 97;
+            const auto bits = std::bit_cast<std::uint32_t>(_Stofx_nid_postfix(example.text, &end, 0, &error));
+            const auto flags = _mm_getcsr() & 0x3f;
+            const bool rangeLost = bits == 0 || bits == 0x7f800000;
+            Require(bits == example.bits[mode], "decimal _Stofx follows the selected rounding mode");
+            Require(flags == example.flags, "decimal _Stofx status flags");
+            Require(end == example.text + example.consumed, "decimal _Stofx end pointer");
+            Require(error == (rangeLost ? 1 : 0) && *__error_nid_postfix() == (rangeLost ? RangeError : 97), "decimal _Stofx range reporting");
+        }
+    }
+    _mm_setcsr(0x1f80);
+    Require(std::bit_cast<std::uint32_t>(_Stof_nid_postfix("1e-34", nullptr, -6)) == 0x116c3, "_Stof applies the external decimal scale");
+    Require(std::bit_cast<std::uint32_t>(_WStof_nid_postfix(u"1e-34", nullptr, -6)) == 0x116c3, "_WStof applies the external decimal scale");
+    _mm_setcsr(saved);
+}
+
+void TestDecimalScaleLimits() {
+    struct Case {
+        const char* text;
+        std::int64_t scale;
+        std::uint32_t bits;
+        unsigned flags;
+    };
+    constexpr Case cases[] = {
+        {"1e999999999", -999999999, 0x3f800000, 0},
+        {"1e-999999999", 999999999, 0x3f800000, 0},
+        {"1e1000000000", -1000000000, 0, 0x32},
+        {"1e-1000000000", 1000000000, 0x7f800000, 0x28},
+        {"1e1", INT64_MAX, 0, 0x32},
+        {"1e-1", INT64_MIN, 0x7f800000, 0x28}
+    };
+    const auto saved = _mm_getcsr();
+    for (const auto& item : cases) {
+        _mm_setcsr(0x1f80);
+        char* end = nullptr;
+        int error = -1;
+        *__error_nid_postfix() = 97;
+        const auto actual = std::bit_cast<std::uint32_t>(_Stofx_nid_postfix(item.text, &end, item.scale, &error));
+        const auto flags = _mm_getcsr() & 0x3f;
+        Require(actual == item.bits && flags == item.flags, "_Stofx decimal scale limits");
+        Require(end == item.text + std::strlen(item.text), "_Stofx consumes the complete exponent");
+        const bool range = item.flags != 0;
+        Require(error == (range ? 1 : 0) && *__error_nid_postfix() == (range ? RangeError : 97), "_Stofx scale limit range reporting");
+    }
+    _mm_setcsr(saved);
 }
 
 void TestHexRange() {
@@ -429,6 +547,33 @@ void TestIntegerErrors() {
     checkUnsigned(_Stoullx_nid_postfix);
 }
 
+void TestIntegerOutputsUnmapped() {
+    const auto throws = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    auto* const unmappedError = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    auto** const unmappedEnd = reinterpret_cast<char**>(std::uintptr_t{0x10});
+    char* end = nullptr;
+    int error = 7;
+    Require(throws([&] { _Stollx_nid_postfix("12", &end, 10, unmappedError); }), "_Stollx with an unwritable error output throws");
+    Require(throws([&] { _Stoullx_nid_postfix("12", &end, 10, unmappedError); }), "_Stoullx with an unwritable error output throws");
+    Require(throws([&] { _Stoulx_nid_postfix("12", &end, 10, unmappedError); }), "_Stoulx with an unwritable error output throws");
+    Require(throws([&] { _Stolx_nid_postfix("12", &end, 10, unmappedError); }), "_Stolx with an unwritable error output throws");
+    Require(throws([&] { _Stollx_nid_postfix("12", unmappedEnd, 1, &error); }), "_Stollx with an invalid base and an unwritable end throws");
+    Require(throws([&] { _Stolx_nid_postfix("12", unmappedEnd, 37, &error); }), "_Stolx with an invalid base and an unwritable end throws");
+    *__error_nid_postfix() = 77;
+    Require(throws([&] { _Stollx_nid_postfix("12", &end, 10, unmappedError); }) && *__error_nid_postfix() == 77, "an unwritable error output keeps errno");
+    *__error_nid_postfix() = 77;
+    Require(throws([&] { _Stoullx_nid_postfix("12", unmappedEnd, 1, &error); }) && *__error_nid_postfix() == 77, "an unwritable end keeps errno");
+    error = 7;
+    Require(_Stolx_nid_postfix("12", &end, 10, &error) == 12 && error == 0, "_Stolx still converts after the failures");
+}
+
 void TestFloatingRounds() {
     GuestFloatingPointEnvironment saved;
     Require(fegetenv_nid_postfix(&saved) == 0, "save floating environment");
@@ -598,6 +743,23 @@ void TestDoubleHelpers() {
     CheckFExp(-0x1.fd4b92p+5f, 1.0f, -3, 0x1.1d1806p-95f, Finite, 0, FE_INEXACT, "_FExp rounds a scaled small result as titles do");
     CheckFExp(0x1.5e147ap+4f, 2.0f, 3, 0x1.7b078cp+35f, Finite, 0, FE_INEXACT, "_FExp rounds a large product as titles do");
     CheckFExp(0x1.0644b8p-24f, 0.25f, 2, 0x1.000002p+0f, Finite, 0, FE_INEXACT, "_FExp evaluates arguments above half an epsilon");
+    const auto requireInvalidArgument = [](auto&& action, std::string_view expectedMessage, const char* label) {
+        bool threw = false;
+        try { action(); } catch (const std::invalid_argument& error) { threw = std::string_view(error.what()) == expectedMessage; }
+        Require(threw, label);
+    };
+    requireInvalidArgument([] { _Exp_nid_postfix(nullptr, 1.0, 0); }, "_Exp: null value", "_Exp rejects null value");
+    requireInvalidArgument([] { _Exp_nid_postfix(reinterpret_cast<double*>(0x10), 1.0, 0); }, "_Exp: unreadable value", "_Exp rejects unreadable value");
+    {
+        ReadOnlyScalar<double> readOnlyDouble(1.0);
+        requireInvalidArgument([&] { _Exp_nid_postfix(readOnlyDouble.Data(), 1.0, 0); }, "_Exp: unwritable value", "_Exp rejects unwritable value");
+    }
+    requireInvalidArgument([] { _FExp_nid_postfix(nullptr, 1.0f, 0); }, "_FExp: null value", "_FExp rejects null value");
+    requireInvalidArgument([] { _FExp_nid_postfix(reinterpret_cast<float*>(0x10), 1.0f, 0); }, "_FExp: unreadable value", "_FExp rejects unreadable value");
+    {
+        ReadOnlyScalar<float> readOnlyFloat(1.0f);
+        requireInvalidArgument([&] { _FExp_nid_postfix(readOnlyFloat.Data(), 1.0f, 0); }, "_FExp: unwritable value", "_FExp rejects unwritable value");
+    }
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
@@ -853,10 +1015,12 @@ void TestLongLogExports() {
 }
 
 int main() {
+    TestDecimalFloat();
     TestStod();
     CheckNoConversion(_Stodx_nid_postfix);
     CheckNoConversion(_Stofx_nid_postfix);
     CheckNoConversion(_Stoldx_nid_postfix);
+    TestDecimalScaleLimits();
     TestHexRange();
     TestUnscaledHexadecimal();
     TestLongDoubleHexadecimalPrecision();
@@ -866,6 +1030,7 @@ int main() {
     TestFloatErrors();
     TestScaledNan();
     TestIntegerErrors();
+    TestIntegerOutputsUnmapped();
     TestArithmetic();
     TestDispatch();
     TestLongDoubleHelpers();

@@ -2,6 +2,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
@@ -35,14 +36,6 @@ std::atomic<std::uint8_t> g_flag1WXQlxMpnNA{0};
 }
 
 extern "C" {
-
-int APS5_VABI __cfi_slowpath_diag_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __cfi_slowpath_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI __freeze_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -174,8 +167,39 @@ int APS5_VABI __sys_osem_open_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_randomized_path_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int GuestRandomizedPath_nid_no_patch(const char* set, char* get, std::size_t* length) {
+    if (set != nullptr) NotImplemented_nid_no_patch("__sys_randomized_path: setting the randomized path");
+    if (get == nullptr || length == nullptr) return 0;
+
+    constexpr int GuestEfault = 14;
+    std::size_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+
+    const char* const path = sceKernelGetFsSandboxRandomWord();
+    const std::size_t pathLength = std::strlen(path);
+    if (!GuestCopyOut_nid_no_patch(length, &pathLength, sizeof(pathLength))) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    if (capacity == 0 || pathLength == 0) return 0;
+
+    const std::size_t copied = std::min(capacity - 1, pathLength);
+    std::string output(path, copied);
+    output.push_back('\0');
+    const GuestArena::HostWrite guard(get, output.size());
+    if (!guard.Open() || !GuestWritable_nid_no_patch(get, output.size()) ||
+        !GuestCopyOut_nid_no_patch(get, output.data(), output.size())) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    return 0;
+}
+
+int APS5_VABI __sys_randomized_path_nid_postfix(const char* set, char* get, std::size_t* length) {
+    return GuestRandomizedPath_nid_no_patch(set, get, length);
 }
 
 int GuestRdup_nid_no_patch(int pid, int fd) {

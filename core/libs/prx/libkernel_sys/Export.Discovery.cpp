@@ -1762,7 +1762,10 @@ int APS5_VABI scePthreadGetconcurrency(void) {
 }
 
 int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {
-    return SceResult(pthread_getcpuclockid_nid_postfix(thread, clockId));
+    const int error = pthread_getcpuclockid_nid_postfix(thread, clockId);
+    if (error != 0) return SceResult(error);
+    constexpr int ClockThreadCpuTimeId = 14;
+    return CopyOutBytes(clockId, &ClockThreadCpuTimeId, sizeof(ClockThreadCpuTimeId)) ? 0 : SceKernelError(14);
 }
 
 
