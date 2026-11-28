@@ -1,4 +1,11 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
@@ -9,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -120,6 +128,85 @@ void TestHeapCopyAndAssignment() {
     Release(assigned.hostname);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 4096;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template <typename Function>
+bool ThrowsInvalidArgument(Function function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestGuardedPointers() {
+    GuardedPages pages;
+    auto* guardAddr = reinterpret_cast<WebRtcSocketAddress*>(pages.Guard());
+    auto* readOnlyAddr = reinterpret_cast<WebRtcSocketAddress*>(pages.ReadOnly());
+
+    WebRtcSocketAddress valid{};
+    SetInline(valid.hostname, "stun.example");
+    WebRtcSocketAddress dest{};
+    SetInline(dest.hostname, "old");
+
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(guardAddr, &valid); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(readOnlyAddr, &valid); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(&dest, guardAddr); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(guardAddr, &valid); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(readOnlyAddr, &valid); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&dest, guardAddr); }));
+
+    WebRtcSocketAddress badHeapSource{};
+    badHeapSource.hostname.pointer = reinterpret_cast<char*>(pages.Guard());
+    badHeapSource.hostname.size = 32;
+    badHeapSource.hostname.capacity = 63;
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(&dest, &badHeapSource); }));
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&dest, &badHeapSource); }));
+
+    WebRtcSocketAddress readOnlyHeapDest{};
+    readOnlyHeapDest.hostname.pointer = reinterpret_cast<char*>(pages.ReadOnly());
+    readOnlyHeapDest.hostname.size = 4;
+    readOnlyHeapDest.hostname.capacity = 63;
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&readOnlyHeapDest, &valid); }));
+}
+
 }
 
 int main() {
@@ -129,6 +216,7 @@ int main() {
         reinterpret_cast<void*>(&TestAlign), reinterpret_cast<void*>(&TestRealign),
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    TestGuardedPointers();
     TestInlineCopyConstructorAndAssignment();
     TestHeapCopyAndAssignment();
     return 0;
