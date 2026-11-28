@@ -29,6 +29,7 @@ int main() {
     GuestEui64 id{};
     Require(eui64_aton_nid_postfix("not an id", &id) == -1);
     Require(eui64_aton_nid_postfix("00-11-22", &id) == -1);
+    Require(eui64_aton_nid_postfix("00-11-22-33-44-55-66-77", nullptr) == -1);
 
     char text[32];
     std::memset(text, 'x', sizeof(text));
@@ -39,6 +40,7 @@ int main() {
 
     std::memset(text, 'x', sizeof(text));
     Require(eui64_ntoa_nid_postfix(&wanted, text, 23) == -1);
+    Require(eui64_ntoa_nid_postfix(nullptr, text, 24) == -1);
     Require(std::strcmp(text, "00-11-22-33-44-55-66-7") == 0);
     return 0;
 }

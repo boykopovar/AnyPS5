@@ -86,6 +86,7 @@ constexpr std::size_t Eui64TextBytes = 23;
 
 extern "C" int APS5_VABI eui64_aton_nid_postfix(const char* text, GuestEui64* id) {
     if (text == nullptr) throw std::runtime_error("eui64_aton: null text");
+    if (id == nullptr) return -1;
     unsigned int o0 = 0, o1 = 0, o2 = 0, o3 = 0, o4 = 0, o5 = 0, o6 = 0, o7 = 0;
     int converted = std::sscanf(text, "%x-%x-%x-%x-%x-%x-%x-%x", &o0, &o1, &o2, &o3, &o4, &o5, &o6, &o7);
     if (converted != 8) converted = std::sscanf(text, "%x:%x:%x:%x:%x:%x:%x:%x", &o0, &o1, &o2, &o3, &o4, &o5, &o6, &o7);
@@ -111,6 +112,7 @@ extern "C" int APS5_VABI eui64_aton_nid_postfix(const char* text, GuestEui64* id
 }
 
 extern "C" int APS5_VABI eui64_ntoa_nid_postfix(const GuestEui64* id, char* text, std::size_t length) {
+    if (id == nullptr) return -1;
     char formatted[Eui64TextBytes + 1];
     std::snprintf(formatted, sizeof(formatted), "%02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x",
         static_cast<unsigned int>(id->octet[0]), static_cast<unsigned int>(id->octet[1]),
