@@ -469,7 +469,7 @@ void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
     }
     event.event.data = change.data;
     if ((change.flags & EV_CLEAR) != 0) {
-        event.triggered = false;
+        event.triggered = event.forcedOneshot;
     }
 }
 
@@ -565,6 +565,7 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change, bool setDefau
         if ((change.flags & EV_FORCEONESHOT) != 0) {
             event.event.flags = static_cast<std::uint16_t>(event.event.flags | EV_ONESHOT);
             event.triggered = true;
+            event.forcedOneshot = true;
         }
         if (event.enabled && event.filter.pollFunc == PollEdge) {
             static_cast<EdgeWatch::Watch*>(event.filter.data)->armed = true;

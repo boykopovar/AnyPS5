@@ -64,6 +64,7 @@ struct KernelFilter {
 
 struct KernelEqueueEvent {
     bool triggered = false;
+    bool forcedOneshot = false;
     bool enabled = true;
     uint64_t deadlineNs = 0;
     uint64_t intervalNs = 0;
