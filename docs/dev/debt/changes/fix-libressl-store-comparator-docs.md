@@ -1,0 +1,5 @@
+# libSceLibreSsl
+
+## change [X509_STORE_new, X509_STORE_free and X509_STORE_set_flags]
+
+- [X509_STORE_new, X509_STORE_free and X509_STORE_set_flags](../../../core/libs/prx/libSceLibreSsl/src/X509Store.cpp) are unverified on PS5. The 136-byte store, 64-byte verify parameters, 56-byte parameter identity, 32-byte stacks and the results follow [LibreSSL 2.5.4](https://github.com/libressl/openbsd/tree/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/x509) `x509_lu.c` and `x509_vpm.c`, the version in [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). `X509_STORE_add_cert` adds certificates to the store's object cache, whose comparator orders objects by type and then canonical subject encoding, so `X509_STORE_free` frees a store whose cache holds no elements and throws only when the cache holds certificates or CRLs. A null store or verify parameters, a null verify parameter identity, and a null element array behind a positive count, throw where LibreSSL faults
