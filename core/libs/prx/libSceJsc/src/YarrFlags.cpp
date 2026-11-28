@@ -43,7 +43,6 @@ bool FlagFor(char16_t character, Flags& flag) {
         case u'm': flag = Flags::Multiline; return true;
         case u's': flag = Flags::DotAll; return true;
         case u'u': flag = Flags::Unicode; return true;
-        case u'v': flag = Flags::UnicodeSets; return true;
         case u'y': flag = Flags::Sticky; return true;
         default: return false;
     }
@@ -60,18 +59,15 @@ extern "C" {
 
 OptionalFlags APS5_VABI _ZN3JSC4Yarr10parseFlagsEN3WTF10StringViewE(StringView string) {
     if (string.length && !string.characters) throw std::invalid_argument("JSC::Yarr::parseFlags: null characters with a nonzero length");
-    std::uint16_t flags = 0;
+    std::uint8_t flags = 0;
     for (unsigned index = 0; index < string.length; ++index) {
         Flags flag;
-        if (!FlagFor(CodeUnit(string, index), flag)) return {0, false};
-        const auto bit = static_cast<std::uint16_t>(flag);
-        if (flags & bit) return {0, false};
+        if (!FlagFor(CodeUnit(string, index), flag)) return {0, false, 0};
+        const auto bit = static_cast<std::uint8_t>(flag);
+        if (flags & bit) return {0, false, 0};
         flags |= bit;
     }
-    const auto unicode = static_cast<std::uint16_t>(Flags::Unicode);
-    const auto unicodeSets = static_cast<std::uint16_t>(Flags::UnicodeSets);
-    if ((flags & unicode) && (flags & unicodeSets)) return {0, false};
-    return {flags, true};
+    return {flags, true, 0};
 }
 
 }

@@ -9,26 +9,26 @@
 
 namespace Jsc::YarrAbi {
 
-enum class Flags : std::uint16_t {
+enum class Flags : std::uint8_t {
     HasIndices = 1 << 0,
     Global = 1 << 1,
     IgnoreCase = 1 << 2,
     Multiline = 1 << 3,
     DotAll = 1 << 4,
     Unicode = 1 << 5,
-    UnicodeSets = 1 << 6,
-    Sticky = 1 << 7,
+    Sticky = 1 << 6,
 };
 
 struct OptionalFlags {
-    std::uint16_t value;
+    std::uint8_t value;
     bool engaged;
+    std::uint16_t reserved;
 };
 
 static_assert(sizeof(OptionalFlags) == 4);
 static_assert(alignof(OptionalFlags) == 2);
 static_assert(offsetof(OptionalFlags, value) == 0);
-static_assert(offsetof(OptionalFlags, engaged) == 2);
+static_assert(offsetof(OptionalFlags, engaged) == 1);
 static_assert(std::is_trivially_copyable_v<OptionalFlags>);
 
 } // namespace Jsc::YarrAbi
