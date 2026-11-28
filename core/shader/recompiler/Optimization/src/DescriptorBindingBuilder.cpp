@@ -35,6 +35,7 @@ static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <=
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherImageShapeBase);
 static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
+static_assert(PipelineSpecialization::NormalizedImageBase + ShaderInfo::MaxImages <= PipelineSpecialization::CompareReferenceFormatBase);
 static_assert(PipelineSpecialization::NormalizedImageBase + ShaderInfo::MaxImages <= PipelineSpecialization::D16TowardZeroBase);
 
 namespace {
@@ -500,6 +501,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         }
         if (!info.images[index].depthCompare && !convertedSample) continue;
         const auto compare = compareStates[index] = ResourceMaterializer::EmulatedCompareState(info, snapshot, index);
+        if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::CompareReferenceFormatBase + index, (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu});
         const auto first = PipelineSpecialization::CompareBase + index * PipelineSpecialization::CompareWords;
         const std::array<std::uint32_t, 6> values{EmulatedCompare::Function(compare), (compare & EmulatedCompare::Linear) != 0u, EmulatedCompare::AddressX(compare), EmulatedCompare::AddressY(compare), EmulatedCompare::Reference(compare), (compare & EmulatedCompare::BorderWhite) != 0u};
         for (std::uint32_t word = 0; word < values.size() && !registrationModules; ++word) plan.specialization.push_back({first + word, values[word]});
