@@ -25,6 +25,7 @@ extern "C" {
 
 int APS5_VABI sceApplicationGetAppInfoByAppId(std::uint32_t applicationId, ApplicationInfo* info) {
     if (!g_initialized.load(std::memory_order_acquire)) return kNotInitialized;
+    if (info == nullptr) return kInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -396,6 +397,12 @@ int APS5_VABI libSceSysCoreUnknown_F2qydFnZWfY_nid_no_patch() {
 }
 APS5_EXPORT("F2qydFnZWfY", libSceSysCoreUnknown_F2qydFnZWfY_nid_no_patch);
 
+int APS5_VABI libSceSysCoreUnknown_KJ3Cw7ZH6pU_nid_no_patch() {
+    if (!g_initialized.load(std::memory_order_acquire)) return kNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KJ3Cw7ZH6pU", libSceSysCoreUnknown_KJ3Cw7ZH6pU_nid_no_patch);
+
 int APS5_VABI libSceSysCoreUnknown_Q5nkKEHtW18_nid_no_patch() {
     if (!g_initialized.load(std::memory_order_acquire)) return kNotInitialized;
     NotImplemented_nid_no_patch(__func__);
@@ -407,6 +414,12 @@ int APS5_VABI libSceSysCoreUnknown_V7awqOXNG30_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("V7awqOXNG30", libSceSysCoreUnknown_V7awqOXNG30_nid_no_patch);
+
+int APS5_VABI libSceSysCoreUnknown_WoJ7K_minus_2EIKk_nid_no_patch() {
+    if (!g_initialized.load(std::memory_order_acquire)) return kNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WoJ7K-2EIKk", libSceSysCoreUnknown_WoJ7K_minus_2EIKk_nid_no_patch);
 
 int APS5_VABI libSceSysCoreUnknown_lGA8mxzKIhk_nid_no_patch() {
     if (!g_initialized.load(std::memory_order_acquire)) return kNotInitialized;
@@ -420,5 +433,11 @@ int APS5_VABI libSceSysCoreUnknown_piCjhbSYauo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("piCjhbSYauo", libSceSysCoreUnknown_piCjhbSYauo_nid_no_patch);
+
+int APS5_VABI libSceSysCoreUnknown_x6tZHyeLijI_nid_no_patch() {
+    if (!g_initialized.load(std::memory_order_acquire)) return kNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("x6tZHyeLijI", libSceSysCoreUnknown_x6tZHyeLijI_nid_no_patch);
 
 }
