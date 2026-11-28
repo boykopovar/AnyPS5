@@ -28,6 +28,7 @@ def binds(data):
     position = 0
     ordinal = None
     opcode = None
+    symbol = None
     while position < len(stream):
         raw = stream[position]
         position += 1
@@ -45,7 +46,7 @@ def binds(data):
             opcode = raw
         elif kind == 0x40:
             end = stream.index(0, position)
-            events.append({"symbol": stream[position:end].decode(), "dylib_opcode": opcode, "dylib": ordinal})
+            symbol = stream[position:end].decode()
             position = end + 1
         elif kind == 0x60:
             while stream[position] & 0x80:
@@ -56,7 +57,7 @@ def binds(data):
         elif kind == 0x50:
             continue
         elif kind == 0x90:
-            continue
+            events.append({"symbol": symbol, "dylib_opcode": opcode, "dylib": ordinal})
         else:
             raise AssertionError(f"unsupported bind opcode {raw:#x}")
     return macho, events
