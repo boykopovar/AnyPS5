@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +14,11 @@
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -185,6 +190,12 @@ void TestOctetStrings() {
     Require(value != nullptr && value->length == 0 && value->type == 4);
     Require(value->data != nullptr && value->data[0] == 0);
     FreeOctetString(value);
+    Fixture longPadded(82, {0x04, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01, 0x02, 0x03});
+    value = static_cast<Asn1String*>(X509V3_EXT_d2i_nid_postfix(&longPadded.extension));
+    Require(value != nullptr && value->length == 3 && value->type == 4 && value->flags == 0);
+    Require(value->data[0] == 1 && value->data[1] == 2 && value->data[2] == 3 && value->data[3] == 0);
+    FreeOctetString(value);
+    RequireQueue({});
 }
 
 void TestIntegers() {
@@ -344,7 +355,7 @@ void TestAuthorityKeyIssuer() {
     Require(id && id->keyId && id->serial && id->issuer);
     Require(ASN1_INTEGER_get_nid_postfix(id->serial) == 42);
     Require(sk_num_nid_postfix(id->issuer) == 6);
-    const auto issuerName = [id](int index, int type) {
+    const auto issuerName = [&id](int index, int type) {
         auto* name = static_cast<LibreSslGeneralName*>(sk_value_nid_postfix(id->issuer, index));
         Require(name && name->type == type && name->value);
         return name->value;
@@ -370,6 +381,40 @@ void TestAuthorityKeyIssuer() {
     FreeAuthorityKeyId(id);
     Require(allocations.empty());
     RequireQueue({});
+
+    Fixture constructedEmptyDns(90, {0x30, 0x04, 0xa1, 0x02, 0xa2, 0x00});
+    id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&constructedEmptyDns.extension));
+    Require(id != nullptr && id->keyId == nullptr && id->serial == nullptr && id->issuer != nullptr);
+    Require(sk_num_nid_postfix(id->issuer) == 1);
+    const auto* emptyDns = static_cast<const Asn1String*>(issuerName(0, 2));
+    Require(emptyDns->type == 22 && emptyDns->length == 0 && emptyDns->data[0] == 0);
+    FreeAuthorityKeyId(id);
+    Require(allocations.empty());
+    RequireQueue({});
+
+    for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
+             {0x30, 0x09, 0xa1, 0x07, 0xa2, 0x05, 0x04, 0x03, 'a', '.', 'b'},
+             {0x30, 0x0b, 0xa1, 0x09, 0xa2, 0x80, 0x04, 0x03, 'a', '.', 'b', 0x00, 0x00}}) {
+        Fixture constructedDns(90, bytes);
+        id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&constructedDns.extension));
+        Require(id != nullptr && id->issuer != nullptr && sk_num_nid_postfix(id->issuer) == 1);
+        const auto* constructedValue = static_cast<const Asn1String*>(issuerName(0, 2));
+        Require(constructedValue->type == 22 && constructedValue->length == 3 &&
+            std::memcmp(constructedValue->data, "a.b", 3) == 0 && constructedValue->data[3] == 0);
+        FreeAuthorityKeyId(id);
+        Require(allocations.empty());
+        RequireQueue({});
+    }
+
+    const auto checkMalformedConstructed = [](std::initializer_list<unsigned char> bytes,
+                                              std::initializer_list<int> queue) {
+        Fixture malformedConstructed(90, bytes);
+        Require(X509V3_EXT_d2i_nid_postfix(&malformedConstructed.extension) == nullptr);
+        Require(allocations.empty());
+        RequireQueue(queue);
+    };
+    checkMalformedConstructed({0x30, 0x06, 0xa1, 0x04, 0xa2, 0x02, 0x00, 0x00}, {159, 58, 58, 58});
+    checkMalformedConstructed({0x30, 0x04, 0xa1, 0x02, 0xa2, 0x80}, {137, 58, 58, 58});
 
     for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
              {0x30, 0x02, 0x81, 0x00},
@@ -858,11 +903,1000 @@ void TestNidResolution() {
     RequireQueue({});
 }
 
+Bytes FromHex(std::string_view hex) {
+    Bytes bytes;
+    for (std::size_t index = 0; index + 1 < hex.size(); index += 2)
+        bytes.push_back(static_cast<unsigned char>(std::stoul(std::string(hex.substr(index, 2)), nullptr, 16)));
+    return bytes;
+}
+
+void FreeGeneralNames(void* value) {
+    GENERAL_NAMES_free_nid_postfix(static_cast<LibreSslStack*>(value));
+}
+
+LibreSslStack* DecodeGeneralNames(int nid, const Bytes& bytes) {
+    auto* names = static_cast<LibreSslStack*>(DecodeValue(nid, bytes));
+    Require(names != nullptr);
+    RequireQueue({});
+    return names;
+}
+
+const LibreSslGeneralName* GeneralNameAt(const LibreSslStack* names, int index, int type) {
+    const auto* name = static_cast<const LibreSslGeneralName*>(sk_value_nid_postfix(names, index));
+    Require(name != nullptr && name->type == type && name->value != nullptr);
+    return name;
+}
+
+void RequireString(const void* value, std::int32_t type, const Bytes& data) {
+    const auto* string = static_cast<const Asn1String*>(value);
+    Require(string->type == type && string->length == static_cast<std::int32_t>(data.size()));
+    if (!data.empty()) Require(std::memcmp(string->data, data.data(), data.size()) == 0);
+    Require(string->data[data.size()] == 0);
+}
+
+std::vector<std::vector<int>> DistinctQueues(std::vector<std::vector<int>> queues) {
+    std::sort(queues.begin(), queues.end());
+    queues.erase(std::unique(queues.begin(), queues.end()), queues.end());
+    return queues;
+}
+
+void TestGeneralNames() {
+    for (const Bytes& bytes : {FromHex("3000"), FromHex("30005a"), FromHex("1000")}) {
+        LibreSslStack* names = DecodeGeneralNames(85, bytes);
+        Require(sk_num_nid_postfix(names) == 0);
+        FreeGeneralNames(names);
+        Require(allocations.empty());
+    }
+
+    LibreSslStack* names = DecodeGeneralNames(85, FromHex("3014810178820261628601798704c000020188022a03"));
+    Require(sk_num_nid_postfix(names) == 5);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {'x'});
+    RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'a', 'b'});
+    RequireString(GeneralNameAt(names, 2, 6)->value, 22, {'y'});
+    RequireString(GeneralNameAt(names, 3, 7)->value, 4, {192, 0, 2, 1});
+    const auto* object = static_cast<const Asn1Object_nid_no_patch*>(GeneralNameAt(names, 4, 8)->value);
+    Require(object->length == 2 && object->flags == 0x09 && std::memcmp(object->data, "\x2a\x03", 2) == 0);
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(86, FromHex("3003820161"));
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("30088100870086008200"));
+    Require(sk_num_nid_postfix(names) == 4);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
+    RequireString(GeneralNameAt(names, 1, 7)->value, 4, {});
+    RequireString(GeneralNameAt(names, 2, 6)->value, 22, {});
+    RequireString(GeneralNameAt(names, 3, 2)->value, 22, {});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3002a300"));
+    RequireString(GeneralNameAt(names, 0, 3)->value, 16, {0xa3, 0x00});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3003a38100"));
+    RequireString(GeneralNameAt(names, 0, 3)->value, 16, {0xa3, 0x81, 0x00});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a3020500"));
+    RequireString(GeneralNameAt(names, 0, 3)->value, 16, {0xa3, 0x02, 0x05, 0x00});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    const Bytes directory = FromHex("3011a40f300d310b300906035504030c024341");
+    names = DecodeGeneralNames(85, directory);
+    const auto* name = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    Require(sk_num_nid_postfix(name->entries) == 1);
+    const auto* entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(name->entries, 0));
+    Require(entry != nullptr && entry->value != nullptr);
+    RequireString(entry->value, 12, {'C', 'A'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3011a40f300d310b3009060355040313024341"));
+    const auto* printable = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(printable->entries, 0));
+    RequireString(entry->value, 19, {'C', 'A'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3004a4023000"));
+    name = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    Require(sk_num_nid_postfix(name->entries) == 0);
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a4021000"));
+    name = static_cast<const LibreSslX509Name*>(GeneralNameAt(names, 0, 4)->value);
+    Require(sk_num_nid_postfix(name->entries) == 0);
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("30138100a40f300d310b300906035504030c024341"));
+    Require(sk_num_nid_postfix(names) == 2);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    names = DecodeGeneralNames(85, FromHex("3002a200"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
+    FreeGeneralNames(names);
+    for (const std::string_view hex : {"3007a2050403612e62", "300ba20924040402612e040162",
+             "3009a2800403612e620000"}) {
+        names = DecodeGeneralNames(85, FromHex(hex));
+        Require(sk_num_nid_postfix(names) == 1);
+        RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a', '.', 'b'});
+        FreeGeneralNames(names);
+    }
+    names = DecodeGeneralNames(85, FromHex("3007a2800000820178"));
+    Require(sk_num_nid_postfix(names) == 2);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
+    RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'x'});
+    FreeGeneralNames(names);
+    for (const std::string_view hex : {"3008a203040161820162", "3008a206240304026162"}) {
+        names = DecodeGeneralNames(85, FromHex(hex));
+        Require(sk_num_nid_postfix(names) == 1);
+        RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a', 'b'});
+        FreeGeneralNames(names);
+    }
+    names = DecodeGeneralNames(85, FromHex("3004a1028000"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a7028000"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 7)->value, 4, {});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("300ea20c240a24082406240424020400"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3089000000000000000003820161"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
+    RequireMalformed(85, {
+        {{}, {102, 58}},
+        {FromHex("30ff"), {102, 58}},
+        {FromHex("3100"), {168, 58}},
+        {FromHex("0000"), {168, 58}},
+        {FromHex("30020000"), {159}},
+        {FromHex("3005820261"), {155, 58}},
+        {FromHex("30011f"), {102, 58, 58, 58, 58}},
+        {FromHex("30029f80"), {102, 58, 58, 58, 58}},
+        {FromHex("30028900"), {143, 58}},
+        {FromHex("3003020100"), {143, 58}},
+        {FromHex("30039f810100"), {143, 58}},
+        {FromHex("30023000"), {143, 58}},
+        {FromHex("30020500"), {143, 58}},
+        {FromHex("30028a00"), {143, 58}},
+        {FromHex("300281ff"), {102, 58, 58, 58, 58}},
+        {FromHex("30028180"), {102, 58, 58, 58, 58}},
+        {FromHex("30028201"), {155, 58, 58, 58, 58}},
+        {FromHex("3004a2020000"), {159, 58, 58, 58}},
+        {FromHex("3002a280"), {137, 58, 58, 58}},
+        {FromHex("3005a203040561"), {155, 58, 58, 58, 58}},
+        {FromHex("300da2802404040261620401630000"), {159, 58, 58, 58}},
+        {FromHex("3003a2011f"), {102, 58, 58, 58, 58}},
+        {FromHex("3010a20e240c240a24082406240424020400"), {197, 58, 58, 58}},
+        {FromHex("3003830161"), {156, 58, 58, 58}},
+        {FromHex("30028800"), {216, 58, 58, 58}},
+        {FromHex("300488028001"), {216, 58, 58, 58}},
+        {FromHex("3005a803060101"), {231, 58, 58, 58}},
+        {FromHex("3003800100"), {149, 58, 58, 58}},
+        {FromHex("3003850100"), {149, 58, 58, 58}},
+        {FromHex("30028400"), {120, 58, 58}},
+        {FromHex("3002a400"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("3012a410300d310b300906035504030c02434100"), {148, 58, 58}},
+        {FromHex("3013a411300d310b300906035504030c0243410500"), {148, 58, 58}},
+        {FromHex("3004a4023100"), {168, 58, 58, 58, 58, 58}},
+        {FromHex("3003a40100"), {168, 58, 58, 58, 58, 58}},
+        {FromHex("3004a4023005"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("3002a405"), {155, 58, 58, 58}},
+        {FromHex("30138100840f300d310b300906035504030c024341"), {120, 58, 58}},
+    });
+
+    for (const auto& [hex, reason] : {std::pair<std::string_view, int>{"3006a40430023000", 168},
+             {"300ba409300731053003060100", 121}, {"3009a40730053103020100", 168}}) {
+        Require(DecodeValue(85, FromHex(hex)) == nullptr);
+        Require(allocations.empty());
+        const std::vector<int> queue = DrainReasons();
+        Require(!queue.empty() && queue.front() == reason);
+    }
+
+    RequireUnmodelled(85, {
+        FromHex("300f810178a00a06032a0304a003160178"),
+        FromHex("3008a506a1040c026162"),
+        FromHex("3004a3800000"),
+        FromHex("3004a4800000"),
+        FromHex("30800000"),
+    });
+
+    Require(DistinctQueues(AllocationFailures(85, FromHex("3003820161"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 65, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(85, FromHex("3014810178820261628601798704c000020188022a03"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{58, 58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 65, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(85, FromHex("300488022a03"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{58, 58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(85, FromHex("3002a300"), FreeGeneralNames)) ==
+        std::vector<std::vector<int>>{{65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 65, 58, 58, 58}});
+    const std::vector<std::vector<int>> directoryFailures = AllocationFailures(85, directory, FreeGeneralNames);
+    Require(!directoryFailures.empty());
+    for (const std::vector<int>& queue : directoryFailures) Require(!queue.empty());
+}
+
+struct AccessDescription {
+    Asn1Object_nid_no_patch* method;
+    LibreSslGeneralName* location;
+};
+
+void FreeAuthorityInfoAccess(void* value) {
+    sk_pop_free_nid_postfix(static_cast<LibreSslStack*>(value), +[](void* pointer) APS5_VABI {
+        auto* description = static_cast<AccessDescription*>(pointer);
+        if (!description) return;
+        GENERAL_NAME_free_nid_postfix(description->location);
+        ASN1_OBJECT_free_nid_postfix(description->method);
+        free_nid_postfix(description);
+    });
+}
+
+LibreSslStack* DecodeAuthorityInfoAccess(int nid, const Bytes& bytes) {
+    auto* info = static_cast<LibreSslStack*>(DecodeValue(nid, bytes));
+    Require(info != nullptr);
+    RequireQueue({});
+    return info;
+}
+
+const AccessDescription* AccessDescriptionAt(const LibreSslStack* info, int index, const Bytes& methodEncoding, int methodNid,
+    int locationType) {
+    const auto* description = static_cast<const AccessDescription*>(sk_value_nid_postfix(info, index));
+    Require(description != nullptr && description->method != nullptr && description->location != nullptr);
+    Require(description->method->length == static_cast<int>(methodEncoding.size()));
+    Require(std::memcmp(description->method->data, methodEncoding.data(), methodEncoding.size()) == 0);
+    Require(description->method->nid == 0 && description->method->flags == 0x09);
+    Require(OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(description->method)) == methodNid);
+    Require(description->location->type == locationType && description->location->value != nullptr);
+    return description;
+}
+
+void TestAuthorityInfoAccess() {
+    static_assert(sizeof(AccessDescription) == 16 && offsetof(AccessDescription, location) == 8);
+    for (const Bytes& empty : {FromHex("3000"), FromHex("30005a"), FromHex("1000"), FromHex("308100")}) {
+        LibreSslStack* info = DecodeAuthorityInfoAccess(177, empty);
+        Require(sk_num_nid_postfix(info) == 0);
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* info = DecodeAuthorityInfoAccess(398, FromHex("3000"));
+        Require(sk_num_nid_postfix(info) == 0);
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    const Bytes ocspMethod{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01};
+    const Bytes caIssuersMethod{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x02};
+    const Bytes caRepositoryMethod{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x05};
+    const Bytes privateMethod{0x2a, 0x03};
+
+    const Bytes singleAia = FromHex("3010300e06082b0601050507300186026162");
+    LibreSslStack* info = DecodeAuthorityInfoAccess(177, singleAia);
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    const Bytes singleSia = FromHex("3010300e06082b0601050507300586026364");
+    info = DecodeAuthorityInfoAccess(398, singleSia);
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, caRepositoryMethod, 785, 6)->location->value, 22, {'c', 'd'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    const Bytes multiAia = FromHex(
+        "303a300f06082b060105050730028603757269300906022a038203646e73300a06022a038704c0000201"
+        "300806022a0388022a03300606022a03a300");
+    info = DecodeAuthorityInfoAccess(177, multiAia);
+    Require(sk_num_nid_postfix(info) == 5);
+    RequireString(AccessDescriptionAt(info, 0, caIssuersMethod, 179, 6)->location->value, 22, {'u', 'r', 'i'});
+    RequireString(AccessDescriptionAt(info, 1, privateMethod, 0, 2)->location->value, 22, {'d', 'n', 's'});
+    RequireString(AccessDescriptionAt(info, 2, privateMethod, 0, 7)->location->value, 4, {192, 0, 2, 1});
+    const auto* rid = static_cast<const Asn1Object_nid_no_patch*>(
+        AccessDescriptionAt(info, 3, privateMethod, 0, 8)->location->value);
+    Require(rid->length == 2 && rid->flags == 0x09 && std::memcmp(rid->data, "\x2a\x03", 2) == 0);
+    RequireString(AccessDescriptionAt(info, 4, privateMethod, 0, 3)->location->value, 16, {0xa3, 0x00});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    const Bytes dirAia = FromHex("3017301506022a03a40f300d310b300906035504030c024341");
+    info = DecodeAuthorityInfoAccess(177, dirAia);
+    Require(sk_num_nid_postfix(info) == 1);
+    const auto* dirName = static_cast<const LibreSslX509Name*>(
+        AccessDescriptionAt(info, 0, privateMethod, 0, 4)->location->value);
+    Require(sk_num_nid_postfix(dirName->entries) == 1);
+    const auto* entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(dirName->entries, 0));
+    Require(entry != nullptr && entry->value != nullptr);
+    RequireString(entry->value, 12, {'C', 'A'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    for (const int nid : {177, 398}) {
+        info = DecodeAuthorityInfoAccess(nid, FromHex("300a300806022a03a1028000"));
+        Require(sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, privateMethod, 0, 1)->location->value, 22, {});
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    info = DecodeAuthorityInfoAccess(177, FromHex("301a300e06082b0601050507300186026162300806022a03a1028000"));
+    Require(sk_num_nid_postfix(info) == 2);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    RequireString(AccessDescriptionAt(info, 1, privateMethod, 0, 1)->location->value, 22, {});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    for (const std::string_view hex : {
+             "3017301506082b06010505073001a609240404026162040163",
+             "3017301506082b06010505073001a680040261620401630000"}) {
+        info = DecodeAuthorityInfoAccess(177, FromHex(hex));
+        Require(sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b', 'c'});
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    info = DecodeAuthorityInfoAccess(177, FromHex("3089000000000000000010300e06082b0601050507300186026162"));
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    static unsigned char aiaOid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01};
+    Fixture resolvedAia(0, aiaOid, sizeof(aiaOid), {0x30, 0x10, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07,
+        0x30, 0x01, 0x86, 0x02, 'a', 'b'});
+    info = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedAia.extension));
+    Require(info != nullptr && sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+
+    static unsigned char siaOid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x0b};
+    Fixture resolvedSia(0, siaOid, sizeof(siaOid), {0x30, 0x10, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07,
+        0x30, 0x05, 0x86, 0x02, 'c', 'd'});
+    info = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedSia.extension));
+    Require(info != nullptr && sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, caRepositoryMethod, 785, 6)->location->value, 22, {'c', 'd'});
+    FreeAuthorityInfoAccess(info);
+
+    struct ConfCase {
+        int nid;
+        const char* value;
+        Bytes method;
+        int methodNid;
+        Bytes expected;
+    };
+    for (const ConfCase& item : {
+             ConfCase{177, "DER:3010300e06082b0601050507300186026162", ocspMethod, 178, {'a', 'b'}},
+             ConfCase{398, "DER:3010300e06082b0601050507300586026364", caRepositoryMethod, 785, {'c', 'd'}}}) {
+        LibreSsl3X509Extension* built = X509V3_EXT_conf_nid_nid_postfix(nullptr, nullptr, item.nid, item.value);
+        Require(built != nullptr);
+        info = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(built));
+        Require(info != nullptr && sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, item.method, item.methodNid, 6)->location->value, 22, item.expected);
+        FreeAuthorityInfoAccess(info);
+        X509_EXTENSION_free_nid_postfix(built);
+    }
+    Require(allocations.empty());
+    RequireQueue({});
+
+    const std::vector<MalformedValue> malformed{
+        {{}, {102, 58}},
+        {FromHex("30"), {102, 58}},
+        {FromHex("3100"), {168, 58}},
+        {FromHex("0000"), {168, 58}},
+        {FromHex("1080"), {102, 58}},
+        {FromHex("30053000"), {155, 58}},
+        {FromHex("30020000"), {159}},
+        {FromHex("30023100"), {168, 58, 58}},
+        {FromHex("30020500"), {168, 58, 58}},
+        {FromHex("30021000"), {149, 58}},
+        {FromHex("300130"), {102, 58, 58}},
+        {FromHex("30011f"), {102, 58, 58}},
+        {FromHex("300230ff"), {102, 58, 58}},
+        {FromHex("30023005"), {155, 58, 58}},
+        {FromHex("30023000"), {121, 58}},
+        {FromHex("300430020000"), {159, 58}},
+        {FromHex("3008300606042b060105"), {121, 58}},
+        {FromHex("300a300806042b0601050000"), {159, 58}},
+        {FromHex("3012300e06082b06010505073001860261620000"), {159}},
+        {FromHex("300430020500"), {168, 58, 58, 58}},
+        {FromHex("300430028600"), {168, 58, 58, 58}},
+        {FromHex("3003300106"), {102, 58, 58, 58}},
+        {FromHex("300330011f"), {102, 58, 58, 58}},
+        {FromHex("300430020680"), {102, 58, 58, 58}},
+        {FromHex("3004300206ff"), {102, 58, 58, 58}},
+        {FromHex("300430020605"), {155, 58, 58, 58}},
+        {FromHex("300430022600"), {231, 58, 58}},
+        {FromHex("300430020600"), {216, 58, 58}},
+        {FromHex("3006300406028001"), {216, 58, 58}},
+        {FromHex("30053003060180"), {216, 58, 58}},
+        {FromHex("3006300406022a83"), {216, 58, 58}},
+        {FromHex("300a300806042b0601058900"), {143, 58, 58}},
+        {FromHex("3009300706042b0601051f"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("300a300806042b0601058201"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("300b300906042b060105830161"), {156, 58, 58, 58, 58}},
+        {FromHex("300a300806042b0601058400"), {120, 58, 58, 58}},
+        {FromHex("300a300806042b060105a400"), {102, 58, 58, 58, 58, 58, 58}},
+        {FromHex("301a301806042b060105a410300d310b300906035504030c02434100"), {148, 58, 58, 58}},
+        {FromHex("300a300806042b0601058800"), {216, 58, 58, 58, 58}},
+        {FromHex("300d300b06042b060105a803060101"), {231, 58, 58, 58, 58}},
+        {FromHex("300b300906042b060105800100"), {149, 58, 58, 58, 58}},
+        {FromHex("300b300906042b060105850100"), {149, 58, 58, 58, 58}},
+        {FromHex("300d300b06042b0601058601790500"), {148, 58}},
+        {FromHex("300d300b06042b0601058601790000"), {148, 58}},
+        {FromHex("3018300e06082b0601050507300186026162300606022a038900"), {143, 58, 58}},
+    };
+    RequireMalformed(177, malformed);
+    RequireMalformed(398, malformed);
+
+    const std::vector<Bytes> unmodelled{
+        FromHex("30800000"),
+        FromHex("30023080"),
+        FromHex("300430800000"),
+        FromHex("3012301006022a03a00a06032a0304a003160178"),
+        FromHex("300e300c06022a03a506a1040c026162"),
+        FromHex("300a300806022a03a3800000"),
+    };
+    RequireUnmodelled(177, unmodelled);
+    RequireUnmodelled(398, unmodelled);
+
+    Require(DistinctQueues(AllocationFailures(177, FromHex("3000"), FreeAuthorityInfoAccess)) ==
+        std::vector<std::vector<int>>{{65}});
+    Require(DistinctQueues(AllocationFailures(177, singleAia, FreeAuthorityInfoAccess)) ==
+        std::vector<std::vector<int>>{{58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58}, {65, 58, 58, 58, 58},
+            {65, 65, 58, 58, 58, 58}});
+    Require(DistinctQueues(AllocationFailures(177, multiAia, FreeAuthorityInfoAccess)) ==
+        std::vector<std::vector<int>>{{58, 58}, {58, 58, 58, 58}, {65}, {65, 58, 58}, {65, 58, 58, 58},
+            {65, 58, 58, 58, 58}, {65, 65, 58, 58, 58, 58}});
+    const std::vector<std::vector<int>> directoryFailures = AllocationFailures(177, dirAia, FreeAuthorityInfoAccess);
+    Require(!directoryFailures.empty());
+    for (const std::vector<int>& queue : directoryFailures) Require(!queue.empty());
+}
+
+struct DistPointName {
+    int type;
+    union {
+        LibreSslStack* fullname;
+        LibreSslStack* relativename;
+    } name;
+    LibreSslX509Name* dpname;
+};
+
+struct DistPoint {
+    DistPointName* distpoint;
+    Asn1String* reasons;
+    LibreSslStack* crlIssuer;
+    int dpReasons;
+};
+
+void FreeNameEntry(LibreSslX509NameEntry* entry) {
+    if (!entry) return;
+    ASN1_OBJECT_free_nid_postfix(static_cast<Asn1Object_nid_no_patch*>(entry->object));
+    ASN1_OCTET_STRING_free_nid_postfix(static_cast<Asn1String*>(entry->value));
+    free_nid_postfix(entry);
+}
+
+void FreeRelativeName(LibreSslStack* entries) {
+    if (!entries) return;
+    for (int index = 0; index < entries->num; ++index)
+        FreeNameEntry(reinterpret_cast<LibreSslX509NameEntry*>(entries->data[index]));
+    sk_free_nid_postfix(entries);
+}
+
+void FreeCrlDistPoints(void* value) {
+    sk_pop_free_nid_postfix(static_cast<LibreSslStack*>(value), +[](void* pointer) APS5_VABI {
+        auto* point = static_cast<DistPoint*>(pointer);
+        if (!point) return;
+        if (point->distpoint) {
+            if (point->distpoint->type == 0) GENERAL_NAMES_free_nid_postfix(point->distpoint->name.fullname);
+            else if (point->distpoint->type == 1) FreeRelativeName(point->distpoint->name.relativename);
+            free_nid_postfix(point->distpoint);
+        }
+        ASN1_OCTET_STRING_free_nid_postfix(point->reasons);
+        GENERAL_NAMES_free_nid_postfix(point->crlIssuer);
+        free_nid_postfix(point);
+    });
+}
+
+LibreSslStack* DecodeCrlDistPoints(int nid, const Bytes& bytes) {
+    auto* points = static_cast<LibreSslStack*>(DecodeValue(nid, bytes));
+    Require(points != nullptr);
+    RequireQueue({});
+    return points;
+}
+
+const DistPoint* DistPointAt(const LibreSslStack* points, int index) {
+    const auto* point = static_cast<const DistPoint*>(sk_value_nid_postfix(points, index));
+    Require(point != nullptr && point->dpReasons == 0);
+    return point;
+}
+
+const LibreSslX509NameEntry* NameEntryAt(const LibreSslStack* entries, int index, const Bytes& oidEncoding, int oidNid,
+    std::int32_t valueType, const Bytes& valueData, std::int64_t valueFlags = 0) {
+    const auto* entry = static_cast<const LibreSslX509NameEntry*>(sk_value_nid_postfix(entries, index));
+    Require(entry != nullptr && entry->object != nullptr && entry->value != nullptr);
+    Require(entry->set == 0 && entry->size == 0);
+    const auto* object = static_cast<const Asn1Object_nid_no_patch*>(entry->object);
+    Require(object->length == static_cast<int>(oidEncoding.size()));
+    Require(std::memcmp(object->data, oidEncoding.data(), oidEncoding.size()) == 0);
+    Require(object->nid == 0 && object->flags == 0x09);
+    Require(OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(object)) == oidNid);
+    const auto* string = static_cast<const Asn1String*>(entry->value);
+    Require(string->type == valueType && string->flags == valueFlags);
+    Require(string->length == static_cast<std::int32_t>(valueData.size()));
+    if (!valueData.empty()) Require(std::memcmp(string->data, valueData.data(), valueData.size()) == 0);
+    return entry;
+}
+
+void TestCrlDistPoints() {
+    static_assert(sizeof(DistPointName) == 24 && offsetof(DistPointName, name) == 8 && offsetof(DistPointName, dpname) == 16);
+    static_assert(sizeof(DistPoint) == 32 && offsetof(DistPoint, reasons) == 8 && offsetof(DistPoint, crlIssuer) == 16 &&
+        offsetof(DistPoint, dpReasons) == 24);
+
+    for (const int nid : {103, 857}) {
+        for (const Bytes& empty : {FromHex("3000"), FromHex("1000"), FromHex("308100"), FromHex("30005a")}) {
+            LibreSslStack* points = DecodeCrlDistPoints(nid, empty);
+            Require(sk_num_nid_postfix(points) == 0);
+            FreeCrlDistPoints(points);
+            Require(allocations.empty());
+        }
+    }
+
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("30023000"));
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint == nullptr && dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    const Bytes singleFullname = FromHex("300c300aa008a006860474657374");
+    for (const int nid : {103, 857}) {
+        LibreSslStack* points = DecodeCrlDistPoints(nid, singleFullname);
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'t', 'e', 's', 't'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    for (const Bytes& emptyFullname : {FromHex("30063004a002a000"), FromHex("30063004a0028000")}) {
+        LibreSslStack* points = DecodeCrlDistPoints(103, emptyFullname);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 0);
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("300a3008a006800486026162"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'a', 'b'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    const Bytes cnOid{0x55, 0x04, 0x03};
+    const Bytes ouOid{0x55, 0x04, 0x0b};
+    const Bytes privateOid{0x2a, 0x03};
+    const Bytes singleRelative = FromHex("3011300fa00da10b3009060355040313024341");
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, singleRelative);
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.relativename) == 1);
+        NameEntryAt(dp->distpoint->name.relativename, 0, cnOid, 13, 19, {'C', 'A'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    for (const Bytes& emptyRelative : {FromHex("30063004a002a100"), FromHex("30063004a0028100")}) {
+        LibreSslStack* points = DecodeCrlDistPoints(103, emptyRelative);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.relativename) == 0);
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("300f300da00b8109300706022a03130141"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.relativename) == 1);
+        NameEntryAt(dp->distpoint->name.relativename, 0, privateOid, 0, 19, {'A'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex(
+            "30323030a02ea12c300906035504030c024341300806022a0316026162300906022a03030305a000300a06022a031e0400410042"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        const LibreSslStack* entries = dp->distpoint->name.relativename;
+        Require(sk_num_nid_postfix(entries) == 4);
+        NameEntryAt(entries, 0, cnOid, 13, 12, {'C', 'A'});
+        NameEntryAt(entries, 1, privateOid, 0, 22, {'a', 'b'});
+        NameEntryAt(entries, 2, privateOid, 0, 3, {0xa0, 0x00}, 13);
+        NameEntryAt(entries, 3, privateOid, 0, 30, {0x00, 'A', 0x00, 'B'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103,
+            FromHex("301a3018a016a114300a06022a031c0400000041300606022a033000"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        const LibreSslStack* entries = dp->distpoint->name.relativename;
+        Require(sk_num_nid_postfix(entries) == 2);
+        NameEntryAt(entries, 0, privateOid, 0, 28, {0x00, 0x00, 0x00, 'A'});
+        NameEntryAt(entries, 1, privateOid, 0, 16, {0x30, 0x00});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    for (const auto& [hex, valueType, data] : {
+             std::tuple<std::string_view, std::int32_t, Bytes>{"300f300da00ba109300706022a030a0101", 10, {0x01}},
+             {"300f300da00ba109300706022a030a01fe", 0x10a, {0x02}},
+             {"300f300da00ba109300706022a030d0101", 13, {0x01}},
+             {"300f300da00ba109300706022a03070141", 7, {'A'}},
+         }) {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex(hex));
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        const LibreSslStack* entries = dp->distpoint->name.relativename;
+        Require(sk_num_nid_postfix(entries) == 1);
+        NameEntryAt(entries, 0, privateOid, 0, valueType, data);
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(
+            103, FromHex("301c301aa018a11630090603550403130243413009060355040b13024954"));
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 1 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        const LibreSslStack* entries = dp->distpoint->name.relativename;
+        Require(sk_num_nid_postfix(entries) == 2);
+        NameEntryAt(entries, 0, cnOid, 13, 19, {'C', 'A'});
+        NameEntryAt(entries, 1, ouOid, 18, 19, {'I', 'T'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("30063004810205a0"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint == nullptr && dp->reasons != nullptr && dp->crlIssuer == nullptr);
+        Require(dp->reasons->length == 1 && dp->reasons->type == 3 && dp->reasons->flags == 13);
+        Require(dp->reasons->data[0] == 0xa0);
+        FreeCrlDistPoints(points);
+
+        points = DecodeCrlDistPoints(103, FromHex("30053003810100"));
+        dp = DistPointAt(points, 0);
+        Require(dp->reasons != nullptr && dp->reasons->length == 0 && dp->reasons->type == 3 && dp->reasons->flags == 8);
+        FreeCrlDistPoints(points);
+
+        points = DecodeCrlDistPoints(103, FromHex("30063004810207ff"));
+        dp = DistPointAt(points, 0);
+        Require(dp->reasons != nullptr && dp->reasons->length == 1 && dp->reasons->type == 3 && dp->reasons->flags == 15);
+        Require(dp->reasons->data[0] == 0x80);
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("300c300aa2088202616286026364"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint == nullptr && dp->reasons == nullptr && dp->crlIssuer != nullptr);
+        Require(sk_num_nid_postfix(dp->crlIssuer) == 2);
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 2)->value, 22, {'a', 'b'});
+        RequireString(GeneralNameAt(dp->crlIssuer, 1, 6)->value, 22, {'c', 'd'});
+        FreeCrlDistPoints(points);
+
+        for (const Bytes& emptyIssuer : {FromHex("30043002a200"), FromHex("300430028200")}) {
+            points = DecodeCrlDistPoints(103, emptyIssuer);
+            dp = DistPointAt(points, 0);
+            Require(dp->crlIssuer != nullptr && sk_num_nid_postfix(dp->crlIssuer) == 0);
+            FreeCrlDistPoints(points);
+        }
+
+        points = DecodeCrlDistPoints(103, FromHex("3006300482028600"));
+        dp = DistPointAt(points, 0);
+        Require(dp->crlIssuer != nullptr && sk_num_nid_postfix(dp->crlIssuer) == 1);
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 6)->value, 22, {});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    for (const int nid : {103, 857}) {
+        LibreSslStack* points = DecodeCrlDistPoints(nid, FromHex("30083006a204a1028000"));
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint == nullptr && dp->reasons == nullptr && dp->crlIssuer != nullptr);
+        Require(sk_num_nid_postfix(dp->crlIssuer) == 1);
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 1)->value, 22, {});
+        FreeCrlDistPoints(points);
+
+        for (const auto& [hex, type, expected] : {
+                 std::tuple<std::string_view, int, Bytes>{
+                     "3011300fa00da00ba609240404026162040163", 6, {'a', 'b', 'c'}},
+                 {"3011300fa00da00ba680040261620401630000", 6, {'a', 'b', 'c'}},
+                 {"3011300fa00da00ba20924040402612e040162", 2, {'a', '.', 'b'}},
+                 {"300f300da00ba009a2800403612e620000", 2, {'a', '.', 'b'}}}) {
+            points = DecodeCrlDistPoints(nid, FromHex(hex));
+            Require(sk_num_nid_postfix(points) == 1);
+            dp = DistPointAt(points, 0);
+            Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+            Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+            Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+            RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, type)->value, 22, expected);
+            FreeCrlDistPoints(points);
+        }
+
+        for (const auto& [hex, type, expected] : {
+                 std::tuple<std::string_view, int, Bytes>{
+                     "300f300da20ba609240404026162040163", 6, {'a', 'b', 'c'}},
+                 {"300f300da20ba680040261620401630000", 6, {'a', 'b', 'c'}},
+                 {"300f300da20ba20924040402612e040162", 2, {'a', '.', 'b'}},
+                 {"300d300ba209a2800403612e620000", 2, {'a', '.', 'b'}}}) {
+            points = DecodeCrlDistPoints(nid, FromHex(hex));
+            Require(sk_num_nid_postfix(points) == 1);
+            dp = DistPointAt(points, 0);
+            Require(dp->distpoint == nullptr && dp->reasons == nullptr && dp->crlIssuer != nullptr);
+            Require(sk_num_nid_postfix(dp->crlIssuer) == 1);
+            RequireString(GeneralNameAt(dp->crlIssuer, 0, type)->value, 22, expected);
+            FreeCrlDistPoints(points);
+        }
+
+        points = DecodeCrlDistPoints(nid, FromHex("308900000000000000000c300aa008a006860474657374"));
+        Require(sk_num_nid_postfix(points) == 1);
+        dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'t', 'e', 's', 't'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("30123010a00aa008860668747470733a810205a0"));
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->reasons != nullptr && dp->crlIssuer == nullptr);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'h', 't', 't', 'p', 's', ':'});
+        Require(dp->reasons->length == 1 && dp->reasons->flags == 13 && dp->reasons->data[0] == 0xa0);
+        FreeCrlDistPoints(points);
+
+        points = DecodeCrlDistPoints(103, FromHex("30143012a00aa008860668747470733aa20482026162"));
+        dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->reasons == nullptr && dp->crlIssuer != nullptr);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'h', 't', 't', 'p', 's', ':'});
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 2)->value, 22, {'a', 'b'});
+        FreeCrlDistPoints(points);
+    }
+
+    const Bytes reasonsAndIssuer = FromHex("300c300a810205a0a20482026162");
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, reasonsAndIssuer);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint == nullptr && dp->reasons != nullptr && dp->crlIssuer != nullptr);
+        Require(dp->reasons->length == 1 && dp->reasons->flags == 13 && dp->reasons->data[0] == 0xa0);
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 2)->value, 22, {'a', 'b'});
+        FreeCrlDistPoints(points);
+
+        points = DecodeCrlDistPoints(103, FromHex("30183016a00aa008860668747470733a810205a0a20482026162"));
+        dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->reasons != nullptr && dp->crlIssuer != nullptr);
+        Require(dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'h', 't', 't', 'p', 's', ':'});
+        Require(dp->reasons->length == 1 && dp->reasons->flags == 13 && dp->reasons->data[0] == 0xa0);
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 2)->value, 22, {'a', 'b'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    const Bytes fivePoints = FromHex(
+        "30323008a006a004860261313008a006a004860261323008a006a004860261333008a006a004860261343008a006a00486026135");
+    {
+        LibreSslStack* points = DecodeCrlDistPoints(103, fivePoints);
+        Require(sk_num_nid_postfix(points) == 5);
+        for (int index = 0; index < 5; ++index) {
+            const DistPoint* dp = DistPointAt(points, index);
+            Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+            Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+            Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+            RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22,
+                {'a', static_cast<unsigned char>('1' + index)});
+        }
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
+    static unsigned char crldpOid[] = {0x55, 0x1d, 0x1f};
+    Fixture resolvedCrldp(0, crldpOid, sizeof(crldpOid), {0x30, 0x0c, 0x30, 0x0a, 0xa0, 0x08, 0xa0, 0x06, 0x86, 0x04, 't', 'e', 's', 't'});
+    LibreSslStack* points = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedCrldp.extension));
+    Require(points != nullptr && sk_num_nid_postfix(points) == 1);
+    RequireString(GeneralNameAt(DistPointAt(points, 0)->distpoint->name.fullname, 0, 6)->value, 22, {'t', 'e', 's', 't'});
+    FreeCrlDistPoints(points);
+
+    static unsigned char freshestOid[] = {0x55, 0x1d, 0x2e};
+    Fixture resolvedFreshest(0, freshestOid, sizeof(freshestOid), {0x30, 0x0c, 0x30, 0x0a, 0xa0, 0x08, 0xa0, 0x06, 0x86, 0x04, 't', 'e', 's', 't'});
+    points = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedFreshest.extension));
+    Require(points != nullptr && sk_num_nid_postfix(points) == 1);
+    RequireString(GeneralNameAt(DistPointAt(points, 0)->distpoint->name.fullname, 0, 6)->value, 22, {'t', 'e', 's', 't'});
+    FreeCrlDistPoints(points);
+
+    for (const int nid : {103, 857}) {
+        LibreSsl3X509Extension* built =
+            X509V3_EXT_conf_nid_nid_postfix(nullptr, nullptr, nid, "DER:300c300aa008a006860474657374");
+        Require(built != nullptr);
+        points = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(built));
+        Require(points != nullptr && sk_num_nid_postfix(points) == 1);
+        RequireString(GeneralNameAt(DistPointAt(points, 0)->distpoint->name.fullname, 0, 6)->value, 22, {'t', 'e', 's', 't'});
+        FreeCrlDistPoints(points);
+        X509_EXTENSION_free_nid_postfix(built);
+    }
+    Require(allocations.empty());
+    RequireQueue({});
+
+    const std::vector<MalformedValue> malformed{
+        {{}, {102, 58}},
+        {FromHex("30"), {102, 58}},
+        {FromHex("3100"), {168, 58}},
+        {FromHex("0000"), {168, 58}},
+        {FromHex("1080"), {102, 58}},
+        {FromHex("30053000"), {155, 58}},
+        {FromHex("30020000"), {159}},
+        {FromHex("30023100"), {168, 58, 58}},
+        {FromHex("30020500"), {168, 58, 58}},
+        {FromHex("30021000"), {149, 58}},
+        {FromHex("300130"), {102, 58, 58}},
+        {FromHex("30011f"), {102, 58, 58}},
+        {FromHex("300230ff"), {102, 58, 58}},
+        {FromHex("30023005"), {155, 58, 58}},
+        {FromHex("300430020000"), {159, 58}},
+        {FromHex("300430000000"), {159}},
+        {FromHex("3006300230000000"), {168, 58, 58}},
+        {FromHex("300430028000"), {120, 58}},
+        {FromHex("3003300180"), {102, 58, 58}},
+        {FromHex("300330019f"), {102, 58, 58}},
+        {FromHex("300430028080"), {102, 58, 58}},
+        {FromHex("30043002a005"), {155, 58, 58}},
+        {FromHex("30043002a000"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("30063004a0028200"), {143, 58, 58, 58}},
+        {FromHex("30063004a0023000"), {143, 58, 58, 58}},
+        {FromHex("300c300aa008a004860261620500"), {148, 58}},
+        {FromHex("300c300aa008a004860261620000"), {148, 58}},
+        {FromHex("300c300aa006a004860261620000"), {159, 58}},
+        {FromHex("30083006a004a0020000"), {159, 58, 58, 58, 58}},
+        {FromHex("30083006a004a0028900"), {143, 58, 58, 58, 58, 58}},
+        {FromHex("30083006a004a0028205"), {155, 58, 58, 58, 58, 58, 58, 58, 58}},
+        {FromHex("30093007a005a003830161"), {156, 58, 58, 58, 58, 58, 58, 58}},
+        {FromHex("30053003a00181"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("30063004a0028180"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("30063004a0028105"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("30083006a004a1020000"), {159, 58, 58, 58, 58}},
+        {FromHex("30083006a004a1023100"), {168, 58, 58, 58, 58, 58, 58}},
+        {FromHex("30083006a004a1021000"), {149, 58, 58, 58, 58, 58}},
+        {FromHex("30073005a003a10130"), {102, 58, 58, 58, 58, 58, 58}},
+        {FromHex("30083006a004a1023005"), {155, 58, 58, 58, 58, 58, 58}},
+        {FromHex("30083006a004a1023000"), {121, 58, 58, 58, 58, 58}},
+        {FromHex("300a3008a006a10430020000"), {159, 58, 58, 58, 58, 58}},
+        {FromHex("300c300aa008a106300406022a03"), {121, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a030000"), {159, 58, 58, 58, 58, 58}},
+        {FromHex("300a3008a006a10430020500"), {168, 58, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300a3008a006a10430022600"), {231, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300a3008a006a10430020600"), {216, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300c300aa008a106300406028001"), {216, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a038000"), {139, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a030500"), {140, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a031000"), {156, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a030300"), {152, 58, 58, 58, 58, 58, 58}},
+        {FromHex("3010300ea00ca10a300806022a0303020800"), {220, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300f300da00ba109300706022a031e0141"), {214, 58, 58, 58, 58, 58, 58}},
+        {FromHex("3011300fa00da10b300906022a031c03414243"), {215, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300f300da00ba109300706022a032d0101"), {231, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300f300da00ba109300706022a032a0101"), {231, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a030a00"), {62, 58, 58, 58, 58, 58, 58}},
+        {FromHex("3011300fa00da10b300906022a031301410500"), {148, 58, 58, 58, 58, 58}},
+        {FromHex("3011300fa00da10b300906022a031301410000"), {148, 58, 58, 58, 58, 58}},
+        {FromHex("300e300ca00aa108300606022a031305"), {155, 58, 58, 58, 58, 58, 58, 58}},
+        {FromHex("300c300aa008a106300406022a0313"), {121, 58, 58, 58, 58, 58}},
+        {FromHex("300430028100"), {152, 58, 58}},
+        {FromHex("3006300481020800"), {220, 58, 58}},
+        {FromHex("3003300181"), {102, 58, 58, 58}},
+        {FromHex("300430028180"), {102, 58, 58, 58}},
+        {FromHex("300430028105"), {155, 58, 58, 58}},
+        {FromHex("30083006810205a00000"), {159, 58}},
+        {FromHex("300e300ca008a0068604746573740000"), {159, 58}},
+        {FromHex("30083006810205a08000"), {168, 58, 58}},
+        {FromHex("30083006810205a08100"), {168, 58, 58}},
+        {FromHex("300430028300"), {168, 58, 58}},
+        {FromHex("300430020500"), {168, 58, 58}},
+        {FromHex("30063004a2020000"), {159, 58}},
+        {FromHex("30063004a2028900"), {143, 58, 58}},
+        {FromHex("30073005a200800100"), {148, 58}},
+        {FromHex("30073005a200810100"), {148, 58}},
+        {FromHex("30063004a2000000"), {148, 58}},
+        {FromHex("30063004a2000500"), {148, 58}},
+        {FromHex("30063004a200a200"), {148, 58}},
+    };
+    RequireMalformed(103, malformed);
+    RequireMalformed(857, malformed);
+
+    const std::vector<Bytes> unmodelled{
+        FromHex("30800000"),
+        FromHex("300430800000"),
+        FromHex("30043002a080"),
+        FromHex("30063004a0800000"),
+        FromHex("30083006a004a0800000"),
+        FromHex("30083006a004a1800000"),
+        FromHex("30083006a004a1023080"),
+        FromHex("3010300ea00ca10a300806022a0330800000"),
+        FromHex("30133011a00fa10d300b06022a032c050403616263"),
+        FromHex("30093007a105030300ff00"),
+        FromHex("30063004a2800000"),
+        FromHex("30123010a00ea00ca00a06032a0304a003160178"),
+        FromHex("30103008a006a004860261623004a2800000"),
+        FromHex("301d301ba019a117300806022a0313024341300b06022a032c050403616263"),
+    };
+    RequireUnmodelled(103, unmodelled);
+    RequireUnmodelled(857, unmodelled);
+
+    Require(DistinctQueues(AllocationFailures(103, FromHex("3000"), FreeCrlDistPoints)) ==
+        std::vector<std::vector<int>>{{65}});
+    Require(DistinctQueues(AllocationFailures(103, singleFullname, FreeCrlDistPoints)) ==
+        std::vector<std::vector<int>>{
+            {65}, {65, 58, 58}, {65, 58, 58, 58, 58}, {65, 58, 58, 58, 58, 58, 58},
+            {65, 58, 58, 58, 58, 58, 58, 58}, {65, 65, 58, 58, 58, 58, 58, 58, 58}});
+
+    const std::vector<std::vector<int>> relativeFailures =
+        AllocationFailures(103, singleRelative, FreeCrlDistPoints);
+    Require(!relativeFailures.empty());
+    for (const std::vector<int>& queue : relativeFailures) Require(!queue.empty());
+
+    const std::vector<std::vector<int>> reasonsIssuerFailures =
+        AllocationFailures(103, reasonsAndIssuer, FreeCrlDistPoints);
+    Require(!reasonsIssuerFailures.empty());
+    for (const std::vector<int>& queue : reasonsIssuerFailures) Require(!queue.empty());
+
+    const std::vector<std::vector<int>> fivePointFailures =
+        AllocationFailures(103, fivePoints, FreeCrlDistPoints);
+    Require(fivePointFailures.front() == std::vector<int>{65});
+    Require(DistinctQueues(fivePointFailures) ==
+        std::vector<std::vector<int>>{
+            {65}, {65, 58, 58}, {65, 58, 58, 58, 58}, {65, 58, 58, 58, 58, 58, 58},
+            {65, 58, 58, 58, 58, 58, 58, 58}, {65, 65, 58, 58, 58, 58, 58, 58, 58}});
+    Require(std::count(fivePointFailures.begin(), fivePointFailures.end(), std::vector<int>{65}) >= 3);
+    Require(std::find(fivePointFailures.begin() + 3, fivePointFailures.end(), std::vector<int>{65}) !=
+        fivePointFailures.end());
+    for (const std::vector<int>& queue : fivePointFailures) Require(!queue.empty());
+}
+
 void TestUnsupported() {
     Fixture certificatePolicies(89, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&certificatePolicies.extension); });
-    Fixture subjectAltName(85, {0x30, 0x00});
-    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&subjectAltName.extension); });
     Fixture serviceLocator(371, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&serviceLocator.extension); });
 }
@@ -984,6 +2018,12 @@ void TestMalformed() {
     Fixture badLength(83, {0x03, 0xff});
     Require(X509V3_EXT_d2i_nid_postfix(&badLength.extension) == nullptr);
     RequireQueue({102, 58});
+    Fixture reservedLength(82, {0x04, 0xff, 0x01});
+    Require(X509V3_EXT_d2i_nid_postfix(&reservedLength.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture overflowLength(82, {0x04, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01});
+    Require(X509V3_EXT_d2i_nid_postfix(&overflowLength.extension) == nullptr);
+    RequireQueue({102, 58});
     Fixture shortIdentifier(83, {0x1f});
     Require(X509V3_EXT_d2i_nid_postfix(&shortIdentifier.extension) == nullptr);
     RequireQueue({102, 58});
@@ -1056,6 +2096,9 @@ int main() {
     TestPrivateKeyUsagePeriod();
     TestStructuredRoundTrips();
     TestNidResolution();
+    TestGeneralNames();
+    TestAuthorityInfoAccess();
+    TestCrlDistPoints();
     TestUnsupported();
     TestUnknownExtensions();
     TestMethodTable();
