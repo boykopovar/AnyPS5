@@ -1350,6 +1350,22 @@ void verifyStore() {
     require(ShaderDiskCache::Load(key, loaded), "a rewritten entry does not load");
 }
 
+void verifyOversizedStore() {
+    require(ShaderDiskCache::Enabled(), "the disk cache is not enabled");
+    const std::vector<std::byte> key{std::byte{0x6f}, std::byte{0x76}, std::byte{0x72}, std::byte{0x73}, std::byte{0x7a}};
+    auto oversized = sampleVariant();
+    oversized.artifact.spirv = std::vector<std::uint32_t>(ShaderDiskCache::MaxCachedSpirvWords + 1u);
+    const auto before = ShaderDiskCache::Totals();
+    ShaderDiskCache::Store(key, std::make_shared<const CompiledVariant>(std::move(oversized)));
+    ShaderDiskCache::Flush();
+    require(ShaderDiskCache::Totals().writeFailures == before.writeFailures + 1, "an oversized entry was not counted as a write failure");
+    require(!std::filesystem::exists(ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key)), "an oversized entry was written");
+    ShaderDiskCache::Store(key, std::make_shared<const CompiledVariant>(sampleVariant()));
+    ShaderDiskCache::Flush();
+    CompiledVariant loaded;
+    require(ShaderDiskCache::Load(key, loaded), "an entry does not load after a failed oversized write");
+}
+
 void verifySpecializedStore() {
     require(ShaderDiskCache::Enabled(), "the disk cache is not enabled");
     const std::vector<std::byte> key{std::byte{0x73}, std::byte{0x70}, std::byte{0x65}, std::byte{0x63}, std::byte{0x01}};
@@ -3304,6 +3320,7 @@ int main(int argc, char** argv) {
         verifyPlanKey();
         verifySharedPlans();
         verifyStore();
+        verifyOversizedStore();
         verifySpecializedStore();
         verifySpecializedSwitch(argv[0]);
         verifyPersist();

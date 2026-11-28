@@ -1682,7 +1682,14 @@ public:
 
     std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {
         const auto path = directory / EntryName(key);
-        const auto file = EncodeEntry(key, variant);
+        std::vector<std::byte> file;
+        try {
+            file = EncodeEntry(key, variant);
+        } catch (const std::exception& error) {
+            const auto failures = writeFailures.fetch_add(1, std::memory_order_relaxed);
+            if (failures < 4) std::fprintf(stderr, "[shader-disk-cache] cannot encode %s: %s\n", path.string().c_str(), error.what());
+            return nullptr;
+        }
         if (!WriteFileAtomically(path, file)) return nullptr;
         writes.fetch_add(1, std::memory_order_relaxed);
         bytesWritten.fetch_add(file.size(), std::memory_order_relaxed);
@@ -1922,7 +1929,14 @@ private:
     }
 
     void write(const Job& job) {
-        const auto file = job.plan != nullptr ? EncodePlanEntry(job.key, *job.plan) : !job.words.empty() ? wrapEntry(job.key, std::as_bytes(std::span(job.words))) : EncodeEntry(job.key, *job.variant);
+        std::vector<std::byte> file;
+        try {
+            file = job.plan != nullptr ? EncodePlanEntry(job.key, *job.plan) : !job.words.empty() ? wrapEntry(job.key, std::as_bytes(std::span(job.words))) : EncodeEntry(job.key, *job.variant);
+        } catch (const std::exception& error) {
+            const auto failures = writeFailures.fetch_add(1, std::memory_order_relaxed);
+            if (failures < 4) std::fprintf(stderr, "[shader-disk-cache] cannot encode %s: %s\n", (directory / EntryName(job.key)).string().c_str(), error.what());
+            return;
+        }
         if (!file.empty() && WriteFileAtomically(directory / EntryName(job.key), file)) {
             (job.plan != nullptr ? planWrites : !job.words.empty() ? specializedWrites : writes).fetch_add(1, std::memory_order_relaxed);
             bytesWritten.fetch_add(file.size(), std::memory_order_relaxed);
