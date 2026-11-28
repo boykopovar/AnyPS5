@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 #include "Recompiler.hpp"
@@ -32,7 +33,7 @@ constexpr std::uint32_t Last = 0x22220000u;
 constexpr std::uint32_t Past = 0x33330000u;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, Width * Height * 4> Results{};
-alignas(256) std::array<float, Width * Height> DepthMemory{};
+alignas(256) std::array<std::byte, 128 * 128 * 4> DepthMemory{};
 constexpr std::uint32_t Overflow = 256u;
 alignas(256) std::array<std::byte, Overflow * Overflow * 4> OverflowPixels{};
 alignas(256) std::array<std::uint32_t, Overflow * Overflow * 4> OverflowResults{};
@@ -153,6 +154,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t width, std::uint32_t he
         state.color = {};
         state.colors.clear();
         state.blends.clear();
+        Require(sizeof(DepthMemory) >= AgcDriver::Graphics::DepthSliceBytes({width, height}, 4u), "pixel LDS limit: the depth memory is smaller than its tile");
         state.depth = AgcDriver::Graphics::DepthTarget{reinterpret_cast<std::uintptr_t>(DepthMemory.data()), 0u, {width, height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
         state.depthCompare = VK_COMPARE_OP_ALWAYS;
     }
