@@ -554,6 +554,17 @@ Changed-test selection uses the configured CMake target sources. Windows CI repl
 - `tools/sanitizer_report.py <junit> --json` writes structured sanitizer triage to stdout. If you also pass
   `--summary FILE`, it appends Markdown to that file. Exit status 0 means there were no unexpected failures,
   1 means at least one unexpected failure, and 2 means the input or output could not be processed.
+  To summarize a local run like the Sanitizers workflow, write the JUnit file with
+  `ctest --test-dir build --output-junit ctest.xml` and pass the sanitizers the build used:
+
+  ```sh
+  python3 tools/sanitizer_report.py build/ctest.xml --known .github/sanitizer-known-failures.txt --sanitizer address --sanitizer undefined
+  ```
+
+  `--known` needs at least one `--sanitizer`, and an entry applies only when one of its sanitizers is passed, so an
+  entry listed for `thread` alone does not excuse a failure in this build. A listed test that the JUnit file records
+  as not run still counts as an unexpected failure; a listed test missing from the file is only reported as not in
+  this run and does not fail the summary.
 
 ## Public-header archives
 
