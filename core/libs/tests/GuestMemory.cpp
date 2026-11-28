@@ -1732,6 +1732,61 @@ static void CheckNoOverwriteRefusesLiveMapping() {
     Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
+static void CheckNoOverwriteRefusesReservation() {
+    constexpr std::size_t page = 0x4000;
+    constexpr int outOfMemory = static_cast<int>(0x8002000cu);
+    constexpr int fixedNoOverwrite = 0x90;
+    constexpr int sharedFixedNoOverwrite = 0x91;
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 4, 0, 0) == 0);
+    auto* base = static_cast<unsigned char*>(reserved);
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    const auto path = std::filesystem::path("anyps5-no-overwrite-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
+    {
+        std::ofstream stream(path, std::ios::binary);
+        const std::vector<char> seed(page * 2, 5);
+        stream.write(seed.data(), static_cast<std::streamsize>(seed.size()));
+    }
+    const int fd = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Require(fd >= 0);
+    for (auto* target : {base, base + page, base + page * 2}) {
+        void* direct = target;
+        Require(sceKernelMapDirectMemory(&direct, page * 2, 3, fixedNoOverwrite, phys, 0) == outOfMemory);
+        Require(direct == target);
+        void* flexible = target;
+        Require(sceKernelMapFlexibleMemory(&flexible, page * 2, 3, fixedNoOverwrite) == outOfMemory);
+        Require(flexible == target);
+        void* range = target;
+        Require(sceKernelReserveVirtualRange(&range, page * 2, fixedNoOverwrite, 0) == outOfMemory);
+        Require(range == target);
+        void* pool = nullptr;
+        Require(sceKernelMemoryPoolReserve(target, page * 2, 0, fixedNoOverwrite, &pool) == outOfMemory);
+        void* file = nullptr;
+        Require(sceKernelMmap(target, page * 2, 3, sharedFixedNoOverwrite, fd, 0, &file) == outOfMemory);
+        Require(file == nullptr);
+    }
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(base, 0, &info, sizeof(info)) == 0);
+    Require(!info.is_committed && !info.is_direct && !info.is_flexible && info.protection == 0);
+    Require(info.start == reinterpret_cast<std::uintptr_t>(base) && info.end == reinterpret_cast<std::uintptr_t>(base) + page * 4);
+    void* replaced = base + page;
+    Require(sceKernelMapDirectMemory(&replaced, page * 2, 3, 0x10, phys, 0) == 0);
+    Require(replaced == base + page);
+    static_cast<unsigned char*>(replaced)[0] = 9;
+    void* straddling = base;
+    Require(sceKernelMapFlexibleMemory(&straddling, page * 2, 3, fixedNoOverwrite) == outOfMemory);
+    Require(static_cast<unsigned char*>(replaced)[0] == 9);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page * 4) == 0);
+    void* released = base;
+    Require(sceKernelMapFlexibleMemory(&released, page * 4, 3, fixedNoOverwrite) == 0);
+    Require(released == base);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page * 4) == 0);
+    Require(sceKernelClose(fd) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+    std::filesystem::remove(path);
+}
+
 #ifdef _WIN32
 constexpr std::uint32_t ReadWriteProtection = PAGE_READWRITE;
 #else
@@ -4933,6 +4988,7 @@ int main(int argc, char** argv) {
     CheckReservedRangeIsNotCommitted();
     CheckHintInsideReservation();
     CheckNoOverwriteRefusesLiveMapping();
+    CheckNoOverwriteRefusesReservation();
     CheckMlock();
     CheckSharedDirectMemoryLifecycle();
     CheckGetDirectMemoryType();

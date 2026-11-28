@@ -1,0 +1,5 @@
+# libkernel
+
+## add Functional
+
+- [Fixed no-overwrite maps over a reservation](../../../core/libs/prx/libkernel/DirectMemory/DirectMemory.cpp) (libkernel) - direct and flexible maps, `sceKernelReserveVirtualRange` and `sceKernelMemoryPoolReserve` with `MAP_FIXED` and no-overwrite (`0x80`) over reserved pages fail with `ENOMEM`. A PS4 (firmware 12.02, [integration_tests#4](https://github.com/ps4emulation/integration_tests/pull/4)) gives that for `sceKernelMmap` over a void mapping ([test](https://github.com/ps4emulation/integration_tests/blob/35667ae5f1167488882b79238ab8a63df6bb6bc2/tests/memory_test_100/code/test.cpp#L465-L481)), as shadPS4 does; fpPS4 lets reserved pages through. Other calls and a PS5 are unmeasured. Such calls into the AMM ranges, one reservation here, fail too; console behaviour is unknown. A direct or flexible no-overwrite hint without `MAP_FIXED` inside a reservation still throws; anonymous `sceKernelMmap` with no-overwrite returns `EOPNOTSUPP`. Closes when: measured on a PS5
