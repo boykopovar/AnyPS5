@@ -810,6 +810,42 @@ void TestTimeRanges() {
     Require(_ZNK7WebCore10TimeRanges3endEj(tr.get(), 0).returnValue() == 4.0);
 }
 
+void RequireMediaTimeString(const WTF::MediaTime& time, const char* expected) {
+    const NKWebKit::WtfAbi::String value = _ZNK3WTF9MediaTime8toStringEv(&time);
+    Require(value.impl != nullptr);
+    Require((value.impl->hashAndFlags & 4) != 0);
+    const std::size_t length = std::strlen(expected);
+    Require(value.impl->length == length);
+    Require(std::memcmp(value.impl->data, expected, length) == 0);
+}
+
+WTF::MediaTime DoubleMediaTime(double value) {
+    WTF::MediaTime time(0, WTF::MediaTime::DefaultTimeScale, WTF::MediaTime::Valid | WTF::MediaTime::DoubleValue);
+    time.m_timeValueAsDouble = value;
+    return time;
+}
+
+void TestMediaTimeToString() {
+    RequireMediaTimeString(WTF::MediaTime(1, 2, WTF::MediaTime::Valid), "{1/2 = 0.5}");
+    RequireMediaTimeString(WTF::MediaTime(-1, 3, WTF::MediaTime::Valid), "{-1/3 = -0.3333333333333333}");
+    RequireMediaTimeString(WTF::MediaTime(123456789, 1000, WTF::MediaTime::Valid), "{123456789/1000 = 123456.789}");
+    RequireMediaTimeString(WTF::MediaTime(5, 4294967295u, WTF::MediaTime::Valid), "{5/4294967295 = 1.1641532185403987e-9}");
+    RequireMediaTimeString(WTF::MediaTime(0, 1, WTF::MediaTime::Valid), "{0/1 = 0}");
+    RequireMediaTimeString(WTF::MediaTime(), "{0/0 = NaN, invalid}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime11invalidTimeEv(), "{-1/1 = NaN, invalid}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime20positiveInfiniteTimeEv(), "{0/1 = Infinity}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime20negativeInfiniteTimeEv(), "{-1/1 = -Infinity}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime14indefiniteTimeEv(), "{0/1 = NaN}");
+    RequireMediaTimeString(DoubleMediaTime(1.5), "{1.5}");
+    RequireMediaTimeString(DoubleMediaTime(-0.0), "{0}");
+    RequireMediaTimeString(DoubleMediaTime(1e20), "{100000000000000000000}");
+    RequireMediaTimeString(DoubleMediaTime(1e21), "{1e+21}");
+    RequireMediaTimeString(DoubleMediaTime(-2.5e22), "{-2.5e+22}");
+    RequireMediaTimeString(DoubleMediaTime(0.000001), "{0.000001}");
+    RequireMediaTimeString(DoubleMediaTime(1.5e-7), "{1.5e-7}");
+    RequireMediaTimeString(DoubleMediaTime(5e-324), "{5e-324}");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -854,6 +890,7 @@ int main(int argc, char** argv) {
     TestRangesAddedOutOfOrder();
     TestPlatformTimeRanges();
     TestTimeRanges();
+    TestMediaTimeToString();
     std::printf("MediaTime and TimeRanges tests passed successfully!\n");
     return 0;
 }

@@ -14,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -110,8 +111,8 @@ std::uint64_t ReleaseMemValue(std::span<const std::uint32_t> packet) {
     return address(packet[5], packet[6]);
 }
 
-std::uint32_t registerOffset(std::uint32_t value) {
-    require(value != 0xffffffffu, "indirect register sentinel semantics are not implemented");
+std::optional<std::uint32_t> registerOffset(std::uint32_t value) {
+    if (value == 0xffffffffu) return std::nullopt;
     const auto offset = value & ~0x70000000u;
     if (offset > 0xffffu) {
         char what[80];
@@ -139,7 +140,8 @@ bool IndirectDrawsDisabled() {
 // nowhere) or a user-data register of the vertex-side stage banks (0x8c.. for the vertex / geometry
 // programs, 0x10c.. for the local / hull programs).
 bool drawLocation(std::uint32_t value) {
-    return value == 0 || value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
+    const bool gcnVertexStage = ShaderRecompiler::GcnGuestShaders() && (value - 0x4cu < 16u || value - 0xccu < 16u || value - 0x14cu < 16u);
+    return gcnVertexStage || value == 0 || value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
 }
 
 Registers& registersFor(QueueState& queue, std::uint32_t opcode) {
@@ -537,7 +539,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet.size() >= 3, "register packet has no values");
             if (opcode == 0x7a) require((packet[1] & 0xf0000000u) == 0 || (packet.size() == 3 && (packet[1] == 0x20000243u || packet[1] == 0x10000242u)), "indexed register bank selection is not implemented");
             const auto offset = registerOffset(packet[1]);
-            require(packet.size() - 2 <= 0x10000u - offset, "register range overflow");
+            if (offset.has_value()) require(packet.size() - 2 <= 0x10000u - *offset, "register range overflow");
             break;
         }
         case 0x59:
@@ -1111,15 +1113,19 @@ void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<c
     require(pairs.size() == static_cast<std::size_t>(packet[4]) * 2, "indirect register list does not match its packet");
     const auto usable = [&](std::uint32_t value) { return !skipInvalid || IndirectRegistersValid(std::span(&value, 1)); };
     for (std::size_t i = 0; i < pairs.size(); i += 2) {
-        if (usable(pairs[i])) registerOffset(pairs[i]);
+        if (usable(pairs[i])) (void)registerOffset(pairs[i]);
     }
     for (std::size_t i = 0; i < pairs.size(); i += 2) {
-        if (usable(pairs[i])) writeRegister(queue, opcode, registerOffset(pairs[i]), pairs[i + 1]);
+        if (!usable(pairs[i])) continue;
+        const auto offset = registerOffset(pairs[i]);
+        if (offset.has_value()) writeRegister(queue, opcode, *offset, pairs[i + 1]);
     }
     if (queue.savedContext.has_value() && TraceContextState()) {
         std::fprintf(stderr, "[context]   indirect 0x%x:", opcode);
         for (std::size_t i = 0; i < pairs.size(); i += 2) {
-            if (usable(pairs[i])) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
+            if (usable(pairs[i])) {
+                if (const auto offset = registerOffset(pairs[i])) std::fprintf(stderr, " %x", *offset);
+            }
         }
         std::fprintf(stderr, "\n");
     }
@@ -1289,7 +1295,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x69: case 0x76: case 0x79: case 0x7a: {
             if (IsTagMarker(packet)) return;
             const auto offset = registerOffset(packet[1]);
-            for (std::size_t i = 2; i < packet.size(); ++i) writeRegister(queue, opcode, offset + static_cast<std::uint32_t>(i - 2), packet[i]);
+            if (offset.has_value()) for (std::size_t i = 2; i < packet.size(); ++i) writeRegister(queue, opcode, *offset + static_cast<std::uint32_t>(i - 2), packet[i]);
             return;
         }
         case 0x81:

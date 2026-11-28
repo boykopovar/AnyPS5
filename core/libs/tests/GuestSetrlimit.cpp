@@ -18,6 +18,7 @@ static constexpr int GUEST_RLIMIT_NPROC = 7;
 static constexpr int GUEST_RLIMIT_NOFILE = 8;
 static constexpr int GUEST_RLIM_NLIMITS = 15;
 static constexpr std::int64_t GUEST_RLIM_INFINITY = std::numeric_limits<std::int64_t>::max();
+static constexpr std::int64_t GUEST_OPEN_FILES_PER_PROCESS = 12555;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -114,7 +115,16 @@ int main() {
     else
         Require(Throws(GUEST_RLIMIT_DATA, negative));
 
-    Require(Throws(GUEST_RLIMIT_NOFILE, infinity));
+    const GuestResourceLimit nofileLowered{1000, 13952};
+    *__error_nid_postfix() = 13;
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &nofileLowered) == 0 && *__error_nid_postfix() == 13);
+    RequireLimit(GUEST_RLIMIT_NOFILE, 1000, GUEST_OPEN_FILES_PER_PROCESS);
+    const GuestResourceLimit nofileRestored{13952, 13952};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &nofileRestored) == 0);
+    RequireLimit(GUEST_RLIMIT_NOFILE, GUEST_OPEN_FILES_PER_PROCESS, GUEST_OPEN_FILES_PER_PROCESS);
+    const GuestResourceLimit nofileSoftAboveHard{14000, GUEST_OPEN_FILES_PER_PROCESS};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &nofileSoftAboveHard) == 0);
+    RequireLimit(GUEST_RLIMIT_NOFILE, GUEST_OPEN_FILES_PER_PROCESS, GUEST_OPEN_FILES_PER_PROCESS);
 
     RequireSoftLimitRoundTrip(GUEST_RLIMIT_CORE, 0);
     RequireSoftLimitRoundTrip(GUEST_RLIMIT_CORE, 4096);

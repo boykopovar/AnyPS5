@@ -996,13 +996,13 @@ void SignalInterruptsBlockingRead() {
 #endif
 
 void ConsultsNativeOwnerTransfer() {
-    Gate release;
+    Gate first;
+    Gate second;
     Scenario scenario;
     scenario.server = [&](Connection& tls, int) {
-        release.Wait("the client never opened the gate");
+        first.Wait("the client never opened the first gate");
         WriteAll(tls, "one", 3);
-        release.open = false;
-        release.Wait("the client never reopened the gate");
+        second.Wait("the client never opened the second gate");
         WriteAll(tls, "two", 3);
         std::array<std::uint8_t, 4> ping{};
         ReadExact(tls, ping.data(), ping.size());
@@ -1018,10 +1018,9 @@ void ConsultsNativeOwnerTransfer() {
         Require(fake->calls > 0 && fake->sendCalls > 0, "the engine moved the handshake through NativeOwner::transfer, not the raw socket");
         std::array<char, 8> out{};
         std::size_t transferred = 0;
-        release.Open();
+        first.Open();
         Require(Retry([&] { return tls.Read(out.data(), out.size(), transferred, false); }) == Result::Done && transferred == 3, "the first read");
         const int callsAfterFirstRead = fake->calls;
-        release.open = false;
 
         fake->failNext = HostInterruptedCode;
         transferred = 1;
@@ -1037,7 +1036,7 @@ void ConsultsNativeOwnerTransfer() {
         Require(tls.SystemError() == HostInterruptedCode && tls.LastDirection() == LibreSslTls::Direction::Write, "the interrupted send is visible as errno EINTR");
         Require(Retry([&] { return tls.Write(payload.data(), payload.size(), transferred); }) == Result::Done && transferred == payload.size(), "the interrupted write completes when retried");
 
-        release.Open();
+        second.Open();
         Require(Retry([&] { return tls.Read(out.data(), out.size(), transferred, false); }) == Result::Done && transferred == 3 && std::memcmp(out.data(), "two", 3) == 0,
             "the read completes when retried");
         bool complete = false;
@@ -1230,6 +1229,51 @@ void SelectNextProto() {
     Require(errno == 71, "unwritable outputLength rollback preserves errno");
 }
 
+struct Barrier {
+    std::atomic<std::size_t> count{0};
+    std::atomic<bool> released{false};
+
+    void arrive(std::size_t total) {
+        std::size_t arrived = count.fetch_add(1) + 1;
+        while (!released.load()) {
+            if (arrived == total) {
+                released.store(true);
+                break;
+            }
+        }
+    }
+};
+
+void ConcurrentConnectionConstruction() {
+    constexpr int Threads = 8;
+    constexpr int Iterations = 100;
+    Barrier startBarrier;
+    std::atomic<int> successCount{0};
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < Threads; ++t) {
+        threads.emplace_back([&, t] {
+            startBarrier.arrive(Threads);
+            for (int i = 0; i < Iterations; ++i) {
+                bool isServer = (t + i) % 2 == 0;
+                Connection conn(isServer);
+                if (!isServer) {
+                    conn.SetHostname(TestHost);
+                } else {
+                    conn.UseCertificate(
+                        reinterpret_cast<const unsigned char*>(ServerCertificate), sizeof(ServerCertificate) - 1,
+                        reinterpret_cast<const unsigned char*>(ServerKey), sizeof(ServerKey) - 1
+                    );
+                }
+                successCount.fetch_add(1);
+            }
+        });
+    }
+
+    for (auto& th : threads) th.join();
+    Require(successCount.load() == Threads * Iterations, "concurrent connection construction failed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1266,21 +1310,27 @@ int main(int argc, char** argv) {
             Shutdown();
             ShutdownBeforeHandshake();
             AbruptClose();
+            ConcurrentConnectionConstruction();
         }
         if (transport) {
-            NonBlockingRead();
-            WriteBackPressure();
-            BlockingTransport();
-            NonBlockingTransport();
-            ReceiveTimeout();
-            SendTimeout();
-            LargeRecordSendTimeout();
+            const auto run = [](const char* name, void (*test)()) {
+                std::fprintf(stderr, "running TLS transport case %s\n", name);
+                std::fflush(stderr);
+                test();
+            };
+            run("NonBlockingRead", NonBlockingRead);
+            run("WriteBackPressure", WriteBackPressure);
+            run("BlockingTransport", BlockingTransport);
+            run("NonBlockingTransport", NonBlockingTransport);
+            run("ReceiveTimeout", ReceiveTimeout);
+            run("SendTimeout", SendTimeout);
+            run("LargeRecordSendTimeout", LargeRecordSendTimeout);
 #ifndef _WIN32
-            SignalInterruptsBlockingRead();
+            run("SignalInterruptsBlockingRead", SignalInterruptsBlockingRead);
 #endif
-            ConsultsNativeOwnerTransfer();
-            ClosedDescriptor();
-            ReassignedSocket();
+            run("ConsultsNativeOwnerTransfer", ConsultsNativeOwnerTransfer);
+            run("ClosedDescriptor", ClosedDescriptor);
+            run("ReassignedSocket", ReassignedSocket);
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "failed: %s\n", error.what());

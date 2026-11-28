@@ -1,7 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include <cerrno>
+#include <stdexcept>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -47,7 +49,14 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
     if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
+        const auto resolved = ResolveArchivedPath_nid_no_patch(copy.c_str());
+        if (AppArchiveOnly_nid_no_patch(resolved)) {
+            AppArchiveNode node{};
+            if (!AppArchiveLookup_nid_no_patch(resolved, &node)) throw std::logic_error("access: " + resolved.string() + " left app0.zar while checking it");
+            if (mode == 0 || mode == 4 || (node.Directory && (mode & 2) == 0)) return 0;
+            if ((mode & 2) == 0) { errno = 13; return -1; }
+            NotImplemented_nid_no_patch(("access for writing to the app0.zar entry " + copy).c_str());
+        }
 #ifdef _WIN32
         const auto target = FollowedPath(resolved);
         const DWORD attributes = target.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(target.c_str());

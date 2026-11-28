@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceDepth2/include/InventoryExports.hpp"
 #include "prx/libSceDepth2/include/Api.hpp"
@@ -65,43 +66,49 @@ int APS5_VABI sceDepth2QueryMemory(const SceDepth2Param* param, SceDepth2Memory*
     if (param == nullptr || mem == nullptr) {
         return ErrorNullPointer;
     }
-    if (param->size != 0x40) {
+    SceDepth2Param query{};
+    if (!GuestPtr<const SceDepth2Param>(param).CopyIn(query)) {
+        return ErrorNullPointer;
+    }
+    if (query.size != 0x40) {
         return ErrorInvalidSize;
     }
-    if (param->type != 0 && param->type != 2 && param->type != 3 && param->type != 4) {
+    if (query.type != 0 && query.type != 2 && query.type != 3 && query.type != 4) {
         return ErrorInvalidType;
     }
-    if (param->mode != 0 && param->mode != 1) {
+    if (query.mode != 0 && query.mode != 1) {
         return ErrorInvalidMode;
     }
-    if (!IsValidResolution(param->inputWidth, param->inputHeight, param->mode, param->type)) {
-        return param->mode == 1 ? ErrorInvalidInputResolutionMode1 : ErrorInvalidMode;
+    if (!IsValidResolution(query.inputWidth, query.inputHeight, query.mode, query.type)) {
+        return query.mode == 1 ? ErrorInvalidInputResolutionMode1 : ErrorInvalidMode;
     }
-    if (param->unknown0c > 1) {
+    if (query.unknown0c > 1) {
         return ErrorInvalidInputProperty;
     }
-    if (!IsValidResolution(param->outputWidth, param->outputHeight, param->mode, param->type)) {
+    if (!IsValidResolution(query.outputWidth, query.outputHeight, query.mode, query.type)) {
         return ErrorInvalidMode;
     }
-    if (param->unknown18 > 1) {
+    if (query.unknown18 > 1) {
         return ErrorInvalidOutputProperty;
     }
-    if (param->reserved20 != 0 || param->reserved24 != 0) {
+    if (query.reserved20 != 0 || query.reserved24 != 0) {
         return ErrorReservedNotEmpty;
     }
-    if (param->unknown30 >= 7 || param->unknown34 >= 8) {
+    if (query.unknown30 >= 7 || query.unknown34 >= 8) {
         return ErrorInvalidValue;
     }
     uint64_t size = 0;
-    if ((param->inputWidth == 320 && param->inputHeight == 200) || (param->inputWidth == 480 && param->inputHeight == 270)) {
+    if ((query.inputWidth == 320 && query.inputHeight == 200) || (query.inputWidth == 480 && query.inputHeight == 270)) {
         size = 0xc00000;
-    } else if ((param->inputWidth == 640 && param->inputHeight == 400) || (param->inputWidth == 960 && param->inputHeight == 540)) {
+    } else if ((query.inputWidth == 640 && query.inputHeight == 400) || (query.inputWidth == 960 && query.inputHeight == 540)) {
         size = 0x2000000;
-    } else if ((param->inputWidth == 1280 && param->inputHeight == 800) || (param->inputWidth == 1920 && param->inputHeight == 1080)) {
+    } else if ((query.inputWidth == 1280 && query.inputHeight == 800) || (query.inputWidth == 1920 && query.inputHeight == 1080)) {
         size = 0x8000000;
     }
-    mem->size = size;
-    mem->alignment = 0x40000;
+    const SceDepth2Memory memory{size, 0x40000};
+    if (!GuestPtr<SceDepth2Memory>(mem).CopyOut(memory)) {
+        return ErrorNullPointer;
+    }
     return 0;
 }
 

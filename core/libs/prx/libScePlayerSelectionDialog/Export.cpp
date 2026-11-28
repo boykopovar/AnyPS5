@@ -85,7 +85,7 @@ int APS5_VABI scePlayerSelectionDialogParamInitialize(PlayerSelectionDialogParam
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  PlayerSelectionDialogParam local{};
  local.base.size = sizeof(local.base);
- local.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param->base)) - 1060003575u;
+ local.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u;
  local.size = sizeof(local);
  const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(param, &local, sizeof(local));

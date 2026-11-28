@@ -867,6 +867,16 @@ int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char* pass, void** pkey,
 int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa);
 void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa);
 void LibreSslRsaFree_nid_no_patch(LibreSslRsa* rsa);
+int LibreSslRsaSize_nid_no_patch(const LibreSslRsa* rsa);
+int LibreSslRsaFlags_nid_no_patch(const LibreSslRsa* rsa);
+int LibreSslRsaPublicEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
+int LibreSslRsaPublicDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
+int LibreSslRsaPrivateEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
+int LibreSslRsaPrivateDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
+int LibreSslRsaSign_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa);
+int LibreSslRsaVerify_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa);
+int LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength);
+int LibreSslRsaVerifyPkcs1Pss_nid_no_patch(LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength);
 int APS5_VABI RSA_generate_key_ex_nid_postfix(LibreSslRsa* rsa, int bits, Bignum* exponent, void* callback);
 LibreSslRsa* APS5_VABI RSA_new_nid_postfix(void);
 int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength);
@@ -893,6 +903,7 @@ int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx);
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path);
 int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void);
 LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method);
+void* LibreSslNewContext_nid_no_patch(const void* method);
 void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(LibreSslCtx* ctx, void* callback);
 int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void);
@@ -951,7 +962,7 @@ int APS5_VABI SSL_peek_nid_postfix(LibreSslSsl* ssl, void* buffer, int length);
 int APS5_VABI SSL_pending_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_read_nid_postfix(LibreSslSsl* ssl, void* buffer, int length);
 int APS5_VABI SSL_select_next_proto_nid_postfix(unsigned char** output, unsigned char* outputLength, const unsigned char* peer, std::uint32_t peerLength, const unsigned char* supported, std::uint32_t supportedLength);
-int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void);
+LibreSslCtx* APS5_VABI SSL_set_SSL_CTX_nid_postfix(LibreSslSsl* ssl, LibreSslCtx* ctx);
 int APS5_VABI SSL_set_bio_nid_postfix(void);
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value);
@@ -1077,5 +1088,15 @@ const char* APS5_VABI RAND_file_name_nid_postfix(char* buffer, std::size_t size)
 void* APS5_VABI CRYPTO_malloc_nid_postfix(int count, const char*, int);
 void APS5_VABI CRYPTO_free_nid_postfix(void* pointer);
 int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*);
+
+void* APS5_VABI NCONF_new_nid_no_patch(const void* method);
+int APS5_VABI NCONF_load_nid_no_patch(void* conf, const char* file, long* eline);
+void APS5_VABI NCONF_free_nid_no_patch(void* conf);
+void* APS5_VABI NCONF_get_section_nid_no_patch(void* conf, const char* section);
+const char* APS5_VABI NCONF_get_string_nid_no_patch(const void* conf, const char* section, const char* name);
+int APS5_VABI sk_CONF_VALUE_num_nid_no_patch(const void* section);
+void* APS5_VABI sk_CONF_VALUE_value_nid_no_patch(const void* section, int index);
+int APS5_VABI CONF_modules_load_nid_no_patch(const void* cnf, const char* appname, std::uint64_t flags);
+int APS5_VABI CONF_module_add_nid_no_patch(const char* name, int (*init)(void*, const void*), void (*finish)(void*));
 
 }

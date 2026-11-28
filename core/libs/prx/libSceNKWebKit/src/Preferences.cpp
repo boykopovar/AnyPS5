@@ -838,6 +838,14 @@ bool APS5_VABI WKPreferencesGetAcceleratedDrawingEnabled(const void* preferences
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"AcceleratedDrawingEnabled");
 }
 
+void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"CanvasUsesAcceleratedDrawing", flag);
+}
+
+bool APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"CanvasUsesAcceleratedDrawing");
+}
+
 void APS5_VABI WKPreferencesSetCanvasUsesAcceleratedDrawing(const void* preferencesRef, bool flag) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"CanvasUsesAcceleratedDrawing", flag);
 }

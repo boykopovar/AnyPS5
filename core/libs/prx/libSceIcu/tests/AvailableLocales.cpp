@@ -4,6 +4,7 @@
 #include "unicode/udata.h"
 #include "unicode/uenum.h"
 #include "unicode/uloc.h"
+#include "unicode/ures.h"
 #include "unicode/utypes.h"
 #include <array>
 #include <cerrno>
@@ -33,6 +34,8 @@ namespace {
 
 static_assert(std::is_same_v<decltype(&uloc_openAvailableByType_nid_postfix),
                              UEnumeration* (APS5_VABI*)(std::int32_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ures_openAvailableLocales_nid_postfix),
+                             UEnumeration* (APS5_VABI*)(const char*, std::int32_t*)>);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -191,6 +194,26 @@ void CompareEnumerations(UEnumeration* host, UEnumeration* guest, UErrorCode& ho
     }
 }
 
+void CompareResourceLocales(const char* path, bool found) {
+    UErrorCode hostStatus = U_USING_FALLBACK_WARNING;
+    std::int32_t status = hostStatus;
+    UEnumeration* host = ures_openAvailableLocales(path, &hostStatus);
+    UEnumeration* guest = ures_openAvailableLocales_nid_postfix(path, &status);
+    Require((host != nullptr) == found && (guest != nullptr) == found && status == hostStatus,
+            "resource package open matches bundled ICU");
+    if (guest) {
+        Require(uenum_count_nid_postfix(guest, &status) == 2, "resource package enumerates installed locales");
+        CompareEnumerations(host, guest, hostStatus, status);
+        guest->reset(guest, &status);
+        std::int32_t length = -1;
+        const char16_t* first = uenum_unext_nid_postfix(guest, &length, &status);
+        Require(first && length == 2 && std::u16string_view(first, static_cast<std::size_t>(length)) == u"en",
+                "resource package enumeration can reset and read UTF-16");
+    }
+    uenum_close(host);
+    uenum_close_nid_postfix(guest);
+}
+
 void CheckErrorsAndParity() {
     for (std::int32_t type : {0, 1, 2}) {
         UErrorCode hostStatus = U_ZERO_ERROR;
@@ -221,6 +244,13 @@ void CheckErrorsAndParity() {
     }
 
     RejectsInvalid([] { uloc_openAvailableByType_nid_postfix(0, nullptr); }, "null status is rejected");
+    const auto* unreadablePath = reinterpret_cast<const char*>(std::uintptr_t{1});
+    std::int32_t prefailed = U_BUFFER_OVERFLOW_ERROR;
+    Require(!ures_openAvailableLocales_nid_postfix(unreadablePath, &prefailed) && prefailed == U_BUFFER_OVERFLOW_ERROR,
+            "resource locale enumeration preserves a pre-existing failure without reading the path");
+    RejectsInvalid([] { ures_openAvailableLocales_nid_postfix(nullptr, nullptr); },
+                   "resource locale enumeration rejects null status");
+    CompareResourceLocales("anyps5_missing_locale_test_package", false);
 
 #ifdef _WIN32
     const std::size_t pageSize = 4096;
@@ -342,6 +372,16 @@ void CheckWithSyntheticData() {
     CheckEnumeration(ULOC_AVAILABLE_DEFAULT, {"en", "fr_FR"});
     CheckEnumeration(ULOC_AVAILABLE_ONLY_LEGACY_ALIASES, {"iw", "no_NO_NY"});
     CheckEnumeration(ULOC_AVAILABLE_WITH_LEGACY_ALIASES, {"en", "fr_FR", "iw", "no_NO_NY"});
+    CompareResourceLocales(nullptr, true);
+
+    UResourceBundle* bundle = ures_openDirect(nullptr, "res_index", &hostStatus);
+    Require(bundle != nullptr && U_SUCCESS(hostStatus), "open a native resource bundle with the synthetic index");
+    const char* expectedLocale = ures_getLocale(bundle, &hostStatus);
+    status = U_ZERO_ERROR;
+    Require(expectedLocale != nullptr && ures_getLocale_nid_postfix(bundle, &status) == expectedLocale &&
+            ures_getLocaleInternal_nid_postfix(bundle, &status) == expectedLocale && status == hostStatus,
+            "both guest getters return the bundled ICU actual locale pointer");
+    ures_close(bundle);
 
     std::int32_t invalidStatus = 0;
     Require(!uloc_openAvailableByType_nid_postfix(ULOC_AVAILABLE_COUNT, &invalidStatus) &&

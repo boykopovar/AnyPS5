@@ -10,6 +10,7 @@
 //   Corporation and others.  All Rights Reserved.
 
 #include "prx/libSceIcu/include/InventoryExports.hpp"
+#include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -93,13 +94,23 @@ std::set<std::string>& DefaultNames() {
 }
 
 const char* SetSystemDefault() {
-    std::string name = Canonicalize(SystemLocaleId().c_str());
+    const std::string& system = SystemLocaleId();
+    std::string name = Icu::DefaultLocaleId(system.c_str())
+                           ? Icu::CanonicalLocaleName(system.c_str())
+                           : Canonicalize(system.c_str());
     if (LanguageLength(name) >= LanguageCapacity) name.clear();
-    std::lock_guard lock(defaultMutex);
     defaultName = DefaultNames().insert(std::move(name)).first->c_str();
     return defaultName;
 }
 
+}
+
+bool Icu::DefaultLocaleId(const char* locale) {
+    static constexpr std::string_view id = "i-default";
+    return locale && std::strncmp(locale, id.data(), id.size()) == 0 &&
+           (locale[id.size()] == '\0' || locale[id.size()] == '_' ||
+            locale[id.size()] == '-' || locale[id.size()] == '.' ||
+            locale[id.size()] == '@');
 }
 
 extern "C" {
@@ -109,11 +120,8 @@ const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix() {
 }
 
 const char* APS5_VABI uloc_getDefault() {
-    {
-        std::lock_guard lock(defaultMutex);
-        if (defaultName) return defaultName;
-    }
-    return SetSystemDefault();
+    std::lock_guard lock(defaultMutex);
+    return defaultName ? defaultName : SetSystemDefault();
 }
 
 }
@@ -174,6 +182,7 @@ void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::in
     if (!readable) NotImplemented_nid_no_patch("uloc_setDefault: unreadable UErrorCode");
     if (incoming > 0) return;
     if (!newDefaultLocale) {
+        std::lock_guard lock(defaultMutex);
         SetSystemDefault();
         return;
     }

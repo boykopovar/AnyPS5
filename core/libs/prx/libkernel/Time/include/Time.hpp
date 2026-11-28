@@ -6,6 +6,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#ifdef APS5_MQUEUE_TESTING
+using RealtimeClockHookForTesting = int (*)(KernelTimespec*);
+#endif
+
 extern "C" {
 
     std::uint64_t APS5_VABI sceKernelGetProcessTime();
@@ -25,6 +29,9 @@ extern "C" {
     int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz);
     void SetGuestTimezone_nid_no_patch(std::int32_t minutesWest, std::int32_t daylightTime);
     void ResetGuestTimezone_nid_no_patch();
+#ifdef APS5_MQUEUE_TESTING
+    void SetRealtimeClockHookForTesting(RealtimeClockHookForTesting hook);
+#endif
 
     void KernelPauseGuestClock_nid_no_patch();
     void KernelResumeGuestClock_nid_no_patch();

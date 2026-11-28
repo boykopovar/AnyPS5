@@ -4,7 +4,6 @@
 #include FT_FREETYPE_H
 #include FT_GZIP_H
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -72,18 +71,12 @@ std::size_t BytesProduced(const std::vector<std::uint8_t>& produced, FT_Error er
     return static_cast<std::size_t>(std::mismatch(produced.begin(), produced.end(), repeated.begin()).first - produced.begin());
 }
 
-void CopyGuestInBytesPreservingErrno(const void* guestAddress, void* hostBuffer, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(hostBuffer, guestAddress, bytes);
-    errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+void CopyGuestInBytes(const void* guestAddress, void* hostBuffer, std::size_t bytes, const char* caller) {
+    if (!GuestCopyIn_nid_no_patch(hostBuffer, guestAddress, bytes)) NotImplemented_nid_no_patch(caller);
 }
 
-void CopyGuestOutBytesPreservingErrno(void* guestAddress, const void* hostBuffer, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(guestAddress, hostBuffer, bytes);
-    errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+void CopyGuestOutBytes(void* guestAddress, const void* hostBuffer, std::size_t bytes, const char* caller) {
+    if (!GuestCopyOut_nid_no_patch(guestAddress, hostBuffer, bytes)) NotImplemented_nid_no_patch(caller);
 }
 
 }
@@ -93,14 +86,14 @@ extern "C" {
 std::int32_t APS5_VABI FT_Gzip_Uncompress_nid_postfix(FreeType::GuestMemoryRec* memory, std::uint8_t* output, std::uint64_t* outputLength, const std::uint8_t* input, std::uint64_t inputLength) {
     if (!memory || !outputLength || !output) return FT_Err_Invalid_Argument;
     std::uint64_t requestedLength = 0;
-    CopyGuestInBytesPreservingErrno(outputLength, &requestedLength, sizeof(requestedLength), __func__);
+    CopyGuestInBytes(outputLength, &requestedLength, sizeof(requestedLength), __func__);
     if (requestedLength > std::numeric_limits<FT_ULong>::max() || inputLength > std::numeric_limits<FT_ULong>::max()) return FT_Err_Invalid_Argument;
     FreeType::GuestMemoryRec guestMemory{};
-    CopyGuestInBytesPreservingErrno(memory, &guestMemory, sizeof(guestMemory), __func__);
+    CopyGuestInBytes(memory, &guestMemory, sizeof(guestMemory), __func__);
     std::vector<std::uint8_t> hostInput;
     if (input && inputLength > 0) {
         hostInput.resize(static_cast<std::size_t>(inputLength));
-        CopyGuestInBytesPreservingErrno(input, hostInput.data(), hostInput.size(), __func__);
+        CopyGuestInBytes(input, hostInput.data(), hostInput.size(), __func__);
     }
     const FT_Byte* nativeInput = input ? hostInput.data() : nullptr;
     std::vector<std::uint8_t> hostOutput(requestedLength ? static_cast<std::size_t>(requestedLength) : 1);
@@ -111,13 +104,13 @@ std::int32_t APS5_VABI FT_Gzip_Uncompress_nid_postfix(FreeType::GuestMemoryRec* 
     if (error == FT_Err_Array_Too_Large || error == FT_Err_Invalid_Table || error == FT_Err_Out_Of_Memory) {
         const std::size_t produced = BytesProduced(hostOutput, error, context.allocated, static_cast<FT_ULong>(requestedLength), nativeInput,
                                                    static_cast<FT_ULong>(inputLength));
-        if (produced > 0) CopyGuestOutBytesPreservingErrno(output, hostOutput.data(), produced, __func__);
+        if (produced > 0) CopyGuestOutBytes(output, hostOutput.data(), produced, __func__);
     }
     if (error != FT_Err_Ok || !input) return error;
     const std::uint64_t writtenLength = length;
-    CopyGuestOutBytesPreservingErrno(outputLength, &requestedLength, sizeof(requestedLength), __func__);
-    CopyGuestOutBytesPreservingErrno(output, hostOutput.data(), static_cast<std::size_t>(writtenLength), __func__);
-    CopyGuestOutBytesPreservingErrno(outputLength, &writtenLength, sizeof(writtenLength), __func__);
+    CopyGuestOutBytes(outputLength, &requestedLength, sizeof(requestedLength), __func__);
+    CopyGuestOutBytes(output, hostOutput.data(), static_cast<std::size_t>(writtenLength), __func__);
+    CopyGuestOutBytes(outputLength, &writtenLength, sizeof(writtenLength), __func__);
     return FT_Err_Ok;
 }
 
