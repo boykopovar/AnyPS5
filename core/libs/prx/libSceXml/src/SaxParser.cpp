@@ -491,15 +491,25 @@ int ParserParse(XmlHandle* self, const XmlString* text, bool last) {
     DocumentState& doc = state->document;
     std::string combined;
     std::string_view in(text->buffer, text->size);
-    if (!doc.started && doc.pending.empty() && in.size() >= 4 && static_cast<unsigned char>(in[0]) == 0xef &&
-            static_cast<unsigned char>(in[1]) == 0xbb && static_cast<unsigned char>(in[2]) == 0xbf) {
-        in.remove_prefix(3);
-    }
     if (!doc.pending.empty()) {
         combined = std::move(doc.pending);
         doc.pending.clear();
         combined.append(in);
         in = combined;
+    }
+    if (!doc.started) {
+        const bool partialBom1 = in.size() == 1 && static_cast<unsigned char>(in[0]) == 0xef;
+        const bool partialBom2 = in.size() == 2 && static_cast<unsigned char>(in[0]) == 0xef &&
+                                 static_cast<unsigned char>(in[1]) == 0xbb;
+        if (!last && (partialBom1 || partialBom2)) {
+            doc.pending.assign(in);
+            state->inProgress = true;
+            return StatusInProgress;
+        }
+        if (in.size() >= 3 && static_cast<unsigned char>(in[0]) == 0xef &&
+                static_cast<unsigned char>(in[1]) == 0xbb && static_cast<unsigned char>(in[2]) == 0xbf) {
+            in.remove_prefix(3);
+        }
     }
 
     auto needMore = [&](std::size_t from, int eofStatus) -> int {
