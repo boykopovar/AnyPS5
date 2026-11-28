@@ -221,6 +221,41 @@ class AccessTests(unittest.TestCase):
         )
         self.assertEqual(findings(source), [("sceExampleSn", "p", ["library call"]), ("sceExampleS", "p", ["library call"])])
 
+    def test_string_search_concatenation_and_conversion_operands_are_checked(self):
+        source = (
+            "int APS5_VABI sceExampleFind(const void* p, std::size_t n) { return std::memchr(p, 0, n) != nullptr; }\n"
+            "int APS5_VABI sceExampleAppend(char* out, const char* in) { std::strcat(out, in); return 0; }\n"
+            "int APS5_VABI sceExampleAppendN(char* out, const char* in) { std::strncat(out, in, 4); return 0; }\n"
+            "int APS5_VABI sceExampleFirst(const char* p) { return std::strchr(p, '=') != nullptr; }\n"
+            "int APS5_VABI sceExampleLast(const char* p) { return std::strrchr(p, '_') != nullptr; }\n"
+            "int APS5_VABI sceExampleSearch(const char* p, const char* q) { return std::strstr(p, q) != nullptr; }\n"
+            "int APS5_VABI sceExampleAny(const char* p, const char* q) { return std::strpbrk(p, q) != nullptr; }\n"
+            "int APS5_VABI sceExampleSpan(const char* p, const char* q) { return static_cast<int>(std::strspn(p, q)); }\n"
+            "int APS5_VABI sceExampleBreak(const char* p, const char* q) { return static_cast<int>(std::strcspn(p, q)); }\n"
+            "long long APS5_VABI sceExampleParse(const char* p, char** end) { return std::strtoll(p, end, 10); }\n"
+            "long long APS5_VABI sceExampleParseLocal(const char* p) { char* end = nullptr; return std::strtoll(p, &end, 10); }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleFind", "p", ["library call"]),
+            ("sceExampleAppend", "out", ["library call"]),
+            ("sceExampleAppend", "in", ["library call"]),
+            ("sceExampleAppendN", "out", ["library call"]),
+            ("sceExampleAppendN", "in", ["library call"]),
+            ("sceExampleFirst", "p", ["library call"]),
+            ("sceExampleLast", "p", ["library call"]),
+            ("sceExampleSearch", "p", ["library call"]),
+            ("sceExampleSearch", "q", ["library call"]),
+            ("sceExampleAny", "p", ["library call"]),
+            ("sceExampleAny", "q", ["library call"]),
+            ("sceExampleSpan", "p", ["library call"]),
+            ("sceExampleSpan", "q", ["library call"]),
+            ("sceExampleBreak", "p", ["library call"]),
+            ("sceExampleBreak", "q", ["library call"]),
+            ("sceExampleParse", "p", ["library call"]),
+            ("sceExampleParse", "end", ["library call"]),
+            ("sceExampleParseLocal", "p", ["library call"]),
+        ])
+
     def test_line_is_the_earliest_access_of_any_kind(self):
         entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code("int APS5_VABI sceExampleEarly(Info* p)\n{\n  p[0] = {};\n  p->field = 1;\n  return 0;\n}\n"))
         self.assertEqual((entry["line"], entry["kinds"]), (3, ["index", "member"]))
@@ -322,6 +357,30 @@ class CommandLineTests(unittest.TestCase):
                     self.run_main(["--json", name], files)
                 self.assertEqual(raised.exception.code, 2)
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
+
+    def test_broken_pipe_exits_cleanly_without_traceback(self):
+        import os
+        import subprocess
+        script = Path(guest_pointer_audit.__file__).resolve()
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(script), "libc"],
+                stdout=write_fd,
+                stderr=subprocess.PIPE,
+            )
+        finally:
+            os.close(write_fd)
+        try:
+            _, stderr_bytes = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr_bytes = process.communicate()
+            raise
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(stderr, "")
 
 
     def test_split_top_level_ignores_commas_inside_brackets(self):

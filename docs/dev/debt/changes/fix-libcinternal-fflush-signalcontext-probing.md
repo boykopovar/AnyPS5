@@ -1,0 +1,9 @@
+# libSceLibcInternal
+
+## change [signalcontext]
+
+- [signalcontext](../../../core/libs/prx/libSceLibcInternal/UserContext.cpp) (libSceLibcInternal, NID `SQGxZCv3aYk`) is not measured on a console, which lists only the name in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c). It follows FreeBSD 11.4's [`signalcontext.c`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/amd64/gen/signalcontext.c#L44-L106): copies the context below its stack pointer, builds an 80-byte `siginfo_t` with only `si_signo`, clears the signal from the mask, links `uc_link` to the copy, and enters via `makecontext` (passing its three extra argument registers). Null context returns -1 with `EINVAL`; unmapped context or stack returns -1 with `EFAULT` via `GuestCopyIn` / `GuestCopyOut` as a host-safety fallback instead of faulting; `errno` is preserved on success.
+
+## change [__fflush]
+
+- [__fflush](../../../core/libs/prx/libSceLibcInternal/Stream.cpp) (libSceLibcInternal, NID `E1iwBYkG3CM`) reuses the public `fflush` implementation (`fflush_nid_postfix`) rather than FreeBSD 11.4 libc's unlocked helper ([fflush.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdio/fflush.c)): it acquires stream locks. It probes non-null `stream` pointers with `GuestCopyIn`, returning -1 with `EFAULT` (14) on an unmapped pointer as a host-safety fallback instead of faulting. A closed stream returns 0 without modifying `errno`, as FreeBSD does for a stream with 0 flags, instead of the public `fflush` result of -1 with `EBADF`. Passing null flushes all open streams and returns 0 when all writes succeed (preserving `errno`) or EOF on write error. Console behavior is unverified.

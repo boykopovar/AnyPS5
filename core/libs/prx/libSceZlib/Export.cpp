@@ -69,8 +69,7 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     if (!initialized) return NOT_INITIALIZED;
     if (!source || !sourceLength || !destination || !requestId || !destinationLength ||
         destinationLength > 65536 || destinationLength % 2048 != 0) return INVALID_ARGUMENT;
-    if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0)
-        throw std::runtime_error("sceZlibInflate: unaligned destination driver behavior is not implemented");
+    if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0) return INVALID_ARGUMENT;
     if (nextId == std::numeric_limits<std::uint64_t>::max()) throw std::runtime_error("sceZlibInflate: request IDs exhausted");
     const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source);
     if (sourceLength > std::numeric_limits<std::uintptr_t>::max() - sourceAddress) return INVALID_ARGUMENT;
