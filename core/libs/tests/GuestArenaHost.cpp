@@ -25,6 +25,10 @@
 
 using namespace GuestArena;
 
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
+    throw std::runtime_error(std::string(name) + " not implemented");
+}
+
 namespace {
 
 constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull;
@@ -79,6 +83,35 @@ void CheckAvailable() {
     GuestArenaRange_nid_postfix(&base, &bytes);
     Require(base == ArenaStart, "the guest arena does not start at the PS5 application map base");
     Require(base + bytes == ApplicationAreaEnd, "the guest arena does not end at the PS5 application map limit");
+}
+
+void CheckMapperWindow() {
+    std::uintptr_t base = 0;
+    std::size_t bytes = 0;
+    int error = -1;
+    GuestArenaMapperWindow_nid_no_patch(&base, &bytes, &error);
+    Require(base == 0x0000080000000000ull + GuestAddressOffset && error == 0 && bytes == (std::size_t{512} << 30), "the AMM window was not reserved at startup");
+    for (std::uintptr_t cursor = base; cursor < base + bytes;) {
+        mach_vm_address_t address = cursor;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        Require(mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS && address <= cursor,
+            "the host does not hold the AMM window reserved");
+        cursor = static_cast<std::uintptr_t>(address + size);
+    }
+    auto* inside = reinterpret_cast<void*>(base);
+    Require(GuestArenaContains_nid_postfix(inside, 0x10000), "the guest arena does not contain the AMM window");
+    bool rejected = false;
+    try {
+        GuestArenaFixedTarget_nid_no_patch(inside, 0x10000);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected, "a fixed mapping inside the AMM window was accepted outside AMM access");
+    const MapperAccess access;
+    Require(GuestArenaFixedTarget_nid_no_patch(inside, 0x10000), "a fixed mapping inside the AMM window was refused inside AMM access");
 }
 
 void CheckSkipsUnmappable() {
@@ -244,6 +277,7 @@ int main(int argc, char** argv) {
         Require(argc == 2, "expected a guest arena test mode");
         const std::string_view mode(argv[1]);
         if (mode == "available") CheckAvailable();
+        else if (mode == "mapper-window") CheckMapperWindow();
         else if (mode == "unmappable") CheckSkipsUnmappable();
         else if (mode == "host") CheckHostRegionsKept();
         else if (mode == "gap") CheckGapBesideHostRegion();
