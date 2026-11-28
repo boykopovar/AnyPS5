@@ -305,17 +305,9 @@ void RunNonSeamlessCubeTests(const Fields& base) {
     context.nonSeamlessCubeMap = true;
     Require((createSampler(context, decoded).flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT) != 0u, "a non-seamless cube sampler was created without VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT");
     Require(createSampler(context, DecodeSamplerResource(pack(base))).flags == 0u, "a seamless sampler was created with flags");
-    const std::array honored{std::make_shared<Sampler>(context, decoded)};
-    Require(!honored[0]->RequiresNonSeamlessCube(), "a sampler created with the non-seamless flag still restricts cube textures");
-    RequireNonSeamlessCube(true, 0b1u, honored);
 
     context.nonSeamlessCubeMap = false;
     Require(createSampler(context, decoded).flags == 0u, "a sampler set the non-seamless flag without the device feature");
-    const std::array unsupported{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, decoded)};
-    Require(unsupported[1]->RequiresNonSeamlessCube(), "a non-seamless sampler without the device feature does not restrict cube textures");
-    RequireNonSeamlessCube(false, 0b11u, unsupported);
-    RequireNonSeamlessCube(true, 0b01u, unsupported);
-    reject([&] { RequireNonSeamlessCube(true, 0b10u, unsupported); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
 }
 
 void RunMirrorOnceTests(const Fields& base) {

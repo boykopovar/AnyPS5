@@ -2086,7 +2086,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (state->depthClipControl) deviceExtensions.push_back(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
     }
     VkPhysicalDeviceNonSeamlessCubeMapFeaturesEXT nonSeamlessCubeFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT};
-    if (hasExtension(VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME)) {
+    if (hasExtension(VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME) && std::getenv("APS5_NO_NON_SEAMLESS_CUBE_MAP") == nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &nonSeamlessCubeFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->nonSeamlessCubeMap = nonSeamlessCubeFeatures.nonSeamlessCubeMap == VK_TRUE;
