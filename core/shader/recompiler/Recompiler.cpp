@@ -2266,6 +2266,12 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
         }
     }
+    // A disabled TYPE 2/3 V# and a null V# both reach the snapshot as zero words; only
+    // keepsDestination tells their loads apart, and the specialization keys on it. Only kept
+    // buffers are mixed, so a snapshot without one hashes as before.
+    for (std::size_t index = 0; index < snapshot.buffers.size() && index < snapshot.keepsDestination.size(); ++index) {
+        if (snapshot.keepsDestination[index] != 0u) mix(0x4b454550ull << 32u | index);
+    }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
     mix(snapshot.registeredImages.size());

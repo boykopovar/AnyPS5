@@ -314,6 +314,42 @@ void DisabledMultiwordLoads(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void CachedKeptDestinationOrder(AgcDriver::VulkanDevice& device) {
+    alignas(256) std::array<std::uint32_t, Lanes * 4u> input{};
+    alignas(256) std::array<std::uint32_t, Lanes * 4u> output{};
+    constexpr std::uint32_t Previous = 0xa1a2a3a4u;
+    for (std::uint32_t i = 0u; i < input.size(); ++i) input[i] = 0x2468ace1u ^ (i * 0x10305u);
+    alignas(256) std::array<std::uint32_t, 9> code{0x34020084u, 0x7e0802ffu, Previous, 0xe0301000u, 0x80000401u, 0xbf8c3f70u, 0xe0701000u, 0x80010401u, 0xbf810000u};
+    std::array<std::uint32_t, 8> userData{};
+    const auto destination = BufferDescriptor(output.data(), sizeof(output));
+    std::copy(destination.begin(), destination.end(), userData.begin() + 4u);
+    auto request = Request(userData, device.ComputeTarget(Lanes), {});
+    request.useCache = true;
+    request.context.typedBufferLoads = true;
+    request.shader.code = code;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+    for (const auto& order : {std::array{0u, 0x91016facu, 0u, 0xd1016facu}, std::array{0x91016facu, 0u, 0xd1016facu, 0u}}) {
+        for (const auto word3 : order) {
+            auto source = BufferDescriptor(input.data(), sizeof(input));
+            if (word3 == 0u) source.fill(0u);
+            else source[3] = word3;
+            std::copy(source.begin(), source.end(), userData.begin());
+            output.fill(Fill);
+            ShaderRecompiler::SrtRuntime runtime{};
+            runtime.userData = userData;
+            const auto capture = ShaderRecompiler::CaptureResources(request, runtime);
+            Require(capture != nullptr, "a cached disabled load did not capture");
+            const auto result = ShaderRecompiler::Recompile(request, *capture);
+            device.Dispatch(*result, 1u, 1u, 1u);
+            device.WaitIdle();
+            for (std::uint32_t lane = 0u; lane < Lanes; ++lane) {
+                const auto expected = word3 == 0u ? 0u : Previous;
+                Require(output[lane * 4u] == expected, "cached disabled load with word3 " + Hex(word3) + " lane " + std::to_string(lane) + " returned " + Hex(output[lane * 4u]) + ", expected " + Hex(expected));
+            }
+        }
+    }
+}
+
 void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     constexpr std::uint32_t Value = 0x12345678u;
     alignas(256) static constexpr std::array<std::uint32_t, 5> formattedStore{0x7e0202ffu, Value, 0xe0102000u, 0x80000100u, 0xbf810000u};
@@ -429,6 +465,7 @@ int main() {
         ScalarReads(*device);
         DisabledDescriptors(*device);
         DisabledMultiwordLoads(*device);
+        CachedKeptDestinationOrder(*device);
         DisabledLdsLoads(*device);
         std::puts("buffer descriptor runtime tests passed");
         return 0;
