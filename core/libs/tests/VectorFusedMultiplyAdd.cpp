@@ -90,7 +90,7 @@ void CheckMix(const std::string& name, const std::array<std::uint32_t, 2>& words
     Require(fused == 1u, name + " emits " + std::to_string(fused) + " fused multiply-adds");
 }
 
-void CheckMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& words, RdnaOpcode opcode, std::uint32_t floatMode) {
+void CheckMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& words, RdnaOpcode opcode, std::uint32_t floatMode, std::uint32_t expected = 1u) {
     const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);
     Require(instruction.family == RdnaInstructionFamily::VOP3P, name + " is not decoded as VOP3P");
     Require(instruction.op == opcode, name + " decodes to another opcode");
@@ -110,23 +110,7 @@ void CheckMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& w
         const std::uint32_t rounding = (value->Argument(3)->ImmediateU32() >> InterpolationRound16Shift) & 3u;
         Require(rounding == ((floatMode >> 2u) & 3u), name + " rounds in f16 mode " + std::to_string(rounding));
     }
-    Require(exact == 1u, name + " emits " + std::to_string(exact) + " product-sums rounded once to f16");
-}
-
-void RejectMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& words, std::uint32_t floatMode) {
-    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);
-    IrProgram program;
-    auto& block = program.CreateBlock();
-    program.SetEntryBlock(block);
-    TranslationContext context(program, block, 256);
-    context.SetFloatMode(ShaderFloatMode{floatMode, false, false, false});
-    try {
-        context.TranslateInstruction(instruction);
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()).find("FLOAT_MODE " + std::to_string(floatMode)) != std::string::npos, name + " fails with another error: " + error.what());
-        return;
-    }
-    Require(false, name + " is translated in FLOAT_MODE " + std::to_string(floatMode));
+    Require(exact == expected, name + " emits " + std::to_string(exact) + " product-sums rounded once to f16");
 }
 
 }
@@ -148,7 +132,8 @@ int main() {
         CheckMixHalf("v_fma_mixhi_f16", {0xcc220005u, 0x04220f06u}, RdnaOpcode::VMadMixhiF16, 0xc0u);
         CheckMixHalf("v_fma_mixlo_f16 op_sel_hi:[1,1,1]", {0xcc214005u, 0x1c220f06u}, RdnaOpcode::VMadMixloF16, 0xc0u);
         CheckMixHalf("v_fma_mixlo_f16 with f32 round toward zero", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xf3u);
-        RejectMixHalf("v_fma_mixlo_f16 with f16 denormals flushed", {0xcc210005u, 0x04220f06u}, 0x30u);
+        CheckMixHalf("v_fma_mixlo_f16 with f16 denormals flushed", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0x30u, 2u);
+        CheckMixHalf("v_fma_mixhi_f16 with f16 denormals flushed and round toward -inf", {0xcc220005u, 0x04220f06u}, RdnaOpcode::VMadMixhiF16, 0x38u, 2u);
         CheckMixHalf("v_fma_mixhi_f16 with f16 round toward -inf", {0xcc220005u, 0x04220f06u}, RdnaOpcode::VMadMixhiF16, 0xf8u);
         CheckMixHalf("v_fma_mixlo_f16 with f16 round toward zero", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xccu);
         return 0;
