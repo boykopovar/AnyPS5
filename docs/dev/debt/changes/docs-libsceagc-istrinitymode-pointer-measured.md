@@ -1,0 +1,5 @@
+# libSceAgc
+
+## change [sceAgcGetIsTrinityMode]
+
+- [sceAgcGetIsTrinityMode](../../../core/libs/prx/libSceAgc/Misc/src/Platform.cpp) (libSceAgc) - signature from PPSA26344 (a pointer to a one-byte flag, result ignored); a null or unwritable output pointer throws (rejecting unwritable memory is a host-safety fallback). A PS5 (firmware 11.60, payload process; a title process may differ) returned 0 and stored 0 for a valid pointer (three calls in each of two runs, the 15 neighbouring bytes unchanged) and raised SIGSEGV for the null pointer and for 0x10 (two runs) and for a mapped read-only page (one run; an unmapped pointer was not tried), so the console faults where this throws. The SDK 9.04 module stores `sceKernelIsTrinityMode`'s byte result through the pointer and returns it without an error path, so a console faults on null. Six more disassembled titles (PPSA01494, PPSA18194, PPSA21564, PPSA30839, PPSA31162, PPSA34502) call it once from an initializer with a static byte and check `flag != 0` without passing null
