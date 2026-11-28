@@ -15,13 +15,17 @@ inline bool ParseHostVolumeFlag(std::string_view name, std::string_view value) {
 }
 
 inline int ParseHostVolumeLevel(std::string_view name, std::string_view value) {
-    int parsed = 0;
-    const auto end = value.data() + value.size();
-    const auto result = std::from_chars(value.data(), end, parsed);
-    if (value.empty() || result.ec != std::errc{} || result.ptr != end || parsed < 0 || parsed > HostVolume::MaxVolume) {
+    unsigned int parsed = 0;
+    bool valid = !value.empty();
+    if (valid) {
+        const auto end = value.data() + value.size();
+        const auto result = std::from_chars(value.data(), end, parsed);
+        valid = result.ec == std::errc{} && result.ptr == end && parsed <= static_cast<unsigned int>(HostVolume::MaxVolume);
+    }
+    if (!valid) {
         throw std::runtime_error(std::string(name) + " must be a whole number from 0 to " + std::to_string(HostVolume::MaxVolume) + ", not '" + std::string(value) + "'");
     }
-    return parsed;
+    return static_cast<int>(parsed);
 }
 
 inline std::string HostVolumeMessage(const HostVolume& state) {

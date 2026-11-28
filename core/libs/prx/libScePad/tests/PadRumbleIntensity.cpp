@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/PadRumbleIntensity.hpp"
+#include "prx/libScePad/include/HostVolumeSettings.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -6,6 +7,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -182,6 +184,31 @@ void FocusGateSuppressesOnlyWhileUnfocusedWithThePauseOn() {
     Require(!Pad::RumbleSuppressed(false, false), "an unfocused window with the pause off keeps rumble");
 }
 
+void RejectsHostVolumeLevel(std::string_view value, const char* message) {
+    bool rejected = false;
+    try {
+        ParseHostVolumeLevel("ANYPS5_VOLUME", value);
+    } catch (const std::runtime_error& error) {
+        const std::string what = error.what();
+        rejected = what.find("ANYPS5_VOLUME") != std::string::npos;
+    }
+    Require(rejected, message);
+}
+
+void HostVolumeLevelRejectsSignedZeroAndEmpty() {
+    RejectsHostVolumeLevel("-0", "negative zero is rejected");
+    RejectsHostVolumeLevel("-00", "padded negative zero is rejected");
+    RejectsHostVolumeLevel(std::string_view{}, "default-constructed empty view is rejected");
+    RejectsHostVolumeLevel("", "empty string is rejected");
+    for (const char* invalid : {"-1", "+0", "101", "abc"}) {
+        RejectsHostVolumeLevel(invalid, "invalid host volume level is rejected");
+    }
+    const struct { const char* text; int expected; } valid[] = {{"0", 0}, {"000", 0}, {"50", 50}, {"100", 100}};
+    for (const auto& entry : valid) {
+        Require(ParseHostVolumeLevel("ANYPS5_VOLUME", entry.text) == entry.expected, "valid host volume level is accepted");
+    }
+}
+
 }
 
 int main() {
@@ -196,5 +223,6 @@ int main() {
     RumbleOnFocusLossParserAcceptsOnlyZeroOrOne();
     FocusGateSuppressesOnlyWhileUnfocusedWithThePauseOn();
     FocusSequenceResumesWithTheNextPulse();
+    HostVolumeLevelRejectsSignedZeroAndEmpty();
     return 0;
 }
