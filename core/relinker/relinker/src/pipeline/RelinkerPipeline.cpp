@@ -317,6 +317,47 @@ RelinkResult RelinkerPipeline::Relink() {
         if (!dynSymTabBound || sceSymTabSize < *dynSymTabBound)
             dynSymTabBound = sceSymTabSize;
     }
+    if (!dynSymTabBound && (hasTag(DT_HASH) || hasTag(DT_GNU_HASH))) {
+        const auto readHashWord = [&](const FileByteOffset offset) {
+            if (offset > raw.size() || raw.size() - offset < 4)
+                throw RelinkerException("Dynamic symbol table: unmapped address", offset);
+            std::uint32_t word = 0;
+            std::memcpy(&word, raw.data() + offset, sizeof(word));
+            return word;
+        };
+        std::uint64_t symbolCount = 0;
+        if (hasTag(DT_HASH)) {
+            const FileByteOffset table = elfReader->TranslateVirtualAddress(getTagValue(DT_HASH));
+            const auto bucketCount = readHashWord(table);
+            symbolCount = readHashWord(table + 4);
+            if (bucketCount == 0 || symbolCount == 0)
+                throw RelinkerException("Dynamic symbol table: invalid SysV hash header", table);
+        } else {
+            const FileByteOffset table = elfReader->TranslateVirtualAddress(getTagValue(DT_GNU_HASH));
+            const auto bucketCount = readHashWord(table);
+            const auto firstSymbol = readHashWord(table + 4);
+            const auto bloomCount = readHashWord(table + 8);
+            if (bucketCount == 0 || bloomCount == 0 || firstSymbol == 0)
+                throw RelinkerException("Dynamic symbol table: invalid GNU hash header", table);
+            const std::uint64_t buckets = table + 16 + static_cast<std::uint64_t>(bloomCount) * 8;
+            std::uint64_t lastBucket = 0;
+            for (std::uint64_t index = 0; index < bucketCount; ++index) {
+                const auto bucket = readHashWord(buckets + index * 4);
+                if (bucket != 0 && bucket < firstSymbol)
+                    throw RelinkerException("Dynamic symbol table: invalid GNU hash bucket", table);
+                lastBucket = std::max<std::uint64_t>(lastBucket, bucket);
+            }
+            symbolCount = firstSymbol;
+            if (lastBucket != 0) {
+                const std::uint64_t chains = buckets + static_cast<std::uint64_t>(bucketCount) * 4;
+                symbolCount = lastBucket;
+                while ((readHashWord(chains + (symbolCount - firstSymbol) * 4) & 1) == 0)
+                    ++symbolCount;
+                ++symbolCount;
+            }
+        }
+        dynSymTabBound = symbolCount * symEntSize;
+    }
     validateSceTableRange(DT_OS_SYMTAB, dynSymTabOffset, dynSymTabSize.value_or(0), "Dynamic symbol table");
 
     if (dynStrTabOffset > raw.size() || dynStrTabSize > raw.size() - dynStrTabOffset)

@@ -761,7 +761,10 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
             } else if (context.cfa == exception->private_2) actions = _Unwind_Action(actions | _UA_HANDLER_FRAME);
             if (frame.personality) {
                 auto result = CallPersonality(frame.personality, actions, exception, &context);
-                if (result == _URC_INSTALL_CONTEXT) LibcRestoreRegisters(context.registers);
+                if (result == _URC_INSTALL_CONTEXT) {
+                    context.registers[7] += context.argumentsSize;
+                    LibcRestoreRegisters(context.registers);
+                }
                 if (result != _URC_CONTINUE_UNWIND) return _URC_FATAL_PHASE2_ERROR;
             }
         }
@@ -952,6 +955,19 @@ const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
     return CursorSlots;
 }
 
+bool LibcUnwindHasFrame_nid_no_patch(const std::uintptr_t* registers) {
+    _Unwind_Context context {};
+    for (unsigned index = 0; index < 17; ++index) context.registers[index] = registers[index];
+    LibcUnwind::Frame frame {};
+    if (LibcUnwind::DecodeFrame(context, frame)) return true;
+#ifdef _WIN32
+    frame = {};
+    return LibcUnwind::VirtualUnwind(context, frame);
+#else
+    return false;
+#endif
+}
+
 extern "C" {
 _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Exception* exception) {
     _Unwind_Context start;
@@ -1063,6 +1079,10 @@ _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn tra
 
 const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
     return nullptr;
+}
+
+bool LibcUnwindHasFrame_nid_no_patch(const std::uintptr_t*) {
+    return false;
 }
 
 extern "C" {

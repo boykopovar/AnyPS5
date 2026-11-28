@@ -273,6 +273,8 @@ struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     GuestSockets::LingerValue udpLinger;
 #endif
     std::atomic<bool> nonblock{false};
+    std::mutex statusMutex;
+    int status = 0;
     std::atomic<int> receiveTimeout{0};
     std::atomic<int> sendTimeout{0};
     std::atomic<int> connectTimeout{0};
@@ -605,6 +607,17 @@ void* APS5_VABI RunNetThread(void* param) {
     const auto* thread = static_cast<const NetThreadParameter*>(param);
     thread->entry(thread->arg);
     return nullptr;
+}
+
+int set_native_nonblock(NativeSocket native, bool enabled) {
+#ifdef _WIN32
+    static_cast<void>(native);
+    static_cast<void>(enabled);
+#else
+    const int old_flags = fcntl(native, F_GETFL, 0);
+    if (old_flags < 0 || fcntl(native, F_SETFL, enabled ? old_flags | O_NONBLOCK : old_flags & ~O_NONBLOCK) != 0) return native_error();
+#endif
+    return 0;
 }
 
 int set_native_timeout(NativeSocket native, int optname, std::int64_t microseconds) {
@@ -1252,32 +1265,39 @@ constexpr int GuestFcntlGetStatus = 3;
 constexpr int GuestFcntlSetStatus = 4;
 constexpr int GuestReadWrite = 2;
 constexpr int GuestNonblocking = 4;
-constexpr int GuestStatusFlagsMask = 7;
+constexpr int GuestKeptStatusFlags = 0x8 | 0x40 | 0x80 | 0x200 | 0x10000;
+constexpr int GuestPosixSharedMemoryFlag = 0x100;
 
 bool ControlSocketStatusForKernel(int descriptor, int command, int flags, int* result, int* error) {
-    bool nonblock = false;
+    std::shared_ptr<NativeSocketHandle> native;
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(descriptor);
         if (it == g_socks.end()) return false;
-        nonblock = it->second.native->nonblock;
+        native = it->second.native;
     }
     *result = 0;
     *error = 0;
+    std::lock_guard statusLock(native->statusMutex);
     if (command == GuestFcntlGetStatus) {
-        *result = GuestReadWrite | (nonblock ? GuestNonblocking : 0);
+        *result = GuestReadWrite | (native->nonblock ? GuestNonblocking : 0) | native->status;
         return true;
     }
     if (command != GuestFcntlSetStatus) {
         *error = NET_EINVAL;
         return true;
     }
-    if ((flags & ~GuestStatusFlagsMask) != 0) {
+    if ((flags & GuestPosixSharedMemoryFlag) != 0) {
         *error = NET_EOPNOTSUPP;
         return true;
     }
-    const int enabled = (flags & GuestNonblocking) != 0 ? 1 : 0;
-    if (sceNetSetsockopt(descriptor, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled)) != 0) *error = *errno_slot();
+    const bool enabled = (flags & GuestNonblocking) != 0;
+    if (const int failure = set_native_nonblock(native->value, enabled)) {
+        *error = failure;
+        return true;
+    }
+    native->nonblock = enabled;
+    native->status = flags & GuestKeptStatusFlags;
     return true;
 }
 
@@ -1564,6 +1584,12 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     connection.tcpKeepInterval = listener.tcpKeepInterval;
     connection.tcpKeepCount = listener.tcpKeepCount;
     connection.native = std::move(handle);
+    bool inheritNonblock = false;
+    {
+        std::lock_guard statusLock(listener.native->statusMutex);
+        inheritNonblock = listener.native->nonblock;
+        connection.native->status = listener.native->status;
+    }
 #ifdef _WIN32
     connection.native->receiveTimeout = listener.native->receiveTimeout.load();
     connection.native->sendTimeout = listener.native->sendTimeout.load();
@@ -1586,7 +1612,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
         }
         g_socks.emplace(descriptor, connection);
     }
-    if (listener.native->nonblock) {
+    if (inheritNonblock) {
         const int enabled = 1;
         if (sceNetSetsockopt(descriptor, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled)) != 0) {
             const int error = *errno_slot();
@@ -2232,11 +2258,10 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
             ::setsockopt(socket.native->value, SOL_SOCKET, SO_OOBINLINE, reinterpret_cast<const char*>(&enabled), sizeof(enabled)) != 0)
             return fail(native_error());
     } else if (optname == NET_SO_NBIO) {
-#ifndef _WIN32
-        const int old_flags = fcntl(socket.native->value, F_GETFL, 0);
-        if (old_flags < 0 || fcntl(socket.native->value, F_SETFL,
-            value ? old_flags | O_NONBLOCK : old_flags & ~O_NONBLOCK) != 0) return fail(native_error());
-#endif
+        std::lock_guard statusLock(socket.native->statusMutex);
+        if (const int error = set_native_nonblock(socket.native->value, value != 0)) return fail(error);
+        socket.native->nonblock = value != 0;
+        return 0;
     } else if (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO) {
         if (value < 0) return fail(NET_EINVAL);
         if (set_native_timeout(socket.native->value, optname, value) != 0) return fail(native_error());
@@ -2261,7 +2286,6 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     auto it = g_socks.find(s);
     if (it != g_socks.end()) {
         if (optname == NET_SO_OOBINLINE && it->second.native == socket.native) it->second.oobInline = value != 0;
-        if (optname == NET_SO_NBIO) it->second.native->nonblock = value != 0;
         if (optname == NET_SO_RCVTIMEO) it->second.native->receiveTimeout = value;
         if (optname == NET_SO_SNDTIMEO) it->second.native->sendTimeout = value;
         if (optname == NET_SO_SCE_CONNECTTIMEO) it->second.native->connectTimeout = value;
@@ -3560,7 +3584,11 @@ int APS5_VABI sceNetResolverConnect(NetResolverConnection* connection, const cha
 int APS5_VABI sceNetResolverConnectDestroy(NetResolverConnection* connection) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
     if (connection == nullptr) return fail(NET_EINVAL);
-    if ((reinterpret_cast<const std::uint8_t*>(connection)[NET_RESOLVER_CONNECTION_FLAGS] & 1) == 0) return fail(NET_EBADF);
+    std::uint8_t flags = 0;
+    if (!GuestCopyIn_nid_no_patch(&flags, reinterpret_cast<const std::uint8_t*>(connection) + NET_RESOLVER_CONNECTION_FLAGS, sizeof(flags))) {
+        return fail(NET_EFAULT);
+    }
+    if ((flags & 1) == 0) return fail(NET_EBADF);
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4160,8 +4188,7 @@ int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
 }
 
 int APS5_VABI sceNetSetDns6InfoToKernel(const NetDns6Info* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetDns6Info(info, flags);
 }
 
 int APS5_VABI sceNetShowRoute6ForBuffer(char* buffer, std::int32_t bufferSize, std::int32_t poolId) {

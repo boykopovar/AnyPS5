@@ -1,0 +1,5 @@
+# shader
+
+## change [Flat accesses outside the aperture routing]
+
+- [Flat accesses outside the aperture routing](../../../core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvMemoryInstructions.cpp) (core/shader/recompiler) - a wide shared-aperture load whose offset passes 0xffffffff wraps to the start of LDS, where RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) returns 0; [FlatApertureLdsBounds](../../../core/libs/prx/libSceAgcDriver/tests/execution/FlatApertureLdsBounds.cpp) pins the rest as measured there: an access ending past the LDS reads 0 or is dropped whole (per dword for `dwordx2`), a misaligned one moves its bytes. That driver also let `ds_read_b32` read misaligned bytes, which the DS path here aligns down, so the console's misaligned accesses are unmeasured. Inferred: scratch past its end reads 0 or is dropped, and an unaligned aperture atomic records the BDA unaligned fault. Graphics stages send both apertures to BDA. Every 64-bit flat atomic in a compute shader requests the workgroup lock (`ldsLock`), also on global addresses.

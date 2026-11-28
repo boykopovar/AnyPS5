@@ -226,6 +226,29 @@ void CountFollowsEveryPath() {
     Expect(recorder.Reap() && recorder.InFlightKeptBytes() == 0, "a reaped batch still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
 }
 
+void SubmittedWorkRunningFollowsTheLastBatch() {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    Expect(!recorder.SubmittedWorkRunning(), "a recorder with nothing submitted reported running GPU work");
+    recorder.Keep(std::make_shared<int>(0));
+    Expect(!recorder.SubmittedWorkRunning(), "an open, unsubmitted batch counted as running GPU work");
+    recorder.Submit();
+    recorder.Keep(std::make_shared<int>(1));
+    recorder.Submit();
+    Expect(recorder.InFlightBatches() == 2 && recorder.SubmittedWorkRunning(), "two unfinished submitted batches did not count as running GPU work");
+    auto last = mock.signaled.end();
+    --last;
+    last->second = true;
+    Expect(!recorder.SubmittedWorkRunning(), "finished last batch still counted as running GPU work");
+    last->second = false;
+    mock.signaled.begin()->second = true;
+    Expect(recorder.SubmittedWorkRunning(), "a finished first batch hid the unfinished last one");
+    for (auto& [fence, signaled] : mock.signaled) signaled = true;
+    recorder.Sync();
+    Expect(!recorder.SubmittedWorkRunning(), "a synced recorder reported running GPU work");
+}
+
 void SharedOwnerCountsOncePerBatch() {
     mock = MockDevice{};
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -439,6 +462,7 @@ int main() {
         SharedOwnerCountsOncePerBatch();
         RetentionGrowsWithoutDuplicates();
         RetentionAfterFailedSubmission();
+        SubmittedWorkRunningFollowsTheLastBatch();
         SeparateStoresOfOneRunAreOrdered();
         FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);

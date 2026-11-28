@@ -1,0 +1,5 @@
+# shader
+
+## change and fetch-inactive `v_permlane16_b32`/`v_permlanex16_b32` read undefined data
+
+- [`v_readlane_b32`](../../../core/shader/recompiler/SpirvBackend/src/SpirvAlu/SpirvAluEmitterMath.cpp) and fetch-inactive `v_permlane16_b32`/`v_permlanex16_b32` read undefined data from a lane that the host subgroup does not hold or whose host invocation is inactive; the console reads the lane's VGPR. RDNA2 (gfx1036, AMD Windows driver 32.0.21045.29003, [hardware oracle](../HW_ORACLE.md)) reads the VGPR of a lane that EXEC masks off in wave32 and wave64, after `s_mov` to EXEC, in an `s_and_saveexec` branch and in an `s_andn2` loop, for constant and SGPR lanes. A permlane with FI reads masked-off source lanes; without FI such a source keeps the old destination, or writes 0 with BC. [InactiveLaneRead](../../../core/libs/prx/libSceAgcDriver/tests/execution/InactiveLaneRead.cpp) pins those cases on 32-lane subgroups, where the RTX 5090 and gfx1036 read the same values. Lanes past the work-group size and the PS5's gfx1013 are unmeasured.
