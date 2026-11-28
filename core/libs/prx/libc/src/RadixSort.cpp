@@ -75,7 +75,9 @@ void ROrderUnstable(const Byte** a, int n, int i, const Byte* tr, std::uint32_t 
 void ROrderStable(const Byte** a, const Byte** ta, int n, int i, const Byte* tr, std::uint32_t endch);
 
 void ROrderUnstable(const Byte** a, int n, int i, const Byte* tr, std::uint32_t endch) {
-    static int count[256], nc, bmin;
+    int count[256] = {};
+    int nc = 0;
+    int bmin = 0;
     int c;
     const Byte **ak, *r;
     RadixStack s[RadixStackSize], *sp, *sp0, *sp1, temp;
@@ -154,7 +156,9 @@ void ROrderUnstable(const Byte** a, int n, int i, const Byte* tr, std::uint32_t 
 }
 
 void ROrderStable(const Byte** a, const Byte** ta, int n, int i, const Byte* tr, std::uint32_t endch) {
-    static int count[256], nc, bmin;
+    int count[256] = {};
+    int nc = 0;
+    int bmin = 0;
     int c;
     const Byte **ak, **ai;
     RadixStack s[RadixStackSize], *sp, *sp0, *sp1, temp;
@@ -218,6 +222,10 @@ void ROrderStable(const Byte** a, const Byte** ta, int n, int i, const Byte* tr,
 }
 
 bool SetUpTable(const Byte* tab, std::uint32_t& endch, const Byte*& tr, Byte (&tr0)[256]) {
+    if (endch > 255) {
+        SetErrno(GuestEinval);
+        return false;
+    }
     if (tab == nullptr) {
         tr = tr0;
         int c;
@@ -254,7 +262,7 @@ extern "C" int APS5_VABI sradixsort_nid_postfix(const unsigned char** a, int n, 
         SimpleSort(a, n, 0, tr, endch);
         return 0;
     }
-    const Byte** ta = static_cast<const Byte**>(malloc_nid_postfix(static_cast<std::size_t>(n) * sizeof(a)));
+    const Byte** ta = static_cast<const Byte**>(malloc_nid_postfix(static_cast<std::size_t>(n) * sizeof(*a)));
     if (ta == nullptr) {
         SetErrno(GuestEnomem);
         return -1;
