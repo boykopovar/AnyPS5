@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -97,8 +98,20 @@ public:
         auto changes = PendingTransitions(now);
         history.clear();
         reportedAt = std::max(reportedAt, now);
+        reported = events.empty() || now < started ? Input{} : InputAt(now - started);
         return changes;
     }
+
+    void TakeTransitions(std::uint64_t now, std::size_t count) {
+        auto changes = PendingTransitions(now == std::numeric_limits<std::uint64_t>::max() ? now : now + 1);
+        count = std::min(count, changes.size());
+        if (count > 0) reported = changes[count - 1].second;
+        history.assign(changes.begin() + static_cast<std::ptrdiff_t>(count), changes.end());
+        if (history.size() > HistoryLimit) history.erase(history.begin(), history.end() - HistoryLimit);
+        reportedAt = std::max(reportedAt, now);
+    }
+
+    const Input& Reported() const { return reported; }
 
     std::uint32_t Buttons(std::uint64_t now) { return Poll(now).buttons; }
 
@@ -332,6 +345,7 @@ private:
     Input inherited;
     std::vector<std::pair<std::uint64_t, Input>> history;
     std::uint64_t reportedAt = 0;
+    Input reported;
     static constexpr std::size_t HistoryLimit = 64;
 };
 }

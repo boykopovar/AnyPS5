@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -27,7 +28,7 @@ namespace {
     constexpr std::uint64_t kLatchExpiry = 100000;
     constexpr std::uint64_t kLatchExpiryLimit = 500000;
     constexpr std::uint32_t kInterceptedButton = 0x80000000;
-    std::uint64_t injectedTimestamp = 0;
+    std::uint64_t scriptTimestamp = 0;
     std::uint32_t injectedHeldThroughCapture = 0;
     std::uint64_t injectedHeldAt = 0;
     std::mutex hapticMutex;
@@ -48,6 +49,7 @@ namespace {
         std::array<std::uint8_t, 2> liveTriggerStatuses{};
         bool liveTriggerStatusValid = false;
         std::deque<QueuedInput> queue;
+        PadInputState queueBase;
         Quat orientation;
         std::uint64_t lastFuseTime = 0;
         float biasIntegral[3] = {0.0f, 0.0f, 0.0f};
@@ -177,6 +179,7 @@ void Pad::Initialize() {
             slots[i].timestamp = now;
             slots[i].lastFuseTime = now;
             slots[i].queue.clear();
+            slots[i].queueBase = slots[i].state;
             slots[i].pressedSinceRead = 0;
             slots[i].lastReadAt = 0;
             slots[i].readInterval = 0;
@@ -386,13 +389,19 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now, bool titleRead = f
         }
         for (const auto& error : report.errors) std::fprintf(stderr, "%s\n", error.c_str());
         if (!report.fired.empty() || !report.errors.empty()) std::fflush(stderr);
+        static Pad::InputCommandFile::Input lastScripted;
         scriptFrame = frame;
+        Pad::InputCommandFile::Input scripted;
+        MergeScriptFrame(scripted);
+        if (scripted != lastScripted) {
+            lastScripted = scripted;
+            scriptTimestamp = now;
+        }
         MergeScriptFrame(injected);
     }
     if (injected != lastInjected) {
         lastInjected = injected;
         slots[0].timestamp = now;
-        injectedTimestamp = now;
     }
     return injected;
 }
@@ -458,11 +467,11 @@ std::uint64_t LatchExpiry(const PadSlot& slot) {
     return std::clamp(slot.readInterval + slot.readInterval / 2, kLatchExpiry, kLatchExpiryLimit);
 }
 
-PadData BufferedSample(PadSlot& slot, const std::pair<std::uint64_t, Pad::InputCommandFile::Input>& change, int port) {
-    auto input = change.second;
+PadData BufferedSample(PadSlot& slot, const PadInputState& state, std::uint64_t at, const Pad::InputCommandFile::Input& change, int port) {
+    auto input = change;
     MergeScriptFrame(input);
     input.buttons &= ~injectedHeldThroughCapture;
-    return BuildData(slot, slot.state, change.first, change.first, input, port);
+    return BuildData(slot, state, std::max(at, scriptTimestamp), at, input, port);
 }
 }
 
@@ -486,7 +495,7 @@ PadData Pad::ReadState(int port) {
     slot.lastReadAt = now;
     if (port == 0 && !withdrawn) {
         for (const auto& change : InjectedCommands().PendingTransitions(now)) {
-            auto pending = BufferedSample(slot, change, port);
+            auto pending = BufferedSample(slot, slot.state, change.first, change.second, port);
             ApplyRecording(pending, change.first);
         }
         ApplyRecording(data, now);
@@ -504,32 +513,48 @@ int Pad::Read(PadData* data, int num, int port) {
     slot.pressedSinceRead = 0;
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
-    const auto changes = port == 0 ? InjectedCommands().TakeTransitions(now) : std::vector<std::pair<std::uint64_t, Pad::InputCommandFile::Input>>{};
     if (WithdrawnPort(port, slot)) {
+        if (port == 0) InjectedCommands().TakeTransitions(now);
         slot.queue.clear();
         data[0] = WithdrawnData(slot.timestamp);
         return 1;
     }
     if (slot.queue.empty()) {
+        const auto changes = port == 0 ? InjectedCommands().TakeTransitions(now) : std::vector<std::pair<std::uint64_t, Pad::InputCommandFile::Input>>{};
         const std::size_t limit = static_cast<std::size_t>(num) - 1;
         const std::size_t first = changes.size() > limit ? changes.size() - limit : 0;
         int count = 0;
         for (std::size_t index = first; index < changes.size(); ++index) {
-            data[count] = BufferedSample(slot, changes[index], port);
+            data[count] = BufferedSample(slot, slot.state, changes[index].first, changes[index].second, port);
             ApplyRecording(data[count++], changes[index].first);
         }
         data[count] = BuildData(slot, slot.state, now, now, injected, port);
         if (port == 0) ApplyRecording(data[count], now);
         return count + 1;
     }
+    const auto changes = port == 0 ? InjectedCommands().PendingTransitions(now == std::numeric_limits<std::uint64_t>::max() ? now : now + 1) : std::vector<std::pair<std::uint64_t, Pad::InputCommandFile::Input>>{};
+    auto current = port == 0 ? InjectedCommands().Reported() : Pad::InputCommandFile::Input{};
+    std::size_t taken = 0;
     int count = 0;
-    while (count < num && !slot.queue.empty()) {
-        const QueuedInput& entry = slot.queue.front();
-        const std::uint64_t sample = port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp;
-        data[count++] = BuildData(slot, entry.input, sample, sample, injected, port);
-        if (port == 0) ApplyRecording(data[count - 1], now);
-        slot.queue.pop_front();
+    while (count < num && (!slot.queue.empty() || taken < changes.size())) {
+        std::uint64_t at = 0;
+        if (taken < changes.size() && (slot.queue.empty() || changes[taken].first < slot.queue.front().timestamp)) {
+            at = changes[taken].first;
+            current = changes[taken++].second;
+        } else {
+            at = slot.queue.front().timestamp;
+            slot.queueBase = slot.queue.front().input;
+            slot.queue.pop_front();
+        }
+        if (port == 0) {
+            data[count] = BufferedSample(slot, slot.queueBase, at, current, port);
+            ApplyRecording(data[count], at);
+        } else {
+            data[count] = BuildData(slot, slot.queueBase, at, at, current, port);
+        }
+        ++count;
     }
+    if (port == 0) InjectedCommands().TakeTransitions(now, taken);
     return count;
 }
 
@@ -760,8 +785,12 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
             if (pressed & 0x200u) slot.pressedAnalogR2 = input.analogButtonsR2;
         }
     }
+    if (slot.queue.empty()) slot.queueBase = slot.state;
     slot.state = input;
-    if (slot.queue.size() == kQueueCapacity) slot.queue.pop_front();
+    if (slot.queue.size() == kQueueCapacity) {
+        slot.queueBase = slot.queue.front().input;
+        slot.queue.pop_front();
+    }
     slot.queue.push_back({input, slot.timestamp});
 }
 

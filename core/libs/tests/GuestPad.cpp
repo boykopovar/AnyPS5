@@ -1628,24 +1628,20 @@ static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     } while (std::chrono::steady_clock::now() < deadline);
     Require(pressed.buttons == 0x6000 && pressed.timestamp > before.timestamp);
-    PadData queued{};
-    Require(Pad::Read(&queued, 1) == 1);
-    Require(queued.buttons == pressed.buttons);
-    if (queued.timestamp < pressed.timestamp) {
-        std::fputs("queued input predates its injected button press\n", stderr);
-        std::abort();
-    }
+    PadData queued[64]{};
+    Require(Pad::Read(queued, 64) == 2);
+    Require(queued[0].buttons == 0x2000 && queued[0].timestamp <= before.timestamp);
+    Require(queued[1].buttons == pressed.buttons && queued[1].timestamp > queued[0].timestamp && queued[1].timestamp <= pressed.timestamp);
     physical.sticks[0] = 130;
     PadPublishInput_nid_postfix(physical);
+    const auto moved = Pad::ReadState();
     std::this_thread::sleep_for(std::chrono::milliseconds(310));
     const auto released = Pad::ReadState();
     Require(released.buttons == 0x2000 && released.timestamp > pressed.timestamp);
-    Require(Pad::Read(&queued, 1) == 1);
-    Require(queued.buttons == released.buttons && queued.left_stick_x == 130);
-    if (queued.timestamp < released.timestamp) {
-        std::fputs("queued input predates its injected button release\n", stderr);
-        std::abort();
-    }
+    Require(Pad::Read(queued, 64) == 2);
+    Require(queued[0].buttons == 0x6000 && queued[0].left_stick_x == 130 && queued[0].timestamp <= moved.timestamp);
+    Require(queued[1].buttons == released.buttons && queued[1].left_stick_x == 130);
+    Require(queued[1].timestamp > queued[0].timestamp && queued[1].timestamp <= released.timestamp);
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
@@ -1721,6 +1717,35 @@ static void CheckInjectedTimelineSkipsUnchangedBoundaries(const std::filesystem:
     const int count = Pad::Read(samples, 4);
     Require(count == 3);
     Require(CountPresses(samples, count, 0x2000) == 1 && (samples[count - 1].buttons & 0x2000) == 0);
+}
+
+static void CheckInjectedTimelineWithQueuedPhysicalInput(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    PadInputState physical;
+    physical.sticks[0] = 200;
+    PadPublishInput_nid_postfix(physical);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 16 2\n0 40 8192\n80 40 8192\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    physical.sticks[0] = 60;
+    PadPublishInput_nid_postfix(physical);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require((Pad::ReadState().buttons & 0x2000) == 0);
+    Require(Pad::Read(samples, 1) == 1);
+    Require(samples[0].left_stick_x == 200 && (samples[0].buttons & 0x2000) == 0);
+    const int count = Pad::Read(samples + 1, 63) + 1;
+    Require(CountPresses(samples, count, 0x2000) == 2);
+    bool moved = false;
+    for (int index = 1; index < count; ++index) {
+        Require(samples[index].timestamp >= samples[index - 1].timestamp);
+        if (samples[index].left_stick_x == 60) moved = true;
+        else Require(!moved && samples[index].left_stick_x == 200);
+    }
+    Require(moved && (samples[count - 1].buttons & 0x2000) == 0);
+    Require(Pad::Read(samples, 64) == 1 && (samples[0].buttons & 0x2000) == 0 && samples[0].left_stick_x == 60);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::Read(samples, 64);
 }
 
 static std::vector<std::pair<std::uint64_t, std::uint32_t>> RecordedButtons(const std::filesystem::path& path) {
@@ -2025,6 +2050,7 @@ int main() {
     CheckInjectedTimelineReplacedBetweenReads(commandPath);
     CheckInjectedTimelineSkipsUnchangedBoundaries(commandPath);
     CheckInjectedRecordingKeepsChangeTimes(commandPath, recordingPath);
+    CheckInjectedTimelineWithQueuedPhysicalInput(commandPath);
     PadLightBarParam lightBar{255, 128, 64};
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK);
     Require(scePadSetLightBar(handle, nullptr) == PAD_ERROR_INVALID_ARG);
