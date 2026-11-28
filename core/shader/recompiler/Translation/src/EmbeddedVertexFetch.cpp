@@ -230,6 +230,7 @@ bool touchesSgpr(const RdnaInstruction& inst, std::uint32_t sgpr) {
 bool killsSgpr(const RdnaInstruction& inst, std::uint32_t sgpr) {
     if (!isScalarOperand(inst.destination)) return false;
     const auto first = scalarSlot(inst.destination);
+    if (inst.family == RdnaInstructionFamily::SMEM && IsScalarMemoryAtomicOpcode(inst.op)) return inst.glc && sgpr >= first && sgpr < first + ScalarMemoryAtomicReturnDwords(inst.op);
     switch (inst.op) {
     case RdnaOpcode::SCmovB32:
     case RdnaOpcode::SCmovB64:
@@ -307,6 +308,10 @@ bool readsSgprRange(const RdnaInstruction& inst, std::uint32_t first, std::uint3
         if (!isScalarOperand(*sources[i])) continue;
         const auto slot = scalarSlot(*sources[i]);
         if (slot < first + count && first < slot + scalarOperandWidth(inst, i)) return true;
+    }
+    if (inst.family == RdnaInstructionFamily::SMEM && (IsScalarMemoryStoreOpcode(inst.op) || IsScalarMemoryAtomicOpcode(inst.op)) && isScalarOperand(inst.destination)) {
+        const auto slot = scalarSlot(inst.destination);
+        return slot < first + count && first < slot + inst.dataDwordCount;
     }
     return false;
 }

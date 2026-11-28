@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [Scalar stores and atomics](../../../core/shader/recompiler/Translation/src/MemoryInstructions/ScalarBufferInstructions.cpp) (`s_[buffer_]store_*`, `s_[buffer_]atomic_*`, GFX10.1) are not measured on gfx1013. They follow AMD's text in [gem5](https://github.com/gem5/gem5/blob/4d04b2365d2031b9b629d1476f8a1ff992e024e2/src/arch/amdgpu/vega/insts/smem.cc#L585-L590) and [CLRX](https://github.com/CLRX/CLRX-mirror/blob/c6558f95cf2904ba2f6c75328609d0e13369ba8e/doc/GcnInstrsSmem.md#s_atomic_add): stores write SDATA at base plus offset; an atomic updates memory once per wave and with GLC returns the old value. Every lane stores the same value; one invocation, never a pixel program's helper, runs the atomic and `ReadFirstLane` shares its result, so a wave of only helpers skips it. Raw forms use the base as a global address, buffer forms the V# as a storage buffer; the scalar cache, `s_dcache_wb` and an SGPR offset's low bits are not modelled. `s_scratch_store_*` throw like `s_scratch_load_*`.
