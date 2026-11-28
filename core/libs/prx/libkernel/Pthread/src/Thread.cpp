@@ -17,6 +17,8 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
+#include <cerrno>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +26,8 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <mutex>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <string>
@@ -1737,11 +1741,32 @@ int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
     return SCE_OK;
 }
 
+static std::mutex sceOnceMutex;
+static std::condition_variable sceOnceChanged;
+static std::unordered_set<int32_t*> sceOnceRunning;
+
+static bool ReadSceOnceState(const int32_t* once, int32_t& state) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&state, once, sizeof(state));
+    errno = savedErrno;
+    return copied;
+}
+
+static bool WriteSceOnceState(int32_t* once, int32_t state) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(once, &state, sizeof(state));
+    errno = savedErrno;
+    return copied;
+}
+
 static void APS5_VABI ResetOnce(void* once) {
-    constexpr int32_t Never = 0;
-    std::atomic_ref<int32_t> state(*static_cast<int32_t*>(once));
-    state.store(Never, std::memory_order_release);
-    state.notify_all();
+    auto* const control = static_cast<int32_t*>(once);
+    {
+        std::lock_guard lock(sceOnceMutex);
+        WriteSceOnceState(control, 0);
+        sceOnceRunning.erase(control);
+    }
+    sceOnceChanged.notify_all();
 }
 
 int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
@@ -1749,11 +1774,22 @@ int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
     constexpr int32_t Never = 0;
     constexpr int32_t Done = 1;
     constexpr int32_t Running = 2;
-    std::atomic_ref<int32_t> state(*once);
-    for (int32_t expected = Never; !state.compare_exchange_strong(expected, Running, std::memory_order_acq_rel); expected = Never) {
-        if (expected != Running) return SCE_OK;
-        state.wait(Running, std::memory_order_acquire);
+    std::unique_lock lock(sceOnceMutex);
+    sceOnceChanged.wait(lock, [&] {
+        return !sceOnceRunning.contains(once);
+    });
+    int32_t state = Never;
+    if (!ReadSceOnceState(once, state)) return SCE_KERNEL_ERROR_EFAULT;
+    if (state == Running) return SCE_KERNEL_ERROR_EFAULT;
+    if (state != Never) return SCE_OK;
+    sceOnceRunning.insert(once);
+    if (!WriteSceOnceState(once, Running)) {
+        sceOnceRunning.erase(once);
+        lock.unlock();
+        sceOnceChanged.notify_all();
+        return SCE_KERNEL_ERROR_EFAULT;
     }
+    lock.unlock();
     CleanupHandler reset{};
     void* const mark = ThreadCancel::CleanupMark();
     __pthread_cleanup_push_imp_nid_postfix(ResetOnce, once, &reset);
@@ -1766,9 +1802,12 @@ int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
         throw;
     }
     ThreadCancel::CleanupRestore(mark);
-    state.store(Done, std::memory_order_release);
-    state.notify_all();
-    return SCE_OK;
+    lock.lock();
+    const bool updated = WriteSceOnceState(once, Done);
+    sceOnceRunning.erase(once);
+    lock.unlock();
+    sceOnceChanged.notify_all();
+    return updated ? SCE_OK : SCE_KERNEL_ERROR_EFAULT;
 }
 
 }

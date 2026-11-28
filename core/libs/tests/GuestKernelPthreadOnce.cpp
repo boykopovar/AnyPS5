@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -290,6 +291,19 @@ static void APS5_VABI FaultInit() {
     ++gFaultInitCalls;
 }
 
+static OnceFaultPages* gFreezeDuringInitPages = nullptr;
+static int gFreezeDuringInitCalls = 0;
+static std::atomic<bool> gFreezeEntered{false};
+static std::atomic<bool> gFreezeRelease{false};
+static void APS5_VABI FreezeDuringInit() {
+    ++gFreezeDuringInitCalls;
+    gFreezeEntered.store(true, std::memory_order_release);
+    while (!gFreezeRelease.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    gFreezeDuringInitPages->ProtectReadOnly();
+}
+
 static void TestFaultArguments() {
     OnceFaultPages pages;
     errno = 71;
@@ -317,6 +331,69 @@ static void TestFaultArguments() {
     Require(errno == 71);
     Require(gFaultInitCalls == 1);
     pages.ProtectReadWrite();
+
+    OnceFaultPages scePages;
+    gFaultInitCalls = 0;
+    errno = 71;
+    Require(scePthreadOnce(reinterpret_cast<int32_t*>(0x10), FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(scePthreadOnce(static_cast<int32_t*>(scePages.Unreadable()), FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+
+    auto* const sceControl = static_cast<int32_t*>(scePages.ReadOnly());
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 0);
+
+    scePages.ProtectReadWrite();
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == 0);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
+    Require(*sceControl == 1);
+
+    scePages.ProtectReadOnly();
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == 0);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
+
+    scePages.ProtectReadWrite();
+    *sceControl = 0;
+    gFreezeDuringInitPages = &scePages;
+    gFreezeDuringInitCalls = 0;
+    gFreezeEntered.store(false, std::memory_order_relaxed);
+    gFreezeRelease.store(false, std::memory_order_relaxed);
+    int waiterResult = 0;
+    std::thread waiter([&] {
+        while (!gFreezeEntered.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        std::thread releaser([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            gFreezeRelease.store(true, std::memory_order_release);
+        });
+        waiterResult = scePthreadOnce(sceControl, FaultInit);
+        releaser.join();
+    });
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FreezeDuringInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    waiter.join();
+    Require(waiterResult == SCE_KERNEL_ERROR_EFAULT);
+    Require(gFreezeDuringInitCalls == 1);
+    Require(gFaultInitCalls == 1);
+    Require(*sceControl == 2);
+
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
+    gFreezeDuringInitPages = nullptr;
+    scePages.ProtectReadWrite();
 }
 
 int main() {
