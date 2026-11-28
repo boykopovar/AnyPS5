@@ -189,10 +189,13 @@ int InitializeCipher(LibreSslCipherContext& context, const LibreSslCipher* ciphe
             keyInput = keyCopy.data.data();
         }
         if (context.cipherData != nullptr && method.contextSize > 0) {
-            RequireReadable(context.cipherData, static_cast<std::size_t>(method.contextSize), "CMAC: unreadable cipher data");
-            RequireWritable(context.cipherData, static_cast<std::size_t>(method.contextSize), "CMAC: unwritable cipher data");
+            const auto size = static_cast<std::size_t>(method.contextSize);
+            RequireReadable(context.cipherData, size, "CMAC: unreadable cipher data");
+            GuestWriteScope cipherWrite(context.cipherData, size, "CMAC: unwritable cipher data");
+            if (!method.init(&context, keyInput, iv, 1)) return 0;
+        } else if (!method.init(&context, keyInput, iv, 1)) {
+            return 0;
         }
-        if (!method.init(&context, keyInput, iv, 1)) return 0;
     }
     context.bufferLength = 0;
     context.finalUsed = 0;
@@ -215,8 +218,10 @@ int SetKeyLength(LibreSslCipherContext& context, std::size_t length) {
 int EncryptBlock(LibreSslCmac& context, const LibreSslCipher& method, unsigned char* output, const unsigned char* input) {
     if (method.cipher == nullptr) NotImplemented_nid_no_patch(__func__);
     if (context.cipherContext.cipherData != nullptr && method.contextSize > 0) {
-        RequireReadable(context.cipherContext.cipherData, static_cast<std::size_t>(method.contextSize), "CMAC: unreadable cipher data");
-        RequireWritable(context.cipherContext.cipherData, static_cast<std::size_t>(method.contextSize), "CMAC: unwritable cipher data");
+        const auto size = static_cast<std::size_t>(method.contextSize);
+        RequireReadable(context.cipherContext.cipherData, size, "CMAC: unreadable cipher data");
+        GuestWriteScope cipherWrite(context.cipherContext.cipherData, size, "CMAC: unwritable cipher data");
+        return method.cipher(&context.cipherContext, output, input, method.blockSize);
     }
     return method.cipher(&context.cipherContext, output, input, method.blockSize);
 }
@@ -316,12 +321,17 @@ int APS5_VABI CMAC_Init_nid_postfix(LibreSslCmac* context, const void* key, std:
         CopyOut(context, &local.value, sizeof(local.value), "CMAC_Init: unwritable context");
         return 1;
     }
+    bool stagedCustomKey = false;
     if (cipher != nullptr) {
         const auto incoming = ReadCipher(cipher, "CMAC_Init: unreadable cipher");
-        if (key != nullptr && (incoming.flags & 0x80) == 0) {
-            const int narrowed = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(keyLength));
-            if (narrowed > 0 && (incoming.keyLength == narrowed || (incoming.flags & 8) != 0))
-                RequireReadable(key, static_cast<std::size_t>(narrowed), "CMAC_Init: unreadable key");
+        if (key != nullptr) {
+            if ((incoming.flags & 0x80) == 0) {
+                const int narrowed = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(keyLength));
+                if (narrowed > 0 && (incoming.keyLength == narrowed || (incoming.flags & 8) != 0))
+                    RequireReadable(key, static_cast<std::size_t>(narrowed), "CMAC_Init: unreadable key");
+            } else {
+                stagedCustomKey = true;
+            }
         }
     } else if (key != nullptr && local.value.cipherContext.cipher != nullptr) {
         const auto existing = ReadCipher(local.value.cipherContext.cipher, "CMAC_Init: unreadable cipher");
@@ -348,25 +358,60 @@ int APS5_VABI CMAC_Init_nid_postfix(LibreSslCmac* context, const void* key, std:
             }
         }
     } sync{context, &local.value};
-    if (cipher != nullptr) {
+    if (stagedCustomKey) {
+        if (local.value.cipherContext.engine != nullptr || engine != nullptr) NotImplemented_nid_no_patch(__func__);
+        Cleansed<LibreSslCipherContext> staged;
+        staged.value.flags = local.value.cipherContext.flags & 1;
+        struct StagedGuard {
+            LibreSslCipherContext* ctx;
+            bool armed = true;
+            ~StagedGuard() noexcept {
+                if (!armed) return;
+                try {
+                    Cleanup(*ctx);
+                } catch (...) {
+                }
+            }
+        } stagedGuard{&staged.value};
+        if (!InitializeCipher(staged.value, cipher, nullptr, nullptr, engine)) return 0;
+        if (!SetKeyLength(staged.value, keyLength)) return 0;
+        if (staged.value.keyLength > 0)
+            RequireReadable(key, static_cast<std::size_t>(staged.value.keyLength), "CMAC_Init: unreadable key");
         sync.dirty = true;
-        if (!InitializeCipher(local.value.cipherContext, cipher, nullptr, nullptr, engine)) {
+        if (local.value.cipherContext.cipher != nullptr) Cleanup(local.value.cipherContext);
+        local.value.cipherContext = staged.value;
+        stagedGuard.armed = false;
+        staged.value = {};
+    } else {
+        if (cipher != nullptr) {
+            sync.dirty = true;
+            if (!InitializeCipher(local.value.cipherContext, cipher, nullptr, nullptr, engine)) {
+                sync.Flush();
+                return 0;
+            }
+        }
+        if (key == nullptr) {
+            sync.Flush();
+            return 1;
+        }
+        if (local.value.cipherContext.cipher == nullptr) {
             sync.Flush();
             return 0;
         }
-    }
-    if (key == nullptr) {
-        sync.Flush();
-        return 1;
-    }
-    if (local.value.cipherContext.cipher == nullptr) {
-        sync.Flush();
-        return 0;
-    }
-    sync.dirty = true;
-    if (!SetKeyLength(local.value.cipherContext, keyLength)) {
-        sync.Flush();
-        return 0;
+        const int previousKeyLength = local.value.cipherContext.keyLength;
+        if (!SetKeyLength(local.value.cipherContext, keyLength)) {
+            sync.Flush();
+            return 0;
+        }
+        if (local.value.cipherContext.keyLength > 0) {
+            try {
+                RequireReadable(key, static_cast<std::size_t>(local.value.cipherContext.keyLength), "CMAC_Init: unreadable key");
+            } catch (...) {
+                local.value.cipherContext.keyLength = previousKeyLength;
+                throw;
+            }
+        }
+        sync.dirty = true;
     }
     if (!InitializeCipher(local.value.cipherContext, nullptr, static_cast<const unsigned char*>(key), zero, nullptr)) {
         sync.Flush();
