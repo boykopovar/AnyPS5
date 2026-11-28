@@ -1,0 +1,5 @@
+# libSceVideoDecoderArbitration
+
+## change [sceVideoDecoderArbitrationAcceptEvent, sceVideoDecoderArbitrationEnable and sceVideoDecoderArbitrationInitialize]
+
+- [sceVideoDecoderArbitrationAcceptEvent, sceVideoDecoderArbitrationEnable and sceVideoDecoderArbitrationInitialize](../../../core/libs/prx/libSceVideoDecoderArbitration/Export.cpp) (libSceVideoDecoderArbitration) - delegate to `libSceVideoArbitration` (`sceVideoArbitrationInitialize`, `sceVideoArbitrationEnable`, `sceVideoArbitrationAcceptEvent`) and map `0x819E0001..0x819E0004` to `0x81570001`, `0x81570002`, `0x81570004`, and `0x815700FF` following firmware 13.60 `libSceVideoDecoderArbitration.sprx` disassembly (`0xf0`, `0x1e0`, `0x2a0`, not measured on a console), including converting `SCE_VIDEO_ARBITRATION_ERROR_ALREADY_INITIALIZED` to `0` in `AcceptEvent` and clearing the stored callback on failed `Enable`. Unreadable non-null parameter pointers return `0x81570001` as a host-safety fallback instead of faulting, and `Enable` trampoline invocation of the guest callback remains dependent on `libSceVideoArbitration` event delivery.
