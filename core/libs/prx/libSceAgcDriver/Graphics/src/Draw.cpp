@@ -1400,7 +1400,7 @@ std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups
 std::optional<MeshGrid> MeshComputeGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances) {
     const auto& limits = context.limits;
     if (groups == 0 || instances > limits.maxComputeWorkGroupCount[1] || limits.maxComputeWorkGroupCount[0] == 0) return std::nullopt;
-    const auto across = groups <= limits.maxComputeWorkGroupCount[0] ? groups : limits.maxComputeWorkGroupCount[0];
+    const auto across = groups <= limits.maxComputeWorkGroupCount[0] ? groups : std::min(limits.maxComputeWorkGroupCount[0], ShaderRecompiler::MeshLayerStrideLimit);
     const auto layers = (groups - 1u) / across + 1u;
     const auto columns = (groups - 1u) / layers + 1u;
     if (layers > limits.maxComputeWorkGroupCount[2]) return std::nullopt;
@@ -1430,7 +1430,7 @@ std::vector<CompiledShader> MeshComputeStages(const Context& context, const Stat
         if (entry == nullptr) entry = std::make_unique<const ShaderRecompiler::RecompileResult>(ShaderRecompiler::BuildMeshReadbackVertexShader(mesh, VK_API_VERSION_1_1));
         readback = entry.get();
     }
-    return {{Stage::Compute, &mesh, shaders.front().pushConstantOffset}, {Stage::Vertex, readback, shaders.front().pushConstantOffset}, shaders.back()};
+    return {{Stage::Compute, &mesh, shaders.front().pushConstantOffset, shaders.front().registeredImageViews}, {Stage::Vertex, readback, shaders.front().pushConstantOffset}, shaders.back()};
 }
 
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules) {

@@ -1,3 +1,4 @@
+#include "PipelineSpecialization.hpp"
 #include "Recompiler.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -24,6 +25,7 @@ public:
         intType = builder.Type(spv::OpTypeInt, 32u, 1u);
         ulongType = builder.Type(spv::OpTypeInt, 64u, 0u);
         floatType = builder.Type(spv::OpTypeFloat, 32u);
+        boolType = builder.Type(spv::OpTypeBool);
         vec4FloatType = builder.Type(spv::OpTypeVector, floatType, 4u);
         functionType = builder.Type(spv::OpTypeFunction, voidType);
     }
@@ -83,7 +85,7 @@ public:
         const auto parameterCount = static_cast<std::uint32_t>(parameters.size());
         const auto stride = constant64(MeshRecordBytes(parameterCount, layout));
         const auto record = result(spv::OpIAdd, ulongType, records, result(spv::OpIMul, ulongType, vertex, stride));
-        store(position, loadAt(vec4FloatType, record));
+        auto stored = loadAt(vec4FloatType, record);
         for (std::size_t i = 0; i < outputs.size(); ++i) store(outputs[i], loadAt(vec4FloatType, offset(record, 16ull * (1u + i))));
         const auto extras = MeshRecordExtraOffset(parameterCount);
         const auto outputPointer = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, floatType);
@@ -95,8 +97,19 @@ public:
             const auto provokingCorner = result(spv::OpIAdd, ulongType, result(spv::OpIMul, ulongType, primitive, constant64(size)), constant64(std::min(MeshRecordProvokingVertex(layout), size - 1u)));
             const auto provoking = widen(loadAt(uintType, result(spv::OpIAdd, ulongType, triangles, result(spv::OpShiftLeftLogical, ulongType, provokingCorner, constant(uintType, 2u)))));
             const auto provokingRecord = result(spv::OpIAdd, ulongType, records, result(spv::OpIMul, ulongType, provoking, stride));
-            store(layerOutput, result(spv::OpBitcast, intType, loadAt(uintType, offset(provokingRecord, extras + 4ull * (clipDistances + cullDistances)))));
+            const auto base = builder.SpecializationConstant(uintType, PipelineSpecialization::MeshLayerBase, 0u);
+            const auto count = builder.SpecializationConstant(uintType, PipelineSpecialization::MeshLayerCount, 0xffffffffu);
+            const auto relative = result(spv::OpISub, uintType, loadAt(uintType, offset(provokingRecord, extras + 4ull * (clipDistances + cullDistances))), base);
+            const auto inside = result(spv::OpULessThan, boolType, relative, count);
+            store(layerOutput, result(spv::OpBitcast, intType, result(spv::OpSelect, uintType, inside, relative, constant(uintType, 0u))));
+            const auto one = builder.Constant(spv::OpConstant, floatType, 0x3f800000u);
+            const auto zero = builder.Constant(spv::OpConstant, floatType, 0u);
+            const auto beyond = builder.Constant(spv::OpConstant, floatType, 0x40000000u);
+            const auto outsideClip = builder.Constant(spv::OpConstantComposite, vec4FloatType, beyond, zero, zero, one);
+            const auto keep = result(spv::OpCompositeConstruct, builder.Type(spv::OpTypeVector, boolType, 4u), inside, inside, inside, inside);
+            stored = result(spv::OpSelect, vec4FloatType, keep, stored, outsideClip);
         }
+        store(position, stored);
         builder.AddFunction(spv::OpReturn);
         builder.AddFunction(spv::OpFunctionEnd);
         return builder.Finalize();
@@ -112,6 +125,7 @@ private:
     std::uint32_t intType = 0;
     std::uint32_t ulongType = 0;
     std::uint32_t floatType = 0;
+    std::uint32_t boolType = 0;
     std::uint32_t vec4FloatType = 0;
     std::uint32_t functionType = 0;
 
@@ -158,6 +172,7 @@ RecompileResult BuildMeshReadbackVertexShader(const RecompileResult& mesh, std::
     result.variantId = mesh.variantId;
     result.runtimeAbiVersion = mesh.runtimeAbiVersion;
     result.spirv = emitter.Emit(mesh.parameterExports, mesh.meshRecordLayout);
+    if (MeshRecordLayer(mesh.meshRecordLayout)) result.specialization = {{PipelineSpecialization::MeshLayerBase, 0u}, {PipelineSpecialization::MeshLayerCount, 0xffffffffu}};
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     result.spirv = ValidateAndOptimizeSpirv(result.spirv, vulkanVersion, words[1]);
 #else

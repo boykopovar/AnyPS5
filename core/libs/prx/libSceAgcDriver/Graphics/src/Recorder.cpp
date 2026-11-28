@@ -2162,6 +2162,7 @@ VkCommandBuffer Recorder::beginChainBuffer() {
 }
 
 void Recorder::splitForPrologue() {
+    open->chain.reserve(open->chain.size() + 2);
     const auto prologue = beginChainBuffer();
     VkCommandBuffer pass = VK_NULL_HANDLE;
     try {
@@ -2170,7 +2171,6 @@ void Recorder::splitForPrologue() {
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &prologue);
         throw;
     }
-    open->chain.reserve(open->chain.size() + 2);
     open->chain.push_back(open->commands);
     open->chain.push_back(prologue);
     open->commands = pass;
