@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -28,6 +29,8 @@ namespace {
 std::set<void*> live;
 std::size_t failAfterAllocations = static_cast<std::size_t>(-1);
 std::size_t allocationCounter = 0;
+void (*afterAllocateHook)() = nullptr;
+void (*afterFreeHook)() = nullptr;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     if (allocationCounter >= failAfterAllocations)
@@ -37,6 +40,8 @@ void* APS5_VABI TestAllocate(std::size_t size) {
     if (!pointer)
         throw std::bad_alloc();
     live.insert(pointer);
+    if (afterAllocateHook)
+        std::exchange(afterAllocateHook, nullptr)();
     return pointer;
 }
 
@@ -46,6 +51,8 @@ void APS5_VABI TestFree(void* pointer) {
     if (live.erase(pointer) != 1)
         std::abort();
     std::free(pointer);
+    if (afterFreeHook)
+        std::exchange(afterFreeHook, nullptr)();
 }
 
 void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) {
@@ -96,6 +103,24 @@ struct ReadOnlyPage {
         size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
         address = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(address != MAP_FAILED);
+        Require(mprotect(address, size, PROT_READ) == 0);
+#endif
+    }
+
+    void SetWritable() const {
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(address, size, PAGE_READWRITE, &oldProtect) != 0);
+#else
+        Require(mprotect(address, size, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
+
+    void SetReadOnly() const {
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(address, size, PAGE_READONLY, &oldProtect) != 0);
+#else
         Require(mprotect(address, size, PROT_READ) == 0);
 #endif
     }
@@ -352,6 +377,90 @@ void TestInvalidGuestInputs() {
     Require(live.empty());
 }
 
+void TestMoveWithReadOnlyRootThrows() {
+    ReadOnlyPage page;
+    page.SetWritable();
+    WebRtcSdpAudioFormat source;
+    InitEmptyFormat(source, "opus", 48000, 2);
+    auto* root = new (page.address) WebRtcStringMapNode{};
+    root->links.isBlack = true;
+    root->links.parent = EndNode(source.parameters);
+    InitGuestString(root->key, "ptime");
+    InitGuestString(root->value, "20");
+    source.parameters.root = root;
+    source.parameters.beginNode = root;
+    source.parameters.size = 1;
+    page.SetReadOnly();
+
+    const WebRtcSdpAudioFormat sourceBefore = source;
+    WebRtcSdpAudioFormat target;
+    std::memset(&target, 0xcd, sizeof(target));
+    const WebRtcSdpAudioFormat targetBefore = target;
+    errno = 57;
+    Require(ThrowsInvalid([&] { _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(&target, &source); }));
+    Require(errno == 57);
+    Require(std::memcmp(&source, &sourceBefore, sizeof(source)) == 0);
+    Require(std::memcmp(&target, &targetBefore, sizeof(target)) == 0);
+    Require(root->links.parent == EndNode(source.parameters));
+
+    WebRtcSdpAudioFormat copied;
+    std::memset(&copied, 0xcd, sizeof(copied));
+    _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(&copied, &source);
+    Require(copied.parameters.size == 1 && copied.parameters.root != root);
+    Require(ReadGuestString(copied.parameters.root->key) == "ptime");
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&copied);
+    Require(live.empty());
+}
+
+ReadOnlyPage* hookPage = nullptr;
+
+void TestDestinationTurningReadOnlyLeaksNothing() {
+    ReadOnlyPage page;
+    page.SetWritable();
+    hookPage = &page;
+    auto* target = static_cast<WebRtcSdpAudioFormat*>(page.address);
+    WebRtcSdpAudioFormat source;
+    InitEmptyFormat(source, "heap-source-codec-name-1234567890", 48000, 2);
+    AttachSampleTree(source);
+
+    std::memset(target, 0xcd, sizeof(*target));
+    const WebRtcSdpAudioFormat untouched = *target;
+    const auto liveBefore = live;
+    afterAllocateHook = [] { hookPage->SetReadOnly(); };
+    Require(ThrowsInvalid([&] { _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(target, &source); }));
+    Require(afterAllocateHook == nullptr && live == liveBefore);
+    Require(std::memcmp(target, &untouched, sizeof(*target)) == 0);
+
+    page.SetWritable();
+    InitEmptyFormat(*target, "existing-codec-name-1234567890", 16000, 1);
+    auto* node = MakeNode("ptime", "20", true);
+    node->links.parent = EndNode(target->parameters);
+    target->parameters.root = node;
+    target->parameters.beginNode = node;
+    target->parameters.size = 1;
+    const WebRtcSdpAudioFormat assignedBefore = *target;
+    const auto liveAssigned = live;
+    afterAllocateHook = [] { hookPage->SetReadOnly(); };
+    Require(ThrowsInvalid([&] { _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(target, &source); }));
+    Require(afterAllocateHook == nullptr && live == liveAssigned);
+    Require(std::memcmp(target, &assignedBefore, sizeof(*target)) == 0);
+
+    page.SetWritable();
+    afterFreeHook = [] { hookPage->SetReadOnly(); };
+    _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(target, &source);
+    Require(afterFreeHook == nullptr && live.count(node) == 0 && target->parameters.size == 4);
+    Require(ReadGuestString(target->name) == "heap-source-codec-name-1234567890" && target->clockrateHz == 48000);
+
+    page.SetWritable();
+    afterFreeHook = [] { hookPage->SetReadOnly(); };
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(target);
+    Require(afterFreeHook == nullptr && target->parameters.size == 0 && target->parameters.root == nullptr);
+    Require(target->parameters.beginNode == EndNode(target->parameters) && target->name.size == 0);
+    hookPage = nullptr;
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&source);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -365,6 +474,8 @@ int main() {
     TestCopyAssignmentAndSelfAssign();
     TestAllocationFailureCleanup();
     TestInvalidGuestInputs();
+    TestMoveWithReadOnlyRootThrows();
+    TestDestinationTurningReadOnlyLeaksNothing();
     std::puts("libwebrtc SdpAudioFormat tests passed");
     return 0;
 }
