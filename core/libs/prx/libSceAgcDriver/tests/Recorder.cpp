@@ -423,7 +423,7 @@ void deviceSelectionTests() {
 // them, as the driver creates its own; the recorder's batches need a real queue and real fences.
 class Device {
 public:
-    explicit Device(bool settleOnOtherFamily = false) {
+    explicit Device(bool settleOnOtherFamily = false, bool enableTimeline = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -527,6 +527,17 @@ public:
             context.singlePassStorage = supported.shaderStorageImageReadWithoutFormat == VK_TRUE && supported.shaderStorageImageWriteWithoutFormat == VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+            if (enableTimeline && hasExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                timelineSemaphores = timeline.timelineSemaphore == VK_TRUE;
+                if (timelineSemaphores) {
+                    extensionsEnabled.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+                    timeline.pNext = address.pNext;
+                    address.pNext = &timeline;
+                }
+            }
             VkPhysicalDeviceDriverProperties driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
             if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
@@ -682,6 +693,7 @@ public:
     void UsePushDescriptors() { context.pushDescriptors = pushDescriptors; }
     const Context& GetContext() const { return context; }
     bool Graphics() const { return graphics; }
+    bool TimelineSemaphores() const { return timelineSemaphores; }
     bool Timestamps() const {
         std::uint32_t count = 0;
         const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
@@ -742,7 +754,142 @@ private:
     bool nullDescriptors = false;
     bool memoryBudget = false;
     bool pushDescriptors = false;
+    bool timelineSemaphores = false;
 };
+
+struct DrawIndexWaitProbe {
+    DrawIndexWaitProbe() { active = this; }
+    ~DrawIndexWaitProbe() { active = nullptr; }
+
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkWaitSemaphoresKHR") == 0) return reinterpret_cast<PFN_vkVoidFunction>(wait);
+        return nativeResolve(device, name);
+    }
+
+    static VKAPI_ATTR VkResult VKAPI_CALL wait(VkDevice device, const VkSemaphoreWaitInfo* info, std::uint64_t timeout) {
+        const auto nativeWait = reinterpret_cast<PFN_vkWaitSemaphoresKHR>(nativeResolve(device, "vkWaitSemaphoresKHR"));
+        const auto result = nativeWait(device, info, timeout);
+        if (result == VK_SUCCESS && active != nullptr && GpuMutex().DepthOnThisThread() == 0) {
+            ++active->unlockedWaits;
+            if (active->afterWait) {
+                try {
+                    std::exchange(active->afterWait, {})();
+                } catch (...) {
+                    active->failure = std::current_exception();
+                }
+            }
+        }
+        return result;
+    }
+
+    static inline PFN_vkGetDeviceProcAddr nativeResolve = nullptr;
+    static inline thread_local DrawIndexWaitProbe* active = nullptr;
+    unsigned unlockedWaits = 0;
+    std::function<void()> afterWait;
+    std::exception_ptr failure;
+};
+
+bool drawIndexFlushTests(const Device& device) {
+    if (!device.TimelineSemaphores()) {
+        std::cout << "skipped, draw index flush requires Vulkan timeline semaphores\n";
+        return false;
+    }
+
+    auto context = device.GetContext();
+    DrawIndexWaitProbe::nativeResolve = context.deviceProc;
+    context.deviceProc = DrawIndexWaitProbe::resolve;
+    std::lock_guard gpu(GpuMutex());
+    auto data = std::make_shared<Buffer>(context, sizeof(std::uint32_t) * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto address = reinterpret_cast<std::uint64_t>(data->Bytes().data());
+    constexpr auto bytes = sizeof(std::uint32_t);
+    auto recorder = std::make_unique<Recorder>(context, true);
+    Require(recorder->HasTimeline(), "could not create the draw index flush timeline");
+    recorder->Activate();
+    const auto write = [&](std::uint32_t value) {
+        const auto commands = recorder->Commands();
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, data->Handle(), 0, bytes, value);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder->NotePendingWrite(address, bytes);
+    };
+    const auto read = [&] {
+        std::uint32_t result;
+        std::memcpy(&result, data->Bytes().data(), bytes);
+        return result;
+    };
+
+    {
+        DrawIndexWaitProbe probe;
+        write(1);
+        const auto hold = AgcDriver::GuestMemory::GpuHoldSerial();
+        Require(Recorder::FlushDrawIndices(recorder.get(), address + bytes, bytes), "a nonoverlapping index flush aborted");
+        Require(GpuMutex().DepthOnThisThread() == 1 && AgcDriver::GuestMemory::GpuHoldSerial() == hold && probe.unlockedWaits == 0, "a nonoverlapping index flush released the GPU mutex");
+        Require(recorder->PendingWriteOverlaps(address, bytes), "a nonoverlapping index flush waited for an unrelated write");
+        std::lock_guard nested(GpuMutex());
+        Require(Recorder::FlushDrawIndices(recorder.get(), address, bytes), "a nested index flush aborted");
+        AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+        Require(GpuMutex().DepthOnThisThread() == 2 && AgcDriver::GuestMemory::GpuHoldSerial() == hold && probe.unlockedWaits == 0, "a nested index flush released the GPU mutex");
+        Require(!recorder->PendingWriteOverlaps(address, bytes) && read() == 1, "the nested index flush did not land the write");
+    }
+
+    const auto interleaveWait = [&](auto action, bool destroying = false, const std::function<bool()>& deviceCurrent = {}) {
+        std::promise<void> acknowledge;
+        auto acknowledged = acknowledge.get_future();
+        std::exception_ptr workerFailure;
+        std::jthread worker;
+        DrawIndexWaitProbe probe;
+        probe.afterWait = [&] {
+            worker = std::jthread([&] {
+                std::lock_guard workerGpu(GpuMutex());
+                if (destroying) acknowledge.set_value();
+                try {
+                    action();
+                } catch (...) {
+                    workerFailure = std::current_exception();
+                }
+                if (!destroying) acknowledge.set_value();
+            });
+            acknowledged.wait();
+        };
+        const bool proceed = Recorder::FlushDrawIndices(recorder.get(), address, bytes, deviceCurrent);
+        if (probe.failure) std::rethrow_exception(probe.failure);
+        Require(GpuMutex().DepthOnThisThread() == 1 && probe.unlockedWaits == 1 && worker.joinable(), "an overlapping index flush must unlock only for its first timeline wait");
+        worker.join();
+        if (workerFailure) std::rethrow_exception(workerFailure);
+        return proceed;
+    };
+
+    write(2);
+    Require(interleaveWait([&] {
+        Require(recorder->Reap(), "the worker could not reap the completed index write");
+        write(3);
+        recorder->Submit();
+    }), "the index flush aborted with the same recorder active");
+    Require(!recorder->PendingWriteOverlaps(address, bytes) && read() == 3, "the index flush missed a GPU write recorded during the unlocked wait");
+
+    bool deviceCurrent = true;
+    std::uint32_t deviceCheckDepth = 0;
+    write(4);
+    Require(!interleaveWait([&] { deviceCurrent = false; }, false, [&] {
+        deviceCheckDepth = GpuMutex().DepthOnThisThread();
+        return deviceCurrent;
+    }), "the index flush accepted a detached device");
+    Require(deviceCheckDepth == 1, "the index flush checked its device before relocking");
+
+    const auto id = recorder->Id();
+    {
+        Recorder replacement(context);
+        write(5);
+        Require(!interleaveWait([&] { replacement.Activate(); }), "the index flush accepted a replaced recorder");
+        Require(Recorder::Alive(id) && Recorder::Active() == &replacement, "the replaced recorder was not retained across the wait");
+        recorder->Activate();
+    }
+
+    write(6);
+    Require(!interleaveWait([&] { recorder.reset(); }, true), "the index flush accepted a destroyed recorder");
+    Require(!Recorder::Alive(id) && Recorder::Active() == nullptr, "the recorder was not destroyed across the wait");
+    std::cout << "Draw index flush tests passed\n";
+    return true;
+}
 
 using Kind = Recorder::ReadKind;
 
@@ -19880,9 +20027,10 @@ int main(int argc, char** argv) {
             std::cout << "queued write group tests passed\n";
             return 0;
         }
+        const bool drawIndexFlush = argc == 2 && std::string_view(argv[1]) == "--draw-index-flush-only";
         std::unique_ptr<Device> created;
         try {
-            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"));
+            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"), drawIndexFlush);
         } catch (const TestConfigurationError&) {
             throw;
         } catch (const std::exception& error) {
@@ -19891,6 +20039,7 @@ int main(int argc, char** argv) {
             return 77;
         }
         Device& device = *created;
+        if (drawIndexFlush) return drawIndexFlushTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-use-collect-only") return multisampleUseCollectTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-only") return RunHostImportLifetimeTests(device.GetContext());
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-mutation-race-only") return RunHostImportMutationRaceTests(device.GetContext());

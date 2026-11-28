@@ -56,7 +56,7 @@ struct Recipe {
 
 // Recorded: the dispatch went into the open batch from the recipe; Rebuild: the proof failed or an
 // object went away, the caller runs the ordinary path (the recipe is re-attached after it).
-enum class RecipeOutcome { Recorded, Rebuild };
+enum class RecipeOutcome { Recorded, Rebuild, RecorderLost };
 
 // What a recorded draw needs to record again from its draw-cache hit without looking anything up
 // (design_cpu_final M8, step 8b): the resource-cache template the draw's stages were served with
