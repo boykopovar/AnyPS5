@@ -536,8 +536,13 @@ int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) {
 int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) {
     auto* context = AudioOut2FindContext(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
-    if (!attributes) return static_cast<int>(0x80268001);
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    if (!attributes) return ErrorInvalidParam;
     for (uint32_t index = 0; index < num; index++) {
+        const auto id = attributes[index].attribute_id;
+        if (id == 0 || id == 3 || id == 4 || id == 0x100 || id == 0xffffffffu) return ErrorInvalidParam;
+        if (id != 1 && id != 2) NotImplemented_nid_no_patch(__func__);
+        if (id == 2 && (attributes[index].value == nullptr || attributes[index].value_size == 0)) return ErrorInvalidParam;
         AUDIOOUT2_TRACE("t=%.3f ContextSetAttributes ctx %p: id=0x%x size=%zu value=%p (ignored)\n", AudioOut2TraceSeconds(), static_cast<void*>(context), attributes[index].attribute_id, attributes[index].value_size, attributes[index].value);
     }
     return 0;
