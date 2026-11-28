@@ -13,6 +13,12 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -385,6 +391,122 @@ void Ulthreads() {
     gRelease = true;
     CHECK(sceUltUlthreadJoin(&waiting, &status) == Ok && status == 0);
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+
+    struct GuardedBuffer {
+        void* base = nullptr;
+        std::size_t pageSize = 4096u;
+        std::size_t totalBytes = 0;
+
+        explicit GuardedBuffer(const void* firstPageBytes, std::size_t size, bool twoPages, bool readOnlyFirstPage) {
+#ifdef _WIN32
+            SYSTEM_INFO sysInfo{};
+            GetSystemInfo(&sysInfo);
+            if (sysInfo.dwPageSize != 0) pageSize = sysInfo.dwPageSize;
+            totalBytes = twoPages ? pageSize * 2 : pageSize;
+            base = VirtualAlloc(nullptr, totalBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            CHECK(base != nullptr);
+#else
+            const long sysPage = sysconf(_SC_PAGESIZE);
+            if (sysPage > 0) pageSize = static_cast<std::size_t>(sysPage);
+            totalBytes = twoPages ? pageSize * 2 : pageSize;
+            base = mmap(nullptr, totalBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            CHECK(base != MAP_FAILED);
+#endif
+            if (firstPageBytes != nullptr && size != 0) std::memcpy(base, firstPageBytes, size);
+            if (readOnlyFirstPage) ProtectReadOnly(0);
+        }
+
+        void ProtectReadOnly(std::size_t pageIndex) {
+            void* target = static_cast<std::uint8_t*>(base) + pageIndex * pageSize;
+#ifdef _WIN32
+            DWORD oldProtect = 0;
+            CHECK(VirtualProtect(target, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+            CHECK(mprotect(target, pageSize, PROT_READ) == 0);
+#endif
+        }
+
+        ~GuardedBuffer() {
+            if (base == nullptr) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, totalBytes);
+#endif
+        }
+    };
+
+    gRelease = false;
+    UlthreadRuntimeObject zeroWorkerRt{};
+    CHECK(sceUltUlthreadRuntimeCreate(&zeroWorkerRt, "zero-workers", 2, 0, nullptr, nullptr, 0) == Ok);
+    UlthreadObject activeOne{};
+    UlthreadObject activeTwo{};
+    CHECK(sceUltUlthreadCreate(&activeOne, "active-one", WaitingEntry, 0, context, sizeof(context), &zeroWorkerRt, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&activeTwo, "active-two", WaitingEntry, 0, context, sizeof(context), &zeroWorkerRt, nullptr, 0) == Ok);
+
+    Pthread workerHandles[2]{};
+    std::memset(workerHandles, 0xCC, sizeof(workerHandles));
+    Pthread savedWorkers[2]{};
+    std::memcpy(savedWorkers, workerHandles, sizeof(savedWorkers));
+    void* activePair[2]{};
+    std::memset(activePair, 0xAA, sizeof(activePair));
+    void* savedPair[2]{};
+    std::memcpy(savedPair, activePair, sizeof(savedPair));
+    UltUlthreadRuntimeInfo probeInfo{};
+    std::memset(&probeInfo, 0x55, sizeof(probeInfo));
+    const UltUlthreadRuntimeInfo expectedProbe = probeInfo;
+
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, &probeInfo, activePair, 2, workerHandles, 2) == Ok && errno == 71);
+    CHECK(probeInfo.workerThreads == 0 && probeInfo.activeUlthreads == 2);
+    CHECK(std::memcmp(workerHandles, savedWorkers, sizeof(savedWorkers)) == 0);
+    CHECK((activePair[0] == &activeOne && activePair[1] == &activeTwo) || (activePair[0] == &activeTwo && activePair[1] == &activeOne));
+
+    std::memcpy(activePair, savedPair, sizeof(savedPair));
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, reinterpret_cast<UltUlthreadRuntimeInfo*>(0x10), activePair, 2, nullptr, 0) == Null && errno == 71);
+    CHECK(std::memcmp(activePair, savedPair, sizeof(savedPair)) == 0);
+
+    UltUlthreadRuntimeInfo sentinelInfo{};
+    std::memset(&sentinelInfo, 0x77, sizeof(sentinelInfo));
+    GuardedBuffer roInfo(&sentinelInfo, sizeof(sentinelInfo), false, true);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, static_cast<UltUlthreadRuntimeInfo*>(roInfo.base), activePair, 2, nullptr, 0) == Null && errno == 71);
+    CHECK(std::memcmp(roInfo.base, &sentinelInfo, sizeof(sentinelInfo)) == 0);
+    CHECK(std::memcmp(activePair, savedPair, sizeof(savedPair)) == 0);
+
+    std::memcpy(&probeInfo, &expectedProbe, sizeof(probeInfo));
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, &probeInfo, reinterpret_cast<void**>(0x10), 2, nullptr, 0) == Null && errno == 71);
+    CHECK(std::memcmp(&probeInfo, &expectedProbe, sizeof(probeInfo)) == 0);
+
+    void* sentinelSlot[2]{reinterpret_cast<void*>(std::uintptr_t{0x12345678u}), reinterpret_cast<void*>(std::uintptr_t{0x9abcdef0u})};
+    GuardedBuffer roArray(sentinelSlot, sizeof(sentinelSlot), false, true);
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, &probeInfo, static_cast<void**>(roArray.base), 2, nullptr, 0) == Null && errno == 71);
+    CHECK(std::memcmp(&probeInfo, &expectedProbe, sizeof(probeInfo)) == 0);
+    CHECK(std::memcmp(roArray.base, sentinelSlot, sizeof(sentinelSlot)) == 0);
+
+    GuardedBuffer straddlingArray(nullptr, 0, true, false);
+    auto** straddling = reinterpret_cast<void**>(static_cast<std::uint8_t*>(straddlingArray.base) + straddlingArray.pageSize - sizeof(void*));
+    straddling[0] = sentinelSlot[0];
+    std::memcpy(static_cast<std::uint8_t*>(straddlingArray.base) + straddlingArray.pageSize, &sentinelSlot[1], sizeof(void*));
+    straddlingArray.ProtectReadOnly(1);
+    std::memcpy(&probeInfo, &expectedProbe, sizeof(probeInfo));
+    errno = 71;
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, &probeInfo, straddling, 2, nullptr, 0) == Null && errno == 71);
+    CHECK(std::memcmp(&probeInfo, &expectedProbe, sizeof(probeInfo)) == 0);
+
+    std::memcpy(activePair, savedPair, sizeof(savedPair));
+    CHECK(sceUltGetUlthreadRuntimeInfo(&zeroWorkerRt, &probeInfo, activePair, 1, nullptr, 0) == Ok);
+    CHECK(probeInfo.activeUlthreads == 2);
+    CHECK(activePair[0] == &activeOne || activePair[0] == &activeTwo);
+    CHECK(activePair[1] == savedPair[1]);
+
+    gRelease = true;
+    CHECK(sceUltUlthreadJoin(&activeOne, &status) == Ok && status == 0);
+    CHECK(sceUltUlthreadJoin(&activeTwo, &status) == Ok && status == 0);
+    CHECK(sceUltUlthreadRuntimeDestroy(&zeroWorkerRt) == Ok);
 }
 
 std::atomic<bool> gOwnerStage{false};
@@ -558,6 +680,8 @@ void GetInfoTests() {
     CHECK(sceUltGetQueueInfo(dummy, &queueInfo, nullptr, 0) == State);
     CHECK(sceUltGetUlthreadInfo(dummy, &threadInfo) == State);
     CHECK(sceUltGetUlthreadRuntimeInfo(dummy, &rtInfo, nullptr, 0, nullptr, 0) == State);
+    Pthread dummyWorkers[2]{};
+    CHECK(sceUltGetUlthreadRuntimeInfo(dummy, &rtInfo, nullptr, 0, dummyWorkers, 2) == State);
 
     CHECK(sceUltWaitingQueueResourcePoolCreate(poolObj, "test-pool", 4, 4, nullptr, nullptr, 0) == Ok);
     CHECK(sceUltGetWaitingQueueResourcePoolInfo(poolObj, &poolInfo) == Ok);
@@ -740,13 +864,26 @@ void GetInfoTests() {
     CHECK(rtInfo.activeUlthreads == 0);
 
     Pthread workerHandles[2]{};
+    std::memset(workerHandles, 0xCC, sizeof(workerHandles));
+    Pthread savedWorkerHandles[2]{};
+    std::memcpy(savedWorkerHandles, workerHandles, sizeof(savedWorkerHandles));
+    UltUlthreadRuntimeInfo unsupportedInfo{};
+    std::memset(&unsupportedInfo, 0xEE, sizeof(unsupportedInfo));
+    const UltUlthreadRuntimeInfo savedUnsupportedInfo = unsupportedInfo;
+    void* unsupportedActive[2]{};
+    std::memset(unsupportedActive, 0xAA, sizeof(unsupportedActive));
+    void* savedUnsupportedActive[2]{};
+    std::memcpy(savedUnsupportedActive, unsupportedActive, sizeof(savedUnsupportedActive));
     bool workerQueryThrew = false;
     try {
-        sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, nullptr, 0, workerHandles, 2);
+        sceUltGetUlthreadRuntimeInfo(rtObj, &unsupportedInfo, unsupportedActive, 2, workerHandles, 2);
     } catch (const std::runtime_error&) {
         workerQueryThrew = true;
     }
     CHECK(workerQueryThrew);
+    CHECK(std::memcmp(&unsupportedInfo, &savedUnsupportedInfo, sizeof(unsupportedInfo)) == 0);
+    CHECK(std::memcmp(unsupportedActive, savedUnsupportedActive, sizeof(unsupportedActive)) == 0);
+    CHECK(std::memcmp(workerHandles, savedWorkerHandles, sizeof(savedWorkerHandles)) == 0);
 
     UltUlthreadRuntimeInfo untouchedInfo{};
     std::memset(&untouchedInfo, 0xEE, sizeof(untouchedInfo));
