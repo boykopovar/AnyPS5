@@ -53,6 +53,22 @@ void TestRemoteTargets() {
     Require(Throws([] { _ZNK9Inspector22RemoteAutomationTarget20remoteControlAllowedEv(nullptr); }));
 }
 
+void TestRemoteAutomationTargetCopy() {
+    const RemoteTarget source{reinterpret_cast<const void*>(0x3000), 9, true};
+    RemoteTarget copy{reinterpret_cast<const void*>(0x4000), 0, false};
+    _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(&copy, &source);
+    Require(copy.identifier == 9 && copy.flag);
+    Require(copy.vtable == reinterpret_cast<const void*>(0x4000));
+    Require(!_ZNK9Inspector22RemoteAutomationTarget20remoteControlAllowedEv(&copy));
+    const RemoteTarget unpaired{reinterpret_cast<const void*>(0x3000), 0, false};
+    _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(&copy, &unpaired);
+    Require(copy.identifier == 0 && !copy.flag);
+    _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(&copy, &copy);
+    Require(copy.identifier == 0 && !copy.flag);
+    Require(Throws([&] { _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(nullptr, &source); }));
+    Require(Throws([&] { _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(&copy, nullptr); }));
+}
+
 void TestSavedResultAlias() {
     int impl = 0;
     InjectedScriptHost host{reinterpret_cast<const void*>(0x2000), 1, nullptr, {true, &impl}};
@@ -70,6 +86,7 @@ void TestSavedResultAlias() {
 int main() {
     TestAsyncCallIdentifier();
     TestRemoteTargets();
+    TestRemoteAutomationTargetCopy();
     TestSavedResultAlias();
     std::puts("Inspector accessors tests passed");
     return 0;
