@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
@@ -19,25 +20,12 @@ struct SelectionMatch {
 
 template <typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
-    return ok;
-}
-
-bool CopyGuestBytesInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<const T>(source).CopyIn(destination);
 }
 
 template <typename T>
 bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<T>(destination).CopyOut(value);
 }
 
 SelectionMatch FirstOffered_nid_no_patch(const unsigned char* peer, std::uint32_t peerLength,
@@ -55,8 +43,8 @@ SelectionMatch FirstOffered_nid_no_patch(const unsigned char* peer, std::uint32_
                     return {peer + offered, 0};
                 unsigned char peerBytes[255]{};
                 unsigned char supportedBytes[255]{};
-                if (!CopyGuestBytesInPreservingErrno(peerBytes, peer + offered + 1, peerItemLength) ||
-                    !CopyGuestBytesInPreservingErrno(supportedBytes, supported + local + 1, supportedItemLength))
+                if (!GuestCopyIn_nid_no_patch(peerBytes, peer + offered + 1, peerItemLength) ||
+                    !GuestCopyIn_nid_no_patch(supportedBytes, supported + local + 1, supportedItemLength))
                     NotImplemented_nid_no_patch(function);
                 if (std::memcmp(peerBytes, supportedBytes, peerItemLength) == 0)
                     return {peer + offered, peerItemLength};

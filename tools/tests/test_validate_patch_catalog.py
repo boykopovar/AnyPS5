@@ -53,6 +53,12 @@ class CatalogValidatorTests(unittest.TestCase):
     def test_empty_catalog_is_valid(self):
         self.assertEqual(self.run_validator([]), (0, "Catalog validation: 0 entries valid.\n", ""))
 
+    def test_byte_order_mark_is_accepted(self):
+        (self.catalog / "index.json").write_text(json.dumps({"format": 1, "entries": [self.entry]}), encoding="utf-8-sig")
+        self.patch.write_text('format = 1\n[[patch]]\ntarget = "module.prx"\nva = 0x1000\nexpected = "00"\nvalue = "01"\n', encoding="utf-8-sig")
+        result, output, errors = self.run_validator()
+        self.assertEqual((result, output, errors), (0, "Catalog validation: 1 entries valid.\n", ""))
+
     def test_invalid_entries_are_all_reported_even_for_unrelated_titles(self):
         missing = dict(self.entry, titleId="OTHER0001", patch="missing.toml")
         malformed = dict(self.entry, titleId="THIRD0001", category="not-a-category")

@@ -16,33 +16,15 @@ namespace {
 std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
     if (!status) throw std::invalid_argument(std::string(caller) + ": invalid argument");
     std::int32_t value = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&value, status, sizeof(value));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(caller) + ": unreadable status");
     return value;
 }
 
 void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
     if (outgoing == incoming) return;
-    const int savedErrno = errno;
     const bool writable = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
-    errno = savedErrno;
     if (!writable) throw std::invalid_argument(std::string(caller) + ": unwritable status");
-}
-
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
 }
 
 constexpr std::size_t Unbounded = static_cast<std::size_t>(-1);
@@ -53,7 +35,7 @@ std::string ReadText(const char* source, std::size_t limit, const char* caller, 
         char chunk[0x1000];
         const auto address = reinterpret_cast<std::uintptr_t>(source + text.size());
         const std::size_t count = (std::min)(limit - text.size(), sizeof(chunk) - address % sizeof(chunk));
-        if (!CopyIn(chunk, source + text.size(), count))
+        if (!GuestCopyIn_nid_no_patch(chunk, source + text.size(), count))
             throw std::invalid_argument(std::string(caller) + ": unreadable " + name);
         const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
         text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);
@@ -110,7 +92,7 @@ std::int32_t APS5_VABI uloc_setKeywordValue_nid_postfix(const char* keyword, con
     }
     if (U_SUCCESS(local) && length >= 0) {
         const auto bytes = (std::min)(fullCapacity, static_cast<std::size_t>(length) + 1);
-        if (!CopyOut(buffer, host.data(), bytes)) throw std::invalid_argument(std::string(__func__) + ": unwritable buffer");
+        if (!GuestCopyOut_nid_no_patch(buffer, host.data(), bytes)) throw std::invalid_argument(std::string(__func__) + ": unwritable buffer");
     }
     WriteStatus(status, incoming, local, __func__);
     return length;

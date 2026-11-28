@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
@@ -241,5 +242,14 @@ int main() {
     Require(sceCesUcsProfileInitSJis1997Cp932(sjis) == sjis);
     RequireThrows([&] { sceCesGbUcsProfileSet4ByteCharRange(sjis, 0); });
     RequireThrows([&] { sceCesGbUcsProfileSetUdaMapping(sjis, 0); });
+
+    static const std::uint8_t readOnlyGb[sheetSize] = {'G', 'B', '1', '8', '-', '0', '0', 0, 1, 1};
+    errno = 71;
+    Require(sceCesGbUcsProfileSet4ByteCharRange(reinterpret_cast<void*>(0x10), 0) == invalidProfile && errno == 71);
+    Require(sceCesGbUcsProfileSet4ByteCharRange(const_cast<std::uint8_t*>(readOnlyGb), 0) == invalidProfile && errno == 71);
+    Require(readOnlyGb[8] == 1);
+    Require(sceCesGbUcsProfileSetUdaMapping(reinterpret_cast<void*>(0x10), 0) == invalidProfile && errno == 71);
+    Require(sceCesGbUcsProfileSetUdaMapping(const_cast<std::uint8_t*>(readOnlyGb), 0) == invalidProfile && errno == 71);
+    Require(readOnlyGb[9] == 1);
     return 0;
 }

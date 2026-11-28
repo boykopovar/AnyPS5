@@ -66,12 +66,16 @@ if(BUILD_TESTING)
         add_test(NAME agc_capture_trace_dll_shutdown COMMAND agc_capture_trace_tests dll-shutdown $<TARGET_FILE:agc_capture_trace_unload_fixture>)
         set_tests_properties(agc_capture_trace_dll_shutdown PROPERTIES TIMEOUT 15
                 ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceDirectory}/dll-shutdown/trace.log")
+        add_test(NAME agc_capture_trace_dll_process_exit COMMAND "${CMAKE_COMMAND}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CaptureTraceProcessExit.cmake"
+                "$<TARGET_FILE:agc_capture_trace_tests>" "$<TARGET_FILE:agc_capture_trace_unload_fixture>" "${agcCaptureTraceDirectory}")
+        set_tests_properties(agc_capture_trace_dll_process_exit PROPERTIES TIMEOUT 15)
         set_tests_properties(agc_capture_trace_path_default agc_capture_trace_path_empty
                 agc_capture_trace_path_explicit agc_capture_trace_explicit_writes
                 agc_capture_trace_prefix_matching agc_capture_trace_prefix_writes
                 agc_capture_trace_default_writes agc_capture_trace_open_failure agc_capture_trace_best_effort_overflow agc_capture_trace_format_overflow agc_capture_trace_queue_drop agc_capture_trace_queue_drop_shutdown agc_capture_trace_queue_drop_cumulative
                 agc_capture_trace_disabled agc_capture_trace_stop_unused agc_capture_trace_stop_drains
-                agc_capture_trace_dll_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
+                agc_capture_trace_dll_shutdown agc_capture_trace_dll_process_exit PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 

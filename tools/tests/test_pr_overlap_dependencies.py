@@ -1,6 +1,9 @@
 import json
+from itertools import combinations
 from pathlib import Path
 import sys
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -175,6 +178,44 @@ class StackedDependencyTests(unittest.TestCase):
         prs = stacked_pull_requests()
         self.assertIsNone(pr_overlap.overlaps(prs, 7, 8))
         self.assertIsNone(pr_overlap.overlaps(prs, 8, 2))
+
+
+class PairComparisonTests(unittest.TestCase):
+    def test_pairs_that_change_the_same_files_are_compared_on_the_workers(self):
+        prs = {n: {"author": f"author{n % 3}", "files": {"shared.txt"} if n % 2 else {f"own{n}.txt"}} for n in range(1, 61)}
+        threads, lines = {}, []
+
+        def fake_overlaps(prs, a, b):
+            threads[a, b] = threading.current_thread()
+            return {"added": {f"{a}-{b}"}} if (a + b) % 7 == 0 else None
+
+        with patch.object(pr_overlap, "overlaps", side_effect=fake_overlaps), patch.object(pr_overlap, "progress", side_effect=lines.append):
+            serial = {n: {} for n in prs}
+            for a, b in combinations(prs, 2):
+                if found := pr_overlap.overlaps(prs, a, b):
+                    serial[a][b] = serial[b][a] = found
+            threads.clear()
+            rows = pr_overlap.compare_all(prs, combinations(prs, 2), 4)
+        self.assertEqual(rows, serial)
+        merging = {(a, b) for a, b in combinations(prs, 2) if a % 2 and b % 2 and a % 3 != b % 3}
+        self.assertEqual(len(threads), len(list(combinations(prs, 2))))
+        self.assertEqual({pair for pair, thread in threads.items() if thread is not threading.main_thread()}, merging)
+        self.assertEqual(lines, [f"compared {len(merging)}/{len(merging)} pull request pairs that change the same files"])
+
+    def test_a_failed_pair_comparison_cancels_the_queued_ones(self):
+        prs = {n: {"author": f"author{n}", "files": {"shared.txt"}} for n in range(1, 41)}
+        calls = []
+
+        def fake_overlaps(prs, a, b):
+            calls.append((a, b))
+            if len(calls) == 1:
+                raise RuntimeError("git merge-tree failed")
+            time.sleep(0.01)
+
+        with patch.object(pr_overlap, "overlaps", side_effect=fake_overlaps), patch.object(pr_overlap, "progress"):
+            with self.assertRaisesRegex(RuntimeError, "git merge-tree failed"):
+                pr_overlap.compare_all(prs, combinations(prs, 2), 1)
+        self.assertLess(len(calls), 10)
 
 
 if __name__ == "__main__":

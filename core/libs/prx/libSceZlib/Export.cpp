@@ -69,8 +69,7 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     if (!initialized) return NOT_INITIALIZED;
     if (!source || !sourceLength || !destination || !requestId || !destinationLength ||
         destinationLength > 65536 || destinationLength % 2048 != 0) return INVALID_ARGUMENT;
-    if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0)
-        throw std::runtime_error("sceZlibInflate: unaligned destination driver behavior is not implemented");
+    if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0) return INVALID_ARGUMENT;
     if (nextId == std::numeric_limits<std::uint64_t>::max()) throw std::runtime_error("sceZlibInflate: request IDs exhausted");
     const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source);
     if (sourceLength > std::numeric_limits<std::uintptr_t>::max() - sourceAddress) return INVALID_ARGUMENT;
@@ -153,19 +152,24 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     errno = savedErrno;
     if (!copiedOutput) return INVALID_ARGUMENT;
     const std::uint64_t id = nextId;
-    results.emplace(id, InflateResult{produced, status});
-    try {
-        completed.push_back(id);
-    } catch (...) {
-        results.erase(id);
-        throw;
-    }
-    const int savedIdErrno = errno;
-    const bool copiedId = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedIdErrno;
-    if (!copiedId) {
+    completed.push_back(id);
+    const auto discard = [&] {
         completed.pop_back();
         results.erase(id);
+    };
+    const int savedIdErrno = errno;
+    bool copiedId;
+    try {
+        results.emplace(id, InflateResult{produced, status});
+        copiedId = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    } catch (...) {
+        discard();
+        errno = savedIdErrno;
+        throw;
+    }
+    errno = savedIdErrno;
+    if (!copiedId) {
+        discard();
         return INVALID_ARGUMENT;
     }
     ++nextId;

@@ -45,6 +45,7 @@ constexpr int ErrLibAsn1 = 13;
 
 constexpr int ErrRNestedAsn1Error = 58;
 constexpr int Asn1RBadObjectHeader = 102;
+constexpr int Asn1RHeaderTooLong = 123;
 constexpr int Asn1RNotEnoughData = 142;
 constexpr int Asn1RSequenceLengthMismatch = 148;
 constexpr int Asn1RTooLong = 155;
@@ -456,6 +457,169 @@ void TestEcPkcs8TrailingBytes(int expectedCurve, const std::vector<unsigned char
     PKCS8_PRIV_KEY_INFO_free_nid_postfix(referenceInfo);
 }
 
+std::vector<unsigned char> SpkiKeyBytes(const std::vector<unsigned char>& spki) {
+    std::size_t length = 0;
+    std::size_t offset = DerHeaderLength(spki, 0, length);
+    Require(spki[0] == 0x30 && offset + length == spki.size());
+    Require(spki[offset] == 0x30);
+    offset += DerHeaderLength(spki, offset, length);
+    offset += length;
+    Require(spki[offset] == 0x03);
+    offset += DerHeaderLength(spki, offset, length);
+    Require(length >= 1 && offset + length == spki.size() && spki[offset] == 0x00);
+    return std::vector<unsigned char>(spki.begin() + offset + 1, spki.end());
+}
+
+std::vector<unsigned char> SpkiWith(const std::vector<unsigned char>& spki,
+    const std::vector<unsigned char>& parameter, const std::vector<unsigned char>& keyBytes) {
+    std::size_t length = 0;
+    std::size_t offset = DerHeaderLength(spki, 0, length);
+    Require(spki[offset] == 0x30);
+    offset += DerHeaderLength(spki, offset, length);
+    Require(spki[offset] == 0x06);
+    const std::size_t objectHeader = DerHeaderLength(spki, offset, length);
+    std::vector<unsigned char> algorithm(spki.begin() + offset, spki.begin() + offset + objectHeader + length);
+    algorithm.insert(algorithm.end(), parameter.begin(), parameter.end());
+    std::vector<unsigned char> body = DerElement(0x30, algorithm);
+    std::vector<unsigned char> bits{0x00};
+    bits.insert(bits.end(), keyBytes.begin(), keyBytes.end());
+    const std::vector<unsigned char> bitString = DerElement(0x03, bits);
+    body.insert(body.end(), bitString.begin(), bitString.end());
+    return DerElement(0x30, body);
+}
+
+std::vector<std::pair<int, int>> SpkiRefused(const std::vector<unsigned char>& spki,
+    std::source_location location = std::source_location::current()) {
+    const unsigned char* cursor = spki.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PUBKEY_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(spki.size())) == nullptr, location);
+    Require(cursor == spki.data(), location);
+    std::vector<std::pair<int, int>> errors;
+    for (std::uint64_t code = ERR_get_error_nid_postfix(); code != 0; code = ERR_get_error_nid_postfix())
+        errors.push_back({static_cast<int>((code >> 24) & 0xff), static_cast<int>(code & 0xfff)});
+    Require(!errors.empty(), location);
+    Require(d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(spki.size())) == nullptr, location);
+    Require(cursor == spki.data(), location);
+    ERR_clear_error_nid_postfix();
+    return errors;
+}
+
+void TestRsaSpkiParameterAndTrailingBytes() {
+    constexpr int errLibRsa = 4;
+    constexpr int errLibEc = 16;
+    constexpr int errRRsaLib = 4;
+    constexpr int asn1RInvalidObjectEncoding = 216;
+    constexpr int ecRDecodeError = 142;
+    constexpr int x509RPublicKeyDecodeError = 125;
+    const std::pair<int, int> rsaLibError{errLibRsa, errRRsaLib};
+    const std::pair<int, int> ecDecodeError{errLibEc, ecRDecodeError};
+    const std::pair<int, int> publicKeyDecodeError{ErrLibX509, x509RPublicKeyDecodeError};
+
+    const std::vector<unsigned char> rsaKey = SpkiKeyBytes(RsaSpkiDer);
+    Require(rsaKey == RsaPkcs1PubDer);
+    Require(SpkiWith(RsaSpkiDer, {0x05, 0x00}, rsaKey) == RsaSpkiDer);
+    const unsigned char* referenceCursor = RsaSpkiDer.data();
+    LibreSsl3EvpPkey* reference = d2i_PUBKEY_nid_postfix(
+        nullptr, &referenceCursor, static_cast<std::int64_t>(RsaSpkiDer.size()));
+    Require(reference != nullptr && reference->type == RsaType);
+    const auto* referenceRsa = static_cast<const LibreSsl3Rsa*>(reference->key);
+
+    const std::vector<unsigned char> p256Curve{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
+    std::vector<unsigned char> wrappedArc{0x06, 0x0d, 0x2a, 0x81};
+    wrappedArc.insert(wrappedArc.end(), 10, 0x80);
+    wrappedArc.push_back(0x01);
+    std::vector<unsigned char> zeroAfterWrap{0x06, 0x0e, 0x2a, 0x81};
+    zeroAfterWrap.insert(zeroAfterWrap.end(), 11, 0x80);
+    zeroAfterWrap.push_back(0x01);
+    const std::vector<std::vector<unsigned char>> parameters{
+        {}, {0x05, 0x00}, {0x06, 0x03, 0x2a, 0x03, 0x04}, {0x06, 0x04, 0x2a, 0x81, 0x80, 0x00}, p256Curve, wrappedArc,
+        {0x30, 0x00}, {0x30, 0x03, 0x02, 0x01, 0x05}, {0x30, 0x01, 0xff}};
+    const std::vector<std::vector<unsigned char>> suffixes{{}, {0x00}, {0x05, 0x00}, {0x30, 0x80, 0xff}};
+    for (const std::vector<unsigned char>& parameter : parameters) {
+        for (const std::vector<unsigned char>& suffix : suffixes) {
+            std::vector<unsigned char> keyBytes = rsaKey;
+            keyBytes.insert(keyBytes.end(), suffix.begin(), suffix.end());
+            std::vector<unsigned char> spki = SpkiWith(RsaSpkiDer, parameter, keyBytes);
+            const std::size_t spkiSize = spki.size();
+            spki.push_back(0x5a);
+
+            const unsigned char* cursor = spki.data();
+            ERR_clear_error_nid_postfix();
+            LibreSsl3EvpPkey* key = d2i_PUBKEY_nid_postfix(
+                nullptr, &cursor, static_cast<std::int64_t>(spki.size()));
+            Require(key != nullptr && key->type == RsaType && key->method != nullptr);
+            Require(cursor == spki.data() + spkiSize);
+            Require(ERR_get_error_nid_postfix() == 0);
+            const auto* rsa = static_cast<const LibreSsl3Rsa*>(key->key);
+            Require(rsa != nullptr && rsa->d == nullptr);
+            CompareRsaKeys(referenceRsa, rsa, false);
+            EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+
+            cursor = spki.data();
+            LibreSsl3Rsa* direct = d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+                nullptr, &cursor, static_cast<std::int64_t>(spki.size()));
+            Require(direct != nullptr && direct->references == 1 && direct->d == nullptr);
+            Require(cursor == spki.data() + spkiSize);
+            Require(ERR_get_error_nid_postfix() == 0);
+            CompareRsaKeys(referenceRsa, direct, false);
+            RSA_free_nid_disambig1_nid_postfix(direct);
+        }
+    }
+
+    const std::vector<std::vector<unsigned char>> brokenKeys{
+        std::vector<unsigned char>(rsaKey.begin(), rsaKey.end() - 1),
+        {0x30, 0x03, 0x02, 0x01, 0x05},
+        {0x30, 0x00},
+        {0x02, 0x01, 0x05},
+        {},
+        {0x30, 0x09, 0x02, 0x01, 0x05, 0x02, 0x01, 0x03, 0x02, 0x01, 0x01}};
+    for (const std::vector<unsigned char>& parameter : parameters) {
+        for (const std::vector<unsigned char>& broken : brokenKeys) {
+            const std::vector<std::pair<int, int>> errors = SpkiRefused(SpkiWith(RsaSpkiDer, parameter, broken));
+            Require(errors.size() >= 3 && errors.back() == publicKeyDecodeError);
+            Require(errors[errors.size() - 2] == rsaLibError);
+            for (std::size_t index = 0; index + 2 < errors.size(); ++index) Require(errors[index].first == ErrLibAsn1);
+        }
+    }
+
+    struct RefusedParameter {
+        std::vector<unsigned char> bytes;
+        int firstReason;
+    };
+    const std::vector<RefusedParameter> refusedParameters{
+        {{0x06, 0x00}, asn1RInvalidObjectEncoding},
+        {{0x06, 0x01, 0x80}, asn1RInvalidObjectEncoding},
+        {{0x06, 0x02, 0x2a, 0x83}, asn1RInvalidObjectEncoding},
+        {{0x06, 0x03, 0x2a, 0x80, 0x01}, asn1RInvalidObjectEncoding},
+        {zeroAfterWrap, asn1RInvalidObjectEncoding},
+        {{0x05, 0x00, 0x05, 0x00}, Asn1RSequenceLengthMismatch},
+        {{0x06, 0x05, 0x2a}, Asn1RTooLong},
+        {{0x05, 0x01, 0x00}, 0},
+        {{0x10, 0x00}, 0}};
+    for (const RefusedParameter& refused : refusedParameters) {
+        const std::vector<std::pair<int, int>> errors = SpkiRefused(SpkiWith(RsaSpkiDer, refused.bytes, rsaKey));
+        Require(errors.front().first == ErrLibAsn1);
+        Require(refused.firstReason == 0 || errors.front().second == refused.firstReason);
+    }
+
+    const std::vector<unsigned char> point = SpkiKeyBytes(P256SpkiDer);
+    Require(SpkiWith(P256SpkiDer, p256Curve, point) == P256SpkiDer);
+    std::vector<unsigned char> longPoint = point;
+    longPoint.push_back(0x00);
+    const std::vector<std::vector<unsigned char>> refusedEcKeys{
+        SpkiWith(P256SpkiDer, {0x05, 0x00}, point),
+        SpkiWith(P256SpkiDer, {}, point),
+        SpkiWith(P256SpkiDer, p256Curve, longPoint)};
+    for (const std::vector<unsigned char>& spki : refusedEcKeys) {
+        const std::vector<std::pair<int, int>> errors = SpkiRefused(spki);
+        Require(errors.size() >= 2 && errors.back() == publicKeyDecodeError);
+        Require(errors[errors.size() - 2] == ecDecodeError);
+    }
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(reference);
+}
+
 void TestRsaPrivateRoundTrip() {
     std::vector<unsigned char> pkcs8WithTrailing = RsaPkcs8Der;
     pkcs8WithTrailing.push_back(0x11);
@@ -860,6 +1024,166 @@ void TestBioMalformedAndMultiChunkObjects() {
     PKCS8_PRIV_KEY_INFO_free_nid_postfix(refP8);
 }
 
+std::vector<unsigned char> WithLengthOctets(const std::vector<unsigned char>& der, std::size_t count) {
+    std::size_t headerSize = 2;
+    if (der[1] & 0x80) headerSize += der[1] & 0x7f;
+    const std::size_t contentSize = der.size() - headerSize;
+    std::vector<unsigned char> out{der[0], static_cast<unsigned char>(0x80 | count)};
+    for (std::size_t index = count; index > 0; --index) {
+        out.push_back(index > sizeof(std::size_t) ? 0 : static_cast<unsigned char>(contentSize >> (8 * (index - 1))));
+    }
+    out.insert(out.end(), der.begin() + static_cast<std::ptrdiff_t>(headerSize), der.end());
+    return out;
+}
+
+void TestNonMinimalLengths() {
+    const unsigned char* cursor = RsaPkcs8Der.data();
+    LibreSsl3Pkcs8PrivKeyInfo* refP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(RsaPkcs8Der.size()));
+    Require(refP8 != nullptr);
+    LibreSsl3EvpPkey* refKey = EVP_PKCS82PKEY_nid_postfix(refP8);
+    Require(refKey != nullptr && refKey->type == RsaType);
+
+    for (const std::size_t count : {3u, 4u, 8u, 9u, 126u, 127u}) {
+        const std::vector<unsigned char> padded = WithLengthOctets(RsaPkcs8Der, count);
+        cursor = padded.data();
+        ERR_clear_error_nid_postfix();
+        LibreSsl3Pkcs8PrivKeyInfo* p8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+            nullptr, &cursor, static_cast<std::int64_t>(padded.size()));
+        Require(p8 != nullptr && cursor == padded.data() + padded.size());
+        Require(ERR_peek_error_nid_postfix() == 0);
+        std::vector<unsigned char> encoded(RsaPkcs8Der.size());
+        unsigned char* out = encoded.data();
+        Require(i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8, &out) == static_cast<int>(RsaPkcs8Der.size()));
+        Require(encoded == RsaPkcs8Der);
+        LibreSsl3EvpPkey* key = EVP_PKCS82PKEY_nid_postfix(p8);
+        Require(key != nullptr && key->type == RsaType);
+        CompareRsaKeys(
+            static_cast<const LibreSsl3Rsa*>(refKey->key), static_cast<const LibreSsl3Rsa*>(key->key), true);
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+        PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8);
+
+        LibreSsl::Bio* p8Bio = BIO_new_mem_buf_nid_postfix(padded.data(), static_cast<int>(padded.size()));
+        LibreSsl::Bio* keyBio = BIO_new_mem_buf_nid_postfix(padded.data(), static_cast<int>(padded.size()));
+        Require(p8Bio != nullptr && keyBio != nullptr);
+        ERR_clear_error_nid_postfix();
+        LibreSsl3Pkcs8PrivKeyInfo* bioP8 = d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(p8Bio, nullptr);
+        if (count <= 6) {
+            Require(bioP8 != nullptr);
+            PKCS8_PRIV_KEY_INFO_free_nid_postfix(bioP8);
+        } else {
+            Require(bioP8 == nullptr);
+            ExpectError(ErrLibAsn1, Asn1RHeaderTooLong);
+        }
+        ERR_clear_error_nid_postfix();
+        LibreSsl3EvpPkey* bioKey = d2i_PrivateKey_bio_nid_postfix(keyBio, nullptr);
+        if (count <= 6) {
+            Require(bioKey != nullptr && bioKey->type == RsaType);
+            CompareRsaKeys(
+                static_cast<const LibreSsl3Rsa*>(refKey->key), static_cast<const LibreSsl3Rsa*>(bioKey->key), true);
+            EVP_PKEY_free_nid_disambig1_nid_postfix(bioKey);
+        } else {
+            Require(bioKey == nullptr);
+            ExpectError(ErrLibAsn1, Asn1RHeaderTooLong);
+        }
+        BIO_free_nid_postfix(keyBio);
+        BIO_free_nid_postfix(p8Bio);
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(refP8);
+
+    cursor = P256SpkiDer.data();
+    LibreSsl3EvpPkey* refPub = d2i_PUBKEY_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(P256SpkiDer.size()));
+    Require(refPub != nullptr && refPub->type == EcType);
+    for (const std::size_t count : {1u, 2u, 127u}) {
+        const std::vector<unsigned char> padded = WithLengthOctets(P256SpkiDer, count);
+        cursor = padded.data();
+        LibreSsl3EvpPkey* pub = d2i_PUBKEY_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(padded.size()));
+        Require(pub != nullptr && pub->type == EcType && cursor == padded.data() + padded.size());
+        CompareEcKeys(static_cast<const EcKey*>(refPub->key), static_cast<const EcKey*>(pub->key), false);
+        EVP_PKEY_free_nid_disambig1_nid_postfix(pub);
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refPub);
+
+    const std::vector<unsigned char> paddedRsaSpki = WithLengthOctets(RsaSpkiDer, 5);
+    cursor = paddedRsaSpki.data();
+    LibreSsl3Rsa* rsa = d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(paddedRsaSpki.size()));
+    Require(rsa != nullptr && cursor == paddedRsaSpki.data() + paddedRsaSpki.size());
+    RSA_free_nid_disambig1_nid_postfix(rsa);
+
+    const std::vector<unsigned char> innerKey = WithLengthOctets(
+        std::vector<unsigned char>(P256Pkcs8Der.begin() + 29, P256Pkcs8Der.end()), 2);
+    std::vector<unsigned char> innerOctets{0x04, 0x81, static_cast<unsigned char>(innerKey.size())};
+    innerOctets.insert(innerOctets.end(), innerKey.begin(), innerKey.end());
+    std::vector<unsigned char> nested{0x30, 0x00};
+    nested.insert(nested.end(), P256Pkcs8Der.begin() + 3, P256Pkcs8Der.begin() + 27);
+    nested.insert(nested.end(), innerOctets.begin(), innerOctets.end());
+    nested = WithLengthOctets(nested, 3);
+    cursor = P256Pkcs8Der.data();
+    LibreSsl3Pkcs8PrivKeyInfo* refEcP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(P256Pkcs8Der.size()));
+    Require(refEcP8 != nullptr);
+    LibreSsl3EvpPkey* refEcKey = EVP_PKCS82PKEY_nid_postfix(refEcP8);
+    Require(refEcKey != nullptr && refEcKey->type == EcType);
+    cursor = nested.data();
+    LibreSsl3Pkcs8PrivKeyInfo* nestedP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(nested.size()));
+    Require(nestedP8 != nullptr && cursor == nested.data() + nested.size());
+    LibreSsl3EvpPkey* nestedKey = EVP_PKCS82PKEY_nid_postfix(nestedP8);
+    Require(nestedKey != nullptr && nestedKey->type == EcType);
+    CompareEcKeys(static_cast<const EcKey*>(refEcKey->key), static_cast<const EcKey*>(nestedKey->key), true);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(nestedKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(nestedP8);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(refEcKey);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(refEcP8);
+
+    std::vector<unsigned char> longNull(RsaPkcs8Der);
+    Require(longNull[8] == 0x0d && longNull[20] == 0x05 && longNull[21] == 0x00);
+    longNull.insert(longNull.begin() + 21, 0x81);
+    longNull[8] = 0x0e;
+    longNull = WithLengthOctets(longNull, 2);
+    cursor = longNull.data();
+    LibreSsl3Pkcs8PrivKeyInfo* longNullP8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(longNull.size()));
+    Require(longNullP8 != nullptr && cursor == longNull.data() + longNull.size());
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(longNullP8);
+
+    std::vector<unsigned char> indefiniteNull(RsaPkcs8Der);
+    indefiniteNull[21] = 0x80;
+    cursor = indefiniteNull.data();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(indefiniteNull.size())) == nullptr);
+    Require(cursor == indefiniteNull.data());
+
+    std::vector<unsigned char> hugeLength = WithLengthOctets(RsaPkcs8Der, 8);
+    hugeLength[5] = 0x01;
+    cursor = hugeLength.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(hugeLength.size())) == nullptr);
+    ExpectError(ErrLibAsn1, Asn1RTooLong);
+
+    std::vector<unsigned char> nineOctets = WithLengthOctets(RsaPkcs8Der, 9);
+    nineOctets[2] = 0x01;
+    cursor = nineOctets.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(nineOctets.size())) == nullptr);
+    Require(cursor == nineOctets.data());
+    ExpectError(ErrLibAsn1, Asn1RBadObjectHeader);
+
+    std::vector<unsigned char> negativeLength = WithLengthOctets(RsaPkcs8Der, 8);
+    negativeLength[2] = 0x80;
+    cursor = negativeLength.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(negativeLength.size())) == nullptr);
+    Require(cursor == negativeLength.data());
+    ExpectError(ErrLibAsn1, Asn1RBadObjectHeader);
+}
+
 void TestGuestOutput() {
     const unsigned char* cursor = RsaPkcs8Der.data();
     LibreSsl3Pkcs8PrivKeyInfo* p8 = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
@@ -959,6 +1283,7 @@ int main() {
     TestRsaPkcs8ParameterAndErrors();
     TestEcPkcs8TrailingBytes(Secp256r1, P256Pkcs8Der);
     TestEcPkcs8TrailingBytes(Secp384r1, P384Pkcs8Der);
+    TestRsaSpkiParameterAndTrailingBytes();
     TestEcPublicAndPrivate(Secp256r1, P256Pkcs8Der, &P256SpkiDer, &P256Sec1Der);
     TestEcPublicAndPrivate(Secp384r1, P384Pkcs8Der, nullptr, nullptr);
     TestErrorsAndNulls();
@@ -966,6 +1291,7 @@ int main() {
     TestConsecutiveBioObjects();
     TestPkcs8AttributesRoundTrip();
     TestBioMalformedAndMultiChunkObjects();
+    TestNonMinimalLengths();
     TestGuestOutput();
     return 0;
 }

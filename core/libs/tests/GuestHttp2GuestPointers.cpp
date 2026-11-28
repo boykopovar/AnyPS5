@@ -62,6 +62,7 @@ int main() {
     setenv("APS5_NET_DISCONNECTED", "1", 1);
 #endif
     Require(sceHttp2SendRequestAsync(request, nullptr, 0, nullptr, nullptr) == 0);
+    RequireErrno(sceHttp2GetStatusCode(request, static_cast<int*>(unmapped)), nullPointer);
     RequireErrno(sceHttp2WaitAsync(request, static_cast<Http2AsyncResult*>(unmapped), nullptr, nullptr), nullPointer);
     static const Http2AsyncResult readOnlyResult{99, 99, 99};
     RequireErrno(sceHttp2WaitAsync(request, const_cast<Http2AsyncResult*>(&readOnlyResult), nullptr, nullptr), nullPointer);

@@ -97,6 +97,81 @@ class CheckCompileDatabaseNulTests(unittest.TestCase):
                     check_compile.compilation_database(json.dumps([record]), "compile_commands.json")
 
 
+class CheckCompileHeaderTests(CheckCompileFixture):
+    def test_checks_only_configurations_that_include_the_header(self):
+        cmake = shutil.which("cmake")
+        ninja = shutil.which("ninja")
+        compiler = shutil.which("gcc") or shutil.which("clang")
+        if not all((cmake, ninja, compiler)):
+            self.skipTest("requires CMake, Ninja and GCC or Clang")
+        self.source(".gitignore", "build/\n")
+        self.source("CMakeLists.txt", """cmake_minimum_required(VERSION 3.15)
+project(HeaderSyntax C)
+add_library(with_header STATIC source.c)
+target_compile_definitions(with_header PRIVATE USE_SHARED)
+add_library(without_header STATIC source.c)
+add_library(unbuilt STATIC EXCLUDE_FROM_ALL source.c)
+""")
+        self.source("source.c", '#ifdef USE_SHARED\n#include "Shared Dir/shared header.h"\n#endif\nint x;\n')
+        header = "Shared Dir/shared header.h"
+        self.source(header, "#define SHARED 1\n")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], cwd=self.root, check=True)
+        subprocess.run([cmake, "-S", str(self.root), "-B", str(self.build), "-G", "Ninja",
+                        f"-DCMAKE_C_COMPILER={compiler}", f"-DCMAKE_MAKE_PROGRAM={ninja}",
+                        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], check=True, capture_output=True)
+        subprocess.run([cmake, "--build", str(self.build)], check=True, capture_output=True)
+
+        manifest = json.loads((self.build / "compile_commands.json").read_text(encoding="utf-8-sig"))
+        owner = next(entry for entry in manifest if "-DUSE_SHARED" in entry["command"])
+        output = self.build / check_compile.compilation_output(owner)
+
+        self.source(header, "#error header syntax fixture\n")
+        ordinary = self.tool("--base", "HEAD", "--dry-run")
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertEqual(json.loads(ordinary.stdout), {"translation_units": []})
+        for paths in ((header,), ("--base", "HEAD")):
+            with self.subTest(paths=paths):
+                planned = self.tool("--headers", "--dry-run", *paths)
+                self.assertEqual(planned.returncode, 0, planned.stderr)
+                units = json.loads(planned.stdout)["translation_units"]
+                self.assertEqual([Path(unit["source"]) for unit in units], [self.root / "source.c"])
+                self.assertEqual(len(units[0]["commands"]), 1)
+                self.assertIn("-DUSE_SHARED", units[0]["commands"][0]["arguments"])
+                self.assertIn("0 stale, 1 missing", planned.stderr)
+
+        owner.pop("output", None)
+        self.manifest(manifest)
+        explicit = self.tool("--headers", "--dry-run", "source.c", header)
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        units = json.loads(explicit.stdout)["translation_units"]
+        self.assertEqual(len(units), 1)
+        self.assertEqual(len(units[0]["commands"]), 3)
+
+        checked = self.tool("--headers", header)
+        self.assertEqual(checked.returncode, 1, checked.stderr)
+        self.assertIn("header syntax fixture", checked.stderr)
+        self.assertIn("1 of 1 translation units did not compile", checked.stderr)
+        self.source(header, "#define SHARED 1\n")
+        checked = self.tool("--headers", header)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertIn("1 translation units compile", checked.stdout)
+
+        output.unlink()
+        stale = self.tool("--headers", "--dry-run", header)
+        self.assertEqual(stale.returncode, 1, stale.stderr)
+        self.assertEqual(json.loads(stale.stdout), {"translation_units": []})
+        self.assertIn("1 stale, 1 missing", stale.stderr)
+        self.assertIn("has no compile configuration with a valid recorded Ninja dependency", stale.stderr)
+
+    def test_source_only_request_does_not_require_ninja(self):
+        self.source("source.c")
+        self.manifest([self.entry("source.c", "cc -c source.c")])
+        with patch.object(check_compile, "ninja_for_build", side_effect=AssertionError("unexpected Ninja lookup")):
+            tasks = check_compile.compile_tasks(self.root, self.build, [self.root / "source.c"], headers=True)
+        self.assertEqual(len(tasks[0][-1]), 1)
+
+
 class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
@@ -513,10 +588,32 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
             ninja = bin / "ninja"
             ninja.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stub}"\n', encoding="utf-8")
             ninja.chmod(0o755)
-        result = self.tool("unit.cpp", env={"PATH": f"{bin}{os.pathsep}{os.environ['PATH']}",
-                                            "NINJA_STUB_PYTHON": sys.executable})
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("1 translation units compile", result.stdout)
+        for program in (None, "CMAKE_MAKE_PROGRAM-NOTFOUND", self.root / "missing-ninja"):
+            with self.subTest(program=program):
+                if program is not None:
+                    (self.build / "CMakeCache.txt").write_text(
+                        f"CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_MAKE_PROGRAM:FILEPATH={program}\n", encoding="utf-8")
+                result = self.tool("unit.cpp", env={"PATH": f"{bin}{os.pathsep}{os.environ['PATH']}",
+                                                    "NINJA_STUB_PYTHON": sys.executable})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("1 translation units compile", result.stdout)
+
+    def test_configured_ninja_is_used_when_ninja_is_not_on_path(self):
+        ninja = shutil.which("ninja")
+        cmake = shutil.which("cmake")
+        compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+        if ninja is None or cmake is None or compiler is None:
+            self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
+        source = self.source("unit.cpp", "int main() { return 0; }\n")
+        self.source("CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\nproject(Unit CXX)\n"
+                    "add_executable(unit unit.cpp)\n")
+        subprocess.run([cmake, "-G", "Ninja", "-S", str(self.root), "-B", str(self.build),
+                        f"-DCMAKE_MAKE_PROGRAM={ninja}", f"-DCMAKE_CXX_COMPILER={compiler}",
+                        "-DCMAKE_EXPORT_COMPILE_COMMANDS=OFF"], check=True, capture_output=True)
+        path_lookup = shutil.which
+        with patch.object(check_compile.shutil, "which", side_effect=lambda name: None if name == "ninja" else path_lookup(name)):
+            self.assertEqual(check_compile.check(self.root, self.build, [source]), (1, 0))
 
     def test_argument_arrays_preserve_tokens_and_take_precedence_over_command(self):
         source = self.source("unit with spaces.cpp")
@@ -858,21 +955,26 @@ class CheckCompileOutputTests(CheckCompileFixture):
                     self.assertEqual(path.read_bytes(), content, str(path))
                 self.assertEqual(set(self.build.iterdir()), set(preserved))
 
-    def test_unmodeled_saved_temporary_modes_are_rejected_before_the_compiler_runs(self):
+    def test_all_saved_temporary_modes_are_dropped_before_the_compiler_runs(self):
         source = self.source("unit.c")
         invoked = self.root / "invoked"
-        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        recorded = self.root / "recorded.json"
+        script = self.compiler("import json, sys\nfrom pathlib import Path\n"
+                               f"Path({str(invoked)!r}).touch()\n"
+                               f"Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n")
         for option in ("-save-temps=invalid", "-save-temps=diag", "--save-temps=diag",
                        "-save-temps=CWD", "-save-temps="):
             with self.subTest(option=option):
+                invoked.unlink(missing_ok=True)
+                recorded.unlink(missing_ok=True)
                 self.manifest([{"directory": str(self.build), "file": str(source),
-                                "arguments": [sys.executable, str(script), str(invoked), option,
+                                "arguments": [sys.executable, str(script), option,
                                               "-c", str(source), "-o", str(self.build / "unit.o")]}])
                 result = self.tool("unit.c")
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn(f"unsupported saved-temporary mode in {option}", result.stderr)
-                self.assertNotIn("Traceback", result.stderr)
-                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("1 translation units compile", result.stdout)
+                self.assertTrue(invoked.exists(), result.stdout + result.stderr)
+                self.assertNotIn(option, json.loads(recorded.read_text(encoding="utf-8")))
                 self.assertFalse((self.build / "unit.o").exists(), result.stdout + result.stderr)
 
 
@@ -1449,6 +1551,21 @@ class CheckCompileLauncherPrefixTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check_compile.launcher_prefix(arguments)
 
+    def test_compiler_wrapper_prefixes_are_bare(self):
+        self.assertEqual(check_compile.launcher_prefix(["ccache", "clang", "-c", "a.c"]), ["ccache"])
+        self.assertEqual(check_compile.launcher_prefix(["sccache", "clang"]), ["sccache"])
+        self.assertEqual(check_compile.launcher_prefix(["distcc", "clang"]), ["distcc"])
+
+    def test_compiler_wrapper_options_are_refused(self):
+        for arguments in (["ccache", "--unknown", "clang"], ["ccache", "--show-stats", "clang"],
+                          ["ccache", "--clear", "clang"], ["ccache", "-s"], ["ccache", "--", "clang"],
+                          ["sccache", "--show-stats"], ["sccache", "--start-server", "clang"], ["sccache"],
+                          ["distcc", "--show-hosts", "clang"], ["distcc", "-j", "8", "clang"],
+                          ["distcc", "-j"], ["ccache"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.launcher_prefix(arguments)
+
 
 class CheckCompileEntryKeyTests(unittest.TestCase):
     def test_relative_file_is_resolved_against_the_entry_directory(self):
@@ -1493,6 +1610,19 @@ class CheckCompileResolveSourceTests(unittest.TestCase):
             file = Path(other) / "x.cpp"
             _, key = check_compile.resolve_source(file, Path(name))
             self.assertEqual(key, check_compile.real(file).as_posix())
+
+
+class CheckCompileCommandArgumentsTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
+    def test_command_arguments_splits_quoted_words(self):
+        self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+
+
+class CheckCompileEntriesTests(unittest.TestCase):
+    def test_entries_rejects_a_build_that_is_not_a_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                check_compile.entries(Path(directory) / "missing-build")
 
 
 if __name__ == "__main__":

@@ -103,12 +103,21 @@ int main() {
     Require(sceFontStringRefersRenderCharacters(string, &characters[2], &characters[0], unmappedCount) == nullptr);
     Require(sceFontStringRefersRenderCharacters(nullptr, nullptr, nullptr, unmappedCount) == nullptr);
 
+    auto* const unmappedCharacter = reinterpret_cast<FontTextCharacter*>(0x10);
+    count = 77;
+    errno = 71;
+    Require(sceFontStringRefersRenderCharacters(string, unmappedCharacter, nullptr, &count) == nullptr && count == 0 && errno == 71);
+    count = 77;
+    errno = 71;
+    Require(sceFontStringRefersRenderCharacters(string, &characters[0], unmappedCharacter, &count) == nullptr && count == 0 && errno == 71);
+
     const auto at = [&](std::ptrdiff_t index) {
         return reinterpret_cast<FontTextCharacter*>(reinterpret_cast<std::uintptr_t>(characters) + static_cast<std::uintptr_t>(index * static_cast<std::ptrdiff_t>(sizeof(FontTextCharacter))));
     };
     FontTextCharacter* const before = at(-1);
     FontTextCharacter* const after = at(4);
-    for (FontTextCharacter* outside : {before, after}) {
+    FontTextCharacter* const unaligned = reinterpret_cast<FontTextCharacter*>(reinterpret_cast<std::uintptr_t>(characters) + 1);
+    for (FontTextCharacter* outside : {before, after, unaligned}) {
         count = 77;
         Require(sceFontStringRefersRenderCharacters(string, outside, nullptr, &count) == nullptr && count == 0);
         count = 77;

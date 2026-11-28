@@ -28,9 +28,9 @@ void RequireInvalidArgument(Function function) {
 }
 
 bool callbackCalled = false;
-void OnOrigins(const void* arrayRef, const void* errorRef, void* context) {
-    (void)errorRef;
-    (void)context;
+void APS5_VABI OnOrigins(const void* arrayRef, const void* errorRef, void* context) {
+    Require(errorRef == nullptr);
+    Require(context == &callbackCalled);
     callbackCalled = (arrayRef != nullptr);
     if (arrayRef) {
         Require(WKArrayGetSize(arrayRef) == 1);
@@ -76,7 +76,7 @@ int main() {
     RequireInvalidArgument([&] { WKResourceCacheManagerClearCacheForOrigin(mgrRef, badObj.Get(), 1); });
 
     mgr->origins.push_back("example.org");
-    WKResourceCacheManagerGetCacheOrigins(mgrRef, nullptr, OnOrigins);
+    WKResourceCacheManagerGetCacheOrigins(mgrRef, &callbackCalled, OnOrigins);
     Require(callbackCalled);
     WKResourceCacheManagerGetCacheOrigins(mgrRef, nullptr, nullptr);
 
