@@ -89,7 +89,12 @@ VKAPI_ATTR void VKAPI_CALL Destroy(VkDevice, VkPipelineCache cache, const VkAllo
 VKAPI_ATTR VkResult VKAPI_CALL Merge(VkDevice, VkPipelineCache destination, std::uint32_t count, const VkPipelineCache* sources) {
     std::lock_guard lock(mutex);
     Check(count == 1, "expected one merge source");
-    caches.at(destination) = caches.at(sources[0]);
+    auto& merged = caches.at(destination);
+    const auto& source = caches.at(sources[0]);
+    if (merged.size() < source.size()) merged.resize(source.size());
+    for (std::size_t index = 32; index < source.size(); ++index) {
+        if (source[index] != std::byte{0}) merged[index] = source[index];
+    }
     return VK_SUCCESS;
 }
 
@@ -127,6 +132,11 @@ std::vector<char> Read(const std::filesystem::path& path) {
 void Grow(VkPipelineCache cache, std::size_t bytes = 128) {
     std::lock_guard lock(mutex);
     caches.at(cache).resize(bytes, std::byte{9});
+}
+
+void Mark(VkPipelineCache cache, std::size_t index, std::byte value) {
+    std::lock_guard lock(mutex);
+    caches.at(cache).at(index) = value;
 }
 
 #ifdef _WIN32
@@ -436,10 +446,12 @@ int main(int argc, char** argv) {
         {
             PipelineCache writer(context, properties);
             Grow(writer.Handle(), 96);
+            Mark(writer.Handle(), 40, std::byte{0xb1});
             writer.SaveNow();
         }
         const auto external = Read(file);
-        Check(external.size() == 24 + 96, "the second writer did not update the cache file");
+        Check(external.size() == 24 + 96 && external[24 + 40] == static_cast<char>(0xb1), "the second writer did not update the cache file");
+        Mark(cache->Handle(), 48, std::byte{0xa1});
         auto before = creations.load();
         cache->SaveNow();
         Check(creations == before + 1 && Read(file) == external, "a smaller cache did not merge and keep the other writer's file");
@@ -447,8 +459,11 @@ int main(int argc, char** argv) {
             Grow(cache->Handle(), bytes);
             before = creations.load();
             cache->SaveNow();
+            const auto saved = Read(file);
+            Check(saved.size() == 24 + bytes, "the save after an external merge did not write the grown cache");
+            Check(saved[24 + 40] == static_cast<char>(0xb1), "a save after an external merge lost the other writer's entry");
+            Check(saved[24 + 48] == static_cast<char>(0xa1), "a save after an external merge lost the cache's own entry");
             Check(creations == before + 1, "a cache that lacks another writer's entries saved over the file without merging it");
-            Check(Read(file).size() == 24 + bytes, "the save after an external merge did not write the grown cache");
         }
         cache.reset();
         Check(caches.empty(), "the external-merge test leaked Vulkan objects");
