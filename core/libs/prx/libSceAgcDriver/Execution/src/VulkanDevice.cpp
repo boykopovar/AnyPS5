@@ -863,6 +863,10 @@ struct VulkanDevice::State {
     std::uint32_t queueIndex = 0;
     int nextDumpIndex = 0;
     bool nextDumpScreenshot = false;
+    // A trigger file or a screenshot key seen while the frame dump writer was still
+    // writing the previous PNG: the request waits for the writer instead of being
+    // consumed on a frame that cannot honour it.
+    bool pendingScreenshot = false;
     FrameDumpWriter dumpWriter;
 
     template<typename TFunction>
@@ -4404,7 +4408,12 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
 }
 
 bool VulkanDevice::takeScreenshot(bool dumpFrame) {
-    state->nextDumpScreenshot = !dumpFrame && state->dumpWriter.Idle() && Screenshot::Take();
+    // Consume the request as soon as it is seen and keep it until the writer can take the dump:
+    // with Idle() checked first, a request made while the previous PNG was being written was only
+    // consumed on a later frame that happened to find the writer idle.
+    if (!dumpFrame && Screenshot::Take()) state->pendingScreenshot = true;
+    state->nextDumpScreenshot = !dumpFrame && state->pendingScreenshot && state->dumpWriter.Idle();
+    if (state->nextDumpScreenshot) state->pendingScreenshot = false;
     return state->nextDumpScreenshot;
 }
 
