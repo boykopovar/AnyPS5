@@ -76,7 +76,7 @@ public:
             auto command = read();
             if (command.sequence > lastSequence) {
                 lastSequence = command.sequence;
-                const Input replaced = events.empty() || now < started ? Input{} : InputAt(now - started);
+                const Input replaced = events.empty() || now < started ? Input{} : now == started ? inherited : InputAt(now - started - 1);
                 appendTransitions(history, reportedAt, now);
                 if (history.size() > HistoryLimit) history.erase(history.begin(), history.end() - HistoryLimit);
                 events = std::move(command.events);

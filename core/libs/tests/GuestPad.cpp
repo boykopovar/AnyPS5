@@ -73,6 +73,16 @@ static void CheckInputCommandReplacement() {
     Require(commands.Buttons(1700000) == 0x2000);
     const auto held = commands.TakeTransitions(1900000);
     Require(held.size() == 1 && held[0].first == 1800000 && held[0].second.buttons == 0);
+    write("APS5_PAD_TIMELINE 1 6 1\n0 300 8192\n");
+    Require(commands.Buttons(2000000) == 0x2000);
+    Require(commands.TakeTransitions(2000000).empty());
+    write("APS5_PAD_TIMELINE 1 7 1\n100 40 8192\n");
+    Require(commands.Buttons(2300000) == 0);
+    const auto boundary = commands.TakeTransitions(2500000);
+    Require(boundary.size() == 3);
+    Require(boundary[0].first == 2300000 && boundary[0].second.buttons == 0);
+    Require(boundary[1].first == 2400000 && boundary[1].second.buttons == 0x2000);
+    Require(boundary[2].first == 2440000 && boundary[2].second.buttons == 0);
 }
 
 static void CheckInputCommands() {
