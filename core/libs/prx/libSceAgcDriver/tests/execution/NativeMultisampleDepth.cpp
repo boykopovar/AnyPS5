@@ -3615,6 +3615,7 @@ public:
     DriverDepthTarget& operator=(const DriverDepthTarget&) = delete;
 
     void Fill(std::size_t bytes) const { SubmitDriverDmaFill(target.htileAddress, static_cast<std::uint32_t>(bytes), clearWord); }
+    void StoreHtile() const { QueueTargetWordFill(context, recorder, target.htileAddress, htileBytes, clearWord); }
     std::shared_ptr<Texture> Sampled() const {
         const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         return CachedSampledTexture(context, words);
@@ -3690,6 +3691,15 @@ void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint
     std::printf("Native depth on the driver's device samples=%u clear=%u %ux%u: drawn, cleared by a DMA_DATA fill of its HTILE through the driver and sampled\n", fragments, one, size.width, size.height);
 }
 
+void CheckGpuHtileClearStore(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one) {
+    const DriverDepthTarget target(context, recorder, fragments, one, {5u, 3u});
+    target.Sample(0.25f, 0.25f, "native depth drawn before a GPU store of clear HTILE words");
+    target.StoreHtile();
+    target.Sample(std::nullopt, std::nullopt, "native depth after a GPU store of HTILE words that prove its clear value");
+    target.Sample(0.125f, 0.125f, "native depth drawn after a GPU store of clear HTILE words");
+    std::printf("Native depth samples=%u clear=%u: a GPU store of HTILE words proving the clear value cleared the native depth\n", fragments, one);
+}
+
 int CheckDriverPath(bool queued) {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
@@ -3723,6 +3733,7 @@ int CheckDriverPath(bool queued) {
         for (const auto samples : {2u, 4u, 8u}) {
             if (!supported(samples)) { unavailable += queued ? 2u : 3u; continue; }
             for (const bool one : {false, true}) { CheckDriverPathTarget(context, *recorder, samples, one, queued ? DriverFill::Queued : DriverFill::Whole); ++checked; }
+            if (!queued) for (const bool one : {false, true}) CheckGpuHtileClearStore(context, *recorder, samples, one);
             if (!queued) { CheckDriverPathTarget(context, *recorder, samples, false, DriverFill::Whole, {64u, 32u}); ++checked; }
         }
         if (!queued) CheckDriverPathTarget(context, *recorder, 4u, false, DriverFill::Partial);
@@ -5497,6 +5508,43 @@ void CheckElidedFillOverArmedClear(Context context, std::uint32_t samples) {
     std::printf("Native D32 with HTILE, samples=%u: a recorded fill superseded an armed clear dispatch while an elided fill kept its pending-write refusal\n", samples);
 }
 
+void CheckExpandedHtileStore(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    constexpr std::uint32_t expanded = 0xfffc000fu;
+    const std::uint32_t pattern = 0xfffffff0u;
+    for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &pattern, 4u);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto words = DepthSampleWords(target);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the expanded HTILE store fixture has no attachment view");
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "the expanded HTILE store fixture was not imported");
+    recorder.Sync();
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, expanded);
+    Require(CachedSampledTexture(context, words) != nullptr, "a GPU store of expanded HTILE words over native depth was refused");
+    Require(DepthSurfaceHolds(context, DecodeTextureResource(words), texture.get()), "a GPU store of expanded HTILE words lost the native depth view");
+    recorder.Sync();
+    Require(CachedSampledTexture(context, words) != nullptr, "native depth was refused on the lookup after an accepted expanded HTILE store");
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    recorder.Sync();
+    QueueTargetWordFill(context, recorder, target.address, 4u, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32 with HTILE, samples=%u: a GPU store of expanded HTILE words kept the native depth while other GPU stores over its planes were refused\n", samples);
+}
+
 enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind, ShaderBufferRead, ShaderBufferWrite, GuestWriteAfterRead, UndecidedShaderBufferWrite, TextureRead, DecidedVertexRead, DecidedNewDepthTarget };
 void CheckReusePublication(Context context, ReuseCase use) {
     constexpr std::uint32_t samples = 4u;
@@ -5902,6 +5950,7 @@ int main(int argc, char** argv) {
                 if (!supported(samples)) { ++unavailable; continue; }
                 CheckStoredRepeatFill(context, samples);
                 if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) CheckElidedFillOverArmedClear(context, samples);
+                if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) CheckExpandedHtileStore(context, samples);
                 ++checked;
             }
             std::printf("Native depth stored repeated HTILE fill cases checked=%u unavailable=%u\n", checked, unavailable);
