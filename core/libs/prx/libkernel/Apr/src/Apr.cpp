@@ -347,6 +347,7 @@ int _readFile(const Apr::ReadFileCommand& command) {
         }
         if (read != command.size) {
             if (command.offset + read < file.node.Size) return failed(SCE_KERNEL_ERROR_EIO, "the archive read came back short before the end of the entry");
+            if (trace) std::fprintf(stderr, "[apr] read of file %u SHORT: 0x%llx of 0x%llx at offset 0x%llx (rest zero-filled)\n", command.fileId, static_cast<unsigned long long>(read), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.offset));
             std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
         }
         return 0;
@@ -375,6 +376,7 @@ int _readFile(const Apr::ReadFileCommand& command) {
         std::error_code sizeError;
         const auto fileSize = std::filesystem::file_size(hostPath, sizeError);
         if (!stream.eof() || sizeError || command.offset + read < fileSize) return failed(SCE_KERNEL_ERROR_EIO, "the read came back short before the end of the file");
+        if (trace) std::fprintf(stderr, "[apr] read of file %u SHORT: 0x%llx of 0x%llx at offset 0x%llx (rest zero-filled)\n", command.fileId, static_cast<unsigned long long>(read), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.offset));
         std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
     }
     return 0;
