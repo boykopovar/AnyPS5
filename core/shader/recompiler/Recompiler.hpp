@@ -401,6 +401,7 @@ struct SpirvTarget {
     bool float16NarrowNans = false;
     bool float16HostNans = false;
     bool meshInlineFunctions = false;
+    bool meshSoftwareControlBarriers = false;
     bool spannedShuffleThroughMemory = false;
     bool spannedUnreachableStays = false;
     bool spannedUnreachableVerify = false;

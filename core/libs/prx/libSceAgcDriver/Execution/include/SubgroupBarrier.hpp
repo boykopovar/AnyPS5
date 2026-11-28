@@ -25,6 +25,10 @@ inline bool DeviceAtomicWorkgroupMemoryBarriersRequired(VkDriverId driver) {
     return driver == VK_DRIVER_ID_AMD_PROPRIETARY;
 }
 
+inline bool MeshSoftwareControlBarriersRequired(VkDriverId driver, std::uint32_t driverVersion) {
+    return driver == VK_DRIVER_ID_AMD_PROPRIETARY && driverVersion == VK_MAKE_API_VERSION(0, 2, 0, 331);
+}
+
 }
 
 #endif

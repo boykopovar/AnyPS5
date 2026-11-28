@@ -402,6 +402,7 @@ private:
         append(key, value.float16NarrowNans);
         append(key, value.float16HostNans);
         append(key, value.meshInlineFunctions);
+        append(key, value.meshSoftwareControlBarriers);
         append(key, value.spannedShuffleThroughMemory);
         append(key, value.spannedUnreachableStays);
         append(key, value.spannedUnreachableVerify);

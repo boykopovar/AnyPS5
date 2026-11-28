@@ -77,6 +77,15 @@ std::uint32_t WaveLdsScope(const IrProgram& program, const ShaderWorkgroupInputI
     return threads <= program.WaveSize() ? spv::ScopeWorkgroup : 0u;
 }
 
+bool ProgramHasBarrier(const IrProgram& program) {
+    for (const auto* block : program.BlockOrder()) {
+        for (const auto* instruction : block->Instructions()) {
+            if (instruction->Opcode() == IrOpcode::Barrier) return true;
+        }
+    }
+    return false;
+}
+
 }
 
 SpirvEmitterState::SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo) : module(program.Resources().stage == IrShaderStage::Mesh ? 0x00010400u : 0x00010300u), program(program), inputInfo(inputInfo), requirements(AnalyzeProgramRequirements(program)) {
@@ -251,6 +260,14 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Co
 }
 
 std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const ShaderStageInputInfo& inputInfo, const CompiledBindingLayout& bindings, const SpirvTargetOptions& target, SpirvEmitInfo* info) const {
+
+    const bool meshSoftwareCandidate = target.meshSoftwareControlBarriers && program.Resources().stage == IrShaderStage::Mesh && ProgramHasBarrier(program);
+    if (meshSoftwareCandidate) {
+        auto nativeTarget = target;
+        nativeTarget.meshSoftwareControlBarriers = false;
+        const auto nativeWords = Emit(program, inputInfo, bindings, nativeTarget, info);
+        if (SpannedBarrierInDivergentFlow(nativeWords)) return nativeWords;
+    }
     if (program.Resources().stage != IrShaderStage::Compute && program.Resources().stage != IrShaderStage::Vertex && program.Resources().stage != IrShaderStage::Pixel && program.Resources().stage != IrShaderStage::Mesh && program.Resources().stage != IrShaderStage::Local && program.Resources().stage != IrShaderStage::TessellationControl && program.Resources().stage != IrShaderStage::TessellationEvaluation) {
         FailProgram(program, "binary SPIR-V emitter received an unsupported shader stage");
     }
@@ -288,9 +305,17 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;
     state.deviceAtomicWorkgroupMemoryBarriers = target.deviceAtomicWorkgroupMemoryBarriers;
+    state.meshSoftwareControlBarriers = target.meshSoftwareControlBarriers && program.Resources().stage == IrShaderStage::Mesh && ProgramHasBarrier(program);
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
+    const auto supportsCapability = [&](spv::Capability capability) {
+        return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
+    };
+    if (state.meshSoftwareControlBarriers && !HostSubgroupSingleLane(state) &&
+        (!supportsCapability(spv::CapabilityGroupNonUniform) || !supportsCapability(spv::CapabilityGroupNonUniformBallot))) {
+        FailEmit("mesh software control barriers require group-non-uniform ballot support");
+    }
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
         state.requirements.subgroupLocalInvocationId = true;

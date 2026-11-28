@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
+#include "IntermediateRepresentation/IrProgram.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -11,6 +13,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -50,6 +53,10 @@ constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
     0xbf880006u, 0xd8d80200u, 0x03000002u, 0xbf8cc07fu, 0x4a020701u, 0xd8340000u, 0x00000102u, 0xbefe03c1u,
     0xbf8cc07fu, 0xbf8a0000u, 0xbf810000u,
 };
+constexpr std::array<std::uint32_t, 5> EarlyReturnBarrier{0x7d880090u, 0xbf860001u, 0xbf810000u, 0xbf8a0000u, 0xbf810000u};
+
+constexpr std::array<std::uint32_t, 5> UniformEarlyReturnBarrier{0xbf0a8408u, 0xbf850001u, 0xbf810000u, 0xbf8a0000u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 1> MeshNoBarrier{0xbf810000u};
 
 constexpr std::array<std::uint32_t, 5> LdsHalfStore{0x34040082u, 0xd87c0400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> LdsAtomicAdd{0x34040082u, 0xd8000400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
@@ -144,6 +151,206 @@ void verifyDriverQuirk() {
     }
 }
 
+void verifyMeshSoftwareBarrierDriver() {
+    const auto affected = VK_MAKE_API_VERSION(0, 2, 0, 331);
+    require(AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_AMD_PROPRIETARY, affected), "AMD proprietary Vulkan 2.0.331 did not enable mesh software control barriers");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_AMD_PROPRIETARY, affected - 1u), "the AMD mesh barrier workaround matched the preceding driver version");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_AMD_PROPRIETARY, affected + 1u), "the AMD mesh barrier workaround matched the following driver version");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_MESA_RADV, affected), "the AMD mesh barrier workaround matched RADV");
+    require(!AgcDriver::MeshSoftwareControlBarriersRequired(VK_DRIVER_ID_NVIDIA_PROPRIETARY, affected), "the AMD mesh barrier workaround matched NVIDIA");
+}
+
+struct MeshBarrierOps {
+    std::uint32_t control = 0;
+    std::uint32_t atomicLoad = 0;
+    std::uint32_t atomicIAdd = 0;
+    std::uint32_t atomicStore = 0;
+    std::uint32_t loopMerge = 0;
+    std::uint32_t subgroupBallot = 0;
+    std::uint32_t vectorExtractDynamic = 0;
+    std::uint32_t selectionMerge = 0;
+    bool groupNonUniformCapability = false;
+    bool subgroupBallotCapability = false;
+    bool releasePathAcquiresGeneration = false;
+    bool waitPredicateExcludesLast = false;
+};
+
+bool releaseMergeEntersGenerationWait(std::span<const std::uint32_t> words) {
+    struct Instruction {
+        spv::Op op;
+        std::size_t offset;
+    };
+    const auto constants = constantsOf(words);
+    std::vector<Instruction> instructions;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        instructions.push_back({static_cast<spv::Op>(words[at] & 0xffffu), at});
+    }
+    std::uint32_t arrivalPointer = 0u;
+    std::uint32_t generationPointer = 0u;
+    bool releaseStore = false;
+    bool generationIncrement = false;
+    for (std::size_t i = 0; i < instructions.size(); ++i) {
+        const auto& instruction = instructions[i];
+        if (instruction.op == spv::OpAtomicStore) {
+            if ((words[instruction.offset] >> 16u) < 5u) return false;
+            arrivalPointer = words[instruction.offset + 1u];
+            releaseStore = true;
+            continue;
+        }
+        if (releaseStore && instruction.op == spv::OpAtomicIAdd) {
+            if ((words[instruction.offset] >> 16u) < 7u) return false;
+            generationPointer = words[instruction.offset + 3u];
+            const auto semantics = constants.find(words[instruction.offset + 5u]);
+            generationIncrement = generationPointer != 0u && generationPointer != arrivalPointer &&
+                semantics != constants.end() && (semantics->second & spv::MemorySemanticsReleaseMask) != 0u;
+            continue;
+        }
+        if (!generationIncrement || instruction.op != spv::OpBranch) continue;
+        const auto releaseMerge = words[instruction.offset + 1u];
+        if (i + 7u >= instructions.size() || instructions[i + 1u].op != spv::OpLabel ||
+            words[instructions[i + 1u].offset + 1u] != releaseMerge || instructions[i + 2u].op != spv::OpBranch) {
+            return false;
+        }
+        const auto done = words[instructions[i + 2u].offset + 1u];
+        if (instructions[i + 3u].op != spv::OpLabel || instructions[i + 4u].op != spv::OpBranch ||
+            words[instructions[i + 4u].offset + 1u] != done || instructions[i + 5u].op != spv::OpLabel ||
+            words[instructions[i + 5u].offset + 1u] != done || instructions[i + 6u].op != spv::OpBranch) {
+            return false;
+        }
+        const auto waitHeader = words[instructions[i + 6u].offset + 1u];
+        if (instructions[i + 7u].op != spv::OpLabel || words[instructions[i + 7u].offset + 1u] != waitHeader) return false;
+        for (std::size_t j = i + 8u; j < instructions.size() && instructions[j].op != spv::OpLabel; ++j) {
+            if (instructions[j].op == spv::OpLoopMerge) return false;
+            if (instructions[j].op != spv::OpAtomicLoad || (words[instructions[j].offset] >> 16u) < 6u ||
+                words[instructions[j].offset + 3u] != generationPointer) continue;
+            const auto semantics = constants.find(words[instructions[j].offset + 5u]);
+            if (semantics != constants.end() && (semantics->second & spv::MemorySemanticsAcquireMask) != 0u) {
+                for (std::size_t k = j + 1u; k < instructions.size() && instructions[k].op != spv::OpLabel; ++k) {
+                    if (instructions[k].op == spv::OpLoopMerge) return true;
+                }
+            }
+        }
+        return false;
+    }
+    return false;
+}
+bool waitPredicateExcludesLast(std::span<const std::uint32_t> words, std::uint32_t participants) {
+    const auto constants = constantsOf(words);
+    std::uint32_t ticket = 0u;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpAtomicIAdd) continue;
+        ticket = words[at + 2u];
+        break;
+    }
+    if (ticket == 0u) return false;
+    std::uint32_t notLast = 0u;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpINotEqual) continue;
+        const auto left = words[at + 3u];
+        const auto right = words[at + 4u];
+        const auto leftConstant = constants.find(left);
+        const auto rightConstant = constants.find(right);
+        if (left == ticket && rightConstant != constants.end() && rightConstant->second == participants - 1u) notLast = words[at + 2u];
+        if (right == ticket && leftConstant != constants.end() && leftConstant->second == participants - 1u) notLast = words[at + 2u];
+    }
+    if (notLast == 0u) return false;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpLogicalAnd &&
+            (words[at + 3u] == notLast || words[at + 4u] == notLast)) return true;
+    }
+    return false;
+}
+MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::uint64_t codeAddress, bool software, std::uint32_t guestWaveSize = 64u, std::uint32_t hostSubgroupSize = 64u, bool ballotSupported = true) {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 16> hidden{};
+    static constexpr std::array<std::uint32_t, 9> capabilitiesWithBallot{
+        spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
+        spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot,
+        spv::CapabilityMeshShadingEXT
+    };
+    static constexpr std::array<std::uint32_t, 8> capabilitiesWithoutBallot{
+        spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
+        spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform, spv::CapabilityMeshShadingEXT
+    };
+    static constexpr std::array<std::string_view, 3> extensions{
+        "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"
+    };
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Mesh, codeAddress, code, 0, {}};
+    request.context.waveSize = guestWaveSize;
+    request.context.userData = hidden;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.context.vertex->paClVsOutCntl = (1u << 18u) | (1u << 21u);
+    request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 128u, 1024u, 0u, 4u}, std::nullopt, {}};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010400u;
+    request.target.subgroupSize = hostSubgroupSize;
+    request.target.bdaAbiVersion = 1u;
+    if (ballotSupported) request.target.supportedCapabilities = capabilitiesWithBallot;
+    else request.target.supportedCapabilities = capabilitiesWithoutBallot;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024u;
+    request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+    request.target.mesh = MeshTargetLimits{{128u, 1u, 1u}, 128u, 32768u, 256u, 256u, 128u, 32768u, 1u, 1u};
+    request.target.meshSoftwareControlBarriers = software;
+    request.layout = {0u, 0u, 0u, 128u};
+    request.useCache = true;
+    const auto result = Recompile(request);
+    MeshBarrierOps ops;
+    const auto& words = result.spirv.Words();
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        switch (static_cast<spv::Op>(words[at] & 0xffffu)) {
+        case spv::OpControlBarrier: ++ops.control; break;
+        case spv::OpAtomicLoad: ++ops.atomicLoad; break;
+        case spv::OpAtomicIAdd: ++ops.atomicIAdd; break;
+        case spv::OpAtomicStore: ++ops.atomicStore; break;
+        case spv::OpLoopMerge: ++ops.loopMerge; break;
+        case spv::OpGroupNonUniformBallot: ++ops.subgroupBallot; break;
+        case spv::OpVectorExtractDynamic: ++ops.vectorExtractDynamic; break;
+        case spv::OpCapability:
+            if (words[at + 1u] == spv::CapabilityGroupNonUniform) ops.groupNonUniformCapability = true;
+            if (words[at + 1u] == spv::CapabilityGroupNonUniformBallot) ops.subgroupBallotCapability = true;
+            break;
+        case spv::OpSelectionMerge: ++ops.selectionMerge; break;
+        default: break;
+        }
+    }
+    ops.releasePathAcquiresGeneration = releaseMergeEntersGenerationWait(words);
+    ops.waitPredicateExcludesLast = waitPredicateExcludesLast(words, 128u);
+    return ops;
+}
+
+void verifyMeshSoftwareBarrierEmission() {
+    const auto normal = recompileMeshBarrier(BranchedLdsStep, 0x26267000u, false);
+    require(normal.control >= 2u, "the mesh barrier fixture did not emit both its guest and wrapper control barriers");
+    require(normal.atomicIAdd == 0u && normal.atomicLoad == 0u && normal.atomicStore == 0u, "the normal mesh barrier fixture unexpectedly used software barrier atomics");
+    const auto software = recompileMeshBarrier(BranchedLdsStep, 0x26267000u, true);
+    require(software.control == 2u, "the software mesh barrier path did not retain only the two unconditional wrapper control barriers");
+    require(software.atomicLoad >= 2u && software.atomicIAdd >= 2u && software.atomicStore >= 1u && software.loopMerge >= 1u, "the software mesh barrier path did not emit the cyclic atomic rendezvous");
+    require(software.subgroupBallot >= normal.subgroupBallot + 2u, "the software mesh barrier path did not make its release and wait decisions uniform across the host subgroup");
+    require(software.groupNonUniformCapability && software.subgroupBallotCapability, "the software mesh barrier path emitted subgroup ballots without declaring the required SPIR-V capabilities");
+    require(software.releasePathAcquiresGeneration, "the release and wait loop did not reconverge at the outer selection merge");
+    require(software.waitPredicateExcludesLast, "the last ticket was allowed to spin in the generation wait loop");
+    require(software.selectionMerge >= normal.selectionMerge + 2u, "the software mesh barrier path did not reconverge the single-lane release before leaving its subgroup");
+    const auto splitNormal = recompileMeshBarrier(BranchedLdsStep, 0x26267200u, false, 32u, 64u);
+    const auto splitSoftware = recompileMeshBarrier(BranchedLdsStep, 0x26267200u, true, 32u, 64u);
+    require(splitSoftware.subgroupBallot >= splitNormal.subgroupBallot + 2u, "the split-subgroup barrier did not emit both host-subgroup votes");
+    require(splitSoftware.vectorExtractDynamic == splitNormal.vectorExtractDynamic, "the software mesh barrier narrowed its rendezvous votes to one guest-wave half of a 64-lane host subgroup");
+    require(splitSoftware.subgroupBallotCapability, "the split-subgroup mesh software barrier omitted the subgroup-ballot capability");
+    const auto singleLane = recompileMeshBarrier(BranchedLdsStep, 0x26267300u, true, 32u, 1u);
+    require(singleLane.subgroupBallot == 0u && !singleLane.groupNonUniformCapability && !singleLane.subgroupBallotCapability, "a single-lane host subgroup emitted an unnecessary subgroup operation or capability");
+    const auto noBarrier = recompileMeshBarrier(MeshNoBarrier, 0x26267400u, true, 32u, 64u, false);
+    require(noBarrier.subgroupBallot == 0u && !noBarrier.subgroupBallotCapability, "a mesh shader without a guest barrier required subgroup ballot support");
+    const auto earlyReturn = recompileMeshBarrier(EarlyReturnBarrier, 0x26267100u, true);
+    const auto uniformEarlyReturn = recompileMeshBarrier(UniformEarlyReturnBarrier, 0x26267500u, true);
+    require(earlyReturn.atomicLoad == 0u && earlyReturn.atomicIAdd == 0u && earlyReturn.atomicStore == 0u, "a mesh barrier bypassed by an early return used a software rendezvous that can wait forever");
+    require(earlyReturn.control >= 2u, "a divergent early-return barrier did not retain native control-barrier emission: " + std::to_string(earlyReturn.control));
+    require(uniformEarlyReturn.control == 2u && uniformEarlyReturn.atomicLoad >= 1u && uniformEarlyReturn.atomicIAdd >= 2u && uniformEarlyReturn.atomicStore >= 1u, "a workgroup-uniform early-return branch was not admitted to the software mesh rendezvous");
+}
+
 void verifyLdsMemoryBarrierScope() {
     const std::array<std::pair<const char*, std::span<const std::uint32_t>>, 3> programs{{{"ds_write_b16", LdsHalfStore}, {"ds_add_u32", LdsAtomicAdd}, {"ds_max_f32", LdsAtomicMax}}};
     for (const auto& [name, code] : programs) {
@@ -203,6 +410,8 @@ void verifyDeviceAtomicMemoryBarrierSemantics() {
 int main() {
     try {
         verifyDriverQuirk();
+        verifyMeshSoftwareBarrierDriver();
+        verifyMeshSoftwareBarrierEmission();
         verifyLdsLockFenceDrivers();
         verifyEmittedBarriers();
         verifyLdsMemoryBarrierScope();
