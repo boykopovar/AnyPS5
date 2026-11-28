@@ -1,11 +1,18 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 #include "../src/WtfTextAbi.hpp"
 
@@ -36,6 +43,37 @@ template<typename T> void Throws(T action, std::source_location location = std::
     Check(threw, location);
 }
 
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        memory = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE, PAGE_NOACCESS));
+        Check(memory != nullptr);
+        Check(VirtualAlloc(memory, pageSize, MEM_COMMIT, PAGE_READWRITE) != nullptr);
+#else
+        void* mapped = mmap(nullptr, 2 * pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapped != MAP_FAILED);
+        Check(mprotect(mapped, pageSize, PROT_READ | PROT_WRITE) == 0);
+        memory = static_cast<std::uint8_t*>(mapped);
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * pageSize);
+#endif
+    }
+
+    std::uint8_t* readableEnd() { return memory + pageSize; }
+
+    static constexpr std::size_t pageSize = 4096;
+
+private:
+    std::uint8_t* memory;
+};
+
 TextStream NewStream(unsigned flags = 0, bool multiLine = true) {
     StringBuilder builder{String()};
     builder.shouldCrashOnOverflow = true;
@@ -60,6 +98,19 @@ template<typename Function> std::string Dump(Function function, unsigned flags =
     TextStream& returned = function(stream);
     Check(&returned == &stream);
     Check(stream.formattingFlags == flags);
+    return Release(stream);
+}
+
+template<typename T> std::string ThrowsKeepingStream(T action, std::source_location location = std::source_location::current()) {
+    TextStream stream = NewStream();
+    _ZN3WTF10TextStreamlsEPKc(&stream, "kept");
+    bool threw = false;
+    try {
+        action(stream);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Check(threw, location);
     return Release(stream);
 }
 
@@ -352,6 +403,143 @@ void TestChaining() {
     Check(Release(stream) == "a=(1,2) b=ROUND");
 }
 
+void TestVectorOfUnsignedLong() {
+    auto dump = [](const NKWebKit::WtfAbi::Vector<std::uint64_t>& vector, unsigned limit = 0) {
+        return Dump([&](TextStream& s) -> TextStream& {
+            s.containerSizeLimit = limit;
+            return _ZN7WebCorelsERN3WTF10TextStreamERKNS0_6VectorImLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(s, vector);
+        });
+    };
+    NKWebKit::WtfAbi::Vector<std::uint64_t> empty;
+    Check(dump(empty) == "[]");
+
+    NKWebKit::WtfAbi::Vector<std::uint64_t> vector(3);
+    vector.size = 3;
+    vector[0] = 5;
+    vector[1] = 7;
+    vector[2] = 9;
+    Check(dump(vector) == "[5, 7, 9]");
+    Check(dump(vector, 1) == "[5, ...]");
+    Check(dump(vector, 2) == "[5, 7, ...]");
+    Check(dump(vector, 3) == "[5, 7, 9]");
+    Check(dump(vector, 4) == "[5, 7, 9]");
+
+    NKWebKit::WtfAbi::Vector<std::uint64_t> chunked(100);
+    chunked.size = 100;
+    for (unsigned i = 0; i < 100; ++i) chunked[i] = i;
+    std::string expected = "[0";
+    for (unsigned i = 1; i < 100; ++i) expected += ", " + std::to_string(i);
+    expected += "]";
+    Check(dump(chunked) == expected);
+    std::string truncated = "[0";
+    for (unsigned i = 1; i < 70; ++i) truncated += ", " + std::to_string(i);
+    truncated += ", ...]";
+    Check(dump(chunked, 70) == truncated);
+
+    NKWebKit::WtfAbi::Vector<std::uint64_t> broken(1);
+    broken.buffer = nullptr;
+    broken.size = 1;
+    Throws([&] { dump(broken); });
+}
+
+void TestVectorThrowKeepsStream() {
+    GuardPage guard;
+    NKWebKit::WtfAbi::Vector<std::uint64_t> vector;
+    vector.buffer = reinterpret_cast<std::uint64_t*>(guard.readableEnd() - 64 * sizeof(std::uint64_t));
+    vector.capacity = 100;
+    vector.size = 100;
+    for (unsigned i = 0; i < 64; ++i) vector.buffer[i] = i + 1;
+    std::string kept = ThrowsKeepingStream([&](TextStream& s) -> TextStream& {
+        return _ZN7WebCorelsERN3WTF10TextStreamERKNS0_6VectorImLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(s, vector);
+    });
+    Check(kept == "kept");
+    vector.buffer = nullptr;
+}
+
+void TestScrollableAreaParameters() {
+    auto dump = [](WebCore::ScrollableAreaParameters value) {
+        return Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE(s, value); });
+    };
+    WebCore::ScrollableAreaParameters parameters;
+    Check(dump(parameters) ==
+        "\n(horizontal scroll elasticity 1)\n(vertical scroll elasticity 1)\n(horizontal scrollbar mode 0)\n(vertical scrollbar mode 0)");
+    parameters.horizontalScrollElasticity = WebCore::ScrollElasticity::Automatic;
+    parameters.verticalScrollElasticity = WebCore::ScrollElasticity::Allowed;
+    parameters.horizontalScrollbarMode = WebCore::ScrollbarMode::AlwaysOff;
+    parameters.verticalScrollbarMode = WebCore::ScrollbarMode::AlwaysOn;
+    Check(dump(parameters) ==
+        "\n(horizontal scroll elasticity 0)\n(vertical scroll elasticity 2)\n(horizontal scrollbar mode 1)\n(vertical scrollbar mode 2)");
+    parameters.allowsHorizontalScrolling = true;
+    parameters.allowsVerticalScrolling = true;
+    parameters.horizontalNativeScrollbarVisibility = WebCore::NativeScrollbarVisibility::HiddenByStyle;
+    parameters.verticalNativeScrollbarVisibility = WebCore::NativeScrollbarVisibility::HiddenByStyle;
+    Check(dump(parameters) ==
+        "\n(horizontal scroll elasticity 0)\n(vertical scroll elasticity 2)\n(horizontal scrollbar mode 1)\n(vertical scrollbar mode 2)"
+        "\n(allows horizontal scrolling 1)\n(allows vertical scrolling 1)"
+        "\n(horizontal scrollbar hidden by style 1)\n(vertical scrollbar hidden by style 1)");
+    parameters.horizontalNativeScrollbarVisibility = WebCore::NativeScrollbarVisibility::Visible;
+    Check(dump(parameters) ==
+        "\n(horizontal scroll elasticity 0)\n(vertical scroll elasticity 2)\n(horizontal scrollbar mode 1)\n(vertical scrollbar mode 2)"
+        "\n(allows horizontal scrolling 1)\n(allows vertical scrolling 1)"
+        "\n(vertical scrollbar hidden by style 1)");
+}
+
+std::string PointerText(const void* pointer) {
+    TextStream stream = NewStream();
+    _ZN3WTF10TextStreamlsEPKv(&stream, pointer);
+    return Release(stream);
+}
+
+std::string PositionDumpText(const char* label, const void* position, const void* anchorNode, const std::string& offset, const char* anchorType) {
+    return std::string("\n  (") + label + " \n    (Position " + PointerText(position) +
+        "\n      (anchor node " + PointerText(anchorNode) + ")" +
+        "\n      (offset " + offset + ")" +
+        "\n      (anchor type " + anchorType + ")))";
+}
+
+void TestVisibleSelectionDump() {
+    WebCore::VisibleSelection selection;
+    selection.m_base.m_anchorNode = reinterpret_cast<void*>(0x2001);
+    selection.m_base.m_offset = 1;
+    selection.m_base.m_anchorTypeBits = 0;
+    selection.m_extent.m_anchorNode = reinterpret_cast<void*>(0x2002);
+    selection.m_extent.m_offset = 2;
+    selection.m_extent.m_anchorTypeBits = 1;
+    selection.m_start.m_anchorNode = reinterpret_cast<void*>(0x2003);
+    selection.m_start.m_offset = 3;
+    selection.m_start.m_anchorTypeBits = 3;
+    selection.m_end.m_anchorNode = reinterpret_cast<void*>(0x2004);
+    selection.m_end.m_offset = 0xFFFFFFFF;
+    selection.m_end.m_anchorTypeBits = 4;
+    auto dump = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_16VisibleSelectionE(s, selection); };
+    std::string expected = "\n(VisibleSelection " + PointerText(&selection) +
+        PositionDumpText("base", &selection.m_base, reinterpret_cast<void*>(0x2001), "1", "offset in anchor") +
+        PositionDumpText("extent", &selection.m_extent, reinterpret_cast<void*>(0x2002), "2", "before anchor") +
+        PositionDumpText("start", &selection.m_start, reinterpret_cast<void*>(0x2003), "3", "before children") +
+        PositionDumpText("end", &selection.m_end, reinterpret_cast<void*>(0x2004), "-1", "after children") + ")";
+    Check(Dump(dump) == expected);
+}
+
+void TestVisiblePositionDump() {
+    WebCore::VisiblePosition visiblePosition;
+    visiblePosition.m_deepPosition.m_anchorNode = reinterpret_cast<void*>(0x1000);
+    visiblePosition.m_deepPosition.m_offset = 5;
+    visiblePosition.m_deepPosition.m_anchorTypeBits = 0;
+    visiblePosition.m_affinity = 1;
+    auto dump = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_15VisiblePositionE(s, visiblePosition); };
+    std::string result = Dump(dump);
+    Check(result.rfind("\n(VisiblePosition " + PointerText(&visiblePosition) + "\n  (position \n    (Position ", 0) == 0);
+    Check(result.find("\n      (anchor node " + PointerText(reinterpret_cast<void*>(0x1000)) + ")") != std::string::npos);
+    Check(result.find("\n      (offset 5)") != std::string::npos);
+    Check(result.find("\n      (anchor type offset in anchor)))") != std::string::npos);
+    Check(result.find("\n  (affinity downstream))") != std::string::npos);
+
+    visiblePosition.m_affinity = 0;
+    Check(Dump(dump).find("\n  (affinity upstream))") != std::string::npos);
+    visiblePosition.m_affinity = 7;
+    Check(Dump(dump).find("\n  (affinity ))") != std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -367,5 +555,10 @@ int main() {
     TestRegion();
     TestPositionConstraints();
     TestChaining();
+    TestVectorOfUnsignedLong();
+    TestVectorThrowKeepsStream();
+    TestScrollableAreaParameters();
+    TestVisiblePositionDump();
+    TestVisibleSelectionDump();
     return 0;
 }

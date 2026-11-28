@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,15 +23,32 @@ BATCH = 20000
 CTEST_INDEX_PREFIX = "0,0,0,"
 
 
+def read_cmake_cache(path):
+    cache = {}
+    for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition("=")
+        cache[name.partition(":")[0]] = value
+    return cache
+
+
+def ctest_program(cache):
+    configured = cache.get("CMAKE_CTEST_COMMAND")
+    return (shutil.which(configured) if configured else None) or "ctest"
+
+
 class Build:
     def __init__(self, path):
-        cache = {}
-        for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
-            name, _, value = line.partition("=")
-            cache[name.partition(":")[0]] = value
+        cache = read_cmake_cache(path)
         self.path = os.path.normpath(cache["CMAKE_CACHEFILE_DIR"])
         self.source = os.path.normpath(cache["CMAKE_HOME_DIRECTORY"])
+        try:
+            same_directory = os.path.samefile(path, self.path)
+        except FileNotFoundError:
+            same_directory = False
+        if not same_directory:
+            raise ValueError(f"CMake cache belongs to {self.path}; configure this directory first")
         self.program = cache.get("CMAKE_MAKE_PROGRAM") or "ninja"
+        self.ctest = ctest_program(cache)
         self.encoding = "utf-8"
         if sys.platform == "win32":
             codepage = self.run("-t", "wincodepage").strip()
@@ -100,8 +118,7 @@ class Build:
         return [path for path in paths if path in built]
 
     def tests(self, *arguments):
-        listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
-                                            capture_output=True, text=True, encoding="utf-8", check=True).stdout)
+        listing = ctest_listing([self.ctest, "--test-dir", self.path], *arguments)
         missing = {test["name"] for test in listing["tests"] if not test.get("command")}
         if missing:
             commands = self.test_commands(missing)
@@ -199,7 +216,7 @@ def changed_paths(path):
     if b"\0" in data:
         return [name for name in data.decode("utf-8").split("\0") if name]
     text = data.decode("utf-8-sig")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    return [line for line in re.split(r"\r\n?|\n", text) if line]
 
 
 def dependency_path(data, base):
@@ -369,6 +386,11 @@ def select(graph, changed, reasons=None):
     return picked, []
 
 
+def ctest_listing(command, *arguments):
+    return json.loads(subprocess.run([*command, "--show-only=json-v1", *arguments],
+                                     capture_output=True, text=True, encoding="utf-8", check=True).stdout)
+
+
 @contextmanager
 def ctest_index_file(indices):
     with tempfile.TemporaryDirectory() as directory:
@@ -383,21 +405,33 @@ def disabled(test):
 
 def plan(build, graph, picked):
     _, listed = build.tests()
-    run = [i for i, t in enumerate(listed, 1)
-           if not disabled(t) and (t["name"] in picked or t["name"] not in graph["tests"])]
-    if not run:
+    indices = [i for i, t in enumerate(listed, 1)
+               if not disabled(t) and (t["name"] in picked or t["name"] not in graph["tests"])]
+    if not indices:
         skip = {build.target(t) for t in listed} - {None}
-        return [], [t for t in build.leaves() if t not in skip], len(listed)
-    with ctest_index_file(CTEST_INDEX_PREFIX + ",".join(map(str, run))) as index_file:
+        return {}, [t for t in build.leaves() if t not in skip], len(listed)
+    with ctest_index_file(CTEST_INDEX_PREFIX + ",".join(map(str, indices))) as index_file:
         _, selected = build.tests("-I", index_file)
     names = {t["name"] for t in selected}
-    run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
+    run = {i: t["name"] for i, t in enumerate(listed, 1) if t["name"] in names}
     if any(not t.get("command") for t in listed if t["name"] in names):
         return run, build.leaves(), len(listed)
     keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
     targets = [t for t in build.leaves() if t not in skip]
     return run, targets + build.outputs(sorted(keep - set(targets) - {None})), len(listed)
+
+
+def read_test_selection(path):
+    text = path.read_text(encoding="utf-8-sig")
+    if text.strip() == CTEST_INDEX_PREFIX:
+        return {}
+    selection = json.loads(text)
+    if not isinstance(selection, dict) or any(
+            not re.fullmatch("[1-9][0-9]*", index) or not isinstance(name, str)
+            for index, name in selection.items()):
+        raise ValueError("invalid test selection")
+    return selection
 
 
 def escape(name):
@@ -413,7 +447,7 @@ def main(argv=None):
     d = sub.add_parser("dump", help="write the test graph of a built tree")
     d.add_argument("build")
     d.add_argument("graph")
-    s = sub.add_parser("select", help="write a ninja file and a ctest index list for a configured tree")
+    s = sub.add_parser("select", help="write a ninja file and a ctest selection for a configured tree")
     s.add_argument("build")
     s.add_argument("graph")
     s.add_argument("changed", help="file with newline-separated or Git -z NUL-separated changed paths")
@@ -429,16 +463,31 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        command = ["ctest", "--test-dir", args.build]
         try:
-            indices = selected.read_text(encoding="utf-8-sig").strip()
+            cache = read_cmake_cache(args.build)
+        except (OSError, UnicodeDecodeError):
+            cache = {}
+        command = [ctest_program(cache), "--test-dir", args.build]
+        try:
+            selection = read_test_selection(selected)
         except FileNotFoundError:
             return subprocess.run([*command, "--no-tests=error", *args.arguments]).returncode
-        except (OSError, UnicodeDecodeError) as error:
-            parser.error(f"{selected}: {error}")
-        if indices != CTEST_INDEX_PREFIX:
+        except (OSError, ValueError, RecursionError) as error:
+            parser.error(f"{selected}: {error}. Run select again to regenerate the test selection")
+        indices = CTEST_INDEX_PREFIX + ",".join(selection)
+        if selection:
             command.append("--no-tests=error")
         with ctest_index_file(indices) as index_file:
+            if selection:
+                try:
+                    listing = ctest_listing(command, "-I", index_file)
+                except subprocess.CalledProcessError as error:
+                    parser.error(error.stderr.strip() or str(error))
+                except (ValueError, RecursionError) as error:
+                    parser.error(f"could not read the CTest test listing: {error}")
+                names = [test["name"] for test in listing["tests"]]
+                if collections.Counter(names) != collections.Counter(selection.values()):
+                    parser.error(f"{selected}: CTest registration changed. Run select again and rebuild the selected targets")
             return subprocess.run([*command, *args.arguments, "-I", index_file]).returncode
     if args.command == "explain":
         try:
@@ -454,10 +503,16 @@ def main(argv=None):
         return 0
     try:
         build = Build(args.build)
-    except (OSError, KeyError) as error:
+    except (OSError, KeyError, ValueError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
     if args.command == "targets":
-        _, listed = build.tests("-R", args.regex)
+        try:
+            _, listed = build.tests("-R", args.regex)
+        except json.JSONDecodeError as error:
+            marker = "RegularExpression::compile():"
+            _, found, tail = error.doc.partition(marker)
+            diagnostic = marker + tail.partition("\n")[0] if found else str(error)
+            parser.error(f"ctest -R {args.regex}: {diagnostic}")
         if not listed:
             parser.error(f"no test matches {args.regex}")
         wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}
@@ -484,7 +539,7 @@ def main(argv=None):
     run, targets, total = plan(build, graph, picked)
     Path(build.path, "select.ninja").write_text("include build.ninja\nbuild selected: phony "
                                                 + " ".join(escape(t) for t in targets) + "\n", encoding=build.encoding)
-    Path(build.path, "select.tests").write_text(CTEST_INDEX_PREFIX + ",".join(map(str, run)) + "\n", encoding="utf-8")
+    Path(build.path, "select.tests").write_text(json.dumps(run) + "\n", encoding="utf-8")
     print(f"selected {len(run)}/{total} tests, {len(targets)} build targets")
     return 0
 

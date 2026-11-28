@@ -10,6 +10,12 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
@@ -162,6 +168,75 @@ void TestGuestBacking() {
     _ZdlPvm_nid_postfix(backing, 32);
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        address_ = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+        Require(address_ != nullptr);
+#else
+        void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        address_ = mapped;
+#endif
+    }
+    ~GuardedPage() {
+        if (!address_)
+            return;
+#ifdef _WIN32
+        VirtualFree(address_, 0, MEM_RELEASE);
+#else
+        munmap(address_, 4096);
+#endif
+    }
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(address_);
+    }
+
+private:
+    void* address_ = nullptr;
+};
+
+template<typename TCall>
+void RequireInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false);
+}
+
+void TestGuardedPointers() {
+    GuardedPage guard;
+    WebRtcCopyOnWriteBuffer valid{};
+    _ZN3rtc17CopyOnWriteBufferC1Em_nid_postfix(&valid, 8);
+    WebRtcCopyOnWriteBuffer uninit{};
+    WebRtcCopyOnWriteBuffer badBacking{guard.As<WebRtcRefCountedBuffer>(), 0, 8};
+
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferC1Em_nid_postfix(guard.As<WebRtcCopyOnWriteBuffer>(), 8); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(guard.As<WebRtcCopyOnWriteBuffer>(), 4, 8); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(guard.As<WebRtcCopyOnWriteBuffer>(), &valid); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(&uninit, guard.As<const WebRtcCopyOnWriteBuffer>()); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(&uninit, &badBacking); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(guard.As<WebRtcCopyOnWriteBuffer>()); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(&badBacking); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(guard.As<WebRtcCopyOnWriteBuffer>(), 16); });
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(&badBacking, 16); });
+
+    WebRtcRefCountedBuffer guardedData{4, 4, guard.As<std::uint8_t>(), 2};
+    WebRtcCopyOnWriteBuffer badData{&guardedData, 0, 4};
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(&badData, 16); });
+
+    std::uint8_t smallByte = 0x42;
+    WebRtcRefCountedBuffer hugeBacking{1ULL << 40, 1ULL << 40, &smallByte, 2};
+    WebRtcCopyOnWriteBuffer hugeBuffer{&hugeBacking, 0, 1ULL << 40};
+    RequireInvalidArgument([&] { _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(&hugeBuffer, 1ULL << 40); });
+
+    Destroy(valid);
+}
+
 }
 
 int main() {
@@ -175,6 +250,7 @@ int main() {
         TestDetach();
         TestGuestBacking();
         TestAllocationFailure();
+        TestGuardedPointers();
         Require(allocations.empty() && allocated == freed);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "CopyOnWriteBuffer exception: %s\n", error.what());

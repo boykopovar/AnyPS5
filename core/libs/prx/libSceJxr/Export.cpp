@@ -52,6 +52,7 @@ constexpr std::int64_t WmpErrAbstractMethod = -3;
 constexpr std::int64_t WmpErrOutOfMemory = -101;
 constexpr std::int64_t WmpErrUnsupportedFormat = -106;
 constexpr std::int64_t WmpErrBufferOverflow = -103;
+constexpr std::int64_t WmpErrFileIo = -102;
 constexpr std::size_t MemoryBuffer = 0;
 constexpr std::size_t MemorySize = 1;
 constexpr std::size_t MemoryPosition = 2;
@@ -100,8 +101,26 @@ std::int64_t AllocateZeroed(void** out, std::size_t size) {
     return *out ? WmpErrSuccess : WmpErrOutOfMemory;
 }
 
-std::int64_t APS5_VABI CreateStreamFromFilename_nid_no_patch(Jxr::Stream**, const char*, const char*) {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI CloseWS_File_nid_no_patch(Jxr::Stream** stream) {
+    if (!stream || !*stream) APS5_INVALID_ARG_EX;
+    auto* file = reinterpret_cast<FileStream*>((*stream)->state[0]);
+    if (file) fclose_nid_postfix(file);
+    return WMPFree_nid_postfix(reinterpret_cast<void**>(stream));
+}
+
+std::int64_t APS5_VABI CreateStreamFromFilename_nid_no_patch(Jxr::Stream** stream, const char* filename, const char* mode) {
+    const auto result = WMPAlloc_nid_postfix(reinterpret_cast<void**>(stream), sizeof(Jxr::Stream));
+    if (result < 0) return result;
+    auto* created = *stream;
+    created->close = CloseWS_File_nid_no_patch;
+    created->end = EOSWS_File_nid_postfix;
+    created->read = ReadWS_File_nid_postfix;
+    created->write = WriteWS_File_nid_postfix;
+    created->setPosition = SetPosWS_File_nid_postfix;
+    created->getPosition = GetPosWS_File_nid_postfix;
+    auto* file = fopen_nid_postfix(filename, mode);
+    created->state[0] = reinterpret_cast<std::uintptr_t>(file);
+    return file ? WmpErrSuccess : WmpErrFileIo;
 }
 
 std::int64_t APS5_VABI CloseWS_Memory_nid_no_patch(Jxr::Stream** stream) {
@@ -201,10 +220,10 @@ std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 
 std::int64_t APS5_VABI PKCodecFactory_CreateCodec_nid_postfix(const std::uint32_t* iid, void** codec) {
     if (!iid || !codec) APS5_INVALID_ARG_EX;
-    if (*iid == JxrGuest_IID_PKImageWmpEncode_nid_no_patch) {
+    if (*iid == IID_PKImageWmpEncode_nid_no_patch) {
         return PKImageEncode_Create_WMP_nid_postfix(reinterpret_cast<Jxr::ImageEncode**>(codec));
     }
-    if (*iid == JxrGuest_IID_PKImageWmpDecode_nid_no_patch) {
+    if (*iid == IID_PKImageWmpDecode_nid_no_patch) {
         return PKImageDecode_Create_WMP_nid_postfix(codec);
     }
     return WmpErrUnsupportedFormat;
@@ -530,15 +549,22 @@ std::int64_t APS5_VABI SetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 
 std::int64_t APS5_VABI WMPAlloc_nid_postfix(void** memory, std::size_t size) {
     if (!memory) APS5_INVALID_ARG_EX;
-    *memory = calloc_nid_postfix(1, size);
-    return *memory ? WmpErrSuccess : WmpErrOutOfMemory;
+    void* allocated = calloc_nid_postfix(1, size);
+    if (!GuestCopyOut_nid_no_patch(memory, &allocated, sizeof(allocated))) {
+        if (allocated != nullptr) free_nid_postfix(allocated);
+        APS5_INVALID_ARG_EX;
+    }
+    return allocated ? WmpErrSuccess : WmpErrOutOfMemory;
 }
 
 std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory) {
     if (!memory) APS5_INVALID_ARG_EX;
-    if (*memory) {
-        free_nid_postfix(*memory);
-        *memory = nullptr;
+    void* ptr = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&ptr, memory, sizeof(ptr))) APS5_INVALID_ARG_EX;
+    if (ptr != nullptr) {
+        void* nullPtr = nullptr;
+        if (!GuestCopyOut_nid_no_patch(memory, &nullPtr, sizeof(nullPtr))) APS5_INVALID_ARG_EX;
+        free_nid_postfix(ptr);
     }
     return WmpErrSuccess;
 }

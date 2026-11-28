@@ -1,3 +1,5 @@
+import subprocess
+import os
 import contextlib
 import io
 import json
@@ -177,6 +179,20 @@ class ReportTests(unittest.TestCase):
             (7, ["code", "no-test", "stale?"], "missing link core/libs/prx/libSceExample/Gone.cpp"),
         ])
 
+    def test_text_report_uses_utf8_with_an_ascii_console(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = dict(self.FILES)
+            files[DEBT] = "# Debt\n\n### Functional\n\n- [sceGone](../../../core/libs/gone-é.cpp) - unknown\n"
+            write(root, files)
+            command = ("import sys; sys.path.insert(0, sys.argv[1]); import debt_report; "
+                       "from pathlib import Path; debt_report.ROOT = Path(sys.argv[2]); "
+                       "sys.exit(debt_report.main([]))")
+            result = subprocess.run([sys.executable, "-c", command, str(Path(debt_report.__file__).parent), str(root)],
+                                    capture_output=True, env={**os.environ, "PYTHONIOENCODING": "ascii:strict"}, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("gone-é.cpp", result.stdout.decode("utf-8"))
+
     def test_text_filter_and_counts(self):
         code, output = self.run_main(["libSceExample", "--label", "no-test"])
         self.assertEqual(code, 0)
@@ -194,11 +210,34 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)[0]["labels"], ["code"])
 
+    def test_invalid_utf8_debt_document_gets_a_path_qualified_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, self.FILES)
+            source = root / DEBT
+            source.write_bytes(b"# invalid \xff")
+            with mock.patch.object(debt_report, "ROOT", root), contextlib.redirect_stderr(io.StringIO()) as errors:
+                with self.assertRaises(SystemExit) as failure:
+                    debt_report.main(["--json"])
+            self.assertEqual(failure.exception.code, 2)
+            self.assertIn(str(source), errors.getvalue())
+
     def test_unknown_debt_file_is_a_usage_error(self):
         with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
             self.run_main(["libSceMissing"])
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("no debt file: libSceMissing", errors.getvalue())
+
+    def test_unknown_label_is_a_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
+            self.run_main(["--label", "windwos"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("windwos", errors.getvalue())
+
+    def test_stale_link_filter_can_be_combined_with_another_label(self):
+        code, output = self.run_main(["--json", "--label", "no-test", "--label", "stale?"])
+        self.assertEqual(code, 0)
+        self.assertEqual([row["line"] for row in json.loads(output)], [7])
 
 
 class DebtFilesTests(unittest.TestCase):

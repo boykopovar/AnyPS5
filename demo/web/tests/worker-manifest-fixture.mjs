@@ -22,12 +22,21 @@ async function load(release, options = {}) {
       return { ok: true, body: new ReadableStream({ start(controller) { controller.enqueue(contents); if (!options.keepOpen) controller.close(); }, cancel() { cancelled = true; } }) };
     } });
   const module = new vm.SourceTextModule(readFileSync(new URL("../worker.mjs", import.meta.url), "utf8"), {
-    context, importModuleDynamically() { throw new Error("fixture-stop"); }
+    context,
+    async importModuleDynamically() {
+      if (!options.native) throw new Error("fixture-stop");
+      const native = new vm.SyntheticModule(["default"], function() {
+        this.setExport("default", () => options.native);
+      }, { context });
+      await native.link(() => {});
+      await native.evaluate();
+      return native;
+    }
   });
   await module.link(async name => {
     const exports = name === "./batch.mjs" ? { batchMemoryEstimate() {}, batchOutputDirectory() {}, MEMORY_LIMIT: 0 }
       : name === "./i18n.mjs" ? { translate }
-      : { Archive: options.Archive ?? class {}, CONVERSION_LIMIT: 0, createPackageWriter() {}, packageArchive() {} };
+      : { Archive: options.Archive ?? class {}, CONVERSION_LIMIT: 0, createPackageWriter() {}, packageArchive: options.packageArchive ?? (() => {}) };
     return new vm.SyntheticModule(Object.keys(exports), function() { for (const [key, value] of Object.entries(exports)) this.setExport(key, value); }, { context });
   });
   await module.evaluate();
@@ -63,6 +72,38 @@ assert.equal(event.appName, "game.zip");
 assert.equal(event.completed, 1);
 await workerProgress.self.onmessage({ data: { type: "convert", locale: "en", target: "linux", mode: "memory" } });
 assert(workerProgress.progress.some(item => item.type === "progress" && item.phaseKey === "phaseLoadingConverter"));
+const revisionSha = "0123456789abcdef0123456789abcdef01234567";
+for (const [revision, expectedRevision, target, toIntel] of [
+  [revisionSha, revisionSha, "linux", true],
+  [revisionSha, revisionSha, "windows", false],
+  [undefined, null, "linux", false],
+  [revisionSha + "\n", null, "linux", false],
+  ["wrong", null, "linux", false]
+]) {
+  const release = { ...valid(target), revision };
+  const archiveOptions = [];
+  const conversion = await load(release, {
+    Archive: class {
+      async inspect() { return { selectedBytes: 0 }; }
+      async conversionInput() { return { outputName: "app.elf" }; }
+      async close() {}
+    },
+    native: { Convert() { return { ok: true }; } },
+    async packageArchive(_archive, _converted, _name, _libraries, _destination, _report, _directory, options) {
+      archiveOptions.push(options);
+    }
+  });
+  await conversion.self.onmessage({ data: { type: "inspect", inputs: [{ name: "private source.zip" }] } });
+  await conversion.self.onmessage({ data: { type: "convert", target, toIntel, mode: "memory" } });
+  const complete = conversion.progress.find(item => item.type === "complete");
+  assert.ok(complete, JSON.stringify(conversion.progress));
+  assert.equal(complete.release, release.tag);
+  assert.equal(archiveOptions.length, 1);
+  assert.equal(complete.revision, expectedRevision);
+  assert.deepEqual(JSON.parse(JSON.stringify(archiveOptions[0].receipt)), {
+    version: 1, release: { tag: release.tag, revision: expectedRevision }, target, toIntel
+  });
+}
 let validCount = 0;
 for (const target of ["linux", "windows"]) {
   for (const rateLimit of [false, true]) {

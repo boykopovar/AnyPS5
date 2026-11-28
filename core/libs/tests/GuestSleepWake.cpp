@@ -1,8 +1,10 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
+#include <source_location>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -31,7 +33,12 @@ static constexpr unsigned EARLY_WAKES_PER_RUN = 8;
 static constexpr unsigned TRIES = 20;
 static constexpr auto EARLY = std::chrono::microseconds(900);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "sleep/wake check failed at %s:%u in %s\n", location.file_name(), static_cast<unsigned>(location.line()), location.function_name());
+    std::fflush(stderr);
+    std::abort();
+}
 
 static std::chrono::microseconds Usleep(KernelUseconds microseconds) {
     const auto start = std::chrono::steady_clock::now();

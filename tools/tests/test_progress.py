@@ -297,6 +297,35 @@ class ProgressTests(unittest.TestCase):
                                                           base["shaders"], head["shaders"])))
         self.assertNotIn("Changed libraries", report)
 
+    def test_report_shows_gfx1013_translation_and_dpp_changes(self):
+        measured = self.report_snapshot()
+        profile = {"instructions": {"total": 100, "decoded": 75, "translated": 50},
+                   "dpp": {"total": 20, "decoded": 10}}
+        measured["shader_source"] = {"profiles": {"gfx1013": profile}}
+        cases = (
+            ({"instructions": {**profile["instructions"], "translated": 51}},
+             "| Instruction forms with a translator case | 50/100 | 51/100 |"),
+            ({"dpp": {**profile["dpp"], "decoded": 11}},
+             "| DPP forms decoded | 10/20 | 11/20 |"),
+        )
+        for change, expected in cases:
+            with self.subTest(change=change):
+                candidate = self.report_snapshot()
+                candidate["shader_source"] = {"profiles": {"gfx1013": {**profile, **change}}}
+                report = progress.report(measured, candidate)
+                self.assertIn(expected, report)
+                self.assertIn("| Instruction forms decoded | 75/100 (75.0%) | 75/100 (75.0%) |", report)
+        self.assertEqual(progress.report(measured, measured), "")
+
+    def test_report_shows_gfx1013_availability_in_both_directions(self):
+        measured, unavailable = self.report_snapshot(), self.report_snapshot()
+        measured["shader_source"] = {"profiles": {"gfx1013": {
+            "instructions": {"total": 100, "decoded": 75, "translated": 50},
+            "dpp": {"total": 20, "decoded": 10},
+        }}}
+        self.assertIn("| DPP forms decoded | 10/20 | Not measured |", progress.report(measured, unavailable))
+        self.assertIn("| DPP forms decoded | Not measured | 10/20 |", progress.report(unavailable, measured))
+
     def test_report_shows_a_headline_change_that_two_decimals_would_hide(self):
         before = dict(self.report_library("libScePad", ["A"], ["T"]), done=50000, todo=50001)
         after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=50001, todo=50000)
@@ -1421,6 +1450,40 @@ class InertStatementTests(unittest.TestCase):
         self.assertFalse(progress.inert_statement('return other();', {'helper'}, set()))
         self.assertIn('a', progress.inert_parameters('int f(int a, const char* b)'))
         self.assertIn('b', progress.inert_parameters('int f(int a, const char* b)'))
+
+
+class ParallelLibraryScanTests(unittest.TestCase):
+    def test_parallel_scan_matches_serial_scan_and_follows_deleted_and_older_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "core" / "libs" / "prx"
+            for name in ("libSceA", "libSceB", "libSceC", "libSceD"):
+                (root / name / "src").mkdir(parents=True)
+                (root / name / "src" / "Export.cpp").write_text(f"int APS5_VABI {name}Ready() {{ return 0; }}\n")
+            source = root / "libSceA" / "src"
+            newest = source / "Newest.cpp"
+            older = source / "Older.cpp"
+            newest.write_text("int APS5_VABI NewestReady() { return 0; }\n")
+            older.write_text("int APS5_VABI OlderReady() { return 0; }\n")
+            os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+            with patch.object(progress, "ROOT", Path(directory)), patch.object(progress, "PRX", root), \
+                    patch.object(progress.os, "cpu_count", return_value=4), \
+                    patch.object(progress, "ProcessPoolExecutor", wraps=progress.ProcessPoolExecutor) as pool:
+                first = progress.collect_libraries()
+                self.assertEqual(pool.call_args.kwargs["max_workers"], 4)
+                serial = progress.summarize([progress.scan_library(path) for path in sorted(root.iterdir())])
+                self.assertEqual(first, serial)
+                self.assertIn("OlderReady", first["groups"][0]["done_names"])
+                older.unlink()
+                deleted = progress.collect_libraries()
+                self.assertNotIn("OlderReady", deleted["groups"][0]["done_names"])
+                self.assertEqual(deleted["done"], first["done"] - 1)
+                added = source / "Added.cpp"
+                added.write_text("int APS5_VABI AddedReady() { return 0; }\n")
+                os.utime(added, ns=(1_000_000_000, 1_000_000_000))
+                grown = progress.collect_libraries()
+                self.assertIn("AddedReady", grown["groups"][0]["done_names"])
+                self.assertEqual(grown["done"], first["done"])
+            self.assertFalse((Path(directory) / ".cache").exists())
 
 
 if __name__ == "__main__":

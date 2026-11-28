@@ -3,8 +3,11 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
+
+from performance_compare import unique_json_object
 
 BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", ".gitmodules")
 
@@ -32,15 +35,26 @@ def target_document(value, path):
     return target
 
 
+def read_cmake_reply(path):
+    if not stat.S_ISREG(path.stat().st_mode):
+        raise ValueError(f"{path}: CMake reply must be a regular file")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_json_object)
+    except RecursionError as error:
+        raise ValueError(f"{path}: CMake reply is nested too deeply") from error
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
+
+
 def read_reply(build_dir):
     reply_dir = build_dir / ".cmake" / "api" / "v1" / "reply"
     indexes = [*reply_dir.glob("index-*.json"), *reply_dir.glob("error-*.json")]
     if not indexes:
         raise ValueError(f"{reply_dir}: no CMake File API index; configure with the codemodel-v2 query first")
-    index = max(indexes, key=lambda path: path.name.split("-", 1)[1])
+    index = max(indexes, key=lambda path: (path.name.split("-", 1)[1], path.name.startswith("error-")))
     if index.name.startswith("error-"):
         raise ValueError(f"{index}: latest CMake generation failed; configure successfully before selecting targets")
-    document = object_document(json.loads(index.read_text(encoding="utf-8")), index, "CMake File API index")
+    document = object_document(read_cmake_reply(index), index, "CMake File API index")
     reply = object_document(document.get("reply", {}), index, "CMake File API reply")
     codemodel = reply.get("codemodel-v2")
     if codemodel is None:
@@ -49,17 +63,20 @@ def read_reply(build_dir):
     if not codemodel:
         raise ValueError(f"{index}: missing codemodel-v2 reply")
     model_path = reply_dir / codemodel["jsonFile"]
-    model = object_document(json.loads(model_path.read_text(encoding="utf-8")), model_path, "CMake codemodel")
-    configurations = model.get("configurations", [])
+    model = object_document(read_cmake_reply(model_path), model_path, "CMake codemodel")
+    configurations = object_entries(model.get("configurations", []), model_path, "CMake configurations")
     if len(configurations) != 1:
         raise ValueError(f"{index}: expected one CMake configuration, found {len(configurations)}")
-    configuration = object_document(configurations[0], model_path, "CMake configuration")
+    configuration = configurations[0]
     targets = {}
-    for target in configuration.get("targets", []):
-        target = object_document(target, model_path, "CMake target reference")
+    for target in object_entries(configuration.get("targets", []), model_path, "CMake target references"):
+        target_id = target.get("id")
+        if not isinstance(target_id, str) or not target_id:
+            raise ValueError(f"{model_path}: invalid CMake target id (expected a nonempty string)")
+        if target_id in targets:
+            raise ValueError(f"{model_path}: duplicate CMake target id {target_id!r}")
         target_path = reply_dir / target["jsonFile"]
-        targets[target["id"]] = target_document(
-            json.loads(target_path.read_text(encoding="utf-8")), target_path)
+        targets[target_id] = target_document(read_cmake_reply(target_path), target_path)
     return Path(model["paths"]["source"]).resolve(), targets
 
 
@@ -162,7 +179,7 @@ def source_relative_path(source_root, source):
         return None
 
 
-def target_reached_sources(target, targets, source_root):
+def target_reached_sources(target, targets, source_root, include_product_libraries=False):
     reached = set()
     visited = set()
     queue = [target]
@@ -188,7 +205,8 @@ def target_reached_sources(target, targets, source_root):
             kind = dependency.get("type")
             if kind not in {"OBJECT_LIBRARY", "STATIC_LIBRARY", "INTERFACE_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"}:
                 continue
-            if kind in {"SHARED_LIBRARY", "MODULE_LIBRARY"} and is_product_library(dependency, source_root):
+            if (not include_product_libraries and kind in {"SHARED_LIBRARY", "MODULE_LIBRARY"}
+                    and is_product_library(dependency, source_root)):
                 continue
             if dep_id not in visited:
                 visited.add(dep_id)
@@ -234,6 +252,13 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
     return sorted(set(matched), key=str.casefold)
 
 
+def read_changed_paths(path):
+    data = path.read_bytes()
+    if b"\0" in data:
+        return [name for name in data.decode("utf-8").split("\0") if name]
+    return data.decode("utf-8-sig").splitlines()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="build core/libs test executables that do not link guest libc")
     parser.add_argument("build_dir", type=Path)
@@ -242,7 +267,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
-        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
+        changed_paths = read_changed_paths(args.changed_paths) if args.changed_paths else None
         selected = host_only_test_targets(source_root, targets, changed_paths)
         if not selected:
             print("No changed host-only core/libs test executables require a link check")

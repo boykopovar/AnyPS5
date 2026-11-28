@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [VOP3 abs and neg on v_alignbit_b32 and v_alignbyte_b32](../../../core/shader/recompiler/RdnaDecoder/src/RdnaVectorOpDecoder.cpp) (shader recompiler) - not measured on the PS5's gfx1013, or on GCN hardware for PS4 shaders, which take the same path. On VOP3 `v_alignbit_b32` (0x14e) and `v_alignbyte_b32` (0x14f), `abs` on src1 clears bit 31, `neg` flips it and both set it; `omod` and `clamp` leave the result unchanged. On src0, and on src2 before or after its `op_sel` byte select, `abs` and `neg` cannot change the result, so whether they apply there is unknown. Measured on RDNA2 (gfx1036, AMD Windows driver 32.0.21045.29003) with the [hardware oracle](../HW_ORACLE.md) over every `abs`/`neg` combination, `omod` at IEEE 0 and 1 with f32 denormals flushed and kept, `clamp`, `op_sel`, and literal, inline-constant and SGPR sources: 314 encodings by 1024 lanes. Checked by [Vop3AlignSourceModifiers](../../../core/libs/prx/libSceAgcDriver/tests/execution/Vop3AlignSourceModifiers.cpp).

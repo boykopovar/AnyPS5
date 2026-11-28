@@ -151,6 +151,11 @@ def main():
                 assert artifact.read_bytes().startswith(b"MZ" if windows else b"\x7fELF")
                 assert module.read_bytes() == original
                 assert not (case / "sce_module").exists()
+                if relative == "." and not windows:
+                    converted = output.read_bytes()
+                    result, output = convert(case, windows, ["--module-dir", relative], standard=False)
+                    assert result.returncode == 0, (result.stdout, result.stderr)
+                    assert output.read_bytes() == converted and module.read_bytes() == original
                 for invalid in ("missing", "../outside"):
                     failed, _ = convert(case, windows, ["--module-dir", invalid], standard=False)
                     assert failed.returncode == 2, (invalid, failed.stdout, failed.stderr)

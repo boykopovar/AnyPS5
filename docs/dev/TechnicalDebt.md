@@ -1,6 +1,6 @@
 # Project technical debt
 
-Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
+Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry is limited to 1000 characters; a longer one is reported as a `debt-length` warning ([CONTRIBUTING](../../CONTRIBUTING.md#documentation)). An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
 
 #### Fragments
 

@@ -44,6 +44,17 @@ class TimelineTests(unittest.TestCase):
         durations = sorted(slice_["dur"] for slice_ in slices)
         self.assertEqual(durations, [1000, 2000, 3000])
 
+    def test_cli_saves_trace_labels_with_invalid_svg_characters(self):
+        path = Path(self.tmp.name) / "capture.json"
+        capture = document([complete(1, "driver\u0000\ufffe", 0, 1)])
+        capture["traceEvents"][0]["args"]["name"] = "worker\u0001 & queue"
+        path.write_text(json.dumps(capture), encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path)], capture_output=True, timeout=5)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        page = path.with_suffix(".html").read_text(encoding="utf-8")
+        self.assertIn("driver\ufffd\ufffd", page)
+        self.assertIn("worker\ufffd &amp; queue", page)
+
     def test_window_keeps_only_the_selected_threads(self):
         slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
         self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])

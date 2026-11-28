@@ -36,6 +36,7 @@ def main():
                 result = subprocess.run([str(relinker), *options, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
                 assert result.returncode == 0, (result.stdout, result.stderr)
+                assert ("  |-- libs/\n" in result.stdout) == (label in ("default", "list-bare")), result.stdout
                 for relative in (Path(module_directory) / "needed.prx.guest.prx", Path("sce_module/standard.prx.guest.prx")):
                     artifact = output.parent / "app0" / relative
                     tags, strings = dynamic_strings(artifact.read_bytes())

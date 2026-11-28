@@ -2,6 +2,7 @@
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontFt/libSceFontFt.hpp"
 #include "tests/FontFixture.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -128,6 +129,10 @@ int main() {
     Require(cleared.form == 0 && cleared.effectWeightX == 1.0f);
     Require(sceFontGetFontMetrics(plain, 1, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontGetFontMetrics(nullptr, 1, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    errno = 71;
+    Require(sceFontGetFontMetrics(plain, 1, reinterpret_cast<FontMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetFontMetrics(nullptr, 1, reinterpret_cast<FontMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(errno == 71);
     Require(sceFontSetEffectWeight(nullptr, 1.0f, 1.0f, 0) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontSetEffectWeight(plain, 1.0f, 1.0f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSetEffectSlant(nullptr, 0.0f) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);

@@ -522,10 +522,10 @@ int APS5_VABI msetname(void* address, std::size_t length, const char* name) {
 }
 
 int APS5_VABI pthread_setschedparam_np(Pthread thread, int policy, const KernelSchedParam* param) {
-    if (policy == 2) {
-        NotImplemented_nid_no_patch(__func__);
-    }
-    return pthread_setschedparam_nid_postfix(thread, policy, param);
+    if (policy != 2) return pthread_setschedparam_nid_postfix(thread, policy, param);
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return PosixEfault;
+    return pthread_setprio_nid_postfix(thread, requested.sched_priority);
 }
 
 int APS5_VABI setenv_np(const char* name, const char* value, int overwrite) {

@@ -119,7 +119,11 @@ int main() {
     Require(sceZlibInitialize(output, 0) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(nullptr, 0) == 0);
     Require(sceZlibInitialize(nullptr, 0) == static_cast<std::int32_t>(0x81120033));
-    RequireThrows([&] { sceZlibInflate(compressed.data(), compressed.size(), output + 1, 8192, &id); });
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output + 1, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    Require(id == 0);
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output + 1024, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    Require(id == 0);
+    Require(std::all_of(storage.begin(), storage.end(), [](auto byte) { return byte == 0; }));
     for (const auto capacity : {0u, 1u, 2047u, 2049u, 65535u, 65537u}) {
         Require(sceZlibInflate(compressed.data(), compressed.size(), output, capacity, &id) == static_cast<std::int32_t>(0x81120016));
         Require(id == 0);

@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_kernel_proc_param_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelProcParam.cpp)
+    target_include_directories(guest_kernel_proc_param_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_proc_param_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_proc_param_tests)
+    add_test(NAME guest_kernel_proc_param COMMAND guest_kernel_proc_param_tests)
+    set_tests_properties(guest_kernel_proc_param PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_proc_param PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

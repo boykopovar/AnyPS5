@@ -118,6 +118,18 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertEqual(excluded, {1: "unresolved_dependency"})
         self.assertEqual(progress_prs.measure(self.root, combined)["done"], 1)
 
+    def test_integrated_head_does_not_probe_stale_closed_dependencies(self):
+        present = self.branch(1, {"first": "1"})
+        present["depends"] = {99}
+        followup = self.branch(2, {"second": "2"}, parent=present["sha"])
+        followup["depends"] = {1}
+        with patch.object(progress_prs, "closed_dependency_status", side_effect=RuntimeError("dependency unavailable")) as probe:
+            _, included, excluded = progress_prs.integrate_pull_requests(
+                self.root, {1: present, 2: followup}, present["sha"], "fixture/repo")
+        probe.assert_not_called()
+        self.assertEqual(included, {1, 2})
+        self.assertEqual(excluded, {})
+
     def test_unresolved_and_cyclic_dependencies_are_excluded(self):
         first = self.branch(1, {"first": "1"})
         second = self.branch(2, {"second": "2"})

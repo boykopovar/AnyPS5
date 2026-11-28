@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -87,6 +88,20 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
     const ParsedURL base = ParsedOf(baseURLRef, __func__);
     const ParsedURL absolute = Parse(base.fields, relativeURL);
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(NKWebKit::EncodeUtf8(Units(Wtf::ViewOf(absolute.fields.impl)))));
+}
+
+const void* APS5_VABI WKRegistrableDomainCreate(const void* urlRef) {
+    const ParsedURL url = ParsedOf(urlRef, __func__);
+    const std::u16string host = Units(_ZNK3WTF3URL4hostEv(&url.fields));
+    if (host.empty()) {
+        return MakeWKString(u"nullOrigin");
+    }
+    const auto hostString = _ZN3WTF10StringImpl20create8BitIfPossibleEPKDsj(host.data(), static_cast<unsigned>(host.size()));
+    const auto domain = _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE(&hostString);
+    if (domain.impl && domain.impl->length) {
+        return MakeWKString(Units(Wtf::ViewOf(domain.impl)));
+    }
+    return MakeWKString(host);
 }
 
 }
