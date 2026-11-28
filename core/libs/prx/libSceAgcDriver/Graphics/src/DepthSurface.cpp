@@ -929,6 +929,7 @@ bool StencilShadowCopyWorks(const Context& context, VkFormat format, std::uint32
 
 class DepthSurface;
 std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
+std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImageAspectFlags cleared);
 void noteStalePlane(std::uint64_t begin, std::uint64_t end);
 std::uint64_t nextPlaneSerial();
 
@@ -1044,6 +1045,25 @@ public:
     DepthSurface(const DepthSurface&) = delete;
     DepthSurface& operator=(const DepthSurface&) = delete;
 
+    bool clearedHtilePlane(const GuestMemory::UnchangedQuery& range) const {
+        if (!target.htileDepthOnly || range.bytes < 4u || clearPending || clearGeneration != 0u || stencilClearGeneration != 0u || pendingClear != 0u) return false;
+        for (std::uint64_t offset = 0u; offset + 4u <= range.bytes; offset += 4u) {
+            std::uint32_t word;
+            std::memcpy(&word, reinterpret_cast<const void*>(range.address + offset), sizeof(word));
+            if (!htileProvesClear(word, true, target.clearDepth)) return false;
+        }
+        return true;
+    }
+
+    bool expandedHtilePlane(const GuestMemory::UnchangedQuery& range) const {
+        for (std::uint64_t offset = 0u; offset + 4u <= range.bytes; offset += 4u) {
+            std::uint32_t word;
+            std::memcpy(&word, reinterpret_cast<const void*>(range.address + offset), sizeof(word));
+            if (word != expandedHtileWord(word, target.htileStencil, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) return false;
+        }
+        return true;
+    }
+
     void CheckCurrent() {
         if (target.samples == 1u) return;
         ProveOverwrite();
@@ -1070,10 +1090,19 @@ public:
             const auto& range = sampling.initial[index];
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) && GuestMemory::Watched(range.address, range.bytes), "native multisample depth requires watched accessible guest memory");
             if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill) && recorder->PendingWriteOverlaps(range.address, range.bytes)) {
-                Require(!recorder->PendingStoreOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
-                const auto settled = GuestMemory::TrackerGeneration();
-                RecorderFor(context)->SyncThrough(range.address, range.bytes);
-                Require(!GuestMemory::WrittenSince(range.address, range.bytes, settled), "external GPU writes over native multisample depth are not implemented");
+                if (recorder->PendingStoreOverlaps(range.address, range.bytes)) {
+                    Require(index == 1u, "external GPU writes over native multisample depth are not implemented");
+                    RecorderFor(context)->SyncThrough(range.address, range.bytes);
+                    if (clearedHtilePlane(range)) RecordClearValue(VK_IMAGE_ASPECT_DEPTH_BIT, target.clearDepth, 0u);
+                    else if (!expandedHtilePlane(range)) sampling.refusal = "external GPU writes over native multisample depth are not implemented";
+                    Require(sampling.refusal.empty(), sampling.refusal);
+                    sampling.initial[index].generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                    RebasePublication(1u);
+                } else {
+                    const auto settled = GuestMemory::TrackerGeneration();
+                    RecorderFor(context)->SyncThrough(range.address, range.bytes);
+                    Require(!GuestMemory::WrittenSince(range.address, range.bytes, settled), "external GPU writes over native multisample depth are not implemented");
+                }
             }
             GuestMemory::CollectWritesForGpuUse(range, samplingObservations[index]);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
@@ -1146,6 +1175,24 @@ public:
             clearAspects = 0u;
             clearPlaneGeneration = {};
             pendingClear = 0u;
+        }
+        if (!GuestMemory::UnchangedSinceAll(sampling.initial) && sampling.refusal.empty() && target.htileAddress != 0u && sampling.initial.size() > 1u && sampling.initial[1].address == target.htileAddress && sampling.initial[1].bytes != 0u) {
+            bool planesUnchanged = true;
+            for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
+                const auto& plane = sampling.initial[index];
+                if (index != 1u && plane.bytes != 0u && !GuestMemory::UnchangedSince(plane.address, plane.bytes, plane.generation)) planesUnchanged = false;
+            }
+            if (planesUnchanged) {
+                auto current = sampling.initial;
+                current[1].generation = GuestMemory::CollectWritesUncached(current[1].address, current[1].bytes);
+                const bool cleared = clearedHtilePlane(current[1]);
+                Require(cleared || expandedHtilePlane(current[1]), "guest writes over native multisample depth are not implemented");
+                for (const auto& range : current) GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                Require(GuestMemory::UnchangedSinceAll(current), "CPU writes raced native multisample depth HTILE expansion");
+                if (cleared) RecordClearValue(VK_IMAGE_ASPECT_DEPTH_BIT, target.clearDepth, 0u);
+                sampling.initial = current;
+                RebasePublication(1u);
+            }
         }
         Require(GuestMemory::UnchangedSinceAll(sampling.initial), "guest writes over native multisample depth are not implemented");
     }
