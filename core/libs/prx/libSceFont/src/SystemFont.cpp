@@ -5,7 +5,7 @@
 #include <string_view>
 #include <system_error>
 #ifdef _WIN32
-#include <windows.h>
+#include "prx/libc/include/HostExecutable.hpp"
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -124,10 +124,7 @@ std::optional<Font::SystemFontFile> FirstExisting(const std::filesystem::path& d
 
 std::filesystem::path ExecutableDirectory() {
 #ifdef _WIN32
-    wchar_t module[MAX_PATH];
-    const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
-    if (length == 0 || length == MAX_PATH) throw std::runtime_error("libSceFont: cannot locate the executable");
-    return std::filesystem::path(module).parent_path();
+    return HostExecutable::Own("libSceFont").parent_path();
 #elif defined(__APPLE__)
     std::uint32_t size = 0;
     _NSGetExecutablePath(nullptr, &size);

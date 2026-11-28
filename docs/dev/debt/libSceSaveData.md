@@ -15,12 +15,12 @@
 | `Unknown` | `AuTE0gFxZCI` |
 | `Unknown` | `IE+HJN8+Jdg` |
 | `Unknown` | `IGpkv-UOup0` |
-| `Unknown` | `NxxouhCA12c` |
-| `Unknown` | `QaI8L6NzmJU` |
+| `sceSaveDataGetUpdatedDataCountProspero` | `NxxouhCA12c` |
+| `sceSaveDataMount5Prospero` | `QaI8L6NzmJU` |
 | `Unknown` | `VM8qEhWh-A4` |
 | `Unknown` | `apvJPjG+6-Q` |
 | `Unknown` | `cbD93i6sy9E` |
-| `Unknown` | `fIu-ckf3n-o` |
+| `sceSaveDataMountSysProspero2` | `fIu-ckf3n-o` |
 | `Unknown` | `g1roz3Ux+3I` |
 | `Unknown` | `q8KxzjSpPVw` |
 | `Unknown` | `yBM2vzabhEA` |

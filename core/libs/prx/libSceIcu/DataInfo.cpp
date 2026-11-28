@@ -22,3 +22,15 @@ static_assert(offsetof(DataHeader, info) == 4);
 extern "C" void APS5_VABI udata_getInfo_nid_postfix(Icu::DataMemory* memory, Icu::DataInfo* info) {
     udata_getInfo(reinterpret_cast<UDataMemory*>(memory), reinterpret_cast<UDataInfo*>(info));
 }
+
+extern "C" std::int32_t APS5_VABI udata_getLength_nid_postfix(Icu::DataMemory* memory) {
+    return udata_getLength(reinterpret_cast<UDataMemory*>(memory));
+}
+
+extern "C" const void* APS5_VABI udata_getRawMemory_nid_postfix(Icu::DataMemory* memory) {
+    return udata_getRawMemory(reinterpret_cast<UDataMemory*>(memory));
+}
+
+extern "C" const void* APS5_VABI udata_getMemory_nid_postfix(Icu::DataMemory* memory) {
+    return udata_getMemory(reinterpret_cast<UDataMemory*>(memory));
+}

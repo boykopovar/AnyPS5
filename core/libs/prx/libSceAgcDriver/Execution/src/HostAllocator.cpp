@@ -14,12 +14,18 @@
 namespace {
 
 constexpr std::size_t Granule = 16;
-constexpr std::size_t LargestCached = 1024;
+constexpr std::size_t LargestShared = 1024;
+constexpr std::size_t SharedClasses = LargestShared / Granule;
+constexpr std::size_t LargestCached = 4096;
 constexpr std::size_t Classes = LargestCached / Granule;
 constexpr std::size_t SmallestKept = sizeof(void*);
 constexpr std::uintptr_t HeldBits = Granule - 1;
+constexpr std::size_t LargeThreadBytes = 4 * 1024 * 1024;
+constexpr std::size_t LargeClassBytes = 256 * 1024;
+constexpr std::uint32_t TrimInterval = 1u << 16;
 
 constexpr std::uint16_t Depth(std::size_t sizeClass) {
+    if (sizeClass >= SharedClasses) return static_cast<std::uint16_t>(std::max<std::size_t>(2, LargeClassBytes / ((sizeClass + 1) * Granule)));
     return sizeClass < 256 / Granule ? 64 : 16;
 }
 
@@ -38,22 +44,37 @@ std::size_t Held(const FreeBlock* block, std::size_t sizeClass) noexcept {
 struct Cache {
     FreeBlock* heads[Classes];
     std::uint16_t counts[Classes];
+    std::uint8_t touched[Classes];
+    std::size_t largeBytes;
+    std::uint32_t largeOperations;
 };
 
-constexpr std::uint16_t KeptLists = 8;
+constexpr std::size_t DepotSlots = 64;
+constexpr std::size_t DepotClassBytes = 256 * 1024;
+
+constexpr std::size_t ListBytes(std::size_t sizeClass) {
+    return Depth(sizeClass) * (sizeClass + 1) * Granule;
+}
+
+constexpr std::size_t KeptLists(std::size_t sizeClass) {
+    return std::min(DepotSlots, DepotClassBytes / ListBytes(sizeClass));
+}
+
+static_assert(KeptLists(SharedClasses - 1) >= 1);
 
 struct Depot {
     SRWLOCK lock = SRWLOCK_INIT;
-    FreeBlock* lists[KeptLists] = {};
+    FreeBlock* lists[DepotSlots] = {};
     std::uint16_t count = 0;
 };
 
-Depot depots[Classes];
+Depot depots[SharedClasses];
 
 bool KeepList(std::size_t sizeClass, FreeBlock* list) noexcept {
     auto& depot = depots[sizeClass];
+    const auto limit = KeptLists(sizeClass);
     AcquireSRWLockExclusive(&depot.lock);
-    const bool kept = depot.count < KeptLists;
+    const bool kept = depot.count < limit;
     if (kept) depot.lists[depot.count++] = list;
     ReleaseSRWLockExclusive(&depot.lock);
     return kept;
@@ -152,13 +173,34 @@ Cache* CurrentCache() noexcept {
     return cache != nullptr ? cache : CreateCache(slot);
 }
 
-bool Keep(Cache* cache, FreeBlock* block, std::size_t held) noexcept {
-    const auto sizeClass = (held - 1) / Granule;
-    if (cache->counts[sizeClass] == Depth(sizeClass) && KeepList(sizeClass, cache->heads[sizeClass])) {
-        cache->heads[sizeClass] = nullptr;
+void TrimLarge(Cache* cache) noexcept {
+    for (std::size_t sizeClass = SharedClasses; sizeClass < Classes; ++sizeClass) {
+        if (cache->touched[sizeClass] != 0) {
+            cache->touched[sizeClass] = 0;
+            continue;
+        }
+        while (FreeBlock* block = cache->heads[sizeClass]) {
+            cache->heads[sizeClass] = Next(block);
+            cache->largeBytes -= Held(block, sizeClass);
+            std::free(block);
+        }
         cache->counts[sizeClass] = 0;
     }
-    if (cache->counts[sizeClass] == Depth(sizeClass)) return false;
+}
+
+bool Keep(Cache* cache, FreeBlock* block, std::size_t held) noexcept {
+    const auto sizeClass = (held - 1) / Granule;
+    if (sizeClass >= SharedClasses) {
+        if ((++cache->largeOperations & (TrimInterval - 1)) == 0) TrimLarge(cache);
+        if (cache->counts[sizeClass] == Depth(sizeClass) || cache->largeBytes + held > LargeThreadBytes) return false;
+        cache->largeBytes += held;
+    } else {
+        if (cache->counts[sizeClass] == Depth(sizeClass) && KeepList(sizeClass, cache->heads[sizeClass])) {
+            cache->heads[sizeClass] = nullptr;
+            cache->counts[sizeClass] = 0;
+        }
+        if (cache->counts[sizeClass] == Depth(sizeClass)) return false;
+    }
     block->link = reinterpret_cast<std::uintptr_t>(cache->heads[sizeClass]) | ((held - 1) & HeldBits);
     cache->heads[sizeClass] = block;
     ++cache->counts[sizeClass];
@@ -170,7 +212,7 @@ void* TryAllocate(std::size_t bytes) noexcept {
     if (bytes <= LargestCached) {
         const auto sizeClass = (bytes - 1) / Granule;
         if (auto* cache = CurrentCache()) {
-            if (cache->heads[sizeClass] == nullptr) {
+            if (cache->heads[sizeClass] == nullptr && sizeClass < SharedClasses) {
                 if (FreeBlock* list = TakeList(sizeClass)) {
                     cache->heads[sizeClass] = list;
                     cache->counts[sizeClass] = Depth(sizeClass);
@@ -180,6 +222,10 @@ void* TryAllocate(std::size_t bytes) noexcept {
                 FreeBlock* next = Next(block);
                 cache->heads[sizeClass] = next;
                 --cache->counts[sizeClass];
+                if (sizeClass >= SharedClasses) {
+                    cache->largeBytes -= Held(block, sizeClass);
+                    cache->touched[sizeClass] = 1;
+                }
                 if (next != nullptr) _mm_prefetch(reinterpret_cast<const char*>(next), _MM_HINT_T0);
                 if (Held(block, sizeClass) >= bytes || _msize(block) >= bytes) return block;
                 if (sizeClass == 0 || !Keep(cache, block, sizeClass * Granule)) std::free(block);
@@ -212,6 +258,21 @@ void Release(void* block, std::size_t bytes = 0) noexcept {
     std::free(block);
 }
 
+}
+
+std::size_t HostAllocatorLargeBytes() noexcept {
+    const auto* cache = CurrentCache();
+    return cache != nullptr ? cache->largeBytes : 0;
+}
+
+std::size_t HostAllocatorDepotBytes(std::size_t blockBytes) noexcept {
+    if (blockBytes == 0 || (blockBytes - 1) / Granule >= SharedClasses) return 0;
+    const auto sizeClass = (blockBytes - 1) / Granule;
+    auto& depot = depots[sizeClass];
+    AcquireSRWLockExclusive(&depot.lock);
+    const auto bytes = depot.count * ListBytes(sizeClass);
+    ReleaseSRWLockExclusive(&depot.lock);
+    return bytes;
 }
 
 void* operator new(std::size_t bytes) { return Allocate(bytes); }

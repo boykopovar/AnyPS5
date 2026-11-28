@@ -1,0 +1,5 @@
+# libc
+
+## change [fseeko and fsetpos]
+
+- [fseeko and fsetpos](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) leave a failed `SEEK_END` seek on a stream in write mode, on a nonregular file or on macOS to the host C library, which on Windows drops the read buffer when the seek fails, so the stream continues at the descriptor's read-ahead offset. Other targets are checked first as FreeBSD 11.4's [`_fseeko`](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/stdio/fseek.c) does: a negative `SEEK_SET`, `SEEK_CUR` or regular-file `SEEK_END` target is `EINVAL` and one past `OFF_MAX` is `EOVERFLOW`, leaving the buffer, pushback and EOF state alone. Buffered output is not flushed to find the end. A host seek that fails on a valid target is not checked. On a PS5 payload process (firmware 11.60) `fseeko(-1, SEEK_SET)` returned -1 with the position and `errno` untouched, where this sets `EINVAL`; valid seeks (10, 100, `SEEK_END` -4, `SEEK_CUR` 5) returned 0 and left `errno` alone; `fsetpos` is unmeasured.

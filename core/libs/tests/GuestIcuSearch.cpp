@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "unicode/utypes.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -11,6 +12,9 @@
 #include <limits>
 #include <source_location>
 #include <string>
+
+U_CAPI int32_t U_EXPORT2 u_strcmpCodePointOrder(const UChar* s1, const UChar* s2);
+U_CAPI int32_t U_EXPORT2 u_strncmpCodePointOrder(const UChar* s1, const UChar* s2, int32_t n);
 
 
 namespace {
@@ -179,6 +183,40 @@ void Substrings() {
     std::u16string longNeedle(100000, u'a');
     Require(u_strFindFirst_nid_postfix(u"", -1, longNeedle.data(), -1) == nullptr);
     Require(u_strFindFirst_nid_postfix(u"b", -1, longNeedle.data(), -1) == nullptr);
+    Require(u_strFindFirst_nid_postfix(longNeedle.c_str(), -1, longText.c_str() + 1, 2) == nullptr);
+    Require(u_strFindFirst_nid_postfix(longText.c_str(), 100000, u"ba", -1) == nullptr);
+    Require(u_strFindLast_nid_postfix(longText.c_str(), 100000, u"xa", 2) == longText.data() + 99998);
+}
+
+void MappedSubstrings() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t bytes = 2 * page;
+    constexpr std::size_t unitsPerPage = page / sizeof(char16_t);
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, bytes, 3, 0, physical, 0) == 0 && mapping);
+    auto* data = static_cast<char16_t*>(mapping);
+    const std::size_t start = unitsPerPage - 3;
+    {
+        const GuestArena::HostWrite access(data, bytes);
+        Require(access.Open());
+        for (std::size_t index = 0; index < 40; ++index) data[start + index] = static_cast<char16_t>(u'a' + index % 3);
+        data[start + 20] = 0xd83d;
+        data[start + 21] = 0xde42;
+    }
+    Require(u_strFindFirst_nid_postfix(data + start, 40, u"bc", 2) == data + start + 1);
+    Require(u_strFindLast_nid_postfix(data + start, 40, u"ca", -1) == data + start + 38);
+    Require(u_strFindFirst_nid_postfix(data + start, 40, u"\U0001f642", 2) == data + start + 20);
+    Require(u_strFindFirst_nid_postfix(data + start, 19, u"\U0001f642", 2) == nullptr);
+    Require(u_strFindFirst_nid_postfix(data + start, 40, data + start + 1, 2) == data + start + 1);
+    Require(u_strFindLast_nid_postfix(data + start, 40, data + start + 1, 2) == data + start + 37);
+    Require(sceKernelMprotect(mapping, page, 1) == 0);
+    Require(u_strFindFirst_nid_postfix(data + start, 40, data + start + 1, 2) == data + start + 1);
+    Require(u_strFindLast_nid_postfix(data + start, 40, u"ca", -1) == data + start + 38);
+    Require(sceKernelMprotect(mapping, page, 3) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
 }
 
 void Comparisons() {
@@ -197,6 +235,46 @@ void Comparisons() {
     Require(u_strcmpCodePointOrder_nid_postfix(nullptr, nullptr) == 0);
     Throws([&] { u_strcmpCodePointOrder_nid_postfix(nullptr, u"a"); });
     Throws([&] { u_strncmpCodePointOrder_nid_postfix(u"a", nullptr, -1); });
+
+    const char16_t unpairedLead[]{0xd800, u'x', 0};
+    const char16_t unpairedTrail[]{0xdc00, 0};
+    const char16_t trailAfterLetter[]{u'a', 0xdc00, 0};
+    const char16_t letterThenBmp[]{u'a', 0xe000, 0};
+    const char16_t leadThenBmp[]{0xd800, 0xe000, 0};
+    const char16_t highPair[]{0xdbff, 0xdfff, 0};
+    const char16_t lastBmp[]{0xffff, 0};
+    const char16_t reversedPair[]{0xdc00, 0xd800, 0};
+    const char16_t letterPair[]{u'a', 0xd800, 0xdc00, 0};
+    const char16_t letterLastBmp[]{u'a', 0xffff, 0};
+    Require(u_strcmpCodePointOrder_nid_postfix(unpairedLead, bmp) == -0x800);
+    Require(u_strcmpCodePointOrder_nid_postfix(unpairedTrail, bmp) == -0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(trailAfterLetter, letterThenBmp) == -0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(supplementary, leadThenBmp) == 0x2400);
+    Require(u_strcmpCodePointOrder_nid_postfix(highPair, lastBmp) == 0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(u"a", bmp) == 0x61 - 0xe000);
+    Require(u_strcmpCodePointOrder_nid_postfix(u"\xd7ff", supplementary) == -1);
+    Require(u_strcmpCodePointOrder_nid_postfix(reversedPair, bmp) == -0x400);
+    Require(u_strcmpCodePointOrder_nid_postfix(supplementary + 1, bmp) == -0x400);
+    Require(u_strncmpCodePointOrder_nid_postfix(supplementary + 1, bmp, 1) == -0x400);
+    Require(u_strncmpCodePointOrder_nid_postfix(lastBmp, supplementary, 1) == 0x27ff);
+    Require(u_strncmpCodePointOrder_nid_postfix(lastBmp, supplementary, 2) == -1);
+    Require(u_strncmpCodePointOrder_nid_postfix(letterPair, letterLastBmp, 2) == -0x27ff);
+    Require(u_strncmpCodePointOrder_nid_postfix(letterPair, letterLastBmp, 3) == 1);
+
+    constexpr std::array<char16_t, 9> units{0, u'a', 0xd7ff, 0xd800, 0xdbff, 0xdc00, 0xdfff, 0xe000, 0xffff};
+    constexpr std::array<char16_t, 2> before{u'a', 0xd800};
+    std::array<std::array<char16_t, 5>, 729 * 2> texts{};
+    for (std::size_t index = 0; index < texts.size(); ++index)
+        texts[index] = {before[index / 729], units[index % 9], units[index / 9 % 9], units[index / 81 % 9], 0};
+    for (const auto& left : texts) {
+        for (const auto& right : texts) {
+            const char16_t* first = left.data() + 1;
+            const char16_t* second = right.data() + 1;
+            Require(u_strcmpCodePointOrder_nid_postfix(first, second) == u_strcmpCodePointOrder(first, second));
+            for (std::int32_t count = -1; count <= 4; ++count)
+                Require(u_strncmpCodePointOrder_nid_postfix(first, second, count) == u_strncmpCodePointOrder(first, second, count));
+        }
+    }
 }
 
 } // namespace
@@ -206,5 +284,6 @@ int main() {
     MappedMemory();
     Characters();
     Substrings();
+    MappedSubstrings();
     Comparisons();
 }

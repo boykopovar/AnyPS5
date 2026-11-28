@@ -390,6 +390,22 @@ static void CheckLongDoubleExpTinyRounding() {
     Require(std::fesetround(saved) == 0);
 }
 
+static void CheckIntegralRoundingInexact() {
+    const auto inexact = [](long double (APS5_VABI *function)(long double), long double input, long double expected) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const long double result = function(input);
+        const int flags = std::fetestexcept(FE_ALL_EXCEPT) & FE_INEXACT;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return SameBits(result, expected) && flags == (SameBits(input, expected) ? 0 : FE_INEXACT);
+    };
+    Require(inexact(floorl_nid_postfix, 2.5L, 2.0L) && inexact(floorl_nid_postfix, -2.5L, -3.0L) && inexact(floorl_nid_postfix, 0.5L, 0.0L));
+    Require(inexact(ceill_nid_postfix, 2.5L, 3.0L) && inexact(ceill_nid_postfix, -2.5L, -2.0L) && inexact(ceill_nid_postfix, -0.5L, -0.0L));
+    Require(inexact(truncl_nid_postfix, 2.5L, 2.0L) && inexact(truncl_nid_postfix, -2.5L, -2.0L) && inexact(truncl_nid_postfix, 0.5L, 0.0L));
+    for (const long double whole : {0.0L, -0.0L, 3.0L, -3.0L, 0x1p70L, std::numeric_limits<long double>::infinity()}) {
+        Require(inexact(floorl_nid_postfix, whole, whole) && inexact(ceill_nid_postfix, whole, whole) && inexact(truncl_nid_postfix, whole, whole));
+    }
+}
+
 static void CheckRoundlAndFdimlFlags() {
     constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
     const auto raised = [] {
@@ -447,6 +463,32 @@ static void CheckClassification() {
     Require(__isnormall_nid_postfix(1.0L) == 1 && __isnormall_nid_postfix(denormal) == 0);
     Require(_Dclass_nid_postfix(5e-324) == -2 && _Dclass_nid_postfix(-0.0) == 0);
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
+}
+
+static void CheckPowSpecialValues() {
+    Require(pow_nid_postfix(2.0, 10.0) == 1024.0 && pow_nid_postfix(-2.0, 3.0) == -8.0 && pow_nid_postfix(-2.0, 2.0) == 4.0 && pow_nid_postfix(2.0, -1.0) == 0.5);
+    Require(pow_nid_postfix(5.0, 0.0) == 1.0 && pow_nid_postfix(-5.0, -0.0) == 1.0 && pow_nid_postfix(NAN, 0.0) == 1.0 && pow_nid_postfix(INFINITY, 0.0) == 1.0);
+    Require(std::isnan(pow_nid_postfix(NAN, 1.0)) && std::isnan(pow_nid_postfix(2.0, NAN)));
+
+    Require(pow_nid_postfix(0.0, -3.0) == INFINITY && pow_nid_postfix(-0.0, -3.0) == -INFINITY);
+    Require(pow_nid_postfix(0.0, -2.0) == INFINITY && pow_nid_postfix(-0.0, -2.0) == INFINITY);
+    Require(pow_nid_postfix(0.0, -INFINITY) == INFINITY && pow_nid_postfix(-0.0, -INFINITY) == INFINITY);
+    Require(pow_nid_postfix(0.0, 3.0) == 0.0 && !std::signbit(pow_nid_postfix(0.0, 3.0)));
+    Require(pow_nid_postfix(-0.0, 3.0) == 0.0 && std::signbit(pow_nid_postfix(-0.0, 3.0)));
+    Require(pow_nid_postfix(0.0, 2.0) == 0.0 && !std::signbit(pow_nid_postfix(0.0, 2.0)));
+    Require(pow_nid_postfix(-0.0, 2.0) == 0.0 && !std::signbit(pow_nid_postfix(-0.0, 2.0)));
+    Require(pow_nid_postfix(-0.0, 0.5) == 0.0 && !std::signbit(pow_nid_postfix(-0.0, 0.5)));
+
+    Require(pow_nid_postfix(0.5, INFINITY) == 0.0 && pow_nid_postfix(-0.5, INFINITY) == 0.0 && pow_nid_postfix(2.0, INFINITY) == INFINITY && pow_nid_postfix(-2.0, INFINITY) == INFINITY);
+    Require(pow_nid_postfix(0.5, -INFINITY) == INFINITY && pow_nid_postfix(-0.5, -INFINITY) == INFINITY && pow_nid_postfix(2.0, -INFINITY) == 0.0 && pow_nid_postfix(-2.0, -INFINITY) == 0.0);
+
+    Require(pow_nid_postfix(INFINITY, -1.0) == 0.0 && !std::signbit(pow_nid_postfix(INFINITY, -1.0)) && pow_nid_postfix(INFINITY, 1.0) == INFINITY);
+    Require(pow_nid_postfix(-INFINITY, -3.0) == 0.0 && std::signbit(pow_nid_postfix(-INFINITY, -3.0)));
+    Require(pow_nid_postfix(-INFINITY, -2.0) == 0.0 && !std::signbit(pow_nid_postfix(-INFINITY, -2.0)));
+    Require(pow_nid_postfix(-INFINITY, 3.0) == -INFINITY && pow_nid_postfix(-INFINITY, 2.0) == INFINITY);
+
+    Require(std::isnan(pow_nid_postfix(-8.0, 0.5)) && std::isnan(pow_nid_postfix(-2.0, -1.5)));
+    Require(pow_nid_postfix(10.0, 400.0) == INFINITY && pow_nid_postfix(10.0, -400.0) == 0.0);
 }
 
 static void CheckLongDoubleExp() {
@@ -780,6 +822,19 @@ static void CheckFmalFarApartDirected() {
     }
 }
 
+static void CheckFmalSubnormalStepErrno() {
+    const int saved = std::fegetround();
+    const int savedError = errno;
+    Require(std::fesetround(FE_DOWNWARD) == 0 && std::feclearexcept(FE_ALL_EXCEPT) == 0);
+    errno = 97;
+    const long double result = fmal_nid_postfix(Extended(0x1f51, 0x8a418d0c40da77ffull), Extended(0x9f95, 0xe33ba935df33d6a8ull), Extended(0x0000, 0x0000000000000f3bull));
+    const int exceptions = std::fetestexcept(FE_UNDERFLOW | FE_INEXACT);
+    const int error = errno;
+    Require(std::fesetround(saved) == 0);
+    errno = savedError;
+    Require(SameBits(result, Extended(0x0000, 0x0000000000000f3aull)) && exceptions == (FE_UNDERFLOW | FE_INEXACT) && error == ERANGE);
+}
+
 static void CheckExpSpecialValues() {
     Require(exp_nid_postfix(0.0) == 1.0 && exp_nid_postfix(-0.0) == 1.0);
     Require(exp_nid_postfix(INFINITY) == INFINITY);
@@ -1024,14 +1079,17 @@ int main(int argc, char** argv) {
     CheckLongDoubleExpTinyMultiplierOverflow();
     CheckLongDoubleExpTinyRounding();
     CheckRintTiesToEven();
+    CheckIntegralRoundingInexact();
     CheckRoundlAndFdimlFlags();
     CheckClassification();
+    CheckPowSpecialValues();
     CheckLongDoubleExp();
     CheckRoundHalfwayAwayFromZero();
     CheckFmalSpecials();
     CheckFmalExactResults();
     CheckFmalDirectedZero();
     CheckFmalFarApartDirected();
+    CheckFmalSubnormalStepErrno();
     CheckExpSpecialValues();
     CheckExpOffsetsBeyond16Bits();
     CheckPowlBitsFlagsAndErrno();

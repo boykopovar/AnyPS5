@@ -141,6 +141,22 @@ int main() {
         threw = true;
     }
     Require(threw, "null output", row);
+    auto* const unmapped = reinterpret_cast<double*>(std::uintptr_t{0x10});
+    threw = false;
+    try {
+        __kernel_rem_pio2_nid_postfix(unmapped, y, 0, 1, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "unreadable input", row);
+    threw = false;
+    try {
+        __kernel_rem_pio2_nid_postfix(x, unmapped, 0, 1, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "unwritable output", row);
+    Require(x[0] == 1.0, "a rejected output leaves the input unchanged", row);
     std::puts("__kernel_rem_pio2: ok");
     return 0;
 }

@@ -70,5 +70,11 @@ int main() {
     Check(decodedSecond.hasValue && decodedSecond.value == secondDigest, __LINE__);
 
     _ZN3WTF11Persistence7EncoderD1Ev(&encoder);
+
+    Jsc::WtfAbi::StringImpl* uuid = nullptr;
+    Check(_ZN3WTF25createCanonicalUUIDStringEv(&uuid) == &uuid && uuid != nullptr, __LINE__);
+    Check(uuid->refCount == 2 && uuid->length == 36, __LINE__);
+    Check(_ZN3WTF14fastMallocSizeEPKv(uuid) == 56, __LINE__);
+    _ZN3WTF8fastFreeEPv(uuid);
     return 0;
 }

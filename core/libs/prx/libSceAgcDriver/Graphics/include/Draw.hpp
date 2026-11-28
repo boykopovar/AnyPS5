@@ -33,10 +33,12 @@ struct DrawTraceContext {
     std::uint64_t target = 0;
 };
 
+enum class DrawResult { Handled, NeedsIndividualRecords };
+
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
+DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
 std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
 
 struct PixelFunctionLdsLayouts {
@@ -68,15 +70,17 @@ struct DrawInputCopy {
     std::uint64_t registryGeneration = 0;
     Recorder::OwnedDrawInputProof owned;
 };
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0, bool hostOnly = false);
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0, bool hostOnly = false, std::size_t growLimit = 0);
 bool BindsIndexCopy(const State& state);
+std::size_t GrownVertexCopyBytes(std::size_t bytes, std::size_t growLimit);
+std::uint64_t VertexCopyGrowEnd(const State& state, std::uint64_t end, std::uint64_t limit);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
 inline constexpr std::uint64_t InPlaceDrawInputMaxReads = 512;
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr, std::size_t fetched = std::numeric_limits<std::size_t>::max(), std::uint64_t reads = std::numeric_limits<std::uint64_t>::max());
-enum class IndexBehindWriter : std::uint8_t { Taken, Off, NoWriter, VertexAttributes, IndexLimit, MeshStage, PrimitiveRestart, VertexOffset, UnitShadow, PendingStorage, LabelOrStore, CopiedWriter, NoImport, Refused, Count };
+enum class IndexBehindWriter : std::uint8_t { Taken, Off, NoWriter, IndexLimit, MeshStage, PrimitiveRestart, VertexOffset, UnitShadow, PendingStorage, LabelOrStore, CopiedWriter, NoImport, Refused, Count };
 std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterCounts();
-const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome = nullptr);
+const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome = nullptr);
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
     std::uint32_t lowest = 0;
@@ -102,8 +106,10 @@ struct MeshArgumentRules {
     std::uint32_t maxGroups;
     std::uint32_t maxInstances;
     std::uint32_t maxTotal;
+    std::uint32_t firstIgnored;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw);
 struct MeshGrid {
     std::uint32_t groups;
     std::uint32_t instances;

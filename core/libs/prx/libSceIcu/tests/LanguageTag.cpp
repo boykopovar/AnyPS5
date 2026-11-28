@@ -148,6 +148,40 @@ constexpr Vector kVectors[] = {
     {"und-variant-u-attr", "__VARIANT@attribute=attr", 18},
     {"und-1994-u-attr", "__1994@attribute=attr", 15},
     {"und-US-u-attr", "_US@attribute=attr", 13},
+    {"zh-cmn-CH-u-co-pinyin", "cmn_CH@collation=pinyin", 21},
+    {"en-u-ca-gregory", "en@calendar=gregorian", 15},
+    {"en-U-cu-USD", "en@currency=usd", 11},
+    {"en-US-u-va-posix", "en_US_POSIX", 16},
+    {"en-us-u-ca-gregory-va-posix", "en_US_POSIX@calendar=gregorian", 27},
+    {"en-us-posix-u-va-posix", "en_US_POSIX@va=posix", 22},
+    {"en-us-u-va-posix2", "en_US@va=posix2", 17},
+    {"en-us-vari1-u-va-posix", "en_US_VARI1@va=posix", 22},
+    {"fr-u-nu-latn-cu-eur", "fr@currency=eur;numbers=latn", 19},
+    {"de-k-kext-u-co-phonebk-nu-latn", "de@collation=phonebook;k=kext;numbers=latn", 30},
+    {"ja-u-cu-jpy-ca-jp", "ja@calendar=yes;currency=jpy;jp=yes", 17},
+    {"en-us-u-tz-usnyc", "en_US@timezone=America/New_York", 16},
+    {"zh-u-ca-chinese-x-u-ca-chinese", "zh@calendar=chinese;x=u-ca-chinese", 30},
+    {"en-US-u-attr1-attr2-ca-gregory", "en_US@attribute=attr1-attr2;calendar=gregorian", 30},
+    {"sr-u-kn", "sr@colnumeric=yes", 7},
+    {"de-u-kn-co-phonebk", "de@collation=phonebook;colnumeric=yes", 18},
+    {"en-u-attr2-attr1-kn-kb", "en@attribute=attr1-attr2;colbackwards=yes;colnumeric=yes", 22},
+    {"ja-u-ijkl-efgh-abcd-ca-japanese-xx-yyy-zzz-kn", "ja@attribute=abcd-efgh-ijkl;calendar=japanese;colnumeric=yes;xx=yyy-zzz", 45},
+    {"de-u-xc-xphonebk-co-phonebk-ca-buddhist-mo-very-lo-extensi-xd-that-de-should-vc-probably-xz-killthebuffer", "de@calendar=buddhist;collation=phonebook;de=should;lo=extensi;mo=very;vc=probably;xc=xphonebk;xd=that;xz=yes", 91},
+    {"en-u-baz-ca-islamic-civil", "en@attribute=baz;calendar=islamic-civil", 25},
+    {"en-a-bar-u-ca-islamic-civil-x-u-foo", "en@a=bar;calendar=islamic-civil;x=u-foo", 35},
+    {"en-a-bar-u-baz-ca-islamic-civil-x-u-foo", "en@a=bar;attribute=baz;calendar=islamic-civil;x=u-foo", 39},
+    {"und-Arab-u-em-emoji", "_Arab@em=emoji", 19},
+    {"und-Latn-u-em-emoji", "_Latn@em=emoji", 19},
+    {"und-Latn-DE-u-em-emoji", "_Latn_DE@em=emoji", 22},
+    {"und-Zzzz-DE-u-em-emoji", "_Zzzz_DE@em=emoji", 22},
+    {"und-DE-u-em-emoji", "_DE@em=emoji", 17},
+    {"zh-hans-cn-u-ca-x_t-u", "zh_Hans_CN@calendar=yes", 15},
+    {"zh-u-ca-chinese-ca-gregory", "zh@calendar=chinese", 26},
+    {"zh-u-ca-gregory-co-pinyin-ca-chinese", "zh@calendar=gregorian;collation=pinyin", 36},
+    {"de-latn-DE-1901-u-co-phonebk-co-pinyin-ca-gregory", "de_Latn_DE_1901@calendar=gregorian;collation=phonebook", 49},
+    {"th-u-kf-nu-thai-kf-false", "th@colcasefirst=yes;numbers=thai", 24},
+    {"sgn-br-u-co-phonebk", "bzs@collation=phonebook", 19},
+    {"ja-latn-hepburn-heploc-u-ca-japanese", "ja_Latn__ALALC97@calendar=japanese", 36},
 };
 
 [[noreturn]] void Fail(const char* tag, const char* what) {
@@ -227,16 +261,31 @@ void CheckStatus() {
     if (large[0] != 'e' || large[1] != 'n' || large[2] != 'Z') Fail("attributes", "overflow output");
 }
 
-void CheckThrows(const char* tag) {
+void CheckKeywordFailure(const char* tag, const char* written, std::int32_t parsedLength) {
     char buffer[64];
-    std::int32_t parsed = 0;
+    std::memset(buffer, 'Z', sizeof(buffer));
+    std::int32_t parsed = -7;
     std::int32_t status = 0;
-    try {
-        uloc_forLanguageTag(tag, buffer, sizeof(buffer), &parsed, &status);
-    } catch (const std::exception&) {
-        return;
-    }
-    Fail(tag, "did not throw");
+    const std::int32_t length = uloc_forLanguageTag(tag, buffer, sizeof(buffer), &parsed, &status);
+    if (status != kIllegalArgument) Fail(tag, "keyword failure status");
+    if (length != static_cast<std::int32_t>(std::strlen(written)) || std::memcmp(buffer, written, std::strlen(written)) != 0) Fail(tag, "keyword failure output");
+    if (buffer[std::strlen(written)] != 'Z' || parsed != parsedLength) Fail(tag, "keyword failure length");
+}
+
+void CheckLongType() {
+    std::string type;
+    for (int index = 0; index < 13; ++index) type += "abcdefgh-";
+    const std::string fits = "en-u-zz-" + type + "ABCDE-wxyz";
+    const std::string over = "en-u-zz-" + type + "ABCDE-vwxyz";
+    const std::string expected = "en@zz=" + type + "abcde-wxyz";
+    char buffer[160];
+    std::memset(buffer, 'Z', sizeof(buffer));
+    std::int32_t parsed = -7;
+    std::int32_t status = 0;
+    const std::int32_t length = uloc_forLanguageTag(fits.c_str(), buffer, sizeof(buffer), &parsed, &status);
+    if (status != 0 || length != static_cast<std::int32_t>(expected.size()) || expected != buffer) Fail("long type", "127 characters");
+    if (parsed != static_cast<std::int32_t>(fits.size())) Fail("long type", "parsed length");
+    CheckKeywordFailure(over.c_str(), "en", static_cast<std::int32_t>(over.size()));
 }
 
 void CheckInvalidArguments() {
@@ -317,6 +366,25 @@ constexpr TagVector kTagVectors[] = {
     {"x-elmer", "x-elmer", "x-elmer"},
     {"en-x-elmer", "en-x-elmer", "en-x-elmer"},
     {"en-a-bar-u-baz", "en-a-bar-u-baz", "en-a-bar-u-baz"},
+    {"en_US_POSIX@va=posix2", "en-US-u-va-posix2", "en-US-u-va-posix2"},
+    {"en_US_POSIX@ca=japanese", "en-US-u-ca-japanese-va-posix", "en-US-u-ca-japanese-va-posix"},
+    {"en@calendar=gregorian", "en-u-ca-gregory", "en-u-ca-gregory"},
+    {"de@collation=phonebook;calendar=gregorian", "de-u-ca-gregory-co-phonebk", "de-u-ca-gregory-co-phonebk"},
+    {"th@numbers=thai;z=extz;x=priv-use;a=exta", "th-a-exta-u-nu-thai-z-extz-x-priv-use", "th-a-exta-u-nu-thai-z-extz-x-priv-use"},
+    {"en@timezone=America/New_York;calendar=japanese", "en-u-ca-japanese-tz-usnyc", "en-u-ca-japanese-tz-usnyc"},
+    {"en@timezone=US/Eastern", "en-u-tz-usnyc", "en-u-tz-usnyc"},
+    {"it@collation=badcollationtype;colStrength=identical;cu=usd-eur", "it-u-cu-usd-eur-ks-identic", nullptr},
+    {"en_US_POSIX@calendar=japanese;currency=EUR", "en-US-u-ca-japanese-cu-eur-va-posix", "en-US-u-ca-japanese-cu-eur-va-posix"},
+    {"en_US@attribute=attr1-attr2;calendar=gregorian", "en-US-u-attr1-attr2-ca-gregory", "en-US-u-attr1-attr2-ca-gregory"},
+    {"en@attribute=baz;calendar=islamic-civil", "en-u-baz-ca-islamic-civil", "en-u-baz-ca-islamic-civil"},
+    {"en@a=bar;calendar=islamic-civil;x=u-foo", "en-a-bar-u-ca-islamic-civil-x-u-foo", "en-a-bar-u-ca-islamic-civil-x-u-foo"},
+    {"en@a=bar;attribute=baz;calendar=islamic-civil;x=u-foo", "en-a-bar-u-baz-ca-islamic-civil-x-u-foo", "en-a-bar-u-baz-ca-islamic-civil-x-u-foo"},
+    {"en-u-kn-true", "en-u-kn", "en-u-kn"},
+    {"en-u-kn", "en-u-kn", "en-u-kn"},
+    {"de-u-co-yes", "de-u-co", "de-u-co"},
+    {"de-u-co", "de-u-co", "de-u-co"},
+    {"de@collation=yes", "de-u-co", "de-u-co"},
+    {"cmn-hans-cn-u-ca-t-ca-x-t-u", "cmn-Hans-CN-t-ca-u-ca-x-t-u", "cmn-Hans-CN-t-ca-u-ca-x-t-u"},
 };
 
 [[noreturn]] void TagFail(const char* locale, const char* what) {
@@ -462,10 +530,7 @@ int main() {
     CheckVectors();
     CheckCapacity();
     CheckStatus();
-    CheckThrows("en-u-ca-gregory");
-    CheckThrows("en-u-baz-ca-gregory");
-    CheckThrows("und-u-em-emoji");
-    CheckThrows("en-US-u-va-posix");
+    CheckLongType();
     CheckInvalidArguments();
     CheckTagVectors();
     CheckTagRoundTrip();

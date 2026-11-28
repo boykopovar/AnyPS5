@@ -6,6 +6,7 @@
 
 struct UBreakIterator;
 struct UCalendar;
+struct UCharIterator;
 struct UCollator;
 struct UConstrainedFieldPosition;
 struct UDateFormat;
@@ -107,10 +108,15 @@ void APS5_VABI ucal_setMillis_nid_postfix(UCalendar* cal, UDate dateTime, std::i
 
 void APS5_VABI ucol_close_nid_postfix(UCollator* coll);
 std::int32_t APS5_VABI ucol_getAttribute_nid_postfix(const UCollator* coll, std::int32_t attr, std::int32_t* status);
+void APS5_VABI ucol_getContractionsAndExpansions_nid_postfix(const UCollator* coll, USet* contractions, USet* expansions, std::int8_t addPrefixes, std::int32_t* status);
+UEnumeration* APS5_VABI ucol_getKeywordValues_nid_postfix(const char* keyword, std::int32_t* status);
+UEnumeration* APS5_VABI ucol_getKeywordValuesForLocale_nid_postfix(const char* key, const char* locale, std::int8_t commonlyUsed, std::int32_t* status);
 std::int32_t APS5_VABI ucol_getReorderCodes_nid_postfix(const UCollator* coll, std::int32_t* dest, std::int32_t destCapacity, std::int32_t* status);
+const char16_t* APS5_VABI ucol_getRules_nid_postfix(const UCollator* coll, std::int32_t* length);
 USet* APS5_VABI ucol_getTailoredSet_nid_postfix(const UCollator* coll, std::int32_t* status);
 UCollator* APS5_VABI ucol_open_nid_postfix(const char* locale, std::int32_t* status);
 void APS5_VABI ucol_setAttribute_nid_postfix(UCollator* coll, UColAttribute attr, UColAttributeValue value, std::int32_t* status);
+std::int32_t APS5_VABI ucol_strcollIter_nid_postfix(const UCollator* coll, UCharIterator* sIter, UCharIterator* tIter, std::int32_t* status);
 
 void APS5_VABI udat_close_nid_postfix(UDateFormat*);
 std::int32_t APS5_VABI udat_countSymbols_nid_postfix(const UDateFormat* fmt, std::int32_t type);
@@ -205,7 +211,10 @@ void APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix(const UFormattedNumb
 std::int32_t APS5_VABI unumf_resultToString_nid_postfix(const UFormattedNumber* result, char16_t* buffer, std::int32_t bufferCapacity, std::int32_t* status);
 
 void APS5_VABI unumsys_close_nid_postfix(UNumberingSystem* unumsys);
+const char* APS5_VABI unumsys_getName_nid_postfix(const UNumberingSystem* unumsys);
+std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem* unumsys);
 UNumberingSystem* APS5_VABI unumsys_open_nid_postfix(const char* locale, std::int32_t* status);
+UEnumeration* APS5_VABI unumsys_openAvailableNames_nid_postfix(std::int32_t* status);
 UNumberingSystem* APS5_VABI unumsys_openByName_nid_postfix(const char* name, std::int32_t* status);
 
 void APS5_VABI uplrules_close_nid_postfix(UPluralRules* uplrules);
@@ -221,6 +230,12 @@ URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* l
 void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
+const char* APS5_VABI ures_getUTF8String_nid_postfix(const UResourceBundle* resB, char* dest, std::int32_t* length,
+    std::int8_t forceCopy, std::int32_t* status);
+const char* APS5_VABI ures_getUTF8StringByIndex_nid_postfix(const UResourceBundle* resB, std::int32_t index, char* dest,
+    std::int32_t* length, std::int8_t forceCopy, std::int32_t* status);
+const char* APS5_VABI ures_getUTF8StringByKey_nid_postfix(const UResourceBundle* resB, const char* key, char* dest,
+    std::int32_t* length, std::int8_t forceCopy, std::int32_t* status);
 
 UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search);
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search);

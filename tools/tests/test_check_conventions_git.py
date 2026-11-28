@@ -166,5 +166,19 @@ class GitIgnoreTests(unittest.TestCase):
         self.assertEqual(ignored, [])
 
 
+
+class ToolScriptModeTests(unittest.TestCase):
+    def test_top_level_python_shebangs_are_executable(self):
+        entries = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-s", "--", "tools/*.py"],
+            capture_output=True, text=True, check=True,
+        ).stdout.splitlines()
+        for entry in entries:
+            metadata, relative = entry.split("\t", 1)
+            mode = metadata.split()[0]
+            if (REPO_ROOT / relative).read_bytes().startswith(b"#!"):
+                self.assertEqual(mode, "100755", relative)
+
+
 if __name__ == "__main__":
     unittest.main()

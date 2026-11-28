@@ -1,4 +1,7 @@
+import contextlib
+import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,10 +42,20 @@ def commit_on_base(base, message, files):
 
 
 class NamesLookupTests(unittest.TestCase):
-    def setUp(self):
-        self.old = os.getcwd()
-        self.tmp = tempfile.TemporaryDirectory()
-        os.chdir(self.tmp.name)
+    @classmethod
+    def setUpClass(cls):
+        seed = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(seed.cleanup)
+        cls.seed = seed.name
+        original_directory = os.getcwd()
+        try:
+            os.chdir(seed.name)
+            cls.numbers = cls.build_fixture()
+        finally:
+            os.chdir(original_directory)
+
+    @staticmethod
+    def build_fixture():
         run("init", "-q")
         run("config", "core.safecrlf", "false")
         write("core/libs/prx/libSceExample/Export.cpp", BASE_SOURCE)
@@ -59,12 +72,17 @@ class NamesLookupTests(unittest.TestCase):
         }
         for number, sha in numbers.items():
             run("update-ref", f"refs/pr/{number}", sha)
-        self.prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "title": f"title {n}", "depends": set()}
-                    for n, sha in numbers.items()}
+        return numbers
 
-    def tearDown(self):
-        os.chdir(self.old)
-        self.tmp.cleanup()
+    def setUp(self):
+        self.old = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(os.chdir, self.old)
+        shutil.copytree(self.seed, self.tmp.name, dirs_exist_ok=True)
+        os.chdir(self.tmp.name)
+        self.prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "title": f"title {n}", "depends": set()}
+                    for n, sha in self.numbers.items()}
 
     def test_finds_the_pull_requests_that_add_each_name(self):
         found = pr_overlap.pull_requests_with(["pending_nid_postfix", "legacy_target", "done", "absent"], self.prs, 2)
@@ -153,11 +171,60 @@ class NamesLookupTests(unittest.TestCase):
         status = pr_overlap.main_status(names, "refs/pr/base")
         text = pr_overlap.lookup_report(names, found, status, self.prs, "https://github.com/owner/project/blob/0")
         self.assertIn("pending\n  main: core/libs/prx/libSceExample (stub)\n  open: [PR 1](https://www.github.com/owner/project/pull/1) by author1: title 1\n", text)
-        self.assertIn("absent\n  main: not declared\n  open: none\n", text)
+        self.assertIn("absent\n  main: no matching PS5 export\n  open: no matching PS5 export changes\n", text)
+
+    def test_report_scopes_internal_function_lookups(self):
+        path = "core/shader/recompiler/Decoder.cpp"
+        source = "int DecodeExample(int opcode) { return opcode; }\n"
+        base = commit_on_base(run("rev-parse", "refs/pr/base"), "internal decoder", {path: source})
+        run("update-ref", "refs/pr/base", base)
+        sha = commit_on_base(base, "edit internal decoder", {path: source.replace("return opcode;", "return opcode + 1;")})
+        run("update-ref", "refs/pr/4", sha)
+        pr = {"ref": "refs/pr/4", "sha": sha, "author": "author4", "title": "internal decoder edit", "depends": set()}
+        names = ["DecodeExample"]
+        found = pr_overlap.pull_requests_with(names, {4: pr}, 2)
+        status = pr_overlap.main_status(names, "refs/pr/base")
+        text = pr_overlap.lookup_report(names, found, status, {4: pr}, "https://github.com/owner/project/blob/0")
+        self.assertIn("PS5 exports only", text)
+        self.assertIn("Internal functions and instruction opcodes are not checked", text)
+        self.assertIn("--branch <branch>", text)
+        self.assertIn("main: no matching PS5 export", text)
+        self.assertIn("open: no matching PS5 export changes", text)
+        self.assertNotIn("open: none", text)
 
     def test_names_excludes_the_other_modes(self):
         with self.assertRaises(SystemExit):
             pr_overlap.main(["--names", "pending", "--branch", "HEAD"])
+
+    def test_names_with_whitespace_or_control_characters_are_refused_before_any_lookup(self):
+        for name in ("pending\r", "pending\n", " pending", "pen ding", "pending\t", "pending\x00", "pending\x7f", ""):
+            with self.subTest(name=name):
+                with patch.object(pr_overlap, "upstream") as upstream, patch.object(pr_overlap, "open_prs") as open_prs, \
+                        self.assertRaises(SystemExit) as raised:
+                    pr_overlap.main(["--names", "done", name, "pending"])
+                self.assertEqual(raised.exception.code, "pr_overlap: --names takes one function name per argument, "
+                                                        "without whitespace or control characters: " + ascii(name))
+                upstream.assert_not_called()
+                open_prs.assert_not_called()
+
+    def test_every_refused_name_is_listed(self):
+        with self.assertRaises(SystemExit) as raised:
+            pr_overlap.main(["--names", "pending\r", "done", "absent\r"])
+        self.assertTrue(raised.exception.code.endswith(": 'pending\\r', 'absent\\r'"))
+
+    def test_names_without_whitespace_reach_the_lookup_unchanged(self):
+        names = ["pending_nid_postfix", "_ZN3sce3Xml3Dom4NodeC1Ev", "legacy_target_nid_disambig2"]
+        seen = []
+
+        def record(wanted, prs, jobs):
+            seen.extend(wanted)
+            return {}
+
+        with patch.object(pr_overlap, "upstream", return_value="owner/project"), patch.object(pr_overlap, "open_prs", return_value={}), \
+                patch.object(pr_overlap, "base_commit", return_value="refs/pr/base"), patch.object(pr_overlap, "fetch_heads"), \
+                patch.object(pr_overlap, "pull_requests_with", side_effect=record), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(pr_overlap.main(["--names", *names]), 0)
+        self.assertEqual(seen, names)
 
 
 class LibraryStatusScanTests(unittest.TestCase):

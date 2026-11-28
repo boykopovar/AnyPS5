@@ -46,6 +46,8 @@ class Tests(unittest.TestCase):
         r=self.run_tool(a,b)
         self.assertEqual(r.returncode,2)
         self.assertEqual(r.stdout,"")
+        self.assertIn(str(b), r.stderr)
+        self.assertIn(str(b), self.run_tool(b, a).stderr)
 
     def test_value_changes_after_unicode_separators_are_reported(self):
         baseline, candidate = self.root / "baseline", self.root / "candidate"
@@ -83,6 +85,16 @@ class Tests(unittest.TestCase):
             "name": "X", "before": {"value": "1", "help": "Test old help"},
             "after": {"value": "1", "help": "Test new help"},
         }])
+
+    def test_variable_probe_change_is_reported(self):
+        baseline, candidate = self.root / "baseline", self.root / "candidate"
+        for cache, value in ((baseline, "1"), (candidate, "")):
+            cache.write_text(f"//Have variable timezone\nHAVE_TIMEZONE:INTERNAL={value}\n", encoding="utf-8")
+        result = self.run_tool(baseline, candidate)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        change, = json.loads(result.stdout)["changed"]
+        self.assertEqual((change["name"], change["before"]["value"], change["after"]["value"]),
+                         ("HAVE_TIMEZONE", "1", ""))
 
     def test_added_and_removed_are_sorted_by_name(self):
         a, b = self.root / "a", self.root / "b"

@@ -9,8 +9,7 @@
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress) {
-    if (indexAddress != 0) Agc::Command::CheckAddress(indexAddress, 2, __func__);
-    return Agc::Command::Emit(buf, 0x26u, {static_cast<std::uint32_t>(indexAddress), static_cast<std::uint32_t>(indexAddress >> 32u)}, __func__);
+    return Agc::Command::Emit(buf, 0x26u, {static_cast<std::uint32_t>(indexAddress) & ~1u, static_cast<std::uint32_t>(indexAddress >> 32u)}, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetIndexBufferGetSize() {
@@ -26,9 +25,9 @@ std::uint32_t APS5_VABI sceAgcDcbSetIndexCountGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexSize(CommandBuffer* buf, std::uint8_t indexSize, std::uint8_t cachePolicy) {
-    Agc::Command::Require(indexSize <= 2, __func__, "invalid index element size");
-    Agc::Command::CheckBits(cachePolicy, 3, __func__);
-    return Agc::Command::Emit(buf, 0x7au, {0x20000243u, 0x400u | indexSize | (static_cast<std::uint32_t>(cachePolicy) << 6u)}, __func__);
+    const std::uint32_t size = indexSize & 3u;
+    Agc::Command::Require(size <= 2, __func__, "invalid index element size");
+    return Agc::Command::Emit(buf, 0x7au, {0x20000243u, 0x400u | size | ((cachePolicy & 3u) << 6u)}, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetIndexSizeGetSize() {
@@ -43,9 +42,7 @@ std::uint32_t* APS5_VABI sceAgcDcbSetIndexSize_0600(CommandBuffer* buf, std::uin
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint64_t attributeAddress, std::uint32_t attributeIndex) {
-    if (attributeAddress != 0) Agc::Command::CheckAddress(attributeAddress, 16, __func__);
-    Agc::Command::CheckBits(attributeIndex, 0xffffu, __func__);
-    return Agc::Command::Emit(buf, 0x91u, {static_cast<std::uint32_t>(attributeAddress), static_cast<std::uint32_t>(attributeAddress >> 32u), attributeIndex}, __func__);
+    return Agc::Command::Emit(buf, 0x91u, {static_cast<std::uint32_t>(attributeAddress) & ~0xfu, static_cast<std::uint32_t>(attributeAddress >> 32u), attributeIndex & 0xffffu}, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetIndexIndirectArgsGetSize() {

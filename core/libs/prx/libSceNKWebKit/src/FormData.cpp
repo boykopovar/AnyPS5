@@ -242,7 +242,7 @@ void Destroy(FormData& formData) {
 }
 
 FormData* NewFormData() {
-    void* storage = _Znwm_nid_postfix(sizeof(FormData));
+    void* storage = _ZN3WTF10fastMallocEm(sizeof(FormData));
     auto* formData = new (storage) FormData{};
     formData->refCount = 1;
     return formData;
@@ -250,7 +250,7 @@ FormData* NewFormData() {
 
 void Discard(FormData* formData) {
     Destroy(*formData);
-    _ZdlPv_nid_postfix(formData);
+    _ZN3WTF8fastFreeEPv(formData);
 }
 
 WebCore::Ref<FormData> Adopt(FormData* formData) {
@@ -289,7 +289,7 @@ void FormData::deref() const {
     }
     auto* self = const_cast<FormData*>(this);
     _ZN7WebCore8FormDataD1Ev(self);
-    _ZdlPv_nid_postfix(self);
+    _ZN3WTF8fastFreeEPv(self);
 }
 
 }

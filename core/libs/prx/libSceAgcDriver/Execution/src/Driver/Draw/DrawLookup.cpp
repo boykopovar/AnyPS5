@@ -114,6 +114,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             mix(static_cast<std::uint64_t>(pixel.rasterPrimitive));
             mix(pixel.ditheredAlphaToCoverage);
             mix(pixel.ditheredAlphaSamples);
+            mix(static_cast<std::uint64_t>(pixel.singleSampleDither));
             mix(pixel.quadPixelMask);
             for (const auto mask : pixel.quadSampleMask) mix(mask);
             mix(pixel.iteratesSamples);
@@ -229,7 +230,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         rotated->order = entry->order;
                         again->second = std::move(rotated);
                     }
-                    if (drawCacheHits - again->second->touched > drawCacheEntries() / 8) {
+                    if (drawCacheHits - again->second->touched > DrawCacheEntries() / 8) {
                         drawOrder.splice(drawOrder.begin(), drawOrder, again->second->order);
                         again->second->touched = drawCacheHits;
                         ++counters.touches;

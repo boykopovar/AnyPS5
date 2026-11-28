@@ -15,7 +15,8 @@ const void* APS5_VABI WKDownloadCopyRedirectChain(const void* downloadRef) {
 
 const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef) {
     const auto* download = NKWebKit::Cast<NKWebKit::Download>(downloadRef, __func__);
-    return download->request ? NKWebKit::ToRef(download->request) : nullptr;
+    if (!download->request) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URLRequest>());
+    return NKWebKit::ToRef(download->request);
 }
 
 std::uint64_t APS5_VABI WKDownloadGetID(const void* downloadRef) {

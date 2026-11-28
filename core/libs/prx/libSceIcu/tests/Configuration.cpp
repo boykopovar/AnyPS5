@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "unicode/putil.h"
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -158,9 +159,18 @@ void TimeZoneDirectory() {
     Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/warn");
 
     u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
-    Require(status == 1);
+    Require(status == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+    u_setTimeZoneFilesDirectory_nid_postfix("/warn", &status);
+    status = -124;
+    u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
+    Require(status == -124 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
     status = 0;
-    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+
+    UErrorCode bundled = U_ZERO_ERROR;
+    u_setTimeZoneFilesDirectory("bundled", &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "bundled");
+    u_setTimeZoneFilesDirectory(nullptr, &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "");
 
     u_setTimeZoneFilesDirectory_nid_postfix("/first", &status);
     u_setTimeZoneFilesDirectory_nid_postfix("", &status);

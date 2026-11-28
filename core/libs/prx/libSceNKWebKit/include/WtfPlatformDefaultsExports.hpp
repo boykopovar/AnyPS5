@@ -7,7 +7,10 @@
 
 extern "C" {
 
+void APS5_VABI _ZN3WTF11OSAllocator18releaseDecommittedEPvm(void* address, std::size_t bytes);
 void APS5_VABI _ZN3WTF11OSAllocator23hintMemoryNotNeededSoonEPvm(void* address, std::size_t bytes);
+void APS5_VABI _ZN3WTF11OSAllocator6commitEPvmbb(void* address, std::size_t bytes, bool writable, bool executable);
+void APS5_VABI _ZN3WTF11OSAllocator8decommitEPvm(void* address, std::size_t bytes);
 void APS5_VABI _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_(const NKWebKit::WtfAbi::String& path, const NKWebKit::WtfAbi::String& urlString, const NKWebKit::WtfAbi::String& referrer);
 bool APS5_VABI _ZN3WTF14FileSystemImpl29makeSafeToUseMemoryMapForPathERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl25createTemporaryZipArchiveERKNS_6StringE(const NKWebKit::WtfAbi::String& directory);

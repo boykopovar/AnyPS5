@@ -1,0 +1,5 @@
+# libSceNpCppWebApi
+
+## change [sce::Np::CppWebApi::Common::Vector]
+
+- [sce::Np::CppWebApi::Common::Vector](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - native mutation/ownership and unmeasured accessors remain unestablished. The selected 42 iterators, 19 sizes, four empty checks and ten intrusive-pointer indices use native pointers at 0/8/0x10; element strides are 24 for intrusive pointers and 8 for uint64 values. One PPSA09809 module was measured, not console execution or all versions. SDK host handle identity is recorded by typed construction/copy/body allocation and cleared on release/deletion, never inferred from pointer ordering or pointee-registry membership. Direct tagged bodies and legacy null-deleter borrows remain compatible; other non-null-deleter private borrows need SDK-managed construction/lifetime. Typed mutation preserves aliases bearing the SDK body deleter. Tagged host counters stay 0x30 even through String/scalar handles; foreign counter offsets are unchanged. Const returns keep their nontrivial ABI. Native elements are not read by readers.

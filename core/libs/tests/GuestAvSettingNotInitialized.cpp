@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -21,12 +22,34 @@ void Require(bool condition, const char* message) {
 }
 
 std::uint32_t* Word(std::uint32_t value) {
-    auto* memory = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAllocate_nid_postfix(sizeof(std::uint32_t)));
+    constexpr std::size_t Allocation = 4 * sizeof(std::uint32_t);
+    auto* memory = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAllocate_nid_postfix(Allocation));
     Require(memory != nullptr, "guest fixture allocation failed");
-    const GuestArena::HostWrite access(memory, sizeof(value));
+    const GuestArena::HostWrite access(memory, Allocation);
     Require(access.Open(), "guest fixture memory was not writable");
+    std::memset(memory, 0, Allocation);
     std::memcpy(memory, &value, sizeof(value));
     return memory;
+}
+
+std::uint32_t* Filled(std::uint32_t value) {
+    constexpr std::size_t Allocation = 4 * sizeof(std::uint32_t);
+    auto* memory = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAllocate_nid_postfix(Allocation));
+    Require(memory != nullptr, "guest fixture allocation failed");
+    const GuestArena::HostWrite access(memory, Allocation);
+    Require(access.Open(), "guest fixture memory was not writable");
+    std::memset(memory, 0x5A, Allocation);
+    std::memcpy(memory, &value, sizeof(value));
+    return memory;
+}
+
+void RequireFirstByteUntouched(void* memory, const char* message) {
+    Require(reinterpret_cast<unsigned char*>(memory)[0] == 0x5A, message);
+}
+
+void RequireSixteenBytesUntouched(void* memory, const char* message) {
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(memory);
+    for (int i = 0; i < 16; ++i) Require(bytes[i] == 0x5A, message);
 }
 
 void Expect(int result, int expected, const char* message) {
@@ -62,6 +85,45 @@ void CheckGetters(void* buffer) {
     Expect(sceAvControlGetPuStatus(buffer), NotInitialized, "GetPuStatus reports not initialized");
     Expect(sceAvControlGetPuType(nullptr), Error0002, "GetPuType checks the output pointer");
     Expect(sceAvControlGetPuType(buffer), NotInitialized, "GetPuType reports not initialized");
+}
+
+void CheckConsoleMeasuredGetters(void* buffer) {
+    Expect(sceAvSettingGetDetailedHdcpStatus(nullptr), Error0002, "SettingGetDetailedHdcpStatus checks the output pointer");
+    std::uint32_t* detailed = Filled(0x5A5A5A5Au);
+    Expect(sceAvSettingGetDetailedHdcpStatus(detailed), NotInitialized, "SettingGetDetailedHdcpStatus reports not initialized");
+    RequireSixteenBytesUntouched(detailed, "SettingGetDetailedHdcpStatus does not write to the destination");
+    Expect(sceAvSettingGetDeviceInfo(0, nullptr), Error0002, "SettingGetDeviceInfo checks the output pointer");
+    Expect(sceAvSettingGetDeviceInfo(0, buffer), NotInitialized, "SettingGetDeviceInfo ignores its first argument and reports not initialized");
+    Expect(sceAvSettingGetHdcpStatus(nullptr), Error0002, "SettingGetHdcpStatus checks the output pointer");
+    std::uint32_t* hdcp = Filled(0x5A5A5A5Au);
+    Expect(sceAvSettingGetHdcpStatus(hdcp), NotInitialized, "SettingGetHdcpStatus reports not initialized");
+    Require(*hdcp == 7u, "SettingGetHdcpStatus writes 7 to the destination before reporting not initialized");
+    const unsigned char* hdcp_bytes = reinterpret_cast<const unsigned char*>(hdcp);
+    for (int i = 4; i < 16; ++i) Require(hdcp_bytes[i] == 0x5A, "SettingGetHdcpStatus writes only its first four bytes");
+    Expect(sceAvSettingGetHdmiConnectDisconnectNum(nullptr), Error0002, "GetHdmiConnectDisconnectNum checks the output pointer");
+    Expect(sceAvSettingGetHdmiConnectDisconnectNum(buffer), NotInitialized, "GetHdmiConnectDisconnectNum reports not initialized");
+    Expect(sceAvSettingGetHdmiKsvList(0, nullptr), Error0002, "SettingGetHdmiKsvList checks the output pointer");
+    std::uint32_t* ksv = Filled(0x5A5A5A5Au);
+    Expect(sceAvSettingGetHdmiKsvList(0, ksv), NotInitialized, "SettingGetHdmiKsvList ignores its first argument and reports not initialized");
+    RequireSixteenBytesUntouched(ksv, "SettingGetHdmiKsvList does not write to the destination");
+    Expect(sceAvControlGetCurrentOutputSysMode(), NotInitialized, "GetCurrentOutputSysMode reports not initialized");
+    Expect(sceAvControlGetNativeHdmiMonitorInfo(0, nullptr), Error0001, "GetNativeHdmiMonitorInfo checks the output pointer");
+    Expect(sceAvControlGetNativeHdmiMonitorInfo(reinterpret_cast<std::uint64_t>(buffer), nullptr), Error0001, "GetNativeHdmiMonitorInfo checks the output pointer whatever the first argument is");
+    Expect(sceAvControlGetNativeHdmiMonitorInfo(0, buffer), NotInitialized, "GetNativeHdmiMonitorInfo ignores its first argument and reports not initialized");
+    std::uint32_t* native_output = Filled(0x5A5A5A5Au);
+    Expect(sceAvControlGetNativeHdmiMonitorInfo(0, native_output), NotInitialized, "GetNativeHdmiMonitorInfo reports not initialized with a writable output");
+    RequireFirstByteUntouched(native_output, "GetNativeHdmiMonitorInfo does not write through the output pointer");
+    std::uint32_t* native_second = Filled(0x5A5A5A5Au);
+    Expect(sceAvControlGetNativeHdmiMonitorInfo(reinterpret_cast<std::uint64_t>(native_output), native_second), NotInitialized, "GetNativeHdmiMonitorInfo reports not initialized with two buffers");
+    RequireFirstByteUntouched(native_second, "GetNativeHdmiMonitorInfo does not write with a non-null first argument");
+    Expect(sceAvControlGetPuTypeByMonitorInfo(nullptr), Error0002, "GetPuTypeByMonitorInfo checks its pointer");
+    bool threw = false;
+    try {
+        sceAvControlGetPuTypeByMonitorInfo(buffer);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "GetPuTypeByMonitorInfo still throws for writable pointers");
 }
 
 void CheckControlSetters() {
@@ -139,6 +201,7 @@ int main() {
     void* buffer = Word(0);
     for (int pass = 0; pass < 2; ++pass) {
         CheckGetters(buffer);
+        CheckConsoleMeasuredGetters(buffer);
         CheckControlSetters();
         CheckSettingCalls();
         CheckNidBound(buffer);

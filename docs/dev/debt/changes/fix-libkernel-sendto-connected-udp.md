@@ -1,0 +1,5 @@
+# libkernel
+
+## change [bind, connect, sendto]
+
+- [bind, connect, sendto](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) - a connected stream socket's `sendto` ignores the address once its length passes, as FreeBSD 11.4's `tcp_usr_send` does, and a connected datagram socket's `sendto` and `sendmsg` fail with `EISCONN` after reading the data, as its `udp_output` and `udp6_output` do (an `AF_INET6` destination with port 0 still goes to the host); neither was measured. Otherwise they check a socket address as a payload process on a PS5 (firmware 13.60) did on datagram and stream sockets: a length below 2 fails with `EINVAL` and above 255 with `ENAMETOOLONG`; then an `AF_INET` socket needs exactly 16 bytes and an `AF_INET6` socket 28, or `EINVAL`, before the family is looked at (an `AF_INET6` address of 28 or 10 bytes on an `AF_INET` socket fails with `EINVAL`); then another family, `AF_UNSPEC` with `INADDR_ANY` included, fails with `EAFNOSUPPORT`; and `connect` on a listening stream socket fails with `EOPNOTSUPP`

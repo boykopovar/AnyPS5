@@ -148,11 +148,11 @@ int main() {
             if (!device) return VulkanTestSkipped;
             const auto context = device->graphicsContext();
             if (!context.fillModeNonSolid) {
-                std::puts("skipped, line polygon mode needs the fillModeNonSolid feature");
+                std::puts("skipped, the device does not support the fillModeNonSolid feature, which line polygon mode needs");
                 return VulkanTestSkipped;
             }
             if (context.limits.strictLines != VK_TRUE) {
-                std::puts("skipped, exact line coverage needs strictLines");
+                std::puts("skipped, the device does not report strictLines, which exact line coverage needs");
                 return VulkanTestSkipped;
             }
             try {

@@ -305,7 +305,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         state.requirements.bufferInt64Atomics = false;
         state.requirements.bufferInt64AtomicsSplit = true;
     }
-    state.requirements.bufferAtomicLocks = state.requirements.bufferInt64Atomics && !state.requirements.addressInt64Atomics && !int64Atomics;
+    state.requirements.bufferAtomicLocks = state.requirements.bufferInt64Atomics && !int64Atomics;
     state.requirements.bufferU64View = (state.requirements.bufferInt64Atomics && !state.requirements.bufferAtomicLocks) || (state.requirements.coherentBufferPairs && int64Atomics);
     state.requirements.imageAtomicLocks = state.requirements.imageInt64Atomics && std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end();
     if (state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks) state.requirements.subgroupBallot = true;
@@ -321,6 +321,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
     state.spannedAnySubgroup = state.spannedWave && target.spannedAnySubgroup;
+    state.spannedShuffleThroughMemory = state.spannedWave && target.spannedShuffleThroughMemory;
     if (state.spannedWave) {
         state.requirements.subgroupLocalInvocationId = true;
         state.requirements.subgroupBallot = true;
@@ -350,11 +351,20 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
     auto words = state.module.Finalize();
+    if (info != nullptr) info->keptPastUnreachable.clear();
     if (state.spannedWave) {
         static const bool snapshotLoads = SpannedSnapshotLoadsEnabled(std::getenv("APS5_NO_SPANNED_SNAPSHOT_LOADS"));
         const std::uint32_t snapshotVariables[] = {state.flattenedSrtVariable};
         const auto snapshots = snapshotLoads && state.flattenedSrtVariable != 0u ? std::span<const std::uint32_t>(snapshotVariables) : std::span<const std::uint32_t>();
-        if (auto reason = SpannedBarrierInDivergentFlow(words, snapshots)) throw SpannedWaveUnsupported(*reason);
+        if (auto reason = SpannedBarrierInDivergentFlow(words, snapshots, !target.spannedUnreachableStays)) throw SpannedWaveUnsupported(*reason);
+        if (target.spannedUnreachableStays) {
+            if (auto exits = SpannedBarrierInDivergentFlow(words, snapshots)) {
+                if (target.spannedUnreachableVerify) {
+                    if (auto stray = SpannedUnreachableOutsideSpecializedSwitch(words)) throw std::runtime_error("APS5_VERIFY_SPANNED_UNREACHABLE_STAYS: a spanned wave kept past an OpUnreachable, but " + *stray);
+                }
+                if (info != nullptr) info->keptPastUnreachable = *exits;
+            }
+        }
     }
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;

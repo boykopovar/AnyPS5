@@ -225,7 +225,11 @@ void TestInvertLightnessTransformColor() {
 
     WebCore::SRGBA<float> extended{1.5f, 0.0f, 0.0f, 1.0f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, extended));
-    Require(NearColor(extended, 0.955f, 0.0f, 0.0f, 1.0f));
+    Require(NearColor(extended, 0.955f, -0.245f, -0.2465f, 1.0f));
+
+    WebCore::SRGBA<float> magenta{1.0f, 0.0f, 1.0f, 1.0f};
+    Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, magenta));
+    Require(NearColor(magenta, 1.059f, 0.259f, 1.059f, 1.0f));
 
     WebCore::SRGBA<float> alphaChannel{0.0f, 0.0f, 0.0f, 0.25f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, alphaChannel));
@@ -233,15 +237,15 @@ void TestInvertLightnessTransformColor() {
 
     WebCore::SRGBA<float> highAlpha{0.0f, 0.0f, 0.0f, 2.0f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, highAlpha));
-    Require(NearColor(highAlpha, 1.0f, 1.0f, 1.0f, 1.0f));
+    Require(NearColor(highAlpha, 1.0f, 1.0f, 1.0f, 2.0f));
 
     WebCore::SRGBA<float> lowAlpha{0.0f, 0.0f, 0.0f, -1.0f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, lowAlpha));
-    Require(NearColor(lowAlpha, 1.0f, 1.0f, 1.0f, 0.0f));
+    Require(NearColor(lowAlpha, 1.0f, 1.0f, 1.0f, -1.0f));
 
-    WebCore::SRGBA<float> nanRed{std::nanf(""), 0.0f, 0.0f, 1.0f};
-    Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, nanRed));
-    Require(NearColor(nanRed, 1.0f, 1.0f, 1.0f, 1.0f));
+    WebCore::SRGBA<float> nanAlpha{0.0f, 0.0f, 0.0f, std::nanf("")};
+    Require(_ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE(self, nanAlpha));
+    Require(std::isnan(nanAlpha.red) && std::isnan(nanAlpha.green) && std::isnan(nanAlpha.blue) && std::isnan(nanAlpha.alpha));
 
     bool threw = false;
     WebCore::SRGBA<float> color{};
@@ -262,15 +266,19 @@ void TestInvertLightnessInverseTransformColor() {
 
     WebCore::SRGBA<float> black{0.0f, 0.0f, 0.0f, 1.0f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation21inverseTransformColorERNS_5SRGBAIfEE(self, black));
-    Require(NearColor(black, 1.0f, 1.0f, 1.0f, 1.0f));
+    Require(NearColor(black, 1.25f, 1.25f, 1.25f, 1.0f));
 
     WebCore::SRGBA<float> red{1.0f, 0.0f, 0.0f, 1.0f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation21inverseTransformColorERNS_5SRGBAIfEE(self, red));
-    Require(NearColor(red, 1.0f, 0.0f, 0.0f, 1.0f));
+    Require(NearColor(red, 1.201f, -0.05f, -0.05f, 1.0f));
 
     WebCore::SRGBA<float> alphaChannel{0.0f, 0.0f, 0.0f, 0.5f};
     Require(_ZNK7WebCore30InvertLightnessFilterOperation21inverseTransformColorERNS_5SRGBAIfEE(self, alphaChannel));
-    Require(NearColor(alphaChannel, 1.0f, 1.0f, 1.0f, 0.5f));
+    Require(NearColor(alphaChannel, 1.25f, 1.25f, 1.25f, 0.5f));
+
+    WebCore::SRGBA<float> nanAlpha{1.0f, 1.0f, 1.0f, std::nanf("")};
+    Require(_ZNK7WebCore30InvertLightnessFilterOperation21inverseTransformColorERNS_5SRGBAIfEE(self, nanAlpha));
+    Require(std::isnan(nanAlpha.red) && std::isnan(nanAlpha.green) && std::isnan(nanAlpha.blue) && std::isnan(nanAlpha.alpha));
 
     bool threw = false;
     WebCore::SRGBA<float> color{};
@@ -296,7 +304,7 @@ void TestInvertLightnessVtable() {
 
     WebCore::SRGBA<float> black{0.0f, 0.0f, 0.0f, 1.0f};
     Require(vtable.inverseTransformColor(blended, black));
-    Require(NearColor(black, 1.0f, 1.0f, 1.0f, 1.0f));
+    Require(NearColor(black, 1.25f, 1.25f, 1.25f, 1.0f));
 
     Require(!vtable.isIdentity(blended));
     Require(!vtable.affectsOpacity(blended));

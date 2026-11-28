@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from pad_input import BUTTONS, COMMAND_FILE_BYTES, next_sequence
+from pad_input import BUTTONS, COMMAND_FILE_BYTES, MAX_SEQUENCE, next_sequence, replace_command
 
 
 def load_timeline(path):
@@ -28,7 +28,7 @@ def integer(value, field, minimum, maximum):
 
 
 def compile_timeline(document, sequence, repeat=1, gap_ms=200):
-    integer(sequence, "sequence", 1, 2**64 - 1)
+    integer(sequence, "sequence", 1, MAX_SEQUENCE)
     integer(repeat, "repeat", 1, 4096)
     integer(gap_ms, "gap_ms", 0, 3600000)
     if not isinstance(document, dict) or set(document) != {"version", "events"}:
@@ -96,7 +96,7 @@ def queue_timeline(path, text):
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
             output.write(text)
-        os.replace(temporary, path)
+        replace_command(temporary, path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
