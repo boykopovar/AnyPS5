@@ -238,6 +238,16 @@ int CreateRequest(Service& service, int titleCtxId, bool async) {
     return reqId;
 }
 
+int CreateAsyncRequest(Service& service, int titleCtxId, const std::uint64_t* param) {
+    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::uint64_t buffer[ASYNC_REQUEST_PARAMETER_SIZE / sizeof(std::uint64_t)] = {};
+    static_assert(sizeof(buffer) == ASYNC_REQUEST_PARAMETER_SIZE);
+    if (!CopyInPreservingErrno(buffer, param, sizeof(buffer)) || buffer[0] != ASYNC_REQUEST_PARAMETER_SIZE) {
+        return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
+    return CreateRequest(service, titleCtxId, true);
+}
+
 int DeleteRequest(Service& service, int reqId) {
     std::lock_guard lock(service.mutex);
     if (!service.requests.erase(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
@@ -803,13 +813,7 @@ int APS5_VABI sceNpLookupAbortRequest(int reqId) {
 }
 
 int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    std::uint64_t value = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
-    errno = savedErrno;
-    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    return CreateRequest(lookup, titleCtxId, true);
+    return CreateAsyncRequest(lookup, titleCtxId, param);
 }
 
 int APS5_VABI sceNpLookupCreateRequest(int titleCtxId) {
@@ -858,13 +862,7 @@ int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void*
 }
 
 int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    std::uint64_t value = 0;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, param, sizeof(value));
-    errno = savedErrno;
-    if (!copied || value != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    return CreateRequest(wordFilter, titleCtxId, true);
+    return CreateAsyncRequest(wordFilter, titleCtxId, param);
 }
 
 int APS5_VABI sceNpWordFilterCreateRequest(int titleCtxId) {
