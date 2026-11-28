@@ -1,0 +1,15 @@
+add_library(libSceVideoOutSecondary SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoOutSecondary PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVideoOutSecondary)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_out_secondary_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutSecondary.cpp)
+    target_include_directories(guest_video_out_secondary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_secondary_tests PRIVATE libSceVideoOutSecondary libkernel libc)
+    configure_windows_unwind(guest_video_out_secondary_tests)
+    add_test(NAME guest_video_out_secondary COMMAND guest_video_out_secondary_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_out_secondary PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOutSecondary>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
