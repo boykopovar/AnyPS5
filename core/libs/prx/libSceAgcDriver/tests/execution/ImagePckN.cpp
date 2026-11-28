@@ -1,4 +1,6 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -28,7 +30,11 @@ constexpr std::uint32_t R8UInt = 5;
 constexpr std::uint32_t R16UInt = 11;
 constexpr std::uint32_t Rg8UInt = 18;
 constexpr std::uint32_t R32UInt = 20;
+constexpr std::size_t ZBytes = 65536;
+constexpr std::uint32_t Z64KBX = 24;
 alignas(256) std::array<std::uint8_t, Bytes> Texels{};
+alignas(256) std::array<std::uint8_t, ZBytes * 2u> ZStorage{};
+const std::span<std::uint8_t, ZBytes> ZTexels(ZStorage.data() + ((ZBytes - reinterpret_cast<std::uintptr_t>(ZStorage.data()) % ZBytes) % ZBytes), ZBytes);
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<std::uint32_t, Threads * 4> Output{};
 
@@ -53,10 +59,10 @@ std::vector<std::uint32_t> Code(std::uint32_t opcode, std::uint32_t dmask) {
     return code;
 }
 
-std::array<std::uint32_t, 8> Descriptor(std::uint32_t format, std::uint32_t swizzle) {
-    const auto address = reinterpret_cast<std::uintptr_t>(Texels.data());
+std::array<std::uint32_t, 8> Descriptor(std::uint32_t format, std::uint32_t swizzle, const void* base = Texels.data(), std::uint32_t levels = Levels, std::uint32_t swizzleMode = 0u) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
     return {static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>(address >> 40u) | (format << 20u) | (((Width - 1u) & 3u) << 30u),
-        ((Width - 1u) >> 2u) | ((Height - 1u) << 14u), swizzle | ((Levels - 1u) << 16u) | (9u << 28u), 0u, 1u << 4u, 0u, 0u};
+        ((Width - 1u) >> 2u) | ((Height - 1u) << 14u), swizzle | ((levels - 1u) << 16u) | (swizzleMode << 20u) | (9u << 28u), 0u, (levels - 1u) << 4u, 0u, 0u};
 }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -107,11 +113,10 @@ std::vector<std::uint32_t> StoreCode(std::uint32_t opcode) {
     return {0x34060084u, 0xe0381000u, 0x80031e03u, 0xbf8c3f70u, 0xf0000108u | (opcode << 18u), 0x0001211eu, 0xbf810000u};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t format, std::uint32_t dmask, std::uint32_t swizzle = 0xfacu) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const std::array<std::uint32_t, 8>& descriptor, std::uint32_t dmask, std::span<std::uint8_t> texels) {
     const auto code = opcode >= 0x76u ? StoreCode(opcode) : Code(opcode, dmask);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto descriptor = Descriptor(format, swizzle);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);
@@ -127,8 +132,13 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t fo
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     if (opcode < 0x76u) return;
-    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(Texels.data()), Bytes, nullptr, "test");
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels.data()), texels.size(), nullptr, "test");
     device.WaitIdle();
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(texels.data()), texels.size());
+}
+
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t format, std::uint32_t dmask, std::uint32_t swizzle = 0xfacu) {
+    Run(device, opcode, Descriptor(format, swizzle), dmask, Texels);
 }
 
 void FillStoreInput() {
@@ -174,6 +184,60 @@ void CheckStore(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const For
     Run(device, opcode, format.id, 0x1u);
     for (std::size_t index = 0; index < Bytes; ++index) {
         Require(Texels[index] == expected[index], name + ": byte " + std::to_string(index) + " is " + std::to_string(Texels[index]) + ", expected " + std::to_string(expected[index]));
+    }
+}
+
+void FillZStoreInput() {
+    constexpr std::array<std::array<std::uint32_t, 2>, Threads> targets{{
+        {0u, 0u}, {3u, 0u}, {4u, 1u}, {7u, 1u}, {8u, 0u}, {11u, 1u}, {13u, 0u}, {14u, 1u},
+        {16u, 0u}, {19u, 0u}, {20u, 1u}, {23u, 1u}, {24u, 2u}, {27u, 2u}, {28u, 2u}, {31u, 2u},
+        {32u, 0u}, {35u, 1u}, {36u, 1u}, {39u, 0u}, {40u, 2u}, {43u, 2u}, {56u, 0u}, {55u, 1u},
+        {58u, 2u}, {59u, 0u}, {60u, 1u}, {Width, 0u}, {0xffffffffu, 1u}, {0x80000000u, 0u}, {44u, Height}, {46u, 0xffffffffu},
+    }};
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Input[thread * 4u + 0u] = targets[thread][0];
+        Input[thread * 4u + 1u] = targets[thread][1];
+        Input[thread * 4u + 2u] = 0u;
+        Input[thread * 4u + 3u] = 0x9e3779b9u * (thread + 1u);
+    }
+}
+
+void CheckZLayout() {
+    const AgcDriver::Graphics::ColorTargetLayout layout(Width, Height, AgcDriver::Graphics::ColorTileMode::Z64KBX, 1u);
+    Require(layout.Offset(0u, 0u) == 0u && layout.Offset(1u, 0u) == 1u && layout.Offset(0u, 1u) == 2u && layout.Offset(1u, 1u) == 3u && layout.Offset(2u, 0u) == 4u, "image PCK 64KB_Z_X: an 8-bit dword is not the measured 2x2 block");
+}
+
+void CheckStoreZ(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& format) {
+    const auto elements = opcode == 0x77u ? 4u : 2u;
+    const auto texelBytes = format.bytes * format.components;
+    const auto name = "image PCK store opcode " + std::to_string(opcode) + " format " + std::to_string(format.id) + " in 64KB_Z_X";
+    const AgcDriver::Graphics::ColorTargetLayout layout(Width, Height, AgcDriver::Graphics::ColorTileMode::Z64KBX, texelBytes);
+    Require(layout.Bytes() <= ZTexels.size(), name + ": surface size");
+    std::vector<bool> texelByte(ZTexels.size(), false);
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            for (std::uint32_t byte = 0; byte < texelBytes; ++byte) texelByte[layout.Offset(x, y) + byte] = true;
+        }
+    }
+    for (std::size_t index = 0; index < ZTexels.size(); ++index) ZTexels[index] = static_cast<std::uint8_t>(index * 0x9du + 0x31u);
+    FillZStoreInput();
+    std::vector<std::uint8_t> expected(ZTexels.begin(), ZTexels.end());
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto x = Input[thread * 4u + 0u];
+        const auto y = Input[thread * 4u + 1u];
+        const auto data = Input[thread * 4u + 3u];
+        if (x >= Width || Width - x < elements || y >= Height) continue;
+        const auto offset = layout.Offset(x, y);
+        for (std::uint32_t element = 0; element < elements && (offset & 3u) + element * texelBytes < 4u; ++element) {
+            const auto target = offset + element * texelBytes;
+            if (!texelByte[target]) continue;
+            const auto bits = data >> (element * texelBytes * 8u);
+            std::memcpy(expected.data() + target, &bits, texelBytes);
+        }
+    }
+    Run(device, opcode, Descriptor(format.id, 0xfacu, ZTexels.data(), 1u, Z64KBX), 0x1u, ZTexels);
+    for (std::size_t index = 0; index < ZBytes; ++index) {
+        Require(ZTexels[index] == expected[index], name + ": byte " + std::to_string(index) + " is " + std::to_string(ZTexels[index]) + ", expected " + std::to_string(expected[index]));
     }
 }
 
@@ -224,6 +288,9 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true, true);
+        GuestAllocations::Mutation().Add(ZStorage.data(), ZStorage.size(), true, true, true);
+        AgcDriver::GuestMemory::CollectWrites(reinterpret_cast<std::uintptr_t>(ZTexels.data()), ZBytes);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
         constexpr Format r8{R8UInt, 1u, 1u};
         constexpr Format r16{R16UInt, 2u, 1u};
         constexpr Format rg8{Rg8UInt, 1u, 2u};
@@ -244,9 +311,15 @@ int main() {
             CheckStore(*device, opcode, rg8);
         }
         for (const auto opcode : {0x77u, 0x7au}) CheckStore(*device, opcode, r8);
+        CheckZLayout();
+        CheckStoreZ(*device, 0x76u, r8);
+        CheckStoreZ(*device, 0x77u, r8);
+        CheckStoreZ(*device, 0x76u, r16);
+        CheckStoreZ(*device, 0x76u, rg8);
         Refused(*device, 0x76u, R32UInt, 0x1u, 0xfacu, layout);
         Refused(*device, 0x77u, R16UInt, 0x1u, 0xfacu, layout);
         Refused(*device, 0x76u, R16UInt, 0x1u, 0xf2eu, layout);
+        GuestAllocations::Mutation().Remove(ZStorage.data());
         GuestAllocations::Mutation().Remove(Texels.data());
         std::cout << "image PCK2/PCK4 load and store execution tests passed\n";
         return 0;

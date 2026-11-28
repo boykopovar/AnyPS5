@@ -57,6 +57,14 @@ std::uint32_t RuntimeImageSwizzle(SpirvEmitterState& state, std::uint32_t resour
     return Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), descriptor, ConstantU32(state, component * 3u)), ConstantU32(state, 7u));
 }
 
+std::uint32_t RuntimeImageSwizzleMode(SpirvEmitterState& state, std::uint32_t resource) {
+    const bool table = state.program.Info().images.at(resource).table != NoTable;
+    if (!table && !state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::PackedStoreSwizzleModeBase + resource, 0u);
+    if (table && !state.tableAccess.active) FailEmit("image table swizzle mode requested outside a table access");
+    const auto descriptor = table ? state.tableAccess.dword3 : RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 3u);
+    return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), descriptor, ConstantU32(state, 20u)), 0x1fu);
+}
+
 std::uint32_t RuntimeSwizzledComponent(SpirvEmitterState& state, std::uint32_t selector, const std::array<std::uint32_t, 4>& components) {
     auto result = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), ConstantU32(state, 1u), ConstantU32(state, 0u));
     for (std::uint32_t index = 0u; index < components.size(); ++index) result = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, index + 4u)), components[index], result);
@@ -1618,14 +1626,28 @@ void EmitPackedByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
         auto inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpULessThan, TypeBool(state), x, width), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), Binary(state, spv::OpISub, TypeU32(state), width, x), ConstantU32(state, elements)));
         inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), y, height));
         const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, groupTexels - 1u));
+        const auto zOrder = texelBits == 8u ? Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzleMode(state, access.mem.resource), ConstantU32(state, 24u)) : 0u;
+        const auto zByte = texelBits == 8u ? Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, 1u)), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), y, ConstantU32(state, 1u)), ConstantU32(state, 1u))) : 0u;
         const auto word = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ctx.Arg(access.inst, 2), 0u);
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? lod : 0u;
         for (std::uint32_t element = 0; element < elements; ++element) {
-            const auto enabled = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpIAdd, TypeU32(state), lane, ConstantU32(state, element)), ConstantU32(state, groupTexels)));
+            auto enabled = Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpIAdd, TypeU32(state), lane, ConstantU32(state, element)), ConstantU32(state, groupTexels));
+            auto coordX = Binary(state, spv::OpIAdd, TypeU32(state), x, ConstantU32(state, element));
+            auto coordY = y;
+            if (texelBits == 8u) {
+                const auto byte = Binary(state, spv::OpIAdd, TypeU32(state), zByte, ConstantU32(state, element));
+                const auto zX = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, ~1u)), Binary(state, spv::OpBitwiseAnd, TypeU32(state), byte, ConstantU32(state, 1u)));
+                const auto zY = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), y, ConstantU32(state, ~1u)), Binary(state, spv::OpShiftRightLogical, TypeU32(state), byte, ConstantU32(state, 1u)));
+                const auto zEnabled = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpULessThan, TypeBool(state), byte, ConstantU32(state, 4u)), Binary(state, spv::OpULessThan, TypeBool(state), zY, height));
+                enabled = Select(state, TypeBool(state), zOrder, zEnabled, enabled);
+                coordX = Select(state, TypeU32(state), zOrder, zX, coordX);
+                coordY = Select(state, TypeU32(state), zOrder, zY, coordY);
+            }
+            enabled = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, enabled);
             EmitIfCondition(state, enabled, [&]() {
                 const auto coord = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, Binary(state, spv::OpIAdd, TypeU32(state), x, ConstantU32(state, element)), y);
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, coordX, coordY);
                 const auto shifted = element == 0u ? word : Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, element * texelBits));
                 const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), shifted, ConstantU32(state, (1u << texelBits) - 1u));
                 const auto source = state.module.AllocateId();

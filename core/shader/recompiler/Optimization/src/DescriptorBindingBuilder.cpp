@@ -36,6 +36,8 @@ static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <
 static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
 static_assert(PipelineSpecialization::NormalizedImageBase + ShaderInfo::MaxImages <= PipelineSpecialization::D16TowardZeroBase);
+static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::PackedStoreSwizzleModeBase);
+static_assert(PipelineSpecialization::PackedStoreSwizzleModeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 
 namespace {
 
@@ -544,6 +546,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (info.images[index].table != NoTable) continue;
         const auto& modes = info.runtimeImageModes.at(index);
         if (std::ranges::any_of(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; })) plan.specialization.push_back({PipelineSpecialization::FmaskFormatBase + index, modes.at(imageModes[index]).conversionFormat == FmaskExpansion ? (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu : 0u});
+        if (std::ranges::any_of(modes, [](const ImageResource& mode) { return mode.packed && mode.written && mode.byElements != 0u; })) plan.specialization.push_back({PipelineSpecialization::PackedStoreSwizzleModeBase + index, (snapshot.images.at(index).dwords[3] >> 20u) & 0x1fu});
         const auto first = PipelineSpecialization::ImageBase + index * PipelineSpecialization::ImageWords;
         plan.specialization.push_back({first, imageModes[index]});
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({first + 1u + component, (snapshot.images.at(index).dwords[3] >> (component * 3u)) & 7u});
