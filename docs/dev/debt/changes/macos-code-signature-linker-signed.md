@@ -1,0 +1,5 @@
+# relinker
+
+## change [code signature writer]
+
+- The ad-hoc code signature of macOS output ([code signature writer](../../../core/relinker/elfpatcher/src/macos/MacOsCodeSignature.cpp)) is marked linker-signed (`CS_LINKER_SIGNED`, `0x20000`, alongside `CS_ADHOC`), so `strip` re-signs the file instead of invalidating it: on an M5 Pro with macOS 27.2.1, `codesign --verify --strict` passes both before and after `strip -x`, and `codesign -dvvv` reports `flags=0x20002(adhoc,linker-signed)` while the plain ad-hoc `0x2` file fails after the same `strip` with `invalid signature (code or signature have been modified)`. The re-signed file no longer carries the two special slots (`hashes=N+0`), so its identifier becomes the file name, and signing it again with `codesign -s - -f` drops the flag back to `0x2`. `install_name_tool` cannot change the output at all: the writer reserves no header padding, so every change stops with `larger updated load commands do not fit` and leaves the file valid, which leaves its re-sign path unmeasured on this output. Intel Macs, macOS releases other than 27.2.1, and the arm64 dyld path that enforces link-time signatures have not run it.

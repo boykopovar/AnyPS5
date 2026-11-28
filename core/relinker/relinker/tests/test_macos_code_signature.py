@@ -28,6 +28,7 @@ CSMAGIC_REQUIREMENTS = 0xFADE0C01
 CSMAGIC_BLOBWRAPPER = 0xFADE0B01
 CS_SUPPORTSEXECSEG = 0x20400
 CS_ADHOC = 0x2
+CS_LINKER_SIGNED = 0x20000
 CS_HASHTYPE_SHA256 = 2
 CS_EXECSEG_MAIN_BINARY = 0x1
 PAGE = 0x1000
@@ -65,7 +66,7 @@ def check_signature(name, data, identifier, main_binary):
     (cd_magic, cd_length, version, flags, hash_offset, ident_offset, special, slots, code_limit, hash_size, hash_type,
      platform_id, page_shift, _, scatter, team, _, code_limit64, exec_base, exec_limit, exec_flags) = \
         struct.unpack_from('>IIIIIIIIIBBBBIIIIQQQQ', blob, cd)
-    assert cd_magic == CSMAGIC_CODEDIRECTORY and version == CS_SUPPORTSEXECSEG and flags == CS_ADHOC, (name, hex(version), hex(flags))
+    assert cd_magic == CSMAGIC_CODEDIRECTORY and version == CS_SUPPORTSEXECSEG and flags == CS_ADHOC | CS_LINKER_SIGNED, (name, hex(version), hex(flags))
     assert hash_size == 32 and hash_type == CS_HASHTYPE_SHA256 and page_shift == 12 and platform_id == 0, name
     assert scatter == team == code_limit64 == 0, name
     assert code_limit == dataoff and slots == (dataoff + PAGE - 1) // PAGE and special == 2, (name, code_limit, slots, special)
