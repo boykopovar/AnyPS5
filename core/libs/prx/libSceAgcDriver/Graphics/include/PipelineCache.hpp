@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -50,6 +51,7 @@ private:
     File readFile() const;
     File readFile(const std::filesystem::path& from) const;
     void seedFromSibling();
+    void markSeeded(const std::string& note) const;
     std::optional<FileHeader> readHeader() const;
     void load(std::vector<std::byte>& initialData);
     void save(bool final, bool waitForPipelines);
@@ -64,6 +66,7 @@ private:
     std::size_t loadedBytes = 0;
     std::size_t settledBytes = 0;
     std::optional<FileHeader> settledFile;
+    std::string seededFrom;
     std::mutex mutex;
     std::condition_variable wake;
     bool stopping = false;

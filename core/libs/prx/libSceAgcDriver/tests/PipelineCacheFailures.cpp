@@ -188,7 +188,7 @@ std::filesystem::path MakeSibling(const std::filesystem::path& root, const Conte
     return sibling / FileName();
 }
 
-constexpr std::array<std::string_view, 10> SeedingModes{"own-file", "seed-merge", "seed-once", "seed-newest", "seed-invalid", "seed-foreign", "seed-truncated", "seed-optout", "seed-alloc", "seed-unloaded"};
+constexpr std::array<std::string_view, 12> SeedingModes{"own-file", "seed-merge", "seed-once", "seed-newest", "seed-invalid", "seed-foreign", "seed-truncated", "seed-optout", "seed-alloc", "seed-unloaded", "seed-scan-fails", "seed-not-persisted"};
 
 int RunSeeding(std::string_view mode, const std::filesystem::path& root, const Context& context, const VkPhysicalDeviceProperties& properties) {
     const auto own = root / VersionFolder() / FileName();
@@ -220,10 +220,11 @@ int RunSeeding(std::string_view mode, const std::filesystem::path& root, const C
             PipelineCache cache(context, properties);
             Check(merges == 1, "the sibling was not merged exactly once");
             Check(CacheSize(cache.Handle()) == 4096, "the sibling's entries are not in the live cache");
-            Check(Text(marker) == older + "\n", "the marker does not name the sibling");
+            Check(!std::filesystem::exists(marker), "seeding left its marker before the merged cache was saved");
             Check(!std::filesystem::exists(own), "seeding wrote the folder's own cache file itself");
             cache.SaveNow();
             Check(Read(own).size() == 24 + 4096, "the merged cache was not saved to the folder's own file");
+            Check(Text(marker) == older + "\n", "the marker does not name the sibling");
         }
         Check(Read(sibling) == before, "seeding changed the sibling's file");
         Check(caches.empty(), "seeding leaked Vulkan objects");
@@ -241,8 +242,8 @@ int RunSeeding(std::string_view mode, const std::filesystem::path& root, const C
         {
             PipelineCache cache(context, properties);
             Check(merges == 1 && CacheSize(cache.Handle()) == expected, "the newest sibling was not the one merged");
-            Check(Text(marker) == (once ? older : newer) + "\n", "the marker names another sibling");
         }
+        Check(Text(marker) == (once ? older : newer) + "\n", "the marker names another sibling");
         if (once) {
             SetAge(newerFile, -1h);
             merges = 0;
@@ -299,6 +300,48 @@ int RunSeeding(std::string_view mode, const std::filesystem::path& root, const C
         std::puts("seed-unloaded: a cache that does not load its file is not seeded");
         return 0;
     }
+    if (mode == "seed-scan-fails") {
+        std::filesystem::remove_all(root);
+        {
+            PipelineCache cache(context, properties);
+            Check(merges == 0 && CacheSize(cache.Handle()) == 64, "a folder whose parent could not be listed was seeded");
+            Check(!std::filesystem::exists(marker), "a failed scan of the parent folder left a marker");
+            Grow(cache.Handle());
+            cache.SaveNow();
+            Check(Read(own).size() == 24 + 128, "the folder's own cache was not saved after a failed scan");
+        }
+        Check(!std::filesystem::exists(marker), "saving after a failed scan left a marker");
+        std::filesystem::create_directory(root / older);
+        {
+            PipelineCache again(context, properties);
+            Check(merges == 0 && CacheSize(again.Handle()) == 128, "the folder's own cache did not load after a failed scan");
+        }
+        Check(Text(marker) == "none\n", "a scan that found only folders without a cache file left no marker");
+        std::puts("seed-scan-fails: a failed scan left no marker and the next start confirmed no sibling");
+        return 0;
+    }
+    if (mode == "seed-not-persisted") {
+        MakeSibling(root, context, properties, older, 4096);
+        std::filesystem::create_directories(own);
+        merges = 0;
+        {
+            PipelineCache cache(context, properties);
+            Check(merges == 1 && CacheSize(cache.Handle()) == 4096, "the sibling was not merged");
+            Check(!std::filesystem::exists(marker), "seeding left its marker before the merged cache was saved");
+            cache.SaveNow();
+        }
+        Check(!std::filesystem::exists(marker), "seeding left its marker although the merged cache was never saved");
+        std::filesystem::remove(own);
+        merges = 0;
+        {
+            PipelineCache retry(context, properties);
+            Check(merges == 1 && CacheSize(retry.Handle()) == 4096, "seeding did not retry after the merged cache was not saved");
+        }
+        Check(Read(own).size() == 24 + 4096, "the retried merge was not saved to the folder's own file");
+        Check(Text(marker) == older + "\n", "the retried merge left no marker once saved");
+        std::puts("seed-not-persisted: a merge whose cache was never saved left no marker and seeded again on the next start");
+        return 0;
+    }
     MakeSibling(root, context, properties, older, 4096);
     merges = 0;
     failMerge = true;
@@ -314,8 +357,8 @@ int RunSeeding(std::string_view mode, const std::filesystem::path& root, const C
     {
         PipelineCache retry(context, properties);
         Check(CacheSize(retry.Handle()) == 4096, "seeding could not retry after the allocation failure");
-        Check(Text(marker) == older + "\n", "the retry left no marker");
     }
+    Check(Text(marker) == older + "\n", "the retry left no marker");
     Check(caches.empty(), "the retry leaked a Vulkan pipeline cache");
     std::puts("seed-alloc: propagated the allocation failure, released the cache and seeded on the retry");
     return 0;

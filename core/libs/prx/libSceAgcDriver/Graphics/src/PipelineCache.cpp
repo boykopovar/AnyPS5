@@ -12,6 +12,8 @@
 #include <new>
 #include <span>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -211,27 +213,38 @@ void PipelineCache::seedFromSibling() try {
     if (error) return;
     std::filesystem::path newest;
     std::filesystem::file_time_type newestTime{};
+    bool unsure = false;
     for (std::filesystem::directory_iterator it(nativeRoot, error), end; !error && it != end; it.increment(error)) {
         std::error_code entryError;
-        if (!it->is_directory(entryError) || it->path().filename() == own.filename()) continue;
+        const bool folder = it->is_directory(entryError);
+        if (entryError) {
+            unsure = true;
+            continue;
+        }
+        if (!folder || it->path().filename() == own.filename()) continue;
         const auto candidate = root / it->path().filename() / path.filename();
         const auto nativeCandidate = hostPath(candidate, entryError);
-        if (entryError) continue;
+        if (entryError) {
+            unsure = true;
+            continue;
+        }
         const auto time = std::filesystem::last_write_time(nativeCandidate, entryError);
-        if (entryError) continue;
+        if (entryError) {
+            if (entryError != std::errc::no_such_file_or_directory) unsure = true;
+            continue;
+        }
         if (newest.empty() || time > newestTime) {
             newest = candidate;
             newestTime = time;
         }
     }
-    const auto mark = [&](const std::string& note) {
-        const auto text = note + "\n";
-        std::vector<std::byte> bytes(text.size());
-        std::memcpy(bytes.data(), text.data(), text.size());
-        ShaderRecompiler::WriteFileAtomically(marker, bytes);
-    };
+    if (error) {
+        std::fprintf(stderr, "[pipeline-cache] seeding skipped: cannot list %s: %s\n", root.string().c_str(), error.message().c_str());
+        return;
+    }
+    const auto mark = [&](const std::string& note) { markSeeded(note); };
     if (newest.empty()) {
-        mark("none");
+        if (!unsure) mark("none");
         return;
     }
     auto file = readFile(newest);
@@ -256,12 +269,21 @@ void PipelineCache::seedFromSibling() try {
         std::fprintf(stderr, "[pipeline-cache] not seeding from %s: merge failed (Vulkan result %d)\n", newest.string().c_str(), static_cast<int>(result));
         return;
     }
-    mark(newest.parent_path().filename().string());
+    seededFrom = newest.parent_path().filename().string();
     std::fprintf(stderr, "[pipeline-cache] seeded %.1f KiB from %s into this recompiler's cache\n", static_cast<double>(data.size()) / 1024.0, newest.string().c_str());
 } catch (const std::bad_alloc&) {
     throw;
 } catch (const std::exception& failure) {
     std::fprintf(stderr, "[pipeline-cache] seeding skipped: %s\n", failure.what());
+}
+
+void PipelineCache::markSeeded(const std::string& note) const {
+    auto marker = path;
+    marker += ".seeded";
+    const auto text = note + "\n";
+    std::vector<std::byte> bytes(text.size());
+    std::memcpy(bytes.data(), text.data(), text.size());
+    ShaderRecompiler::WriteFileAtomically(marker, bytes);
 }
 
 void PipelineCache::load(std::vector<std::byte>& initialData) {
@@ -355,6 +377,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
         if (getData(context.device, source, &size, nullptr) != VK_SUCCESS || size == 0) return;
         if (merged != VK_NULL_HANDLE && size == disk.header.dataBytes) {
             settle(disk.header);
+            if (!seededFrom.empty()) markSeeded(std::exchange(seededFrom, {}));
             return;
         }
         file.resize(sizeof(FileHeader) + size);
@@ -375,6 +398,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
         return;
     }
     settle(header);
+    if (!seededFrom.empty()) markSeeded(std::exchange(seededFrom, {}));
     if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", final ? " (teardown)" : "");
 } catch (const std::bad_alloc&) {
     std::fputs("[pipeline-cache] save skipped: host memory exhausted\n", stderr);
