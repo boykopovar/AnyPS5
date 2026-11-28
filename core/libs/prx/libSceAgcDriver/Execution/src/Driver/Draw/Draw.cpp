@@ -377,7 +377,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto& indirect = *drawParameters.indirect;
         auto& pipeline = DrawPipeline::Queue0();
         const bool overlaps = pipeline.Busy() && (pipeline.Overlaps(indirect.arguments, static_cast<std::size_t>(std::max<std::uint64_t>(indirect.RangeBytes(), indirect.recordBytes))) || (indirect.countIndirect && pipeline.Overlaps(indirect.countAddress, 4)));
-        if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect);
+        if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect, 0x100, overlaps ? "arguments_queued" : "unpipelined");
     }
     auto& traceIndirect = tail.traceIndirect;
     if (const auto verdict = precheckDraw(queue, submission, packetOffset, packet, drawParameters, rejected, traceIndirect)) {
@@ -853,7 +853,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     const bool pipelined = tail.pipelined;
     static const bool pipelinedIndirect = std::getenv("APS5_NO_PIPELINED_INDIRECT") == nullptr;
     const auto drainBeforeInline = [&] {
-        if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+        if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect, 0x100, "inline");
     };
     auto& traceIndirect = tail.traceIndirect;
     const auto dumpTarget = tail.dumpTarget;
@@ -1096,7 +1096,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         for (const auto& read : reads) memory.push_back({read.address, read.Bytes()});
     }
 
-    if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
+    if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels, 0x100, "draw_capture");
     if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(*tail.queue, packet, submission, packetOffset, rejected);
 
     bool rectListBuilt = false;
@@ -1239,6 +1239,53 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::size_t lastDrawable = records.size();
         for (std::size_t record = 0; record < records.size(); ++record) {
             if (drawable(records[record])) lastDrawable = record;
+        }
+        static const bool uniformRecords = std::getenv("APS5_UNIFORM_INDIRECT_RECORDS") != nullptr;
+        const auto plainStages = [&] {
+            return std::ranges::all_of(stages, [](const Graphics::CompiledShader& shader) {
+                return shader.program != nullptr && (shader.stage == Stage::Vertex || shader.stage == Stage::Fragment) && shader.program->stencilReferences.empty() && !shader.program->functionLdsBuffer;
+            }) && !Graphics::ShadersWriteMemory(stages);
+        };
+        if (uniformRecords && *indirectCpu == Graphics::IndirectDrawPath::NotFolded && !indirect.drawIndexEnabled &&
+            !graphics.rectList && !graphics.quadList && !graphics.primitiveRestart && !graphics.stages.mesh && !graphics.stages.tessellation &&
+            graphics.stages.path == Graphics::ShaderPath::Vertex && !graphics.depthBiasPerFace &&
+            !Graphics::SplitsAlternateAlpha(graphics) && plainStages()) {
+            const auto live = std::count_if(records.begin(), records.end(), drawable);
+            const auto equalWords = [&](const auto& slots, std::uint32_t value) {
+                return std::all_of(slots.begin(), slots.end(), [&](const auto& slot) { return programs[slot.first].userData.at(slot.second) == value; });
+            };
+            const auto unchanged = [&](const Pm4::DrawArguments& args) {
+                return args.count == 0 || args.instances == 0 || (equalWords(baseVertexWords, indirect.recordBytes == 20 ? args.vertexOffset : args.firstVertexOrIndex) && equalWords(startInstanceWords, args.firstInstance));
+            };
+            if (live > 1 && std::all_of(records.begin(), records.end(), unchanged)) {
+                auto grouped = drawParameters;
+                auto& args = *grouped.indirect;
+                args.baseVertexSgpr = -1;
+                args.startInstanceSgpr = -1;
+                args.countIndirect = false;
+                args.count = static_cast<std::uint32_t>(records.size());
+                if (!ClassifyIndirectDraw(*programResults[0], graphics, programs.front(), localDevice, grouped, false) && !localDevice->KnownDrawRejection(graphics, stages)) {
+                    drainBeforeInline();
+                    lockForDraw();
+                    runCaptureCheckHook();
+                    if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
+                        gpuLock.unlock();
+                        const RecaptureScope recapture;
+                        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    }
+                    auto captured = std::make_shared<std::vector<Pm4::DrawArguments>>(std::move(records));
+                    args.capturedRecords = captured;
+                    noteDrawWriters(stages, submission.queue);
+                    phaseTiming.Phase(DrawRowVectors);
+                    if (localDevice->Draw(graphics, grouped, stages, snapshots, nullptr, tracePtr) == Graphics::DrawResult::Handled) {
+                        if (traceIndirect) std::fprintf(stderr, "[uniform-indirect] grouped %zu drawable records\n", static_cast<std::size_t>(live));
+                        phaseTiming.Phase(DrawRowGraphics);
+                        timing.Mark("draw_and_resource_release");
+                        return drawn();
+                    }
+                    records = std::move(*captured);
+                }
+            }
         }
         const bool pushWord = drawCachePushWord();
         const bool verifyPushWord = pushWord && verifyDrawPushWord();

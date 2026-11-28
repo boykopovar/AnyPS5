@@ -1843,7 +1843,13 @@ bool isVop3pIntegerSaturate(RdnaOpcode opcode) {
         case RdnaOpcode::VPkAddI16:
         case RdnaOpcode::VPkAddU16:
         case RdnaOpcode::VPkSubI16:
-        case RdnaOpcode::VPkSubU16: return true;
+        case RdnaOpcode::VPkSubU16:
+        case RdnaOpcode::VDot2I32I16:
+        case RdnaOpcode::VDot2U32U16:
+        case RdnaOpcode::VDot4I32I8:
+        case RdnaOpcode::VDot4U32U8:
+        case RdnaOpcode::VDot8I32I4:
+        case RdnaOpcode::VDot8U32U4: return true;
         default: return false;
     }
 }

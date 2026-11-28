@@ -41,9 +41,12 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_ADAPTIVE_ENCODER",
     "APS5_QUIESCED_SEGMENTS",
     "APS5_NO_WIDE_TABLE_COPY_HLE",
+    "APS5_NO_SAMPLED_LOOKUP_MEMO",
     "APS5_NO_DCC_MIP_FAST_CLEAR",
     "APS5_NO_TABLE_ENTRY_MEMO",
     "APS5_PASS_STAGING",
+    "APS5_NO_PENDING_WRITE_BLOCKS",
+    "APS5_VERIFY_PENDING_WRITE_BLOCKS",
 };
 
 struct SwitchValues {
@@ -73,9 +76,12 @@ struct SwitchValues {
             std::getenv("APS5_NO_ADAPTIVE_ENCODER") != nullptr,
             std::getenv("APS5_QUIESCED_SEGMENTS") != nullptr,
             std::getenv("APS5_NO_WIDE_TABLE_COPY_HLE") != nullptr,
+            std::getenv("APS5_NO_SAMPLED_LOOKUP_MEMO") != nullptr,
             std::getenv("APS5_NO_DCC_MIP_FAST_CLEAR") != nullptr,
             std::getenv("APS5_NO_TABLE_ENTRY_MEMO") != nullptr,
             std::getenv("APS5_PASS_STAGING") != nullptr,
+            std::getenv("APS5_NO_PENDING_WRITE_BLOCKS") != nullptr,
+            std::getenv("APS5_VERIFY_PENDING_WRITE_BLOCKS") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }

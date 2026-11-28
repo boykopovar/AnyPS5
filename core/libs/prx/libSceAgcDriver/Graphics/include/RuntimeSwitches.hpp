@@ -34,9 +34,12 @@ enum class RuntimeSwitch : std::size_t {
     NoAdaptiveEncoder,
     QuiescedSegments,
     NoWideTableCopyHle,
+    NoSampledLookupMemo,
     NoDccMipFastClear,
     NoTableEntryMemo,
     PassStaging,
+    NoPendingWriteBlocks,
+    VerifyPendingWriteBlocks,
     Count,
 };
 

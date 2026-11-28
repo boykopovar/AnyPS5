@@ -349,7 +349,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
         return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
     }();
     if (!pipelineWrites && !finisherWrites && !recordedWrites && !segment.copiedUnderWrite && !GuestMemory::DriverStoredOver(address, bytes, segment.copiedAt)) return false;
-    if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f, "indirect_buffer_written");
     if (finisherWrites) DrawFinisher::Get().Drain();
     std::vector<std::uint32_t> words(segment.words);
     GuestMemory::Read(address, std::as_writable_bytes(std::span(words)), alignof(std::uint32_t));
@@ -385,7 +385,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
             expanded.renderingWaits.emplace(cursor, prepared->second);
         }
     }
-    if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f, "indirect_buffer_changed");
     if (DrawFinisher::Busy()) DrawFinisher::Get().Drain();
     const auto delta = static_cast<std::ptrdiff_t>(expanded.commands.size()) - static_cast<std::ptrdiff_t>(segment.words);
     const auto moved = [&](std::size_t cursor) { return cursor >= end ? static_cast<std::size_t>(static_cast<std::ptrdiff_t>(cursor) + delta) : cursor; };
@@ -813,6 +813,13 @@ void Driver::executeRewindTail(const Submission& stalled) {
     if (APS5_ENABLE_TIMING_LOG) tail.copiedAt = std::chrono::steady_clock::now();
     validate(tail, stalled.rewindTail);
     readRegisterLists(tail);
+    const auto scan = ReferencedPrograms(tail.commands, tail.registerLists);
+    std::shared_ptr<const ShaderRegistry> registry;
+    {
+        std::lock_guard lock(mutex);
+        registry = shaders;
+    }
+    if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(tail));
     if (APS5_ENABLE_TIMING_LOG) tail.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(tail);
@@ -880,7 +887,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     const bool holdsWork = holdFlipBehindWorker(submission, cpuFlip);
     std::shared_ptr<FlipWork> earlierFlipWork;
     const auto scan = ReferencedPrograms(submission.commands, submission.registerLists);
-    if (!scan.complete || submission.rewindTail != nullptr) {
+    if (!scan.complete) {
         AwaitRegistrationPreparation();
     } else {
         std::shared_ptr<const ShaderRegistry> registry;
