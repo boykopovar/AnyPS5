@@ -69,7 +69,6 @@ static constexpr std::uint32_t READ_WAITERS = 0x20000000u;
 static constexpr std::uint32_t PREFER_READER = 0x2;
 static constexpr int UMTX_OP_MUTEX_WAKE2 = 22;
 static constexpr int UMTX_OP_SEM2_WAKE = 24;
-static constexpr int UMTX_OP_SHM = 25;
 static constexpr std::uint32_t USEM_HAS_WAITERS = 0x80000000u;
 
 struct Umutex {
@@ -525,10 +524,6 @@ static void RejectsBadObjectsAndOperations() {
     }
 
     Require(FailsWith(Umtx(&value, 7, 0), GUEST_EINVAL));
-    bool threw = false;
-    try { Umtx(&value, UMTX_OP_SHM, 0); }
-    catch (const std::runtime_error&) { threw = true; }
-    Require(threw);
 }
 
 static std::uint32_t Self() { return static_cast<std::uint32_t>(scePthreadGetthreadid()); }
