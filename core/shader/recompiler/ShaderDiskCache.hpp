@@ -11,9 +11,13 @@
 #include <string>
 #include <vector>
 
+namespace ShaderRecompiler {
+struct NanSpeculationConfig;
+}
+
 namespace ShaderRecompiler::ShaderDiskCache {
 
-inline constexpr std::uint32_t FormatVersion = 97;
+inline constexpr std::uint32_t FormatVersion = 99;
 inline constexpr std::size_t MaxCachedSpirvWords = 16u * 1024u * 1024u;
 
 enum class LoadStatus {
@@ -35,6 +39,10 @@ struct Counters {
     std::uint64_t planMisses = 0;
     std::uint64_t planWrites = 0;
     std::uint64_t planLoadFailures = 0;
+    std::uint64_t specializedHits = 0;
+    std::uint64_t specializedMisses = 0;
+    std::uint64_t specializedWrites = 0;
+    std::uint64_t specializedLoadFailures = 0;
     std::uint64_t prebuiltHits = 0;
     std::uint64_t prebuiltMisses = 0;
     std::uint64_t prebuiltRejected = 0;
@@ -48,6 +56,7 @@ struct Counters {
 };
 
 [[nodiscard]] std::uint64_t SourceVersion();
+[[nodiscard]] std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exactF32);
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key);
 
@@ -74,6 +83,8 @@ void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> va
 [[nodiscard]] bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan);
 [[nodiscard]] std::shared_ptr<const IrResourcePlan> LoadSharedPlan(std::span<const std::byte> key, std::uint64_t shaderHash);
 void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan);
+[[nodiscard]] bool LoadSpecialized(std::span<const std::byte> key, std::vector<std::uint32_t>& words);
+void StoreSpecialized(std::vector<std::byte> key, std::vector<std::uint32_t> words);
 void Flush();
 void ReleaseMapped(const SharedSpirv& spirv) noexcept;
 void Shutdown();

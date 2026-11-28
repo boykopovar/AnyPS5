@@ -685,6 +685,9 @@ int main() {
                 }
             }
         }
+        guest.Data()[0] = 0xc0c0c0c0u;
+        Run(*device, shader, guest, 32u, 0x31039facu);
+        Require(guest.Output()[0] == 0xbf010204u, "gpu buffer format: 8_8_8_8_SNORM -64 selected at run time is " + Hex(guest.Output()[0]) + ", expected -64/127 (0xbf010204)");
         for (const auto word3 : InvalidFormats) {
             Run(*device, shader, guest, 32u, word3);
             const auto output = guest.Output();

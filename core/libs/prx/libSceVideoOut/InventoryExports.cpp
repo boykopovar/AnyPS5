@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestPtr.hpp"
 #include <array>
@@ -15,6 +16,13 @@ namespace {
 constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
 constexpr int VideoOutErrorDeviceFailure = static_cast<int>(0x802900FFu);
 constexpr int VideoOutErrorNoDevice = static_cast<int>(0x80290018u);
+constexpr int VideoOutErrorNoMemory = static_cast<int>(0x8029100Cu);
+constexpr int VideoOutErrorPortUnsupported = static_cast<int>(0x8029001Bu);
+constexpr std::uintptr_t VideoOutEventDisplayPosition = 12;
+
+bool OpenPort(int handle) {
+    return VideoOutDriver::Get().HasConfig(handle) && VideoOutDriver::Get().IsOpen(handle);
+}
 
 std::uint32_t ModeFlags(const void* mode) {
     std::uint32_t flags = 0;
@@ -45,7 +53,11 @@ int APS5_VABI sceVideoOutAddBufferYccPrivilege() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutAddDisplayPositionEvent() {
+int APS5_VABI sceVideoOutAddDisplayPositionEvent(KernelEqueue eq, int handle, void* udata) {
+    (void)udata;
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    if (!EqueuePin_nid_postfix(eq)) return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -149,8 +161,15 @@ int APS5_VABI sceVideoOutDebugTriggerRefresh() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutDeleteDisplayPositionEvent() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutDeleteDisplayPositionEvent(KernelEqueue eq, int handle) {
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    const int result = EqueueDeleteEvent_nid_postfix(eq, VideoOutEventDisplayPosition, EVFILT_VIDEO_OUT);
+    if (result == 0) return 0;
+    if (result == SCE_KERNEL_ERROR_ENOENT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    if (result == SCE_KERNEL_ERROR_ENOMEM) return VideoOutErrorNoMemory;
+    if (result == SCE_KERNEL_ERROR_EBADF) return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
+    return VideoOutErrorDeviceFailure;
 }
 
 int APS5_VABI sceVideoOutDeleteDriver() {
@@ -310,8 +329,14 @@ int APS5_VABI sceVideoOutRemoveBuffer() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetAlphaControl() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSetAlphaControl(int handle, int enable, std::uint32_t alpha, const std::uint32_t* control, void* reserved) {
+    (void)enable;
+    (void)alpha;
+    (void)control;
+    if (reserved != nullptr) return VIDEO_OUT_ERROR_INVALID_OPTION;
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    return VideoOutErrorPortUnsupported;
 }
 
 int APS5_VABI sceVideoOutSetBlankAfterResume() {
@@ -345,8 +370,12 @@ int APS5_VABI sceVideoOutSetGamutMetadata_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetGlobalAlpha() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSetGlobalAlpha(int handle, int enable, std::uint32_t alpha) {
+    (void)enable;
+    (void)alpha;
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    return VideoOutErrorPortUnsupported;
 }
 
 int APS5_VABI sceVideoOutSetToneMap_() {

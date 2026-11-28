@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -68,10 +69,24 @@ static void PipeReadEvents() {
     Require(sceKernelDeleteReadEvent(eq, pipe[0]) == SCE_OK);
     Require(sceKernelDeleteReadEvent(eq, pipe[0]) == SCE_KERNEL_ERROR_ENOENT);
 
+#ifndef __APPLE__
     int oneWay[2];
     Require(pipe_nid_postfix(oneWay) == 0);
-    Require(Rejects(sceKernelAddWriteEvent, eq, oneWay[1], 1));
-    Require(close_nid_postfix(oneWay[0]) == 0 && close_nid_postfix(oneWay[1]) == 0);
+    Require(sceKernelAddWriteEvent(eq, oneWay[1], 1, &marker) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(oneWay[1]) && events[0].filter == EVFILT_WRITE);
+    Require(events[0].data > 0 && events[0].udata == &marker && (events[0].flags & EV_EOF) == 0);
+    Require(close_nid_postfix(oneWay[0]) == 0);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(oneWay[1]) && (events[0].flags & EV_EOF) != 0);
+    int readded = 0;
+    Require(sceKernelAddWriteEvent(eq, oneWay[1], 1, &readded) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].udata == &readded && (events[0].flags & EV_EOF) != 0);
+    Require(sceKernelDeleteWriteEvent(eq, oneWay[1]) == SCE_OK);
+    Require(sceKernelAddWriteEvent(eq, oneWay[1], 1, nullptr) == SCE_KERNEL_ERROR_EPIPE);
+    Require(close_nid_postfix(oneWay[1]) == 0);
+#endif
     Require(close_nid_postfix(pipe[0]) == 0);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
@@ -268,6 +283,90 @@ int main() {
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
     Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(reader) && events[0].data == sizeof(message));
     Require(recv_nid_postfix(reader, received, sizeof(received), 0) == sizeof(received));
+    Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_OK);
+
+    Require(sceKernelAddReadEvent(blocking, reader, 6, nullptr) == SCE_OK);
+    Require(send_nid_postfix(writer, "abc", 3, 0) == 3);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(send_nid_postfix(writer, "def", 3, 0) == 3);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(reader) && events[0].data == 6);
+    char six[6]{};
+    Require(recv_nid_postfix(reader, six, sizeof(six), 0) == sizeof(six));
+    Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_OK);
+    Require(send_nid_postfix(writer, "abc", 3, 0) == 3);
+    Require(sceKernelAddReadEvent(blocking, reader, static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()), nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(reader) && events[0].data == 3);
+    Require(sceKernelAddReadEvent(blocking, reader, 6, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_OK);
+    Require(recv_nid_postfix(reader, six, 3, 0) == 3);
+    Require(sceKernelAddWriteEvent(blocking, writer, 64, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].filter == EVFILT_WRITE && events[0].data >= 64);
+    Require(sceKernelDeleteWriteEvent(blocking, writer) == SCE_OK);
+    const int datagram = socket_nid_postfix(2, 2, 0);
+    Require(datagram >= 0);
+    Require(sceKernelAddWriteEvent(blocking, datagram, 1, nullptr) == SCE_OK);
+    Require(sceKernelDeleteWriteEvent(blocking, datagram) == SCE_OK);
+    std::array<std::uint8_t, 16> datagramAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    std::uint32_t datagramAddressSize = datagramAddress.size();
+    Require(bind_nid_postfix(datagram, datagramAddress.data(), datagramAddress.size()) == 0);
+    Require(getsockname_nid_postfix(datagram, datagramAddress.data(), &datagramAddressSize) == 0);
+    Require(connect_nid_postfix(datagram, datagramAddress.data(), datagramAddress.size()) == 0);
+    Require(sceKernelAddReadEvent(blocking, datagram, 1, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(send_nid_postfix(datagram, "", 0, 0) == 0);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(datagram) && events[0].data == 0);
+    Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 0);
+    Require(send_nid_postfix(datagram, "", 0, 0) == 0);
+    Require(send_nid_postfix(datagram, "abc", 3, 0) == 3);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 0);
+    Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 0);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 3);
+    Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 3);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    std::atomic<bool> sending{true};
+    std::thread racingSender([&] {
+        for (int i = 0; i < 20000; ++i) {
+            const int length = i % 2 ? 3 : 0;
+            Require(send_nid_postfix(datagram, "abc", length, 0) == length);
+        }
+        sending = false;
+    });
+    std::thread racingReader([&] {
+        char drained[8];
+        for (bool more = true; more;) {
+            more = sending;
+            while (recv_nid_postfix(datagram, drained, sizeof(drained), 0x80) >= 0) {
+            }
+        }
+    });
+    const KernelUseconds instant = 1000;
+    while (sending) {
+        const int result = sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &instant);
+        Require(result == SCE_OK || result == SCE_KERNEL_ERROR_ETIMEDOUT);
+        Require(result != SCE_OK || (count == 1 && (events[0].data == 0 || events[0].data == 3)));
+    }
+    racingSender.join();
+    racingReader.join();
+    char late[8];
+    int drained = SCE_OK;
+    while ((drained = sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout)) == SCE_OK) {
+        Require(count == 1 && (events[0].data == 0 || events[0].data == 3));
+        Require(recv_nid_postfix(datagram, late, sizeof(late), 0x80) == events[0].data);
+    }
+    Require(drained == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(recv_nid_postfix(datagram, late, sizeof(late), 0x80) < 0);
+    Require(sceKernelDeleteReadEvent(blocking, datagram) == SCE_OK);
+    Require(close_nid_postfix(datagram) == 0);
+    Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
 
     std::thread waiter([&] {
         std::array<KernelEvent, 4> woken{};
@@ -287,7 +386,6 @@ int main() {
 
     Require(sceKernelAddReadEvent(eq, client, 1, nullptr) == SCE_KERNEL_ERROR_EBADF);
     Require(Rejects(sceKernelAddReadEvent, eq, 0, 1));
-    Require(Rejects(sceKernelAddWriteEvent, eq, accepted, 64));
 
     Require(close_nid_postfix(accepted) == 0);
     Require(close_nid_postfix(listener) == 0);

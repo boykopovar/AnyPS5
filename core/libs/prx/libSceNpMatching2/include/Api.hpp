@@ -90,7 +90,7 @@ int APS5_VABI sceNpMatching2RegisterLobbyEventCallback(std::uint16_t ctxId, void
 int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(std::uint16_t ctxId, void* callback, void* userdata);
 int APS5_VABI sceNpMatching2RegisterManualUdpSignalingCallback();
 int APS5_VABI sceNpMatching2SendLobbyChatMessage();
-int APS5_VABI sceNpMatching2SetExtraInitParam();
+int APS5_VABI sceNpMatching2SetExtraInitParam(const void* param);
 int APS5_VABI sceNpMatching2SetLobbyMemberDataInternal();
 int APS5_VABI sceNpMatching2SetRoomDataInternalExt();
 int APS5_VABI sceNpMatching2SetSignalingOptParam();

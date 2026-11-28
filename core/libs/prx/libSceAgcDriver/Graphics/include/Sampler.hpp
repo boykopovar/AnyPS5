@@ -9,13 +9,24 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 
 namespace AgcDriver::Graphics {
 
+struct BorderComponentMapping {
+    VkComponentMapping components{};
+    bool srgb = false;
+};
+
+struct OpaqueBlackPairing {
+    BorderComponentMapping view;
+    std::array<std::uint8_t, 4> dstSel{};
+};
+
 class Sampler {
 public:
-    Sampler(const Context& context, const GuestSamplerResource& descriptor);
+    Sampler(const Context& context, const GuestSamplerResource& descriptor, const std::optional<BorderComponentMapping>& borderMapping = std::nullopt);
     ~Sampler();
     Sampler(const Sampler&) = delete;
     Sampler& operator=(const Sampler&) = delete;
@@ -25,6 +36,7 @@ public:
     VkSampler Handle() const;
     bool RequiresFilterMinmax() const;
     bool ReadsOpaqueBlackBorder() const;
+    const std::optional<BorderComponentMapping>& BorderMapping() const { return borderMapping; }
     bool RequiresNonSeamlessCube() const;
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
     static bool ShaderAppliesLodBias(const GuestSamplerResource& descriptor);
@@ -39,6 +51,7 @@ private:
     VkSampler sampler = VK_NULL_HANDLE;
     bool requiresFilterMinmax = false;
     bool opaqueBlackBorder = false;
+    std::optional<BorderComponentMapping> borderMapping;
     bool requiresNonSeamlessCube = false;
 };
 
@@ -53,7 +66,7 @@ public:
     explicit SamplerCache(std::size_t capacity = 1024);
     SamplerCache(const SamplerCache&) = delete;
     SamplerCache& operator=(const SamplerCache&) = delete;
-    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false);
+    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false, const std::optional<BorderComponentMapping>& borderMapping = std::nullopt);
     // APS5_PROFILE_DRAW counters: lookups served by an existing sampler, and samplers created.
     std::uint64_t Hits() const { return hits; }
     std::uint64_t Misses() const { return misses; }
@@ -74,6 +87,9 @@ private:
 void RequireFilterMinmax(const Context& context, VkFormat format, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+std::uint32_t BorderMappingKey(const std::optional<BorderComponentMapping>& mapping);
+std::optional<BorderComponentMapping> OpaqueBlackBorderMapping(const Context& context, std::span<const OpaqueBlackPairing> pairings);
+bool CheckOpaqueBlackPairing(const Context& context, const OpaqueBlackPairing& pairing, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireDisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 

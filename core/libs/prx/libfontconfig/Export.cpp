@@ -83,10 +83,6 @@ int APS5_VABI FcInitBringUptoDate() {
     return 1;
 }
 
-int APS5_VABI FcFontRenderPrepare() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result) {
     if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
     const FcResult noMatch = FcResultNoMatch;

@@ -13,11 +13,18 @@
 #include <unistd.h>
 #endif
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
+
+static void ClobberWriteErrno(std::uintptr_t, std::size_t) {
+    errno = EIO;
+}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -136,6 +143,43 @@ int main() {
     Require(termed == first);
     Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlInit() == 0);
+    {
+        auto* const unwritable = reinterpret_cast<int*>(std::uintptr_t{0x10});
+        Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
+        Require(sceNetCtlGetResultV6(0, unwritable) == kErrInvalidAddr);
+
+        int resultCode = 0x5a5a5a5a;
+        bool threw = false;
+        try {
+            sceNetCtlGetResult(0, &resultCode);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(resultCode == 0x5a5a5a5a);
+
+        threw = false;
+        try {
+            sceNetCtlGetResultV6(0, &resultCode);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(resultCode == 0x5a5a5a5a);
+        Require(sceNetCtlGetResultV6(1, nullptr) == kErrInvalidAddr);
+        Require(sceNetCtlGetResultV6(1, &resultCode) == 0);
+        Require(resultCode == 0);
+
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&ClobberWriteErrno);
+        int stateOut = -1;
+        errno = 71;
+        Require(sceNetCtlGetResult(1, &resultCode) == 0 && resultCode == 0 && errno == 71);
+        errno = 71;
+        Require(sceNetCtlGetState(&stateOut) == 0 && errno == 71);
+        errno = 71;
+        Require(sceNetCtlGetStateV6(&stateOut) == 0 && errno == 71);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    }
     std::memset(&info, kFill, sizeof(info));
     Require(sceNetCtlGetInfoV6(1, &info) == first);
 

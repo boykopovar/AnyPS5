@@ -54,15 +54,14 @@ std::uint8_t APS5_VABI FT_Get_Color_Glyph_Layer_nid_postfix(FreeType::GuestFaceR
     LegacyFreeType::GuestLayerIterator localIterator{};
     if (!GuestCopyIn_nid_no_patch(&localIterator, iterator, sizeof(localIterator)) || !GuestWritable_nid_no_patch(iterator, sizeof(*iterator))) return 0;
     FT_LayerIterator native{localIterator.num_layers, localIterator.layer, localIterator.p};
-    std::uint32_t nativeGlyph = 0;
-    std::uint32_t nativeColor = 0;
+    constexpr std::uint32_t unwritten = 0xffffffffu;
+    std::uint32_t nativeGlyph = unwritten;
+    std::uint32_t nativeColor = unwritten;
     const FT_Bool found = FT_Get_Color_Glyph_Layer(HostFace(face), baseGlyph, glyphIndex ? &nativeGlyph : nullptr, colorIndex ? &nativeColor : nullptr, &native);
     localIterator = {native.num_layers, native.layer, native.p};
     WriteOut(iterator, localIterator);
-    if (found) {
-        if (glyphIndex) WriteOut(glyphIndex, nativeGlyph);
-        if (colorIndex) WriteOut(colorIndex, nativeColor);
-    }
+    if (glyphIndex && nativeGlyph != unwritten) WriteOut(glyphIndex, nativeGlyph);
+    if (colorIndex && nativeColor != unwritten) WriteOut(colorIndex, nativeColor);
     return found;
 }
 

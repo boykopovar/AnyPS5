@@ -95,6 +95,8 @@ def host_text():
 
 def bundle_members(report, *, home, user, host, log=None, input_config=None, environ=None):
     data = json.loads(Path(report).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
+    if not isinstance(data, dict):
+        raise ValueError("run report must be a JSON object")
     identity = {"home": home, "user": user, "host": host}
     members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2, allow_nan=False) + "\n"}
     profile = input_profile_path(data, input_config) if input_config else None

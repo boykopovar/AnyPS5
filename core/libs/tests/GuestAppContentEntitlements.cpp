@@ -2,6 +2,7 @@
 #include "prx/libSceAppContent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -12,7 +13,9 @@
 #include <fstream>
 #include <random>
 #include <stdexcept>
+#include <source_location>
 #include <string>
+#include <cstdio>
 #include <system_error>
 #include <utility>
 #include "ProcessParametersFixture.hpp"
@@ -23,7 +26,12 @@ static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
 static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, const std::source_location location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "%s:%u: AppContent assertion failed\n", location.file_name(), location.line());
+        std::abort();
+    }
+}
 
 static void SetEntitlements(const std::filesystem::path& file) {
 #ifdef _WIN32
@@ -132,7 +140,101 @@ static void CheckEntitlementsIni() {
 #endif
 }
 
-int main() {
+static void RequireConfigResolved(const std::source_location location = std::source_location::current()) {
+    try {
+        uint32_t count = 0;
+        Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, &count) == 0);
+        Require(count == 3);
+    } catch (const std::filesystem::filesystem_error& error) {
+        std::fprintf(stderr, "Equivalent add-on aliases failed to resolve at %s:%u: %s\n", location.file_name(), location.line(), error.what());
+        std::abort();
+    }
+}
+
+static void RequireCollisionContents() {
+    auto* stream = fopen_nid_postfix("/addcont0/sample.txt", "rb");
+    Require(stream != nullptr);
+    constexpr char expected[] = "collision-content";
+    std::array<char, sizeof(expected)> contents{};
+    Require(fread_nid_postfix(contents.data(), 1, contents.size(), stream) == sizeof(expected) - 1);
+    Require(std::memcmp(contents.data(), expected, sizeof(expected) - 1) == 0);
+    Require(fclose_nid_postfix(stream) == 0);
+}
+
+static int RunAliasCollision() {
+    const auto original = std::filesystem::current_path();
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5-appcontent-alias-collision-" + std::to_string(std::random_device{}()));
+    Require(std::filesystem::create_directories(root));
+    std::filesystem::current_path(root);
+    Require(std::filesystem::create_directories("addcont0"));
+    {
+        std::ofstream sample("addcont0/sample.txt");
+        sample << "collision-content";
+        Require(static_cast<bool>(sample));
+    }
+    const auto iniFile = root / "anyps5-entitlements.ini";
+    {
+        std::ofstream ini(iniFile);
+        ini << "COLLIDEADDON0001 = /addcont0\n";
+        ini << "COLLIDEADDON0002 = /addcont0/\n";
+        ini << "COLLIDEADDON0003 = /ADDCONT0/\n";
+        Require(static_cast<bool>(ini));
+    }
+    SetEntitlements(iniFile);
+
+    static std::array<std::byte, 64> process{};
+    Require(ProcessParametersFixture::Install(process.data(), process.size()));
+    std::uint32_t sdkVersion = 0x01500000;
+    std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
+    AppContentInitParam init{};
+    AppContentBootParam boot{};
+    Require(sceAppContentInitialize(&init, &boot) == 0);
+    RequireConfigResolved();
+
+    NpUnifiedEntitlementLabel firstLabel{};
+    NpUnifiedEntitlementLabel secondLabel{};
+    NpUnifiedEntitlementLabel thirdLabel{};
+    std::memcpy(firstLabel.data, "COLLIDEADDON0001", 16);
+    std::memcpy(secondLabel.data, "COLLIDEADDON0002", 16);
+    std::memcpy(thirdLabel.data, "COLLIDEADDON0003", 16);
+    AppContentMountPoint firstMount{};
+    Require(sceAppContentAddcontMount(0, &firstLabel, &firstMount) == 0);
+    Require(std::strcmp(firstMount.data, "/addcont0") == 0);
+    RequireCollisionContents();
+
+    AppContentMountPoint secondMount{};
+    std::memset(&secondMount, 0x5a, sizeof(secondMount));
+    const auto untouchedSecondMount = secondMount;
+    Require(sceAppContentAddcontMount(0, &secondLabel, &secondMount) == ErrorBusy);
+    Require(std::memcmp(&secondMount, &untouchedSecondMount, sizeof(secondMount)) == 0);
+    RequireCollisionContents();
+
+    AppContentMountPoint thirdMount{};
+    std::memset(&thirdMount, 0x5a, sizeof(thirdMount));
+    const auto untouchedThirdMount = thirdMount;
+    Require(sceAppContentAddcontMount(0, &thirdLabel, &thirdMount) == ErrorBusy);
+    Require(std::memcmp(&thirdMount, &untouchedThirdMount, sizeof(thirdMount)) == 0);
+    RequireCollisionContents();
+
+    Require(sceAppContentAddcontUnmount(&firstMount) == 0);
+    Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
+    Require(sceAppContentAddcontMount(0, &thirdLabel, &thirdMount) == 0);
+    Require(std::strcmp(thirdMount.data, "/ADDCONT0/") == 0);
+    RequireCollisionContents();
+    Require(sceAppContentAddcontUnmount(&thirdMount) == 0);
+    Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
+    Require(sceAppContentAddcontMount(0, &secondLabel, &secondMount) == 0);
+    Require(std::strcmp(secondMount.data, "/addcont0/") == 0);
+    RequireCollisionContents();
+    Require(sceAppContentAddcontUnmount(&secondMount) == 0);
+    Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
+    std::filesystem::current_path(original);
+    std::filesystem::remove_all(root);
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "alias-collision") == 0) return RunAliasCollision();
     const auto original = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-appcontent-entitlements-" + std::to_string(std::random_device{}()));
     Require(std::filesystem::create_directories(root));

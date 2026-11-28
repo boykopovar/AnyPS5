@@ -432,6 +432,19 @@ class MainTests(unittest.TestCase):
             self.assertIn("anyps5-input-profile.ini", bundle.namelist())
             self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"), "Cross = KEY:G\n")
 
+    def test_valid_json_without_a_report_object_is_rejected(self):
+        for index, document in enumerate(("[]", "null", "42")):
+            out = self.root / f"non-object-{index}.zip"
+            self.report.write_text(document, encoding="utf-8")
+            for preview in ([], ["--preview"]):
+                with self.subTest(document=document, preview=preview):
+                    code, stdout, stderr = self.run_main(["--report", str(self.report), "--out", str(out), *preview])
+                    self.assertEqual(code, 1)
+                    self.assertEqual(stdout, "")
+                    message = "could not prepare the preview" if preview else "run report must be a JSON object"
+                    self.assertIn(message, stderr)
+                    self.assertFalse(out.exists())
+
     def test_invalid_report_json_is_an_error(self):
         self.report.write_text("not json", encoding="utf-8")
         code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(self.root / "b.zip")])

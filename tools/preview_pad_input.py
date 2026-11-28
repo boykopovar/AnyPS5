@@ -1,4 +1,5 @@
 import argparse
+import stat
 import sys
 from pathlib import Path
 
@@ -33,6 +34,12 @@ def main(argv=None):
         parent = args.path.parent
         if not parent.is_dir():
             parser.error(f"directory does not exist: {parent}")
+        try:
+            mode = args.path.stat().st_mode
+        except FileNotFoundError:
+            mode = None
+        if mode is not None and not stat.S_ISREG(mode):
+            parser.error(f"{args.path}: controller command must be a regular file")
         sequence = next_sequence(args.path)
     except (OSError, ValueError) as error:
         parser.error(str(error))

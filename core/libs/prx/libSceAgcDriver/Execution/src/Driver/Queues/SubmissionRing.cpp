@@ -36,6 +36,7 @@ namespace {
 constexpr std::size_t KeptWords = 512;
 constexpr std::size_t MaximumCapacity = 4096;
 constexpr std::size_t MaximumStallSeconds = 86400;
+constexpr std::size_t MaximumOrderHoldMicroseconds = 1000000;
 constexpr std::size_t PayloadWordsShown = 8;
 
 std::chrono::steady_clock::time_point realStallClock() { return std::chrono::steady_clock::now(); }
@@ -261,6 +262,16 @@ std::chrono::seconds StallWatchdogPeriod() {
     return value;
 }
 
+std::chrono::microseconds OrderHoldWait() {
+    static const std::chrono::microseconds value = [] {
+        constexpr auto reason = "APS5_ORDER_HOLD_WAIT_US must be a number of microseconds from 1 to 1000000";
+        const auto microseconds = environmentCount("APS5_ORDER_HOLD_WAIT_US", 200, MaximumOrderHoldMicroseconds, reason);
+        require(microseconds != 0, reason);
+        return std::chrono::microseconds(microseconds);
+    }();
+    return value;
+}
+
 void SetStallClock(StallClock clock) {
     stallClock.store(clock != nullptr ? clock : realStallClock);
 }
@@ -281,6 +292,7 @@ bool StallPromptEnabled() {
 
 bool ReadSubmissionRingSettings() {
     StallWatchdogPeriod();
+    OrderHoldWait();
     StallPromptEnabled();
     return SubmissionRingCapacity() != 0;
 }

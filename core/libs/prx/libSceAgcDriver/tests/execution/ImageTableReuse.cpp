@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -257,6 +258,79 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::StorageTexture::FlushPending(AddressOf(block.Texels(23)), TextureBytes, nullptr, "test");
     device.WaitIdle();
     Require(Row(block.Texels(23)) == Row(stored.data()), "image table reuse: the image store wrote the wrong values");
+}
+
+bool RunEntryMemo(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
+    using AgcDriver::Graphics::ShaderResources;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    using AgcDriver::Graphics::RuntimeSwitch;
+    const auto& context = device.graphicsContext();
+    auto* srt = block.Table() + 1024u;
+    auto* keys = block.Table() + 2048u;
+    auto* output = block.Table() + 4096u;
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(plain, texture, 0.375f);
+        SetRecord(block, texture, texture, &plain);
+    }
+    for (std::uint32_t key = 0; key < Records; ++key) keys[key] = key;
+    const auto table = Buffer(block.Table(), Records * Stride);
+    const auto keyView = Buffer(keys, static_cast<std::uint32_t>(sizeof(Keys)));
+    const auto outputView = Buffer(output, static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(table.begin(), table.end(), srt);
+    std::copy(keyView.begin(), keyView.end(), srt + 4);
+    std::copy(outputView.begin(), outputView.end(), srt + 8);
+    const auto program = Compile(device, block, srt, keys);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    struct Built {
+        std::shared_ptr<ShaderResources> resources;
+        std::uint64_t reused = 0;
+        std::uint64_t resolved = 0;
+        std::uint64_t memoHits = 0;
+    };
+    const auto make = [&](const std::string& what) {
+        const auto before = AgcDriver::Graphics::ImageTableReuses();
+        Built built{std::make_shared<ShaderResources>(context, shader)};
+        const auto after = AgcDriver::Graphics::ImageTableReuses();
+        built.reused = after.reused - before.reused;
+        built.resolved = after.resolved - before.resolved;
+        built.memoHits = after.entryMemoHits - before.entryMemoHits;
+        Require(built.resources->SampledTextures().size() == Records, "image table entry memo: " + what + ": the build does not hold one texture per table entry");
+        Require(built.reused + built.resolved == 1u, "image table entry memo: " + what + ": the build reused " + std::to_string(built.reused) + " and resolved " + std::to_string(built.resolved) + " tables, not one table");
+        return built;
+    };
+    const auto describe = [](const Built& built) { return std::to_string(built.reused) + " reused, " + std::to_string(built.resolved) + " resolved, " + std::to_string(built.memoHits) + " memo hits"; };
+    const auto build = [&](std::uint64_t reused, std::uint64_t memoHits, const std::string& what) {
+        auto built = make(what);
+        Require(built.reused == reused && built.memoHits == memoHits, "image table entry memo: " + what + ": " + describe(built) + "; expected " + std::to_string(reused) + " reused and " + std::to_string(memoHits) + " memo hits");
+        return built.resources;
+    };
+    const auto settle = [&](const std::string& what) {
+        for (std::uint64_t attempt = 0; attempt <= CpuWriteResolutions; ++attempt) {
+            auto built = make(what);
+            Require(built.memoHits == 0u, "image table entry memo: " + what + ": the memo served a build before any reuse checked the cache by key (" + describe(built) + ")");
+            if (built.reused == 1u) return built.resources;
+        }
+        Require(false, "image table entry memo: " + what + ": the table was not reused within " + std::to_string(CpuWriteResolutions + 1u) + " builds after it was resolved");
+        return std::shared_ptr<ShaderResources>{};
+    };
+    const auto first = build(0, 0, "the first build");
+    const auto second = settle("the first reuse, which checks the cache by key");
+    const auto third = build(1, 1, "the next build, with no cache entry erased since the first reuse");
+    Require(third->SampledTextures() == second->SampledTextures(), "image table entry memo: the build through the memo holds other textures than the reuse that checked the cache by key");
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+    const auto cleared = build(0, 0, "the build after the sampled-texture cache was cleared");
+    for (std::size_t texture = 0; texture < Records; ++texture) Require(cleared->SampledTextures()[texture] != first->SampledTextures()[texture], "image table entry memo: the build after the cache was cleared kept texture " + std::to_string(texture) + " of the erased entries");
+    const auto again = settle("the first reuse after the clear, which checks the cache by key");
+    const auto memo = build(1, 1, "the next reuse after the clear");
+    Require(memo->SampledTextures() == again->SampledTextures(), "image table entry memo: the memo after the clear holds other textures than the reuse before it");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTableEntryMemo, true);
+    const auto control = build(1, 0, "under APS5_NO_TABLE_ENTRY_MEMO");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTableEntryMemo, false);
+    Require(control->SampledTextures() == again->SampledTextures(), "image table entry memo: under APS5_NO_TABLE_ENTRY_MEMO the reuse holds other textures");
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+    return true;
 }
 
 bool RunReusedTableRecords(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
@@ -709,6 +783,15 @@ int main(int argc, char** argv) {
             auto name = selected.substr(2);
             std::replace(name.begin(), name.end(), '-', ' ');
             std::puts(("image table reuse: the " + name + " test passed").c_str());
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "entry-memo") {
+            GuestBlock shared;
+            GuestBlock plain;
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (!RunEntryMemo(*device, shared, plain)) return VulkanTestSkipped;
+            std::puts("image table entry memo tests passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "records") {

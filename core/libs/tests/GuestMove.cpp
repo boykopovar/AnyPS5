@@ -160,7 +160,7 @@ int main() {
     Require(second == kFirstHandle + kHandleStep);
     Require(sceMoveOpen(kUserId, 0, 0) == kAlreadyOpened);
     Require(sceMoveOpen(kUserId, 0, 1) == kAlreadyOpened);
-    Require(Throws([] { sceMoveOpen(kUserId + 1, 0, 2); }));
+    Require(sceMoveOpen(kUserId + 1, 0, 2) == kInvalidPort);
 
     Require(sceMoveGetDeviceInfo(first, nullptr) == kInvalidArg);
     Require(sceMoveGetExtensionPortInfo(first, nullptr) == kInvalidArg);
@@ -252,6 +252,8 @@ int main() {
         }
     }
     for (const auto h : slots) Require(h > 0);
+    Require(sceMoveOpen(kUserId, 0, 0) == kAlreadyOpened);
+    Require(sceMoveOpen(kUserId + 1, 0, 4) == kInvalidPort);
     Require(sceMoveOpen(kUserId, 2, 0) == kMaxCombined);
     for (const auto h : slots) Require(sceMoveClose(h) == kOk);
     SetCompiledSdkVersion(kFirstSdkRequiringData);

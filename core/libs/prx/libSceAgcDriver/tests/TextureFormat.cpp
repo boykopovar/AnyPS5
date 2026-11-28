@@ -23,7 +23,7 @@ VkFormat unsampledFormats[2]{};
 
 void unsampledFormatProperties(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
     *properties = {};
-    if (format != unsampledFormats[0] && format != unsampledFormats[1]) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if (format != unsampledFormats[0] && format != unsampledFormats[1]) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
 }
 
 std::uint32_t decodedWithout(VkFormat first = VK_FORMAT_UNDEFINED, VkFormat second = VK_FORMAT_UNDEFINED) {
@@ -94,6 +94,11 @@ void sampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* pro
     properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 }
 
+void transferSampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+}
+
 void noSampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
     *properties = {};
 }
@@ -116,6 +121,23 @@ void scaledFormatTests() {
     reject([&] { SampledTextureFormat(context, 10u); }, "unsupported guest texture format");
     Require(SampledTextureFormat(context, 4u) == VK_FORMAT_R8_SSCALED && SampledTextureFormat(context, 9u) == VK_FORMAT_R16_USCALED, "scaled formats the host samples must resolve");
     Require(SampledTextureFormat(context, 128u) == VK_FORMAT_R8_SRGB, "a device without scaled-image support still samples sRGB");
+}
+
+void optionalFormatTests() {
+    Context context{};
+    context.optionalSampledFormats = OptionalSampledFormats(transferSampledFormatProperties, VK_NULL_HANDLE);
+    Require(SampledTextureFormat(context, 51u) == VK_FORMAT_A2B10G10R10_SNORM_PACK32 && SampledTextureFormat(context, 55u) == VK_FORMAT_A2B10G10R10_SINT_PACK32, "10_10_10_2 SNORM and SINT must sample natively where the host supports them");
+    Require(SampledTextureFormat(context, 137u) == VK_FORMAT_R4G4_UNORM_PACK8, "4_4 must sample natively where the host supports R4G4_UNORM_PACK8");
+    context.optionalSampledFormats = OptionalSampledFormats(sampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : {51u, 55u, 137u}) reject([&] { SampledTextureFormat(context, format); }, "unsupported guest texture format " + std::to_string(format));
+    context.optionalSampledFormats = OptionalSampledFormats(noSampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : {51u, 55u, 137u}) reject([&] { SampledTextureFormat(context, format); }, "unsupported guest texture format " + std::to_string(format));
+    Require(SampledTextureFormat(context, 50u) == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && SampledTextureFormat(context, 54u) == VK_FORMAT_A2B10G10R10_UINT_PACK32, "10_10_10_2 UNORM and UINT do not depend on the optional formats");
+    unsampledFormats[0] = VK_FORMAT_A2B10G10R10_SINT_PACK32;
+    unsampledFormats[1] = VK_FORMAT_A2B10G10R10_SINT_PACK32;
+    context.optionalSampledFormats = OptionalSampledFormats(unsampledFormatProperties, VK_NULL_HANDLE);
+    Require(SampledTextureFormat(context, 51u) == VK_FORMAT_A2B10G10R10_SNORM_PACK32, "10_10_10_2 SNORM must sample where only SINT is missing");
+    reject([&] { SampledTextureFormat(context, 55u); }, "unsupported guest texture format 55");
 }
 
 void packedChannelTests() {
@@ -315,6 +337,7 @@ void RunTextureFormatTests() {
     srgbDecodeTests();
     srgbTwinTests();
     scaledFormatTests();
+    optionalFormatTests();
     packedChannelTests();
     repackedFormatTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
