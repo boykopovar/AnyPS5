@@ -34,13 +34,13 @@ static void Require(bool condition, std::source_location location = std::source_
 }
 
 template <typename TFunction, typename TModule>
-static TFunction Import(TModule module, const char* name, const char* nid, bool patched) {
-    const std::string symbol = patched ? nid : std::string(name) + "_nid_postfix";
+static TFunction Import(TModule module, const char* symbol) {
 #ifdef _WIN32
-    auto address = GetProcAddress(module, symbol.c_str());
+    auto address = GetProcAddress(module, symbol);
 #else
-    auto address = dlsym(module, symbol.c_str());
+    auto address = dlsym(module, symbol);
 #endif
+    if (!address) std::fprintf(stderr, "Missing export %s\n", symbol);
     Require(address != nullptr);
     return std::bit_cast<TFunction>(address);
 }
@@ -205,7 +205,8 @@ static void CheckFont(const Api& api, GuestLibrary* library, FT_Library nativeLi
 }
 
 int main(int argc, char** argv) {
-    Require(argc == 3);
+    const bool ot = argc == 4 && std::strcmp(argv[3], "ot") == 0;
+    Require(argc == 3 || ot);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
@@ -216,12 +217,21 @@ int main(int argc, char** argv) {
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(module != nullptr);
+    auto faceModule = module;
+    const char* rawPrivate = "FT_Get_PS_Font_Private_nid_postfix";
+#ifdef _WIN32
+    if (ot) {
+        rawPrivate = "FT_Get_PS_Font_PrivateForward_nid_no_patch";
+        if (!patched) faceModule = GetModuleHandleW(L"libSceFreeType.prx");
+    }
+#endif
+    Require(faceModule != nullptr);
     Api api{};
-    api.initialize = Import<decltype(api.initialize)>(module, "FT_Init_FreeType", "GNsiLzm4SH8", patched);
-    api.doneLibrary = Import<decltype(api.doneLibrary)>(module, "FT_Done_FreeType", "dH02CpEEcYk", patched);
-    api.newFace = Import<decltype(api.newFace)>(module, "FT_New_Memory_Face", "40Wa2neSLM0", patched);
-    api.doneFace = Import<decltype(api.doneFace)>(module, "FT_Done_Face", "OgFczHko0w8", patched);
-    api.getPrivate = Import<decltype(api.getPrivate)>(module, "FT_Get_PS_Font_Private", "+yNEa4OFH1M", patched);
+    api.initialize = Import<decltype(api.initialize)>(faceModule, patched ? "GNsiLzm4SH8" : "FT_Init_FreeType_nid_postfix");
+    api.doneLibrary = Import<decltype(api.doneLibrary)>(faceModule, patched ? "dH02CpEEcYk" : "FT_Done_FreeType_nid_postfix");
+    api.newFace = Import<decltype(api.newFace)>(faceModule, patched ? "40Wa2neSLM0" : "FT_New_Memory_Face_nid_postfix");
+    api.doneFace = Import<decltype(api.doneFace)>(faceModule, patched ? "OgFczHko0w8" : "FT_Done_Face_nid_postfix");
+    api.getPrivate = Import<decltype(api.getPrivate)>(module, patched ? "+yNEa4OFH1M" : rawPrivate);
     GuestPSPrivate output;
     std::memset(&output, 0xA5, sizeof(output));
     std::array<unsigned char, sizeof(output)> untouched{};
