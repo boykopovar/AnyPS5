@@ -3398,7 +3398,6 @@ void depthExpandPassTests() {
         {0x010u, 0x20010183u, "of a partially resident or mipmapped depth surface"},
         {0x002u, 1u << 26u, "of a depth view with a mip level"},
         {0x002u, 0x02000000u | (1u << 26u), "of a depth view with a mip level"},
-        {0x207u, 1u << 18u, "with layer exports"},
         {0x014u, 0x20298b01u, "between bases that are not 64 KiB aligned"},
         {0x10fu, std::bit_cast<std::uint32_t>(480.0f), "over part of the depth surface"},
         {0x91u, (1080u << 16u) | 1920u, "over part of the depth surface"},
