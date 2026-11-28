@@ -1030,6 +1030,13 @@ int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...) {
 }
 
 
+int APS5_VABI mkfifoat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
+    if (fd == GuestAtFdcwd || copy[0] == '/') return mkfifo_nid_postfix(copy.c_str(), mode);
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
