@@ -74,6 +74,10 @@ struct CieEncoding {
     std::uint8_t PointerEncoding = kFormatAbsPtr;
     std::uint8_t LsdaEncoding = kEncodingOmit;
     bool Augmented = false;
+    std::size_t PersonalityField = 0;
+    std::uint8_t PersonalityEncoding = kEncodingOmit;
+    std::uint64_t PersonalityAddress = 0;
+    bool PersonalityIndirect = false;
 };
 
 struct CieRecord {
@@ -271,7 +275,7 @@ void StoreUnwindPointer(std::span<std::uint8_t> bytes, const std::size_t at, con
     StoreUnwindFormat(bytes, at, static_cast<std::uint8_t>(encoding & kEncodingFormatMask), value);
 }
 
-CieEncoding ReadCieEncoding(std::span<std::uint8_t> bytes, const std::size_t cieStart) {
+CieEncoding ReadCieEncoding(std::span<std::uint8_t> bytes, const std::size_t cieStart, const Domain::VirtualAddress ehFrameAddress) {
     UnwindCursor cursor{bytes, cieStart, bytes.size()};
     const auto length = ReadUnwindU32(cursor);
     if (length == kExtendedRecordLength)
@@ -321,7 +325,12 @@ CieEncoding ReadCieEncoding(std::span<std::uint8_t> bytes, const std::size_t cie
             break;
         case 'P': {
             const auto personalityEncoding = ReadUnwindByte(cursor);
-            (void)ReadUnwindFormat(cursor, personalityEncoding);
+            const auto personalityField = cursor.Position;
+            const auto personality = ReadUnwindPointer(cursor, personalityEncoding, ehFrameAddress + personalityField, 0);
+            encoding.PersonalityField = personalityField;
+            encoding.PersonalityEncoding = personalityEncoding;
+            encoding.PersonalityAddress = personality.Address;
+            encoding.PersonalityIndirect = personality.Indirect;
             break;
         }
         case 'S':
@@ -333,6 +342,35 @@ CieEncoding ReadCieEncoding(std::span<std::uint8_t> bytes, const std::size_t cie
     if (cursor.Position != augmentationEnd)
         throw CodegenException(".eh_frame CIE augmentation size mismatch", cieStart);
     return encoding;
+}
+
+void PatchCiePersonality(
+    std::span<std::uint8_t> ehFrame,
+    CieEncoding& cie,
+    const Domain::VirtualAddress ehFrameAddress,
+    const CodeExtent& code,
+    const AddressMap& map
+) {
+    if (cie.PersonalityAddress == 0)
+        return;
+    if (cie.PersonalityIndirect)
+        throw CodegenException("Indirect .eh_frame pointers cannot be adjusted", cie.PersonalityField);
+    const auto personalityOffset = OffsetInCode(cie.PersonalityAddress, code);
+    if (!personalityOffset)
+        return;
+    const auto mapped = AddressOf(map.MapAddress(*personalityOffset), code);
+    if (mapped == cie.PersonalityAddress)
+        return;
+    const auto application = static_cast<std::uint8_t>(cie.PersonalityEncoding & kEncodingApplicationMask);
+    const auto fieldAddress = ehFrameAddress + cie.PersonalityField;
+    const auto oldValue = application == kApplicationPcRel
+        ? SignedDifference(cie.PersonalityAddress, fieldAddress)
+        : static_cast<std::int64_t>(cie.PersonalityAddress);
+    const auto newValue = application == kApplicationPcRel
+        ? SignedDifference(mapped, fieldAddress)
+        : static_cast<std::int64_t>(mapped);
+    StoreUnwindPointer(ehFrame, cie.PersonalityField, cie.PersonalityEncoding, newValue);
+    cie.PersonalityAddress = mapped;
 }
 
 void RequireCfiLocationsStable(UnwindCursor& cursor, const std::int64_t beginOffset, const AddressMap& map) {
@@ -349,6 +387,8 @@ void RequireCfiLocationsStable(UnwindCursor& cursor, const std::int64_t beginOff
         } else if ((opcode & 0xC0) != 0xC0) {
             switch (opcode) {
             case 0x00:
+            case 0x0A:
+            case 0x0B:
             case 0x2D:
                 break;
             case 0x01:
@@ -441,38 +481,45 @@ void PatchFde(
         return;
     if (begin.Indirect)
         throw CodegenException("Indirect .eh_frame pointers cannot be adjusted", beginField);
-    const auto beginOffset = OffsetInCode(begin.Address, code);
-    if (!beginOffset)
-        return;
     if (range > std::numeric_limits<std::uint64_t>::max() - begin.Address)
         throw CodegenException(".eh_frame FDE range overflows the address space", beginField);
     const auto oldEnd = begin.Address + range;
-    if (oldEnd != code.Address + code.Size && !OffsetInCode(oldEnd, code))
-        throw CodegenException(".eh_frame FDE extends past the rewritten code", beginField);
-    const auto newBegin = AddressOf(map.MapAddress(*beginOffset), code);
-    const auto newEnd = MapCodeEnd(oldEnd, code, map);
-    if (newEnd < newBegin)
-        throw CodegenException(".eh_frame FDE range shrinks below zero", beginField);
-    if (newBegin != begin.Address) {
-        const auto value = application == kApplicationPcRel
-            ? SignedDifference(newBegin, beginFieldAddress)
-            : static_cast<std::int64_t>(newBegin);
-        StoreUnwindPointer(ehFrame, beginField, cie.PointerEncoding, value);
+    const auto beginOffset = OffsetInCode(begin.Address, code);
+    auto newBegin = begin.Address;
+    if (beginOffset) {
+        if (oldEnd != code.Address + code.Size && !OffsetInCode(oldEnd, code))
+            throw CodegenException(".eh_frame FDE extends past the rewritten code", beginField);
+        newBegin = AddressOf(map.MapAddress(*beginOffset), code);
+        const auto newEnd = MapCodeEnd(oldEnd, code, map);
+        if (newEnd < newBegin)
+            throw CodegenException(".eh_frame FDE range shrinks below zero", beginField);
+        if (newBegin != begin.Address) {
+            const auto value = application == kApplicationPcRel
+                ? SignedDifference(newBegin, beginFieldAddress)
+                : static_cast<std::int64_t>(newBegin);
+            StoreUnwindPointer(ehFrame, beginField, cie.PointerEncoding, value);
+        }
+        const auto newRange = newEnd - newBegin;
+        if (newRange != range)
+            StoreUnwindFormat(ehFrame, rangeField, rangeFormat, static_cast<std::int64_t>(newRange));
+    } else if (oldEnd > code.Address && begin.Address < code.Address + code.Size) {
+        throw CodegenException(".eh_frame FDE overlaps the rewritten code", beginField);
     }
-    const auto newRange = newEnd - newBegin;
-    if (newRange != range)
-        StoreUnwindFormat(ehFrame, rangeField, rangeFormat, static_cast<std::int64_t>(newRange));
     if (cie.Augmented) {
         const auto augmentationLength = ReadUnwindLeb(cursor, false);
         if (augmentationLength > cursor.End - cursor.Position)
             throw CodegenException(".eh_frame FDE augmentation exceeds its record", cursor.Position);
+        const auto augmentationEnd = cursor.Position + static_cast<std::size_t>(augmentationLength);
         if (cie.LsdaEncoding == kEncodingOmit) {
             if (augmentationLength != 0)
                 throw CodegenException("Unsupported .eh_frame FDE augmentation", cursor.Position);
         } else {
-            const auto lsdaField = cursor.Position;
+            UnwindCursor lsdaCursor{ehFrame, cursor.Position, augmentationEnd};
+            const auto lsdaField = lsdaCursor.Position;
             const auto lsdaFieldAddress = ehFrameAddress + lsdaField;
-            const auto lsda = ReadUnwindPointer(cursor, cie.LsdaEncoding, lsdaFieldAddress, begin.Address);
+            const auto lsda = ReadUnwindPointer(lsdaCursor, cie.LsdaEncoding, lsdaFieldAddress, begin.Address);
+            if (lsdaCursor.Position != augmentationEnd)
+                throw CodegenException(".eh_frame FDE augmentation size mismatch", lsdaField);
             if (lsda.Address != 0) {
                 if (lsda.Indirect)
                     throw CodegenException("Indirect .eh_frame pointers cannot be adjusted", lsdaField);
@@ -494,8 +541,10 @@ void PatchFde(
                     StoreUnwindPointer(ehFrame, lsdaField, cie.LsdaEncoding, newValue);
             }
         }
+        cursor.Position = augmentationEnd;
     }
-    RequireCfiLocationsStable(cursor, *beginOffset, map);
+    if (beginOffset)
+        RequireCfiLocationsStable(cursor, *beginOffset, map);
 }
 
 }
@@ -524,11 +573,19 @@ void FixupRelativeJumpTable(const RelativeJumpTableRef& table, const CodeExtent&
         return;
     const auto base = MapCodeAddress(table.Address, code, map);
     for (auto& entry : table.Entries) {
-        const auto target = static_cast<std::int64_t>(table.Address) + static_cast<std::int64_t>(entry);
-        if (target < 0)
-            throw CodegenException("Relative jump table entry points before the address space", table.Address);
-        const auto mapped = MapCodeAddress(static_cast<Domain::VirtualAddress>(target), code, map);
-        const auto displacement = static_cast<std::int64_t>(mapped) - static_cast<std::int64_t>(base);
+        std::uint64_t target = 0;
+        if (entry >= 0) {
+            if (table.Address > std::numeric_limits<std::uint64_t>::max() - static_cast<std::uint64_t>(entry))
+                throw CodegenException("Relative jump table entry overflows the address space", table.Address);
+            target = table.Address + static_cast<std::uint64_t>(entry);
+        } else {
+            const auto magnitude = static_cast<std::uint64_t>(-(static_cast<std::int64_t>(entry) + 1)) + 1;
+            if (table.Address < magnitude)
+                throw CodegenException("Relative jump table entry points before the address space", table.Address);
+            target = table.Address - magnitude;
+        }
+        const auto mapped = MapCodeAddress(target, code, map);
+        const auto displacement = SignedDifference(mapped, base);
         if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
             throw CodegenException("Relative jump table displacement overflows after rewrite", table.Address);
         entry = static_cast<std::int32_t>(displacement);
@@ -569,7 +626,8 @@ void FixupEhFrame(std::span<std::uint8_t> ehFrame, const Domain::VirtualAddress 
                 encoding = record.Encoding;
         }
         if (!encoding) {
-            encoding = ReadCieEncoding(ehFrame, cieStart);
+            encoding = ReadCieEncoding(ehFrame, cieStart, ehFrameAddress);
+            PatchCiePersonality(ehFrame, *encoding, ehFrameAddress, code, map);
             cies.push_back({cieStart, *encoding});
         }
         PatchFde(ehFrame, position, recordEnd, *encoding, ehFrameAddress, code, map);

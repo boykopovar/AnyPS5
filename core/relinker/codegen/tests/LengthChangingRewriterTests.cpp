@@ -194,6 +194,7 @@ void TestShrinkRewrite() {
     const auto result = Codegen::X64InstructionRewriter{}.Rewrite(original, {kShrinkCut, kShrinkReplacement});
 
     Require(result.Bytes.size() == original.size() - 4, "Shrinking rewrite did not shrink the section by four bytes");
+    Require(result.Mapping.Shifts().size() == 1, "Shrinking rewrite did not report one layout shift");
     Require(result.Mapping.Shifts().front() == Codegen::LayoutShift{kShrinkCut, kShrinkCut + 6, -4}, "Shrinking rewrite reported a wrong layout shift");
     Require(std::equal(kShrinkReplacement.begin(), kShrinkReplacement.end(), result.Bytes.begin() + static_cast<std::ptrdiff_t>(kShrinkCut)), "Shrinking rewrite wrote other replacement bytes");
 
@@ -212,7 +213,7 @@ void TestRelocations(const std::size_t originalSize, const Codegen::AddressMap& 
     const CodeExtent code{0x1000, originalSize};
     std::vector<CodeRelocation> relocations{
         {0x1002, 0x1014, RelocationAddendKind::CodeAddress},
-        {0x1014, 0x1018, RelocationAddendKind::SymbolValue},
+        {0x1014, 0x1014, RelocationAddendKind::SymbolValue},
         {0x5000, 0x1000, RelocationAddendKind::CodeAddress},
         {0x1000, -4, RelocationAddendKind::SymbolValue},
     };
@@ -220,7 +221,7 @@ void TestRelocations(const std::size_t originalSize, const Codegen::AddressMap& 
     Require(relocations[0].Offset == 0x1002, "Relocation slot before the cut moved");
     Require(relocations[0].Addend == 0x1018, "Relative relocation addend into shifted code did not move");
     Require(relocations[1].Offset == 0x1018, "Relocation slot after the cut did not move");
-    Require(relocations[1].Addend == 0x1018, "Symbol-relative relocation addend was treated as an address");
+    Require(relocations[1].Addend == 0x1014, "Symbol-relative relocation addend was treated as an address");
     Require(relocations[2].Offset == 0x5000, "Relocation slot outside the code moved");
     Require(relocations[2].Addend == 0x1000, "Relocation addend before the cut moved");
     Require(relocations[3].Offset == 0x1000, "Relocation slot at the code start moved");
@@ -276,6 +277,10 @@ void TestRelativeJumpTables() {
     std::vector<std::int32_t> tableInsideCut{-1};
     RelativeJumpTableRef tableInsideCutRef{tableInsideCut, 0x2004};
     RequireFailure([&] { Codegen::FixupRelativeJumpTable(tableInsideCutRef, code, result.Mapping); }, "inside a rewritten instruction", "Jump table base inside the cut was mapped");
+
+    std::vector<std::int32_t> underflow{-1};
+    RelativeJumpTableRef underflowRef{underflow, 0};
+    RequireFailure([&] { Codegen::FixupRelativeJumpTable(underflowRef, code, result.Mapping); }, "points before the address space", "Jump table entry before the address space was accepted");
 }
 
 constexpr std::uint8_t kEncodeAbsPtr = 0x00;
@@ -369,28 +374,45 @@ void PatchLength(Bytes& frame, const std::size_t start) {
     Write<std::uint32_t>(frame, start, static_cast<std::uint32_t>(frame.size() - start - 4));
 }
 
-std::size_t AppendCie(Bytes& frame, const std::uint8_t pointerEncoding, const std::uint8_t lsdaEncoding) {
+std::size_t AppendCie(
+    Bytes& frame,
+    const std::uint8_t pointerEncoding,
+    const std::uint8_t lsdaEncoding,
+    const std::uint64_t frameAddress,
+    const std::optional<std::pair<std::uint8_t, std::uint64_t>>& personality = {},
+    std::size_t* personalityField = nullptr
+) {
     const auto start = frame.size();
     AppendU32(frame, 0);
     AppendU32(frame, 0);
     AppendByte(frame, 1);
     const bool encoded = pointerEncoding != kEncodeOmit;
     const bool lsda = encoded && lsdaEncoding != kEncodeOmit;
+    const bool personal = encoded && personality.has_value();
     if (encoded) {
         AppendByte(frame, 'z');
         AppendByte(frame, 'R');
         if (lsda)
             AppendByte(frame, 'L');
+        if (personal)
+            AppendByte(frame, 'P');
     }
     AppendByte(frame, 0);
     AppendByte(frame, 1);
     AppendByte(frame, 0x78);
     AppendByte(frame, 16);
     if (encoded) {
-        AppendByte(frame, static_cast<std::uint8_t>(1 + (lsda ? 1 : 0)));
+        const auto augmentationSize = 1 + (lsda ? 1 : 0) + (personal ? 1 + EncodingWidth(personality->first) : 0);
+        AppendByte(frame, static_cast<std::uint8_t>(augmentationSize));
         AppendByte(frame, pointerEncoding);
         if (lsda)
             AppendByte(frame, lsdaEncoding);
+        if (personal) {
+            AppendByte(frame, personality->first);
+            if (personalityField)
+                *personalityField = frame.size();
+            AppendPointer(frame, frameAddress + frame.size(), personality->first, personality->second);
+        }
     }
     PatchLength(frame, start);
     return start;
@@ -465,7 +487,7 @@ void TestEhFrameFixups(const std::size_t originalSize, const Codegen::AddressMap
     constexpr std::uint64_t kFrameAddress = 0x8000;
     const Codegen::CodeExtent code{0x1000, originalSize};
     Bytes frame;
-    const auto cie = AppendCie(frame, kEncodePcRelSdata4, kEncodeOmit);
+    const auto cie = AppendCie(frame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
     const auto before = AppendFde(frame, cie, kEncodePcRelSdata4, kFrameAddress, 0x1000, 0x08, std::nullopt);
     const auto spanning = AppendFde(frame, cie, kEncodePcRelSdata4, kFrameAddress, 0x1008, 0x08, std::nullopt);
     const auto after = AppendFde(frame, cie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x07, std::nullopt);
@@ -485,7 +507,7 @@ void TestEhFrameFixups(const std::size_t originalSize, const Codegen::AddressMap
     Require(Read<std::uint32_t>(frame, ending.RangeField) == 0x0E, "FDE ending at the cut changed its pc_range");
 
     Bytes lsdaFrame;
-    const auto lsdaCie = AppendCie(lsdaFrame, kEncodePcRelSdata4, kEncodePcRelSdata4);
+    const auto lsdaCie = AppendCie(lsdaFrame, kEncodePcRelSdata4, kEncodePcRelSdata4, kFrameAddress);
     const auto lsdaFde = AppendFde(lsdaFrame, lsdaCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04, LsdaPointer{kEncodePcRelSdata4, 0x1014});
     const auto outsideFde = AppendFde(lsdaFrame, lsdaCie, kEncodePcRelSdata4, kFrameAddress, 0x1000, 0x04, LsdaPointer{kEncodePcRelSdata4, 0x9000});
     Codegen::FixupEhFrame(lsdaFrame, kFrameAddress, code, map);
@@ -493,28 +515,39 @@ void TestEhFrameFixups(const std::size_t originalSize, const Codegen::AddressMap
     Require(ReadEncodedAddress(lsdaFrame, lsdaFde.LsdaField, kFrameAddress, kEncodePcRelSdata4) == 0x1018, "LSDA pointer into shifted code did not move");
     Require(ReadEncodedAddress(lsdaFrame, outsideFde.LsdaField, kFrameAddress, kEncodePcRelSdata4) == 0x9000, "LSDA pointer outside the code moved");
 
+    Bytes mismatchFrame;
+    const auto mismatchCie = AppendCie(mismatchFrame, kEncodePcRelSdata4, kEncodePcRelSdata4, kFrameAddress);
+    const auto mismatchFde = AppendFde(mismatchFrame, mismatchCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04, LsdaPointer{kEncodePcRelSdata4, 0x9000});
+    AppendByte(mismatchFrame, 0x44);
+    AppendByte(mismatchFrame, 0x44);
+    AppendByte(mismatchFrame, 0x44);
+    AppendByte(mismatchFrame, 0x44);
+    Write<std::uint8_t>(mismatchFrame, mismatchFde.LsdaField - 1, 8);
+    PatchLength(mismatchFrame, mismatchFde.Start);
+    RequireFailure([&] { Codegen::FixupEhFrame(mismatchFrame, kFrameAddress, code, map); }, "augmentation size mismatch", "FDE LSDA shorter than its augmentation was accepted");
+
     Bytes slebFrame;
-    const auto slebCie = AppendCie(slebFrame, kEncodeSleb, kEncodeOmit);
+    const auto slebCie = AppendCie(slebFrame, kEncodeSleb, kEncodeOmit, kFrameAddress);
     (void)AppendFde(slebFrame, slebCie, kEncodeSleb, kFrameAddress, 0x1010, 0x04, std::nullopt);
     RequireFailure([&] { Codegen::FixupEhFrame(slebFrame, kFrameAddress, code, map); }, "variable-length", "Variable-length FDE start was re-encoded");
 
     Bytes indirectFrame;
-    const auto indirectCie = AppendCie(indirectFrame, kEncodePcRelIndirectSdata4, kEncodeOmit);
+    const auto indirectCie = AppendCie(indirectFrame, kEncodePcRelIndirectSdata4, kEncodeOmit, kFrameAddress);
     (void)AppendFde(indirectFrame, indirectCie, kEncodePcRelIndirectSdata4, kFrameAddress, 0x1010, 0x04, std::nullopt);
     RequireFailure([&] { Codegen::FixupEhFrame(indirectFrame, kFrameAddress, code, map); }, "Indirect", "Indirect FDE start was adjusted");
 
     Bytes dataRelFrame;
-    const auto dataRelCie = AppendCie(dataRelFrame, kEncodeDataRelAbsPtr, kEncodeOmit);
+    const auto dataRelCie = AppendCie(dataRelFrame, kEncodeDataRelAbsPtr, kEncodeOmit, kFrameAddress);
     (void)AppendFde(dataRelFrame, dataRelCie, kEncodeAbsPtr, kFrameAddress, 0x1010, 0x04, std::nullopt);
     RequireFailure([&] { Codegen::FixupEhFrame(dataRelFrame, kFrameAddress, code, map); }, "Unsupported .eh_frame pointer base", "Data-relative FDE start was adjusted");
 
     Bytes overrunFrame;
-    const auto overrunCie = AppendCie(overrunFrame, kEncodePcRelSdata4, kEncodeOmit);
+    const auto overrunCie = AppendCie(overrunFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
     (void)AppendFde(overrunFrame, overrunCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x10, std::nullopt);
     RequireFailure([&] { Codegen::FixupEhFrame(overrunFrame, kFrameAddress, code, map); }, "extends past the rewritten code", "FDE past the rewritten code was adjusted");
 
     Bytes defaultFrame;
-    const auto defaultCie = AppendCie(defaultFrame, kEncodeOmit, kEncodeOmit);
+    const auto defaultCie = AppendCie(defaultFrame, kEncodeOmit, kEncodeOmit, kFrameAddress);
     const auto defaultFde = AppendFde(defaultFrame, defaultCie, kEncodeAbsPtr, kFrameAddress, 0x1010, 0x04, std::nullopt);
     Codegen::FixupEhFrame(defaultFrame, kFrameAddress, code, map);
     Require(ReadEncodedAddress(defaultFrame, defaultFde.BeginField, kFrameAddress, kEncodeAbsPtr) == 0x1014, "FDE without an R augmentation did not default to absolute pointers");
@@ -525,7 +558,7 @@ void TestUnwindEdgeCases(const std::size_t originalSize, const Codegen::AddressM
     const Codegen::CodeExtent code{0x1000, originalSize};
 
     Bytes stableFrame;
-    const auto stableCie = AppendCie(stableFrame, kEncodePcRelSdata4, kEncodeOmit);
+    const auto stableCie = AppendCie(stableFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
     const auto stableFde = AppendFde(stableFrame, stableCie, kEncodePcRelSdata4, kFrameAddress, 0x1000, 0x08, std::nullopt);
     AppendByte(stableFrame, 0x44);
     AppendByte(stableFrame, 0x44);
@@ -534,30 +567,70 @@ void TestUnwindEdgeCases(const std::size_t originalSize, const Codegen::AddressM
     Require(Read<std::uint32_t>(stableFrame, stableFde.RangeField) == 0x08, "CFI rows before the cut changed their pc_range");
 
     Bytes crossingFrame;
-    const auto crossingCie = AppendCie(crossingFrame, kEncodePcRelSdata4, kEncodeOmit);
+    const auto crossingCie = AppendCie(crossingFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
     const auto crossingFde = AppendFde(crossingFrame, crossingCie, kEncodePcRelSdata4, kFrameAddress, 0x1008, 0x08, std::nullopt);
     AppendByte(crossingFrame, 0x48);
     PatchLength(crossingFrame, crossingFde.Start);
     RequireFailure([&] { Codegen::FixupEhFrame(crossingFrame, kFrameAddress, code, map); }, "CFI location crosses", "CFI row spanning the cut was accepted");
 
     Bytes indirectLsdaFrame;
-    const auto indirectLsdaCie = AppendCie(indirectLsdaFrame, kEncodePcRelSdata4, kEncodePcRelIndirectSdata4);
+    const auto indirectLsdaCie = AppendCie(indirectLsdaFrame, kEncodePcRelSdata4, kEncodePcRelIndirectSdata4, kFrameAddress);
     (void)AppendFde(indirectLsdaFrame, indirectLsdaCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04, LsdaPointer{kEncodePcRelIndirectSdata4, 0x9000});
     RequireFailure([&] { Codegen::FixupEhFrame(indirectLsdaFrame, kFrameAddress, code, map); }, "Indirect", "Indirect LSDA outside the code was skipped");
 
     Bytes functionRelFrame;
-    const auto functionRelCie = AppendCie(functionRelFrame, kEncodePcRelSdata4, kEncodeFunctionRelSdata4);
+    const auto functionRelCie = AppendCie(functionRelFrame, kEncodePcRelSdata4, kEncodeFunctionRelSdata4, kFrameAddress);
     const auto functionRelFde = AppendFde(functionRelFrame, functionRelCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04,
         LsdaPointer{kEncodeFunctionRelSdata4, static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1004 - 0x1010))});
     Codegen::FixupEhFrame(functionRelFrame, kFrameAddress, code, map);
     Require(Read<std::int32_t>(functionRelFrame, functionRelFde.LsdaField) == 0x1004 - 0x1014, "Function-relative LSDA kept the old function base");
 
     Bytes outsideFunctionRelFrame;
-    const auto outsideFunctionRelCie = AppendCie(outsideFunctionRelFrame, kEncodePcRelSdata4, kEncodeFunctionRelSdata4);
+    const auto outsideFunctionRelCie = AppendCie(outsideFunctionRelFrame, kEncodePcRelSdata4, kEncodeFunctionRelSdata4, kFrameAddress);
     const auto outsideFunctionRelFde = AppendFde(outsideFunctionRelFrame, outsideFunctionRelCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04,
         LsdaPointer{kEncodeFunctionRelSdata4, static_cast<std::uint64_t>(static_cast<std::int64_t>(0x9000 - 0x1010))});
     Codegen::FixupEhFrame(outsideFunctionRelFrame, kFrameAddress, code, map);
     Require(Read<std::int32_t>(outsideFunctionRelFrame, outsideFunctionRelFde.LsdaField) == 0x9000 - 0x1014, "Function-relative LSDA outside the code kept the old function base");
+
+    Bytes stateFrame;
+    const auto stateCie = AppendCie(stateFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
+    const auto stateFde = AppendFde(stateFrame, stateCie, kEncodePcRelSdata4, kFrameAddress, 0x1000, 0x08, std::nullopt);
+    AppendByte(stateFrame, 0x0A);
+    AppendByte(stateFrame, 0x0B);
+    AppendByte(stateFrame, 0x44);
+    AppendByte(stateFrame, 0x0A);
+    AppendByte(stateFrame, 0x0B);
+    PatchLength(stateFrame, stateFde.Start);
+    Codegen::FixupEhFrame(stateFrame, kFrameAddress, code, map);
+    Require(Read<std::uint32_t>(stateFrame, stateFde.RangeField) == 0x08, "CFI remember/restore state was rejected");
+
+    Bytes coveringFrame;
+    const auto coveringCie = AppendCie(coveringFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
+    (void)AppendFde(coveringFrame, coveringCie, kEncodePcRelSdata4, kFrameAddress, 0x0FF8, 0x20, std::nullopt);
+    RequireFailure([&] { Codegen::FixupEhFrame(coveringFrame, kFrameAddress, code, map); }, "overlaps the rewritten code", "FDE overlapping the rewritten code from outside was skipped");
+
+    Bytes outsideLsdaFrame;
+    const auto outsideLsdaCie = AppendCie(outsideLsdaFrame, kEncodePcRelSdata4, kEncodePcRelSdata4, kFrameAddress);
+    const auto outsideLsdaFde = AppendFde(outsideLsdaFrame, outsideLsdaCie, kEncodePcRelSdata4, kFrameAddress, 0x0FF8, 0x04, LsdaPointer{kEncodePcRelSdata4, 0x1010});
+    Codegen::FixupEhFrame(outsideLsdaFrame, kFrameAddress, code, map);
+    Require(ReadEncodedAddress(outsideLsdaFrame, outsideLsdaFde.LsdaField, kFrameAddress, kEncodePcRelSdata4) == 0x1014, "Out-of-code FDE with an in-code LSDA did not move the LSDA");
+
+    Bytes personalityFrame;
+    std::size_t personalityField = 0;
+    const auto personalityCie = AppendCie(personalityFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress,
+        std::pair<std::uint8_t, std::uint64_t>{kEncodePcRelSdata4, 0x1014}, &personalityField);
+    const auto personalityFde = AppendFde(personalityFrame, personalityCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04, std::nullopt);
+    Codegen::FixupEhFrame(personalityFrame, kFrameAddress, code, map);
+    Require(ReadEncodedAddress(personalityFrame, personalityField, kFrameAddress, kEncodePcRelSdata4) == 0x1018, "Personality pointer into shifted code did not move");
+    Require(ReadEncodedAddress(personalityFrame, personalityFde.BeginField, kFrameAddress, kEncodePcRelSdata4) == 0x1014, "FDE under a personality CIE did not move its pc_begin");
+
+    Bytes outsidePersonalityFrame;
+    std::size_t outsidePersonalityField = 0;
+    const auto outsidePersonalityCie = AppendCie(outsidePersonalityFrame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress,
+        std::pair<std::uint8_t, std::uint64_t>{kEncodePcRelSdata4, 0x9000}, &outsidePersonalityField);
+    (void)AppendFde(outsidePersonalityFrame, outsidePersonalityCie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04, std::nullopt);
+    Codegen::FixupEhFrame(outsidePersonalityFrame, kFrameAddress, code, map);
+    Require(ReadEncodedAddress(outsidePersonalityFrame, outsidePersonalityField, kFrameAddress, kEncodePcRelSdata4) == 0x9000, "Personality pointer outside the code moved");
 }
 
 void TestIdentityPass(const Bytes& growCode, const Codegen::AddressMap& growMap, const Bytes& frame, const std::uint64_t frameAddress) {
@@ -608,7 +681,7 @@ void TestAggregateFixups(const Bytes& growCode, const std::size_t grownSize, con
 
     constexpr std::uint64_t kFrameAddress = 0x8000;
     Bytes frame;
-    const auto cie = AppendCie(frame, kEncodePcRelSdata4, kEncodeOmit);
+    const auto cie = AppendCie(frame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
     const auto fde = AppendFde(frame, cie, kEncodePcRelSdata4, kFrameAddress, 0x1010, 0x04, std::nullopt);
 
     std::vector<CodeRelocation> relocations{{0x1010, 0x1012, RelocationAddendKind::CodeAddress}};
@@ -663,7 +736,7 @@ int main() {
 
         constexpr std::uint64_t kFrameAddress = 0x8000;
         Bytes frame;
-        const auto cie = AppendCie(frame, kEncodePcRelSdata4, kEncodeOmit);
+        const auto cie = AppendCie(frame, kEncodePcRelSdata4, kEncodeOmit, kFrameAddress);
         (void)AppendFde(frame, cie, kEncodePcRelSdata4, kFrameAddress, 0x1000, 0x08, std::nullopt);
         TestIdentityPass(growCode, grown.Mapping, frame, kFrameAddress);
         TestAggregateFixups(growCode, grownSize, grown.Mapping);
