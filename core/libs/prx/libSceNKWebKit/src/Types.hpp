@@ -440,6 +440,9 @@ public:
     }
 };
 
+class MediaSessionFocusManager final : public ObjectOf<ObjectType::MediaSessionFocusManager> {
+};
+
 class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
 public:
     std::map<std::string, std::string> pageURLToIconURL;

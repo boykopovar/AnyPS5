@@ -81,6 +81,7 @@ enum class ObjectType : std::uint32_t {
     InspectorConfiguration,
     KeyValueStorageManager,
     MediaCacheManager,
+    MediaSessionFocusManager,
     MessageListener,
     Navigation,
     NavigationAction,

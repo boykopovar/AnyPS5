@@ -5100,9 +5100,6 @@ int APS5_VABI _ZN7WebCore12JSTimeRangesC1EPN3JSC9StructureERNS_17JSDOMGlobalObje
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetMediaSessionFocusManager() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore11DisplayList20DrawTiledScaledImageD1Ev() {
     NotImplemented_nid_no_patch(__func__);

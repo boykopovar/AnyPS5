@@ -696,6 +696,7 @@ void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation(const void* conte
 void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* contextRef, const void* bundleIdentifierRef);
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 const void* APS5_VABI WKContextGetIconDatabase(const void* contextRef);
+const void* APS5_VABI WKContextGetMediaSessionFocusManager(const void* contextRef);
 void APS5_VABI WKContextSetIconDatabasePath(const void* contextRef, const void* iconDatabasePathRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
