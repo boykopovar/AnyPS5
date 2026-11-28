@@ -834,6 +834,30 @@ static std::string WhatArgument(const char* what) {
     if (!what) throw std::invalid_argument("std::__1::system_error: null what argument");
     return what;
 }
+
+static_assert(sizeof(LibcxxFutureErrorObject) == 32 && offsetof(LibcxxFutureErrorObject, code) == 16);
+static const char* APS5_VABI FutureName_nid_no_patch(const CategoryObject*) { return "future"; }
+static String* APS5_VABI FutureMessage_nid_no_patch(String* result, const CategoryObject*, int value) {
+    static constexpr const char* broken = "The associated promise has been destructed prior to the associated state becoming ready.";
+    static constexpr const char* messages[] {
+        broken, "The future has already been retrieved from the promise or packaged_task.",
+        "The state of the promise has already been set.", "Operation not permitted on an object without an associated state.", broken
+    };
+    return FillString(result, value >= 0 && value <= 4 ? messages[value] : "unspecified future_errc value\n");
+}
+const TypeRecord FutureErrorCategoryType {SingleTypeVtable + 2, "NSt3__123__future_error_categoryE", &DoMessageType};
+const void* const FutureErrorCategoryVtable[] {
+    nullptr, &FutureErrorCategoryType,
+    reinterpret_cast<const void*>(CategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(CategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(FutureName_nid_no_patch), reinterpret_cast<const void*>(Condition_nid_no_patch),
+    reinterpret_cast<const void*>(EquivalentCondition_nid_no_patch), reinterpret_cast<const void*>(EquivalentCode_nid_no_patch),
+    reinterpret_cast<const void*>(FutureMessage_nid_no_patch)
+};
+const CategoryObject FutureErrorCategory {FutureErrorCategoryVtable + 2};
+const ExceptionVtable FutureErrorTable {
+    0, &_ZTINSt3__112future_errorE_nid_postfix, GuestDestroyMessage_nid_no_patch, GuestDeleteMessage_nid_no_patch, GuestMessageWhat_nid_no_patch,
+};
+const TypeRecord SharedCountType {ClassTypeVtable + 2, "NSt3__114__shared_countE", nullptr};
 }
 
 extern "C" {
@@ -885,6 +909,24 @@ void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeERKNS_12basic_stringIcNS
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<LibcException::TypeRecord*>(&_ZTINSt3__112system_errorE_nid_postfix)),
         reinterpret_cast<decltype(LibcException::Header::destructor)>(LibcException::DestroyGuestMessage_nid_no_patch));
 }
+
+const LibcException::CategoryObject* APS5_VABI _ZNSt3__115future_categoryEv_nid_postfix() noexcept {
+    return &LibcException::Libcxx::FutureErrorCategory;
+}
+constinit const LibcException::TypeRecord _ZTINSt3__112future_errorE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__112future_errorE", &_ZTISt11logic_error_nid_postfix,
+};
+void APS5_VABI _ZNSt3__112future_errorC1ENS_10error_codeE_nid_postfix(LibcException::LibcxxFutureErrorObject* self, LibcException::LibcxxErrorCode code) {
+    if (!code.category) throw std::invalid_argument("std::__1::future_error: null error category");
+    LibcException::Construct(&self->base, LibcException::Libcxx::FutureErrorTable, LibcException::Libcxx::CodeMessage(code).c_str());
+    self->code = code;
+}
+void APS5_VABI _ZNSt3__112future_errorD1Ev_nid_postfix(LibcException::LibcxxFutureErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
+constinit const LibcException::TypeRecord _ZTINSt3__117__assoc_sub_stateE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__117__assoc_sub_stateE", &LibcException::Libcxx::SharedCountType,
+};
 }
 
 namespace LibcException::SceV2 {
