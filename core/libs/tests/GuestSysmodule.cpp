@@ -12,6 +12,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #include <cstdio>
 #include <filesystem>
@@ -75,6 +76,31 @@ constexpr std::uint32_t kNgs2InternalModuleId = 0x80000090;
 constexpr std::uint32_t kAgcModuleId = 0x80000094;
 constexpr std::uint32_t kHdrScopesInternalModuleId = 0x800000bd;
 constexpr std::uint32_t kMeasuredInternalUnloadedModuleId = 0x800000c4u;
+
+std::vector<std::string> gLibcPaths;
+KernelModule gAppLibcResult = -1;
+KernelModule gSandboxLibcResult = -1;
+KernelModule gSystemLibcResult = -1;
+const char* gLibcSandbox = "sysmodule-test";
+int gLibcPs4 = 0;
+
+KernelModule LoadLibcForLibkernel(const char* path) {
+    gLibcPaths.emplace_back(path);
+    if (gLibcPaths.back() == "/app0/sce_module/libc.prx") return gAppLibcResult;
+    if (gLibcPaths.back() == "/sysmodule-test/common/lib/libc.sprx") return gSandboxLibcResult;
+    if (gLibcPaths.back() == "/system/common/lib/libc.sprx") return gSystemLibcResult;
+    std::abort();
+}
+
+const char* LibcForLibkernelSandbox() { return gLibcSandbox; }
+
+int LibcForLibkernelPs4() { return gLibcPs4; }
+
+void RequireLibcPaths(std::initializer_list<const char*> expected) {
+    Require(gLibcPaths.size() == expected.size());
+    Require(std::equal(gLibcPaths.begin(), gLibcPaths.end(), expected.begin()));
+    gLibcPaths.clear();
+}
 
 #ifdef __linux__
 struct Mapping {
@@ -605,4 +631,56 @@ int main() {
     Require(invalidResult == kernelResult);
     Require(sceSysmoduleIsCameraPreloaded() == 0);
     Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
+
+    int libcHandle = 0x5a5a5a5a;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == 0x5d);
+    Require(libcHandle == -1);
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleMapLibcForLibkernel(reinterpret_cast<int*>(0x10)); }));
+    Require(errno == 71);
+    Require(sceSysmodulePreloadModuleForLibkernel() == 0);
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == 0);
+    Require(libcHandle > 0);
+    Require(sceKernelStopUnloadModule(libcHandle, 0, nullptr, 0, nullptr, nullptr) == 0);
+
+    SetSysmoduleLibcForLibkernelSources_nid_no_patch(LoadLibcForLibkernel, LibcForLibkernelSandbox, LibcForLibkernelPs4);
+    gAppLibcResult = 101;
+    libcHandle = -1;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == 0);
+    Require(libcHandle == 101);
+    RequireLibcPaths({"/app0/sce_module/libc.prx"});
+
+    gAppLibcResult = -2;
+    gSandboxLibcResult = 102;
+    libcHandle = -1;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == 0);
+    Require(libcHandle == 102);
+    RequireLibcPaths({"/app0/sce_module/libc.prx", "/sysmodule-test/common/lib/libc.sprx"});
+
+    gSandboxLibcResult = -3;
+    gSystemLibcResult = 103;
+    libcHandle = -1;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == 0);
+    Require(libcHandle == 103);
+    RequireLibcPaths({"/app0/sce_module/libc.prx", "/sysmodule-test/common/lib/libc.sprx", "/system/common/lib/libc.sprx"});
+
+    gSystemLibcResult = -4;
+    libcHandle = 0x5a5a5a5a;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == -4);
+    Require(libcHandle == -1);
+    RequireLibcPaths({"/app0/sce_module/libc.prx", "/sysmodule-test/common/lib/libc.sprx", "/system/common/lib/libc.sprx"});
+
+    gLibcSandbox = nullptr;
+    libcHandle = 0x5a5a5a5a;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == -4);
+    Require(libcHandle == -1);
+    RequireLibcPaths({"/app0/sce_module/libc.prx", "/system/common/lib/libc.sprx"});
+
+    gLibcPs4 = 1;
+    Require(ThrowsRuntimeError([] { sceSysmodulePreloadModuleForLibkernel(); }));
+    libcHandle = 0x5a5a5a5a;
+    Require(sceSysmoduleMapLibcForLibkernel(&libcHandle) == -4);
+    Require(libcHandle == 0x5a5a5a5a);
+    RequireLibcPaths({"/app0/sce_module/libc.prx", "/system/common/lib/libc.sprx"});
+    SetSysmoduleLibcForLibkernelSources_nid_no_patch(nullptr, nullptr, nullptr);
 }

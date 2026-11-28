@@ -6,6 +6,7 @@
 #include "prx/libc/include/RunReportComponent.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -96,7 +97,13 @@ APS5_RUN_REPORT_COMPONENT("libkernel")
 
 [[maybe_unused]] const bool g_runReportGameProvider = (LibcRunReportSetGameProvider_nid_no_patch(&ProvideRunReportGame), true);
 
+struct StartupErrnoGuard {
+    int saved = errno;
+    ~StartupErrnoGuard() { errno = saved; }
+};
+
 const bool g_sandboxApp0Mounted = [] {
+    const StartupErrnoGuard restoreErrno{};
     try {
         const auto run = std::filesystem::current_path();
         const auto metadata = run / "app0" / "sce_sys";
@@ -111,6 +118,7 @@ const bool g_sandboxApp0Mounted = [] {
 }();
 
 const bool g_downloadDataMounted = [] {
+    const StartupErrnoGuard restoreErrno{};
     try {
         std::error_code error;
         const auto run = std::filesystem::current_path(error);
@@ -125,6 +133,7 @@ const bool g_downloadDataMounted = [] {
 }();
 
 const bool g_dataMounted = [] {
+    const StartupErrnoGuard restoreErrno{};
     try {
         std::error_code error;
         const auto run = std::filesystem::current_path(error);

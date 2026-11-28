@@ -2360,28 +2360,26 @@ int APS5_VABI sceCesGbUcsProfileSetSbcs(void* p, const void* sbcs) {
 }
 
 int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
-    const int savedErrno = errno;
-    if (!p || !sbcs || !isIso2022(p)) {
-        errno = savedErrno;
-        return CES_ERROR_INVALID_PROFILE;
-    }
+    if (!p || !sbcs) return CES_ERROR_INVALID_PROFILE;
+    uint8_t tag[8]{};
+    const int readErrno = errno;
+    const bool tagCopied = GuestCopyIn_nid_no_patch(tag, p, sizeof(tag));
+    errno = readErrno;
+    if (!tagCopied || !isIso2022(tag)) return CES_ERROR_INVALID_PROFILE;
     const std::initializer_list<const uint8_t*> accepted = {
         singleByteProfile(SingleByte::Ascii),
         singleByteProfile(SingleByte::JisX0201Roman),
         singleByteProfile(SingleByte::JisX0201)
     };
     if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) {
-        errno = savedErrno;
         return CES_ERROR_INVALID_PROFILE;
     }
     const uint8_t index = sbcProfileIndex(sbcs);
-    if (index == 0) {
-        errno = savedErrno;
-        return CES_ERROR_INVALID_PROFILE;
-    }
-    static_cast<uint8_t*>(p)[8] = index;
-    errno = savedErrno;
-    return 0;
+    if (index == 0) return CES_ERROR_INVALID_PROFILE;
+    const int writeErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(static_cast<uint8_t*>(p) + 8, &index, sizeof(index));
+    errno = writeErrno;
+    return copied ? 0 : CES_ERROR_INVALID_PROFILE;
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
@@ -2975,19 +2973,35 @@ void* APS5_VABI sceCesUcsProfileInitGb18030_2022(void* sheet) {
 }
 
 int APS5_VABI sceCesGbUcsProfileSet4ByteCharRange(void* profile, int range) {
-    if (!profile || isEucCn(profile) || isGbk(profile)) return CES_ERROR_INVALID_PROFILE;
-    if (!isGb18030(profile)) throw std::runtime_error("sceCesGbUcsProfileSet4ByteCharRange: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
+    uint8_t tag[8]{};
+    const int readErrno = errno;
+    const bool tagCopied = GuestCopyIn_nid_no_patch(tag, profile, sizeof(tag));
+    errno = readErrno;
+    if (!tagCopied || isEucCn(tag) || isGbk(tag)) return CES_ERROR_INVALID_PROFILE;
+    if (!isGb18030(tag)) throw std::runtime_error("sceCesGbUcsProfileSet4ByteCharRange: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
     if (!gb18030Range(range)) return CES_ERROR_INVALID_PARAMETER;
-    static_cast<uint8_t*>(profile)[GB_RANGE_BYTE] = static_cast<uint8_t>(range);
-    return 0;
+    const uint8_t value = static_cast<uint8_t>(range);
+    const int writeErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(static_cast<uint8_t*>(profile) + GB_RANGE_BYTE, &value, sizeof(value));
+    errno = writeErrno;
+    return copied ? 0 : CES_ERROR_INVALID_PROFILE;
 }
 
 int APS5_VABI sceCesGbUcsProfileSetUdaMapping(void* profile, int udaMapping) {
-    if (!profile || isEucCn(profile)) return CES_ERROR_INVALID_PROFILE;
-    if (!isGb(profile)) throw std::runtime_error("sceCesGbUcsProfileSetUdaMapping: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
+    uint8_t tag[8]{};
+    const int readErrno = errno;
+    const bool tagCopied = GuestCopyIn_nid_no_patch(tag, profile, sizeof(tag));
+    errno = readErrno;
+    if (!tagCopied || isEucCn(tag)) return CES_ERROR_INVALID_PROFILE;
+    if (!isGb(tag)) throw std::runtime_error("sceCesGbUcsProfileSetUdaMapping: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
     if (udaMapping != 0 && udaMapping != 1) return CES_ERROR_INVALID_PARAMETER;
-    static_cast<uint8_t*>(profile)[GB_UDA_BYTE] = static_cast<uint8_t>(udaMapping);
-    return 0;
+    const uint8_t value = static_cast<uint8_t>(udaMapping);
+    const int writeErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(static_cast<uint8_t*>(profile) + GB_UDA_BYTE, &value, sizeof(value));
+    errno = writeErrno;
+    return copied ? 0 : CES_ERROR_INVALID_PROFILE;
 }
 
 int APS5_VABI sceCesEucCnToUcs2(const void* profile, const uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucSize, uint16_t* ucs2) {

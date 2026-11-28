@@ -6,8 +6,8 @@
 
 extern "C" {
 
-int APS5_VABI sceDbgKeyboardGetHandle() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceDbgKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
+    return sceKeyboardGetHandle(userId, type, index);
 }
 
 int APS5_VABI sceKeyboardInit(void) {
@@ -104,9 +104,8 @@ int APS5_VABI sceDbgKeyboardClose(int32_t handle) {
     return sceKeyboardClose(handle);
 }
 
-int APS5_VABI sceDbgKeyboardGetKey2Char() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceDbgKeyboardGetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint8_t led, std::uint8_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData) {
+    return sceKeyboardGetKey2Char(handle, arrange, led, modifierKey, keyCode, charData);
 }
 
 int APS5_VABI sceDbgKeyboardInit(void) {
@@ -117,14 +116,12 @@ int APS5_VABI sceDbgKeyboardOpen(int userId, int32_t type, int32_t index, const 
     return sceKeyboardOpen(userId, type, index, param);
 }
 
-int APS5_VABI sceDbgKeyboardRead() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceDbgKeyboardRead(int32_t handle, KeyboardData* data, int32_t num) {
+    return sceKeyboardRead(handle, data, num);
 }
 
 int APS5_VABI sceDbgKeyboardReadState(std::int32_t handle, KeyboardData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceKeyboardReadState(handle, data);
 }
 
 void KeyboardPublishInput_nid_postfix(const KeyboardInputEvent& event) {

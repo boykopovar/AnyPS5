@@ -64,4 +64,21 @@ void APS5_VABI WKUserContentExtensionStoreLookup(const void* storeRef, const voi
     }
 }
 
+void APS5_VABI WKUserContentExtensionStoreRemove(const void* storeRef, const void* identifierRef, void* context, WKUserContentExtensionStoreFunction callback) {
+    auto* store = NKWebKit::Cast<NKWebKit::ContentRuleListStore>(storeRef, __func__);
+    const auto* identifier = NKWebKit::Cast<NKWebKit::String>(identifierRef, __func__);
+
+    auto it = store->filters.find(identifier->characters);
+    if (it != store->filters.end()) {
+        store->filters.erase(it);
+        if (callback) {
+            callback(nullptr, 0, context);
+        }
+    } else {
+        if (callback) {
+            callback(nullptr, 1, context);
+        }
+    }
+}
+
 }

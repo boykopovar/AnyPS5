@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/HostFault.hpp"
 #include "prx/libc/include/LogFile.hpp"
+#include "prx/libc/include/RuntimeThrowHandoff.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/CrashText.hpp"
 #include "prx/libc/include/HostThread.hpp"
@@ -373,6 +374,9 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
+        const auto handoff = LibcRuntimeThrowHandoff_nid_no_patch(info);
+        if (handoff == RuntimeThrowHandoff::Redirected) return EXCEPTION_CONTINUE_EXECUTION;
+        if (handoff == RuntimeThrowHandoff::InProgress) return EXCEPTION_CONTINUE_SEARCH;
         if (const auto frame = FrameWithoutUnwindData(*info->ContextRecord)) ReportUndeliverableException(info, frame);
         return EXCEPTION_CONTINUE_SEARCH;
     }
