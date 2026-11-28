@@ -9,6 +9,14 @@
 #include <cstring>
 #include <new>
 #include <stdexcept>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WtfAbi::AtomString;
 using NKWebKit::WtfAbi::String;
@@ -148,11 +156,73 @@ void TestConstructor() {
         Require(object[i] == 0);
 }
 
+struct GuardedPages {
+    std::uint8_t* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<std::uint8_t*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 3) == 0);
+#endif
+    }
+
+    std::uint8_t* ReadOnly() const { return base + pageSize; }
+    std::uint8_t* Guard() const { return base + pageSize * 2; }
+};
+
+template <typename Action>
+bool ThrowsNotImplemented(Action&& action) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == "_ZN7WebCore16TrackPrivateBaseC2Ev not implemented";
+    }
+    return false;
+}
+
+void TestConstructorGuestPointers() {
+    GuardedPages pages;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore16TrackPrivateBaseC2Ev(reinterpret_cast<void*>(0x10)); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore16TrackPrivateBaseC2Ev(pages.ReadOnly()); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore16TrackPrivateBaseC2Ev(pages.Guard()); }));
+
+    std::uint8_t* split = pages.ReadOnly() - 8;
+    std::memset(split, 0x6C, 8);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore16TrackPrivateBaseC2Ev(split); }));
+    for (std::size_t i = 0; i < 8; ++i) Require(split[i] == 0x6C);
+}
+
 }
 
 int main() {
     TestConstructorNullSelf();
     TestConstructor();
+    TestConstructorGuestPointers();
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase2idEv);
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase5labelEv);
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase8languageEv);
