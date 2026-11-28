@@ -1,0 +1,7 @@
+add_test_executable(guest_filesystem_open_dir_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestFilesystemOpenDirError.cpp)
+target_include_directories(guest_filesystem_open_dir_error_tests PRIVATE ${LIBS_INCLUDE_DIR}
+    $<TARGET_PROPERTY:libc,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_definitions(guest_filesystem_open_dir_error_tests PRIVATE
+    $<TARGET_PROPERTY:libc,INTERFACE_COMPILE_DEFINITIONS>)
+add_test(NAME guest_filesystem_open_dir_error COMMAND guest_filesystem_open_dir_error_tests)
+set_tests_properties(guest_filesystem_open_dir_error PROPERTIES TIMEOUT 10)

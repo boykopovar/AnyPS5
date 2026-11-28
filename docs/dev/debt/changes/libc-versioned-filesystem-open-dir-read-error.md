@@ -1,0 +1,5 @@
+# libc
+
+## change [Versioned std::__sce_v2::filesystem primitives]
+
+- [Versioned std::__sce_v2::filesystem primitives](../../../core/libs/prx/libc/src/VersionedFilesystem.cpp) (libc) - `_Open_dir`, `_Read_dir`, `_Close_dir` and `_Current_get` reuse the unversioned Dinkumware implementation and libkernel's directory calls. `_Stat` copies the guest path and maps errors as `stat_nid_postfix` does, reports app0.zar entries through libc's archive reader with the 0444/0555 modes `sceKernelStat` gives, and reads disk entries with host `std::filesystem::status`, as libc cannot link libkernel. The console loops over `sceKernelGetdents` itself, as the `libc.prx` bundled with PPSA28416 shows, and maps the same errors. `_Read_dir` reports type 8 for every entry, as both do; the console's `_Current_get` writes "/" and returns true, reproduced here. `_Open_dir` reports a failed first `readdir_r` through `error` and closes the handle; the console's code for it is unmeasured, so the status is passed through.
