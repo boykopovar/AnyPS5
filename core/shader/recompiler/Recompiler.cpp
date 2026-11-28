@@ -1005,7 +1005,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         for (std::uint32_t kind = 1u; kind < 3u; ++kind) {
             classes.fill(kind);
             const auto specialized = SpecializeVertexInputTypes(result, classes);
-            static_cast<void>(ValidateAndOptimizeSpirv(specialized, request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, false));
+            static_cast<void>(ValidateAndOptimizeSpirv(specialized.Words(), request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, false));
         }
     }
 #endif

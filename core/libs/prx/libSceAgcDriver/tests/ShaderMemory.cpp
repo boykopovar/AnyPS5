@@ -6518,7 +6518,7 @@ void verifyPointerImageTable() {
         for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(offsetSnapshot.words.at(i).dwords == snapshot.words[i].dwords, "pointer image table masked addend: the descriptor words changed");
         require(TableCovered(offsetCompiled.regions, root + Palette / 4u, Entries * 32u), "pointer image table masked addend: the descriptor bytes were not captured");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv, offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv.Words(), offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
 #endif
     }
 
@@ -10565,10 +10565,10 @@ void verifyInt64AtomicCapabilities() {
     };
     for (const auto* code : {&globalSwap, &globalSwapBufferInc}) {
         const auto lockedGlobal = compile(*code, spv::CapabilityShader);
-        require(!declares(lockedGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
+        require(!declares(lockedGlobal.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
         require(asksForLockTable(lockedGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
         const auto nativeGlobal = compile(*code, spv::CapabilityInt64Atomics);
-        require(declares(nativeGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 does not declare Int64Atomics");
+        require(declares(nativeGlobal.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 does not declare Int64Atomics");
         require(!asksForLockTable(nativeGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled with shaderBufferInt64Atomics asks for the atomic lock table");
     }
     const auto lockedBuffer = compile(bufferAtomic, spv::CapabilityShader);
@@ -10590,13 +10590,13 @@ void verifyInt64AtomicCapabilities() {
     const auto locked = compile(imageAtomic, spv::CapabilityShader);
     require(!declares(locked.spirv.Words(), spv::CapabilityInt64ImageEXT) && !declares(locked.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics declares 64-bit atomics");
     require(asksForLockTable(locked), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not ask for the atomic lock table");
-    require(declares(locked.spirv, spv::CapabilityStorageImageExtendedFormats) && !declares(locked.spirv, spv::CapabilityStorageImageReadWithoutFormat) && !declares(locked.spirv, spv::CapabilityStorageImageWriteWithoutFormat), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not declare its image as Rg32ui");
+    require(declares(locked.spirv.Words(), spv::CapabilityStorageImageExtendedFormats) && !declares(locked.spirv.Words(), spv::CapabilityStorageImageReadWithoutFormat) && !declares(locked.spirv.Words(), spv::CapabilityStorageImageWriteWithoutFormat), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not declare its image as Rg32ui");
     const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
     require(declares(native.spirv.Words(), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
     require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
     const std::array<std::pair<const std::vector<std::uint32_t>*, const char*>, 2> updates{{{&imageAtomicInc, "image_atomic_inc"}, {&imageAtomicDec, "image_atomic_dec"}}};
     for (const auto& [code, name] : updates) {
-        const auto words = compile(*code, spv::CapabilityInt64ImageEXT).spirv;
+        const auto words = compile(*code, spv::CapabilityInt64ImageEXT).spirv.Words();
         std::set<std::uint32_t> texelPointers;
         std::size_t exchanges = 0;
         std::size_t loads = 0;
