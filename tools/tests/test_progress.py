@@ -1485,6 +1485,11 @@ class ParallelLibraryScanTests(unittest.TestCase):
                 self.assertEqual(grown["done"], first["done"])
             self.assertFalse((Path(directory) / ".cache").exists())
 
+    def test_code_blanks_comments_and_literals(self):
+        self.assertEqual(
+            progress.code('int a; // hi\nconst char *s = "//x"; /* c\nd */ int b;\n'),
+            "int a;      \nconst char *s = LITERAL;     \n     int b;\n")
+
 
 if __name__ == "__main__":
     unittest.main()
