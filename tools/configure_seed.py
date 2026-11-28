@@ -104,6 +104,8 @@ def main(argv=None):
             results = checks(Path(args.cache))
         except (OSError, UnicodeDecodeError) as error:
             parser.error(f"{args.cache}: {error}")
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(newline="\n")
         sys.stdout.write(render(selected(results, args.include, args.exclude)))
         return 0
     cache, seed = Path(args.cache), Path(args.seed)
