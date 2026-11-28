@@ -1,9 +1,36 @@
 #include "Jsc.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+
+namespace {
+
+bool TryWriteGuestException(NKWebKit::JSValueRef* exception, NKWebKit::JSValueRef value) {
+    if (!exception) return true;
+    const GuestArena::HostWrite guard(exception, sizeof(*exception));
+    if (!guard.Open() || !GuestWritable_nid_no_patch(exception, sizeof(*exception))) return false;
+    return GuestCopyOut_nid_no_patch(exception, &value, sizeof(value));
+}
+
+void RequireWritableGuestException(NKWebKit::JSValueRef* exception, const char* function) {
+    if (!exception) return;
+    const GuestArena::HostWrite guard(exception, sizeof(*exception));
+    if (!guard.Open() || !GuestWritable_nid_no_patch(exception, sizeof(*exception)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CaptureGuestPendingException(NKWebKit::OpaqueJSContext* ctx, NKWebKit::JSValueRef* exception, const char* function) {
+    NKWebKit::JSValueRef captured = nullptr;
+    NKWebKit::CapturePendingException(ctx, exception ? &captured : nullptr);
+    if (exception && captured && !TryWriteGuestException(exception, captured))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+}  // namespace
 
 extern "C" {
 using namespace NKWebKit;
@@ -121,7 +148,7 @@ bool APS5_VABI JSValueIsEqual(JSContextRef ctx, JSValueRef a, JSValueRef b, JSVa
     VmEntryScope vmScope(mutCtx->group);
     const int res = JS_IsEqual(mutCtx->qctx, ValueOrNull(a), ValueOrNull(b));
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestPendingException(mutCtx, exception, __func__);
         return false;
     }
     return res != 0;
@@ -143,7 +170,7 @@ bool APS5_VABI JSValueIsInstanceOfConstructor(JSContextRef ctx, JSValueRef value
     if (data && data->jsClass && !data->isDirectFunction && !data->isDirectConstructor) {
         JSValue method = JS_GetProperty(mutCtx->qctx, constructor->qval, mutCtx->group->hasInstanceAtom);
         if (JS_IsException(method)) {
-            CapturePendingException(mutCtx, exception);
+            CaptureGuestPendingException(mutCtx, exception, __func__);
             return false;
         }
         const bool absent = JS_IsUndefined(method) || JS_IsNull(method);
@@ -152,7 +179,7 @@ bool APS5_VABI JSValueIsInstanceOfConstructor(JSContextRef ctx, JSValueRef value
     }
     const int res = JS_IsInstanceOf(mutCtx->qctx, ValueOrNull(value), constructor->qval);
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestPendingException(mutCtx, exception, __func__);
         return false;
     }
     return res != 0;
@@ -211,15 +238,22 @@ JSValueRef APS5_VABI JSValueMakeFromJSONString(JSContextRef ctx, JSStringRef str
 
 JSStringRef APS5_VABI JSValueCreateJSONString(JSContextRef ctx, JSValueRef value, unsigned indent, JSValueRef* exception) {
     if (!ctx || (value && !value->alive)) return nullptr;
+    if (exception) RequireWritableGuestException(exception, __func__);
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     VmEntryScope vmScope(mutCtx->group);
     JSValue space = JS_NewInt32(mutCtx->qctx, static_cast<std::int32_t>(std::min(indent, 10u)));
     JSValue strVal = JS_JSONStringify(mutCtx->qctx, ValueOrNull(value), JS_UNDEFINED, space);
     JS_FreeValue(mutCtx->qctx, space);
-    if (exception) *exception = nullptr;
     if (JS_IsException(strVal)) {
-        CapturePendingException(mutCtx, exception);
+        JSValueRef captured = nullptr;
+        CapturePendingException(mutCtx, exception ? &captured : nullptr);
+        if (exception && !TryWriteGuestException(exception, captured))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return nullptr;
+    }
+    if (exception && !TryWriteGuestException(exception, nullptr)) {
+        JS_FreeValue(mutCtx->qctx, strVal);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     if (JS_IsUndefined(strVal)) {
         return nullptr;
@@ -241,7 +275,7 @@ double APS5_VABI JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef*
     VmEntryScope vmScope(mutCtx->group);
     double num = std::numeric_limits<double>::quiet_NaN();
     if (JS_ToFloat64(mutCtx->qctx, &num, ValueOrNull(value)) < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestPendingException(mutCtx, exception, __func__);
         return std::numeric_limits<double>::quiet_NaN();
     }
     return num;
@@ -253,7 +287,7 @@ JSStringRef APS5_VABI JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JS
     VmEntryScope vmScope(mutCtx->group);
     JSValue strVal = JS_ToString(mutCtx->qctx, ValueOrNull(value));
     if (JS_IsException(strVal)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestPendingException(mutCtx, exception, __func__);
         return nullptr;
     }
     GuestJSString* res = JsValueToJsString(mutCtx->qctx, strVal);
@@ -269,7 +303,7 @@ JSObjectRef APS5_VABI JSValueToObject(JSContextRef ctx, JSValueRef value, JSValu
     }
     JSValue objVal = JS_ToObject(mutCtx->qctx, ValueOrNull(value));
     if (JS_IsException(objVal)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestPendingException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, objVal);
