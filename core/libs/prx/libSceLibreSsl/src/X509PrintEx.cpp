@@ -298,6 +298,60 @@ bool WriteBytes(LibreSsl::Bio* bio, std::string_view text) {
     return true;
 }
 
+struct BioWriteProxyState {
+    LibreSsl::Bio* target;
+    bool writeFailed;
+};
+
+int APS5_VABI ProxyBioWrite(LibreSsl::Bio* proxy, const char* data, int size) {
+    if (!proxy || !proxy->data) return -1;
+    auto* state = static_cast<BioWriteProxyState*>(proxy->data);
+    if (state->writeFailed || !state->target || size < 0) {
+        state->writeFailed = true;
+        return -1;
+    }
+    if (size == 0) return 0;
+    const int written = LibreSslBioWrite_nid_no_patch(state->target, data, size);
+    if (written != size) {
+        state->writeFailed = true;
+        return -1;
+    }
+    return written;
+}
+
+class StrictWriteBio {
+public:
+    explicit StrictWriteBio(LibreSsl::Bio* target) : state_{target, false} {
+        method_.write = &ProxyBioWrite;
+        bio_.method = &method_;
+        bio_.initialized = 1;
+        bio_.data = &state_;
+    }
+
+    StrictWriteBio(const StrictWriteBio&) = delete;
+    StrictWriteBio& operator=(const StrictWriteBio&) = delete;
+
+    LibreSsl::Bio* Get() { return &bio_; }
+    bool WriteFailed() const { return state_.writeFailed; }
+
+private:
+    BioWriteProxyState state_;
+    LibreSsl::BioMethod method_{};
+    LibreSsl::Bio bio_{};
+};
+
+bool WriteObject(LibreSsl::Bio* bio, const LibreSslAsn1Object* object) {
+    if (!bio) return false;
+    StrictWriteBio proxy(bio);
+    return i2a_ASN1_OBJECT_nid_postfix(proxy.Get(), object) > 0 && !proxy.WriteFailed();
+}
+
+bool WriteTime(LibreSsl::Bio* bio, const Asn1String* time) {
+    if (!bio) return false;
+    StrictWriteBio proxy(bio);
+    return ASN1_TIME_print_nid_postfix(proxy.Get(), time) != 0 && !proxy.WriteFailed();
+}
+
 bool WriteIndent(LibreSsl::Bio* bio, int indent) {
     if (indent <= 0) return true;
     const int clamped = std::min(indent, 128);
@@ -501,7 +555,7 @@ bool PrintSignature(LibreSsl::Bio* bio, const void* guestAlg, const void* guestS
     if (!WriteBytes(bio, "    Signature Algorithm: ")) return false;
     HostAsn1Object algObj;
     const LibreSslAsn1Object* hostAlgObj = algObj.CopyFrom(algor.algorithm, __func__);
-    if (!bio || i2a_ASN1_OBJECT_nid_postfix(bio, hostAlgObj) <= 0) return false;
+    if (!WriteObject(bio, hostAlgObj)) return false;
     const int sigNid = hostAlgObj ? LibreSslObjectNid_nid_no_patch(hostAlgObj) : 0;
     if (sigNid == NidRsaSsaPss) NotImplemented_nid_no_patch("X509_print_ex: RSA-PSS signature parameters");
     if (IsDsaSignatureNid(sigNid)) {
@@ -586,7 +640,7 @@ bool PrintPublicKey(LibreSsl::Bio* bio, const void* guestKey) {
     const X509Algor algor = CopyIn(pubkey.algor, __func__);
     HostAsn1Object algObj;
     const LibreSslAsn1Object* hostAlgObj = algObj.CopyFrom(algor.algorithm, __func__);
-    if (!bio || i2a_ASN1_OBJECT_nid_postfix(bio, hostAlgObj) <= 0) return false;
+    if (!WriteObject(bio, hostAlgObj)) return false;
     if (!WriteBytes(bio, "\n")) return false;
 
     if (pubkey.pkey) {
@@ -664,27 +718,6 @@ bool PrintPublicKey(LibreSsl::Bio* bio, const void* guestKey) {
     NotImplemented_nid_no_patch("X509_print_ex: unsupported public key algorithm");
 }
 
-struct ExtensionBioProxy {
-    LibreSsl::Bio* target;
-    bool writeFailed;
-};
-
-int APS5_VABI ProxyBioWrite(LibreSsl::Bio* proxy, const char* data, int size) {
-    if (!proxy || !proxy->data) return -1;
-    auto* state = static_cast<ExtensionBioProxy*>(proxy->data);
-    if (state->writeFailed || !state->target || size < 0) {
-        state->writeFailed = true;
-        return -1;
-    }
-    if (size == 0) return 0;
-    const int written = LibreSslBioWrite_nid_no_patch(state->target, data, size);
-    if (written != size) {
-        state->writeFailed = true;
-        return -1;
-    }
-    return written;
-}
-
 bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint64_t certFlags) {
     if (!guestExtensions) return true;
     const LibreSslStack stack = CopyIn(static_cast<const LibreSslStack*>(guestExtensions), __func__);
@@ -698,13 +731,7 @@ bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint6
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     if (!WriteBytes(bio, "        X509v3 extensions:\n")) return false;
-    ExtensionBioProxy proxyState{bio, false};
-    LibreSsl::BioMethod proxyMethod{};
-    proxyMethod.write = &ProxyBioWrite;
-    LibreSsl::Bio proxyBio{};
-    proxyBio.method = &proxyMethod;
-    proxyBio.initialized = 1;
-    proxyBio.data = &proxyState;
+    StrictWriteBio proxy(bio);
     for (std::size_t i = 0; i < count; ++i) {
         if (!pointers[i]) throw std::invalid_argument("X509_print_ex: null extension");
         const X509Extension ext = CopyIn(reinterpret_cast<const X509Extension*>(pointers[i]), __func__);
@@ -725,13 +752,13 @@ bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint6
         }
         X509Extension hostExt{objPtr, ext.critical, 0, valPtr};
         if (!WriteIndent(bio, 12)) return false;
-        if (!bio || i2a_ASN1_OBJECT_nid_postfix(bio, objPtr) <= 0) return false;
+        if (!WriteObject(bio, objPtr)) return false;
         if (!WriteBytes(bio, ext.critical > 0 ? ": critical\n" : ": \n")) return false;
-        const int extResult = X509V3_EXT_print_nid_postfix(&proxyBio, &hostExt, certFlags, 16);
-        if (proxyState.writeFailed) return false;
+        const int extResult = X509V3_EXT_print_nid_postfix(proxy.Get(), &hostExt, certFlags, 16);
+        if (proxy.WriteFailed()) return false;
         if (extResult == 0 && (certFlags & (std::uint64_t{0xf} << 16)) == 0) {
             if (!WriteIndent(bio, 16)) return false;
-            if (!ASN1_STRING_print_nid_postfix(&proxyBio, valPtr) || proxyState.writeFailed) return false;
+            if (!ASN1_STRING_print_nid_postfix(proxy.Get(), valPtr) || proxy.WriteFailed()) return false;
         }
         if (!WriteBytes(bio, "\n")) return false;
     }
@@ -743,9 +770,9 @@ bool PrintValidity(LibreSsl::Bio* bio, const void* guestValidity) {
     if (!WriteBytes(bio, "            Not Before: ")) return false;
     if (!guestValidity) throw std::invalid_argument("X509_print_ex: null validity");
     const X509Validity validity = CopyIn(static_cast<const X509Validity*>(guestValidity), __func__);
-    if (!bio || !ASN1_TIME_print_nid_postfix(bio, validity.notBefore)) return false;
+    if (!WriteTime(bio, validity.notBefore)) return false;
     if (!WriteBytes(bio, "\n            Not After : ")) return false;
-    if (!ASN1_TIME_print_nid_postfix(bio, validity.notAfter)) return false;
+    if (!WriteTime(bio, validity.notAfter)) return false;
     return WriteBytes(bio, "\n");
 }
 

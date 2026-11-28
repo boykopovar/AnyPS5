@@ -171,12 +171,17 @@ int writesBeforeFailure = -1;
 int failOnlyCall = -1;
 int shortWriteOnCall = -1;
 int writeCallIndex = 0;
+bool shortWriteTriggered = false;
 
 int APS5_VABI CaptureWrite(LibreSsl::Bio*, const char* data, int size) {
     const int currentCall = writeCallIndex++;
     if (writesBeforeFailure == 0 || currentCall == failOnlyCall) return -1;
     if (writesBeforeFailure > 0) --writesBeforeFailure;
-    const int accepted = currentCall == shortWriteOnCall && size > 1 ? 1 : size;
+    int accepted = size;
+    if (currentCall == shortWriteOnCall && size > 1) {
+        accepted = 1;
+        shortWriteTriggered = true;
+    }
     printed.append(data, static_cast<std::size_t>(accepted));
     return accepted;
 }
@@ -710,26 +715,51 @@ void CheckErrorsAndGuardPages() {
     printed.clear();
     writeCallIndex = 0;
     shortWriteOnCall = 0;
+    shortWriteTriggered = false;
     Require(X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, X509FlagCompat) == 0);
+    Require(shortWriteTriggered);
     Require(printed == "C");
     shortWriteOnCall = -1;
+    shortWriteTriggered = false;
 
-    const std::uint64_t extOnly =
+    const std::uint64_t allSectionsOff =
         X509FlagNoHeader | X509FlagNoVersion | X509FlagNoSerial | X509FlagNoSigName |
         X509FlagNoIssuer | X509FlagNoValidity | X509FlagNoSubject | X509FlagNoPubkey |
-        X509FlagNoSigDump | X509FlagNoAux;
-    for (int call = 0; call < 20; ++call) {
-        printed.clear();
-        writeCallIndex = 0;
-        failOnlyCall = call;
-        const int res = X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, extOnly);
-        failOnlyCall = -1;
-        if (call < writeCallIndex) {
+        X509FlagNoExtensions | X509FlagNoSigDump | X509FlagNoAux;
+    const auto checkEveryWriteFailure = [&](std::uint64_t mask, int minShortWrites) {
+        for (int call = 0; call < 64; ++call) {
+            printed.clear();
+            writeCallIndex = 0;
+            failOnlyCall = call;
+            const int res = X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, mask);
+            failOnlyCall = -1;
+            if (call >= writeCallIndex) break;
             Require(res == 0);
             Require(printed.find("....") == std::string::npos);
         }
-        if (call >= writeCallIndex) break;
-    }
+        int shortWritesSeen = 0;
+        for (int call = 0; call < 64; ++call) {
+            printed.clear();
+            writeCallIndex = 0;
+            shortWriteOnCall = call;
+            shortWriteTriggered = false;
+            const int res = X509_print_ex_nid_postfix(&bio.bio, &fixture.cert, X509FlagCompat, mask);
+            shortWriteOnCall = -1;
+            const bool triggered = shortWriteTriggered;
+            shortWriteTriggered = false;
+            if (triggered) {
+                ++shortWritesSeen;
+                Require(res == 0);
+            }
+            if (call >= writeCallIndex) break;
+        }
+        Require(shortWritesSeen >= minShortWrites);
+    };
+
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoSigName, 2);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoValidity, 5);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoPubkey, 4);
+    checkEveryWriteFailure(allSectionsOff & ~X509FlagNoExtensions, 5);
 
     {
         CertificateFixture bad;
