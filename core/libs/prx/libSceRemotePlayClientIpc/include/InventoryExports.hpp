@@ -11,7 +11,7 @@ int APS5_VABI sceRemotePlayClientIpcTerminateStreaming();
 int APS5_VABI sceRemotePlayClientIpcTerminate();
 int APS5_VABI sceRemotePlayClientIpcWaitConnectionAsync();
 int APS5_VABI libSceRemotePlayClientIpcUnknown_0Ezd4jv7F_minus_4_nid_no_patch();
-int APS5_VABI libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch(void* callback);
 int APS5_VABI libSceRemotePlayClientIpcUnknown_4_plus_sKR9yWkWY_nid_no_patch();
 int APS5_VABI libSceRemotePlayClientIpcUnknown_EVbYn8UOvMs_nid_no_patch();
 int APS5_VABI libSceRemotePlayClientIpcUnknown_JGKtr0_plus_B87A_nid_no_patch();

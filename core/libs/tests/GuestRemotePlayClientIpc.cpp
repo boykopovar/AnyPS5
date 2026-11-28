@@ -8,6 +8,8 @@ void Require(bool value) {
     if (!value) std::abort();
 }
 
+void DummyCallback(int) {}
+
 constexpr int notConnected = static_cast<int>(0x8122101Du);
 
 }
@@ -28,5 +30,19 @@ int main() {
         Require(libSceRemotePlayClientIpcUnknown_gO3jwkOQ834_nid_no_patch() == notConnected);
         Require(libSceRemotePlayClientIpcUnknown_gqmq4cTnR0M_nid_no_patch() == notConnected);
     }
+
+    Require(sceRemotePlayClientIpcTerminate() == 0);
+    Require(sceRemotePlayClientIpcTerminate() == 0);
+
+    Require(libSceRemotePlayClientIpcUnknown_a3LqZtr60o4_nid_no_patch() == 0);
+    Require(libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch(nullptr) == notConnected);
+
+    void* cb = reinterpret_cast<void*>(&DummyCallback);
+    Require(libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch(cb) == 0);
+    Require(libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch(cb) == notConnected);
+    Require(libSceRemotePlayClientIpcUnknown_a3LqZtr60o4_nid_no_patch() == 0);
+    Require(libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch(cb) == 0);
+    Require(libSceRemotePlayClientIpcUnknown_a3LqZtr60o4_nid_no_patch() == 0);
+
     return 0;
 }

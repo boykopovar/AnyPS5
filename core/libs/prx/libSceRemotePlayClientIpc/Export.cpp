@@ -2,12 +2,16 @@
 #include "prx/libSceRemotePlayClientIpc/include/InventoryExports.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
 
 constexpr int ErrorNotConnected = static_cast<int>(0x8122101Du);
+
+std::mutex g_callbackMutex;
+void* g_connectionCallback = nullptr;
 
 bool IsConnected() {
     return false;
@@ -49,6 +53,9 @@ int APS5_VABI sceRemotePlayClientIpcTerminateStreaming() {
 }
 
 int APS5_VABI sceRemotePlayClientIpcTerminate() {
+    if (!IsConnected()) {
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -64,8 +71,13 @@ int APS5_VABI libSceRemotePlayClientIpcUnknown_0Ezd4jv7F_minus_4_nid_no_patch() 
 }
 APS5_EXPORT("0Ezd4jv7F-4", libSceRemotePlayClientIpcUnknown_0Ezd4jv7F_minus_4_nid_no_patch);
 
-int APS5_VABI libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch(void* callback) {
+    std::lock_guard<std::mutex> lock(g_callbackMutex);
+    if (callback == nullptr || g_connectionCallback != nullptr) {
+        return ErrorNotConnected;
+    }
+    g_connectionCallback = callback;
+    return 0;
 }
 APS5_EXPORT("2dzIQ1US7Ag", libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch);
 
@@ -126,7 +138,9 @@ int APS5_VABI libSceRemotePlayClientIpcUnknown_RiyUwZBmS_minus_k_nid_no_patch() 
 APS5_EXPORT("RiyUwZBmS-k", libSceRemotePlayClientIpcUnknown_RiyUwZBmS_minus_k_nid_no_patch);
 
 int APS5_VABI libSceRemotePlayClientIpcUnknown_a3LqZtr60o4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lock(g_callbackMutex);
+    g_connectionCallback = nullptr;
+    return 0;
 }
 APS5_EXPORT("a3LqZtr60o4", libSceRemotePlayClientIpcUnknown_a3LqZtr60o4_nid_no_patch);
 
