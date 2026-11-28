@@ -43,6 +43,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -162,12 +163,24 @@ void UpdateResourceRequestBody(const ResourceRequestBase& request) {
     if (!request.resourceRequestBodyUpdated) throw std::logic_error("WebCore::ResourceRequest::doUpdateResourceHTTPBody is not implemented");
 }
 
-void Assign(String& target, const String& source) {
+void Assign(String& target, const String& source, const char* function = "WebCore::ResourceRequestBase") {
+    std::optional<GuestWriteScope> sourceWrite;
+    if (source.impl)
+        sourceWrite.emplace(source.impl, sizeof(*source.impl), function, "null WTF::StringImpl");
+    std::optional<GuestWriteScope> targetWrite;
+    if (target.impl && target.impl != source.impl)
+        targetWrite.emplace(target.impl, sizeof(*target.impl), function, "null WTF::StringImpl");
     String copy(source);
     std::swap(target.impl, copy.impl);
 }
 
-void Assign(URL& target, const URL& source) {
+void Assign(URL& target, const URL& source, const char* function = "WebCore::ResourceRequestBase") {
+    std::optional<GuestWriteScope> sourceWrite;
+    if (source.impl)
+        sourceWrite.emplace(source.impl, sizeof(*source.impl), function, "null WTF::StringImpl");
+    std::optional<GuestWriteScope> targetWrite;
+    if (target.impl && target.impl != source.impl)
+        targetWrite.emplace(target.impl, sizeof(*target.impl), function, "null WTF::StringImpl");
     String copy(source.impl);
     if (copy.impl) copy.impl->refCount += 2;
     std::swap(target.impl, copy.impl);
@@ -332,20 +345,58 @@ void SetFallbackArray(ResourceRequestBase& request, const String* first, const S
     request.platformRequestUpdated = false;
 }
 
+char16_t ToASCIILower(char16_t unit) {
+    return (unit >= u'A' && unit <= u'Z') ? static_cast<char16_t>(unit + (u'a' - u'A')) : unit;
+}
+
+bool EqualIgnoringASCIICase(const NKWebKit::WtfAbi::StringImpl* left, const NKWebKit::WtfAbi::StringImpl* right) {
+    if (left == right) return true;
+    if (!left || !right || left->length != right->length) return false;
+    const auto leftView = NKWebKit::WtfAbi::ViewOf(left);
+    const auto rightView = NKWebKit::WtfAbi::ViewOf(right);
+    for (unsigned i = 0; i < leftView.length; ++i) {
+        if (ToASCIILower(NKWebKit::WtfAbi::CodeUnitAt(leftView, i)) != ToASCIILower(NKWebKit::WtfAbi::CodeUnitAt(rightView, i)))
+            return false;
+    }
+    return true;
+}
+
 bool EqualHeaderMaps(const NKWebKit::HttpAbi::HTTPHeaderMap& left, const NKWebKit::HttpAbi::HTTPHeaderMap& right, const char* function) {
     ValidateVector(left.common, function);
     ValidateVector(left.uncommon, function);
     ValidateVector(right.common, function);
     ValidateVector(right.uncommon, function);
     if (left.common.size != right.common.size || left.uncommon.size != right.uncommon.size) return false;
+    for (unsigned j = 0; j < right.common.size; ++j)
+        ValidateGuestStringImpl(right.common.buffer[j].value.impl, function);
+    for (unsigned j = 0; j < right.uncommon.size; ++j) {
+        ValidateGuestStringImpl(right.uncommon.buffer[j].key.impl, function);
+        ValidateGuestStringImpl(right.uncommon.buffer[j].value.impl, function);
+    }
     for (unsigned i = 0; i < left.common.size; ++i) {
         ValidateGuestStringImpl(left.common.buffer[i].value.impl, function);
+        std::optional<GuestWriteScope> rightValueWrite;
+        for (unsigned j = 0; j < right.common.size; ++j) {
+            if (right.common.buffer[j].key == left.common.buffer[i].key) {
+                if (auto* impl = right.common.buffer[j].value.impl)
+                    rightValueWrite.emplace(impl, sizeof(*impl), function, "null WTF::StringImpl", false);
+                break;
+            }
+        }
         String value = _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(&right, left.common.buffer[i].key);
         if (!_ZN3WTF5equalEPKNS_10StringImplES2_(value.impl, left.common.buffer[i].value.impl)) return false;
     }
     for (unsigned i = 0; i < left.uncommon.size; ++i) {
         ValidateGuestStringImpl(left.uncommon.buffer[i].key.impl, function);
         ValidateGuestStringImpl(left.uncommon.buffer[i].value.impl, function);
+        std::optional<GuestWriteScope> rightValueWrite;
+        for (unsigned j = 0; j < right.uncommon.size; ++j) {
+            if (EqualIgnoringASCIICase(right.uncommon.buffer[j].key.impl, left.uncommon.buffer[i].key.impl)) {
+                if (auto* impl = right.uncommon.buffer[j].value.impl)
+                    rightValueWrite.emplace(impl, sizeof(*impl), function, "null WTF::StringImpl", false);
+                break;
+            }
+        }
         String value = _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(&right, left.uncommon.buffer[i].key);
         if (!_ZN3WTF5equalEPKNS_10StringImplES2_(value.impl, left.uncommon.buffer[i].value.impl)) return false;
     }
@@ -379,6 +430,21 @@ const NKWebKit::WebCoreAbi::FormData* CheckedFormData(const void* pointer, const
     if (!pointer) return nullptr;
     RequireReadableGuestBytes(pointer, sizeof(NKWebKit::WebCoreAbi::FormData), function);
     return static_cast<const NKWebKit::WebCoreAbi::FormData*>(pointer);
+}
+
+void ValidateFormDataForIsolatedCopy(const NKWebKit::WebCoreAbi::FormData& formData, const char* function) {
+    ValidateVector(formData.elements, function);
+    for (unsigned i = 0; i < formData.elements.size; ++i) {
+        const auto& element = formData.elements.buffer[i];
+        const auto kind = static_cast<std::uint8_t>(element.index & 0xFF);
+        if (kind == kBytesElement) {
+            ValidateVector(element.storage.bytes, function);
+        } else if (kind == kFileElement) {
+            ValidateGuestStringImpl(element.storage.file.filename, function);
+        } else if (kind == kBlobElement) {
+            ValidateGuestStringImpl(element.storage.blob.url.impl, function);
+        }
+    }
 }
 
 bool FormDataElementsEqual(const NKWebKit::WebCoreAbi::FormData& left, const NKWebKit::WebCoreAbi::FormData& right, const char* function) {
@@ -480,6 +546,7 @@ void SetIsolatedCopy(ResourceRequestBase& to, const ResourceRequestBase& from, c
     }
     if (from.httpBody) {
         auto* body = CheckedFormData(from.httpBody, function);
+        ValidateFormDataForIsolatedCopy(*body, function);
         auto isolated = _ZNK7WebCore8FormData12isolatedCopyEv(body);
         SetHTTPBody(to, std::exchange(isolated.m_ptr, nullptr));
     }
@@ -516,7 +583,7 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE(ResourceRequ
     auto& request = reqAccess.Ref();
     const auto& value = CheckedRead(url, __func__);
     UpdateResourceRequest(request);
-    Assign(request.url, value);
+    Assign(request.url, value, __func__);
     request.platformRequestUpdated = false;
 }
 
@@ -546,7 +613,7 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase23setFirstPartyForCookiesERKN3WTF
     UpdateResourceRequest(request);
     ValidateGuestStringImpl(request.firstPartyForCookies.impl, __func__);
     if (Equal(request.firstPartyForCookies, value)) return;
-    Assign(request.firstPartyForCookies, value);
+    Assign(request.firstPartyForCookies, value, __func__);
     request.platformRequestUpdated = false;
 }
 
@@ -563,7 +630,7 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase13setHTTPMethodERKN3WTF6StringE(R
     UpdateResourceRequest(request);
     ValidateGuestStringImpl(request.httpMethod.impl, __func__);
     if (Equal(request.httpMethod, value)) return;
-    Assign(request.httpMethod, value);
+    Assign(request.httpMethod, value, __func__);
     request.platformRequestUpdated = false;
 }
 
@@ -767,16 +834,21 @@ void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(LegacyResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody) {
+    if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
+    if (!httpBody) throw std::invalid_argument("null WTF::RefPtr");
     auto reqAccess = CheckedWrite(self, __func__);
     auto& request = reqAccess.Ref();
     GuestWriteScope bodyPtrAccess(httpBody, sizeof(*httpBody), __func__, "null WTF::RefPtr");
     NKWebKit::WebCoreAbi::FormData* adopted = nullptr;
     CopyInGuest(&adopted, httpBody, sizeof(adopted), __func__);
     UpdateResourceRequest(request);
+    auto* previous = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
+    std::optional<GuestWriteScope> previousAccess;
+    if (previous)
+        previousAccess.emplace(previous, sizeof(NKWebKit::WebCoreAbi::FormData), __func__, "null WebCore::FormData");
     NKWebKit::WebCoreAbi::FormData* cleared = nullptr;
     if (!GuestCopyOut_nid_no_patch(httpBody, &cleared, sizeof(cleared)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    auto* previous = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
     request.httpBody = adopted;
     if (previous) previous->deref();
     request.resourceRequestBodyUpdated = true;
@@ -836,6 +908,8 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase17setCachePartitionERKN3WTF6Strin
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(ResourceRequestBase* self, NKWebKit::WebCoreAbi::HTTPHeaderMap* headerFields) {
+    if (!self) throw std::invalid_argument("null WebCore::ResourceRequestBase");
+    if (!headerFields) throw std::invalid_argument("null WebCore::HTTPHeaderMap");
     auto reqAccess = CheckedWrite(self, __func__);
     auto& request = reqAccess.Ref();
     GuestWriteRef<NKWebKit::HttpAbi::HTTPHeaderMap> sourceAccess(
@@ -1072,6 +1146,10 @@ extern "C" LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase
     const auto& source = CheckedRead(self, __func__);
     if (!redirectResponse) throw std::invalid_argument("null WebCore::ResourceResponseBase");
     RequireReadableGuestBytes(redirectResponse, sizeof(ResourceResponseStatusLayout), __func__);
+    if (!source.resourceRequestUpdated) {
+        GuestWriteScope sourceWrite(const_cast<LegacyResourceRequestBase*>(self), sizeof(*self), __func__, "null WebCore::ResourceRequestBase");
+        source.resourceRequestUpdated = true;
+    }
     int statusCode = 0;
     CopyInGuest(&statusCode,
         reinterpret_cast<const unsigned char*>(redirectResponse) + offsetof(ResourceResponseStatusLayout, httpStatusCode),
@@ -1086,11 +1164,7 @@ extern "C" LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase
     LegacyResourceRequestBase request = CopyRequest(source);
     auto& headers = HeaderFields(request);
     request.resourceRequestUpdated = true;
-    Assign(request.url, target);
-    if (!source.resourceRequestUpdated) {
-        GuestWriteScope sourceWrite(const_cast<LegacyResourceRequestBase*>(self), sizeof(*self), __func__, "null WebCore::ResourceRequestBase");
-        source.resourceRequestUpdated = true;
-    }
+    Assign(request.url, target, __func__);
     if (ShouldUseGet(source.httpMethod, statusCode)) {
         request.httpMethod = DefaultHTTPMethod();
         if (auto* body = static_cast<NKWebKit::WebCoreAbi::FormData*>(std::exchange(request.httpBody, nullptr))) body->deref();

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
@@ -1197,6 +1198,7 @@ struct GuardedPages {
 
 template<class TFunction>
 static bool ThrowsNotImplemented(TFunction function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
     try {
         function();
     } catch (const std::invalid_argument&) {
@@ -1204,7 +1206,19 @@ static bool ThrowsNotImplemented(TFunction function) {
     } catch (const std::logic_error&) {
         return false;
     } catch (const std::exception&) {
+        return NotImplementedCalls_nid_no_patch() == before + 1;
+    }
+    return false;
+}
+
+template<class TFunction>
+static bool ThrowsInvalidArgument(TFunction function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
         return true;
+    } catch (const std::exception&) {
+        return false;
     }
     return false;
 }
@@ -1268,6 +1282,31 @@ static void TestGuestPointers() {
     Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase17setAsIsolatedCopyERKNS_15ResourceRequestE(&req, guardReq); }));
     Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(guardLegacy, guardResponse, false); }));
     Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(&legacy, guardResponse, false); }));
+
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(readOnlyLegacy, nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(readOnlyReq, nullptr); }));
+
+    URL readOnlyUrl{};
+    readOnlyUrl.impl = reinterpret_cast<StringImpl*>(pages.ReadOnly());
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE(&req, &readOnlyUrl); }));
+
+    auto newBodyRef = _ZN7WebCore8FormData6createEPKvm("abc", 3);
+    FormData* incomingBody = std::exchange(newBodyRef.m_ptr, nullptr);
+    legacy.httpBody = pages.ReadOnly();
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&legacy, &incomingBody); }));
+    Require(incomingBody != nullptr);
+    Require(legacy.httpBody == pages.ReadOnly());
+    incomingBody->deref();
+    legacy.httpBody = nullptr;
+
+    FormData badElementsBody{};
+    badElementsBody.refCount = 1;
+    badElementsBody.elements.buffer = reinterpret_cast<FormDataElement*>(pages.Guard());
+    badElementsBody.elements.capacity = 1;
+    badElementsBody.elements.size = 1;
+    req.httpBody = &badElementsBody;
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase12isolatedCopyEv(&req); }));
+    req.httpBody = nullptr;
 
     req.httpBody = reinterpret_cast<void*>(pages.Guard());
     Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase9hasUploadEv(&req); }));
