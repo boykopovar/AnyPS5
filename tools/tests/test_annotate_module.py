@@ -1005,7 +1005,7 @@ class InputProtectionTests(unittest.TestCase):
             original = build_module()
             module.write_bytes(original)
             result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("separate from the input", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
@@ -1023,7 +1023,7 @@ class InputProtectionTests(unittest.TestCase):
             invalid = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=3)
             module.write_bytes(invalid)
             result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "out"), "--no-names"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("GNU hash Bloom filter count 3 is not a power of two", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
@@ -1183,7 +1183,7 @@ class OutputProtectionTests(unittest.TestCase):
             exports = root / "report.exports.txt"
             os.link(imports, exports)
             result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("outputs must name different files", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
@@ -1235,7 +1235,7 @@ class PathResolutionTests(unittest.TestCase):
                     self.skipTest("Windows symbolic-link privileges unavailable")
                 raise
             result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(str(loop), result.stderr)
             self.assertNotIn("Traceback", result.stderr)

@@ -400,7 +400,7 @@ class PatchAdvisorTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(tool), *arguments, "--param-json", str(self.param), "--input", str(self.input),
                      "--module-dir", "Media/Modules"],
-                    capture_output=True, text=True, timeout=30, env=env)
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertRegex(result.stderr, r"Symlink loop|Too many levels of symbolic links")
