@@ -1,5 +1,6 @@
 #include "prx/libSceAjmi/libSceAjmi.hpp"
 #include "prx/libSceAjm.native/libSceAjm.native.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <array>
 #include <bit>
@@ -187,8 +188,8 @@ void CheckErrors(decltype(&sceAjmiStrError) call, decltype(&sceAjmStrError) refe
 
 int main(int argc, char** argv) {
     Require(argc == 5);
-    const std::filesystem::path aliasPath = std::u8string(reinterpret_cast<const char8_t*>(argv[1]));
-    const std::filesystem::path nativePath = std::u8string(reinterpret_cast<const char8_t*>(argv[2]));
+    const std::filesystem::path aliasPath = ArgumentPath(argv, 1);
+    const std::filesystem::path nativePath = ArgumentPath(argv, 2);
     const bool patched = std::string_view(argv[4]) == "nid";
     Require(patched || std::string_view(argv[4]) == "unpatched");
     Module native(nativePath);
