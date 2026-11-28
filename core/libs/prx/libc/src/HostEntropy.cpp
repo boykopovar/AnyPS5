@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <system_error>
 #ifdef __APPLE__
 #include <sys/random.h>
@@ -15,19 +16,30 @@
 #endif
 
 void HostEntropy_nid_no_patch(void* buffer, std::size_t size) {
+    if (size == 0)
+        return;
+    if (buffer == nullptr)
+        throw std::invalid_argument("HostEntropy: null buffer");
     auto* bytes = static_cast<unsigned char*>(buffer);
+    std::size_t remaining = size;
 #ifdef _WIN32
-    for (std::size_t offset = 0; offset < size; offset += sizeof(unsigned int)) {
+    while (remaining > 0) {
         unsigned int value = 0;
         if (const errno_t error = rand_s(&value); error != 0)
             throw std::system_error(error, std::generic_category(), "HostEntropy: rand_s failed");
-        std::memcpy(bytes + offset, &value, std::min(sizeof(value), size - offset));
+        const std::size_t chunk = std::min(sizeof(value), remaining);
+        std::memcpy(bytes, &value, chunk);
+        bytes += chunk;
+        remaining -= chunk;
     }
 #else
     constexpr std::size_t MaxChunk = 256;
-    for (std::size_t offset = 0; offset < size; offset += MaxChunk) {
-        if (getentropy(bytes + offset, std::min(MaxChunk, size - offset)) != 0)
+    while (remaining > 0) {
+        const std::size_t chunk = std::min(MaxChunk, remaining);
+        if (getentropy(bytes, chunk) != 0)
             throw std::system_error(errno, std::generic_category(), "HostEntropy: getentropy failed");
+        bytes += chunk;
+        remaining -= chunk;
     }
 #endif
 }
