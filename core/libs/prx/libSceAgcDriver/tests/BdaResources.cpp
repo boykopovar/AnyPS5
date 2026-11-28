@@ -4683,10 +4683,22 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
                     seeded = seed.Handle();
                 }
                 const auto base = reinterpret_cast<std::uintptr_t>(reservation.data);
+                const bool released = shape == "decommitted";
+                if (released) {
+                    GuestBufferMemory warm(context);
+                    if (writable) warm.AddWritable(base, reserved);
+                    else warm.AddReadable(base, reserved);
+                    warm.Upload(false);
+                    std::uint32_t warmAdjustment = 0;
+                    const auto warmed = warm.Descriptor(base, reserved, warmAdjustment);
+                    warm.WriteBack();
+                    const auto poisoned = access.bytes(warmed.buffer);
+                    std::fill(poisoned.begin(), poisoned.end(), std::byte{0xa5});
+                    seeded = warmed.buffer;
+                }
                 GuestBufferMemory memory(context);
                 if (writable) memory.AddWritable(base, reserved);
                 else memory.AddReadable(base, reserved);
-                const bool released = shape == "decommitted";
                 if (released) {
 #ifdef _WIN32
                     Require(VirtualFree(reservation.data + 2 * unit, unit, MEM_DECOMMIT) != 0, "cannot decommit the sparse heap tail");
@@ -4728,6 +4740,7 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
             }
         }
     }
+    ClearUploadCopies(context.device);
     return passed;
 }
 

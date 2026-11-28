@@ -7621,7 +7621,13 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     std::shared_ptr<UploadCopies::Spans> sparseSpans;
     if (compareSparse && cacheable && !addressable && region.sparse && !region.backed.empty() && !uploadGeneration && allocated <= uploadCacheBudget()) {
         sparseSpans = std::make_shared<UploadCopies::Spans>();
-        if (auto cached = refreshSparseUpload(context, {region.begin, allocated, usage}, region.backed, *sparseSpans)) {
+        std::shared_ptr<Buffer> cached;
+        try {
+            cached = refreshSparseUpload(context, {region.begin, allocated, usage}, region.backed, *sparseSpans);
+        } catch (const std::runtime_error&) {
+            cached.reset();
+        }
+        if (cached) {
             region.buffer = std::move(cached);
             region.snapshot.clear();
             insertUploaded(context, region.begin, region.backed, allocated, usage, region.buffer, 0, std::move(sparseSpans));
@@ -7660,7 +7666,10 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
                 const auto mappings = GuestMemory::ForgetSerial();
                 const bool readable = GuestMemory::Accessible(reinterpret_cast<const void*>(first), piece.size());
                 GuestMemory::ReadCommitted(first, piece);
-                if (!readable || (mappings & 1u) != 0u || GuestMemory::ForgetSerial() != mappings) uploadGeneration = 0;
+                if (!readable || (mappings & 1u) != 0u || GuestMemory::ForgetSerial() != mappings) {
+                    uploadGeneration = 0;
+                    sparseSpans.reset();
+                }
                 readBytes += piece.size();
                 if (written) region.uploaded.insert(region.uploaded.end(), piece.begin(), piece.end());
                 cursor = at + piece.size();
