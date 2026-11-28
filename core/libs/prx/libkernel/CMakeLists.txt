@@ -2808,6 +2808,18 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
     endif()
     add_test(NAME guest_memory COMMAND guest_memory_tests)
     add_test(NAME guest_mmap_fixed_anonymous COMMAND guest_memory_tests fixed-anonymous)
+    add_library(host_preload_fixture MODULE ${LIBS_INCLUDE_DIR}/tests/HostPreloadFixture.cpp)
+    add_library(host_preload_no_entry MODULE ${LIBS_INCLUDE_DIR}/tests/HostPreloadNoEntry.cpp)
+    set_target_properties(host_preload_fixture host_preload_no_entry PROPERTIES
+        CXX_VISIBILITY_PRESET default WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    add_test_executable(host_preload_tests ${LIBS_INCLUDE_DIR}/tests/HostPreload.cpp)
+    target_link_libraries(host_preload_tests PRIVATE libkernel libc)
+    configure_windows_unwind(host_preload_tests)
+    add_dependencies(host_preload_tests host_preload_fixture host_preload_no_entry)
+    target_compile_definitions(host_preload_tests PRIVATE
+        HOST_PRELOAD_FIXTURE="$<TARGET_FILE:host_preload_fixture>"
+        HOST_PRELOAD_NO_ENTRY="$<TARGET_FILE:host_preload_no_entry>")
+    add_test(NAME host_preload COMMAND host_preload_tests)
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME guest_mmap_executable COMMAND guest_memory_tests executable-mappings)
         set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
