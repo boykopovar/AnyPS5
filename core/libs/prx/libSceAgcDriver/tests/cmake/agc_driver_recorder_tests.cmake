@@ -701,9 +701,11 @@ target_sources(agc_driver_recorder_tests PRIVATE ${agcVertexRangeHeaders})
 if(BUILD_TESTING)
     add_test(NAME agc_driver_vertex_target_range_copied COMMAND agc_driver_recorder_tests --vertex-target-range-copied)
     add_test(NAME agc_driver_vertex_target_range_imported COMMAND agc_driver_recorder_tests --vertex-target-range-imported)
+    add_test(NAME agc_driver_mixed_key_clear COMMAND agc_driver_recorder_tests --mixed-key-clear-only)
     set_tests_properties(agc_driver_vertex_target_range_copied agc_driver_vertex_target_range_imported PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_RELEASE_UNDER_LOCK=1" FAIL_REGULAR_EXPRESSION "VUID-|InvalidCommandBuffer")
+    set_tests_properties(agc_driver_mixed_key_clear PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_driver_vertex_target_range_copied agc_driver_vertex_target_range_imported PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_vertex_target_range_copied agc_driver_vertex_target_range_imported agc_driver_mixed_key_clear PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_vertex_target_range_copied_release_thread COMMAND agc_driver_recorder_tests --vertex-target-range-copied)

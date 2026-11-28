@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -25,15 +27,29 @@ const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes);
+std::size_t DccSliceKeyExtent(const GuestTextureResource& resource, std::uint64_t surfaceBytes);
+struct DccSlice {
+    std::uint64_t byteOffset = 0;
+    std::uint64_t byteSize = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint64_t keyOffset = 0;
+    std::size_t keyCount = 0;
+};
+std::vector<DccSlice> DccSlices(const GuestTextureResource& resource);
 std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes);
 std::optional<std::size_t> DccMipKeyOffset(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, std::uint32_t mipCount, std::uint32_t firstTailLevel, std::uint32_t level);
 
 template<typename ReadFollowed, typename ReadNamed>
-bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys filled, std::uint64_t namedDcc, ReadFollowed&& readFollowed, ReadNamed&& readNamed) {
+bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, std::uint64_t uploadedMixed, DccKeys filled, std::uint64_t namedDcc, ReadFollowed&& readFollowed, ReadNamed&& readNamed) {
     if (namedDcc == 0 || namedDcc == followedDcc) return true;
-    if (uploaded != DccKeys::Uncompressed || filled != DccKeys::Uncompressed) return false;
-    if (followedDcc != 0 && readFollowed() != DccKeys::Uncompressed) return false;
-    return readNamed() == DccKeys::Uncompressed;
+    if (uploaded != DccKeys::Uncompressed || uploadedMixed != 0 || filled != DccKeys::Uncompressed) return false;
+    if (followedDcc != 0) {
+        const auto followed = readFollowed();
+        if (followed.keys != DccKeys::Uncompressed || followed.mixedSignature != 0) return false;
+    }
+    const auto named = readNamed();
+    return named.keys == DccKeys::Uncompressed && named.mixedSignature == 0;
 }
 // The keys covering a surface of `surfaceBytes`, when they all agree.
 DccKeys ReadDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
@@ -66,7 +82,12 @@ bool DccAlphaOnMsb(VkFormat format, std::uint32_t componentSwap);
 
 // The keys of a texture's DCC surface when they fast-clear it to a value encodable here, else
 // Uncompressed (the texels are read as stored; other keys are reported once).
+struct DccKeyState {
+    DccKeys keys = DccKeys::Uncompressed;
+    std::uint64_t mixedSignature = 0;
+};
 DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes);
+DccKeyState TextureClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes);
 DccKeys ScannedDccKeys(std::uint64_t metaAddress, std::size_t keyCount);
 // The last stable key scan of one surface's metadata (ProvedClearKeys): the keys read and the write
 // generation the key range was collected at before the scan. Held by the image or texture of the
@@ -76,6 +97,7 @@ struct DccKeyProof {
     std::uint64_t generation = 0;
     std::uint64_t pendingNote = 0;
     std::uint64_t pendingRecorder = 0;
+    std::uint64_t mixedSignature = 0;
 };
 // TextureClearKeys with the scan skipped while the key range is unchanged since `proof` was taken
 // (CollectWrites over the keys, then UnchangedSince its generation), so a surface's keys are scanned
@@ -86,6 +108,7 @@ struct DccKeyProof {
 // their record), which makes the proof exactly as sound as UnchangedSince over the texels.
 // APS5_NO_KEY_FAST_PATH=1 scans on every call and stores nothing.
 DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof);
+DccKeyState ProvedClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof);
 DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeys keys);
 bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof);
 bool KeyFastPath();
@@ -117,6 +140,15 @@ struct DccRangeProof {
 DccKeys ProvedCurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, DccRangeProof& proof);
 // A surface's texels as a read sees them: the guest bytes, or the clear value of fast-cleared keys.
 void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std::span<std::byte> bytes);
+struct MixedKeyClear {
+    DccKeys keys = DccKeys::Uncompressed;
+    std::uint32_t pattern = 0;
+    std::uint64_t signature = 0;
+    std::vector<std::pair<std::size_t, std::size_t>> runs;
+};
+bool MixedKeyClearEnabled();
+std::optional<MixedKeyClear> MixedKeyClearRuns(const GuestTextureResource& resource, std::uint64_t guestBytes);
+void ApplyMixedKeyClear(const MixedKeyClear& clear, std::span<std::byte> dst, std::uint64_t sliceByteOffset = 0);
 void NoteKeysFillOnGpu(std::uint64_t begin, std::size_t count, DccKeys keys);
 std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes);
 bool DccKeyWritersPending(std::uint64_t metaAddress, std::size_t count);

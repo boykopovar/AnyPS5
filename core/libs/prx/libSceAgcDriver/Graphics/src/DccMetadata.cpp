@@ -5,9 +5,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -538,13 +540,149 @@ DccKeys readDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized
 
 DccKeys currentDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized);
 
-DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, bool& memoized) {
+std::optional<std::uint32_t> mixedClearPattern(VkFormat clearFormat, DccKeys keys, std::uint32_t elementBytes, bool alphaOnMsb) {
+    if (elementBytes == 0 || elementBytes > 16 || (elementBytes & (elementBytes - 1)) != 0) return std::nullopt;
+    std::array<std::byte, 16> elem{};
+    if (!FillDccClear(clearFormat, keys, alphaOnMsb, std::span(elem.data(), elementBytes))) return std::nullopt;
+    if (elementBytes <= 4) {
+        std::array<std::byte, 4> wordBytes{};
+        for (std::size_t i = 0; i < 4; i += elementBytes) std::memcpy(wordBytes.data() + i, elem.data(), elementBytes);
+        std::uint32_t pattern = 0;
+        std::memcpy(&pattern, wordBytes.data(), sizeof(pattern));
+        return pattern;
+    }
+    for (std::size_t i = 4; i < elementBytes; i += 4) {
+        if (std::memcmp(elem.data(), elem.data() + i, 4) != 0) return std::nullopt;
+    }
+    std::uint32_t pattern = 0;
+    std::memcpy(&pattern, elem.data(), sizeof(pattern));
+    return pattern;
+}
+
+void ReportMixedSliceOnce(const GuestTextureResource& resource, std::size_t sliceIndex, std::span<const std::uint8_t> keys) {
+    static AgcDriver::Mutex mutex;
+    static std::set<std::pair<std::uint64_t, std::uint64_t>> reported;
+    std::lock_guard lock(mutex);
+    if (!reported.insert({resource.baseAddress, resource.dccAddress}).second) return;
+    std::array<std::uint64_t, 256> tally{};
+    for (const auto key : keys) tally[key]++;
+    std::string values;
+    for (int byte = 0; byte < 256; ++byte) {
+        if (tally[byte] == 0) continue;
+        char piece[32];
+        std::snprintf(piece, sizeof(piece), "%llu x 0x%02x", static_cast<unsigned long long>(tally[byte]), byte);
+        if (!values.empty()) values += ", ";
+        values += piece;
+    }
+    std::fprintf(stderr, "[gpu] texture 0x%llx (%ux%u format %u) DCC slice %zu has %s keys; its texels are read as stored\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, sliceIndex, values.c_str());
+}
+
+bool FillableClear(std::uint8_t byte) {
+    const auto keys = ByteKeys(byte);
+    return keys == DccKeys::Clear0000 || keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111;
+}
+
+std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& resource, std::span<const DccSlice> slices, bool wholeOnly) {
+    if (!MixedKeyClearEnabled() || resource.dccAddress == 0 || IsBlockCompressed(resource.format) || slices.empty()) return std::nullopt;
+    const auto elementBytes = BytesPerElement(resource.format);
+    std::optional<std::uint8_t> clearByte;
+    bool sawUncompressed = false;
+    std::vector<std::pair<std::size_t, std::size_t>> fillRuns;
+    std::uint64_t hash = 14695981039346656037ull;
+    const auto mix = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ull;
+    };
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+    for (std::size_t sliceIndex = 0; sliceIndex < slices.size(); ++sliceIndex) {
+        const auto& slice = slices[sliceIndex];
+        const auto count = slice.keyCount;
+        const auto meta = resource.dccAddress + slice.keyOffset;
+        if (count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(meta), count)) return std::nullopt;
+        std::vector<std::uint8_t> raw(count);
+        GuestMemory::ReadCommitted(meta, std::as_writable_bytes(std::span(raw)));
+        bool uniform = true;
+        for (const auto key : raw) {
+            if (key != raw.front()) uniform = false;
+            if (key == 0xff) sawUncompressed = true;
+        }
+        if (uniform && raw.front() != 0xff) {
+            if (FillableClear(raw.front())) {
+                if (clearByte.has_value() && *clearByte != raw.front()) {
+                    ReportMixedSliceOnce(resource, sliceIndex, std::span(raw));
+                    return std::nullopt;
+                }
+                clearByte = raw.front();
+                fillRuns.emplace_back(static_cast<std::size_t>(slice.byteOffset / 256), static_cast<std::size_t>((slice.byteOffset + slice.byteSize + 255) / 256));
+                mix(slice.byteOffset);
+                mix(count);
+                continue;
+            }
+        }
+        if (uniform && !wholeOnly) continue;
+        if (uniform) return std::nullopt;
+        ReportMixedSliceOnce(resource, sliceIndex, std::span(raw));
+        if (wholeOnly) return std::nullopt;
+    }
+    if (!clearByte.has_value()) return std::nullopt;
+    if (!wholeOnly && !sawUncompressed) return std::nullopt;
+    const auto clearKeys = ByteKeys(*clearByte);
+    const auto pattern = mixedClearPattern(DccClearTextureFormat(resource.format), clearKeys, elementBytes, resource.dccAlphaOnMsb);
+    if (!pattern.has_value()) return std::nullopt;
+    mix(*clearByte);
+    mix(*pattern);
+    for (const auto& [first, last] : fillRuns) {
+        mix(first);
+        mix(last);
+    }
+    if (hash == 0) hash = 1;
+    return MixedKeyClear{clearKeys, *pattern, hash, std::move(fillRuns)};
+}
+
+enum class SliceKeys { Unreadable, Uniform, Differ };
+SliceKeys uniformSliceKeys(const GuestTextureResource& resource, std::span<const DccSlice> slices, std::uint8_t& byte) {
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+    bool first = true;
+    std::vector<std::uint8_t> raw;
+    for (const auto& slice : slices) {
+        const auto count = slice.keyCount;
+        const auto meta = resource.dccAddress + slice.keyOffset;
+        if (count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(meta), count)) return SliceKeys::Unreadable;
+        raw.resize(count);
+        GuestMemory::ReadCommitted(meta, std::as_writable_bytes(std::span(raw)));
+        if (first) {
+            byte = raw.front();
+            first = false;
+        }
+        if (!AllKeysEqual(raw.data(), raw.size(), byte)) return SliceKeys::Differ;
+    }
+    return first ? SliceKeys::Unreadable : SliceKeys::Uniform;
+}
+
+DccKeyState textureClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes, bool& memoized) {
     memoized = false;
-    if (resource.dccAddress == 0) return DccKeys::Uncompressed;
+    if (resource.dccAddress == 0) return {};
     DccKeys keys;
-    if (const auto known = WaitForKeyWriters(resource, guestBytes)) keys = *known;
-    else keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
-    if (keys == DccKeys::Uncompressed || (keys == DccKeys::ClearSingle && SingleKeysReadable(resource))) return keys;
+    bool fromWriters = false;
+    if (const auto known = WaitForKeyWriters(resource, guestBytes)) {
+        keys = *known;
+        fromWriters = true;
+    } else {
+        keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
+    }
+    if (keys != DccKeys::Mixed && keys != DccKeys::Unreadable && !memoized && !fromWriters && resource.dccPipeAligned && MixedKeyClearEnabled() && resource.width != 0 && resource.height != 0 && !IsBlockCompressed(resource.format)) {
+        if (const auto slices = DccSlices(resource); slices.size() > 1) {
+            std::uint8_t byte = 0;
+            const auto sliced = uniformSliceKeys(resource, slices, byte);
+            if (sliced == SliceKeys::Differ) keys = DccKeys::Mixed;
+            else if (sliced == SliceKeys::Uniform) keys = ByteKeys(byte);
+        }
+    }
+    if (keys == DccKeys::Mixed && MixedKeyClearEnabled()) {
+        if (memoized) return {};
+        if (const auto mixed = MixedKeyClearRuns(resource, guestBytes)) return {DccKeys::Uncompressed, mixed->signature};
+    }
+    if (keys == DccKeys::Uncompressed || (keys == DccKeys::ClearSingle && SingleKeysReadable(resource))) return {keys, 0};
     if (DccClearTextureFormat(resource.format) == ResolveTextureFormat(resource.format) && IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || (keys == DccKeys::Clear1111 && resource.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format6E4Float)))) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
     std::byte probe[16]{};
     if (!IsDccClear(keys) || !FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) {
@@ -552,9 +690,9 @@ DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
         static std::set<std::pair<std::uint64_t, int>> reported;
         std::lock_guard lock(reportedMutex);
         if (reported.size() < 32 && reported.insert({resource.baseAddress, static_cast<int>(keys)}).second) std::fprintf(stderr, "[gpu] texture 0x%llx (format %u) has %s DCC keys at 0x%llx; its texels are read as stored\n", static_cast<unsigned long long>(resource.baseAddress), resource.format, DccKeysName(keys), static_cast<unsigned long long>(resource.dccAddress));
-        return DccKeys::Uncompressed;
+        return {};
     }
-    return keys;
+    return {keys, 0};
 }
 
 DccKeys currentDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized) {
@@ -747,9 +885,104 @@ DccKeys ScannedDccKeys(std::uint64_t metaAddress, std::size_t keyCount) {
     return std::ranges::all_of(keys, [&](std::uint8_t key) { return key == keys.front(); }) ? ByteKeys(keys.front()) : DccKeys::Mixed;
 }
 
-DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+bool MixedKeyClearEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_MIXED_KEY_CLEAR") != nullptr;
+    return !disabled;
+}
+
+std::vector<DccSlice> DccSlices(const GuestTextureResource& resource) {
+    auto slices = std::vector<DccSlice>{};
+    if (resource.dccAddress == 0 || resource.width == 0 || resource.height == 0) return slices;
+    const auto geometry = DescribeSurface(resource);
+    const auto mips = static_cast<std::uint32_t>(geometry.mips.size());
+    const auto elementBytes = BytesPerElement(resource.format);
+    const bool chain = !geometry.thick && resource.dccPipeAligned && mips > 1 && elementBytes != 0 && resource.tileMode == TextureTileMode::kR64KBX;
+    std::uint32_t firstTail = mips;
+    if (chain) {
+        for (std::uint32_t level = 0; level < mips; ++level) {
+            if (geometry.mips[level].tail) {
+                firstTail = level;
+                break;
+            }
+        }
+    }
+    std::uint64_t chainExtent = 0;
+    if (chain) {
+        if (firstTail < mips) chainExtent = 4096;
+        for (std::uint32_t level = 0; level < firstTail; ++level) chainExtent += DccMipKeySlice(geometry.mips[level].width, geometry.mips[level].height, elementBytes);
+    }
+    std::uint64_t keyCursor = 0;
+    for (std::uint32_t layer = 0; layer < geometry.layers; ++layer) {
+        for (std::uint32_t level = 0; level < mips; ++level) {
+            if (!geometry.HasLayer(level, layer)) continue;
+            const auto& mip = geometry.mips[level];
+            auto slice = DccSlice{geometry.GuestOffset(layer, mip), mip.tiledSize, mip.width, mip.height};
+            if (chain) {
+                if (firstTail < mips && level >= firstTail) {
+                    slice.keyCount = 4096;
+                } else if (const auto offset = DccMipKeyOffset(resource.width, resource.height, elementBytes, mips, firstTail, level)) {
+                    slice.keyOffset = *offset;
+                    slice.keyCount = DccMipKeySlice(mip.width, mip.height, elementBytes);
+                }
+                slice.keyOffset += static_cast<std::uint64_t>(layer) * chainExtent;
+            } else {
+                slice.keyOffset = keyCursor;
+                slice.keyCount = resource.dccPipeAligned
+                    ? DccKeyCount(resource.tileMode, elementBytes, mip.width, mip.height, mip.tiledSize)
+                    : DccKeyBytes(mip.tiledSize);
+                keyCursor += slice.keyCount;
+            }
+            slices.push_back(slice);
+        }
+    }
+    std::sort(slices.begin(), slices.end(), [](const auto& a, const auto& b) { return a.byteOffset < b.byteOffset; });
+    return slices;
+}
+
+std::size_t DccSliceKeyExtent(const GuestTextureResource& resource, std::uint64_t surfaceBytes) {
+    auto extent = DccKeyCount(resource, surfaceBytes);
+    if (resource.dccAddress == 0 || !resource.dccPipeAligned || !MixedKeyClearEnabled() || resource.width == 0 || resource.height == 0 || IsBlockCompressed(resource.format)) return extent;
+    const auto slices = DccSlices(resource);
+    if (slices.size() <= 1) return extent;
+    for (const auto& slice : slices) extent = std::max(extent, static_cast<std::size_t>(slice.keyOffset + slice.keyCount));
+    return extent;
+}
+
+std::optional<MixedKeyClear> MixedKeyClearRuns(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    static_cast<void>(guestBytes);
+    if (resource.dccAddress == 0 || resource.width == 0 || resource.height == 0 || IsBlockCompressed(resource.format)) return std::nullopt;
+    auto mixed = MixedKeyClearSlices(resource, DccSlices(resource), DescribeSurface(resource).mips.size() > 1);
+    if (mixed.has_value() && DccClearTextureFormat(resource.format) == ResolveTextureFormat(resource.format) && IsConvertedTextureFormat(resource.format) && (mixed->keys == DccKeys::Clear0001 || mixed->keys == DccKeys::Clear1110)) return std::nullopt;
+    return mixed;
+}
+
+void ApplyMixedKeyClear(const MixedKeyClear& clear, std::span<std::byte> dst, std::uint64_t sliceByteOffset) {
+    const auto sliceEnd = sliceByteOffset + dst.size();
+    constexpr std::size_t chunk = 4096;
+    std::array<std::byte, chunk + sizeof(clear.pattern)> fill;
+    for (std::size_t i = 0; i < fill.size(); i += sizeof(clear.pattern)) std::memcpy(fill.data() + i, &clear.pattern, sizeof(clear.pattern));
+    for (const auto& [first, last] : clear.runs) {
+        const auto runBegin = static_cast<std::uint64_t>(first) * KeyBytes;
+        const auto runEnd = static_cast<std::uint64_t>(last) * KeyBytes;
+        if (runEnd <= sliceByteOffset || runBegin >= sliceEnd) continue;
+        const auto clampedBegin = static_cast<std::size_t>(std::max(runBegin, sliceByteOffset) - sliceByteOffset);
+        const auto clampedEnd = static_cast<std::size_t>(std::min(runEnd, sliceEnd) - sliceByteOffset);
+        const auto phase = static_cast<std::size_t>((sliceByteOffset + clampedBegin) % sizeof(clear.pattern));
+        for (auto pos = clampedBegin; pos < clampedEnd;) {
+            const auto size = std::min(chunk, clampedEnd - pos);
+            std::memcpy(dst.data() + pos, fill.data() + phase, size);
+            pos += size;
+        }
+    }
+}
+
+DccKeyState TextureClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes) {
     bool memoized = false;
-    return textureClearKeys(resource, guestBytes, memoized);
+    return textureClearKeyState(resource, guestBytes, memoized);
+}
+
+DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    return TextureClearKeyState(resource, guestBytes).keys;
 }
 
 bool KeyFastPath() {
@@ -757,23 +990,36 @@ bool KeyFastPath() {
     return enabled;
 }
 
-DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof) {
-    if (resource.dccAddress == 0) return DccKeys::Uncompressed;
+namespace {
+
+std::size_t proofKeyCount(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    auto count = DccKeyBytes(guestBytes);
+    if (resource.dccAddress == 0 || !resource.dccPipeAligned || !MixedKeyClearEnabled() || resource.width == 0 || resource.height == 0 || IsBlockCompressed(resource.format)) return count;
+    const auto slices = DccSlices(resource);
+    if (slices.size() <= 1) return count;
+    for (const auto& slice : slices) count = std::max(count, static_cast<std::size_t>(slice.keyOffset + slice.keyCount));
+    return count;
+}
+
+}
+
+DccKeyState ProvedClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof) {
+    if (resource.dccAddress == 0) return {};
     auto& counters = Proofs();
     if (!KeyFastPath()) {
         counters.scanned.fetch_add(1, std::memory_order_relaxed);
-        return TextureClearKeys(resource, guestBytes);
+        return TextureClearKeyState(resource, guestBytes);
     }
-    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    const auto count = proofKeyCount(resource, guestBytes);
     // The collect precedes the scan: a write landing between them is stamped above `collected`, so
     // the proof it would invalidate is never taken as current.
     const auto collected = count == 0 ? 0 : GuestMemory::CollectWrites(resource.dccAddress, count);
     if (proof.generation != 0 && collected != 0 && GuestMemory::UnchangedSince(resource.dccAddress, count, proof.generation) && PendingKeyProofHolds(resource, guestBytes, proof)) {
         counters.proved.fetch_add(1, std::memory_order_relaxed);
-        return proof.keys;
+        return {proof.keys, proof.mixedSignature};
     }
     bool memoized = false;
-    const auto keys = textureClearKeys(resource, guestBytes, memoized);
+    const auto state = textureClearKeyState(resource, guestBytes, memoized);
     bool stable = collected != 0 && !memoized;
     if (stable) {
         // After the scan: a write noted since the collect is stamped above it anyway; one noted
@@ -787,14 +1033,18 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
             stable = !Recorder::SnapshotWriteOverlaps(resource.dccAddress, count);
         }
     }
-    proof = stable ? DccKeyProof{keys, collected} : memoized && collected != 0 ? PendingKeyProof(resource, guestBytes, keys) : DccKeyProof{};
+    proof = stable ? DccKeyProof{state.keys, collected, 0, 0, state.mixedSignature} : memoized && collected != 0 ? PendingKeyProof(resource, guestBytes, state.keys) : DccKeyProof{};
     counters.scanned.fetch_add(1, std::memory_order_relaxed);
     if (!stable) counters.unstable.fetch_add(1, std::memory_order_relaxed);
-    return keys;
+    return state;
+}
+
+DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof) {
+    return ProvedClearKeyState(resource, guestBytes, proof).keys;
 }
 
 DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeys keys) {
-    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    const auto count = proofKeyCount(resource, guestBytes);
     if (!KeyFastPath() || resource.dccAddress == 0 || count == 0 || keys == DccKeys::Mixed || keys == DccKeys::Unreadable || !GuestMemory::GpuMutex().HeldByThisThread()) return {};
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return {};
@@ -809,7 +1059,7 @@ DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t 
 
 bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof) {
     if (proof.pendingNote == 0) return true;
-    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    const auto count = proofKeyCount(resource, guestBytes);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return false;
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || recorder->Id() != proof.pendingRecorder || recorder->NewestWriteNote(resource.dccAddress, count) != proof.pendingNote) return false;
@@ -851,6 +1101,9 @@ void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std:
     if (keys == DccKeys::Uncompressed || keys == DccKeys::ClearSingle) GuestMemory::ReadCommitted(resource.baseAddress, bytes);
     else FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, bytes);
     if (keys == DccKeys::ClearSingle) ExpandSingleBlocks(bytes, BytesPerElement(resource.format));
+    if (keys == DccKeys::Uncompressed && resource.dccAddress != 0) {
+        if (const auto mixed = MixedKeyClearRuns(resource, bytes.size())) ApplyMixedKeyClear(*mixed, bytes);
+    }
 }
 
 bool SingleKeysReadable(const GuestTextureResource& resource) {
