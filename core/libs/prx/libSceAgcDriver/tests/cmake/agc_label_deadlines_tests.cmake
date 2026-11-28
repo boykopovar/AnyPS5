@@ -1,0 +1,10 @@
+add_test_executable(agc_label_deadlines_tests EXCLUDE_FROM_ALL tests/LabelDeadlines.cpp)
+target_include_directories(agc_label_deadlines_tests PRIVATE ${LIBS_INCLUDE_DIR})
+set_target_properties(agc_label_deadlines_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_host_test_executable(agc_label_deadlines_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_label_deadlines_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_label_deadlines COMMAND agc_label_deadlines_tests)
+    set_tests_properties(agc_label_deadlines PROPERTIES TIMEOUT 30)
+endif()

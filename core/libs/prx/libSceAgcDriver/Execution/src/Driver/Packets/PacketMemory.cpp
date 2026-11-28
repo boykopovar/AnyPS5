@@ -582,7 +582,7 @@ void Driver::submitDueAfterCommit(VulkanDevice* localDevice) {
     if (localDevice == nullptr) return;
     const auto pending = Graphics::Recorder::PendingLabelSince();
     const auto age = pending.has_value() ? std::chrono::steady_clock::now() - *pending : std::chrono::steady_clock::duration::zero();
-    const bool due = pending.has_value() && age >= labelFlushDeadline() && (age >= labelFlushBusyDeadline() || !localDevice->SubmittedWorkRunning());
+    const bool due = pending.has_value() && age >= labelIdleDeadline() && (age >= labelFlushBusyDeadline() || !localDevice->SubmittedWorkRunning());
     const bool capped = batchCap() != 0 && Graphics::Recorder::RecordedWorkSinceSubmit() >= batchCap();
     if (due || capped) localDevice->SubmitRecorded(true);
 }
