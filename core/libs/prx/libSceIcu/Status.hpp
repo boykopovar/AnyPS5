@@ -5,6 +5,7 @@
 namespace Icu {
 
 constexpr std::int32_t IllegalArgument = 1;
+constexpr std::int32_t MemoryAllocation = 7;
 constexpr std::int32_t InvalidCharacter = 10;
 constexpr std::int32_t BufferOverflow = 15;
 constexpr std::int32_t UnsupportedError = 16;
