@@ -3417,6 +3417,19 @@ void CheckGpuHtileClearStore(const Context& context, Recorder& recorder, std::ui
     std::printf("Native depth samples=%u clear=%u: a GPU store of HTILE words proving the clear value cleared the native depth\n", fragments, one);
 }
 
+void CheckGpuHtileClearStoreSynced(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one) {
+    const DriverDepthTarget target(context, recorder, fragments, one, {5u, 3u});
+    target.Sample(0.25f, 0.25f, "native depth drawn before a synced GPU store of clear HTILE words");
+    target.StoreHtile();
+    {
+        const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        recorder.Sync();
+    }
+    target.Sample(std::nullopt, std::nullopt, "native depth after a GPU store of clear HTILE words synced before its lookup");
+    target.Sample(0.125f, 0.125f, "native depth drawn after a synced GPU store of clear HTILE words");
+    std::printf("Native depth samples=%u clear=%u: a GPU store of HTILE words proving the clear value, synced before its lookup, cleared the native depth\n", fragments, one);
+}
+
 int CheckDriverPath(bool queued) {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
@@ -3447,6 +3460,7 @@ int CheckDriverPath(bool queued) {
             if (!supported(samples)) { unavailable += queued ? 2u : 3u; continue; }
             for (const bool one : {false, true}) { CheckDriverPathTarget(context, *recorder, samples, one, queued ? DriverFill::Queued : DriverFill::Whole); ++checked; }
             if (!queued) for (const bool one : {false, true}) CheckGpuHtileClearStore(context, *recorder, samples, one);
+            if (!queued) for (const bool one : {false, true}) CheckGpuHtileClearStoreSynced(context, *recorder, samples, one);
             if (!queued) { CheckDriverPathTarget(context, *recorder, samples, false, DriverFill::Whole, {64u, 32u}); ++checked; }
         }
         if (!queued) CheckDriverPathTarget(context, *recorder, 4u, false, DriverFill::Partial);

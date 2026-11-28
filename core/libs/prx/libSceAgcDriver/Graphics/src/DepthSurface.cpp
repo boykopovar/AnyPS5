@@ -1165,9 +1165,11 @@ public:
             if (planesUnchanged) {
                 auto current = sampling.initial;
                 current[1].generation = GuestMemory::CollectWritesUncached(current[1].address, current[1].bytes);
-                Require(expandedHtilePlane(current[1]), "guest writes over native multisample depth are not implemented");
+                const bool cleared = clearedHtilePlane(current[1]);
+                Require(cleared || expandedHtilePlane(current[1]), "guest writes over native multisample depth are not implemented");
                 for (const auto& range : current) GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 Require(GuestMemory::UnchangedSinceAll(current), "CPU writes raced native multisample depth HTILE expansion");
+                if (cleared) RecordClearValue(VK_IMAGE_ASPECT_DEPTH_BIT, target.clearDepth, 0u);
                 sampling.initial = current;
                 RebasePublication(1u);
             }
