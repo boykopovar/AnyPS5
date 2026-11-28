@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Command kind checkpoints](../../../core/libs/prx/libSceAgcDriver/Graphics/src/CommandCheckpoints.cpp) (libSceAgcDriver): with APS5_GPU_CHECKPOINTS and VK_NV_device_diagnostic_checkpoints, a checkpoint before each recorded command and after vkBeginCommandBuffer names only the command kind and the last guest token of its command buffer on the recording thread; a thread recording two command buffers at once, a replay on another thread, or a buffer begun again on another thread loses or keeps a stale token. vkCmdBind*, vkCmdPush* and vkCmdSet* other than events pass as state, and the source scan in the test sees only literal, PFN_ and X(Cmd...) names; submit semaphore waits get none; kind markers carry no submit serial. Real functions are process-wide; a second vkCmdSetCheckpointNV throws. A draw or dispatch right after a guest token, or after the batch-begin token of APS5_GPU_CHECKPOINT_BATCHES, gets no checkpoint of its own, even if it is not that token's work.
