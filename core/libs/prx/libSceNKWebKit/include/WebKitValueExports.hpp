@@ -165,6 +165,7 @@ void APS5_VABI WKBundlePageWillExitFullScreen(const void* pageRef);
 void APS5_VABI WKBundlePageSetBottomOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetTopOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold(const void* pageRef, std::uint64_t threshold);
+bool APS5_VABI WKBundlePageHasLocalDataForURL(const void* pageRef, const void* urlRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
@@ -523,6 +524,7 @@ std::uint32_t APS5_VABI WKProtectionSpaceGetTypeID();
 const void* APS5_VABI WKRectCreate(NKWebKit::RectValue rect);
 std::uint32_t APS5_VABI WKRectGetTypeID();
 NKWebKit::RectValue APS5_VABI WKRectGetValue(const void* rectRef);
+const void* APS5_VABI WKRegistrableDomainCreate(const void* urlRef);
 void APS5_VABI WKRelease(const void* object);
 const void* APS5_VABI WKRenderLayerCopyElementID(const void* layerRef);
 const void* APS5_VABI WKRenderLayerCopyElementTagName(const void* layerRef);
@@ -617,6 +619,7 @@ void APS5_VABI WKUserContentExtensionStoreCompile(const void* storeRef, const vo
 const void* APS5_VABI WKUserContentExtensionStoreCreate(const void* pathRef);
 std::uint32_t APS5_VABI WKUserContentExtensionStoreGetTypeID();
 void APS5_VABI WKUserContentExtensionStoreLookup(const void* storeRef, const void* identifierRef, void* context, WKUserContentExtensionStoreFunction callback);
+void APS5_VABI WKUserContentExtensionStoreRemove(const void* storeRef, const void* identifierRef, void* context, WKUserContentExtensionStoreFunction callback);
 const void* APS5_VABI WKUserContentURLPatternCopyHost(const void* urlPatternRef);
 const void* APS5_VABI WKUserContentURLPatternCopyScheme(const void* urlPatternRef);
 const void* APS5_VABI WKUserContentURLPatternCreate(const void* patternRef);
@@ -731,5 +734,18 @@ void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDom
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsMinimumTimeBetweenDataRecordsRemoval(const void* dataStore, double seconds);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsNotifyPagesWhenDataRecordsWereScanned(const void* dataStore, bool value);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsPrevalentResource(const void* dataStore, const void* hostRef, bool value, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsPruneEntriesDownTo(const void* dataStore, unsigned entries);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsShouldClassifyResourcesBeforeDataRecordsRemoval(const void* dataStore, bool value);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsSubframeUnderTopFrameOrigin(const void* dataStore, const void* hostRef, const void* topFrameHostRef);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsSubresourceUnderTopFrameOrigin(const void* dataStore, const void* hostRef, const void* topFrameHostRef);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsSubresourceUniqueRedirectFrom(const void* dataStore, const void* hostRef, const void* hostRedirectedFromRef);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsSubresourceUniqueRedirectTo(const void* dataStore, const void* hostRef, const void* hostRedirectedToRef);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsTimeToLiveUserInteraction(const void* dataStore, double seconds, void* context, void (APS5_VABI *callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetStatisticsTopFrameUniqueRedirectFrom(const void* dataStore, const void* hostRef, const void* hostRedirectedFromRef);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsTopFrameUniqueRedirectTo(const void* dataStore, const void* hostRef, const void* hostRedirectedToRef);
+void APS5_VABI WKWebsiteDataStoreSetStatisticsVeryPrevalentResource(const void* dataStore, const void* hostRef, bool value, void* context, void (APS5_VABI *callback)(void*));
 
 }

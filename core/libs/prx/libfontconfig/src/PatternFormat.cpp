@@ -1218,11 +1218,12 @@ FcPatternFormatToBuf (FcPattern     *pat,
 extern "C" FcChar8* APS5_VABI FcPatternFormat(FcPattern* pat, const FcChar8* format) {
     if (!format) NotImplemented_nid_no_patch(__func__);
     try {
+        const std::string copiedFormat = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(format), __func__);
         PatternOwner empty(pat ? nullptr : FcPatternCreate());
         if (!pat) pat = empty.get();
         if (!pat) return nullptr;
         FcStrBuf buf;
-        if (!FcPatternFormatToBuf(pat, format, &buf)) return nullptr;
+        if (!FcPatternFormatToBuf(pat, reinterpret_cast<const FcChar8*>(copiedFormat.c_str()), &buf)) return nullptr;
         return FcStrBufDone(&buf);
     } catch (const std::bad_alloc&) {
         return nullptr;
