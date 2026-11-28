@@ -1,0 +1,15 @@
+add_library(libSceNpSns SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpSns PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpSns)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_sns_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSns.cpp)
+    target_include_directories(guest_np_sns_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_sns_tests PRIVATE libSceNpSns libc)
+    configure_windows_unwind(guest_np_sns_tests)
+    add_test(NAME guest_np_sns COMMAND guest_np_sns_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_sns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSns>")
+    endif()
+endif()
