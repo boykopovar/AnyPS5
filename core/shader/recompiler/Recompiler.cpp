@@ -366,13 +366,13 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             deadCodeEliminator.Eliminate(program);
         }
 
-        if (maskedSelectEliminator.Eliminate(program).removedSelects != 0u) {
+        if (const auto maskedSelects = maskedSelectEliminator.Eliminate(program); maskedSelects.removedSelects != 0u) {
             const bool liveAncillary = std::ranges::any_of(program.Blocks(), [](const auto& block) {
                 return std::ranges::any_of(block->Instructions(), [](const IrValue* value) {
                     return value->Opcode() == IrOpcode::GetBuiltin && value->HasUses() && value->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::PackedAncillary);
                 });
             });
-            if (liveAncillary) {
+            if (liveAncillary || maskedSelects.immediateSelects != 0u) {
                 constantFolder.Fold(program);
                 deadCodeEliminator.RemoveIdentities(program);
                 deadCodeEliminator.Eliminate(program);
@@ -918,6 +918,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
     targetOptions.meshInlineFunctions = request.target.meshInlineFunctions;
     targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
+    targetOptions.spannedUnreachableStays = request.target.spannedUnreachableStays || request.target.spannedUnreachableVerify;
+    targetOptions.spannedUnreachableVerify = request.target.spannedUnreachableVerify;
     targetOptions.meshAsCompute = request.target.meshAsCompute;
     if (targetOptions.meshAsCompute && request.shader.stage == ShaderStage::Mesh && request.graphics && request.graphics->mesh && request.graphics->mesh->outputPrimitiveSize == 1u) throw std::runtime_error("mesh-path points in a mesh program run as compute are not implemented");
 
@@ -939,6 +941,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         targetOptions.registrationModules = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     }
+    if (!emitted.keptPastUnreachable.empty()) std::fprintf(stderr, "[spanned-wave] 0x%llx keeps spanned waves past an OpUnreachable (APS5_SPANNED_UNREACHABLE_STAYS%s); counting it as an exit would refuse: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), targetOptions.spannedUnreachableVerify ? ", verified as specialization-switch defaults" : "", emitted.keptPastUnreachable.c_str());
     result.registrationModule = registration;
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
     result.layerReplaySafe = LayerReplaySafe(program);
@@ -2566,8 +2569,7 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     } catch (const std::exception& e) {
         NoteFailureOnce();
         constexpr auto requestSerializer = RequestSerializer{};
-        const auto inputInfo = request.context.splitState.empty() ? "\nRecompileRequest:\n" + requestSerializer.Serialize(request) : std::string();
-        throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + inputInfo);
+        throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + "\nRecompileRequest:\n" + requestSerializer.Serialize(request));
     } catch (...) {
         throw std::runtime_error("ShaderRecompiler::Recompile: unknown exception");
     }

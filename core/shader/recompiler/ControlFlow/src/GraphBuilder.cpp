@@ -1929,7 +1929,7 @@ bool splitReadsScc(const RdnaInstruction& instruction) {
 }
 
 bool splitReadsM0(const RdnaInstruction& instruction) {
-    if (instruction.family == RdnaInstructionFamily::DS || instruction.family == RdnaInstructionFamily::VINTRP) return true;
+    if (instruction.family == RdnaInstructionFamily::DS || instruction.family == RdnaInstructionFamily::VINTRP || instruction.lds) return true;
     switch (instruction.op) {
         case RdnaOpcode::SMovrelsB32:
         case RdnaOpcode::SMovrelsB64:

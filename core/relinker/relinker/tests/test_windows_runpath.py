@@ -20,7 +20,16 @@ def main():
         result = subprocess.run([str(relinker), "--windows", str(source), str(seed / "output.exe")],
                                 capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "  |-- libs/\n" in result.stdout, result.stdout
         library = (seed / "app0" / "prx" / "a.prx.guest.prx").read_bytes()
+
+        for index, runpath in enumerate(("$ORIGIN/libs/", "libs", r"$ORIGIN\libs")):
+            output = seed / f"bundled{index}.exe"
+            result = subprocess.run([str(relinker), "--windows", "--rpath", runpath, str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 0, (runpath, result.stdout, result.stderr)
+            assert "  |-- libs/\n" in result.stdout, result.stdout
+            assert f"Custom library search path (--rpath): {runpath}\n" in result.stdout, result.stdout
 
         for index, runpath in enumerate(("$ORIGIN", "$ORIGIN/", "$ORIGIN\\", "$ORIGIN/.", ".")):
             case = work / str(index)
@@ -32,6 +41,8 @@ def main():
             result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", "--rpath", runpath,
                                      str(source), str(output)], capture_output=True, text=True, timeout=20)
             assert result.returncode == 0, (runpath, result.stdout, result.stderr)
+            assert "  |-- libs/\n" not in result.stdout, result.stdout
+            assert f"Custom library search path (--rpath): {runpath}\n" in result.stdout, result.stdout
             if os.name == "nt":
                 executed = subprocess.run([str(output)], cwd=work, capture_output=True, text=True, timeout=20)
                 assert executed.returncode == 77, (runpath, executed.returncode, executed.stdout, executed.stderr)
