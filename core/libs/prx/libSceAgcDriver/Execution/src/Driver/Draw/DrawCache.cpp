@@ -100,6 +100,10 @@ bool Driver::verifyDrawPushWord() {
 uint64_t Driver::drawEntryBytes(const DrawEntry& entry) {
   const auto held = [](const auto& values) { return static_cast<uint64_t>(values.capacity()) * sizeof(values[0]); };
   uint64_t bytes = sizeof(DrawEntry);
+    bytes += held(entry.stages);
+    for (const auto& inner : entry.stages) {
+        bytes += held(inner);
+    }
   if (entry.decode) {
     bytes += sizeof(DrawDecode);
     bytes += held(entry.decode->programs);
