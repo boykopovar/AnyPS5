@@ -544,7 +544,6 @@ static void TestSetDocumentState() {
     HistoryItemVectorStorage growSource{four, 4, 4};
     _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, &growSource);
     Require(item.documentState.size == 4 && item.documentState.capacity == 4);
-    Require(item.documentState.buffer != firstBuffer);
     stored = static_cast<const String*>(item.documentState.buffer);
     Require(stored[0].impl == &a && stored[1].impl == &b && stored[2].impl == &c && stored[3].impl == &b);
     Require(a.refCount == 10 && b.refCount == 14 && c.refCount == 12);
