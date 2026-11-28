@@ -111,8 +111,8 @@ struct AlignedBuffer {
 }
 
 extern "C" std::int64_t PKImageEncode_WriteSource_impl_nid_no_patch(void* encoder, void* converter, void* rectangle) {
-    JxrGuestGuid fromFormat = JxrGuest_GUID_PKPixelFormatDontCare_nid_no_patch;
-    JxrGuestGuid toFormat = JxrGuest_GUID_PKPixelFormatDontCare_nid_no_patch;
+    JxrGuestGuid fromFormat = GUID_PKPixelFormatDontCare_nid_no_patch;
+    JxrGuestGuid toFormat = GUID_PKPixelFormatDontCare_nid_no_patch;
 
     const auto sourceAddress = ConverterCallback(converter, JxrWriteSourceSourceCallbackSize_nid_no_patch(),
                                                  JxrWriteSourceSourceCallback_nid_no_patch, __func__);
