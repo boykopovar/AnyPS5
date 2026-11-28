@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
 #include <cstdint>
@@ -136,6 +137,16 @@ bool ThrowsInvalidArgument(TFunction function) {
     return false;
 }
 
+template <class TFunction>
+bool ThrowsRuntimeError(TFunction function, const char* expectedMessage = nullptr) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return !expectedMessage || std::strstr(error.what(), expectedMessage) != nullptr;
+    }
+    return false;
+}
+
 void TestSetCallback(Bio* sslBio, LibreSslSsl* ssl, Bio* forward) {
     Require(StoredInfo(ssl) == nullptr, "a new SSL has no info callback");
     ssl->rbio = nullptr;
@@ -214,6 +225,115 @@ void TestUnattached() {
     Require(BIO_free_nid_postfix(bio) == 1, "free unattached SSL BIO");
 }
 
+void TestAttachedControls() {
+    constexpr int SetSsl = 109;
+    constexpr int GetSsl = 110;
+    constexpr int Pending = 10;
+    constexpr int Flush = 11;
+    constexpr int WritePending = 13;
+    constexpr int DoStateMachine = 101;
+    constexpr std::uint64_t ConnectionTypeNotSet = 0x1404e090;
+    constexpr std::uint64_t Uninitialized = 0x1404e114;
+
+    LibreSslCtx* context = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    Require(context != nullptr, "attached SSL context");
+    LibreSslSsl* ssl = SSL_new_nid_postfix(context);
+    Require(ssl != nullptr, "attached SSL");
+    Bio* readBio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Bio* writeBio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(readBio != nullptr && writeBio != nullptr, "attached memory BIOs");
+    ssl->rbio = readBio;
+    ssl->wbio = writeBio;
+    Bio* sslBio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+    Require(sslBio != nullptr, "attached SSL BIO");
+
+    ERR_clear_error_nid_postfix();
+    Require(BIO_ctrl_nid_postfix(sslBio, SetSsl, 1, ssl) == 1, "attaching an SSL returns 1");
+    Require(sslBio->initialized == 1 && sslBio->shutdown == 1 && sslBio->next == readBio, "attaching records the SSL and its read BIO");
+    Require(readBio->references == 2, "attaching takes a reference on the read BIO");
+    void* attached = nullptr;
+    Require(BIO_ctrl_nid_postfix(sslBio, GetSsl, 0, &attached) == 1 && attached == ssl, "the attached SSL is returned");
+    Require(BIO_ctrl_nid_postfix(sslBio, GetSsl, 0, nullptr) == 0, "get SSL with null output returns 0");
+    Require(BIO_ctrl_nid_postfix(sslBio, 3, 0, nullptr) == 0, "info control returns 0");
+    Require(BIO_ctrl_nid_postfix(sslBio, 8, 0, nullptr) == 1, "get close returns the shutdown flag");
+    Require(BIO_ctrl_nid_postfix(sslBio, 9, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(sslBio, 8, 0, nullptr) == 0,
+        "set close clears shutdown");
+    Require(BIO_ctrl_nid_postfix(sslBio, 9, 1, nullptr) == 1 && BIO_ctrl_nid_postfix(sslBio, 8, 0, nullptr) == 1,
+        "set close restores shutdown");
+    Require(ThrowsRuntimeError([&] { BIO_ctrl_nid_postfix(sslBio, 1, 0, nullptr); }), "unsupported attached control throws");
+    Require(ThrowsRuntimeError([&] { BIO_ctrl_nid_postfix(sslBio, SetSsl, 1, ssl); }) && sslBio->next == readBio && readBio->references == 2,
+        "attaching a second SSL is not implemented and leaves the attachment alone");
+
+    Require(BIO_write_nid_postfix(readBio, "abcde", 5) == 5, "fill the read BIO");
+    Require(BIO_write_nid_postfix(writeBio, "xyz", 3) == 3, "fill the write BIO");
+    Require(BIO_ctrl_nid_postfix(sslBio, Pending, 0, nullptr) == 5, "pending reports the read BIO without a session");
+    Require(BIO_ctrl_nid_postfix(sslBio, WritePending, 0, nullptr) == 0, "write pending reports the write BIO");
+
+    readBio->flags |= 0x9;
+    readBio->retryReason = 2;
+    sslBio->flags = 0xf;
+    Require(BIO_ctrl_nid_postfix(sslBio, Flush, 0, nullptr) == 1, "flush returns the write BIO result");
+    Require(sslBio->flags == 0x9 && sslBio->retryReason == 2, "flush copies the read BIO retry flags and reason");
+
+    Require(BIO_ctrl_nid_postfix(sslBio, DoStateMachine, 0, nullptr) == -1, "handshake without a connect state fails");
+    Require(sslBio->flags == 0 && sslBio->retryReason == 0, "a failed handshake without a retry leaves no retry state");
+    Require(ERR_get_error_nid_postfix() == ConnectionTypeNotSet && ERR_get_error_nid_postfix() == 0, "handshake without a connect state queues CONNECTION_TYPE_NOT_SET");
+
+    char output[4]{};
+    sslBio->flags = 0xf;
+    sslBio->retryReason = 3;
+    Require(BIO_f_ssl_nid_postfix()->read(sslBio, output, 4) == -1, "read before the handshake fails");
+    Require(sslBio->flags == 0 && sslBio->retryReason == 0, "a failed read before the handshake clears the retry state");
+    Require(ERR_get_error_nid_postfix() == Uninitialized && ERR_get_error_nid_postfix() == 0, "read before the handshake queues UNINITIALIZED");
+    sslBio->flags = 0xf;
+    sslBio->retryReason = 3;
+    Require(BIO_write_nid_postfix(sslBio, "x", 1) == -1, "write before the handshake fails");
+    Require(sslBio->flags == 0 && sslBio->retryReason == 0, "a failed write before the handshake clears the retry state");
+    Require(ERR_get_error_nid_postfix() == Uninitialized && ERR_get_error_nid_postfix() == 0, "write before the handshake queues UNINITIALIZED");
+
+    Bio* unattachedBio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+    LibreSslSsl* noReadSsl = SSL_new_nid_postfix(context);
+    Bio* noReadWrite = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(unattachedBio != nullptr && noReadSsl != nullptr && noReadWrite != nullptr, "SSL without a read BIO");
+    noReadSsl->wbio = noReadWrite;
+    Require(BIO_ctrl_nid_postfix(unattachedBio, SetSsl, 1, noReadSsl) == 1 && unattachedBio->next == nullptr, "attaching an SSL without a read BIO records none");
+    Require(ThrowsInvalidArgument([&] { BIO_ctrl_nid_postfix(unattachedBio, Flush, 0, nullptr); }), "flush without a read BIO throws");
+    Require(BIO_free_nid_postfix(unattachedBio) == 1, "free the SSL BIO without a read BIO");
+    Require(ERR_get_error_nid_postfix() == Uninitialized && ERR_get_error_nid_postfix() == 0, "freeing an SSL without a read BIO queues the shutdown error");
+
+    Require(BIO_free_nid_postfix(sslBio) == 1, "free the attached SSL BIO");
+    Require(ERR_get_error_nid_postfix() == Uninitialized && ERR_get_error_nid_postfix() == 0, "freeing an attached SSL queues the shutdown error");
+    Require(readBio->references == 1, "freeing the SSL releases its reference on the read BIO");
+    Require(BIO_free_nid_postfix(readBio) == 1, "free the read BIO");
+
+    Bio* noCloseBio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+    LibreSslSsl* noCloseSsl = SSL_new_nid_postfix(context);
+    Bio* noCloseRead = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(noCloseBio != nullptr && noCloseSsl != nullptr && noCloseRead != nullptr, "BIO_NOCLOSE SSL BIO");
+    noCloseSsl->rbio = noCloseRead;
+    Require(BIO_ctrl_nid_postfix(noCloseBio, SetSsl, 0, noCloseSsl) == 1 && noCloseBio->shutdown == 0 && noCloseBio->initialized == 1,
+        "attaching with BIO_NOCLOSE clears shutdown");
+    Require(BIO_free_nid_postfix(noCloseBio) == 1, "free BIO_NOCLOSE SSL BIO");
+    Require(ERR_get_error_nid_postfix() == Uninitialized && ERR_get_error_nid_postfix() == 0,
+        "freeing BIO_NOCLOSE SSL BIO still shuts down SSL");
+    Require(noCloseRead->references == 2, "BIO_NOCLOSE keeps SSL alive");
+    SSL_free_nid_postfix(noCloseSsl);
+    Require(noCloseRead->references == 1 && BIO_free_nid_postfix(noCloseRead) == 1, "freeing SSL after BIO_NOCLOSE releases its reference");
+
+    LibreSslSsl* renegSsl = SSL_new_nid_postfix(context);
+    Bio* renegBio = BIO_new_nid_postfix(BIO_f_ssl_nid_postfix());
+    Require(renegSsl != nullptr && renegBio != nullptr, "renegotiation SSL BIO");
+    SSL_set_connect_state_nid_postfix(renegSsl);
+    Require(BIO_ctrl_nid_postfix(renegBio, SetSsl, 1, renegSsl) == 1, "attach renegotiation SSL");
+    void* s3Internal = SslLayout::Read<void*>(renegSsl->s3, SslLayout::Ssl3InternalPointer);
+    SslLayout::Write<int>(s3Internal, SslLayout::Ssl3InternalRenegotiate, 1);
+    Require(ThrowsRuntimeError([&] { BIO_ctrl_nid_postfix(renegBio, DoStateMachine, 0, nullptr); },
+        "SSL_do_handshake: pending renegotiation"), "handshake with pending S3I renegotiation throws");
+    Require(BIO_free_nid_postfix(renegBio) == 1, "free renegotiation SSL BIO");
+
+    SSL_CTX_free_nid_postfix(context);
+}
+
 }
 
 int main() {
@@ -237,6 +357,7 @@ int main() {
     SSL_free_nid_postfix(ssl);
     SSL_CTX_free_nid_postfix(context);
     TestUnattached();
+    TestAttachedControls();
     Require(allocations == 0, "every allocation is released");
     return 0;
 }

@@ -866,6 +866,19 @@ int APS5_VABI LibreSslShutdown_nid_no_patch(LibreSslSsl* ssl) {
     throw std::logic_error(std::string(function) + ": unhandled engine result");
 }
 
+int APS5_VABI LibreSslDoHandshake_nid_no_patch(LibreSslSsl* ssl) {
+    LibreSslSsl& connection = SslOf(ssl, "SSL_do_handshake");
+    LibreSslSslInternal& internal = InternalOf(connection, "SSL_do_handshake");
+    if (!internal.handshakeFunc) {
+        LibreSslPutSslError_nid_no_patch(&connection, ReasonConnectionTypeNotSet);
+        return -1;
+    }
+    if (Read<int>(Ssl3InternalOf(connection, "SSL_do_handshake"), Ssl3InternalRenegotiate))
+        NotImplemented_nid_no_patch("SSL_do_handshake: pending renegotiation");
+    if (!(internal.state & (StateInit | StateBefore))) return 1;
+    return reinterpret_cast<SslStateFunction>(internal.handshakeFunc)(&connection);
+}
+
 int APS5_VABI LibreSslPending_nid_no_patch(const LibreSslSsl* ssl) {
     const Session* session = Find(ssl);
     if (!session) return 0;

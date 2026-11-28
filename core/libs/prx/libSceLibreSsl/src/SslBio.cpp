@@ -141,8 +141,28 @@ int APS5_VABI SocketPuts_nid_no_patch(Bio*, const char*) {
     NotImplemented_nid_no_patch("BIO_s_socket puts callback");
 }
 
-std::int64_t APS5_VABI SocketControl_nid_no_patch(Bio*, int, std::int64_t, void*) {
-    NotImplemented_nid_no_patch("BIO_s_socket control callback");
+std::int64_t APS5_VABI SocketControl_nid_no_patch(Bio* bio, int command, std::int64_t argument, void*) {
+    constexpr int CtrlGetClose = 8;
+    constexpr int CtrlSetClose = 9;
+    constexpr int CtrlFlush = 11;
+    constexpr int CtrlDup = 12;
+    constexpr int CtrlSetFd = 104;
+    constexpr int CtrlGetFd = 105;
+    switch (command) {
+    case CtrlGetClose:
+        return bio->shutdown;
+    case CtrlSetClose:
+        bio->shutdown = static_cast<int>(argument);
+        return 1;
+    case CtrlFlush:
+    case CtrlDup:
+        return 1;
+    case CtrlSetFd:
+    case CtrlGetFd:
+        NotImplemented_nid_no_patch("BIO_s_socket control: descriptor commands");
+    default:
+        return 0;
+    }
 }
 
 int APS5_VABI SocketCreate_nid_no_patch(Bio*) {
