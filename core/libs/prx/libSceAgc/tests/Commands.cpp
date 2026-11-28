@@ -37,6 +37,9 @@
 #include "prx/libc/include/Shutdown.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <array>
 #include <tuple>
 #include <cstdio>
@@ -86,6 +89,42 @@ bool APS5_VABI growReserved(CommandBuffer* buffer, std::uint32_t count, void* us
     buffer->cursor_up = buffer->bottom;
     buffer->cursor_down = buffer->top;
     return true;
+}
+
+struct ConcurrentGrowth {
+    std::array<std::uint32_t, 64> words{};
+    std::atomic<int> inside{0};
+    std::atomic<int> most{0};
+    std::atomic<int> calls{0};
+    std::atomic<bool> entered{false};
+};
+
+bool APS5_VABI growConcurrent(CommandBuffer* buffer, std::uint32_t, void* userData) {
+    auto& growth = *static_cast<ConcurrentGrowth*>(userData);
+    const int now = ++growth.inside;
+    int seen = growth.most.load();
+    while (now > seen && !growth.most.compare_exchange_weak(seen, now)) {}
+    if (++growth.calls == 1) {
+        growth.entered = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    buffer->bottom = growth.words.data();
+    buffer->top = growth.words.data() + growth.words.size();
+    buffer->cursor_up = buffer->bottom;
+    buffer->cursor_down = buffer->top;
+    --growth.inside;
+    return true;
+}
+
+void testReserveGrowthLock() {
+    ConcurrentGrowth growth;
+    CommandBuffer buffer{nullptr, nullptr, nullptr, nullptr, growConcurrent, &growth, 0};
+    std::thread reserving([&] { Agc::Command::Reserve(&buffer, 4, __func__); });
+    while (!growth.entered) std::this_thread::yield();
+    Agc::Command::Allocate(&buffer, 4, __func__);
+    reserving.join();
+    check(growth.most == 1, "a command buffer grew in two threads at once");
+    check(growth.calls == 1, "a command buffer grown by Reserve was grown again by a waiting Allocate");
 }
 
 void testPackets() {
@@ -312,14 +351,16 @@ void testMarkers() {
     check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker header mismatch");
     check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker text mismatch");
     const auto* acbPop = sceAgcAcbPopMarker(&acb.buffer);
-    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x10, 2, 0x0cu << 2u) && acbPop[1] == 0, "ACB pop marker mismatch");
-    sceAgcDcbPopMarker(&dcb.buffer);
+    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x79, 3, 0) && acbPop[1] == 0x342u && acbPop[2] == 0xc2000000u, "ACB pop marker mismatch");
+    const auto* dcbPop = sceAgcDcbPopMarker(&dcb.buffer);
+    check(dcbPop == dcb.words.data() + 3 && dcbPop[0] == Agc::Command::Header(0x79, 3, 4) && dcbPop[1] == 0x342u && dcbPop[2] == 0xc2000000u, "DCB pop marker mismatch");
     const auto* acbSet = sceAgcAcbSetMarker(&acb.buffer, nullptr, 0);
     const auto* dcbSet = sceAgcDcbSetMarker(&dcb.buffer, nullptr, 0);
-    check(acbSet == acb.words.data() + 5 && dcbSet == dcb.words.data() + 5, "set marker did not return its push packet");
+    check(acbSet == acb.words.data() + 6 && dcbSet == dcb.words.data() + 6, "set marker did not return its push packet");
     check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker is not a push and pop pair");
-    check(dcbPush == dcb.words.data() && dcb.words == acb.words, "ACB and DCB markers differ");
-    check(acb.buffer.cursor_up == acb.words.data() + 9, "incorrect ACB marker cursor advance");
+    check(dcbPush == dcb.words.data() && std::equal(acb.words.begin(), acb.words.begin() + 3, dcb.words.begin()), "ACB and DCB push markers differ");
+    check(std::equal(acbSet, acbSet + 4, dcbSet), "ACB and DCB set markers differ");
+    check(acb.buffer.cursor_up == acb.words.data() + 10 && dcb.buffer.cursor_up == dcb.words.data() + 10, "incorrect marker cursor advance");
     expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
     expectFailure([] { sceAgcAcbPopMarker(nullptr); });
     expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
@@ -467,6 +508,8 @@ void testWorkloadStreams() {
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, nullptr, 2) == nullptr, "ACB null workload ids accepted");
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 0, ids, 2) == nullptr, "ACB stream id 0 accepted");
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 32, ids, 2) == nullptr, "ACB stream id 32 accepted");
+    const auto* cursor = registered.buffer.cursor_up;
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x10}), 2) == nullptr && registered.buffer.cursor_up == cursor, "ACB unmapped workload ids accepted");
     check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 64) == nullptr, "ACB workload complete id 64 accepted");
     check(sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr, "ACB null command buffer accepted for active");
     check(sceAgcDcbSetWorkloadStreamInactive(nullptr, 1) == nullptr && sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr &&
@@ -921,6 +964,33 @@ void testMemory() {
     check(acbAcquire[1] == 0u, "ACB acquire mem did not select engine 0");
     check(sceAgcAcquireMemSetEngine(acbAcquire, 0) == 0, "sceAgcAcquireMemSetEngine failed on ACB acquire");
     check(acbAcquire[1] == 0u, "ACB acquire mem engine bit was not cleared to 0");
+}
+
+void testUnmappedPatchPackets() {
+    auto* unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    const auto* address = reinterpret_cast<const volatile void*>(std::uintptr_t{0x123456789ab8u});
+    static const std::array<std::uint32_t, 14> readOnlyWait{0xc0027904u, 0x342u, 0xc8010000u, 0, 0xc0053c00u, 0x13u, 0, 0, 0, 0xffffffffu, 2, 0xc0017904u, 0x342u, 0xc8000000u};
+    auto writableWait = readOnlyWait;
+    check(sceAgcWaitRegMemPatchAddress(writableWait.data(), address) == 0 && writableWait[3] == 0x56789ab8u, "read-only wait fixture is not a valid wait packet");
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(unmapped, address); });
+    expectFailure([&] { sceAgcWaitRegMemPatchAddress(const_cast<std::uint32_t*>(readOnlyWait.data()), address); });
+    check(readOnlyWait[3] == 0 && readOnlyWait[6] == 0, "a wait address patch of a read-only packet changed it");
+    static const std::array<std::uint32_t, 8> readOnlyAcquire{0xc0065800u, 0x1200u};
+    auto writableAcquire = readOnlyAcquire;
+    check(sceAgcAcquireMemSetEngine(writableAcquire.data(), 1) == 0 && writableAcquire[1] == 0x80001200u, "read-only acquire fixture is not an ACQUIRE_MEM packet");
+    expectFailure([&] { sceAgcAcquireMemSetEngine(unmapped, 1); });
+    expectFailure([&] { sceAgcAcquireMemSetEngine(const_cast<std::uint32_t*>(readOnlyAcquire.data()), 1); });
+    check(readOnlyAcquire[1] == 0x1200u, "an engine patch of a read-only packet changed it");
+}
+
+void testUnmappedWorkloadIds() {
+    Storage dcb;
+    const std::uint32_t record[8] = {};
+    check(sceAgcDriverRegisterWorkloadStream(1, record) == 0, "workload stream registration failed");
+    const auto* unmapped = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x10});
+    check(sceAgcDcbSetWorkloadsActive(&dcb.buffer, 1, unmapped, 2) == nullptr, "unreadable workload ids accepted");
+    check(dcb.buffer.cursor_up == dcb.words.data(), "unreadable workload ids advanced the cursor");
+    check(sceAgcDriverUnregisterWorkloadStream(1) == 0, "workload stream unregistration failed");
 }
 
 void testEndOfPipePatches() {
@@ -1384,6 +1454,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testPackets();
+        testReserveGrowthLock();
         testEventWrite();
         testAcquireMem();
         testNop();
@@ -1399,6 +1470,8 @@ int main(int argc, char** argv) {
         testWorkloads();
         testEndOfPipeAddressPatch();
         testWorkloadStreams();
+        testUnmappedPatchPackets();
+        testUnmappedWorkloadIds();
         testIndexBuffer();
         testDrawPackets();
         testIndexIndirectArgs();

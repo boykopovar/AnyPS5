@@ -168,6 +168,12 @@ static bool AtStackReserveBottom(std::uintptr_t start, std::uintptr_t end) {
 }
 
 static int mprotect(void* addr, size_t len, int prot) {
+    struct TrapFence {
+        void* addr;
+        size_t len;
+        TrapFence(void* fencedAddr, size_t fencedLen) : addr(fencedAddr), len(fencedLen) { GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(addr, len); }
+        ~TrapFence() { GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(addr, len); }
+    } const fence(addr, len);
     GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(addr), len, WinProtFromPosix(prot));
     if (prot != PROT_NONE && KernelArena::Get().Owns(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
     auto cursor = reinterpret_cast<std::uintptr_t>(addr);
@@ -1735,14 +1741,19 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
         const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
         if (error != 0) errno = error;
         const bool protectedPages = error == 0;
-#else
-        bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
-#if defined(__linux__)
+#elif defined(__linux__)
+        const auto protect = [&] {
+            const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
+            if (error != 0) errno = error;
+            return error == 0;
+        };
+        bool protectedPages = protect();
         if (!protectedPages && errno == ENOMEM) {
             MapUnmappedPages(insidePointer, static_cast<std::size_t>((stackEnd & ~hostPageMask) - inside));
-            protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+            protectedPages = protect();
         }
-#endif
+#else
+        const bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
 #endif
         if (!protectedPages) throw std::system_error(errno, std::generic_category(), "mprotect failed");
         if (inside != requested) RecordProtection(requestedPointer, static_cast<std::size_t>(inside - requested), prot);
@@ -1781,7 +1792,7 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
         mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0, [&] {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
             if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(const_cast<void*>(span), spanBytes, nativeProtection); error != 0)
                 throw std::system_error(error, std::generic_category(), "mprotect failed");
 #else

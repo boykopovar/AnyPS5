@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelWaitSema and sceKernelSignalSema]
+
+- [sceKernelWaitSema and sceKernelSignalSema](../../../core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp) (libkernel) serve waiters in queue order: arrival order, or with `SCE_KERNEL_SEMA_ATTR_TH_PRIO` (0x02) the priority at the start of the wait, lower first and equal ones in arrival order. `sceKernelSignalSema` stops at the first waiter needing more than is left, so later smaller waiters keep waiting, as a PS5 payload (firmware 13.590.001) measured for attributes 1, 2 (at equal thread priority) and 0: a waiter of 3 queued before one of 1 left both waiting after a signal of 1, a poll of 1 still succeeded, and the later signal woke them in queue order. When the head times out, the console does not hand the token on: the waiter behind it stays asleep until its own timeout and the token stays free (200 ms head, 3 s waiter; infinite waits not measured). Unverified: wake order across priorities, priority changes while waiting, and waits that find tokens while others queue.

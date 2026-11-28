@@ -61,6 +61,8 @@ inline constexpr std::uint32_t SplitStateDescriptorSet = SplitStateAbi::Descript
 inline constexpr std::uint32_t SplitStateCapacityDword = SplitStateAbi::CapacityDword;
 inline constexpr std::uint32_t SplitStateGroupBaseDword = SplitStateAbi::GroupBaseDword;
 inline constexpr std::uint32_t SplitStateGroupCountDword = SplitStateAbi::GroupCountDword;
+inline constexpr std::uint32_t SplitStateGroupListDword = SplitStateAbi::GroupListDword;
+inline constexpr std::uint32_t SplitStateGroupListOffsetDword = SplitStateAbi::GroupListOffsetDword;
 inline constexpr std::uint32_t SplitStateHeaderDwords = SplitStateAbi::HeaderDwords;
 [[nodiscard]] std::uint32_t FunctionLdsDwords(const IrProgram& program);
 [[nodiscard]] std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program, std::uint32_t dwords);

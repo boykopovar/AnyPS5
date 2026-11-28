@@ -513,6 +513,21 @@ void testUnversionedSize() {
     check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0 && size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister), "unversioned query rejected hull halves");
 }
 
+void testUnversionedFusion() {
+    Halves halves;
+    SizeAlign size{};
+    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
+    std::vector<std::uint8_t> versionedScratch(size.m_size);
+    std::vector<std::uint8_t> unversionedScratch(size.m_size);
+    Shader versioned{};
+    check(sceAgcFuseShaderHalves_0200(&versioned, &halves.front, &halves.back, versionedScratch.data()) == 0, "fusion failed");
+    Shader unversioned{};
+    check(sceAgcFuseShaderHalves_nid_postfix(&unversioned, &halves.front, &halves.back, unversionedScratch.data()) == 0, "unversioned fusion failed");
+    check(unversioned.type == static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::Gs) && unversioned.code == versioned.code && unversioned.shader_size == versioned.shader_size, "unversioned fusion did not return the fused program");
+    check(reinterpret_cast<std::uintptr_t>(unversioned.sh_registers) == reinterpret_cast<std::uintptr_t>(unversionedScratch.data()), "unversioned fused registers are not in the caller's memory");
+    check(std::memcmp(unversionedScratch.data(), versionedScratch.data(), unversionedScratch.size()) == 0, "unversioned fused registers differ from the versioned fusion");
+}
+
 }
 
 int main() {
@@ -533,6 +548,7 @@ int main() {
         }
         testHullHalves();
         testUnversionedSize();
+        testUnversionedFusion();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC shader fusion tests passed");
         return 0;

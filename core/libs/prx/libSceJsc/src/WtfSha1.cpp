@@ -85,12 +85,14 @@
  */
 
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceJsc/src/WtfStringAbi.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -280,6 +282,30 @@ void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(SHA1* self, Jsc::WtfA
     Reset(*self);
 }
 
+Jsc::WtfAbi::OwnedCString APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(const Jsc::WtfAbi::SHA1Digest* digest) {
+    if (!digest) throw std::invalid_argument("WTF::SHA1::hexDigest requires a digest");
+    Jsc::WtfAbi::SHA1Digest value{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(value.data(), digest, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::SHA1::hexDigest: unreadable digest");
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate)
+        throw std::runtime_error("WTF::SHA1::hexDigest: CString allocation requires libSceNKWebKit fastMalloc");
+    constexpr std::size_t HexLength = value.size() * 2;
+    void* memory = allocator->allocate(sizeof(Jsc::WtfAbi::CStringBuffer) + HexLength + 1);
+    if (!memory) throw std::bad_alloc();
+    auto* buffer = new (memory) Jsc::WtfAbi::CStringBuffer{1u, HexLength};
+    auto* output = reinterpret_cast<char*>(buffer + 1);
+    static constexpr char Digits[] = "0123456789ABCDEF";
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        output[2 * i] = Digits[value[i] >> 4];
+        output[2 * i + 1] = Digits[value[i] & 15];
+    }
+    output[HexLength] = '\0';
+    return Jsc::WtfAbi::OwnedCString(buffer);
+}
+
 Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder) {
     if (!decoder) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode requires a decoder");
     if (decoder->sha1.cursor >= BlockSize) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode: buffer cursor out of range");
@@ -355,7 +381,8 @@ Jsc::WtfAbi::OptionalString* APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6d
     if (length > MaxDecodedLength) throw std::length_error(name + ": length above INT32_MAX");
     using Jsc::WtfAbi::StringImpl;
     constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
-    void* storage = FastMalloc(charactersOffset + byteLength, name);
+    const std::size_t allocationSize = std::max<std::size_t>(sizeof(StringImpl), charactersOffset + byteLength);
+    void* storage = FastMalloc(allocationSize, name);
     auto* characters = static_cast<std::uint8_t*>(storage) + charactersOffset;
     auto* string = new (storage) StringImpl{2u, length, characters, is8Bit ? Jsc::WtfAbi::StringImplFlag8Bit : 0u};
     DecodeData(*decoder, characters, byteLength);

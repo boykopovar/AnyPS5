@@ -18,6 +18,8 @@ constexpr const char* kNarrowNoBreakSpace = "\xE2\x80\xAF";
 struct DateIntrinsics {
     JSValue constructor = JS_UNDEFINED;
     JSValue setFullYear = JS_UNDEFINED;
+    JSValue setHours = JS_UNDEFINED;
+    JSValue getTime = JS_UNDEFINED;
 };
 
 double TimeClip(double time) {
@@ -63,10 +65,24 @@ bool LocalWallTimeToUtc(JSContext* qctx, const DateIntrinsics& intrinsics, doubl
         JS_NewFloat64(qctx, static_cast<double>(inDay / 1000 % 60)),
         JS_NewFloat64(qctx, static_cast<double>(inDay % 1000)),
     };
-    JSValue date = JS_CallConstructor(qctx, intrinsics.constructor, 7, fields);
-    if (JS_IsException(date)) return false;
-    JSValue yearValue = JS_NewFloat64(qctx, static_cast<double>(year));
-    JSValue time = JS_Call(qctx, intrinsics.setFullYear, date, 1, &yearValue);
+    JSValue time = JS_UNDEFINED;
+    JSValue date = JS_UNDEFINED;
+    if (year < 0 || year > 99) {
+        date = JS_CallConstructor(qctx, intrinsics.constructor, 7, fields);
+        if (JS_IsException(date)) return false;
+        time = JS_Call(qctx, intrinsics.getTime, date, 0, nullptr);
+    } else {
+        JSValue noon[4] = {JS_NewFloat64(qctx, 2000.0), JS_NewFloat64(qctx, 0.0), JS_NewFloat64(qctx, 1.0), JS_NewFloat64(qctx, 12.0)};
+        date = JS_CallConstructor(qctx, intrinsics.constructor, 4, noon);
+        if (JS_IsException(date)) return false;
+        JSValue dated = JS_Call(qctx, intrinsics.setFullYear, date, 3, fields);
+        if (JS_IsException(dated)) {
+            JS_FreeValue(qctx, date);
+            return false;
+        }
+        JS_FreeValue(qctx, dated);
+        time = JS_Call(qctx, intrinsics.setHours, date, 4, fields + 3);
+    }
     JS_FreeValue(qctx, date);
     if (!NumberOf(qctx, time, utc)) return false;
     *utc += fraction;
@@ -152,7 +168,7 @@ JSValue DateParse(JSContext* qctx, JSValueConst thisVal, int argc, JSValueConst*
     (void)magic;
     JSValue string = JS_ToString(qctx, argc > 0 ? argv[0] : JS_UNDEFINED);
     if (JS_IsException(string)) return JS_EXCEPTION;
-    const DateIntrinsics intrinsics{data[0], data[1]};
+    const DateIntrinsics intrinsics{data[0], data[1], data[2], data[3]};
     double time = kNaN;
     const bool parsed = ParseDateString(qctx, intrinsics, string, &time);
     JS_FreeValue(qctx, string);
@@ -165,6 +181,8 @@ void DateConstructorFinalizer(JSRuntime* rt, JSValueConst value) {
     if (!intrinsics) return;
     JS_FreeValueRT(rt, intrinsics->constructor);
     JS_FreeValueRT(rt, intrinsics->setFullYear);
+    JS_FreeValueRT(rt, intrinsics->setHours);
+    JS_FreeValueRT(rt, intrinsics->getTime);
     delete intrinsics;
 }
 
@@ -174,6 +192,8 @@ void DateConstructorGcMark(JSRuntime* rt, JSValueConst value, JS_MarkFunc* markF
     if (!intrinsics) return;
     JS_MarkValue(rt, intrinsics->constructor, markFunc);
     JS_MarkValue(rt, intrinsics->setFullYear, markFunc);
+    JS_MarkValue(rt, intrinsics->setHours, markFunc);
+    JS_MarkValue(rt, intrinsics->getTime, markFunc);
 }
 
 }  // namespace
@@ -192,7 +212,7 @@ void InstallDateConstructor(OpaqueJSContextGroup* group, JSContext* qctx) {
     JSValue global = JS_GetGlobalObject(qctx);
     JSValue native = JS_GetPropertyStr(qctx, global, "Date");
     JSValue prototype = JS_GetPropertyStr(qctx, native, "prototype");
-    auto* intrinsics = new DateIntrinsics{JS_DupValue(qctx, native), JS_GetPropertyStr(qctx, prototype, "setFullYear")};
+    auto* intrinsics = new DateIntrinsics{JS_DupValue(qctx, native), JS_GetPropertyStr(qctx, prototype, "setFullYear"), JS_GetPropertyStr(qctx, prototype, "setHours"), JS_GetPropertyStr(qctx, prototype, "getTime")};
 
     JSValue functionPrototype = JS_GetFunctionProto(qctx);
     JSValue constructor = JS_NewObjectProtoClass(qctx, functionPrototype, group->dateConstructorClassId);
@@ -200,8 +220,8 @@ void InstallDateConstructor(OpaqueJSContextGroup* group, JSContext* qctx) {
     JS_SetOpaque(constructor, intrinsics);
     JS_SetConstructorBit(qctx, constructor, true);
 
-    JSValue parseData[2] = {intrinsics->constructor, intrinsics->setFullYear};
-    JSValue parse = JS_NewCFunctionData(qctx, &DateParse, 1, 0, 2, parseData);
+    JSValue parseData[4] = {intrinsics->constructor, intrinsics->setFullYear, intrinsics->setHours, intrinsics->getTime};
+    JSValue parse = JS_NewCFunctionData(qctx, &DateParse, 1, 0, 4, parseData);
     JS_DefinePropertyValueStr(qctx, parse, "name", JS_NewString(qctx, "parse"), JS_PROP_CONFIGURABLE);
 
     JS_DefinePropertyValueStr(qctx, constructor, "length", JS_NewInt32(qctx, 7), JS_PROP_CONFIGURABLE);

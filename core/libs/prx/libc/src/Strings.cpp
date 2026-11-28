@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cfenv>
 #include <cmath>
 #include <cwchar>
 #include <cstdio>
@@ -510,6 +511,20 @@ HexadecimalSubject ReadHexadecimalSubject(const char* digits, const char* parsed
     return {(significand << shift) | (sticky ? 1u : 0u), exponent - shift};
 }
 
+double RoundHexadecimalSubnormal(const HexadecimalSubject& exact, bool negative) {
+    const int shift = static_cast<int>(-1074 - exact.exponent);
+    const std::uint64_t remainder = exact.significand & ((1ull << shift) - 1);
+    const std::uint64_t half = 1ull << (shift - 1);
+    std::uint64_t bits = exact.significand >> shift;
+    switch (std::fegetround()) {
+    case FE_UPWARD: bits += remainder != 0 && !negative; break;
+    case FE_DOWNWARD: bits += remainder != 0 && negative; break;
+    case FE_TOWARDZERO: break;
+    default: bits += remainder > half || (remainder == half && (bits & 1) != 0); break;
+    }
+    return std::bit_cast<double>(bits | (negative ? 0x8000000000000000ull : 0));
+}
+
 template<typename TParse>
 auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     const std::string prefix = AsciiPrefix(text);
@@ -574,7 +589,8 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         const long long leadingExponent = exact.exponent + 63;
         if (exact.significand == 0 || leadingExponent > -1075) {
             if (std::isfinite(value)) errno = saved;
-            return value;
+            if (exact.significand == 0 || leadingExponent > -1023) return value;
+            return RoundHexadecimalSubnormal(exact, std::signbit(value));
         }
         errno = ERANGE;
         const bool smallest = leadingExponent == -1075 && (exact.significand & 0x7fffffffffffffffull) >= (1ull << 11);

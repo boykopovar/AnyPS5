@@ -4,9 +4,11 @@
 #include <cstdint>
 
 bool IsKsemDescriptor(int descriptor);
+void DuplicateKsemDescriptor(int from, int to);
 
 #ifdef ANYPS5_KSEM_TESTING
 extern "C" unsigned KsemWaiterCountForTests_nid_no_patch(std::intptr_t id);
+extern "C" void KsemAfterFindForTests_nid_no_patch(void (*hook)(std::intptr_t id));
 #endif
 
 struct FileStat;

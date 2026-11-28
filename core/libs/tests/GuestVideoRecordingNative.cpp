@@ -56,5 +56,6 @@ int main() {
     for (const std::uint32_t mode : std::array<std::uint32_t, 3>{3, 4, 0xFFFFFFFFu}) {
         Require(sceVideoRecordingSetPrivacyImage(buffer.data(), buffer.data(), mode) == invalidArgument);
     }
+    Require(sceVideoRecordingRestModeProcessStop() == static_cast<int>(0x80a80002u));
     return 0;
 }

@@ -136,7 +136,8 @@ int checkDeviceArguments(std::uint32_t type, std::uint32_t len, std::uint32_t fr
 
 int checkMicLevel(int type, int level) {
     if (static_cast<std::uint32_t>(level) > 100) return AUDIO_IN_ERROR_INVALID_PARAM;
-    if (type >= 0 && static_cast<std::uint32_t>(type - 1) > 3) return AUDIO_IN_ERROR_INVALID_DEVICE;
+    const std::uint32_t kind = static_cast<std::uint32_t>(type);
+    if (kind < 1u || kind > 4u) return AUDIO_IN_ERROR_INVALID_DEVICE;
     return 0;
 }
 

@@ -380,6 +380,37 @@ void testPs4Buffers() {
     VideoOutBuffers ps5Buffer{storage.data(), nullptr, {nullptr, nullptr}};
     check(sceVideoOutRegisterBuffers2(ps5Handle, 0, 0, &ps5Buffer, 1, &ps5, 0, nullptr) == 0, "the PS5 group was not registered");
     sceVideoOutClose(ps5Handle);
+    const int vrHandle = sceVideoOutOpen(255, 0, 0, nullptr);
+    void* const plainBuffer[1] = {storage.data()};
+    void* const vrBuffer[1] = {storage.data() + 32768};
+    void* const vrStrictBuffer[1] = {storage.data() + 65536};
+    auto vr = tiled;
+    vr.option = 7;
+    auto vrStrict = tiled;
+    vrStrict.option = 15;
+    check(sceVideoOutRegisterBuffers(vrHandle, 0, plainBuffer, 1, &tiled) == 0, "the PS4 buffer without an option was not registered as set 0");
+    check(sceVideoOutRegisterBuffers(vrHandle, 1, vrBuffer, 1, &vr) == 1, "the PS4 buffer with option 7 (VR) was not registered as set 1");
+    check(sceVideoOutRegisterBuffers(vrHandle, 2, vrStrictBuffer, 1, &vrStrict) == 2, "the PS4 buffer with options 7 and 8 was not registered as set 2");
+    auto vrChange = vrStrict;
+    vrChange.pitch_in_pixel = 128;
+    check(sceVideoOutSubmitChangeBufferAttribute(vrHandle, 0, &vrChange) == 0, "the PS4 change to options 7 and 8 failed");
+    for (const std::uint32_t option : {3u, 6u, 0x17u}) {
+        auto partial = tiled;
+        partial.option = option;
+        check(expectFailure([&] { sceVideoOutRegisterBuffers(vrHandle, 3, vrStrictBuffer, 1, &partial); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 buffer option without all VR bits or with bit 0x10 was accepted");
+        auto partialChange = vrChange;
+        partialChange.option = option;
+        check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute(vrHandle, 0, &partialChange); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 change to an option without all VR bits or with bit 0x10 was accepted");
+    }
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(vrHandle);
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.option == 15 && cfg->groups[0].ps4Pitch == 128 && cfg->groups[1].attribute.option == 7 && cfg->groups[2].attribute.option == 15, "the PS4 VR buffer options were not stored");
+        check(expectFailure([&] { DescribeVideoOutBuffer(cfg->buffers[0], cfg->groups[0]); }).find("buffer option 15") != std::string::npos, "a PS4 buffer changed to the VR option can be shown");
+        check(expectFailure([&] { DescribeVideoOutBuffer(cfg->buffers[1], cfg->groups[1]); }).find("buffer option 7") != std::string::npos, "a PS4 buffer with the VR option can be shown");
+        check(expectFailure([&] { DescribeVideoOutBuffer(cfg->buffers[2], cfg->groups[2]); }).find("buffer option 15") != std::string::npos, "a PS4 buffer with the VR and strict colorimetry options can be shown");
+    }
+    sceVideoOutClose(vrHandle);
     LibcRunShutdown_nid_postfix();
 }
 
@@ -684,8 +715,8 @@ void testControls() {
         std::lock_guard lock(cfg->mutex);
         check(cfg->outputModeEvents.empty(), "output mode unsubscription did not clear registration");
     }
-    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
+    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate output mode unsubscription did not return INVALID_EVENT");
+    check(sceVideoOutDeleteOutputModeEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "output mode unsubscription from queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
     check(sceVideoOutSysGetBus(handle) == VIDEO_OUT_BUS_TYPE_MAIN, "the main port's bus is not main");
     check(sceVideoOutSysGetBus(0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a null handle");
@@ -778,8 +809,8 @@ void testControls() {
         std::lock_guard lock(cfg->mutex);
         check(cfg->vrrStatusEvents.empty(), "VRR status unsubscription did not clear registration");
     }
-    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == 0, "duplicate VRR status unsubscription failed");
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
+    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate VRR status unsubscription did not return INVALID_EVENT");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "VRR status unsubscription from queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteVrrActiveStatusEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR status unsubscription on an invalid handle was accepted");
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 1, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
@@ -866,6 +897,10 @@ void testPadStatus() {
     };
     flipAndPresent("without the panel");
     check(!AgcDriver::PadStatusOverlayLines().has_value(), "the panel is shown before anything asked for it");
+    AgcDriverPadStatusMouseMode_nid_postfix("F4", false);
+    check(AgcDriver::PadStatusOverlayLines() == std::vector<std::string>{"MOUSE AS STICK OFF", "TOGGLE: F4"}, "the mouse mode notice did not reach the overlay");
+    flipAndPresent("with a mouse mode notice");
+    AgcDriverPadStatusMouseMode_nid_postfix(nullptr, false);
     AgcDriverPadStatusShow_nid_postfix();
     check(AgcDriver::PadStatusOverlayLines().has_value(), "a request does not show the panel");
     flipAndPresent("with the panel");
@@ -1310,14 +1345,14 @@ void testUnopenedEventRegistration() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     check(sceVideoOutAddFlipEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event on queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteFlipEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
-    expectFailure([&] { sceVideoOutAddVblankEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteVblankEvent(0, handle); });
-    expectFailure([&] { sceVideoOutAddPreVblankStartEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeletePreVblankStartEvent(0, handle); });
-    expectFailure([&] { sceVideoOutAddOutputModeEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
-    expectFailure([&] { sceVideoOutAddVrrActiveStatusEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
+    check(sceVideoOutAddVblankEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vblank event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteVblankEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vblank event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutAddPreVblankStartEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "pre-vblank event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeletePreVblankStartEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "pre-vblank event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutAddOutputModeEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "output mode event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteOutputModeEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "output mode event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutAddVrrActiveStatusEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vrr active status event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "vrr active status event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
 
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
     check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
@@ -1332,10 +1367,10 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "registered vrr active status event was not deleted");
 
     check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate flip event deletion on an open port did not return INVALID_EVENT");
-    check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "duplicate vblank event deletion on an open port failed");
-    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == 0, "duplicate pre-vblank event deletion on an open port failed");
-    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "duplicate output mode event deletion on an open port failed");
-    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "duplicate vrr active status event deletion on an open port failed");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate vblank event deletion on an open port did not return INVALID_EVENT");
+    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate pre-vblank event deletion on an open port did not return INVALID_EVENT");
+    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate output mode event deletion on an open port did not return INVALID_EVENT");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate vrr active status event deletion on an open port did not return INVALID_EVENT");
 
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");

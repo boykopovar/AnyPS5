@@ -174,11 +174,6 @@ int APS5_VABI sceAppMessagingTryGetEventFlag(std::uint64_t mask, std::uint64_t* 
     return 0;
 }
 
-int APS5_VABI sceAppMessagingTryReceiveMsg(AppMessagingMessage* message) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilAcquireCpuBudgetOfExtraAudioDevices() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -330,11 +325,6 @@ int APS5_VABI sceLncUtilGetResultLaunchAppByTitleId(std::uint32_t requestId) {
 }
 
 int APS5_VABI sceLncUtilGetVideoFinalizeState(std::int32_t appId, std::int32_t processId, LncVideoFinalizeState* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilInitialize() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

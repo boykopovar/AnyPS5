@@ -12,6 +12,8 @@
 
 namespace {
 constexpr std::uint32_t ParamSfoAttributeSupportNeoMode = 0x00800000;
+
+
 }
 
 extern "C" {
@@ -22,7 +24,10 @@ int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) 
         *__error_nid_postfix() = 3;
         return SCE_KERNEL_ERROR_ESRCH;
     }
-    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    if (pid != 0 && pid != getpid_nid_postfix()) {
+        *__error_nid_postfix() = 3;
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
     std::uint32_t value = 0;
     if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
     if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
@@ -95,9 +100,8 @@ int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len) {
     return sceKernelReleaseDirectMemory(start, len);
 }
 
-int APS5_VABI sceKernelSetProcessProperty(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelSetProcessProperty(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4) {
+    return KernelSetProcessProperty_nid_no_patch(name, value1, value2, value3, value4);
 }
 
 }
