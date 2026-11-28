@@ -1,5 +1,6 @@
 #include "prx/libSceOpusSilkEnc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <array>
 #include <cerrno>
@@ -170,9 +171,9 @@ int APS5_VABI sceOpusSilkEncCtl(OpusSilkEncoder* state, int request, ...) {
 }
 
 int APS5_VABI sceOpusSilkEncCancel(OpusSilkEncoder* state, std::uint32_t batchId) {
-    (void)batchId;
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+    const std::uint32_t context = guestStateWord(state, 0xF0u);
+    return sceAjmiBatchCancel(context, batchId);
 }
 
 int APS5_VABI sceOpusSilkEncEncodeWithPriority(OpusSilkEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
