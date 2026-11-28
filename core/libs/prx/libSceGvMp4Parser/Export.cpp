@@ -19,6 +19,8 @@ namespace {
 constexpr int kNotInitialized = static_cast<int>(0x809D420Bu);
 constexpr int kMissingPath = static_cast<int>(0x809D4203u);
 constexpr int kUnsupportedFormat = static_cast<int>(0x809D4201u);
+constexpr int kUnsupportedQuery = static_cast<int>(0x809D4054u);
+constexpr int kKernelErrorEinval = static_cast<int>(0x80020016u);
 constexpr std::size_t kParserBytes = 0x7b8;
 constexpr std::size_t kHelperBytes = 0x28;
 using Allocate = void* (APS5_VABI*)(std::size_t);
@@ -87,25 +89,22 @@ void ReadPath(const GuestString& path, std::string& text) {
     if (error != 0) throw std::invalid_argument("GvMp4 parser: unreadable path text");
 }
 
-enum class ExtensionGate { Supported, Unsupported, Unmeasured };
+void RequireFileExtensionToken(std::string_view path) {
+    const auto slash = path.rfind('/');
+    const std::string_view fileName = slash == std::string_view::npos ? path : path.substr(slash + 1);
+    if (fileName.find('.') == std::string_view::npos) {
+        throw std::out_of_range("GvMp4 parser: path has no extension");
+    }
+}
 
-ExtensionGate ClassifyExtension(std::string_view path) {
+bool IsSupportedContainerExtension(std::string_view path) {
     const auto dot = path.rfind('.');
-    if (dot == std::string_view::npos) throw std::out_of_range("GvMp4 parser: path has no extension");
+    if (dot == std::string_view::npos || path.size() - dot != 4) return false;
     std::string extension(path.substr(dot + 1));
     for (char& byte : extension) {
         if (byte >= 'a' && byte <= 'z') byte = static_cast<char>(byte - 'a' + 'A');
     }
-    if (extension == "MP4" || extension == "M4V" || extension == "MGV" || extension == "MNV") return ExtensionGate::Supported;
-    if (extension == "MOV") return ExtensionGate::Unsupported;
-    return ExtensionGate::Unmeasured;
-}
-
-int Gate(const void* pathObject, const char* name) {
-    GuestString path{};
-    if (const int result = CheckContext(pathObject, path); result != 0) return result;
-    NotImplemented_nid_no_patch(name);
-    return 0;
+    return extension == "MP4" || extension == "M4V" || extension == "MGV" || extension == "MNV";
 }
 
 int ReadGate(const void* pathObject, const char* name) {
@@ -113,14 +112,14 @@ int ReadGate(const void* pathObject, const char* name) {
     if (const int result = CheckContext(pathObject, path); result != 0) return result;
     std::string text;
     ReadPath(path, text);
+    RequireFileExtensionToken(text);
     FileStat stat{};
     const int saved = errno;
     const int statResult = sceKernelStat(text.c_str(), &stat);
     errno = saved;
-    if (statResult == SCE_KERNEL_ERROR_ENOENT) return kMissingPath;
-    if (statResult != 0) NotImplemented_nid_no_patch(name);
-    const auto extension = ClassifyExtension(text);
-    if (extension == ExtensionGate::Unsupported) return kUnsupportedFormat;
+    if (statResult == SCE_KERNEL_ERROR_ENOENT || statResult == kKernelErrorEinval) return kMissingPath;
+    if (statResult != 0) return kUnsupportedFormat;
+    if (!IsSupportedContainerExtension(text)) return kUnsupportedFormat;
     NotImplemented_nid_no_patch(name);
     return 0;
 }
@@ -195,12 +194,16 @@ int APS5_VABI libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(const void* path
 APS5_EXPORT("PJigiYrhUwQ", libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch);
 
 int APS5_VABI libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(const void* path, void*) {
-    return Gate(path, __func__);
+    return ReadGate(path, __func__);
 }
 APS5_EXPORT("tcsvdFwGn9U", libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch);
 
-int APS5_VABI libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(const void* path, std::uint32_t, std::uint32_t, void*) {
-    return Gate(path, __func__);
+int APS5_VABI libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(const void* pathObject, std::uint32_t, std::uint32_t, void*) {
+    GuestString path{};
+    if (const int result = CheckContext(pathObject, path); result != 0) return result;
+    std::string text;
+    ReadPath(path, text);
+    return kUnsupportedQuery;
 }
 APS5_EXPORT("iPAZM6la8Gk", libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch);
 
