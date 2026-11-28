@@ -4163,10 +4163,6 @@ int APS5_VABI _ZN7WebCore20TransformationMatrix6blend2ERKS0_d() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore18ImageBufferBackend15copyImagePixelsENS_22AlphaPremultiplicationENS_11ColorFormatEjPhS1_S2_jS3_RKNS_7IntSizeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_WQN7AOxNX_minus_w_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
