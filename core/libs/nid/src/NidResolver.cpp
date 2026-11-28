@@ -34,7 +34,7 @@ std::unordered_map<std::string, std::string> ResolveImportNids(const std::vector
     for (const auto& name : unique) {
         const bool sce = IsSceImport(name) || (!options.executable && IsMangledSceImport(name));
         if ((!options.executable || options.onlySce) && !sce) result.at(name) = name;
-        else if (!options.executable) result.at(name) = ResolveOneName(name);
+        else if (!options.executable && !excluded.contains(NormalizeExportName(name))) result.at(name) = ResolveOneName(name);
     }
     return result;
 }
