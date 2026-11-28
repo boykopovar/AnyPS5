@@ -195,6 +195,16 @@ std::filesystem::path AppArchivePath_nid_no_patch() {
     return Opened().path;
 }
 
+int AppArchiveCreateError_nid_no_patch(const std::filesystem::path& hostPath) {
+    auto target = hostPath;
+    while (!target.has_filename() && target.has_relative_path()) target = target.parent_path();
+    const auto parent = target.parent_path();
+    if (!AppArchiveOnly_nid_no_patch(parent)) return 0;
+    AppArchiveNode node{};
+    if (!AppArchiveLookup_nid_no_patch(parent, &node)) throw std::logic_error("creating in " + parent.string() + " left app0.zar");
+    return node.Directory ? 30 : 20;
+}
+
 bool AppArchiveOnly_nid_no_patch(const std::filesystem::path& hostPath) {
     auto& archive = Opened();
     if (!archive.reader) return false;

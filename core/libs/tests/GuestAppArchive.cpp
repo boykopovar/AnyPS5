@@ -97,6 +97,14 @@ void Present(const std::filesystem::path& root) {
     Require(fopen_nid_postfix("/app0/Readme.TXT", "w") == nullptr && errno == 30, "fopen for writing an archived file did not report EROFS");
     errno = 0;
     Require(fopen_nid_postfix("/app0/Readme.TXT", "wx") == nullptr && errno == 17, "exclusive fopen of an archived file did not report EEXIST");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Data/New.txt", "w") == nullptr && errno == 30, "fopen creating a file in an archived directory did not report EROFS");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Data/New.txt", "a") == nullptr && errno == 30, "fopen appending a new file in an archived directory did not report EROFS");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Data/New.txt", "r+") == nullptr && errno == 2, "fopen for update of a missing file in an archived directory did not report ENOENT");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Readme.TXT/New.txt", "w") == nullptr && errno == 20, "fopen creating a file under an archived file did not report ENOTDIR");
     bool refused = false;
     try { (void)fopen_nid_postfix("/app0/Data", "r"); } catch (const std::runtime_error& error) { refused = std::strstr(error.what(), "not implemented") != nullptr; }
     Require(refused, "fopen of an archived directory did not throw");
