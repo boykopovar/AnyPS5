@@ -2382,6 +2382,7 @@ void ownLabelBytesTests(Recorder& recorder) {
             ReleaseWatched(memory, bytes);
         }
     } cleanup{memory};
+    static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uint64_t>(memory), bytes));
     using Lookup = Recorder::OwnLabelLookup;
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
