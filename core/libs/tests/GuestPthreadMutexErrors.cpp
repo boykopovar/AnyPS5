@@ -67,6 +67,18 @@ public:
 
     void* Unreadable() const { return memory + page; }
 
+    PthreadMutex* ReadOnlyNullSlot() {
+        auto* slot = reinterpret_cast<PthreadMutex*>(memory);
+        *slot = nullptr;
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+        return slot;
+    }
+
 private:
     char* memory = nullptr;
     std::size_t page = 0;
@@ -85,7 +97,15 @@ static void CheckBadPointers(PthreadMutex* valid) {
         Require(scePthreadMutexSetyieldloops(static_cast<PthreadMutex*>(pointer), 5) == SCE_KERNEL_ERROR_EFAULT);
         Require(pthread_mutex_setspinloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
         Require(pthread_mutex_setyieldloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
+        PthreadMutex fresh = nullptr;
+        Require(scePthreadMutexInit(&fresh, static_cast<const PthreadMutexattr*>(pointer), "unreadable attr") == SCE_KERNEL_ERROR_EFAULT && fresh == nullptr);
+        Require(scePthreadMutexInit(static_cast<PthreadMutex*>(pointer), nullptr, "unwritable slot") == SCE_KERNEL_ERROR_EFAULT);
+        const PthreadMutexattr unreadableAttributes = static_cast<PthreadMutexattr>(pointer);
+        Require(scePthreadMutexInit(&fresh, &unreadableAttributes, "unreadable attribute object") == SCE_KERNEL_ERROR_EFAULT && fresh == nullptr);
+        Require(pthread_mutex_init_nid_postfix(&fresh, &unreadableAttributes) == 14 && fresh == nullptr);
     }
+    PthreadMutex* const readOnly = guard.ReadOnlyNullSlot();
+    Require(scePthreadMutexInit(readOnly, nullptr, "read-only slot") == SCE_KERNEL_ERROR_EFAULT && *readOnly == nullptr);
 }
 
 struct OtherThread {
