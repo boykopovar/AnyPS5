@@ -405,6 +405,8 @@ function(add_shader_recompiler target runtimeTarget)
             glslang
             SPIRV
     )
+    target_link_libraries(${target} PRIVATE libzstd_static)
+    target_include_directories(${target} SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/3rdparty/zstd/lib")
 
     if(ANYPS5_ENABLE_SPIRV_TOOLS)
         target_link_libraries(${target} PRIVATE SPIRV-Tools-opt SPIRV-Tools-static)
