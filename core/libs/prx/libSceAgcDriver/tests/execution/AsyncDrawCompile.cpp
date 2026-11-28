@@ -1,5 +1,7 @@
+#include "Optimization/ResourceProgram.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -75,9 +77,89 @@ void CheckFailedBuildAhead() {
     Require(device->ComputePipelineAhead(abandoned) == Ahead::Unavailable, "an abandoned build ahead left its compute pipeline queued");
 }
 
+void CheckNonBlockingInvocationPreparation() {
+    auto device = OpenVulkanTestDevice();
+    if (!device) return;
+    const auto program = reinterpret_cast<std::uintptr_t>(Code.data());
+    AgcDriver::DriverDetail::ShaderSnapshot pendingSnapshot{program, 0, 0, {Code.begin(), Code.end()}, {}};
+    ShaderRecompiler::ShaderComputeStageInfo computeInfo{};
+    computeInfo.numThreads = {1, 1, 1};
+    computeInfo.partialThreads = {1, 1, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, program, pendingSnapshot.code, 0, {}},
+        {64, 0, {}, computeInfo, std::nullopt, std::nullopt, {}, std::nullopt},
+        device->ComputeTarget(64),
+        {0, 0, 0, 128}
+    };
+    {
+        std::lock_guard lock(pendingSnapshot.prepared->mutex);
+        pendingSnapshot.prepared->pending = true;
+    }
+    std::jthread releasePending([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        std::lock_guard lock(pendingSnapshot.prepared->mutex);
+        pendingSnapshot.prepared->pending = false;
+        pendingSnapshot.prepared->settled.notify_all();
+    });
+    bool pendingThrewEarly = false;
+    try {
+        static_cast<void>(AgcDriver::DriverDetail::InvocationFor(pendingSnapshot, 0, request, true));
+    } catch (const AgcDriver::DriverDetail::DrawCompilePending&) {
+        std::lock_guard lock(pendingSnapshot.prepared->mutex);
+        pendingThrewEarly = pendingSnapshot.prepared->pending;
+    }
+    Require(pendingThrewEarly, "InvocationFor with deferPreparation blocked on pending registration preparation");
+
+    AgcDriver::DriverDetail::ShaderSnapshot abiSnapshot{program, 0, 0, {Code.begin(), Code.end()}, {}};
+    request.shader.code = abiSnapshot.code;
+    {
+        std::lock_guard lock(abiSnapshot.prepared->mutex);
+        abiSnapshot.prepared->deferredPreparing = true;
+    }
+    std::jthread releaseAbi([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        std::lock_guard lock(abiSnapshot.prepared->mutex);
+        abiSnapshot.prepared->deferredPreparing = false;
+        abiSnapshot.prepared->settled.notify_all();
+    });
+    bool abiThrewEarly = false;
+    try {
+        static_cast<void>(AgcDriver::DriverDetail::InvocationFor(abiSnapshot, 0, request, true));
+    } catch (const AgcDriver::DriverDetail::DrawCompilePending&) {
+        std::lock_guard lock(abiSnapshot.prepared->mutex);
+        abiThrewEarly = abiSnapshot.prepared->deferredPreparing;
+    }
+    Require(abiThrewEarly, "InvocationFor with deferPreparation blocked on in-flight deferred ABI preparation");
+
+    for (int round = 0; round < 8; ++round) {
+        AgcDriver::DriverDetail::ShaderSnapshot concurrentSnapshot{program, 0, 0, {Code.begin(), Code.end()}, {}};
+        ShaderRecompiler::RecompileRequest concurrentRequest = request;
+        concurrentRequest.shader.code = concurrentSnapshot.code;
+        std::atomic<bool> go{false};
+        std::jthread syncThread([&] {
+            while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+            static_cast<void>(AgcDriver::DriverDetail::InvocationFor(concurrentSnapshot, 0, concurrentRequest, false));
+        });
+        std::jthread syncWaiter([&] {
+            while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+            static_cast<void>(AgcDriver::DriverDetail::InvocationFor(concurrentSnapshot, 0, concurrentRequest, false));
+        });
+        go.store(true, std::memory_order_release);
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            try {
+                static_cast<void>(AgcDriver::DriverDetail::InvocationFor(concurrentSnapshot, 0, concurrentRequest, true));
+                break;
+            } catch (const AgcDriver::DriverDetail::DrawCompilePending&) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+    }
+}
+
 int main() {
     try {
         CheckFailedBuildAhead();
+        CheckNonBlockingInvocationPreparation();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
