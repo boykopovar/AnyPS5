@@ -171,6 +171,8 @@ def load_trace(path):
             document = json.load(handle, object_pairs_hook=unique_json_object)
         except RecursionError as error:
             raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from error
         return Trace(document)
 
 
