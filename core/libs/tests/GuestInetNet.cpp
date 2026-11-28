@@ -84,6 +84,10 @@ int main() {
     ExpectPton(Inet6, "2001:db8::1/64", prefix64, 8, 64);
     const std::uint8_t host128[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
     ExpectPton(Inet6, "2001:db8::1/128", host128, 16, 128);
+    const std::uint8_t shortZero[1] = {0x00};
+    ExpectPton(Inet6, "::/1", shortZero, 1, 1);
+    const std::uint8_t shortHigh[1] = {0x80};
+    ExpectPton(Inet6, "8000::/1", shortHigh, 1, 1);
 
     const std::uint8_t nsap[7] = {0x47, 0x00, 0x05, 0x80, 0x00, 0x5a, 0x00};
     std::uint8_t binary[16] = {};
