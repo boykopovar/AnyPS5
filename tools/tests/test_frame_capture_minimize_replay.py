@@ -375,5 +375,36 @@ for outcome in ('exit', 'timeout', 'interrupt'):
         self.assertEqual(killpg.call_args_list, [call(123, 9), call(123, 0)])
         process.wait.assert_called_once_with(timeout=1)
 
+    def test_darwin_probe_retries_until_the_process_group_disappears(self):
+        process = Mock(pid=123)
+        with (
+            patch.object(frame_capture_minimize.sys, "platform", "darwin"),
+            patch.object(frame_capture_minimize.signal, "SIGKILL", 9, create=True),
+            patch.object(frame_capture_minimize.os, "killpg", create=True,
+                         side_effect=[None, PermissionError("not allowed"), ProcessLookupError()]) as killpg,
+            patch.object(frame_capture_minimize.time, "sleep"),
+        ):
+            frame_capture_minimize.drain_replay_group(process)
+        self.assertEqual(killpg.call_args_list, [call(123, 9), call(123, 0), call(123, 0)])
+        process.wait.assert_called_once()
+
+    def test_darwin_probe_does_not_accept_persistent_permission_failure(self):
+        process = Mock(pid=123)
+        denied = PermissionError("not allowed")
+        with (
+            patch.object(frame_capture_minimize.sys, "platform", "darwin"),
+            patch.object(frame_capture_minimize.signal, "SIGKILL", 9, create=True),
+            patch.object(frame_capture_minimize.os, "killpg", create=True,
+                         side_effect=[None, denied, denied]) as killpg,
+            patch.object(frame_capture_minimize, "REPLAY_DRAIN_SECONDS", 1),
+            patch.object(frame_capture_minimize.time, "monotonic", side_effect=[0, 0, 0.5, 1]),
+            patch.object(frame_capture_minimize.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(frame_capture_minimize.ReplayCleanupError, "group remains"):
+                frame_capture_minimize.drain_replay_group(process)
+        self.assertEqual(killpg.call_args_list, [call(123, 9), call(123, 0), call(123, 0)])
+        process.wait.assert_called_once_with(timeout=1)
+
+
 if __name__ == "__main__":
     unittest.main()
