@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550704);
@@ -196,7 +197,9 @@ int GetRankingByNpIdPcId(int reqId, const void* idArray, std::uint64_t idArraySi
 int GetGameData(int reqId, const void* npId, void* option) {
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (*static_cast<const char*>(npId) == '\0') return Finish(reqId, SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT);
+    char firstChar = '\0';
+    if (!GuestCopyIn_nid_no_patch(&firstChar, npId, sizeof(firstChar))) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (firstChar == '\0') return Finish(reqId, SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT);
     return Offline(reqId);
 }
 
@@ -204,6 +207,28 @@ int GetGameDataByAccountId(int reqId, std::uint64_t accountId, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (accountId == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return Offline(reqId);
+}
+
+bool CanWriteResult(int* result) {
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite write(result, sizeof(*result));
+        writable = write.Open() && GuestWritable_nid_no_patch(result, sizeof(*result));
+    }
+    errno = savedErrno;
+    return writable;
+}
+
+bool CopyOutResult(int* result, int value) {
+    const int savedErrno = errno;
+    bool copied = false;
+    {
+        const GuestArena::HostWrite write(result, sizeof(*result));
+        copied = write.Open() && GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+    }
+    errno = savedErrno;
+    return copied;
 }
 }
 
@@ -300,14 +325,9 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result) {
     std::lock_guard lock(scoreMutex);
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (result && !CanWriteResult(result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (!request->second.result) return POLL_RUNNING;
-    if (result) {
-        const int value = *request->second.result;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
-        errno = savedErrno;
-        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    }
+    if (result && !CopyOutResult(result, *request->second.result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return POLL_FINISHED;
 }
 
@@ -571,17 +591,12 @@ int APS5_VABI sceNpScoreSetTimeout(int id, int resolveRetry, int resolveTimeout,
 int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
     std::unique_lock lock(scoreMutex);
     if (!requests.contains(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (result && !CanWriteResult(result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     requestFinished.wait(lock, [reqId] {
         const auto request = requests.find(reqId);
         return request != requests.end() && request->second.result;
     });
-    if (result) {
-        const int value = *requests.at(reqId).result;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
-        errno = savedErrno;
-        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    }
+    if (result && !CopyOutResult(result, *requests.at(reqId).result)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

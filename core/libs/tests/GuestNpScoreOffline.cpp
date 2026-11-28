@@ -1,5 +1,8 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -10,6 +13,9 @@
 #include <initializer_list>
 #include <thread>
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -129,6 +135,11 @@ void CheckRequests() {
     int req = NewRequest();
     int result = 7;
     Require(sceNpScorePollAsync(req + 100, &result) == InvalidId, "sceNpScorePollAsync", "an unknown request was taken");
+    errno = 71;
+    Require(sceNpScorePollAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScorePollAsync", "unwritable result was not refused");
+    Require(errno == 71, "sceNpScorePollAsync", "errno was mutated");
+    Require(sceNpScoreWaitAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScoreWaitAsync", "unwritable result was not refused");
+    Require(errno == 71, "sceNpScoreWaitAsync", "errno was mutated");
     Require(sceNpScorePollAsync(req, &result) == PollRunning && result == 7, "sceNpScorePollAsync", "an unstarted request was not running");
     Require(sceNpScoreAbortRequest(req + 100) == InvalidId, "sceNpScoreAbortRequest", "an unknown request was taken");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting failed");
@@ -149,6 +160,100 @@ void CheckRequests() {
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a finished request was not reused");
     sceNpScoreDeleteRequest(req);
 
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        auto* const mapped = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes));
+        Require(mapped != nullptr, "sceNpScoreWaitAsync", "allocating guest arena watch page failed");
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        Require(section != nullptr, "sceNpScoreWaitAsync", "creating guest arena section failed");
+        GuestArena::GuestArenaMap_nid_postfix(mapped, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(mapped, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            bool any = false;
+            for (;;) {
+                std::array<void*, 64> pages{};
+                std::size_t count = pages.size();
+                Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, pages.data(), &count, true),
+                        "sceNpScoreWaitAsync", "collecting guest arena writes failed");
+                if (count != 0) {
+                    any = true;
+                }
+                if (count < pages.size()) {
+                    break;
+                }
+            }
+            return any;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty),
+                "sceNpScoreWaitAsync", "collecting write-watched pages failed");
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            Require(!collectDirty(), "sceNpScoreWaitAsync", "write-watched page was still dirty");
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY,
+                    "sceNpScoreWaitAsync", "write-watched page was not armed PAGE_READONLY");
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* const watched = reinterpret_cast<int*>(mapped);
+        req = NewRequest();
+        watched[0] = 9;
+        armWatch(watched);
+        errno = 71;
+        Require(sceNpScorePollAsync(req, watched) == PollRunning && watched[0] == 9, "sceNpScorePollAsync", "a write-watched pending poll result failed");
+        Require(errno == 71, "sceNpScorePollAsync", "errno was mutated on watched poll");
+        Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a request failed before watched finish");
+        armWatch(watched);
+        errno = 71;
+        Require(sceNpScorePollAsync(req, watched) == PollFinished && watched[0] == SignedOut, "sceNpScorePollAsync", "a write-watched result was refused");
+        Require(errno == 71, "sceNpScorePollAsync", "errno was mutated on watched poll copyout");
+        Require(collectDirty(), "sceNpScorePollAsync", "write-watched poll result did not mark page dirty");
+        watched[0] = 9;
+        armWatch(watched);
+        errno = 71;
+        Require(sceNpScoreWaitAsync(req, watched) == 0 && watched[0] == SignedOut, "sceNpScoreWaitAsync", "a write-watched result was refused");
+        Require(errno == 71, "sceNpScoreWaitAsync", "errno was mutated on watched wait");
+        Require(collectDirty(), "sceNpScoreWaitAsync", "write-watched wait result did not mark page dirty");
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x02);
+        errno = 71;
+        Require(sceNpScorePollAsync(req, watched) == InvalidArgument && watched[0] == SignedOut, "sceNpScorePollAsync", "read-only watched result was accepted");
+        Require(errno == 71, "sceNpScorePollAsync", "errno was mutated on read-only poll");
+        errno = 71;
+        Require(sceNpScoreWaitAsync(req, watched) == InvalidArgument && watched[0] == SignedOut, "sceNpScoreWaitAsync", "read-only watched result was accepted");
+        Require(errno == 71, "sceNpScoreWaitAsync", "errno was mutated on read-only wait");
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x04);
+        sceNpScoreDeleteRequest(req);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(mapped, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(mapped, kArenaBytes);
+    }
 }
 
 void CheckRecord() {
@@ -325,6 +430,11 @@ void CheckGameDataAndBoard() {
     int result = 0;
     Require(gameData(req, 1, emptyNpId, &totalSize, sizeof(data), data, nullptr) == InvalidArgument, "sceNpScoreGetGameData", "an empty online id was taken");
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == InvalidArgument, "sceNpScoreGetGameData", "an empty online id did not finish the request with INVALID_ARGUMENT");
+    sceNpScoreDeleteRequest(req);
+    req = NewRequest();
+    errno = 71;
+    Require(gameData(req, 1, reinterpret_cast<const void*>(0x10), &totalSize, sizeof(data), data, nullptr) == InvalidArgument, "sceNpScoreGetGameData", "unmapped npId was not refused");
+    Require(errno == 71, "sceNpScoreGetGameData", "errno was mutated");
     sceNpScoreDeleteRequest(req);
 
     req = NewRequest();
