@@ -390,6 +390,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         program.Metadata().barycentricEmulation = !hostInterpolationFirst;
         simplify();
     }
+    if (stageKind == ShaderStageKind::Pixel) program.Metadata().barycentricBuiltinsReadFragCoord = request.target.barycentricBuiltinsReadFragCoord && !program.Metadata().barycentricEmulation;
 
     if (NanSpeculation().enabled) {
         const auto& metadata = program.Metadata();

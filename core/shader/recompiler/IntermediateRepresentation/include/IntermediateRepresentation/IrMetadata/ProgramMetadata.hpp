@@ -38,6 +38,7 @@ struct IrProgramMetadata {
     bool pixelIteratesSamples = false;
     bool barycentricEmulation = false;
     bool barycentricBuiltinsUnnormalized = false;
+    bool barycentricBuiltinsReadFragCoord = false;
     bool invalidatesCaches = false;
     std::vector<IrValue*> dynamicReads;
     std::vector<NanSpeculationCheck> nanSpeculationChecks;
