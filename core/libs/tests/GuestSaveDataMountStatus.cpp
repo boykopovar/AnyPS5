@@ -127,15 +127,8 @@ void CheckUnmountedCalls() {
     SaveDataBackup validBackup{};
     validBackup.user_id = 0x10000000;
     validBackup.dir_name = &validDir;
-    Check(sceSaveDataBackup(&validBackup) == 0, "backup valid dir_name succeeds");
-    Check(sceSaveDataGetEventResult(nullptr, reinterpret_cast<SaveDataEvent*>(0x10)) == SaveDataErrorParameter, "getEventResult unwritable event is PARAMETER");
-    SaveDataEvent backupEvent{};
-    Check(sceSaveDataGetEventResult(nullptr, &backupEvent) == 0, "getEventResult retrieves backup event");
-    Check(backupEvent.type == 2, "backup event type is 2");
-    Check(backupEvent.error_code == 0, "backup event error code is 0");
-    Check(backupEvent.user_id == 0x10000000, "backup event user_id matches");
-    Check(std::strcmp(backupEvent.dir_name.data, "valid_backup") == 0, "backup event dir_name matches");
-    Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "event queue is empty after retrieving backup event");
+    Check(sceSaveDataBackup(&validBackup) == SaveDataErrorNotInitialized, "backup before initialize is NOT_INITIALIZED");
+    Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "a backup before initialize posts no event");
     SceSaveDataDirName dirName{};
     std::memcpy(dirName.data, "fresh", sizeof("fresh"));
     SaveDataCheckBackupData check{};
@@ -420,6 +413,60 @@ int RemountWithBackup(SceSaveDataDirName* dirName) {
         return SaveDataErrorNotMounted;
     }
     return UmountWithBackup(name, &mounted.mount_point);
+}
+
+void CheckExplicitBackup() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "explicit", sizeof("explicit"));
+    SaveDataBackup backup{};
+    backup.user_id = 7;
+    backup.dir_name = &name;
+    SaveDataEvent event{};
+    Check(sceSaveDataBackup(&backup) == 0, "a missing save backup request is accepted");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0 && event.type == 2 && event.error_code == SaveDataErrorInternal, "a missing save fails in the backup completion");
+
+    SaveDataMountResult mounted{};
+    if (!MountSave(&name, MountReadWrite | MountCreate, &mounted)) {
+        Check(false, "the explicit backup save mounts");
+        return;
+    }
+    const auto live = std::filesystem::path("_sd") / name.data;
+    const auto data = live / "data.bin";
+    WriteText(data, "original");
+    const char title[] = "Original title";
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, title, sizeof(title)) == 0, "the explicit backup save takes a title");
+    Check(sceSaveDataBackup(&backup) == SaveDataErrorBusy, "backup of a mounted save is BUSY");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "a rejected backup posts no event");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the explicit backup save unmounts normally");
+    const auto original = Snapshot(live);
+
+    SceSaveDataTitleId otherTitle{};
+    std::memcpy(otherTitle.data, "PPSA99999", sizeof("PPSA99999"));
+    backup.title_id = &otherTitle;
+    Check(sceSaveDataBackup(&backup) == SaveDataErrorNotFound, "backup for another title is NOT_FOUND");
+    backup.title_id = reinterpret_cast<const SceSaveDataTitleId*>(0x10);
+    Check(sceSaveDataBackup(&backup) == SaveDataErrorParameter, "backup with an unmapped title pointer is PARAMETER");
+    backup.title_id = nullptr;
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "rejected title IDs post no event");
+
+    Check(sceSaveDataBackup(&backup) == 0, "backup of an unmounted save is accepted");
+    Check(sceSaveDataGetEventResult(nullptr, reinterpret_cast<SaveDataEvent*>(0x10)) == SaveDataErrorParameter, "getEventResult unwritable event is PARAMETER");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0 && event.type == 2 && event.error_code == 0, "the backup posts a successful completion");
+    Check(event.user_id == 7 && std::strcmp(event.dir_name.data, name.data) == 0, "the backup event names the user and save");
+    Check(std::strcmp(event.title_id.data, "PPSA00000") == 0, "backup without a title ID reports the running title");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "the backup completion is polled once");
+
+    SaveDataParam param{};
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    check.param = &param;
+    Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, title) == 0, "the explicit backup stores the save metadata");
+    WriteText(data, "modified");
+    WriteText(live / "added.bin", "added after backup");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "the explicit backup can be restored");
+    Check(Snapshot(live) == original, "restoring the explicit backup restores the original files and metadata");
 }
 
 void CheckBackups() {
@@ -1080,6 +1127,7 @@ int main() {
     CheckEquivalentMounts();
     CheckInvalidNamesAreRejected();
     CheckBackups();
+    CheckExplicitBackup();
     CheckCorruptBackups();
     CheckStagedRestore();
     CheckBackupSwap();

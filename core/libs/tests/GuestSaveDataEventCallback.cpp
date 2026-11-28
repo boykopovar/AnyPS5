@@ -176,6 +176,7 @@ SceSaveDataTitleId TitleId(const char* name) {
 }
 
 int BackUp(const char* name) {
+    std::filesystem::create_directories(std::filesystem::path("_sd") / name);
     const auto dirName = DirName(name);
     const auto titleId = TitleId("PPSA00000");
     SaveDataBackup backup{};
@@ -266,8 +267,6 @@ void CheckBackupDelivery(int* firstTag) {
 }
 
 void CheckUmountWithBackupDelivery(int* firstTag) {
-    std::filesystem::create_directories("app0/sce_sys");
-    WriteText("app0/sce_sys/param.json", "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}");
     auto dirName = DirName("mounted");
     SaveDataMount3 mount{};
     mount.user_id = User;
@@ -468,6 +467,8 @@ int main() {
     std::filesystem::create_directories(root);
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(root);
+    std::filesystem::create_directories("app0/sce_sys");
+    WriteText("app0/sce_sys/param.json", "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}");
     int firstTag = 0;
     int secondTag = 0;
     CheckSessionsWithoutRegistration();

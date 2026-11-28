@@ -67,7 +67,7 @@ void CheckBackupProgress() {
     Check(progress == 0.25f, "a rejected backup leaves progress untouched");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a rejected backup");
     Check(progress == 0.0f, "progress reports 0.0f after a rejected backup");
-    Check(Backup("progress") == 0, "a backup succeeds");
+    Check(Backup("kept") == 0, "a backup succeeds");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a backup");
     Check(progress == 1.0f, "progress reports 1.0f after a backup");
     Check(sceSaveDataTerminate() == 0, "SaveData terminates after a backup");
@@ -75,7 +75,7 @@ void CheckBackupProgress() {
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData reinitializes after the progress checks");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after reinitialize");
     Check(progress == 0.0f, "progress does not survive a terminate");
-    Check(Backup("progress") == 0, "a backup succeeds after reinitialize");
+    Check(Backup("kept") == 0, "a backup succeeds after reinitialize");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after the second backup");
     Check(progress == 1.0f, "progress reports 1.0f after the second backup");
     Check(sceSaveDataClearProgress() == 0, "clear progress succeeds");
@@ -99,6 +99,8 @@ int main() {
     std::ofstream(kept) << "data";
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(work);
+    std::filesystem::create_directories("app0/sce_sys");
+    std::ofstream("app0/sce_sys/param.json") << "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}";
 
     float progress = 0.0f;
     Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query before initialize fails with not initialized");
