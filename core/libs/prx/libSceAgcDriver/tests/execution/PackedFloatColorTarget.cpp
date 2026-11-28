@@ -48,6 +48,7 @@ constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Float11_11_10Info = 0x4171cu;
 constexpr std::uint32_t StandardOrderInfo = Float11_11_10Info & ~0x1800u;
+constexpr std::uint32_t RoundModeBit = 0x40000u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t LinearAttrib3 = 0x09000000u;
 constexpr std::uint32_t Float32Export = 9;
@@ -61,15 +62,12 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 64> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 96> Programs{};
 std::size_t programCount = 0;
 
 std::uint32_t SmallFloat(float value, std::uint32_t mantissaBits) {
     const std::uint32_t infinity = 0x1fu << mantissaBits;
-    if (std::isnan(value)) {
-        const auto top = (std::bit_cast<std::uint32_t>(value) & 0x7fffffu) >> (23u - mantissaBits);
-        return infinity | (top == 0u ? 1u : top);
-    }
+    if (std::isnan(value)) return infinity | (1u << (mantissaBits - 1u));
     if (!(value > 0.0f)) return 0;
     if (std::isinf(value)) return infinity;
     const double magnitude = value;
@@ -174,11 +172,11 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder, std::uint32_t sampleShift = 0) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t attrib3, bool standardOrder, bool truncateBit = true, std::uint32_t sampleShift = 0) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = standardOrder ? StandardOrderInfo : Float11_11_10Info;
+    cx[0x31c] = (standardOrder ? StandardOrderInfo : Float11_11_10Info) & (truncateBit ? ~0u : ~RoundModeBit);
     cx[0x31d] = (sampleShift << 12u) | (sampleShift << 15u);
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = attrib3;
@@ -289,7 +287,7 @@ void ResolveCase(AgcDriver::VulkanDevice& device, std::uint32_t sampleShift, con
     Block resolved(layout.Bytes());
     std::memset(source.data, 0, source.bytes);
     std::memset(resolved.data, 0x5a, resolved.bytes);
-    const auto multisampled = DecodeTarget(source, TiledAttrib3, true, sampleShift);
+    const auto multisampled = DecodeTarget(source, TiledAttrib3, true, true, sampleShift);
     for (std::uint32_t sample = 0; sample < (1u << sampleShift); ++sample) Draw(device, multisampled, Float32Export, Float32Program(samples[sample % samples.size()]), static_cast<std::uint16_t>(1u << sample));
     AgcDriver::Graphics::ColorMetadataPass pass{};
     pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
@@ -329,14 +327,14 @@ std::string Describe(std::array<float, 3> rgb) {
     return text;
 }
 
-void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind, bool standardOrder) {
+void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t attrib3, ColorTileMode mode, const char* kind, bool standardOrder, bool truncateBit) {
     const ColorTargetLayout layout(Width, Height, mode, 4);
     Require(layout.Bytes() == block.bytes, "the test surface size disagrees with its layout");
-    const auto color = DecodeTarget(block, attrib3, standardOrder);
+    const auto color = DecodeTarget(block, attrib3, standardOrder, truncateBit);
     auto before = Fill(block);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
-    const std::array<std::array<float, 3>, 10> cases{{
+    const std::array<std::array<float, 3>, 12> cases{{
         {1.0f, 0.5f, 0.25f},
         {2.0f, 0.75f, 65024.0f},
         {1.0f + 1.9f / 64.0f, 1.0f + 0.9f / 64.0f, 1.0f + 1.9f / 32.0f},
@@ -347,6 +345,8 @@ void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t at
         {std::ldexp(1.0f, -21), std::ldexp(1.9f, -20), std::ldexp(1.9f, -19)},
         {std::numeric_limits<float>::min(), 0.1f, 1.0f / 3.0f},
         {3.0f, 5.0f, 7.0f},
+        {std::bit_cast<float>(0x7fa00000u), std::bit_cast<float>(0x7f800001u), std::bit_cast<float>(0x7fffffffu)},
+        {std::bit_cast<float>(0xffe00000u), std::bit_cast<float>(0x7fc00001u), std::bit_cast<float>(0xff800001u)},
     }};
     for (const auto& rgb : cases) {
         Draw(device, color, Float32Export, Float32Program(rgb));
@@ -367,9 +367,10 @@ int main() {
         Block tiled(ColorTargetLayout(Width, Height, ColorTileMode::RenderTarget, 4).Bytes());
         Block linear(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 4).Bytes());
         for (const bool standardOrder : {false, true}) {
-            TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, standardOrder ? "tiled standard-order" : "tiled", standardOrder);
-            TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, standardOrder ? "linear standard-order" : "linear", standardOrder);
+            TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, standardOrder ? "tiled standard-order" : "tiled", standardOrder, true);
+            TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, standardOrder ? "linear standard-order" : "linear", standardOrder, true);
         }
+        TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, "tiled ROUND_MODE 0", false, false);
         ResolveTests(*device);
         std::puts("11_11_10 float color target tests passed");
         return 0;
