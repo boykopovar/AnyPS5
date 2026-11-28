@@ -21,8 +21,6 @@ namespace AgcDriver {
 
 namespace {
 
-constexpr std::uint64_t MaxCacheEntries = 200000;
-
 std::string operatingSystem() {
 #ifdef _WIN32
     using QueryVersion = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
@@ -94,26 +92,7 @@ std::string sdlCompiled() {
 }
 
 HostShaderCacheFacts shaderCache() {
-    HostShaderCacheFacts facts;
-    const auto directory = ShaderRecompiler::ShaderCacheDirectory();
-    if (directory.empty()) return facts;
-    facts.enabled = true;
-    std::error_code error;
-    facts.present = std::filesystem::is_directory(directory, error) && !error;
-    if (!facts.present) return facts;
-    std::uint64_t bytes = 0;
-    std::uint64_t entries = 0;
-    std::filesystem::recursive_directory_iterator walk(directory, std::filesystem::directory_options::skip_permission_denied, error);
-    for (; !error && walk != std::filesystem::recursive_directory_iterator(); walk.increment(error)) {
-        if (++entries > MaxCacheEntries) break;
-        std::error_code sizeError;
-        if (walk->is_regular_file(sizeError) && !sizeError) {
-            const auto size = walk->file_size(sizeError);
-            if (!sizeError) bytes += size;
-        }
-    }
-    facts.sizeMiB = bytes / (1024 * 1024);
-    return facts;
+    return MeasureShaderCache(ShaderRecompiler::ShaderCacheDirectory());
 }
 
 std::vector<std::string> environmentEntries() {

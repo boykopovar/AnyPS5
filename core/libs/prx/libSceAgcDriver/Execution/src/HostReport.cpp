@@ -261,6 +261,50 @@ std::optional<TValue> gather(const std::function<TValue()>& source, const char* 
     return std::nullopt;
 }
 
+constexpr std::uint64_t MaxCacheEntries = 200000;
+
+}
+
+HostShaderCacheFacts MeasureShaderCache(const std::filesystem::path& directory) {
+    HostShaderCacheFacts facts;
+    if (directory.empty()) return facts;
+    facts.enabled = true;
+    std::error_code error;
+    facts.present = std::filesystem::is_directory(directory, error) && !error;
+    if (!facts.present) return facts;
+    std::uint64_t bytes = 0;
+    std::uint64_t entries = 0;
+#ifdef _WIN32
+    std::vector<std::filesystem::path> pending{directory};
+    while (!pending.empty() && entries <= MaxCacheEntries) {
+        const auto current = std::move(pending.back());
+        pending.pop_back();
+        WIN32_FIND_DATAW data{};
+        const HANDLE find = ::FindFirstFileExW((current / L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+        if (find == INVALID_HANDLE_VALUE) continue;
+        do {
+            const std::wstring_view name(data.cFileName);
+            if (name == L"." || name == L"..") continue;
+            if (++entries > MaxCacheEntries) break;
+            if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) continue;
+            if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) pending.push_back(current / name);
+            else bytes += (static_cast<std::uint64_t>(data.nFileSizeHigh) << 32u) | data.nFileSizeLow;
+        } while (::FindNextFileW(find, &data));
+        ::FindClose(find);
+    }
+#else
+    std::filesystem::recursive_directory_iterator walk(directory, std::filesystem::directory_options::skip_permission_denied, error);
+    for (; !error && walk != std::filesystem::recursive_directory_iterator(); walk.increment(error)) {
+        if (++entries > MaxCacheEntries) break;
+        std::error_code sizeError;
+        if (walk->is_regular_file(sizeError) && !sizeError) {
+            const auto size = walk->file_size(sizeError);
+            if (!sizeError) bytes += size;
+        }
+    }
+#endif
+    facts.sizeMiB = bytes / (1024 * 1024);
+    return facts;
 }
 
 HostFacts CollectHostFacts(const HostSources& sources) {
