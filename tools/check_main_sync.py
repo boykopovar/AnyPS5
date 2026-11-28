@@ -66,7 +66,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
 
 
 def report(repo, base, head):
-    repo = git(repo, "rev-parse", "--show-toplevel").stdout.strip()
+    repo = git(repo, "rev-parse", "--show-toplevel").stdout.removesuffix("\n")
     found = git(repo, "merge-base", base, head, check=False)
     if found.returncode == 1:
         raise RuntimeError(f"{head} and {base} have no common ancestor")

@@ -12,7 +12,6 @@ int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE9underflowEv_nid_postfix(
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE9_EndwriteEv_nid_postfix();
 void APS5_VABI _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt8numpunctIcEC1EPKcmb_nid_postfix();
-int APS5_VABI _reclaim_telldir_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9_EndwriteEv_nid_postfix();
 std::size_t APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 void APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix(void* self);

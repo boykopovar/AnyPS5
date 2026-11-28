@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/SubmissionCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -120,6 +121,7 @@ CapturedSubmission SubmissionCapture::Prepare(std::uint32_t queue, SubmissionKin
     submission.kind = kind;
     submission.dwords = commands.size();
     submission.commands.assign(commands.begin(), commands.end());
+    submission.gcn = ShaderRecompiler::GcnGuestShaders();
     for (std::size_t cursor = 0; cursor < commands.size(); cursor += Pm4::PacketWords(commands[cursor])) {
         if (waitPacket(commands[cursor])) submission.heldAtSubmit.push_back(cursor);
     }
@@ -150,7 +152,7 @@ void SubmissionCapture::Write(const CapturedSubmission& submission) {
     const int length = std::snprintf(head, sizeof(head), "%llu 0x%x %s %llu %llu %zu %s ", static_cast<unsigned long long>(submission.ordinal), submission.queue, QueueType(submission.queue).data(),
                                      static_cast<unsigned long long>(submission.serial), static_cast<unsigned long long>(submission.timeUs), submission.dwords, KindName(submission.kind).data());
     requireCapture(length > 0 && static_cast<std::size_t>(length) < sizeof(head), "index line does not fit");
-    const auto line = std::string(head, static_cast<std::size_t>(length)) + name + " " + heldField(submission) + " " + conditionalField(submission) + "\n";
+    const auto line = std::string(head, static_cast<std::size_t>(length)) + name + " " + heldField(submission) + " " + conditionalField(submission) + (submission.gcn ? " ps4\n" : " ps5\n");
     std::lock_guard lock(mutex);
     index.write(line.data(), static_cast<std::streamsize>(line.size()));
     index.flush();
@@ -187,9 +189,11 @@ std::vector<CapturedSubmission> SubmissionCapture::ReadIndex(const std::filesyst
     requireCapture(input.is_open(), "cannot open " + path.string());
     std::string line;
     requireCapture(std::getline(input, line) && line == Magic, path.string() + " does not start with '" + std::string(Magic) + "'");
-    requireCapture(std::getline(input, line) && (line == Columns || line == ColumnsWithoutHeld), path.string() + " has no column line '" + std::string(Columns) + "' or '" + std::string(ColumnsWithoutHeld) + "'");
-    const bool complete = line == Columns;
-    const std::size_t columns = complete ? 10 : 8;
+    requireCapture(std::getline(input, line) && (line == Columns || line == ColumnsWithoutForms || line == ColumnsWithoutHeld),
+                   path.string() + " has no column line '" + std::string(Columns) + "', '" + std::string(ColumnsWithoutForms) + "' or '" + std::string(ColumnsWithoutHeld) + "'");
+    const bool forms = line == Columns;
+    const bool complete = line != ColumnsWithoutHeld;
+    const std::size_t columns = forms ? 11 : complete ? 10 : 8;
     std::vector<CapturedSubmission> result;
     for (std::size_t number = 3; std::getline(input, line); ++number) {
         const auto where = path.string() + " line " + std::to_string(number);
@@ -209,6 +213,10 @@ std::vector<CapturedSubmission> SubmissionCapture::ReadIndex(const std::filesyst
         if (complete) {
             submission.heldAtSubmit = readHeld(values[8], submission.dwords, where);
             submission.conditionalRanges = readConditional(values[9], submission.dwords, where);
+        }
+        if (forms) {
+            requireCapture(values[10] == "ps4" || values[10] == "ps5", where + ": malformed packet forms '" + std::string(values[10]) + "'");
+            submission.gcn = values[10] == "ps4";
         }
         result.push_back(std::move(submission));
     }

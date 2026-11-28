@@ -793,6 +793,23 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), [published])
         self.assertEqual(published.read_bytes(), b"previous release")
 
+    def test_quickjs_license_in_webkit_archives(self):
+        (self.source / "core/libs/prx/libSceNKWebKit").mkdir()
+        (self.library.parent / "libSceNKWebKit.prx").write_bytes(b"patched WebKit library")
+        (self.unpatched.parent / "libSceNKWebKit.prx").write_bytes(b"unpatched WebKit library")
+        license_file = self.source / "3rdparty/quickjs/LICENSE"
+        license_file.parent.mkdir(parents=True)
+        license_file.write_bytes(b"QuickJS license\n")
+        package_release.package("linux", self.build, self.output, "v1")
+        member = "libs/licenses/quickjs.txt"
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with self.subTest(archive=stem + ".zip"), zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                self.assertIn(member, archive.namelist())
+                self.assertEqual(archive.read(member), license_file.read_bytes())
+            with self.subTest(archive=stem + ".tar.gz"), tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                self.assertIn(member, archive.getnames())
+                self.assertEqual(archive.extractfile(member).read(), license_file.read_bytes())
+
     def test_mimalloc_license_in_archives(self):
         package_release.package("linux", self.build, self.output, "v1")
         for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):

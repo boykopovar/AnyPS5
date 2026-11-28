@@ -665,11 +665,6 @@ float APS5_VABI _FErfc_nid_postfix(float x) {
     return ErfcTail(x, erfcf_nid_postfix, __func__);
 }
 
-int APS5_VABI _FHypot_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1075,22 +1070,12 @@ const char* APS5_VABI _Getzone_nid_postfix() {
     return ":";
 }
 
-int APS5_VABI _Hypot_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Isdst_nid_postfix() {
     return -1;
 }
 
 long double APS5_VABI _LErfc_nid_postfix(long double x) {
     return ErfcTail(x, erfcl_nid_postfix, __func__);
-}
-
-int APS5_VABI _LHypot_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI _LQuad_nid_postfix() {
