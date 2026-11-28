@@ -1,8 +1,6 @@
 #include <codegen/x86/MulxLowering.hpp>
 #include <codegen/CodegenException.hpp>
-#include <algorithm>
 #include <array>
-#include <limits>
 
 namespace Codegen {
 
@@ -26,36 +24,36 @@ void _stack(StubBodyBuilder& body, const std::uint8_t opcode, const bool wide, c
     body.Raw(bytes);
 }
 
-void _loadSource(StubBodyBuilder& body, const MulxOperands& operands) {
-    if (!operands.Memory) {
-        if (operands.Source == kStack) {
-            _stack(body, 0x8D, operands.Wide, 0, kFrameSize);
-        } else {
-            const std::array bytes{_rex(operands.Wide, 0, operands.Source), std::uint8_t{0x8B}, static_cast<std::uint8_t>(0xC0 | (operands.Source & 7))};
-            body.Raw(bytes);
-        }
-        return;
+void _loadRegisterSource(StubBodyBuilder& body, const MulxOperands& operands) {
+    if (operands.Source == kStack) {
+        _stack(body, 0x8D, operands.Wide, 0, kFrameSize);
+    } else {
+        const std::array bytes{_rex(operands.Wide, 0, operands.Source), std::uint8_t{0x8B}, static_cast<std::uint8_t>(0xC0 | (operands.Source & 7))};
+        body.Raw(bytes);
     }
+}
+
+void _loadMemorySource(StubBodyBuilder& body, const MulxOperands& operands, const std::uint8_t destination) {
     const auto& memory = *operands.Memory;
-    auto displacement = static_cast<std::int64_t>(memory.Displacement);
-    if (memory.StackBase) displacement += kFrameSize;
-    const bool address32 = std::find(memory.Prefixes.begin(), memory.Prefixes.end(), 0x67) != memory.Prefixes.end();
-    if (!address32 && displacement > std::numeric_limits<std::int32_t>::max())
-        throw CodegenException("MULX stack displacement does not fit after spilling");
-    const auto mod = memory.StackBase ? 2 : memory.Mod;
     auto bytes = memory.Prefixes;
-    bytes.push_back(static_cast<std::uint8_t>(_rex(operands.Wide, 0, 0) | memory.RexIndexBase));
+    bytes.push_back(static_cast<std::uint8_t>(_rex(operands.Wide, destination, 0) | memory.RexIndexBase));
     bytes.push_back(0x8B);
-    bytes.push_back(static_cast<std::uint8_t>((mod << 6) | memory.Rm));
+    bytes.push_back(static_cast<std::uint8_t>((memory.Mod << 6) | ((destination & 7) << 3) | memory.Rm));
     if (memory.Rm == 4) bytes.push_back(memory.Sib);
     const auto offset = bytes.size();
-    if (mod == 1) bytes.push_back(static_cast<std::uint8_t>(displacement));
-    if (mod == 2 || (mod == 0 && (memory.RipRelative || (memory.Rm == 4 && (memory.Sib & 7) == 5))))
-        _append32(bytes, static_cast<std::uint32_t>(displacement));
+    if (memory.Mod == 1) bytes.push_back(static_cast<std::uint8_t>(memory.Displacement));
+    if (memory.Mod == 2 || (memory.Mod == 0 && (memory.RipRelative || (memory.Rm == 4 && (memory.Sib & 7) == 5))))
+        _append32(bytes, static_cast<std::uint32_t>(memory.Displacement));
     if (memory.RipRelative)
         body.RipRelative(bytes, offset, static_cast<std::int64_t>(memory.InstructionLength) + memory.Displacement);
     else
         body.Raw(bytes);
+}
+
+void _moveSourceToRax(StubBodyBuilder& body, const MulxOperands& operands, const std::uint8_t source) {
+    if (source == 0) return;
+    const std::array bytes{_rex(operands.Wide, 0, source), std::uint8_t{0x8B}, static_cast<std::uint8_t>(0xC0 | (source & 7))};
+    body.Raw(bytes);
 }
 
 }
@@ -86,17 +84,25 @@ std::optional<MulxOperands> DecodeMulx(const std::uint8_t* data, const std::size
 }
 
 void EmitMulx(StubBodyBuilder& body, const MulxOperands& operands) {
-    if (operands.Memory && operands.Memory->StackBase && (operands.Memory->Sib & 0x38) == 0x20 && (operands.Memory->RexIndexBase & 2) == 0) {
-        const auto displacement = static_cast<std::int64_t>(operands.Memory->Displacement);
-        if (displacement < 24 - kFrameSize && displacement + (operands.Wide ? 8 : 4) > -kFrameSize)
-            throw CodegenException("MULX source overlaps its spill frame");
+    std::optional<std::uint8_t> memorySourceRegister;
+    if (operands.Memory) {
+        if (operands.HighDestination != kStack && operands.HighDestination != 2)
+            memorySourceRegister = operands.HighDestination;
+        else if (operands.LowDestination != kStack && operands.LowDestination != 2)
+            memorySourceRegister = operands.LowDestination;
+        else
+            throw CodegenException("MULX memory source has no destination register available for preloading");
+        _loadMemorySource(body, operands, *memorySourceRegister);
     }
     _stack(body, 0x8D, true, kStack, 8 - kFrameSize);
     const std::array pushFlags{std::uint8_t{0x9C}};
     body.Raw(pushFlags);
     _stack(body, 0x89, true, 0, 8);
     _stack(body, 0x89, true, 2, 16);
-    _loadSource(body, operands);
+    if (memorySourceRegister)
+        _moveSourceToRax(body, operands, *memorySourceRegister);
+    else
+        _loadRegisterSource(body, operands);
     const std::array multiply{_rex(operands.Wide, 0, 2), std::uint8_t{0xF7}, std::uint8_t{0xE2}};
     body.Raw(multiply);
     _stack(body, 0x89, true, 0, 24);

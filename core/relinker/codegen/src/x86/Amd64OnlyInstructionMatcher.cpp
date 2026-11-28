@@ -307,8 +307,12 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
         return _trampoline(kScalarCompare.Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _emitScalarCompare(body, instr, *compare); }), true);
     if (const auto masked = _target == Amd64OnlyTarget::Rosetta ? DecodeMaskedStore(instr.Data, instr.Length) : std::nullopt)
         return _trampoline(masked->Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMaskedStore(body, *masked); }));
-    if (const auto mulx = DecodeMulx(instr.Data, instr.Length))
+    if (const auto mulx = DecodeMulx(instr.Data, instr.Length)) {
+        const auto reserved = [](const std::uint8_t reg) { return reg == 2 || reg == 4; };
+        if (_target == Amd64OnlyTarget::Rosetta && mulx->Memory && reserved(mulx->HighDestination) && reserved(mulx->LowDestination))
+            return Amd64OnlyMatch{"MULX", instr.Length, Amd64OnlyLowering::Kept, {}, {}, 0, true};
         return _trampoline("MULX", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMulx(body, *mulx); }));
+    }
     return std::nullopt;
 }
 
@@ -462,6 +466,18 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
     const char* name = nullptr;
     for (const auto& instruction : instructions) {
         const DecodedInstruction instr{instruction.data(), instruction.size()};
+        if (const auto match = Match(instr.Data, instr.Length); match && match->Lowering == Amd64OnlyLowering::Kept) {
+            if (!match->Optional || match->InstructionName != "MULX")
+                return std::nullopt;
+            const X64InstructionDecoder decoder;
+            const auto info = decoder.DecodeInstruction(instr.Data, instr.Length);
+            if (info.Length != instr.Length)
+                return std::nullopt;
+            if (name == nullptr)
+                name = "MULX";
+            body.Move(instruction, info.HasRipRelativeDisp ? std::optional<std::size_t>(info.RipRelativeDispOffset) : std::nullopt);
+            continue;
+        }
         auto emitted = _emitOutOfLine(body, instr);
         if (emitted == nullptr && name != nullptr)
             emitted = _emitInPlace(body, instr);
