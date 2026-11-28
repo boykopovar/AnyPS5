@@ -93,6 +93,10 @@ private:
     std::uint8_t* block = nullptr;
 };
 
+void CollectSetupStores(const GuestBlock& block) {
+    static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(block.Address(), BlockBytes));
+}
+
 void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
     commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
     commands.insert(commands.end(), payload);
@@ -179,6 +183,7 @@ Outcome Run(const GuestBlock& block, const Scenario& scenario, bool knownLabels)
     const auto cpu = std::bit_cast<std::uint32_t>(scenario.cpuValue);
     std::memcpy(block.Data() + scenario.constantOffset, &cpu, sizeof(cpu));
     std::memset(block.Data() + ColorOffset, 0, ColorBytes);
+    CollectSetupStores(block);
     std::vector<std::uint32_t> commands;
     AppendOpeningFill(commands, block.Address());
     AppendState(commands, block.Address() + ColorOffset);
@@ -234,6 +239,7 @@ int CheckSubmittedBeforeWait(const GuestBlock& block) {
     std::memcpy(block.Data() + constantOffset, &cpu, sizeof(cpu));
     std::memset(block.Data() + releaseOffset, 0, sizeof(std::uint32_t));
     std::memset(block.Data() + ColorOffset, 0, ColorBytes);
+    CollectSetupStores(block);
     std::vector<std::uint32_t> commands;
     AppendOpeningFill(commands, block.Address());
     AppendState(commands, block.Address() + ColorOffset);
@@ -290,6 +296,7 @@ HeldOutcome RunBesideHeldWrite(const GuestBlock& block, const std::string& name,
     std::memset(block.Data() + labelOffset, 0, 2 * sizeof(std::uint32_t));
     std::memset(block.Data() + releaseOffset, 0, sizeof(std::uint32_t));
     std::memset(block.Data() + ColorOffset, 0, ColorBytes);
+    CollectSetupStores(block);
     std::atomic_ref<std::uint32_t> landed(*reinterpret_cast<std::uint32_t*>(block.Data() + labelOffset));
     std::atomic_ref<std::uint32_t> otherWord(*reinterpret_cast<std::uint32_t*>(block.Data() + otherOffset));
     std::atomic_ref<std::uint32_t> release(*reinterpret_cast<std::uint32_t*>(block.Data() + releaseOffset));
