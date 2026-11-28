@@ -1,0 +1,8 @@
+execute_process(COMMAND "${EXECUTABLE}" ${MODE} ${ARGUMENT} OUTPUT_VARIABLE output ERROR_VARIABLE output RESULT_VARIABLE result)
+if(NOT result STREQUAL STATUS)
+    message(FATAL_ERROR "${MODE} ${ARGUMENT}: exit status ${result}, expected ${STATUS}\n${output}")
+endif()
+if(NOT output MATCHES "${PATTERN}")
+    message(FATAL_ERROR "${MODE} ${ARGUMENT}: output does not match ${PATTERN}\n${output}")
+endif()
+message(STATUS "${MODE} ${ARGUMENT}: exit status ${result} and diagnostic matched")
