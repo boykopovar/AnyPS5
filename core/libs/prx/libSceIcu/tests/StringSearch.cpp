@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/StringSearchHost.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include <array>
 #include <cerrno>
@@ -32,7 +33,6 @@ static_assert(std::is_same_v<decltype(&usearch_open_nid_postfix), UStringSearch*
 namespace {
 
 constexpr std::int32_t IllegalArgument = 1;
-constexpr std::int32_t UnsupportedError = 16;
 
 class ReadOnlyPage {
 public:
@@ -94,17 +94,17 @@ void Rejects(TAction action) {
     Require(errno == EINVAL);
 }
 
-void GuestPointers(const char16_t* pattern, const char16_t* text, UBreakIterator* iterator) {
+void GuestPointers(const char16_t* pattern, const char16_t* text) {
     auto* badStatus = reinterpret_cast<std::int32_t*>(0x10);
-    Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, badStatus); });
-    Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, iterator, badStatus); });
+    Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", nullptr, badStatus); });
+    Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, nullptr, badStatus); });
 
     {
         ReadOnlyPage page;
         auto* roFailing = page.Set<std::int32_t>(IllegalArgument);
         page.Protect();
         errno = EINVAL;
-        Require(usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, iterator, roFailing) == nullptr);
+        Require(usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, nullptr, roFailing) == nullptr);
         Require(errno == EINVAL);
         Require(*roFailing == IllegalArgument);
     }
@@ -113,11 +113,20 @@ void GuestPointers(const char16_t* pattern, const char16_t* text, UBreakIterator
         ReadOnlyPage page;
         auto* roPassing = page.Set<std::int32_t>(0);
         page.Protect();
-        Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, iterator, roPassing); });
-        Require(*roPassing == 0);
-        Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, roPassing); });
+        Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, nullptr, roPassing); });
         Require(*roPassing == 0);
     }
+
+    std::int32_t status = 0;
+    Rejects([&] { usearch_open_nid_postfix(reinterpret_cast<const char16_t*>(0x10), -1, text, 8, "en", nullptr, &status); });
+    Require(status == 0);
+    Rejects([&] {
+        usearch_open_nid_postfix(reinterpret_cast<const char16_t*>(0x10), std::numeric_limits<std::int32_t>::max(), text, 8,
+                                 "en", nullptr, &status);
+    });
+    Require(status == 0);
+    Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, reinterpret_cast<const char*>(0x10), nullptr, &status); });
+    Require(status == 0);
 }
 
 } // namespace
@@ -128,11 +137,10 @@ void Run() {
     const auto storage = Filler();
     const auto pattern = reinterpret_cast<const char16_t*>(storage.data());
     const auto text = reinterpret_cast<const char16_t*>(storage.data());
-    const auto iterator = reinterpret_cast<UBreakIterator*>(const_cast<std::uint32_t*>(storage.data()));
 
     for (const auto incoming : failing) {
         std::int32_t status = incoming;
-        Require(usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, &status) == nullptr);
+        Require(usearch_open_nid_postfix(pattern, 4, text, 8, "en", nullptr, &status) == nullptr);
         Require(status == incoming);
 
         status = incoming;
@@ -142,21 +150,58 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, &status); });
-        Require(status == incoming);
+        auto* search = usearch_open_nid_postfix(u"ana", -1, u"bananas", -1, "en", nullptr, &status);
+        Require(search != nullptr);
+        Require(status <= 0);
 
         status = incoming;
-        RequireThrows([&] { usearch_open_nid_postfix(nullptr, 0, nullptr, 0, "de", nullptr, &status); });
-        Require(status == incoming);
+        Require(usearch_open_nid_postfix(nullptr, 0, nullptr, 0, "de", nullptr, &status) == nullptr);
+        Require(status == IllegalArgument);
 
         status = incoming;
-        Require(usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, iterator, &status) == nullptr);
+        Require(usearch_open_nid_postfix(pattern, 4, text, 8, nullptr, nullptr, &status) == nullptr);
         Require(status == IllegalArgument);
     }
 
+    std::int32_t status = 0;
+    Require(usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "root", nullptr, &status) != nullptr);
+    Require(status <= 0);
+    for (const auto length : {0, -2}) {
+        status = 0;
+        Require(usearch_open_nid_postfix(u"ana", length, u"bananas", 7, "en", nullptr, &status) == nullptr);
+        Require(status == IllegalArgument);
+        status = 0;
+        Require(usearch_open_nid_postfix(u"ana", 3, u"bananas", length, "en", nullptr, &status) == nullptr);
+        Require(status == IllegalArgument);
+    }
+
+    status = 0;
+    Require(usearch_open_nid_postfix(reinterpret_cast<const char16_t*>(0x10), 3, text, 0, "en", nullptr, &status) == nullptr);
+    Require(status == IllegalArgument);
+    status = 0;
+    Require(usearch_open_nid_postfix(pattern, 0, reinterpret_cast<const char16_t*>(0x10), 3, "en", nullptr, &status) == nullptr);
+    Require(status == IllegalArgument);
+
     Require(Unchanged(storage));
-    RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, nullptr); });
-    GuestPointers(pattern, text, iterator);
+    RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", nullptr, nullptr); });
+    GuestPointers(pattern, text);
+
+    status = 0;
+    auto* iterator = ubrk_open(0, "en", u"old", 3, &status);
+    Require(iterator != nullptr && status <= 0);
+    auto* restricted = usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "en", static_cast<UBreakIterator*>(iterator), &status);
+    Require(restricted != nullptr && status <= 0);
+    Require(ubrk_last(iterator) == 3);
+    ubrk_close(iterator);
+    status = 0;
+    auto* fallbackIterator = ubrk_open(0, "zz_ZZ", u"bananas", 7, &status);
+    Require(fallbackIterator != nullptr && status < 0);
+    status = 0;
+    auto* fallbackSearch = usearch_open_nid_postfix(
+        u"ana", 3, u"bananas", 7, "root", static_cast<UBreakIterator*>(fallbackIterator), &status);
+    Require(fallbackSearch != nullptr && status == 0);
+    ubrk_close(fallbackIterator);
+    u_cleanup_nid_postfix();
 }
 
 } // namespace UsearchOpen
@@ -211,7 +256,7 @@ void FailingStatus(UStringSearch* search, const char16_t* words) {
             usearch_setText_nid_postfix(target, nullptr, 0, &status);
             Require(status == incoming);
             usearch_setAttribute_nid_postfix(target, 0, AttributeValueCount, &status);
-            Require(status == IllegalArgument);
+            Require(status == incoming);
         }
     }
 }
@@ -226,7 +271,9 @@ void PassingStatus(UStringSearch* search, const char16_t* words) {
         for (const auto attribute : {0, 1, 2}) {
             usearch_setAttribute_nid_postfix(nullptr, attribute, 1, &status);
             RequireThrows([&] { usearch_setAttribute_nid_postfix(search, attribute, 1, &status); });
-            RequireThrows([&] { usearch_setAttribute_nid_postfix(search, attribute, AttributeValueCount, &status); });
+            usearch_setAttribute_nid_postfix(search, attribute, AttributeValueCount, &status);
+            Require(status == IllegalArgument);
+            status = incoming;
         }
         for (const auto length : {-1, 4, -2}) {
             RequireThrows([&] { usearch_setPattern_nid_postfix(search, words, length, &status); });
@@ -300,8 +347,8 @@ void GuestPointers(UStringSearch* search, const char16_t* words) {
         usearch_setAttribute_nid_postfix(search, 0, 1, roFailing);
         usearch_setPattern_nid_postfix(nullptr, nullptr, 0, roFailing);
         usearch_setText_nid_postfix(nullptr, nullptr, 0, roFailing);
+        usearch_setAttribute_nid_postfix(search, 0, AttributeValueCount, roFailing);
         Require(errno == EINVAL);
-        Rejects([&] { usearch_setAttribute_nid_postfix(search, 0, AttributeValueCount, roFailing); });
         Require(*roFailing == IllegalArgument);
     }
 
@@ -339,6 +386,40 @@ void Run() {
     NullStatus(search, words);
     Require(Unchanged(storage));
     GuestPointers(search, words);
+
+    std::int32_t status = 0;
+    auto* opened = usearch_open_nid_postfix(u"ana", -1, u"bananas", -1, "en", nullptr, &status);
+    Require(opened != nullptr);
+    Require(status <= 0);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
+    usearch_reset_nid_postfix(opened);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
+    status = 0;
+    usearch_setOffset_nid_postfix(opened, 2, &status);
+    Require(status == 0);
+    status = 0;
+    usearch_setOffset_nid_postfix(opened, 9, &status);
+    Require(status > 0);
+    status = 0;
+    usearch_setAttribute_nid_postfix(opened, 0, 1, &status);
+    Require(status == 0);
+    usearch_setAttribute_nid_postfix(opened, 0, 0, &status);
+    Require(status == 0);
+    for (const auto value : {-1, 2, 3, 4, 100}) {
+        status = 0;
+        usearch_setAttribute_nid_postfix(opened, 0, value, &status);
+        Require(status == 0);
+    }
+    status = 0;
+    usearch_setAttribute_nid_postfix(opened, 0, 1, &status);
+    Require(status == 0);
+    Require(Icu::StringSearchHost::GetAttribute(opened, 0) == 1);
+    usearch_setAttribute_nid_postfix(opened, 0, AttributeValueCount, &status);
+    Require(status == IllegalArgument);
+    Require(Icu::StringSearchHost::GetAttribute(opened, 0) == 0);
+    status = 0;
+    usearch_setAttribute_nid_postfix(opened, 3, 1, &status);
+    Require(status == IllegalArgument);
 }
 
 } // namespace UsearchObject
