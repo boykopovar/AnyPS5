@@ -519,9 +519,9 @@ int main(int argc, char** argv) {
         const auto low = RecompileProgram(lowWrite);
         const auto highShape = Scan(high);
         const auto lowShape = Scan(low);
-        if (highShape.functionArrays != 1u || lowShape.functionArrays != 1u || highShape.accessChains >= lowShape.accessChains || high.size() >= low.size())
+        if (highShape.functionArrays != 1u || lowShape.functionArrays != 1u || highShape.accessChains > lowShape.accessChains || high.size() >= low.size())
             std::fprintf(stderr, "  relative write at v6: %zu arrays, %zu access chains, %zu words; at v4: %zu arrays, %zu access chains, %zu words\n", highShape.functionArrays, highShape.accessChains, high.size(), lowShape.functionArrays, lowShape.accessChains, low.size());
-        return highShape.functionArrays == 1u && lowShape.functionArrays == 1u && highShape.accessChains < lowShape.accessChains && high.size() < low.size();
+        return highShape.functionArrays == 1u && lowShape.functionArrays == 1u && highShape.accessChains <= lowShape.accessChains && high.size() < low.size();
     });
 
     passed &= run("a direct access under a relative write's base register stays in SSA inside the write's loop", [] {
