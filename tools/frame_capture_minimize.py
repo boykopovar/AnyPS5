@@ -159,6 +159,8 @@ def drain_replay_group(process):
                 os.killpg(process.pid, 0)
             except ProcessLookupError:
                 return
+            except PermissionError:
+                return
             if time.monotonic() >= deadline:
                 raise RuntimeError("replay process group remains after termination")
             time.sleep(0.02)
