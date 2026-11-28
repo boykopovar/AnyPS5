@@ -1,0 +1,5 @@
+# libScePosixForWebKit
+
+## add Functional
+
+- [getnameinfo](../../../core/libs/prx/libScePosixForWebKit/Resolver.cpp) - PS5 execution is unverified; it follows FreeBSD 11.4 [getnameinfo.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/net/getnameinfo.c), whose `hexname`, `getnameinfo_link` and `getnameinfo_un` are adapted as `HexName`, `LinkName` and `LocalName` with its copyright notice and BSD licence above them. Host, service and IPv6 zone names come from the host resolver. FreeBSD's [forced numeric host](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/net/getnameinfo.c#L211-L246) for multicast, 240/4, 0/8, IPv6 link-local and `::/8` addresses other than loopback and IPv4-mapped is not modelled, so those addresses are looked up. A null host for an AF_LINK address, which FreeBSD's [getnameinfo_link](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/net/getnameinfo.c#L412-L505) writes through, throws, except for an IEEE 1394 address shorter than 8 bytes.
