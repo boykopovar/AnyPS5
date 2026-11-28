@@ -325,6 +325,58 @@ void TestOpusInputBeyondStatedData(std::uint32_t context, bool multipleFrames) {
 #endif
 }
 
+void TestOpusPacketPastReadableInput(std::uint32_t context) {
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::size_t pageSize = system.dwPageSize;
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtection) != 0);
+#else
+    const long hostPageSize = sysconf(_SC_PAGESIZE);
+    Require(hostPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    auto* tail = pages + pageSize - 4;
+    tail[0] = 0x6a;
+    tail[1] = 0xff;
+    tail[2] = OPUS_STEREO[2];
+    tail[3] = OPUS_STEREO[3];
+
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &instance) == 0);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::int64_t initResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), initResult) == 0);
+    std::uint32_t id = 0;
+    AjmBatchError error{};
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0 && sceAjmBatchWait(context, id, 0, &error) == 0);
+    Require(initResult[0] == 0);
+
+    std::vector<std::int16_t> pcm(960 * 2);
+    DecodeSideband sideband{};
+    RunDecode(context, instance, tail, 0xFFFFFE74u, pcm.data(), pcm.size() * sizeof(std::int16_t), sideband);
+    Require(sideband.result == 2 && sideband.inputConsumed == 0 && sideband.outputWritten == 0);
+    const std::size_t packetBytes = 2 + (OPUS_STEREO[0] | (std::size_t{OPUS_STEREO[1]} << 8u));
+    DecodeSideband next{};
+    RunDecode(context, instance, OPUS_STEREO, packetBytes, pcm.data(), pcm.size() * sizeof(std::int16_t), next);
+    Require(next.result == 0 && static_cast<std::size_t>(next.inputConsumed) == packetBytes && next.outputWritten == 960 * 2 * 2);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
+}
+
 bool ParsesTo(const std::uint8_t* stream, std::uint32_t streamSize, std::uint64_t frameSize, std::uint32_t channels, std::uint32_t samples, std::uint32_t bitrate, std::uint32_t sampleRate) {
     AjmDecMp3ParseFrame frame;
     std::memset(&frame, 0xFF, sizeof(frame));
@@ -890,6 +942,69 @@ void TestGetStatistics(std::uint32_t context) {
     Require(std::all_of(statistics.begin() + 24, statistics.end(), [](std::uint8_t value) { return value == 0xaa; }));
     Require(format.result == 1 && format.numChannels == 0xaaaaaaaau);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+std::string BatchFailure(std::uint32_t context, const AjmBatchInfo& info) {
+    std::uint32_t id = 0;
+    AjmBatchError error{};
+    try {
+        static_cast<void>(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id));
+    } catch (const std::runtime_error& failure) {
+        return failure.what();
+    }
+    return {};
+}
+
+void TestJobBuffersUnmapped(std::uint32_t context) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &instance) == 0);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::int64_t initResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), initResult) == 0);
+    Submit(context, info);
+    Require(initResult[0] == 0);
+    auto* unmapped = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
+    std::vector<std::int16_t> pcm(960 * 2);
+    const std::size_t pcmBytes = pcm.size() * sizeof(std::int16_t);
+    DecodeSideband sideband{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, unmapped, 64, pcm.data(), pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, nullptr, 64, pcm.data(), pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, OPUS_STEREO, sizeof(OPUS_STEREO), unmapped, pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job output buffer is unwritable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, OPUS_STEREO, sizeof(OPUS_STEREO), pcm.data(), pcmBytes, reinterpret_cast<DecodeSideband*>(unmapped)) == 0);
+    Require(BatchFailure(context, info) == "AJM job sideband is unwritable");
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+    std::uint32_t mp3 = 0;
+    Require(sceAjmInstanceCreate(context, 0, 0, &mp3) == 0);
+    std::vector<std::int16_t> mp3Pcm(1152 * 2);
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecodeSingle(&info, mp3, unmapped, sizeof(MP3_MONO), mp3Pcm.data(), mp3Pcm.size() * sizeof(std::int16_t), &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmInstanceDestroy(context, mp3) == 0);
+
+    std::uint32_t at9 = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &at9) == 0);
+    const std::uint8_t config[8] = {0xFE, 0x72, 0x1F, 0xF0};
+    std::int32_t at9Init[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, at9, config, sizeof(config), at9Init) == 0);
+    Submit(context, info);
+    Require(at9Init[0] == 0);
+    std::vector<std::int16_t> at9Pcm(4096 * 2);
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, at9, unmapped, 4096, at9Pcm.data(), at9Pcm.size() * sizeof(std::int16_t), &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmInstanceDestroy(context, at9) == 0);
 }
 
 void TestBatchBounds(std::uint32_t context) {
@@ -3089,6 +3204,7 @@ int main(int argc, char** argv) {
     }
     TestOpusInputBeyondStatedData(context, false);
     TestOpusInputBeyondStatedData(context, true);
+    TestOpusPacketPastReadableInput(context);
     TestDecodeSingle(context);
     TestDecodeSplit(context);
     TestGaplessDecode(context);
@@ -3096,6 +3212,7 @@ int main(int argc, char** argv) {
     TestGetInfo(context);
     TestGetStatistics(context);
     TestBatchBounds(context);
+    TestJobBuffersUnmapped(context);
     TestBatchJobCountRange(context);
     TestBatchJobRunSplitChecks();
     TestBatchStartPriority(context);

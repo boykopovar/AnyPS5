@@ -431,12 +431,14 @@ void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
 Outcome SegmentsCoverAdjacentImports() {
     constexpr std::uint64_t piece = 2 * MiB;
     GuestBlock guest(2 * piece + GuestAlignment);
+    const auto offset = guest.Address() % (2 * piece) == 0 ? GuestAlignment : 0;
+    auto* const base = guest.Data() + offset;
     GuestAllocations::Mutation().Remove(guest.Data());
-    GuestAllocations::Mutation().Add(guest.Data(), piece, true, true, true);
-    GuestAllocations::Mutation().Add(guest.Data() + piece, piece, true, true, true);
+    GuestAllocations::Mutation().Add(base, piece, true, true, true);
+    GuestAllocations::Mutation().Add(base + piece, piece, true, true, true);
     const auto restore = [&] {
-        GuestAllocations::Mutation().Remove(guest.Data() + piece);
-        GuestAllocations::Mutation().Remove(guest.Data());
+        GuestAllocations::Mutation().Remove(base + piece);
+        GuestAllocations::Mutation().Remove(base);
         GuestAllocations::Mutation().Add(guest.Data(), 2 * piece + GuestAlignment, true, true, true);
     };
     try {
@@ -451,7 +453,7 @@ Outcome SegmentsCoverAdjacentImports() {
             return Outcome::NoImport;
         }
         Graphics::ClearHostImports(device->Device());
-        const auto first = guest.Address();
+        const auto first = guest.Address() + offset;
         const auto second = first + piece;
         const auto across = first + piece / 2;
         Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: two unimported allocations count as covered");
