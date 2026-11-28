@@ -2629,6 +2629,30 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(set(stubs), {stub, guarded})
         self.assertEqual(partial, {guarded})
 
+    def test_guarded_stub_helper_host_branches_do_not_abort_source_classification(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int Count(int value) { return value; }\n"
+                     f"int PollDescriptors(int value) {{\n    if (value < 0) NotImplemented_nid_no_patch(\"poll\");\n{blocks}    return Count(value);\n}}\n"
+                     "int APS5_VABI scePoll(int value) { return PollDescriptors(value); }\n"
+                     "int APS5_VABI sceStub(int value) { Fail(); return value; }\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        poll, stub = (("libHosts.prx", nid_names.compute_nid(name)) for name in ("scePoll", "sceStub"))
+        self.assertEqual(set(stubs), {poll, stub})
+        self.assertEqual(partial, {poll})
+
+    def test_unmatched_if_in_a_later_helper_overload_still_fails(self):
+        source = self.work.source
+        write_source(source, "libHosts",
+                     "int Count(int value) { return value; }\n"
+                     "int PollDescriptors(int value) {\n    if (value < 0) NotImplemented_nid_no_patch(\"poll\");\n    return Count(value);\n}\n"
+                     "int PollDescriptors(long value) {\n#ifdef HOST_A\n    NotImplemented_nid_no_patch(\"poll\");\n    return Count(value);\n}\n"
+                     "int APS5_VABI scePoll(int value) { return PollDescriptors(value); }\n")
+        with self.assertRaisesRegex(import_audit.AuditError, "#if without a matching #endif"):
+            import_audit.source_stub_classes(source)
+
     def test_relevant_helper_at_the_variant_limit_remains_a_stub(self):
         blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(8))
         source = self.work.source

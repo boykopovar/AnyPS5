@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import itertools
 import json
 import os
 import posixpath
@@ -972,8 +973,13 @@ def always_stub_calls(text):
     for name, bodies in wrapper_bodies.items():
         if name not in possible:
             continue
-        for body in bodies:
-            helpers.setdefault(name, []).extend(variant_calls(body))
+        variants = []
+        for targets in itertools.chain.from_iterable([variant_calls(body) for body in bodies]):
+            if not targets & possible:
+                break
+            variants.append(targets)
+        else:
+            helpers[name] = variants
     calls = {progress.STUB}
     while True:
         found = {name for name, bodies in helpers.items() if name not in calls and all(targets & calls for targets in bodies)}
