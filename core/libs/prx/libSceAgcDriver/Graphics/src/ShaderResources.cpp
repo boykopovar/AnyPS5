@@ -811,6 +811,8 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
     return budget;
 }
 
+constexpr std::size_t StorageCapEvictionsPerSurface = 4;
+
 std::size_t storageEntries() {
     static const std::size_t entries = [] {
         const char* text = std::getenv("APS5_STORAGE_CACHE_ENTRIES");
@@ -1690,12 +1692,26 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
             const auto budget = storageBudget(context, cache.bytes + entry.accounted);
+            const auto present = Recorder::Presents();
+            std::size_t capped = 0;
             while (!cache.entries.empty()) {
                 const bool overBudget = cache.bytes + entry.accounted > budget;
-                if (!overBudget && cache.entries.size() < storageEntries()) break;
+                if (!overBudget && (cache.entries.size() < storageEntries() || capped == StorageCapEvictionsPerSurface)) break;
                 const auto back = std::prev(cache.entries.end());
-                if (back->texture->TakeUsed()) cache.entries.splice(cache.entries.begin(), cache.entries, back);
-                else evicted.push_back(evictStorage(cache, back, true, overBudget ? "cache eviction" : "entry cap"));
+                if (!overBudget && present != 0u) {
+                    if (back->lastPresent + StorageTexture::CapIdlePresents >= present) break;
+                    if (back->texture->ProvedPresent() + StorageTexture::CapIdlePresents >= present) {
+                        back->lastPresent = present;
+                        cache.entries.splice(cache.entries.begin(), cache.entries, back);
+                        continue;
+                    }
+                }
+                if (back->texture->TakeUsed()) {
+                    cache.entries.splice(cache.entries.begin(), cache.entries, back);
+                } else {
+                    evicted.push_back(evictStorage(cache, back, true, overBudget ? "cache eviction" : "entry cap"));
+                    if (!overBudget) ++capped;
+                }
             }
             cache.bytes += entry.accounted;
             texture = entry.texture;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
@@ -81,6 +82,38 @@ void SetVariable(const char* name, const char* value) {
 #endif
 }
 
+void InUse(AgcDriver::VulkanDevice& device, std::uint64_t base, bool budget) {
+    using AgcDriver::Graphics::Recorder;
+    const auto cached = [&](std::uint32_t surface) { return StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr; };
+    Recorder::CountPresent();
+    std::vector<std::weak_ptr<StorageTexture>> images(Surfaces + 1u);
+    for (std::uint32_t surface = 0; surface < Surfaces; ++surface) images[surface] = Store(device, base, surface, Stride, true);
+    if (budget) {
+        Require(!cached(0) && images[0].expired(), "the least recently used of " + std::to_string(Surfaces) + " surfaces of 1 MiB stayed cached under a 4 MiB budget because it was used in the current present");
+        Require(cached(Surfaces - 1u), "the newest surface is not cached under a 4 MiB budget");
+        return;
+    }
+    for (std::uint32_t surface = 0; surface < Surfaces; ++surface) {
+        Require(cached(surface) && !images[surface].expired(), "surface " + std::to_string(surface) + " was evicted by a limit of " + std::to_string(Entries) + " entries in the present that used it");
+    }
+    Recorder::CountPresent();
+    for (std::uint32_t surface = 0; surface < Surfaces; ++surface) {
+        const auto again = Store(device, base, surface, Stride, true);
+        Require(again != nullptr && again == images[surface].lock(), "surface " + std::to_string(surface) + " was made again one present after its last use, with " + std::to_string(Surfaces) + " surfaces in use under a limit of " + std::to_string(Entries));
+    }
+    for (std::uint64_t present = 0; present <= StorageTexture::CapIdlePresents; ++present) Recorder::CountPresent();
+    for (std::uint32_t surface = 2; surface < Surfaces; ++surface) {
+        const auto again = Store(device, base, surface, Stride, true);
+        Require(again != nullptr && again == images[surface].lock(), "surface " + std::to_string(surface) + " was made again after idle presents although no new surface arrived");
+    }
+    images[Surfaces] = Store(device, base, Surfaces, Stride, true);
+    for (std::uint32_t surface = 0; surface <= Surfaces; ++surface) {
+        const bool idle = surface < 2u;
+        Require(cached(surface) != idle, "surface " + std::to_string(surface) + (idle ? " stayed cached over the limit although it was not used for more than the idle presents" : " was evicted by the entry limit although it was used in the current present"));
+        Require(images[surface].expired() == idle, "surface " + std::to_string(surface) + (idle ? " was evicted but its image is still alive" : " is cached but its weak image expired"));
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -88,17 +121,19 @@ int main(int argc, char** argv) {
         const std::string mode = argc > 1 ? argv[1] : "";
         const bool unlimited = mode == "--unlimited";
         const bool profile = mode == "--profile";
+        const bool inUseBudget = mode == "--in-use-budget";
+        const bool inUse = inUseBudget || mode == "--in-use";
         const std::string limit = unlimited ? "no entry limit" : "a limit of " + std::to_string(Entries) + " entries";
         const auto stride = profile ? SurfaceBytes : Stride;
         SetVariable("APS5_STORAGE_CACHE_ENTRIES", unlimited ? "0" : "4");
-        SetVariable("APS5_TEXTURE_CACHE_MIB", "1024");
+        SetVariable("APS5_TEXTURE_CACHE_MIB", inUseBudget ? "4" : "1024");
         if (profile) SetVariable("APS5_PROFILE_DRAW", "1");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        std::vector<std::uint32_t> storage((SurfaceBytes + Surfaces * stride + Stride) / 4u, 0u);
+        std::vector<std::uint32_t> storage((SurfaceBytes + (Surfaces + 1u) * stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
         const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
-        const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (Surfaces - 1u) * stride);
+        const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + Surfaces * stride);
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(texels, blockBytes, true, true, true);
@@ -108,6 +143,17 @@ int main(int argc, char** argv) {
             GuestAllocations::Mutation mutation;
             mutation.Remove(texels);
         };
+        if (inUse) {
+            try {
+                InUse(*device, base, inUseBudget);
+            } catch (...) {
+                release();
+                throw;
+            }
+            release();
+            std::puts(inUseBudget ? "storage cache entry limit in-use budget tests passed" : "storage cache entry limit in-use tests passed");
+            return 0;
+        }
         try {
             std::vector<std::weak_ptr<StorageTexture>> images(Surfaces);
             for (std::uint32_t surface = 0; surface < Entries; ++surface) {

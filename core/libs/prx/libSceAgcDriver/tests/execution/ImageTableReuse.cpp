@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -26,6 +27,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string>
 #include <thread>
@@ -43,6 +45,7 @@ constexpr std::uint32_t Stride = 48;
 constexpr std::uint32_t Records = 48;
 constexpr std::uint32_t Moved = 64;
 constexpr std::uint32_t Viewed = 32;
+constexpr std::uint32_t EntryLimit = 4;
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2D = 9;
@@ -468,6 +471,46 @@ void RunViewedStore(AgcDriver::VulkanDevice& device, const GuestBlock& block, co
     Expect(kept, 0, 2, "a table of only storage-viewed entries, which has nothing to reuse");
 }
 
+bool RunEntryLimit(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    using AgcDriver::Graphics::StorageTexture;
+    const auto& context = device.graphicsContext();
+    if (context.hostImportAlignment == 0 || AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "image table reuse: storage-viewed entries require host imports");
+        std::puts("host imports are unavailable: a table of more storage-viewed entries than the storage cache's entry limit is not tested");
+        return false;
+    }
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::puts("guest memory has no write watch: a table of more storage-viewed entries than the storage cache's entry limit is not tested");
+        return false;
+    }
+    AgcDriver::Graphics::Recorder::CountPresent();
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.875f);
+        SetRecord(block, texture, texture);
+    }
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+    SetOutput(Output.data());
+    const auto result = Compile(device, block);
+    const auto live = [&](std::uint32_t texture) { return StorageTexture::FindLive(AddressOf(block.Texels(texture)), TextureBytes); };
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(Dispatch(device, result, 23) == Row(block.Texels(23)), "image table reuse: a table of more storage-viewed entries than the entry limit sampled the wrong entry");
+    std::vector<std::weak_ptr<StorageTexture>> images(Records);
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        images[texture] = live(texture);
+        Require(!images[texture].expired(), "image table reuse: entry " + std::to_string(texture) + " of a table of " + std::to_string(Records) + " storage-viewed entries was evicted inside the dispatch that selected the table, under a limit of " + std::to_string(EntryLimit) + " entries");
+    }
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(Dispatch(device, result, 41) == Row(block.Texels(41)), "image table reuse: the second dispatch of a table of more storage-viewed entries than the entry limit sampled the wrong entry");
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        const auto again = live(texture);
+        Require(again != nullptr && again == images[texture].lock(), "image table reuse: entry " + std::to_string(texture) + " of a table of " + std::to_string(Records) + " storage-viewed entries was made again by the next dispatch of the same table in the same present, under a limit of " + std::to_string(EntryLimit) + " entries");
+    }
+    return true;
+}
+
 std::array<std::uint32_t, 8> EntryWords(const GuestBlock& block, std::uint32_t texture) {
     std::array<std::uint32_t, 8> words{};
     const auto image = Image(block.Texels(texture));
@@ -783,6 +826,19 @@ int main(int argc, char** argv) {
             auto name = selected.substr(2);
             std::replace(name.begin(), name.end(), '-', ' ');
             std::puts(("image table reuse: the " + name + " test passed").c_str());
+            return 0;
+        }
+        if (selected == "--entry-limit") {
+#ifdef _WIN32
+            Require(_putenv_s("APS5_STORAGE_CACHE_ENTRIES", std::to_string(EntryLimit).c_str()) == 0, "cannot set the storage cache's entry limit");
+#else
+            Require(setenv("APS5_STORAGE_CACHE_ENTRIES", std::to_string(EntryLimit).c_str(), 1) == 0, "cannot set the storage cache's entry limit");
+#endif
+            GuestBlock viewed;
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (!RunEntryLimit(*device, viewed)) return VulkanTestSkipped;
+            std::puts("image table reuse: the entry limit test passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "entry-memo") {
