@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include <dirent.h>
@@ -9,10 +10,14 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 #include <string>
 #ifdef _WIN32
@@ -190,6 +195,105 @@ struct Directory {
     std::int64_t (APS5_VABI* seekDescriptor)(int, std::int64_t, int) = nullptr;
     ~Directory() { if (native) CloseNative(native); }
 };
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+bool TryCopyIn(void* destination, const void* source, std::size_t bytes) {
+    if (!bytes) return true;
+    if (!source) return false;
+    ErrnoGuard guard;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+    return GuestReadable_nid_no_patch(source, bytes) && GuestCopyIn_nid_no_patch(destination, source, bytes);
+}
+
+class GuestWriteScope {
+public:
+    GuestWriteScope(void* pointer, std::size_t bytes)
+        : saved(), guard(pointer ? pointer : nullptr, pointer ? bytes : 0),
+          valid(bytes == 0 || (pointer != nullptr && guard.Open() && GuestWritable_nid_no_patch(pointer, bytes))) {}
+    bool Valid() const { return valid; }
+    GuestWriteScope(const GuestWriteScope&) = delete;
+    GuestWriteScope& operator=(const GuestWriteScope&) = delete;
+
+private:
+    ErrnoGuard saved;
+    GuestArena::HostWrite guard;
+    bool valid = false;
+};
+
+bool TryCopyOut(void* destination, const void* source, std::size_t bytes) {
+    if (!bytes) return true;
+    GuestWriteScope writeScope(destination, bytes);
+    return writeScope.Valid() && GuestCopyOut_nid_no_patch(destination, source, bytes);
+}
+
+struct DirectoryRegistry {
+    std::mutex mutex;
+    std::unordered_set<Directory*> live;
+};
+
+DirectoryRegistry& GetDirectoryRegistry() {
+    static auto* registry = new DirectoryRegistry();
+    return *registry;
+}
+
+void* RegisterDirectory(std::unique_ptr<Directory> directory) {
+    Directory* raw = directory.get();
+    auto& registry = GetDirectoryRegistry();
+    std::lock_guard lock(registry.mutex);
+    registry.live.insert(raw);
+    return directory.release();
+}
+
+Directory* LookupDirectory(void* handle) {
+    if (!handle) return nullptr;
+    auto& registry = GetDirectoryRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto it = registry.live.find(static_cast<Directory*>(handle));
+    return it == registry.live.end() ? nullptr : *it;
+}
+
+void SeekDirectoryLocked(Directory& directory, std::int64_t location) {
+    if (directory.descriptorDirectory) {
+        if (directory.seekDescriptor(directory.descriptor, location, 0) >= 0) {
+            directory.pending.clear();
+            directory.pendingCursor = 0;
+        }
+    } else if (directory.indexed) {
+        if (location >= 0 && static_cast<std::uint64_t>(location) <= directory.entries.size()) directory.cursor = static_cast<std::size_t>(location);
+        else errno = 22;
+    } else {
+        SeekNative(directory.native, static_cast<long>(location));
+    }
+}
+
+bool ReadDirectoryEntryName(const GuestDirectoryEntry* const* pointer, std::string& out) {
+    if (!pointer) return false;
+    const GuestDirectoryEntry* entry = nullptr;
+    if (!TryCopyIn(&entry, pointer, sizeof(entry)) || !entry) return false;
+    const auto entryAddr = reinterpret_cast<std::uintptr_t>(entry);
+    constexpr std::size_t nameOffset = offsetof(GuestDirectoryEntry, name);
+    if (nameOffset > std::numeric_limits<std::uintptr_t>::max() - entryAddr) return false;
+    const auto nameAddr = entryAddr + nameOffset;
+    char buffer[sizeof(GuestDirectoryEntry::name)]{};
+    for (std::size_t offset = 0; offset < sizeof(buffer);) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - nameAddr) return false;
+        const auto current = nameAddr + offset;
+        const std::size_t toPageEnd = 4096u - (current % 4096u);
+        const std::size_t remaining = sizeof(buffer) - offset;
+        const std::size_t chunk = std::min(toPageEnd, remaining);
+        if (!TryCopyIn(buffer + offset, reinterpret_cast<const void*>(current), chunk)) return false;
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer + offset, '\0', chunk))) {
+            out.assign(buffer, static_cast<std::size_t>(end - buffer));
+            return true;
+        }
+        offset += chunk;
+    }
+    return false;
+}
 std::uint8_t DirectoryType(const std::filesystem::path& path) {
     std::error_code error;
     switch (std::filesystem::symlink_status(path, error).type()) {
@@ -353,30 +457,30 @@ void* APS5_VABI OpenDirectory_nid_no_patch(const char* path) {
                 return nullptr;
             }
         }
-        return directory.release();
+        return RegisterDirectory(std::move(directory));
     } catch (const std::bad_alloc&) { errno = 12; return nullptr; }
       catch (const std::system_error& error) { errno = DirectoryError(error.code()); return nullptr; }
       catch (const std::exception&) { errno = 5; return nullptr; }
 }
 
 GuestDirectoryEntry* APS5_VABI ReadDirectory_nid_no_patch(void* handle) {
-    if (!handle) { errno = 9; return nullptr; }
-    auto& directory = *static_cast<Directory*>(handle);
-    std::lock_guard lock(directory.mutex);
-    return ReadEntry(directory, 1);
+    auto* directory = LookupDirectory(handle);
+    if (!directory) { errno = 9; return nullptr; }
+    std::lock_guard lock(directory->mutex);
+    return ReadEntry(*directory, 1);
 }
 
 int APS5_VABI ReadDirectoryEntry_nid_no_patch(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
-    if (!handle) return 9;
+    auto* directory = LookupDirectory(handle);
+    if (!directory) return 9;
     if (!entry || !result) throw std::invalid_argument("readdir_r: null entry or result");
-    auto& directory = *static_cast<Directory*>(handle);
     const int savedError = errno;
     errno = 0;
     GuestDirectoryEntry* next = nullptr;
     {
-        std::lock_guard lock(directory.mutex);
-        next = ReadEntry(directory, 1);
-        if (next && !GuestCopyOut_nid_no_patch(entry, next, next->recordLength)) {
+        std::lock_guard lock(directory->mutex);
+        next = ReadEntry(*directory, 1);
+        if (next && !TryCopyOut(entry, next, next->recordLength)) {
             errno = savedError;
             return 14;
         }
@@ -384,7 +488,7 @@ int APS5_VABI ReadDirectoryEntry_nid_no_patch(void* handle, GuestDirectoryEntry*
     if (!next && errno) return errno;
     errno = savedError;
     const GuestDirectoryEntry* const output = next ? entry : nullptr;
-    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output))) {
+    if (!TryCopyOut(result, &output, sizeof(output))) {
         errno = savedError;
         return 14;
     }
@@ -393,7 +497,16 @@ int APS5_VABI ReadDirectoryEntry_nid_no_patch(void* handle, GuestDirectoryEntry*
 
 int APS5_VABI CloseDirectory_nid_no_patch(void* handle) {
     if (!handle) { errno = 9; return -1; }
-    std::unique_ptr<Directory> directory(static_cast<Directory*>(handle));
+    Directory* raw = nullptr;
+    {
+        auto& registry = GetDirectoryRegistry();
+        std::lock_guard lock(registry.mutex);
+        const auto it = registry.live.find(static_cast<Directory*>(handle));
+        if (it == registry.live.end()) { errno = 9; return -1; }
+        raw = *it;
+        registry.live.erase(it);
+    }
+    std::unique_ptr<Directory> directory(raw);
     int result = directory->native ? CloseNative(directory->native) : 0;
     directory->native = nullptr;
     if (result) errno = DirectoryError(errno);
@@ -422,9 +535,13 @@ namespace {
 GuestDirectoryEntry* CopyDirectoryEntry(const GuestDirectoryEntry* source) {
     auto* copy = static_cast<GuestDirectoryEntry*>(malloc_nid_postfix(sizeof(GuestDirectoryEntry)));
     if (copy == nullptr) return nullptr;
-    std::memset(copy, 0, sizeof(*copy));
-    std::memcpy(copy, source, std::min<std::size_t>(source->recordLength, sizeof(*copy)));
-    copy->name[std::min<std::size_t>(copy->nameLength, sizeof(copy->name) - 1)] = '\0';
+    GuestDirectoryEntry staged{};
+    std::memcpy(&staged, source, std::min<std::size_t>(source->recordLength, sizeof(staged)));
+    staged.name[std::min<std::size_t>(staged.nameLength, sizeof(staged.name) - 1)] = '\0';
+    if (!TryCopyOut(copy, &staged, sizeof(staged))) {
+        free_nid_postfix(copy);
+        return nullptr;
+    }
     return copy;
 }
 
@@ -473,9 +590,14 @@ int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namel
         errno = 12;
         return -1;
     }
-    std::copy(entries.begin(), entries.end(), array);
+    if (!entries.empty() && !TryCopyOut(array, entries.data(), entries.size() * sizeof(GuestDirectoryEntry*))) {
+        free_nid_postfix(array);
+        FreeDirectoryEntries(entries);
+        errno = 14;
+        return -1;
+    }
     if (!entries.empty() && compar != nullptr) qsort_r_nid_postfix(array, entries.size(), sizeof(*array), &compar, CompareThroughThunk);
-    if (!GuestCopyOut_nid_no_patch(namelist, &array, sizeof(array))) {
+    if (!TryCopyOut(namelist, &array, sizeof(array))) {
         free_nid_postfix(array);
         FreeDirectoryEntries(entries);
         errno = 14;
@@ -485,80 +607,76 @@ int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namel
 }
 
 int APS5_VABI alphasort_nid_postfix(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right) {
-    return strcoll_nid_postfix((*left)->name, (*right)->name);
+    std::string leftName;
+    std::string rightName;
+    if (!ReadDirectoryEntryName(left, leftName) || !ReadDirectoryEntryName(right, rightName))
+        throw std::invalid_argument("alphasort: unreadable directory entry");
+    return strcoll_nid_postfix(leftName.c_str(), rightName.c_str());
 }
 
 void APS5_VABI rewinddir_nid_postfix(void* handle) {
-    if (!handle) { errno = 9; return; }
-    auto& directory = *static_cast<Directory*>(handle);
-    std::lock_guard lock(directory.mutex);
-    if (directory.descriptorDirectory) {
-        if (directory.seekDescriptor(directory.descriptor, 0, 0) >= 0) {
-            directory.pending.clear();
-            directory.pendingCursor = 0;
+    auto* directory = LookupDirectory(handle);
+    if (!directory) { errno = 9; return; }
+    std::lock_guard lock(directory->mutex);
+    if (directory->descriptorDirectory) {
+        if (directory->seekDescriptor(directory->descriptor, 0, 0) >= 0) {
+            directory->pending.clear();
+            directory->pendingCursor = 0;
         }
-    } else if (directory.indexed) {
-        auto entries = std::move(directory.entries);
-        const auto cursor = directory.cursor;
-        const auto indexed = directory.indexed;
-        directory.entries.clear();
-        directory.cursor = 0;
-        directory.indexed = false;
-        const auto restore = [&directory, &entries, cursor, indexed] {
-            if (directory.native) {
-                CloseNative(directory.native);
-                directory.native = nullptr;
+    } else if (directory->indexed) {
+        auto entries = std::move(directory->entries);
+        const auto cursor = directory->cursor;
+        const auto indexed = directory->indexed;
+        directory->entries.clear();
+        directory->cursor = 0;
+        directory->indexed = false;
+        const auto restore = [directory, &entries, cursor, indexed] {
+            if (directory->native) {
+                CloseNative(directory->native);
+                directory->native = nullptr;
             }
-            directory.entries = std::move(entries);
-            directory.cursor = cursor;
-            directory.indexed = indexed;
+            directory->entries = std::move(entries);
+            directory->cursor = cursor;
+            directory->indexed = indexed;
         };
-        try { OpenIndexed(directory); }
+        try { OpenIndexed(*directory); }
         catch (const std::bad_alloc&) { restore(); errno = 12; }
         catch (const std::system_error& error) { restore(); errno = DirectoryError(error.code()); }
         catch (const std::exception&) { restore(); errno = 5; }
     }
-    else RewindNative(directory.native);
+    else RewindNative(directory->native);
 }
 
 std::int64_t APS5_VABI telldir_nid_postfix(void* handle) {
-    if (!handle) { errno = 9; return -1; }
-    auto& directory = *static_cast<Directory*>(handle);
-    std::lock_guard lock(directory.mutex);
-    if (directory.descriptorDirectory) {
-        const auto position = directory.seekDescriptor(directory.descriptor, 0, 1);
+    auto* directory = LookupDirectory(handle);
+    if (!directory) { errno = 9; return -1; }
+    std::lock_guard lock(directory->mutex);
+    if (directory->descriptorDirectory) {
+        const auto position = directory->seekDescriptor(directory->descriptor, 0, 1);
         if (position < 0) return position;
-        const auto unread = directory.pending.size() - directory.pendingCursor;
+        const auto unread = directory->pending.size() - directory->pendingCursor;
         return position >= static_cast<std::int64_t>(unread) ? position - static_cast<std::int64_t>(unread) : 0;
     }
-    return directory.indexed ? static_cast<std::int64_t>(directory.cursor) : TellNative(directory.native);
+    return directory->indexed ? static_cast<std::int64_t>(directory->cursor) : TellNative(directory->native);
 }
 
 void APS5_VABI seekdir_nid_postfix(void* handle, std::int64_t location) {
-    if (!handle) { errno = 9; return; }
-    auto& directory = *static_cast<Directory*>(handle);
-    std::lock_guard lock(directory.mutex);
-    SeekDirectoryUnlocked_nid_no_patch(handle, location);
+    auto* directory = LookupDirectory(handle);
+    if (!directory) { errno = 9; return; }
+    std::lock_guard lock(directory->mutex);
+    SeekDirectoryLocked(*directory, location);
 }
 
 extern "C" GuestDirectoryEntry* APS5_VABI ReadDirectoryUnlocked_nid_no_patch(void* handle, int skip) {
-    if (!handle) { errno = 9; return nullptr; }
-    auto& directory = *static_cast<Directory*>(handle);
-    return ReadEntry(directory, skip);
+    auto* directory = LookupDirectory(handle);
+    if (!directory) { errno = 9; return nullptr; }
+    return ReadEntry(*directory, skip);
 }
 
 extern "C" void APS5_VABI SeekDirectoryUnlocked_nid_no_patch(void* handle, std::int64_t location) {
-    if (!handle) { errno = 9; return; }
-    auto& directory = *static_cast<Directory*>(handle);
-    if (directory.descriptorDirectory) {
-        if (directory.seekDescriptor(directory.descriptor, location, 0) >= 0) {
-            directory.pending.clear();
-            directory.pendingCursor = 0;
-        }
-    } else if (directory.indexed) {
-        if (location >= 0 && static_cast<std::uint64_t>(location) <= directory.entries.size()) directory.cursor = static_cast<std::size_t>(location);
-        else errno = 22;
-    } else SeekNative(directory.native, static_cast<long>(location));
+    auto* directory = LookupDirectory(handle);
+    if (!directory) { errno = 9; return; }
+    SeekDirectoryLocked(*directory, location);
 }
 
 void* APS5_VABI OpenDescriptorDirectory_nid_no_patch(const char* hostPath, int descriptor, int (APS5_VABI* closeDescriptor)(int), std::uint64_t position,
@@ -572,7 +690,7 @@ void* APS5_VABI OpenDescriptorDirectory_nid_no_patch(const char* hostPath, int d
             directory->readDescriptor = readDescriptor;
             directory->seekDescriptor = seekDescriptor;
             directory->descriptorDirectory = true;
-            return directory.release();
+            return RegisterDirectory(std::move(directory));
         }
 #ifdef _WIN32
         directory->native = OpenNative(directory->path);
@@ -592,7 +710,7 @@ void* APS5_VABI OpenDescriptorDirectory_nid_no_patch(const char* hostPath, int d
 #endif
         directory->descriptor = descriptor;
         directory->closeDescriptor = closeDescriptor;
-        return directory.release();
+        return RegisterDirectory(std::move(directory));
     } catch (const std::bad_alloc&) { errno = 12; return nullptr; }
       catch (const std::system_error& error) { errno = DirectoryError(error.code()); return nullptr; }
 }
