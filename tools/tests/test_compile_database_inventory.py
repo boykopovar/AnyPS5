@@ -112,6 +112,18 @@ class Tests(unittest.TestCase):
         self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
         self.assertEqual(list(self.root.iterdir()), [path])
 
+    def test_missing_file_reports_usage_error(self):
+        result = self.run_tool(self.root / "absent.json")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_argument_reports_usage_error(self):
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("usage", result.stderr)
+
 
 
     def test_ninja_log_joins_latest_outputs_and_reports_coverage(self):
